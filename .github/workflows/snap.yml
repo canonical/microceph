@@ -1,0 +1,32 @@
+name: Snapcraft
+on: [push, pull_request]
+jobs:
+  snap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt remove --purge lxd lxd-client 
+          sudo snap install snapcraft --edge --classic
+          sudo snap install lxd
+          sudo lxd waitready
+          sudo lxd init --auto
+          sudo chmod 0666 /var/snap/lxd/common/lxd/unix.socket
+          echo "/snap/bin" >> $GITHUB_PATH
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          snapcraft snap --use-lxd
+
+      - name: Install built snap
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo snap install *.snap --dangerous --devmode

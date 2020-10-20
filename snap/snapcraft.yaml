@@ -1,0 +1,26 @@
+name: microceph
+base: core20
+adopt-info: microceph
+summary: Ceph for a one-rack cluster and appliances
+description: |
+  MicroCeph begins
+grade: devel
+confinement: devmode
+
+parts:
+  microceph:
+    source: cli/
+    plugin: dump
+    override-pull: |
+      snapcraftctl pull
+      CEPH_VERSION=$(dpkg \
+          -f $SNAPCRAFT_PART_SRC/../stage_packages/ceph-mon*.deb \
+          Version|cut -f1 -d-)
+      GIT_VERSION=$(git -C $SNAPCRAFT_PROJECT_DIR describe --always)
+      snapcraftctl set-version $CEPH_VERSION+$GIT_VERSION
+    build-packages:
+      - git
+    stage-packages:
+      - ceph-mon
+      - ceph-mgr
+      - ceph-osd
