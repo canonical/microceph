@@ -30,3 +30,14 @@ jobs:
         run: |
           set -euxo pipefail
           sudo snap install *.snap --dangerous --devmode
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo microceph init
+          sudo microceph.ceph-mon -d --cluster ceph --id $(hostname -s) &
+          sleep 5
+          echo
+          echo
+          sudo microceph.ceph -s
