@@ -30,6 +30,14 @@ layout:
 apps:
   microceph:
     command: bin/microceph.sh
+    plugs:
+      - block-devices
+      - hardware-observe
+      - mount-observe
+      - network
+      - network-bind
+      - network-control
+      - network-observe
   ceph:
     command: usr/bin/ceph
     plugs:
@@ -42,11 +50,58 @@ apps:
     plugs:
       - network
       - network-bind
+  ceph-mgr:
+    command: usr/bin/ceph-mgr
+    plugs:
+      - network
+      - network-bind
+  ceph-osd:
+    command: usr/bin/ceph-osd
+    plugs:
+      - block-devices
+      - hardware-observe
+      - mount-observe
+      - network
+      - network-bind
+      - network-control
+  ceph-volume:
+    command: usr/sbin/ceph-volume
+    plugs:
+      - block-devices
+      - hardware-observe
+      - mount-observe
+      - network
+      - network-bind
+      - network-control
   monmaptool:
     command: usr/bin/monmaptool
 
 parts:
+  ceph-volume:
+    # The upstream Ceph sources hard codes the service username 'ceph' several
+    # places in the code base for the `ceph-volume` program. When running under
+    # a Mandatory Access Control regime such as AppArmor as enforced by a
+    # strict confined snap, the point of running as non-root user becomes moot.
+    plugin: cmake
+    source: https://git.launchpad.net/ubuntu/+source/ceph
+    source-type: git
+    source-branch: ubuntu/focal-updates
+    override-pull: |
+      snapcraftctl pull
+      patch -p1 < $SNAPCRAFT_PROJECT_DIR/patch/ceph-volume-drop-hardcoded-user.patch
+    override-build: |
+      dpkg-source --before-build .
+      cd src/ceph-volume
+      python3 setup.py bdist
+      mkdir -p $SNAPCRAFT_PART_INSTALL/usr/lib/python3/dist-packages
+      python3 setup.py install --prefix $SNAPCRAFT_PART_INSTALL --install-lib $SNAPCRAFT_PART_INSTALL/usr/lib/python3/dist-packages
+    build-packages:
+      - python3-setuptools
+    organize:
+      bin/ceph-volume: usr/sbin/ceph-volume
+      bin/ceph-volume-systemd: usr/sbin/ceph-volume-systemd
   microceph:
+    after: [ceph-volume]
     source: cli/
     plugin: dump
     override-pull: |
@@ -113,8 +168,10 @@ parts:
       - libtcmalloc-minimal4
       - libunwind8
       - lvm2
+      - mount  # we need to ship `mount`
       - parted
       - powermgmt-base
+      - python-pastedeploy-tpl
       - python3-bcrypt
       - python3-bs4
       - python3-ceph-argparse
@@ -155,11 +212,18 @@ parts:
       - python3-webob
       - python3-webtest
       - python3-werkzeug
-      - python-pastedeploy-tpl
       - radosgw
       - shared-mime-info
       - smartmontools
       - thin-provisioning-tools
+      - udev        # we need to ship `udevadm`
+      - util-linux  # we need to ship `blkid`
       - uuid-runtime
       - xdg-user-dirs
       - xfsprogs
+    filesets:
+      exclude-ceph-volume:
+        - -usr/sbin/ceph-volume*
+        - -usr/lib/python3/dist-packages/ceph_volume*
+    stage:
+      - $exclude-ceph-volume

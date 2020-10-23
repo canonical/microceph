@@ -35,8 +35,18 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          sudo apt install -y lsscsi
+          sudo modprobe scsi_debug add_host=1 dev_size_mb=200 per_host_store=1
           sudo microceph init
-          sudo microceph.ceph-mon -d --cluster ceph --id $(hostname -s) &
+          sleep 5
+          echo
+          echo
+          sudo microceph.ceph -s
+          for raw_disk in $(sudo lsscsi|awk '/scsi_debug/{print$6}'); do
+              sudo microceph.ceph-volume lvm prepare \
+                  --data $raw_disk
+          done
+          sudo microceph.ceph-volume lvm activate --all || true
           sleep 5
           echo
           echo

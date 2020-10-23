@@ -13,6 +13,8 @@ mon initial members = $SHORTNAME
 mon host = $ADDR_LIST
 admin socket = $SNAP_COMMON/var/run/ceph/\$cluster-\$name.asok
 pid file = $SNAP_COMMON/var/run/ceph/\$type.\$id.pid
+osd pool default size = 1
+osd pool default min size = 1
 EOF
 
     ceph-authtool \
@@ -53,8 +55,24 @@ EOF
         --monmap /tmp/monmap \
         --keyring /tmp/ceph.mon.keyring
 
-    echo "You can now start the Ceph MON by typing:"
-    echo "    microceph.ceph-mon -d --cluster ceph --id $SHORTNAME"
+    ceph-mon \
+        --cluster ceph \
+        --id $SHORTNAME
+
+    mkdir -p /var/lib/ceph/mgr/ceph-$SHORTNAME
+
+    ceph auth get-or-create \
+        mgr.$SHORTNAME \
+        mon \
+        'allow profile mgr' \
+        osd \
+        'allow *' \
+        mds \
+        'allow *' > /var/lib/ceph/mgr/ceph-$SHORTNAME/keyring
+
+    ceph-mgr \
+        --cluster ceph \
+        --id $SHORTNAME
 }
 
 
