@@ -33,11 +33,14 @@ apps:
     plugs:
       - block-devices
       - hardware-observe
+      - lvm-control
+      - lvm-support
       - mount-observe
       - network
       - network-bind
       - network-control
       - network-observe
+      - tmpfs-mount
   ceph:
     command: usr/bin/ceph
     plugs:
@@ -60,19 +63,25 @@ apps:
     plugs:
       - block-devices
       - hardware-observe
+      - lvm-control
+      - lvm-support
       - mount-observe
       - network
       - network-bind
       - network-control
+      - tmpfs-mount
   ceph-volume:
     command: usr/sbin/ceph-volume
     plugs:
       - block-devices
       - hardware-observe
+      - lvm-control
+      - lvm-support
       - mount-observe
       - network
       - network-bind
       - network-control
+      - tmpfs-mount
   monmaptool:
     command: usr/bin/monmaptool
 
@@ -82,7 +91,7 @@ parts:
     # places in the code base for the `ceph-volume` program. When running under
     # a Mandatory Access Control regime such as AppArmor as enforced by a
     # strict confined snap, the point of running as non-root user becomes moot.
-    plugin: cmake
+    plugin: python
     source: https://git.launchpad.net/ubuntu/+source/ceph
     source-type: git
     source-branch: ubuntu/focal-updates

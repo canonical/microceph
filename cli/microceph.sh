@@ -11,8 +11,9 @@ function init {
 fsid = $FSID
 mon initial members = $SHORTNAME
 mon host = $ADDR_LIST
-admin socket = $SNAP_COMMON/var/run/ceph/\$cluster-\$name.asok
-pid file = $SNAP_COMMON/var/run/ceph/\$type.\$id.pid
+admin socket = /run/snap.microceph/\$cluster-\$type.\$id.asok
+pid file = /run/snap.microceph/\$cluster-\$type.\$id.pid
+run dir = /run/snap.microceph
 osd pool default size = 1
 osd pool default min size = 1
 EOF

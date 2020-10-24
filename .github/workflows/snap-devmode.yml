@@ -1,14 +1,14 @@
-name: Snapcraft
+name: Build and test snap in devmode
 on: [push, pull_request]
 jobs:
   snap:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - name: Install build dependencies
         shell: bash
         run: |
           set -euxo pipefail
-          sudo apt remove --purge lxd lxd-client 
+          sudo apt remove --purge lxd lxd-client
           sudo snap install snapcraft --edge --classic
           sudo snap install lxd
           sudo lxd waitready
@@ -35,18 +35,24 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          sudo apt install -y lsscsi
-          sudo modprobe scsi_debug add_host=1 dev_size_mb=200 per_host_store=1
+          for n in {0..2}; do
+              sudo truncate -s 200M /var/snap/microceph/common/d${n}.img
+              sudo losetup /dev/loop9${n} /var/snap/microceph/common/d${n}.img
+              sudo pvcreate /dev/loop9${n}
+              vg=ceph-$(uuidgen)
+              sudo vgcreate $vg /dev/loop9${n}
+              sudo lvcreate -l 49 $vg
+          done
           sudo microceph init
           sleep 5
           echo
           echo
           sudo microceph.ceph -s
-          for raw_disk in $(sudo lsscsi|awk '/scsi_debug/{print$6}'); do
+          for vg in $(sudo vgs |awk '/ceph/{print$1}'); do
               sudo microceph.ceph-volume lvm prepare \
-                  --data $raw_disk
+                  --bluestore \
+                  --data ${vg}/lvol0
           done
-          sudo microceph.ceph-volume lvm activate --all || true
           sleep 5
           echo
           echo
