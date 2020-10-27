@@ -1,0 +1,75 @@
+name: Build and test confined snap
+on: [push, pull_request]
+jobs:
+  snap:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt remove --purge lxd lxd-client
+          # for in-flight snapd interfaces
+          sudo add-apt-repository -y ppa:fnordahl/dev
+          sudo apt -y install snapd
+          sudo snap install snapcraft --edge --classic
+          sudo snap install lxd
+          sudo lxd waitready
+          sudo lxd init --auto
+          sudo chmod 0666 /var/snap/lxd/common/lxd/unix.socket
+          echo "/snap/bin" >> $GITHUB_PATH
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          snapcraft snap --use-lxd
+
+      - name: Install built snap
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo snap install *.snap --dangerous
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for interface in \
+                  block-devices \
+                  hardware-observe \
+                  lvm-control \
+                  lvm-support \
+                  mount-observe \
+                  network \
+                  network-bind \
+                  network-control \
+                  tmpfs-mount \
+                  ; do
+              sudo snap connect microceph:$interface
+          done
+          for n in {0..2}; do
+              sudo truncate -s 200M /var/snap/microceph/common/d${n}.img
+              sudo losetup /dev/loop9${n} /var/snap/microceph/common/d${n}.img
+              sudo pvcreate /dev/loop9${n}
+              vg=ceph-$(uuidgen)
+              sudo vgcreate $vg /dev/loop9${n}
+              sudo lvcreate -l 49 $vg
+          done
+          sudo microceph init
+          sleep 5
+          echo
+          echo
+          sudo microceph.ceph -s
+          for vg in $(sudo vgs |awk '/ceph/{print$1}'); do
+              sudo microceph.ceph-volume lvm prepare \
+                  --bluestore \
+                  --data ${vg}/lvol0
+          done
+          sleep 5
+          echo
+          echo
+          sudo microceph.ceph -s
