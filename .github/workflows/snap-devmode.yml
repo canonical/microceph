@@ -2,7 +2,7 @@ name: Build and test snap in devmode
 on: [push, pull_request]
 jobs:
   snap:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-18.04
     steps:
       - name: Install build dependencies
         shell: bash
@@ -35,23 +35,18 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          for n in {0..2}; do
-              sudo truncate -s 200M /var/snap/microceph/common/d${n}.img
-              sudo losetup /dev/loop9${n} /var/snap/microceph/common/d${n}.img
-              sudo pvcreate /dev/loop9${n}
-              vg=ceph-$(uuidgen)
-              sudo vgcreate $vg /dev/loop9${n}
-              sudo lvcreate -l 49 $vg
-          done
+          # NOTE: The kernel version used does not have per_host_store support
+          # so we can only use one block device from scsi_debug
+          sudo modprobe scsi_debug add_host=1 dev_size_mb=200
+          sudo apt -y install lsscsi
           sudo microceph init
           sleep 5
           echo
           echo
           sudo microceph.ceph -s
-          for vg in $(sudo vgs |awk '/ceph/{print$1}'); do
+          for raw_disk in $(sudo lsscsi|awk '/scsi_debug/{print$6}'); do
               sudo microceph.ceph-volume lvm prepare \
-                  --bluestore \
-                  --data ${vg}/lvol0
+                  --data $raw_disk
           done
           sleep 5
           echo
