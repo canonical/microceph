@@ -1,0 +1,30 @@
+Description: Don't perform chown if target already has the expected ownership.
+Forwarded: not-needed
+Origin: self
+Author: Frode Nordahl <frode.nordahl@canonical.com>
+
+diff --git a/src/ceph-volume/ceph_volume/util/system.py b/src/ceph-volume/ceph_volume/util/system.py
+index 499862337..43fab06a3 100644
+--- a/src/ceph-volume/ceph_volume/util/system.py
++++ b/src/ceph-volume/ceph_volume/util/system.py
+@@ -108,7 +108,9 @@ def mkdir_p(path, chown=True):
+             raise
+     if chown:
+         uid, gid = get_ceph_user_ids()
+-        os.chown(path, uid, gid)
++        path_stat = os.stat(path)
++        if path_stat.st_uid != uid:
++            os.chown(path, uid, gid)
+ 
+ 
+ def chown(path, recursive=True):
+@@ -116,6 +118,9 @@ def chown(path, recursive=True):
+     ``chown`` a path to the ceph user (uid and guid fetched at runtime)
+     """
+     uid, gid = get_ceph_user_ids()
++    path_stat = os.stat(path)
++    if path_stat.st_uid == uid:
++        return
+     if os.path.islink(path):
+         process.run(['chown', '-h', 'ceph:ceph', path])
+         path = os.path.realpath(path)
