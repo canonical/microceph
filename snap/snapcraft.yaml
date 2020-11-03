@@ -101,6 +101,48 @@ parts:
     plugin: dump
     organize:
       '*': bin/launchers/
+  raft:
+    source: https://github.com/canonical/raft
+    source-type: git
+    source-depth: 1
+    plugin: autotools
+    stage-packages:
+      - libuv1
+    build-packages:
+      - libuv1-dev
+    stage:
+      - usr/local/include/*
+      - usr/local/lib/*
+  sqlite:
+    source: https://github.com/sqlite/sqlite
+    source-type: git
+    source-depth: 1
+    source-tag: version-3.33.0
+    plugin: autotools
+    build-packages:
+      - tcl
+    stage:
+      - usr/local/include/*
+      - usr/local/lib/*
+  dqlite:
+    after:
+      - raft
+      - sqlite
+    source: https://github.com/canonical/dqlite
+    source-type: git
+    source-depth: 1
+    plugin: autotools
+    build-environment:
+      - SQLITE_CFLAGS: -I$SNAPCRAFT_STAGE/usr/local/include
+      - SQLITE_LIBS: -L$SNAPCRAFT_STAGE/usr/local/lib
+    stage-packages:
+      - libuv1
+    build-packages:
+      - libuv1-dev
+      - pkg-config
+    stage:
+      - usr/local/include/*
+      - usr/local/lib/*
   ceph:
     plugin: nil
     override-pull: |
@@ -154,10 +196,18 @@ parts:
     organize:
       bin/ceph-volume: usr/sbin/ceph-volume
       bin/ceph-volume-systemd: usr/sbin/ceph-volume-systemd
-  microceph:
+  transitional-bash-cli:
     source: cli/
     plugin: dump
     organize:
       microceph.sh: bin/microceph.sh
     stage-packages:
       - uuid-runtime
+  microceph:
+    after: [dqlite, raft, sqlite]
+    source: .
+    plugin: go
+    go-buildtags: [libsqlite3]
+    build-environment:
+      - CGO_CFLAGS: -I$SNAPCRAFT_STAGE/usr/local/include
+      - CGO_LDFLAGS: -L$SNAPCRAFT_STAGE/usr/local/lib

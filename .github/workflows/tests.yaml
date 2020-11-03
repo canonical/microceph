@@ -1,6 +1,58 @@
 name: Tests
 on: [push, pull_request]
 jobs:
+  unit-tests:
+    runs-on: ubuntu-20.04
+    env:
+      GOROOT: ""
+      PATH: /snap/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games
+    strategy:
+      matrix:
+        gochannel:
+          - latest/edge
+          - latest/stable
+    steps:
+      - name: Install the go snap
+        run: |
+          set -euxo pipefail
+          sudo snap install --classic --channel=${{ matrix.gochannel }} go
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Get dependencies
+        run: |
+          set -euxo pipefail
+          sudo add-apt-repository -y ppa:dqlite/stable
+          sudo apt -y install libsqlite3-dev libdqlite-dev
+          go mod download -x
+      - name: Format
+        run: |
+          set -euxo pipefail
+          FMT=$(gofmt -d -l .)
+          if [ ! -z "$FMT" ]; then
+              echo "$FMT"
+              exit 1
+          fi
+      - name: Test
+        run: |
+          set -euxo pipefail
+          rm -rf .coverage
+          mkdir .coverage
+          go test -v -cover -coverprofile=.coverage/profile.out ./... | \
+              tee /tmp/gotest-output
+          # MISSING_TESTS="$(grep .*\]$ /tmp/gotest-output)"
+          # if [ ! -z "$MISSING_TESTS" ]; then
+          #     echo -n "The following modules appear to have an issue with "
+          #     echo "their test coverage:"
+          #     echo "$MISSING_TESTS"
+          #     exit 1
+          # fi
+          # FIXME enable once the canonical organization accepts codecov.io
+          # and this repository is made public
+          # curl -s https://codecov.io/bash | bash /dev/stdin -f .coverage/coverage.out
+      - name: Vet
+        run: |
+          set -euxo pipefail
+          go vet ./...
   snap:
     runs-on: ubuntu-18.04
     strategy:
