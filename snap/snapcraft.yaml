@@ -106,6 +106,7 @@ parts:
       python3 setup.py install --prefix $SNAPCRAFT_PART_INSTALL --install-lib $SNAPCRAFT_PART_INSTALL/usr/lib/python3/dist-packages
     build-packages:
       - python3-setuptools
+      - dpkg-dev
     organize:
       bin/ceph-volume: usr/sbin/ceph-volume
       bin/ceph-volume-systemd: usr/sbin/ceph-volume-systemd
