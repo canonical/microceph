@@ -1,8 +1,13 @@
-name: Build and test confined snap
+name: Tests
 on: [push, pull_request]
 jobs:
   snap:
     runs-on: ubuntu-18.04
+    strategy:
+      matrix:
+        confinement:
+          - confined
+          - devmode
     steps:
       - name: Install build dependencies
         shell: bash
@@ -32,25 +37,32 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          sudo snap install *.snap --dangerous
+          if [ ${{ matrix.confinement }} = "devmode" ]; then
+              devmode="--devmode"
+          else
+              devmode=""
+          fi
+          sudo snap install *.snap --dangerous $devmode
+          if [ -z "$devmode" ]; then
+              for interface in \
+                      block-devices \
+                      hardware-observe \
+                      lvm-control \
+                      lvm-support \
+                      mount-observe \
+                      network \
+                      network-bind \
+                      network-control \
+                      tmpfs-mount \
+                      ; do
+                  sudo snap connect microceph:$interface
+              done
+          fi
 
       - name: Smoke test
         shell: bash
         run: |
           set -euxo pipefail
-          for interface in \
-                  block-devices \
-                  hardware-observe \
-                  lvm-control \
-                  lvm-support \
-                  mount-observe \
-                  network \
-                  network-bind \
-                  network-control \
-                  tmpfs-mount \
-                  ; do
-              sudo snap connect microceph:$interface
-          done
           # NOTE: The kernel version used does not have per_host_store support
           # so we can only use one block device from scsi_debug
           sudo modprobe scsi_debug add_host=1 dev_size_mb=200
