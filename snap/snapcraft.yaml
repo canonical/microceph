@@ -98,6 +98,7 @@ parts:
     override-pull: |
       snapcraftctl pull
       patch -p1 < $SNAPCRAFT_PROJECT_DIR/patch/ceph-volume-drop-hardcoded-user.patch
+      patch -p1 < $SNAPCRAFT_PROJECT_DIR/patch/ceph-volume-check-owner-before-chown.patch
     override-build: |
       dpkg-source --before-build .
       cd src/ceph-volume
