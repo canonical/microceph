@@ -32,9 +32,10 @@ apps:
     command: bin/microceph.sh
     plugs:
       - block-devices
+      - device-mapper-control
+      - device-mapper-support
       - hardware-observe
       - lvm-control
-      - lvm-support
       - mount-observe
       - network
       - network-bind
@@ -62,9 +63,10 @@ apps:
     command: usr/bin/ceph-osd
     plugs:
       - block-devices
+      - device-mapper-control
+      - device-mapper-support
       - hardware-observe
       - lvm-control
-      - lvm-support
       - mount-observe
       - network
       - network-bind
@@ -74,9 +76,10 @@ apps:
     command: usr/sbin/ceph-volume
     plugs:
       - block-devices
+      - device-mapper-control
+      - device-mapper-support
       - hardware-observe
       - lvm-control
-      - lvm-support
       - mount-observe
       - network
       - network-bind
