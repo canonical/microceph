@@ -1,6 +1,6 @@
 name: microceph
 base: core20
-adopt-info: microceph
+adopt-info: ceph
 summary: Ceph for a one-rack cluster and appliances
 description: |
   MicroCeph begins
@@ -89,6 +89,34 @@ apps:
     command: usr/bin/monmaptool
 
 parts:
+  ceph:
+    plugin: nil
+    override-pull: |
+      snapcraftctl pull
+      CEPH_VERSION=$(dpkg \
+          -f $SNAPCRAFT_PART_SRC/../stage_packages/ceph-mon*.deb \
+          Version|cut -f1 -d-)
+      GIT_VERSION=$(git -C $SNAPCRAFT_PROJECT_DIR describe --always)
+      snapcraftctl set-version $CEPH_VERSION+$GIT_VERSION
+    build-packages:
+      - git
+    stage-packages:
+      - ceph-base
+      - ceph-mds
+      - ceph-mgr
+      - ceph-mon
+      - ceph-osd
+      - dmsetup     # we need to ship `dmestup`
+      - lvm2        # we need to ship LVM tools
+      - mount       # we need to ship `mount`
+      - udev        # we need to ship `udevadm`
+      - util-linux  # we need to ship `blkid`
+    filesets:
+      exclude-ceph-volume:
+        - -usr/sbin/ceph-volume*
+        - -usr/lib/python3/dist-packages/ceph_volume*
+    stage:
+      - $exclude-ceph-volume
   ceph-volume:
     # The upstream Ceph sources hard codes the service username 'ceph' several
     # places in the code base for the `ceph-volume` program. When running under
@@ -115,129 +143,9 @@ parts:
       bin/ceph-volume: usr/sbin/ceph-volume
       bin/ceph-volume-systemd: usr/sbin/ceph-volume-systemd
   microceph:
-    after: [ceph-volume]
     source: cli/
     plugin: dump
-    override-pull: |
-      snapcraftctl pull
-      CEPH_VERSION=$(dpkg \
-          -f $SNAPCRAFT_PART_SRC/../stage_packages/ceph-mon*.deb \
-          Version|cut -f1 -d-)
-      GIT_VERSION=$(git -C $SNAPCRAFT_PROJECT_DIR describe --always)
-      snapcraftctl set-version $CEPH_VERSION+$GIT_VERSION
     organize:
       microceph.sh: bin/microceph.sh
-    build-packages:
-      - git
     stage-packages:
-      - ceph-base
-      - ceph-common
-      - ceph-mds
-      - ceph-mgr
-      - ceph-mgr-modules-core
-      - ceph-mon
-      - ceph-osd
-      - cryptsetup-bin
-      - dmeventd
-      - dmidecode
-      - dmsetup
-      - gdisk
-      - groff-base
-      - hdparm
-      - ibverbs-providers
-      - javascript-common
-      - libaio1
-      - libbabeltrace1
-      - libboost-context1.71.0
-      - libboost-iostreams1.71.0
-      - libboost-program-options1.71.0
-      - libboost-python1.71.0
-      - libboost-thread1.71.0
-      - libcephfs2
-      - libdevmapper-event1.02.1
-      - libdw1
-      - libelf1
-      - libglib2.0-0
-      - libglib2.0-data
-      - libgoogle-perftools4
-      - libibverbs1
-      - libicu66
-      - libjs-jquery
-      - libleveldb1d
-      - liblvm2cmd2.03
-      - libnl-3-200
-      - libnl-route-3-200
-      - liboath0
-      - libparted2
-      - libpopt0
-      - libpython3.8
-      - librabbitmq4
-      - librados2
-      - libradosstriper1
-      - librbd1
-      - librdmacm1
-      - libreadline5
-      - librgw2
-      - libsnappy1v5
-      - libtcmalloc-minimal4
-      - libunwind8
-      - lvm2
-      - mount  # we need to ship `mount`
-      - parted
-      - powermgmt-base
-      - python-pastedeploy-tpl
-      - python3-bcrypt
-      - python3-bs4
-      - python3-ceph-argparse
-      - python3-ceph-common
-      - python3-cephfs
-      - python3-certifi
-      - python3-cffi-backend
-      - python3-chardet
-      - python3-cherrypy3
-      - python3-cryptography
-      - python3-dateutil
-      - python3-idna
-      - python3-jwt
-      - python3-logutils
-      - python3-lxml
-      - python3-mako
-      - python3-markupsafe
-      - python3-openssl
-      - python3-paste
-      - python3-pastedeploy
-      - python3-pastescript
-      - python3-pecan
-      - python3-pkg-resources
-      - python3-prettytable
-      - python3-pyinotify
-      - python3-rados
-      - python3-rbd
-      - python3-requests
-      - python3-routes
-      - python3-simplegeneric
-      - python3-simplejson
-      - python3-singledispatch
-      - python3-six
-      - python3-soupsieve
-      - python3-tempita
-      - python3-urllib3
-      - python3-waitress
-      - python3-webob
-      - python3-webtest
-      - python3-werkzeug
-      - radosgw
-      - shared-mime-info
-      - smartmontools
-      - thin-provisioning-tools
-      - udev        # we need to ship `udevadm`
-      - util-linux  # we need to ship `blkid`
       - uuid-runtime
-      - xdg-user-dirs
-      - xfsprogs
-    filesets:
-      exclude-ceph-volume:
-        - -usr/sbin/ceph-volume*
-        - -usr/lib/python3/dist-packages/ceph_volume*
-    stage:
-      - $exclude-ceph-volume
