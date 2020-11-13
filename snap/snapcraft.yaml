@@ -89,6 +89,11 @@ apps:
       - tmpfs-mount
   monmaptool:
     command: usr/bin/monmaptool
+  rados:
+    command: usr/bin/rados
+    plugs:
+      - network
+      - network-bind
 
 parts:
   launchers:
