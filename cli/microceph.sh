@@ -56,9 +56,7 @@ EOF
         --monmap /tmp/monmap \
         --keyring /tmp/ceph.mon.keyring
 
-    ceph-mon \
-        --cluster ceph \
-        --id $SHORTNAME
+    snapctl start microceph.ceph-mon
 
     mkdir -p /var/lib/ceph/mgr/ceph-$SHORTNAME
 
@@ -71,9 +69,7 @@ EOF
         mds \
         'allow *' > /var/lib/ceph/mgr/ceph-$SHORTNAME/keyring
 
-    ceph-mgr \
-        --cluster ceph \
-        --id $SHORTNAME
+    snapctl start microceph.ceph-mgr
 }
 
 

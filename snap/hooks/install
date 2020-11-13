@@ -1,5 +1,11 @@
 #!/bin/sh -eux
 
+# disable all services
+for svc in $(snapctl services |awk '/enabled/{print$1}'); do
+    snapctl stop --disable $svc
+done
+
+# pre-create the directory layout expected by the Ceph daemons
 mkdir -p $SNAP_COMMON/etc/ceph
 mkdir -p $SNAP_COMMON/var/run/ceph
 for ceph_daemon in mds mgr osd rbd rbd-mirror rgw; do

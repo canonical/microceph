@@ -50,12 +50,14 @@ apps:
   ceph-authtool:
     command: usr/bin/ceph-authtool
   ceph-mon:
-    command: usr/bin/ceph-mon
+    command: bin/launchers/ceph-mon
+    daemon: simple
     plugs:
       - network
       - network-bind
   ceph-mgr:
-    command: usr/bin/ceph-mgr
+    command: bin/launchers/ceph-mgr
+    daemon: simple
     plugs:
       - network
       - network-bind
@@ -89,6 +91,11 @@ apps:
     command: usr/bin/monmaptool
 
 parts:
+  launchers:
+    source: snap/local/launchers
+    plugin: dump
+    organize:
+      '*': bin/launchers/
   ceph:
     plugin: nil
     override-pull: |
