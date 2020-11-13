@@ -86,7 +86,7 @@ jobs:
           set -euxo pipefail
           # NOTE: The kernel version used does not have per_host_store support
           # so we can only use one block device from scsi_debug
-          sudo modprobe scsi_debug add_host=1 dev_size_mb=200
+          sudo modprobe scsi_debug add_host=1 dev_size_mb=1024
           sudo apt -y install lsscsi
           sudo microceph init
           sleep 5
@@ -97,7 +97,10 @@ jobs:
               sudo microceph.ceph-volume lvm prepare \
                   --data $raw_disk
           done
+          sudo microceph.ceph-osd --cluster ceph --id 0
           sleep 5
           echo
           echo
           sudo microceph.ceph -s
+          sudo microceph.ceph osd pool create bench 16 16
+          sudo microceph.rados bench -p bench -t 2 10 write
