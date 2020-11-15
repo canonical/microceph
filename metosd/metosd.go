@@ -17,4 +17,6 @@ func main() {
 	} else {
 		fmt.Println("not found")
 	}
+	var v CephVolume = &volume{}
+	err = v.Load()
 }
