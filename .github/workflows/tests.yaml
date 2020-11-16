@@ -39,7 +39,7 @@ jobs:
           git fetch origin pull/9547/head:pr-9547
           git fetch origin pull/9585/head:pr-9585
           git checkout pr-9547
-          git cherry-pick pr-9585
+          git cherry-pick a8c7130e2a8999e0665a6829c21227dc5fcb27e0
           snapcraft snap --use-lxd
           sudo snap install *.snap --dangerous
           snapcraft clean --use-lxd
@@ -66,7 +66,7 @@ jobs:
           if [ -z "$devmode" ]; then
               for interface in \
                       block-devices \
-                      device-mapper-support \
+                      device-mapper-devices \
                       device-mapper-control \
                       hardware-observe \
                       lvm-control \
