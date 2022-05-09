@@ -1,7 +1,0 @@
-#!/bin/bash -eux
-
-CLUSTER=ceph
-ID=$(hostname -s)
-SERVICE=$(basename $0)
-
-$SNAP/usr/bin/$SERVICE -f --cluster $CLUSTER --id $ID
