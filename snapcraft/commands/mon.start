@@ -1,0 +1,2 @@
+#!/bin/sh
+exec ceph-mon -f --cluster ceph --id $(hostname)

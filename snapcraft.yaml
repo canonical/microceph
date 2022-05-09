@@ -1,0 +1,139 @@
+name: microceph
+base: core22
+version: git
+grade: devel
+summary: Simple clustered Ceph deployment
+description: |-
+ Self-contained self-deployment with clustering.
+
+confinement: strict
+
+environment:
+  LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu/ceph:$SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu/ceph:$SNAP/lib/x86_64-linux-gnu/ceph/compressor:$SNAP/lib/x86_64-linux-gnu/ceph/crypto:$SNAP/lib/x86_64-linux-gnu/ceph/erasure-code
+  PYTHONPATH: $SNAP/lib/python3.8:$SNAP/lib/python3/dist-packages
+
+layout:
+  /usr/lib/x86_64-linux-gnu/ceph:
+    symlink: $SNAP/lib/x86_64-linux-gnu/ceph
+  /etc/ceph:
+    symlink: $SNAP_DATA/conf
+  /usr/share/ceph:
+    symlink: $SNAP/share/ceph
+  /var/lib/ceph:
+    symlink: $SNAP_COMMON/data
+  /var/log/ceph:
+    symlink: $SNAP_COMMON/log
+
+apps:
+  # Service
+  daemon:
+    command: commands/daemon.start
+    daemon: simple
+
+  mds:
+    command: commands/mds.start
+    daemon: simple
+    install-mode: disable
+    plugs:
+      - network
+      - network-bind
+  mon:
+    command: commands/mon.start
+    daemon: simple
+    install-mode: disable
+    plugs:
+      - network
+      - network-bind
+  mgr:
+    command: commands/mgr.start
+    daemon: simple
+    install-mode: disable
+    plugs:
+      - network
+      - network-bind
+  osd:
+    command: commands/osd.start
+    daemon: simple
+    install-mode: disable
+    stop-mode: sigterm-all
+    stop-timeout: 5m
+    plugs:
+      - block-devices
+      - network
+      - network-bind
+
+  # Commands
+  ceph:
+    command: commands/ceph
+    plugs:
+      - network
+  microceph:
+    command: commands/microceph
+    plugs:
+      - block-devices
+      - network
+      - network-bind
+  rbd:
+    command: commands/rbd
+    plugs:
+      - network
+
+parts:
+  ceph:
+    plugin: nil
+    stage-packages:
+      - ceph-common
+      - ceph-mds
+      - ceph-mgr
+      - ceph-mon
+      - ceph-osd
+    organize:
+      usr/bin/: bin/
+      usr/sbin/: bin/
+      usr/lib/: lib/
+      usr/share/: share/
+    prime:
+      - bin/ceph
+      - bin/ceph-authtool
+      - bin/ceph-bluestore-tool
+      - bin/ceph-mds
+      - bin/ceph-mgr
+      - bin/ceph-mon
+      - bin/ceph-osd
+      - bin/monmaptool
+      - bin/rbd
+      - lib/*/ceph
+      - lib/*/libaio.so*
+      - lib/*/libboost_iostreams.so*
+      - lib/*/libboost_program_options.so*
+      - lib/*/libboost_python310.so*
+      - lib/*/libboost_thread.so*
+      - lib/*/libcephfs.so*
+      - lib/*/libcephsqlite.so*
+      - lib/*/libdaxctl.so*
+      - lib/*/libfuse3.so*
+      - lib/*/libibverbs.so*
+      - lib/*/liblua5.3.so*
+      - lib/*/libndctl.so*
+      - lib/*/libnuma.so*
+      - lib/*/libpmem.so*
+      - lib/*/libpython3.10.so*
+      - lib/*/librados.so*
+      - lib/*/librbd.so*
+      - lib/*/librdmacm.so*
+      - lib/*/libsnappy.so*
+      - lib/python3
+      - share/ceph
+
+  deps:
+    plugin: nil
+    stage-packages:
+      - uuid-runtime
+    organize:
+      usr/bin/: bin/
+    prime:
+      - bin/uuidgen
+
+  wrappers:
+    plugin: dump
+    source: snapcraft/

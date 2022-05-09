@@ -1,0 +1,21 @@
+#!/bin/sh
+export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
+
+while :; do
+    for i in ${SNAP_COMMON}/data/osd/*; do
+        filename=$(basename ${i})
+        [ -z "$filename" ] && continue
+
+        nr=${filename##ceph-}
+        [ -z "$nr" ] && continue
+
+        [ ! -e "${i}/ready" ] && continue
+        [ -e "${SNAP_CURRENT}/run/ceph-osd.${nr}.asok" ] && continue
+
+        ceph-osd --cluster ceph --id $nr
+    done
+
+    sleep 5
+done
+
+exit 1
