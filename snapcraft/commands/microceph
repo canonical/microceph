@@ -87,14 +87,23 @@ elif [ "${1}" = "add-osd" ]; then
     ) >/dev/null 2>&1
     touch ${OSD_PATH} ${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/ready
 elif [ "${1}" = "add-node" ]; then
+    if [ -z "${2:-}" ]; then
+        echo "Invalid microceph add-node: missing name" >&2
+        exit 1
+    fi
     echo "$(hostname):$2:$(uuidgen)" | base64
 elif [ "${1}" = "join" ]; then
+    if [ -z "${2:-}" ]; then
+        echo "Invalid microceph join: missing token" >&2
+        exit 1
+    fi
+
     TARGET=$(echo $2 | base64 -d | cut -d: -f1)
     NAME=$(echo $2 | base64 -d | cut -d: -f2)
     SECRET=$(echo $2 | base64 -d | cut -d: -f3)
 
     echo "Joining cluster through ${TARGET} as ${NAME}"
 else
-    echo "Invalid microceph command: $1"
+    echo "Invalid microceph command: $1" >&2
     exit 1
 fi
