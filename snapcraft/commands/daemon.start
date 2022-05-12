@@ -1,5 +1,5 @@
 #!/bin/sh
-mkdir -p ${SNAP_DATA}/conf
+mkdir -p "${SNAP_DATA}/conf"
 
 echo "Daemon start"
 exit 0
