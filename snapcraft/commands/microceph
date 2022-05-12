@@ -7,7 +7,6 @@ if [ "$1" = "bootstrap" ]; then
     # Setup storage
     mkdir -p ${SNAP_DATA}/conf ${SNAP_DATA}/keyrings ${SNAP_DATA}/run
     mkdir -p ${SNAP_COMMON}/data ${SNAP_COMMON}/log
-    touch ${SNAP_DATA}/conf/ceph.conf
 
     # Generate new fsid
     FSID="$(uuidgen)"
