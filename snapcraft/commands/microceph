@@ -83,7 +83,7 @@ elif [ "${1}" = "add-osd" ]; then
     ln -s "${OSD_PATH}" "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/block"
     (
         set -eu
-        dd if=/dev/zero of="${OSD_PATH}" bs=4M count=1
+        dd if=/dev/zero of="${OSD_PATH}" bs=4M count=1 status=none
         ceph-osd --mkfs --no-mon-config -i "${OSD_NR}"
     ) >/dev/null 2>&1
     touch "${OSD_PATH}" "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/ready"
