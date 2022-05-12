@@ -1,6 +1,8 @@
 #!/bin/sh -eu
 export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
 
+HOSTNAME="$(hostname)"
+
 if [ "$1" = "bootstrap" ]; then
     # Setup storage
     mkdir -p ${SNAP_DATA}/conf ${SNAP_DATA}/keyrings ${SNAP_DATA}/run
@@ -26,7 +28,7 @@ if [ "$1" = "bootstrap" ]; then
     (
     set -eu
     monmaptool --create --fsid ${FSID} ${SNAP_DATA}/conf/mon.map
-    monmaptool --add $(hostname) 127.0.0.1 ${SNAP_DATA}/conf/mon.map
+    monmaptool --add ${HOSTNAME} 127.0.0.1 ${SNAP_DATA}/conf/mon.map
     ) > /dev/null
 
     # Generate minimal config
@@ -45,8 +47,8 @@ EOF
     # Bootstrap monitor
     echo "=> Setting up ceph-mon"
     mkdir -p ${SNAP_COMMON}/data/mon/
-    ceph-mon --mkfs -i $(hostname) \
-        --mon-data ${SNAP_COMMON}/data/mon/ceph-$(hostname) \
+    ceph-mon --mkfs -i ${HOSTNAME} \
+        --mon-data ${SNAP_COMMON}/data/mon/ceph-${HOSTNAME} \
         --monmap ${SNAP_DATA}/conf/mon.map \
         --keyring ${SNAP_DATA}/keyrings/mon.keyring
 
@@ -54,14 +56,14 @@ EOF
 
     # Bootstrap mds
     echo "=> Setting up ceph-mds"
-    mkdir -p ${SNAP_COMMON}/data/mds/ceph-$(hostname)
-    ceph auth get-or-create mds.$(hostname) mon 'profile mds' mgr 'profile mds' mds 'allow *' osd 'allow *' -o ${SNAP_COMMON}/data/mds/ceph-$(hostname)/keyring
+    mkdir -p ${SNAP_COMMON}/data/mds/ceph-${HOSTNAME}
+    ceph auth get-or-create mds.${HOSTNAME} mon 'profile mds' mgr 'profile mds' mds 'allow *' osd 'allow *' -o ${SNAP_COMMON}/data/mds/ceph-${HOSTNAME}/keyring
     snapctl start microceph.mds --enable
 
     # Bootstrap mgr
     echo "=> Setting up ceph-mgr"
-    mkdir -p ${SNAP_COMMON}/data/mgr/ceph-$(hostname)
-    ceph auth get-or-create mgr.$(hostname) mon 'allow profile mgr' osd 'allow *' mds 'allow *' -o ${SNAP_COMMON}/data/mgr/ceph-$(hostname)/keyring
+    mkdir -p ${SNAP_COMMON}/data/mgr/ceph-${HOSTNAME}
+    ceph auth get-or-create mgr.${HOSTNAME} mon 'allow profile mgr' osd 'allow *' mds 'allow *' -o ${SNAP_COMMON}/data/mgr/ceph-${HOSTNAME}/keyring
     snapctl start microceph.mgr --enable
 
     # Bootstrap osd
@@ -91,7 +93,7 @@ elif [ "${1}" = "add-node" ]; then
         echo "Invalid microceph add-node: missing name" >&2
         exit 1
     fi
-    echo "$(hostname):$2:$(uuidgen)" | base64
+    echo "${HOSTNAME}:$2:$(uuidgen)" | base64
 elif [ "${1}" = "join" ]; then
     if [ -z "${2:-}" ]; then
         echo "Invalid microceph join: missing token" >&2
