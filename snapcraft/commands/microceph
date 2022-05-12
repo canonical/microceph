@@ -8,8 +8,8 @@ if [ "$1" = "bootstrap" ]; then
     touch ${SNAP_DATA}/conf/ceph.conf
 
     # Generate new fsid
-    uuidgen > ${SNAP_DATA}/conf/fsid
-    FSID=$(cat ${SNAP_DATA}/conf/fsid)
+    FSID="$(uuidgen)"
+    echo "${FSID}" > "${SNAP_DATA}/conf/fsid"
 
     # Generate keyrings
     echo "=> Generating keyrings"
