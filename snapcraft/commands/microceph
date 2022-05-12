@@ -98,10 +98,11 @@ elif [ "${1}" = "join" ]; then
         echo "Invalid microceph join: missing token" >&2
         exit 1
     fi
+    TOKEN="$(echo "${2}" | base64 -d)"
 
-    TARGET=$(echo $2 | base64 -d | cut -d: -f1)
-    NAME=$(echo $2 | base64 -d | cut -d: -f2)
-    SECRET=$(echo $2 | base64 -d | cut -d: -f3)
+    TARGET=$(echo "${TOKEN}" | cut -d: -f1)
+    NAME=$(echo "${TOKEN}" | cut -d: -f2)
+    SECRET=$(echo "${TOKEN}" | cut -d: -f3)
 
     echo "Joining cluster through ${TARGET} as ${NAME}"
 else
