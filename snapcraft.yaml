@@ -10,7 +10,7 @@ confinement: strict
 
 environment:
   LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu/ceph:$SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu/ceph:$SNAP/lib/x86_64-linux-gnu/ceph/compressor:$SNAP/lib/x86_64-linux-gnu/ceph/crypto:$SNAP/lib/x86_64-linux-gnu/ceph/erasure-code
-  PYTHONPATH: $SNAP/lib/python3.8:$SNAP/lib/python3/dist-packages
+  PYTHONPATH: $SNAP/lib/python3/dist-packages
 
 layout:
   /usr/lib/x86_64-linux-gnu/ceph:

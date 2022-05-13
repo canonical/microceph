@@ -1,32 +1,33 @@
 #!/bin/sh -eu
 export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
 
+HOSTNAME="$(hostname)"
+
 if [ "$1" = "bootstrap" ]; then
     # Setup storage
-    mkdir -p ${SNAP_DATA}/conf ${SNAP_DATA}/keyrings ${SNAP_DATA}/run
-    mkdir -p ${SNAP_COMMON}/data ${SNAP_COMMON}/log
-    touch ${SNAP_DATA}/conf/ceph.conf
+    mkdir -p "${SNAP_DATA}/conf" "${SNAP_DATA}/keyrings" "${SNAP_DATA}/run"
+    mkdir -p "${SNAP_COMMON}/data" "${SNAP_COMMON}/log"
 
     # Generate new fsid
-    uuidgen > ${SNAP_DATA}/conf/fsid
-    FSID=$(cat ${SNAP_DATA}/conf/fsid)
+    FSID="$(uuidgen)"
+    echo "${FSID}" > "${SNAP_DATA}/conf/fsid"
 
     # Generate keyrings
     echo "=> Generating keyrings"
     (
     set -eu
-    ceph-authtool --create-keyring ${SNAP_DATA}/keyrings/mon.keyring --gen-key -n mon. --cap mon 'allow *'
-    ceph-authtool --create-keyring ${SNAP_DATA}/keyrings/client.admin.keyring --gen-key -n client.admin --cap mon 'allow *' --cap osd 'allow *' --cap mds 'allow *' --cap mgr 'allow *'
-    ceph-authtool --create-keyring ${SNAP_DATA}/keyrings/bootstrap-osd.keyring --gen-key -n client.bootstrap-osd --cap mon 'profile bootstrap-osd' --cap mgr 'allow r'
-    ceph-authtool ${SNAP_DATA}/keyrings/mon.keyring --import-keyring ${SNAP_DATA}/keyrings/client.admin.keyring
-    ceph-authtool ${SNAP_DATA}/keyrings/mon.keyring --import-keyring ${SNAP_DATA}/keyrings/bootstrap-osd.keyring
+    ceph-authtool --create-keyring "${SNAP_DATA}/keyrings/mon.keyring" --gen-key -n mon. --cap mon 'allow *'
+    ceph-authtool --create-keyring "${SNAP_DATA}/keyrings/client.admin.keyring" --gen-key -n client.admin --cap mon 'allow *' --cap osd 'allow *' --cap mds 'allow *' --cap mgr 'allow *'
+    ceph-authtool --create-keyring "${SNAP_DATA}/keyrings/bootstrap-osd.keyring" --gen-key -n client.bootstrap-osd --cap mon 'profile bootstrap-osd' --cap mgr 'allow r'
+    ceph-authtool "${SNAP_DATA}/keyrings/mon.keyring" --import-keyring "${SNAP_DATA}/keyrings/client.admin.keyring"
+    ceph-authtool "${SNAP_DATA}/keyrings/mon.keyring" --import-keyring "${SNAP_DATA}/keyrings/bootstrap-osd.keyring"
     ) > /dev/null
 
     echo "=> Generating monmap"
     (
     set -eu
-    monmaptool --create --fsid ${FSID} ${SNAP_DATA}/conf/mon.map
-    monmaptool --add $(hostname) 127.0.0.1 ${SNAP_DATA}/conf/mon.map
+    monmaptool --create --fsid "${FSID}" "${SNAP_DATA}/conf/mon.map"
+    monmaptool --add "${HOSTNAME}" 127.0.0.1 "${SNAP_DATA}/conf/mon.map"
     ) > /dev/null
 
     # Generate minimal config
@@ -39,29 +40,29 @@ fsid = ${FSID}
 mon host = 127.0.0.1:6789
 auth allow insecure global id reclaim = false
 EOF
-    ) > ${SNAP_DATA}/conf/ceph.conf
-    ln -s ${SNAP_CURRENT}/keyrings/client.admin.keyring /etc/ceph/ceph.client.admin.keyring
+    ) > "${SNAP_DATA}/conf/ceph.conf"
+    ln -s "${SNAP_CURRENT}/keyrings/client.admin.keyring" /etc/ceph/ceph.client.admin.keyring
 
     # Bootstrap monitor
     echo "=> Setting up ceph-mon"
-    mkdir -p ${SNAP_COMMON}/data/mon/
-    ceph-mon --mkfs -i $(hostname) \
-        --mon-data ${SNAP_COMMON}/data/mon/ceph-$(hostname) \
-        --monmap ${SNAP_DATA}/conf/mon.map \
-        --keyring ${SNAP_DATA}/keyrings/mon.keyring
+    mkdir -p "${SNAP_COMMON}/data/mon"
+    ceph-mon --mkfs -i "${HOSTNAME}" \
+        --mon-data "${SNAP_COMMON}/data/mon/ceph-${HOSTNAME}" \
+        --monmap "${SNAP_DATA}/conf/mon.map" \
+        --keyring "${SNAP_DATA}/keyrings/mon.keyring"
 
     snapctl start microceph.mon --enable
 
     # Bootstrap mds
     echo "=> Setting up ceph-mds"
-    mkdir -p ${SNAP_COMMON}/data/mds/ceph-$(hostname)
-    ceph auth get-or-create mds.$(hostname) mon 'profile mds' mgr 'profile mds' mds 'allow *' osd 'allow *' -o ${SNAP_COMMON}/data/mds/ceph-$(hostname)/keyring
+    mkdir -p "${SNAP_COMMON}/data/mds/ceph-${HOSTNAME}"
+    ceph auth get-or-create mds."${HOSTNAME}" mon 'profile mds' mgr 'profile mds' mds 'allow *' osd 'allow *' -o "${SNAP_COMMON}/data/mds/ceph-${HOSTNAME}/keyring"
     snapctl start microceph.mds --enable
 
     # Bootstrap mgr
     echo "=> Setting up ceph-mgr"
-    mkdir -p ${SNAP_COMMON}/data/mgr/ceph-$(hostname)
-    ceph auth get-or-create mgr.$(hostname) mon 'allow profile mgr' osd 'allow *' mds 'allow *' -o ${SNAP_COMMON}/data/mgr/ceph-$(hostname)/keyring
+    mkdir -p "${SNAP_COMMON}/data/mgr/ceph-${HOSTNAME}"
+    ceph auth get-or-create mgr."${HOSTNAME}" mon 'allow profile mgr' osd 'allow *' mds 'allow *' -o "${SNAP_COMMON}/data/mgr/ceph-${HOSTNAME}/keyring"
     snapctl start microceph.mgr --enable
 
     # Bootstrap osd
@@ -73,28 +74,38 @@ EOF
     ceph mon enable-msgr2
 
 elif [ "${1}" = "add-osd" ]; then
-    OSD_NR=$2
-    OSD_PATH=$3
+    OSD_NR="${2}"
+    OSD_PATH="${3}"
 
     echo "=> Adding ${OSD_PATH} as osd.${OSD_NR}"
-    mkdir -p ${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/
-    ceph auth get-or-create osd.${OSD_NR} mgr 'allow profile osd' mon 'allow profile osd' osd 'allow *' -o ${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/keyring
-    ln -s ${OSD_PATH} ${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/block
+    mkdir -p "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}"
+    ceph auth get-or-create "osd.${OSD_NR}" mgr 'allow profile osd' mon 'allow profile osd' osd 'allow *' -o "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/keyring"
+    ln -s "${OSD_PATH}" "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/block"
     (
         set -eu
-        dd if=/dev/zero of=${OSD_PATH} bs=4M count=1
-        ceph-osd --mkfs --no-mon-config -i ${OSD_NR}
-    ) >/dev/null 2>&1
-    touch ${OSD_PATH} ${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/ready
+        dd if=/dev/zero of="${OSD_PATH}" bs=4M count=1 status=none
+        ceph-osd --mkfs --no-mon-config -i "${OSD_NR}"
+    ) >/dev/null
+    touch "${OSD_PATH}" "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/ready"
 elif [ "${1}" = "add-node" ]; then
-    echo "$(hostname):$2:$(uuidgen)" | base64
+    if [ -z "${2:-}" ]; then
+        echo "Invalid microceph add-node: missing name" >&2
+        exit 1
+    fi
+    echo "${HOSTNAME}:$2:$(uuidgen)" | base64
 elif [ "${1}" = "join" ]; then
-    TARGET=$(echo $2 | base64 -d | cut -d: -f1)
-    NAME=$(echo $2 | base64 -d | cut -d: -f2)
-    SECRET=$(echo $2 | base64 -d | cut -d: -f3)
+    if [ -z "${2:-}" ]; then
+        echo "Invalid microceph join: missing token" >&2
+        exit 1
+    fi
+    TOKEN="$(echo "${2}" | base64 -d)"
+
+    TARGET="$(echo "${TOKEN}" | cut -d: -f1)"
+    NAME="$(echo "${TOKEN}" | cut -d: -f2)"
+    SECRET="$(echo "${TOKEN}" | cut -d: -f3)"
 
     echo "Joining cluster through ${TARGET} as ${NAME}"
 else
-    echo "Invalid microceph command: $1"
+    echo "Invalid microceph command: ${1}" >&2
     exit 1
 fi

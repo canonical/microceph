@@ -1,2 +1,2 @@
 #!/bin/sh
-exec ceph-mgr -f --cluster ceph --id $(hostname)
+exec ceph-mgr -f --cluster ceph --id "$(hostname)"
