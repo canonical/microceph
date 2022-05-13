@@ -11,7 +11,7 @@ jobs:
       SNAPCRAFT_BUILD_ENVIRONMENT: "lxd"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install dependencies
         run: |
@@ -27,7 +27,7 @@ jobs:
       - name: Run system tests
         run: |
           set -eux
-          sudo snap install --dangerous microceph_git_amd64.snap
+          sudo snap install --dangerous microceph_*.snap
           sudo snap connect microceph:block-devices
 
           sudo microceph bootstrap
@@ -73,7 +73,8 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: snaps
           path: "*.snap"
+          retention-days: 5
