@@ -27,7 +27,7 @@ jobs:
       - name: Run system tests
         run: |
           set -eux
-          sudo snap install --dangerous microceph_git_amd64.snap
+          sudo snap install --dangerous microceph_*.snap
           sudo snap connect microceph:block-devices
 
           sudo microceph bootstrap
