@@ -1,0 +1,79 @@
+name: Tests
+on:
+  - push
+  - pull_request
+
+jobs:
+  system-tests:
+    name: System tests
+    runs-on: ubuntu-20.04
+    env:
+      SNAPCRAFT_BUILD_ENVIRONMENT: "lxd"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install dependencies
+        run: |
+          sudo snap refresh lxd --channel=latest
+          sudo snap set lxd daemon.group=adm
+          sudo lxd init --auto
+          # XXX: building a snap with a core22 base requires snapcraft 7.x not yet in latest/stable
+          sudo snap install snapcraft --classic --channel=7.x/candidate
+
+      - name: Build snaps
+        run: snapcraft
+
+      - name: Run system tests
+        run: |
+          set -eux
+          sudo snap install --dangerous microceph_git_amd64.snap
+          sudo snap connect microceph:block-devices
+
+          sudo microceph bootstrap
+
+          # Early on, ceph health might report OK but will soon turn to WARN
+          sudo microceph.ceph health | grep -xF "HEALTH_OK"
+          sudo microceph.ceph status
+
+          # Allow ceph to notice no OSD are present
+          sleep 30
+          sudo microceph.ceph health | grep -xF "HEALTH_WARN OSD count 0 < osd_pool_default_size 3"
+
+          # XXX: allow block-devices locking until https://github.com/snapcore/snapd/pull/11759 is released
+          sudo sed -i 's#^\(/dev/sdi\[a-v\] rw\)\(,.*\)#\1k\2#' \
+              /var/lib/snapd/apparmor/profiles/snap.microceph.microceph \
+              /var/lib/snapd/apparmor/profiles/snap.microceph.osd
+          sudo apparmor_parser -r \
+            /var/lib/snapd/apparmor/profiles/snap.microceph.microceph \
+            /var/lib/snapd/apparmor/profiles/snap.microceph.osd
+
+          # Add OSDs backed by loop devices
+          i=0
+          for l in a b c; do
+          	loop_file="$(mktemp XXXX.img)"
+          	truncate -s 1G "${loop_file}"
+          	loop_dev="$(sudo losetup --show -f "${loop_file}")"
+          	
+          	# XXX: the block-devices plug doesn't allow accessing /dev/loopX
+            # devices so we make those same devices available under alternate
+            # names (/dev/sdiY) that are not used inside GitHub Action runners
+          	minor="${loop_dev##/dev/loop}"
+          	sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
+          	sudo microceph add-osd "$((i++))" "/dev/sdi${l}"
+          done
+
+          # Wait for OSDs to become up
+          sleep 30
+
+          sudo microceph.ceph health | grep -xF "HEALTH_OK"
+
+          # Show ceph's status
+          sudo microceph.ceph status
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v2
+        with:
+          name: snaps
+          path: "*.snap"
