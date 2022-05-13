@@ -77,3 +77,4 @@ jobs:
         with:
           name: snaps
           path: "*.snap"
+          retention-days: 5
