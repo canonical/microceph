@@ -1,5 +1,5 @@
 name: microceph
-base: core20
+base: core22
 version: git
 grade: devel
 source-code: https://github.com/canonical/microceph.git
@@ -88,7 +88,6 @@ parts:
       - ceph-mgr
       - ceph-mon
       - ceph-osd
-      - libfuse2
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -126,11 +125,6 @@ parts:
       - lib/*/libsnappy.so*
       - lib/python3
       - share/ceph
-      - lib/*/libboost_python38.so*
-      - lib/*/libleveldb.so*
-      - lib/*/libpython3.8.so*
-      - lib/*/libtcmalloc.so*
-      - lib/*/libunwind.so*
 
   deps:
     plugin: nil
