@@ -48,6 +48,8 @@ jobs:
             /var/lib/snapd/apparmor/profiles/snap.microceph.microceph \
             /var/lib/snapd/apparmor/profiles/snap.microceph.osd
 
+          df -h
+
           # Add OSDs backed by loop devices
           i=0
           for l in a b c; do
@@ -67,6 +69,11 @@ jobs:
           sleep 30
 
           # Show ceph's status
+          sudo microceph.ceph status
+
+          df -h
+          sudo microceph.ceph tell mon.`hostname -s` compact
+          df -h
           sudo microceph.ceph status
 
           # Confirm ceph is healthy
