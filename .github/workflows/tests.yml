@@ -66,10 +66,11 @@ jobs:
           # Wait for OSDs to become up
           sleep 30
 
-          sudo microceph.ceph health | grep -xF "HEALTH_OK"
-
           # Show ceph's status
           sudo microceph.ceph status
+
+          # Confirm ceph is healthy
+          sudo microceph.ceph health | grep -xF "HEALTH_OK"
 
       - name: Upload artifacts
         if: always()
