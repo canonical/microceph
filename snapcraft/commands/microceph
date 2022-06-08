@@ -10,7 +10,6 @@ if [ "$1" = "bootstrap" ]; then
 
     # Generate new fsid
     FSID="$(uuidgen)"
-    echo "${FSID}" > "${SNAP_DATA}/conf/fsid"
 
     # Generate keyrings
     echo "=> Generating keyrings"
