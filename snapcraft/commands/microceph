@@ -32,15 +32,13 @@ if [ "$1" = "bootstrap" ]; then
 
     # Generate minimal config
     echo "=> Generating configuration"
-    (
-    cat << EOF
+    cat << EOF > "${SNAP_DATA}/conf/ceph.conf"
 [global]
 run dir = ${SNAP_CURRENT}/run/
 fsid = ${FSID}
 mon host = 127.0.0.1:6789
 auth allow insecure global id reclaim = false
 EOF
-    ) > "${SNAP_DATA}/conf/ceph.conf"
     ln -s "${SNAP_CURRENT}/keyrings/client.admin.keyring" /etc/ceph/ceph.client.admin.keyring
 
     # Bootstrap monitor
