@@ -48,28 +48,29 @@ jobs:
             /var/lib/snapd/apparmor/profiles/snap.microceph.microceph \
             /var/lib/snapd/apparmor/profiles/snap.microceph.osd
 
-          # Add OSDs backed by loop devices
+          # Add OSDs backed by loop devices on /mnt (ephemeral "large" disk attached to GitHub action runners)
           i=0
           for l in a b c; do
-          	loop_file="$(mktemp XXXX.img)"
-          	truncate -s 1G "${loop_file}"
-          	loop_dev="$(sudo losetup --show -f "${loop_file}")"
-          	
-          	# XXX: the block-devices plug doesn't allow accessing /dev/loopX
+            loop_file="$(sudo mktemp -p /mnt XXXX.img)"
+            sudo truncate -s 1G "${loop_file}"
+            loop_dev="$(sudo losetup --show -f "${loop_file}")"
+
+            # XXX: the block-devices plug doesn't allow accessing /dev/loopX
             # devices so we make those same devices available under alternate
             # names (/dev/sdiY) that are not used inside GitHub Action runners
-          	minor="${loop_dev##/dev/loop}"
-          	sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
-          	sudo microceph add-osd "$((i++))" "/dev/sdi${l}"
+            minor="${loop_dev##/dev/loop}"
+            sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
+            sudo microceph add-osd "$((i++))" "/dev/sdi${l}"
           done
 
           # Wait for OSDs to become up
           sleep 30
 
-          sudo microceph.ceph health | grep -xF "HEALTH_OK"
-
           # Show ceph's status
           sudo microceph.ceph status
+
+          # Confirm ceph is healthy
+          sudo microceph.ceph health | grep -xF "HEALTH_OK"
 
       - name: Upload artifacts
         if: always()

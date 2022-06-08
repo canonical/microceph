@@ -10,12 +10,12 @@ description: |-
 confinement: strict
 
 environment:
-  LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu/ceph:$SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu/ceph:$SNAP/lib/x86_64-linux-gnu/ceph/compressor:$SNAP/lib/x86_64-linux-gnu/ceph/crypto:$SNAP/lib/x86_64-linux-gnu/ceph/erasure-code
+  LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/erasure-code
   PYTHONPATH: $SNAP/lib/python3/dist-packages
 
 layout:
-  /usr/lib/x86_64-linux-gnu/ceph:
-    symlink: $SNAP/lib/x86_64-linux-gnu/ceph
+  /usr/lib/$CRAFT_ARCH_TRIPLET/ceph:
+    symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph
   /etc/ceph:
     symlink: $SNAP_DATA/conf
   /usr/share/ceph:
