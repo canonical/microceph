@@ -81,6 +81,12 @@ elif [ "${1}" = "add-osd" ]; then
 
     echo "=> Adding ${OSD_PATH} as osd.${OSD_NR}"
     mkdir -p "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}"
+
+    if [ -e "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/ready" ]; then
+        echo "Refusing to re-add an existing OSD, aborting" >&2
+        exit 1
+    fi
+
     ceph auth get-or-create "osd.${OSD_NR}" mgr 'allow profile osd' mon 'allow profile osd' osd 'allow *' -o "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/keyring"
     ln -s "${OSD_PATH}" "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/block"
     uuidgen > "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/fsid"
