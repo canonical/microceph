@@ -87,6 +87,11 @@ elif [ "${1}" = "add-osd" ]; then
         exit 1
     fi
 
+    if ! [ -b "${OSD_PATH}" ]; then
+        echo "${OSD_PATH} is not a block device, aborting" >&2
+        exit 1
+    fi
+
     ceph auth get-or-create "osd.${OSD_NR}" mgr 'allow profile osd' mon 'allow profile osd' osd 'allow *' -o "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/keyring"
     ln -s "${OSD_PATH}" "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/block"
     uuidgen > "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/fsid"
