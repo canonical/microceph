@@ -3,6 +3,11 @@ export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
 
 HOSTNAME="$(hostname)"
 
+if [ "$1" != "bootstrap" ] && [ "$1" != "join" ] && ! [ -e "${SNAP_DATA}/conf/ceph.conf" ]; then
+    echo "Aborting due to missing ceph.conf. Was microceph bootstrapped? (try: sudo microceph bootstrap)" >&2
+    exit 1
+fi
+
 if [ "$1" = "bootstrap" ]; then
     # Setup storage
     mkdir -p "${SNAP_DATA}/conf" "${SNAP_DATA}/keyrings" "${SNAP_DATA}/run"
