@@ -34,6 +34,7 @@ jobs:
 
           # Early on, ceph health might report OK but will soon turn to WARN
           sudo microceph.ceph health | grep -xF "HEALTH_OK"
+          sudo microceph.ceph version
           sudo microceph.ceph status
 
           # Allow ceph to notice no OSD are present

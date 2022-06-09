@@ -3,6 +3,11 @@ export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
 
 HOSTNAME="$(hostname)"
 
+if [ "$1" != "bootstrap" ] && [ "$1" != "join" ] && ! [ -e "${SNAP_DATA}/conf/ceph.conf" ]; then
+    echo "Aborting due to missing ceph.conf. Was microceph bootstrapped? (try: sudo microceph bootstrap)" >&2
+    exit 1
+fi
+
 if [ "$1" = "bootstrap" ]; then
     # Setup storage
     mkdir -p "${SNAP_DATA}/conf" "${SNAP_DATA}/keyrings" "${SNAP_DATA}/run"
@@ -10,7 +15,6 @@ if [ "$1" = "bootstrap" ]; then
 
     # Generate new fsid
     FSID="$(uuidgen)"
-    echo "${FSID}" > "${SNAP_DATA}/conf/fsid"
 
     # Generate keyrings
     echo "=> Generating keyrings"
@@ -32,15 +36,13 @@ if [ "$1" = "bootstrap" ]; then
 
     # Generate minimal config
     echo "=> Generating configuration"
-    (
-    cat << EOF
+    cat << EOF > "${SNAP_DATA}/conf/ceph.conf"
 [global]
 run dir = ${SNAP_CURRENT}/run/
 fsid = ${FSID}
 mon host = 127.0.0.1:6789
 auth allow insecure global id reclaim = false
 EOF
-    ) > "${SNAP_DATA}/conf/ceph.conf"
     ln -s "${SNAP_CURRENT}/keyrings/client.admin.keyring" /etc/ceph/ceph.client.admin.keyring
 
     # Bootstrap monitor
@@ -79,8 +81,20 @@ elif [ "${1}" = "add-osd" ]; then
 
     echo "=> Adding ${OSD_PATH} as osd.${OSD_NR}"
     mkdir -p "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}"
+
+    if [ -e "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/ready" ]; then
+        echo "Refusing to re-add an existing OSD, aborting" >&2
+        exit 1
+    fi
+
+    if ! [ -b "${OSD_PATH}" ]; then
+        echo "${OSD_PATH} is not a block device, aborting" >&2
+        exit 1
+    fi
+
     ceph auth get-or-create "osd.${OSD_NR}" mgr 'allow profile osd' mon 'allow profile osd' osd 'allow *' -o "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/keyring"
     ln -s "${OSD_PATH}" "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/block"
+    uuidgen > "${SNAP_COMMON}/data/osd/ceph-${OSD_NR}/fsid"
     (
         set -eu
         dd if=/dev/zero of="${OSD_PATH}" bs=4M count=1 status=none
