@@ -31,6 +31,7 @@ jobs:
           sudo snap connect microceph:block-devices
 
           sudo microceph bootstrap
+          snap list snapd
 
           # Early on, ceph health might report OK but will soon turn to WARN
           sudo microceph.ceph health | grep -xF "HEALTH_OK"
