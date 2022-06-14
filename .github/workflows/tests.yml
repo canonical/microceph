@@ -41,14 +41,6 @@ jobs:
           sleep 30
           sudo microceph.ceph health | grep -xF "HEALTH_WARN OSD count 0 < osd_pool_default_size 3"
 
-          # XXX: allow block-devices locking until https://github.com/snapcore/snapd/pull/11759 is released
-          sudo sed -i 's#^\(/dev/sdi\[a-v\] rw\)\(,.*\)#\1k\2#' \
-              /var/lib/snapd/apparmor/profiles/snap.microceph.microceph \
-              /var/lib/snapd/apparmor/profiles/snap.microceph.osd
-          sudo apparmor_parser -r \
-            /var/lib/snapd/apparmor/profiles/snap.microceph.microceph \
-            /var/lib/snapd/apparmor/profiles/snap.microceph.osd
-
           # Add OSDs backed by loop devices on /mnt (ephemeral "large" disk attached to GitHub action runners)
           i=0
           for l in a b c; do
