@@ -19,6 +19,7 @@ jobs:
           sudo snap set lxd daemon.group=adm
           sudo lxd init --auto
           sudo snap install snapcraft --classic
+          snap list
 
       - name: Build snaps
         run: snapcraft
