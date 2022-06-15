@@ -6,7 +6,7 @@ on:
 jobs:
   system-tests:
     name: System tests
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     env:
       SNAPCRAFT_BUILD_ENVIRONMENT: "lxd"
     steps:
