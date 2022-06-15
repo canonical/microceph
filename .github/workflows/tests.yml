@@ -15,7 +15,6 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo snap refresh lxd --channel=latest
           sudo snap refresh
           sudo snap set lxd daemon.group=adm
           sudo lxd init --auto
