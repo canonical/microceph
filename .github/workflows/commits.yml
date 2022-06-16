@@ -2,8 +2,13 @@ name: Commits
 on:
   - pull_request
 
+permissions:
+  contents: read
+
 jobs:
   cla-check:
+    permissions:
+      pull-requests: read
     name: Canonical CLA signed
     runs-on: ubuntu-20.04
     steps:
@@ -11,6 +16,8 @@ jobs:
         uses: canonical/has-signed-canonical-cla@v1
 
   dco-check:
+    permissions:
+      pull-requests: read  # for tim-actions/get-pr-commits to get list of commits from the PR
     name: Signed-off-by (DCO)
     runs-on: ubuntu-20.04
     steps:
