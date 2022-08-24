@@ -1,5 +1,4 @@
 #!/bin/sh
-mkdir -p "${SNAP_DATA}/conf"
+export DQLITE_SOCKET="@snap.${SNAP_INSTANCE_NAME}.dqlite"
 
-echo "Daemon start"
-exit 0
+exec microcephd --state-dir "${SNAP_COMMON}/state"
