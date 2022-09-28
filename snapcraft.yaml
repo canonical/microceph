@@ -47,6 +47,7 @@ apps:
     daemon: simple
     install-mode: disable
     plugs:
+      - hardware-observe
       - network
       - network-bind
   mgr:
