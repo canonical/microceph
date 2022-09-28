@@ -64,6 +64,7 @@ apps:
     stop-timeout: 5m
     plugs:
       - block-devices
+      - hardware-observe
       - network
       - network-bind
 
