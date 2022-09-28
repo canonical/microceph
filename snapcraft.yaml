@@ -58,6 +58,7 @@ apps:
       - network-bind
   osd:
     command: commands/osd.start
+    reload-command: commands/osd.reload
     daemon: simple
     install-mode: disable
     stop-mode: sigterm-all

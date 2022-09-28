@@ -23,3 +23,18 @@ func snapStart(service string, enable bool) error {
 
 	return nil
 }
+
+func snapReload(service string) error {
+	args := []string{
+		"restart",
+		"--reload",
+		fmt.Sprintf("microceph.%s", service),
+	}
+
+	_, err := shared.RunCommand("snapctl", args...)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

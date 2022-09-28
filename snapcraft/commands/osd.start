@@ -1,7 +1,8 @@
 #!/bin/sh
 export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
+echo $$ > "${SNAP_CURRENT}/run/ceph-osd.pid"
 
-while :; do
+spawn() {
     for i in "${SNAP_COMMON}/data/osd"/*; do
         filename="$(basename "${i}")"
         [ -z "$filename" ] && continue
@@ -15,7 +16,11 @@ while :; do
         ceph-osd --cluster ceph --id "${nr}"
     done
 
-    sleep 5
-done
+    wait
+    sleep infinity &
+    wait
+}
+trap spawn HUP
 
-exit 1
+spawn
+exit 0

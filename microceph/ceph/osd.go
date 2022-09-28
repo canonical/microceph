@@ -157,5 +157,11 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 		return err
 	}
 
+	// Spawn the OSD.
+	err = snapReload("osd")
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
