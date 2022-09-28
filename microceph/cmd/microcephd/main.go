@@ -68,6 +68,7 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	h := &config.Hooks{}
 	h.OnBootstrap = ceph.Bootstrap
 	h.OnJoin = ceph.Join
+	h.OnStart = ceph.Start
 
 	return m.Start(api.Endpoints, database.SchemaExtensions, h)
 }
