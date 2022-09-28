@@ -37,8 +37,9 @@ jobs:
           set -eux
           sudo snap install --dangerous microceph_*.snap
           sudo snap connect microceph:block-devices
+          sudo snap connect microceph:hardware-observe
 
-          sudo microceph bootstrap
+          sudo microceph cluster bootstrap
 
           # Early on, ceph health might report OK but will soon turn to WARN
           sudo microceph.ceph health | grep -xF "HEALTH_OK"
@@ -61,7 +62,8 @@ jobs:
             # names (/dev/sdiY) that are not used inside GitHub Action runners
             minor="${loop_dev##/dev/loop}"
             sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
-            sudo microceph add-osd "$((i++))" "/dev/sdi${l}"
+            sudo microceph disk add --wipe "/dev/sdi${l}"
+            sleep 10
           done
 
           # Wait for OSDs to become up
