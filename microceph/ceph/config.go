@@ -47,13 +47,13 @@ func updateConfig(s *state.State) error {
 
 	monitorAddresses := make([]string, len(monitors))
 	remotes := s.Remotes().RemotesByName()
-	for _, monitor := range monitors {
+	for i, monitor := range monitors {
 		remote, ok := remotes[monitor.Member]
 		if !ok {
 			continue
 		}
 
-		monitorAddresses = append(monitorAddresses, remote.Address.Addr().String())
+		monitorAddresses[i] = remote.Address.Addr().String()
 	}
 
 	// Generate ceph.conf.

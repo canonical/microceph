@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/canonical/microcluster/config"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/lxc/lxd/shared/logger"
 	"github.com/spf13/cobra"
@@ -64,9 +65,10 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	h := hooks{}
-	h.bootstrap = ceph.Bootstrap
-	h.join = ceph.Join
+	h := &config.Hooks{}
+	h.OnBootstrap = ceph.Bootstrap
+	h.OnJoin = ceph.Join
+	h.OnStart = ceph.Start
 
 	return m.Start(api.Endpoints, database.SchemaExtensions, h)
 }
