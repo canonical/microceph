@@ -17,13 +17,14 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 )
 
-func nextOSD() (int64, error) {
+func nextOSD(s *state.State) (int64, error) {
+	// Get the used OSD ids from Ceph.
 	osds, err := cephRun("osd", "ls")
 	if err != nil {
 		return -1, err
 	}
 
-	ids := []int64{}
+	cephIds := []int64{}
 	for _, line := range strings.Split(osds, "\n") {
 		if line == "" {
 			continue
@@ -34,12 +35,31 @@ func nextOSD() (int64, error) {
 			continue
 		}
 
-		ids = append(ids, id)
+		cephIds = append(cephIds, id)
 	}
 
+	// Get the used OSD ids from the database.
+	dbIds := []int64{}
+	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+		disks, err := database.GetDisks(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("Failed to fetch disks: %w", err)
+		}
+
+		for _, disk := range disks {
+			dbIds = append(dbIds, int64(disk.OSD))
+		}
+
+		return nil
+	})
+	if err != nil {
+		return -1, err
+	}
+
+	// Find next available.
 	nextID := int64(0)
 	for {
-		if !shared.Int64InSlice(nextID, ids) {
+		if !shared.Int64InSlice(nextID, cephIds) && !shared.Int64InSlice(nextID, dbIds) {
 			return nextID, nil
 		}
 
@@ -97,7 +117,7 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 	}
 
 	// Get a OSD number.
-	nr, err := nextOSD()
+	nr, err := nextOSD(s)
 	if err != nil {
 		return fmt.Errorf("Failed to find next OSD number: %w", err)
 	}
