@@ -3,8 +3,8 @@ module github.com/canonical/microceph/microceph
 go 1.18
 
 require (
-	github.com/canonical/microcluster v0.0.0-20220928041206-012446dc677e
-	github.com/lxc/lxd v0.0.0-20220928010129-8e4b1afe1c5f
+	github.com/canonical/microcluster v0.0.0-20220928190440-eb745aa99b0c
+	github.com/lxc/lxd v0.0.0-20220928134536-ab2429df72e6
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pborman/uuid v1.2.1
 	github.com/spf13/cobra v1.5.0
@@ -49,7 +49,7 @@ require (
 	golang.org/x/crypto v0.0.0-20220926161630-eccd6366d1be // indirect
 	golang.org/x/net v0.0.0-20220927171203-f486391704dc // indirect
 	golang.org/x/sync v0.0.0-20220923202941-7f9b1623fab7 // indirect
-	golang.org/x/sys v0.0.0-20220927170352-d9d178bc13c6 // indirect
+	golang.org/x/sys v0.0.0-20220928140112-f11e5e49a4ec // indirect
 	golang.org/x/term v0.0.0-20220919170432-7a66f970e087 // indirect
 	golang.org/x/text v0.3.7 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
