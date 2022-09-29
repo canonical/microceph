@@ -24,3 +24,18 @@ func AddDisk(ctx context.Context, c *client.Client, data *types.DisksPost) error
 
 	return nil
 }
+
+// GetDisks returns the list of configured disks.
+func GetDisks(ctx context.Context, c *client.Client) (types.Disks, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+
+	disks := types.Disks{}
+
+	err := c.Query(queryCtx, "GET", api.NewURL().Path("disks"), nil, &disks)
+	if err != nil {
+		return nil, fmt.Errorf("Failed listing disks: %w", err)
+	}
+
+	return disks, nil
+}
