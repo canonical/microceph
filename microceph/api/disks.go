@@ -16,7 +16,17 @@ import (
 var disksCmd = rest.Endpoint{
 	Path: "disks",
 
+	Get:  rest.EndpointAction{Handler: cmdDisksGet},
 	Post: rest.EndpointAction{Handler: cmdDisksPost},
+}
+
+func cmdDisksGet(s *state.State, r *http.Request) response.Response {
+	disks, err := ceph.ListOSD(s)
+	if err != nil {
+		return response.InternalError(err)
+	}
+
+	return response.SyncResponse(true, disks)
 }
 
 func cmdDisksPost(s *state.State, r *http.Request) response.Response {

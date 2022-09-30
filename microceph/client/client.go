@@ -24,3 +24,33 @@ func AddDisk(ctx context.Context, c *client.Client, data *types.DisksPost) error
 
 	return nil
 }
+
+// GetDisks returns the list of configured disks.
+func GetDisks(ctx context.Context, c *client.Client) (types.Disks, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+
+	disks := types.Disks{}
+
+	err := c.Query(queryCtx, "GET", api.NewURL().Path("disks"), nil, &disks)
+	if err != nil {
+		return nil, fmt.Errorf("Failed listing disks: %w", err)
+	}
+
+	return disks, nil
+}
+
+// GetResources returns the list of storage devices on the system.
+func GetResources(ctx context.Context, c *client.Client) (*api.ResourcesStorage, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+
+	storage := api.ResourcesStorage{}
+
+	err := c.Query(queryCtx, "GET", api.NewURL().Path("resources"), nil, &storage)
+	if err != nil {
+		return nil, fmt.Errorf("Failed listing storage devices: %w", err)
+	}
+
+	return &storage, nil
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/lxc/lxd/shared"
 	"github.com/pborman/uuid"
 
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
 )
 
@@ -184,4 +185,31 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 	}
 
 	return nil
+}
+
+func ListOSD(s *state.State) (types.Disks, error) {
+	disks := types.Disks{}
+
+	// Get the OSDs from the database.
+	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+		records, err := database.GetDisks(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("Failed to fetch disks: %w", err)
+		}
+
+		for _, disk := range records {
+			disks = append(disks, types.Disk{
+				Location: disk.Member,
+				OSD:      int64(disk.OSD),
+				Path:     disk.Path,
+			})
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return disks, nil
 }

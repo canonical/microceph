@@ -18,6 +18,10 @@ func (c *cmdDisk) Command() *cobra.Command {
 	diskAddCmd := cmdDiskAdd{common: c.common, disk: c}
 	cmd.AddCommand(diskAddCmd.Command())
 
+	// List
+	diskListCmd := cmdDiskList{common: c.common, disk: c}
+	cmd.AddCommand(diskListCmd.Command())
+
 	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
 	cmd.Args = cobra.NoArgs
 	cmd.Run = func(cmd *cobra.Command, args []string) { _ = cmd.Usage() }
