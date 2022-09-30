@@ -54,3 +54,18 @@ func GetResources(ctx context.Context, c *client.Client) (*api.ResourcesStorage,
 
 	return &storage, nil
 }
+
+// GetServices returns the list of configured ceph services.
+func GetServices(ctx context.Context, c *client.Client) (types.Services, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+
+	services := types.Services{}
+
+	err := c.Query(queryCtx, "GET", api.NewURL().Path("services"), nil, &services)
+	if err != nil {
+		return nil, fmt.Errorf("Failed listing services: %w", err)
+	}
+
+	return services, nil
+}
