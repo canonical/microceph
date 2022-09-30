@@ -9,4 +9,5 @@ import (
 var Endpoints = []rest.Endpoint{
 	disksCmd,
 	resourcesCmd,
+	servicesCmd,
 }
