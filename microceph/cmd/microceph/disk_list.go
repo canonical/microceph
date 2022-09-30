@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/lxc/lxd/lxc/utils"
+	"github.com/lxc/lxd/shared/units"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/client"
@@ -38,6 +40,7 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// List configured disks.
 	disks, err := client.GetDisks(context.Background(), cli)
 	if err != nil {
 		return err
@@ -51,5 +54,60 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	header := []string{"OSD", "LOCATION", "PATH"}
 	sort.Sort(utils.ByName(data))
 
-	return utils.RenderTable(utils.TableFormatTable, header, data, disks)
+	fmt.Println("Disks configured in MicroCeph:")
+	err = utils.RenderTable(utils.TableFormatTable, header, data, disks)
+	if err != nil {
+		return err
+	}
+
+	// List local disks.
+	resources, err := client.GetResources(context.Background(), cli)
+	if err != nil {
+		return err
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+
+	data = [][]string{}
+	for _, disk := range resources.Disks {
+		if len(disk.Partitions) > 0 {
+			continue
+		}
+
+		devicePath := fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID)
+
+		found := false
+		for _, entry := range disks {
+			if entry.Location != hostname {
+				continue
+			}
+
+			if entry.Path == devicePath {
+				found = true
+				break
+			}
+		}
+
+		if found {
+			continue
+		}
+
+		data = append(data, []string{disk.Model, units.GetByteSizeStringIEC(int64(disk.Size), 2), disk.Type, devicePath})
+	}
+
+	fmt.Println("")
+	fmt.Println("Available unpartitioned disks on this system:")
+
+	header = []string{"MODEL", "CAPACITY", "TYPE", "PATH"}
+	sort.Sort(utils.ByName(data))
+
+	err = utils.RenderTable(utils.TableFormatTable, header, data, disks)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
