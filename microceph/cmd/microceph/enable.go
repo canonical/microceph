@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
@@ -19,5 +21,5 @@ func (c *cmdEnable) Command() *cobra.Command {
 }
 
 func (c *cmdEnable) Run(cmd *cobra.Command, args []string) error {
-	return nil
+	return fmt.Errorf("MicroCeph doesn't currently have optional services")
 }
