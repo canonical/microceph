@@ -10,6 +10,9 @@ import (
 	"github.com/lxc/lxd/lxd/util"
 	cli "github.com/lxc/lxd/shared/cmd"
 	"github.com/spf13/cobra"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/client"
 )
 
 type cmdInit struct {
@@ -36,14 +39,14 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, err := m.LocalClient()
+	lc, err := m.LocalClient()
 	if err != nil {
 		return err
 	}
 
 	// Check if already initialized.
-	_, err = client.GetClusterMembers(context.Background())
-	isUninitialized := err.Error() == "Daemon not yet initialized"
+	_, err = lc.GetClusterMembers(context.Background())
+	isUninitialized := err != nil && err.Error() == "Daemon not yet initialized"
 	if err != nil && !isUninitialized {
 		return err
 	}
@@ -102,6 +105,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 		fmt.Printf("MicroCeph has already been initialized.\n\n")
 	}
 
+	// Add additional servers.
 	if mode != "join" {
 		wantsMachines, err := cli.AskBool("Would you like to add additional servers to the cluster? (yes/no) [default=no]: ", "no")
 		if err != nil {
@@ -126,6 +130,46 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 				}
 
 				fmt.Println(token)
+			}
+		}
+	}
+
+	// Add some disks.
+	wantsDisks, err := cli.AskBool("Would you like to add additional local disks to MicroCeph? (yes/no) [default=yes]: ", "yes")
+	if err != nil {
+		return err
+	}
+
+	if wantsDisks {
+		err = listLocalDisks(lc)
+		if err != nil {
+			return err
+		}
+
+		for {
+			diskPath, err := cli.AskString("What's the disk path? (empty to exit): ", "", func(input string) error { return nil })
+			if err != nil {
+				return err
+			}
+
+			if diskPath == "" {
+				break
+			}
+
+			diskWipe, err := cli.AskBool("Would you like the disk to be wiped? [default=no]: ", "no")
+			if err != nil {
+				return err
+			}
+
+			// Add the disk.
+			req := &types.DisksPost{
+				Path: diskPath,
+				Wipe: diskWipe,
+			}
+
+			err = client.AddDisk(context.Background(), lc, req)
+			if err != nil {
+				return err
 			}
 		}
 	}

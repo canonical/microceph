@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 
+	microCli "github.com/canonical/microcluster/client"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/lxc/lxd/lxc/utils"
 	"github.com/lxc/lxd/shared/units"
@@ -61,17 +62,35 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// List local disks.
+	err = listLocalDisks(cli)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func listLocalDisks(cli *microCli.Client) error {
+	// List configured disks.
+	disks, err := client.GetDisks(context.Background(), cli)
+	if err != nil {
+		return err
+	}
+
+	// List physical disks.
 	resources, err := client.GetResources(context.Background(), cli)
 	if err != nil {
 		return err
 	}
 
+	// Get local hostname.
 	hostname, err := os.Hostname()
 	if err != nil {
 		return err
 	}
 
-	data = [][]string{}
+	// Prepare the table.
+	data := [][]string{}
 	for _, disk := range resources.Disks {
 		if len(disk.Partitions) > 0 {
 			continue
@@ -101,7 +120,7 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	fmt.Println("")
 	fmt.Println("Available unpartitioned disks on this system:")
 
-	header = []string{"MODEL", "CAPACITY", "TYPE", "PATH"}
+	header := []string{"MODEL", "CAPACITY", "TYPE", "PATH"}
 	sort.Sort(utils.ByName(data))
 
 	err = utils.RenderTable(utils.TableFormatTable, header, data, disks)
