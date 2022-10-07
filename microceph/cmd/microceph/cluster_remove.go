@@ -10,6 +10,8 @@ import (
 type cmdClusterRemove struct {
 	common  *CmdControl
 	cluster *cmdCluster
+
+	flagForce bool
 }
 
 func (c *cmdClusterRemove) Command() *cobra.Command {
@@ -18,6 +20,8 @@ func (c *cmdClusterRemove) Command() *cobra.Command {
 		Short: "Removes a server from the cluster",
 		RunE:  c.Run,
 	}
+
+	cmd.Flags().BoolVarP(&c.flagForce, "force", "f", false, "Forcibly remove the cluster member")
 
 	return cmd
 }
@@ -37,7 +41,7 @@ func (c *cmdClusterRemove) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err = client.DeleteClusterMember(context.Background(), args[0])
+	err = client.DeleteClusterMember(context.Background(), args[0], c.flagForce)
 	if err != nil {
 		return err
 	}
