@@ -1,6 +1,7 @@
 #!/bin/sh
 export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
 echo $$ > "${SNAP_CURRENT}/run/ceph-osd.pid"
+cd "${SNAP_CURRENT}"
 
 spawn() {
     for i in "${SNAP_COMMON}/data/osd"/*; do

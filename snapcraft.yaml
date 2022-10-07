@@ -128,6 +128,7 @@ parts:
       - lib/*/librbd.so*
       - lib/*/librdmacm.so*
       - lib/*/libsnappy.so*
+      - lib/*/rados-classes
       - lib/python3
       - share/ceph
 
