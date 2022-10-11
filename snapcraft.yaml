@@ -35,6 +35,8 @@ apps:
       - hardware-observe
       - network
       - network-bind
+    slots:
+      - microceph
   mds:
     command: commands/mds.start
     daemon: simple
