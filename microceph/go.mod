@@ -3,11 +3,11 @@ module github.com/canonical/microceph/microceph
 go 1.18
 
 require (
-	github.com/canonical/microcluster v0.0.0-20221007172226-aad6e70923eb
-	github.com/lxc/lxd v0.0.0-20221006172050-0da83ca4cd76
+	github.com/canonical/microcluster v0.0.0-20221011200002-813eda8412c3
+	github.com/lxc/lxd v0.0.0-20221011200542-be051b8d945a
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pborman/uuid v1.2.1
-	github.com/spf13/cobra v1.5.0
+	github.com/spf13/cobra v1.6.0
 )
 
 require (
@@ -46,12 +46,12 @@ require (
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/testify v1.8.0 // indirect
-	golang.org/x/crypto v0.0.0-20221005025214-4161e89ecf1b // indirect
+	golang.org/x/crypto v0.0.0-20221010152910-d6f0a8c073c2 // indirect
 	golang.org/x/net v0.0.0-20221004154528-8021a29435af // indirect
 	golang.org/x/sync v0.0.0-20220929204114-8fcdb60fdcc0 // indirect
-	golang.org/x/sys v0.0.0-20221006211917-84dc82d7e875 // indirect
+	golang.org/x/sys v0.0.0-20221010170243-090e33056c14 // indirect
 	golang.org/x/term v0.0.0-20220919170432-7a66f970e087 // indirect
-	golang.org/x/text v0.3.7 // indirect
+	golang.org/x/text v0.3.8 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/errgo.v1 v1.0.1 // indirect
 	gopkg.in/httprequest.v1 v1.2.1 // indirect
