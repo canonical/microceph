@@ -1,7 +1,7 @@
 name: microceph
 base: core22
 version: git
-grade: devel
+grade: stable
 source-code: https://github.com/canonical/microceph.git
 summary: Simple clustered Ceph deployment
 description: |-
