@@ -14,7 +14,7 @@ import (
 
 // AddDisk requests Ceph sets up a new OSD.
 func AddDisk(ctx context.Context, c *client.Client, data *types.DisksPost) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*30)
 	defer cancel()
 
 	err := c.Query(queryCtx, "POST", api.NewURL().Path("disks"), data, nil)
