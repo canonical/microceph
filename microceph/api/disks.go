@@ -16,8 +16,8 @@ import (
 var disksCmd = rest.Endpoint{
 	Path: "disks",
 
-	Get:  rest.EndpointAction{Handler: cmdDisksGet},
-	Post: rest.EndpointAction{Handler: cmdDisksPost},
+	Get:  rest.EndpointAction{Handler: cmdDisksGet, ProxyTarget: true},
+	Post: rest.EndpointAction{Handler: cmdDisksPost, ProxyTarget: true},
 }
 
 func cmdDisksGet(s *state.State, r *http.Request) response.Response {

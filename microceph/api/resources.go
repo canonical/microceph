@@ -13,7 +13,7 @@ import (
 var resourcesCmd = rest.Endpoint{
 	Path: "resources",
 
-	Get: rest.EndpointAction{Handler: cmdResourcesGet},
+	Get: rest.EndpointAction{Handler: cmdResourcesGet, ProxyTarget: true},
 }
 
 func cmdResourcesGet(s *state.State, r *http.Request) response.Response {
