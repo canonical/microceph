@@ -14,7 +14,7 @@ import (
 var servicesCmd = rest.Endpoint{
 	Path: "services",
 
-	Get: rest.EndpointAction{Handler: cmdServicesGet},
+	Get: rest.EndpointAction{Handler: cmdServicesGet, ProxyTarget: true},
 }
 
 func cmdServicesGet(s *state.State, r *http.Request) response.Response {
