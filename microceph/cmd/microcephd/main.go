@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microcluster/state"
 	"math/rand"
 	"os"
 	"time"
@@ -66,9 +68,18 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	h := &config.Hooks{}
-	h.OnBootstrap = ceph.Bootstrap
-	h.OnJoin = ceph.Join
-	h.OnStart = ceph.Start
+	h.OnBootstrap = func(s *state.State) error {
+		interf := common.CephState{State: s}
+		return ceph.Bootstrap(interf)
+	}
+	h.OnJoin = func(s *state.State) error {
+		interf := common.CephState{State: s}
+		return ceph.Join(interf)
+	}
+	h.OnStart = func(s *state.State) error {
+		interf := common.CephState{State: s}
+		return ceph.Start(interf)
+	}
 
 	return m.Start(api.Endpoints, database.SchemaExtensions, h)
 }

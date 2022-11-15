@@ -3,30 +3,29 @@ package ceph
 import (
 	"context"
 	"database/sql"
+	"github.com/canonical/microceph/microceph/common"
 	"reflect"
 	"time"
-
-	"github.com/canonical/microcluster/state"
 
 	"github.com/canonical/microceph/microceph/database"
 )
 
 // Start is run on daemon startup.
-func Start(s *state.State) error {
+func Start(s common.StateInterface) error {
 	// Start background loop to refresh the config every minute if needed.
 	go func() {
 		oldMonitors := []string{}
 
 		for {
 			// Check that the database is ready.
-			if !s.Database.IsOpen() {
+			if !s.ClusterState().Database.IsOpen() {
 				time.Sleep(10 * time.Second)
 				continue
 			}
 
 			// Get the current list of monitors.
 			monitors := []string{}
-			err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+			err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 				serviceName := "mon"
 				services, err := database.GetServices(ctx, tx, database.ServiceFilter{Service: &serviceName})
 				if err != nil {

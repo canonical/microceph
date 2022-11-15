@@ -4,16 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 
 	"github.com/canonical/microceph/microceph/database"
-
-	"github.com/canonical/microcluster/state"
 )
 
 // Join will join an existing Ceph deployment.
-func Join(s *state.State) error {
+func Join(s common.StateInterface) error {
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
 	runPath := filepath.Join(os.Getenv("SNAP_DATA"), "run")
 	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
@@ -38,7 +37,7 @@ func Join(s *state.State) error {
 	srvMgr := 0
 	srvMds := 0
 
-	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		// Monitors.
 		name := "mon"
 		services, err := database.GetServices(ctx, tx, database.ServiceFilter{Service: &name})
@@ -76,14 +75,14 @@ func Join(s *state.State) error {
 	services := []string{}
 
 	if srvMon < 3 {
-		monDataPath := filepath.Join(dataPath, "mon", fmt.Sprintf("ceph-%s", s.Name()))
+		monDataPath := filepath.Join(dataPath, "mon", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
 
 		err = os.MkdirAll(monDataPath, 0700)
 		if err != nil {
 			return fmt.Errorf("Failed to join monitor: %w", err)
 		}
 
-		err = joinMon(s.Name(), monDataPath)
+		err = joinMon(s.ClusterState().Name(), monDataPath)
 		if err != nil {
 			return fmt.Errorf("Failed to join monitor: %w", err)
 		}
@@ -97,14 +96,14 @@ func Join(s *state.State) error {
 	}
 
 	if srvMgr < 3 {
-		mgrDataPath := filepath.Join(dataPath, "mgr", fmt.Sprintf("ceph-%s", s.Name()))
+		mgrDataPath := filepath.Join(dataPath, "mgr", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
 
 		err = os.MkdirAll(mgrDataPath, 0700)
 		if err != nil {
 			return fmt.Errorf("Failed to join manager: %w", err)
 		}
 
-		err = joinMgr(s.Name(), mgrDataPath)
+		err = joinMgr(s.ClusterState().Name(), mgrDataPath)
 		if err != nil {
 			return fmt.Errorf("Failed to join manager: %w", err)
 		}
@@ -118,14 +117,14 @@ func Join(s *state.State) error {
 	}
 
 	if srvMds < 3 {
-		mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", s.Name()))
+		mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
 
 		err = os.MkdirAll(mdsDataPath, 0700)
 		if err != nil {
 			return fmt.Errorf("Failed to join metadata server: %w", err)
 		}
 
-		err = joinMds(s.Name(), mdsDataPath)
+		err = joinMds(s.ClusterState().Name(), mdsDataPath)
 		if err != nil {
 			return fmt.Errorf("Failed to join metadata server: %w", err)
 		}
@@ -139,10 +138,10 @@ func Join(s *state.State) error {
 	}
 
 	// Update the database.
-	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the roles.
 		for _, service := range services {
-			_, err := database.CreateService(ctx, tx, database.Service{Member: s.Name(), Service: service})
+			_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: service})
 			if err != nil {
 				return fmt.Errorf("Failed to record role: %w", err)
 			}
