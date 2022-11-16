@@ -11,6 +11,7 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 )
 
+// ListServices retrieves a list of services from the database
 func ListServices(s *state.State) (types.Services, error) {
 	services := types.Services{}
 

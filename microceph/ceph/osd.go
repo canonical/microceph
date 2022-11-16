@@ -68,6 +68,7 @@ func nextOSD(s *state.State) (int64, error) {
 	}
 }
 
+// AddOSD adds an OSD to the cluster, given a device path and a flag for wiping
 func AddOSD(s *state.State, path string, wipe bool) error {
 	// Validate the path.
 	if !shared.IsBlockdevPath(path) {
@@ -187,6 +188,7 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 	return nil
 }
 
+// ListOSD lists current OSD disks
 func ListOSD(s *state.State) (types.Disks, error) {
 	disks := types.Disks{}
 

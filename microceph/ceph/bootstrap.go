@@ -1,3 +1,4 @@
+// Package ceph has functionality for managing a ceph cluster such as bootstrapping, handling OSDs and status
 package ceph
 
 import (

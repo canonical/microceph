@@ -12,7 +12,7 @@ import (
 // CmdControl has functions that are common to the microctl commands.
 // command line tools.
 type CmdControl struct {
-	cmd *cobra.Command
+	cmd *cobra.Command //nolint:structcheck,unused // FIXME: Remove the nolint flag when this is in use.
 
 	FlagHelp       bool
 	FlagVersion    bool

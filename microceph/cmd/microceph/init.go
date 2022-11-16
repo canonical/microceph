@@ -17,9 +17,6 @@ import (
 
 type cmdInit struct {
 	common *CmdControl
-
-	flagBootstrap bool
-	flagToken     string
 }
 
 func (c *cmdInit) Command() *cobra.Command {
