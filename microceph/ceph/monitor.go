@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/lxc/lxd/shared"
 )
 
 func genMonmap(path string, fsid string) error {
@@ -15,7 +13,7 @@ func genMonmap(path string, fsid string) error {
 		path,
 	}
 
-	_, err := shared.RunCommand("monmaptool", args...)
+	_, err := processExec.RunCommand("monmaptool", args...)
 	if err != nil {
 		return err
 	}
@@ -31,7 +29,7 @@ func addMonmap(path string, name string, address string) error {
 		path,
 	}
 
-	_, err := shared.RunCommand("monmaptool", args...)
+	_, err := processExec.RunCommand("monmaptool", args...)
 	if err != nil {
 		return err
 	}
@@ -48,7 +46,7 @@ func bootstrapMon(hostname string, path string, monmap string, keyring string) e
 		"--keyring", keyring,
 	}
 
-	_, err := shared.RunCommand("ceph-mon", args...)
+	_, err := processExec.RunCommand("ceph-mon", args...)
 	if err != nil {
 		return err
 	}

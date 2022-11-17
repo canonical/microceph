@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
-	"github.com/lxc/lxd/shared"
 )
 
-func genKeyring(path string, name string, caps ...[]string) error {
+func genKeyring(path, name string, caps ...[]string) error {
 	args := []string{
 		"--create-keyring",
 		path,
@@ -25,7 +23,7 @@ func genKeyring(path string, name string, caps ...[]string) error {
 		args = append(args, "--cap", capability[0], capability[1])
 	}
 
-	_, err := shared.RunCommand("ceph-authtool", args...)
+	_, err := processExec.RunCommand("ceph-authtool", args...)
 	if err != nil {
 		return err
 	}
@@ -40,7 +38,7 @@ func importKeyring(path string, source string) error {
 		source,
 	}
 
-	_, err := shared.RunCommand("ceph-authtool", args...)
+	_, err := processExec.RunCommand("ceph-authtool", args...)
 	if err != nil {
 		return err
 	}

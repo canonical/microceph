@@ -4,16 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/canonical/microcluster/state"
-
 	"github.com/canonical/microceph/microceph/database"
 )
 
-func updateConfig(s *state.State) error {
+func updateConfig(s common.StateInterface) error {
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
 	runPath := filepath.Join(os.Getenv("SNAP_DATA"), "run")
 
@@ -22,7 +21,7 @@ func updateConfig(s *state.State) error {
 	var configItems []database.ConfigItem
 	var monitors []database.Service
 
-	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		configItems, err = database.GetConfigItems(ctx, tx)
 		if err != nil {
 			return err
@@ -46,7 +45,7 @@ func updateConfig(s *state.State) error {
 	}
 
 	monitorAddresses := make([]string, len(monitors))
-	remotes := s.Remotes().RemotesByName()
+	remotes := s.ClusterState().Remotes().RemotesByName()
 	for i, monitor := range monitors {
 		remote, ok := remotes[monitor.Member]
 		if !ok {
@@ -67,7 +66,7 @@ func updateConfig(s *state.State) error {
 		"fsid":     config["fsid"],
 		"runDir":   runPath,
 		"monitors": strings.Join(monitorAddresses, ","),
-		"addr":     s.Address().Hostname(),
+		"addr":     s.ClusterState().Address().Hostname(),
 	})
 	if err != nil {
 		return fmt.Errorf("Couldn't render ceph.conf: %w", err)
