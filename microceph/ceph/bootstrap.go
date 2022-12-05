@@ -77,15 +77,9 @@ func Bootstrap(s *state.State) error {
 		return fmt.Errorf("Failed parsing admin keyring: %w", err)
 	}
 
-	// Generate initial monitor map.
-	err = genMonmap(filepath.Join(path, "mon.map"), fsid)
+	err = createMonMap(s, path, fsid)
 	if err != nil {
-		return fmt.Errorf("Failed to generate monitor map: %w", err)
-	}
-
-	err = addMonmap(filepath.Join(path, "mon.map"), s.Name(), s.Address().Hostname())
-	if err != nil {
-		return fmt.Errorf("Failed to generate monitor map: %w", err)
+		return err
 	}
 
 	// Bootstrap the initial monitor.
@@ -195,5 +189,19 @@ func Bootstrap(s *state.State) error {
 		return fmt.Errorf("Failed to re-generate the configuration: %w", err)
 	}
 
+	return nil
+}
+
+func createMonMap(s *state.State, path string, fsid string) error {
+	// Generate initial monitor map.
+	err := genMonmap(filepath.Join(path, "mon.map"), fsid)
+	if err != nil {
+		return fmt.Errorf("Failed to generate monitor map: %w", err)
+	}
+
+	err = addMonmap(filepath.Join(path, "mon.map"), s.Name(), s.Address().Hostname())
+	if err != nil {
+		return fmt.Errorf("Failed to add monitor map: %w", err)
+	}
 	return nil
 }
