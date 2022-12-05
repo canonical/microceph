@@ -8,10 +8,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/canonical/microceph/microceph/database"
-
-	"github.com/canonical/microcluster/state"
 	"github.com/pborman/uuid"
+
+	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microcluster/state"
 )
 
 // Bootstrap will initialize a new Ceph deployment.
@@ -49,28 +49,11 @@ func Bootstrap(s *state.State) error {
 		return fmt.Errorf("Couldn't render ceph.conf: %w", err)
 	}
 
-	// Generate the temporary monitor keyring.
-	path, err := os.MkdirTemp("", "")
+	path, err := createKeyrings(confPath)
 	if err != nil {
-		return fmt.Errorf("Unable to create temporary path: %w", err)
+		return err
 	}
 	defer os.RemoveAll(path)
-
-	err = genKeyring(filepath.Join(path, "mon.keyring"), "mon.", []string{"mon", "allow *"})
-	if err != nil {
-		return fmt.Errorf("Failed to generate monitor keyring: %w", err)
-	}
-
-	// Generate the admin keyring.
-	err = genKeyring(filepath.Join(confPath, "ceph.client.admin.keyring"), "client.admin", []string{"mon", "allow *"}, []string{"osd", "allow *"}, []string{"mds", "allow *"}, []string{"mgr", "allow *"})
-	if err != nil {
-		return fmt.Errorf("Failed to generate admin keyring: %w", err)
-	}
-
-	err = importKeyring(filepath.Join(path, "mon.keyring"), filepath.Join(confPath, "ceph.client.admin.keyring"))
-	if err != nil {
-		return fmt.Errorf("Failed to generate admin keyring: %w", err)
-	}
 
 	adminKey, err := parseKeyring(filepath.Join(confPath, "ceph.client.admin.keyring"))
 	if err != nil {
@@ -190,6 +173,32 @@ func Bootstrap(s *state.State) error {
 	}
 
 	return nil
+}
+
+func createKeyrings(confPath string) (string, error) {
+	// Generate the temporary monitor keyring.
+	path, err := os.MkdirTemp("", "")
+	if err != nil {
+		return "", fmt.Errorf("Unable to create temporary path: %w", err)
+	}
+
+	err = genKeyring(filepath.Join(path, "mon.keyring"), "mon.", []string{"mon", "allow *"})
+	if err != nil {
+		return "", fmt.Errorf("Failed to generate monitor keyring: %w", err)
+	}
+
+	// Generate the admin keyring.
+	err = genKeyring(filepath.Join(confPath, "ceph.client.admin.keyring"), "client.admin", []string{"mon", "allow *"}, []string{"osd", "allow *"}, []string{"mds", "allow *"}, []string{"mgr", "allow *"})
+	if err != nil {
+		return "", fmt.Errorf("Failed to generate admin keyring: %w", err)
+	}
+
+	err = importKeyring(filepath.Join(path, "mon.keyring"), filepath.Join(confPath, "ceph.client.admin.keyring"))
+	if err != nil {
+		return "", fmt.Errorf("Failed to generate admin keyring: %w", err)
+	}
+
+	return path, nil
 }
 
 func createMonMap(s *state.State, path string, fsid string) error {
