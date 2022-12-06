@@ -65,22 +65,9 @@ func Bootstrap(s *state.State) error {
 		return err
 	}
 
-	// Bootstrap the initial monitor.
-	monDataPath := filepath.Join(dataPath, "mon", fmt.Sprintf("ceph-%s", s.Name()))
-
-	err = os.MkdirAll(monDataPath, 0700)
+	err = initMon(s, dataPath, path)
 	if err != nil {
-		return fmt.Errorf("Failed to bootstrap monitor: %w", err)
-	}
-
-	err = bootstrapMon(s.Name(), monDataPath, filepath.Join(path, "mon.map"), filepath.Join(path, "mon.keyring"))
-	if err != nil {
-		return fmt.Errorf("Failed to bootstrap monitor: %w", err)
-	}
-
-	err = snapStart("mon", true)
-	if err != nil {
-		return fmt.Errorf("Failed to start monitor: %w", err)
+		return err
 	}
 
 	// Bootstrap the initial manager.
@@ -211,6 +198,27 @@ func createMonMap(s *state.State, path string, fsid string) error {
 	err = addMonmap(filepath.Join(path, "mon.map"), s.Name(), s.Address().Hostname())
 	if err != nil {
 		return fmt.Errorf("Failed to add monitor map: %w", err)
+	}
+	return nil
+}
+
+func initMon(s *state.State, dataPath string, path string) error {
+	// Bootstrap the initial monitor.
+	monDataPath := filepath.Join(dataPath, "mon", fmt.Sprintf("ceph-%s", s.Name()))
+
+	err := os.MkdirAll(monDataPath, 0700)
+	if err != nil {
+		return fmt.Errorf("Failed to bootstrap monitor: %w", err)
+	}
+
+	err = bootstrapMon(s.Name(), monDataPath, filepath.Join(path, "mon.map"), filepath.Join(path, "mon.keyring"))
+	if err != nil {
+		return fmt.Errorf("Failed to bootstrap monitor: %w", err)
+	}
+
+	err = snapStart("mon", true)
+	if err != nil {
+		return fmt.Errorf("Failed to start monitor: %w", err)
 	}
 	return nil
 }
