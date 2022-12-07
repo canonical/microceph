@@ -75,22 +75,9 @@ func Bootstrap(s *state.State) error {
 		return err
 	}
 
-	// Bootstrap the initial metadata server.
-	mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", s.Name()))
-
-	err = os.MkdirAll(mdsDataPath, 0700)
+	err = initMds(s, dataPath)
 	if err != nil {
-		return fmt.Errorf("Failed to bootstrap metadata server: %w", err)
-	}
-
-	err = bootstrapMds(s.Name(), mdsDataPath)
-	if err != nil {
-		return fmt.Errorf("Failed to bootstrap metadata server: %w", err)
-	}
-
-	err = snapStart("mds", true)
-	if err != nil {
-		return fmt.Errorf("Failed to start metadata server: %w", err)
+		return err
 	}
 
 	// Enable msgr2.
@@ -227,6 +214,27 @@ func initMgr(s *state.State, dataPath string) error {
 	err = snapStart("mgr", true)
 	if err != nil {
 		return fmt.Errorf("Failed to start manager: %w", err)
+	}
+	return nil
+}
+
+func initMds(s *state.State, dataPath string) error {
+	// Bootstrap the initial metadata server.
+	mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", s.Name()))
+
+	err := os.MkdirAll(mdsDataPath, 0700)
+	if err != nil {
+		return fmt.Errorf("Failed to bootstrap metadata server: %w", err)
+	}
+
+	err = bootstrapMds(s.Name(), mdsDataPath)
+	if err != nil {
+		return fmt.Errorf("Failed to bootstrap metadata server: %w", err)
+	}
+
+	err = snapStart("mds", true)
+	if err != nil {
+		return fmt.Errorf("Failed to start metadata server: %w", err)
 	}
 	return nil
 }
