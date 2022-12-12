@@ -70,22 +70,9 @@ func Bootstrap(s *state.State) error {
 		return err
 	}
 
-	// Bootstrap the initial manager.
-	mgrDataPath := filepath.Join(dataPath, "mgr", fmt.Sprintf("ceph-%s", s.Name()))
-
-	err = os.MkdirAll(mgrDataPath, 0700)
+	err = initMgr(s, dataPath)
 	if err != nil {
-		return fmt.Errorf("Failed to bootstrap manager: %w", err)
-	}
-
-	err = bootstrapMgr(s.Name(), mgrDataPath)
-	if err != nil {
-		return fmt.Errorf("Failed to bootstrap manager: %w", err)
-	}
-
-	err = snapStart("mgr", true)
-	if err != nil {
-		return fmt.Errorf("Failed to start manager: %w", err)
+		return err
 	}
 
 	// Bootstrap the initial metadata server.
@@ -219,6 +206,27 @@ func initMon(s *state.State, dataPath string, path string) error {
 	err = snapStart("mon", true)
 	if err != nil {
 		return fmt.Errorf("Failed to start monitor: %w", err)
+	}
+	return nil
+}
+
+func initMgr(s *state.State, dataPath string) error {
+	// Bootstrap the initial manager.
+	mgrDataPath := filepath.Join(dataPath, "mgr", fmt.Sprintf("ceph-%s", s.Name()))
+
+	err := os.MkdirAll(mgrDataPath, 0700)
+	if err != nil {
+		return fmt.Errorf("Failed to bootstrap manager: %w", err)
+	}
+
+	err = bootstrapMgr(s.Name(), mgrDataPath)
+	if err != nil {
+		return fmt.Errorf("Failed to bootstrap manager: %w", err)
+	}
+
+	err = snapStart("mgr", true)
+	if err != nil {
+		return fmt.Errorf("Failed to start manager: %w", err)
 	}
 	return nil
 }
