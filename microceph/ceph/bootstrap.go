@@ -80,16 +80,9 @@ func Bootstrap(s *state.State) error {
 		return err
 	}
 
-	// Enable msgr2.
-	_, err = cephRun("mon", "enable-msgr2")
+	err = enableMsgr2()
 	if err != nil {
-		return fmt.Errorf("Failed to enable msgr2: %w", err)
-	}
-
-	// Start OSD service.
-	err = snapStart("osd", true)
-	if err != nil {
-		return fmt.Errorf("Failed to start OSD service: %w", err)
+		return err
 	}
 
 	// Update the database.
@@ -235,6 +228,21 @@ func initMds(s *state.State, dataPath string) error {
 	err = snapStart("mds", true)
 	if err != nil {
 		return fmt.Errorf("Failed to start metadata server: %w", err)
+	}
+	return nil
+}
+
+func enableMsgr2() error {
+	// Enable msgr2.
+	_, err := cephRun("mon", "enable-msgr2")
+	if err != nil {
+		return fmt.Errorf("Failed to enable msgr2: %w", err)
+	}
+
+	// Start OSD service.
+	err = snapStart("osd", true)
+	if err != nil {
+		return fmt.Errorf("Failed to start OSD service: %w", err)
 	}
 	return nil
 }
