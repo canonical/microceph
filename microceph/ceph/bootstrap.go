@@ -86,36 +86,7 @@ func Bootstrap(s *state.State) error {
 	}
 
 	// Update the database.
-	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		// Record the roles.
-		_, err := database.CreateService(ctx, tx, database.Service{Member: s.Name(), Service: "mon"})
-		if err != nil {
-			return fmt.Errorf("Failed to record role: %w", err)
-		}
-
-		_, err = database.CreateService(ctx, tx, database.Service{Member: s.Name(), Service: "mgr"})
-		if err != nil {
-			return fmt.Errorf("Failed to record role: %w", err)
-		}
-
-		_, err = database.CreateService(ctx, tx, database.Service{Member: s.Name(), Service: "mds"})
-		if err != nil {
-			return fmt.Errorf("Failed to record role: %w", err)
-		}
-
-		// Record the configuration.
-		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "fsid", Value: fsid})
-		if err != nil {
-			return fmt.Errorf("Failed to record fsid: %w", err)
-		}
-
-		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "keyring.client.admin", Value: adminKey})
-		if err != nil {
-			return fmt.Errorf("Failed to record keyring: %w", err)
-		}
-
-		return nil
-	})
+	err = updateDatabase(s, fsid, adminKey)
 	if err != nil {
 		return err
 	}
@@ -245,4 +216,41 @@ func enableMsgr2() error {
 		return fmt.Errorf("Failed to start OSD service: %w", err)
 	}
 	return nil
+}
+
+func updateDatabase(s *state.State, fsid string, adminKey string) error {
+	if s.Database == nil {
+		return fmt.Errorf("no database")
+	}
+	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+		// Record the roles.
+		_, err := database.CreateService(ctx, tx, database.Service{Member: s.Name(), Service: "mon"})
+		if err != nil {
+			return fmt.Errorf("Failed to record role: %w", err)
+		}
+
+		_, err = database.CreateService(ctx, tx, database.Service{Member: s.Name(), Service: "mgr"})
+		if err != nil {
+			return fmt.Errorf("Failed to record role: %w", err)
+		}
+
+		_, err = database.CreateService(ctx, tx, database.Service{Member: s.Name(), Service: "mds"})
+		if err != nil {
+			return fmt.Errorf("Failed to record role: %w", err)
+		}
+
+		// Record the configuration.
+		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "fsid", Value: fsid})
+		if err != nil {
+			return fmt.Errorf("Failed to record fsid: %w", err)
+		}
+
+		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "keyring.client.admin", Value: adminKey})
+		if err != nil {
+			return fmt.Errorf("Failed to record keyring: %w", err)
+		}
+
+		return nil
+	})
+	return err
 }
