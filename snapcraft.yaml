@@ -95,6 +95,7 @@ parts:
       - ceph-mgr
       - ceph-mon
       - ceph-osd
+      - lsof
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -133,6 +134,7 @@ parts:
       - lib/*/rados-classes
       - lib/python3
       - share/ceph
+      - bin/lsof
 
   deps:
     plugin: nil
