@@ -3,6 +3,26 @@ export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
 echo $$ > "${SNAP_CURRENT}/run/ceph-osd.pid"
 cd "${SNAP}"
 
+
+maybe_unlock() {
+    local dev="${1:?missing}"
+    local osdid="${2:?missing}"
+    local key="${3:?missing}"
+
+    luksname="luksosd-${osdid}"
+
+    [ -b "/dev/mapper/$luksname" ] && return
+
+    if cryptsetup isLuks "$dev" ; then
+        echo "${key}" | cryptsetup luksOpen "$dev" "$luksname" --key-file - --keyfile-size 128
+    fi
+}
+
+get_key() {
+    local osdid="${1:?missing}"
+    ceph config-key get "microceph:osd.${osdid}/key"
+}
+
 is_osd_running() {
     local osdid="${1:?missing}"
 
@@ -25,6 +45,10 @@ spawn() {
         [ ! -e "${i}/ready" ] && continue
 
         is_osd_running "${nr}" && continue
+
+        if [ -b "${i}/unencrypted" ] ; then
+            maybe_unlock "${i}/unencrypted" "${nr}" "$( get_key "${nr}" )"
+        fi
 
         ceph-osd --cluster ceph --id "${nr}"
     done

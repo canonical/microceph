@@ -3,8 +3,9 @@ package types
 
 // DisksPost hold a path and a flag for enabling device wiping
 type DisksPost struct {
-	Path string `json:"path" yaml:"path"`
-	Wipe bool   `json:"wipe" yaml:"wipe"`
+	Path    string `json:"path" yaml:"path"`
+	Wipe    bool   `json:"wipe" yaml:"wipe"`
+	Encrypt bool   `json:"encrypt" yaml:"encrypt"`
 }
 
 // Disks is a slice of disks
