@@ -78,7 +78,7 @@ jobs:
           sudo snap stop microceph ; sleep 1 ; sudo snap start microceph ; sleep 7
           sudo microceph.ceph status
           sudo microceph.ceph health | grep -xF "HEALTH_OK"
-          pgrep ceph-osd || ( echo "No ceph-osd process found" ; exit 1 )
+          pgrep ceph-osd || { echo "No ceph-osd process found" ; exit 1; }
 
       - name: Upload artifacts
         if: always()
