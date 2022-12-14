@@ -6,7 +6,7 @@ cd "${SNAP}"
 is_osd_running() {
     local osdid="${1:?missing}"
 
-    skt="${SNAP_CURRENT}/run/ceph-osd.${nr}.asok"
+    skt="${SNAP_CURRENT}/run/ceph-osd.${osdid}.asok"
     pidfile="${SNAP_CURRENT}/run/ceph-osd.pid"
 
     [ ! -e "$skt" ] && return 1
