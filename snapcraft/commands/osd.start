@@ -12,7 +12,7 @@ is_osd_running() {
     [ ! -e "$skt" ] && return 1
     [ ! -f "$pidfile" ] && return 1
     pgrep -F "${pidfile}" || return 1
-    lsof -t +E -aUf -- "${skt}" > /dev/null
+    ss --no-header --listening "src = unix:${skt}" | grep -qwF "${skt}"
 }
 
 spawn() {
