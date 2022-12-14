@@ -9,7 +9,7 @@ is_osd_running() {
     skt="${SNAP_CURRENT}/run/ceph-osd.${osdid}.asok"
     pidfile="${SNAP_CURRENT}/run/ceph-osd.pid"
 
-    [ ! -e "$skt" ] && return 1
+    [ ! -S "$skt" ] && return 1
     [ ! -f "$pidfile" ] && return 1
     pgrep -F "${pidfile}" || return 1
     ss --no-header --listening "src = unix:${skt}" | grep -qwF "${skt}"
