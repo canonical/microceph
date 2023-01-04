@@ -16,6 +16,8 @@ environment:
 layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET/ceph:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph
+  /usr/lib/$CRAFT_ARCH_TRIPLET/rados-classes:
+    symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET/rados-classes
   /etc/ceph:
     symlink: $SNAP_DATA/conf
   /usr/share/ceph:
