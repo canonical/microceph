@@ -23,7 +23,7 @@ layout:
   /var/lib/ceph:
     symlink: $SNAP_COMMON/data
   /var/log/ceph:
-    symlink: $SNAP_COMMON/log
+    symlink: $SNAP_COMMON/logs
 
 apps:
   # Service
