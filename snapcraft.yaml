@@ -71,6 +71,7 @@ apps:
       - hardware-observe
       - network
       - network-bind
+      - network-observe
 
   # Commands
   ceph:
