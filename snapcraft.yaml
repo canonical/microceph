@@ -16,6 +16,8 @@ environment:
 layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET/ceph:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph
+  /usr/lib/$CRAFT_ARCH_TRIPLET/rados-classes:
+    symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET/rados-classes
   /etc/ceph:
     symlink: $SNAP_DATA/conf
   /usr/share/ceph:
@@ -23,7 +25,7 @@ layout:
   /var/lib/ceph:
     symlink: $SNAP_COMMON/data
   /var/log/ceph:
-    symlink: $SNAP_COMMON/log
+    symlink: $SNAP_COMMON/logs
 
 apps:
   # Service
@@ -71,7 +73,6 @@ apps:
       - hardware-observe
       - network
       - network-bind
-      - network-observe
 
   # Commands
   ceph:
@@ -113,26 +114,39 @@ parts:
       - bin/rbd
       - lib/*/ceph
       - lib/*/libaio.so*
+      - lib/*/libboost_context.so*
       - lib/*/libboost_iostreams.so*
       - lib/*/libboost_program_options.so*
       - lib/*/libboost_python310.so*
       - lib/*/libboost_thread.so*
       - lib/*/libcephfs.so*
       - lib/*/libcephsqlite.so*
+      - lib/*/libcurl-gnutls.so*
       - lib/*/libdaxctl.so*
       - lib/*/libfuse3.so*
       - lib/*/libibverbs.so*
+      - lib/*/libicudata.so*
+      - lib/*/libicuuc.so*
+      - lib/*/liblber-2.5.so*
+      - lib/*/libldap-2.5.so*
       - lib/*/liblua5.3.so*
       - lib/*/libndctl.so*
+      - lib/*/libnghttp2.so*
       - lib/*/libnuma.so*
+      - lib/*/liboath.so*
+      - lib/*/libpmemobj.so*
       - lib/*/libpmem.so*
+      - lib/*/libpsl.so*
       - lib/*/libpython3.10.so*
+      - lib/*/librabbitmq.so*
       - lib/*/librados.so*
       - lib/*/librbd.so*
       - lib/*/librdmacm.so*
+      - lib/*/librtmp.so*
+      - lib/*/libsasl2.so*
       - lib/*/libsnappy.so*
-      - lib/*/rados-classes
       - lib/python3
+      - lib/*/rados-classes
       - share/ceph
 
   deps:
