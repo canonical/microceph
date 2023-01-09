@@ -107,36 +107,7 @@ func Bootstrap(s common.StateInterface) error {
 	}
 
 	// Update the database.
-	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
-		// Record the roles.
-		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mon"})
-		if err != nil {
-			return fmt.Errorf("Failed to record role: %w", err)
-		}
-
-		_, err = database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mgr"})
-		if err != nil {
-			return fmt.Errorf("Failed to record role: %w", err)
-		}
-
-		_, err = database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mds"})
-		if err != nil {
-			return fmt.Errorf("Failed to record role: %w", err)
-		}
-
-		// Record the configuration.
-		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "fsid", Value: fsid})
-		if err != nil {
-			return fmt.Errorf("Failed to record fsid: %w", err)
-		}
-
-		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "keyring.client.admin", Value: adminKey})
-		if err != nil {
-			return fmt.Errorf("Failed to record keyring: %w", err)
-		}
-
-		return nil
-	})
+	err = updateDatabase(s, fsid, adminKey)
 	if err != nil {
 		return err
 	}
@@ -230,4 +201,41 @@ func initMgr(s common.StateInterface, dataPath string) error {
 		return fmt.Errorf("Failed to start manager: %w", err)
 	}
 	return nil
+}
+
+func updateDatabase(s common.StateInterface, fsid string, adminKey string) error {
+	if s.ClusterState().Database == nil {
+		return fmt.Errorf("no database")
+	}
+	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+		// Record the roles.
+		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mon"})
+		if err != nil {
+			return fmt.Errorf("Failed to record role: %w", err)
+		}
+
+		_, err = database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mgr"})
+		if err != nil {
+			return fmt.Errorf("Failed to record role: %w", err)
+		}
+
+		_, err = database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mds"})
+		if err != nil {
+			return fmt.Errorf("Failed to record role: %w", err)
+		}
+
+		// Record the configuration.
+		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "fsid", Value: fsid})
+		if err != nil {
+			return fmt.Errorf("Failed to record fsid: %w", err)
+		}
+
+		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "keyring.client.admin", Value: adminKey})
+		if err != nil {
+			return fmt.Errorf("Failed to record keyring: %w", err)
+		}
+
+		return nil
+	})
+	return err
 }
