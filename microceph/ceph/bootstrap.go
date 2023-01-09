@@ -10,12 +10,13 @@ import (
 
 	"github.com/pborman/uuid"
 
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
-	"github.com/canonical/microcluster/state"
 )
 
 // Bootstrap will initialize a new Ceph deployment.
-func Bootstrap(s *state.State) error {
+func Bootstrap(s common.StateInterface) error {
+
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
 	runPath := filepath.Join(os.Getenv("SNAP_DATA"), "run")
 	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
@@ -42,8 +43,8 @@ func Bootstrap(s *state.State) error {
 	err = cephConfTpl.Execute(fd, map[string]any{
 		"fsid":     fsid,
 		"runDir":   runPath,
-		"monitors": s.Address().Hostname(),
-		"addr":     s.Address().Hostname(),
+		"monitors": s.ClusterState().Address().Hostname(),
+		"addr":     s.ClusterState().Address().Hostname(),
 	})
 	if err != nil {
 		return fmt.Errorf("Couldn't render ceph.conf: %w", err)
@@ -76,14 +77,14 @@ func Bootstrap(s *state.State) error {
 	}
 
 	// Bootstrap the initial metadata server.
-	mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", s.Name()))
+	mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
 
 	err = os.MkdirAll(mdsDataPath, 0700)
 	if err != nil {
 		return fmt.Errorf("Failed to bootstrap metadata server: %w", err)
 	}
 
-	err = bootstrapMds(s.Name(), mdsDataPath)
+	err = bootstrapMds(s.ClusterState().Name(), mdsDataPath)
 	if err != nil {
 		return fmt.Errorf("Failed to bootstrap metadata server: %w", err)
 	}
@@ -106,19 +107,19 @@ func Bootstrap(s *state.State) error {
 	}
 
 	// Update the database.
-	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the roles.
-		_, err := database.CreateService(ctx, tx, database.Service{Member: s.Name(), Service: "mon"})
+		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mon"})
 		if err != nil {
 			return fmt.Errorf("Failed to record role: %w", err)
 		}
 
-		_, err = database.CreateService(ctx, tx, database.Service{Member: s.Name(), Service: "mgr"})
+		_, err = database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mgr"})
 		if err != nil {
 			return fmt.Errorf("Failed to record role: %w", err)
 		}
 
-		_, err = database.CreateService(ctx, tx, database.Service{Member: s.Name(), Service: "mds"})
+		_, err = database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mds"})
 		if err != nil {
 			return fmt.Errorf("Failed to record role: %w", err)
 		}
@@ -175,30 +176,30 @@ func createKeyrings(confPath string) (string, error) {
 	return path, nil
 }
 
-func createMonMap(s *state.State, path string, fsid string) error {
+func createMonMap(s common.StateInterface, path string, fsid string) error {
 	// Generate initial monitor map.
 	err := genMonmap(filepath.Join(path, "mon.map"), fsid)
 	if err != nil {
 		return fmt.Errorf("Failed to generate monitor map: %w", err)
 	}
 
-	err = addMonmap(filepath.Join(path, "mon.map"), s.Name(), s.Address().Hostname())
+	err = addMonmap(filepath.Join(path, "mon.map"), s.ClusterState().Name(), s.ClusterState().Address().Hostname())
 	if err != nil {
 		return fmt.Errorf("Failed to add monitor map: %w", err)
 	}
 	return nil
 }
 
-func initMon(s *state.State, dataPath string, path string) error {
+func initMon(s common.StateInterface, dataPath string, path string) error {
 	// Bootstrap the initial monitor.
-	monDataPath := filepath.Join(dataPath, "mon", fmt.Sprintf("ceph-%s", s.Name()))
+	monDataPath := filepath.Join(dataPath, "mon", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
 
 	err := os.MkdirAll(monDataPath, 0700)
 	if err != nil {
 		return fmt.Errorf("Failed to bootstrap monitor: %w", err)
 	}
 
-	err = bootstrapMon(s.Name(), monDataPath, filepath.Join(path, "mon.map"), filepath.Join(path, "mon.keyring"))
+	err = bootstrapMon(s.ClusterState().Name(), monDataPath, filepath.Join(path, "mon.map"), filepath.Join(path, "mon.keyring"))
 	if err != nil {
 		return fmt.Errorf("Failed to bootstrap monitor: %w", err)
 	}
@@ -210,16 +211,16 @@ func initMon(s *state.State, dataPath string, path string) error {
 	return nil
 }
 
-func initMgr(s *state.State, dataPath string) error {
+func initMgr(s common.StateInterface, dataPath string) error {
 	// Bootstrap the initial manager.
-	mgrDataPath := filepath.Join(dataPath, "mgr", fmt.Sprintf("ceph-%s", s.Name()))
+	mgrDataPath := filepath.Join(dataPath, "mgr", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
 
 	err := os.MkdirAll(mgrDataPath, 0700)
 	if err != nil {
 		return fmt.Errorf("Failed to bootstrap manager: %w", err)
 	}
 
-	err = bootstrapMgr(s.Name(), mgrDataPath)
+	err = bootstrapMgr(s.ClusterState().Name(), mgrDataPath)
 	if err != nil {
 		return fmt.Errorf("Failed to bootstrap manager: %w", err)
 	}
