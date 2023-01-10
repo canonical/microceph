@@ -2,8 +2,6 @@ package ceph
 
 import (
 	"fmt"
-
-	"github.com/lxc/lxd/shared"
 )
 
 func snapStart(service string, enable bool) error {
@@ -16,7 +14,7 @@ func snapStart(service string, enable bool) error {
 		args = append(args, "--enable")
 	}
 
-	_, err := shared.RunCommand("snapctl", args...)
+	_, err := processExec.RunCommand("snapctl", args...)
 	if err != nil {
 		return err
 	}
@@ -31,7 +29,7 @@ func snapReload(service string) error {
 		fmt.Sprintf("microceph.%s", service),
 	}
 
-	_, err := shared.RunCommand("snapctl", args...)
+	_, err := processExec.RunCommand("snapctl", args...)
 	if err != nil {
 		return err
 	}

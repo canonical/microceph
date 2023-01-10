@@ -112,7 +112,7 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 	// Wipe the block device if requested.
 	if wipe {
 		// FIXME: Do a Go implementation.
-		_, err := shared.RunCommand("dd", "if=/dev/zero", fmt.Sprintf("of=%s", path), "bs=4M", "count=10", "status=none")
+		_, err := processExec.RunCommand("dd", "if=/dev/zero", fmt.Sprintf("of=%s", path), "bs=4M", "count=10", "status=none")
 		if err != nil {
 			return fmt.Errorf("Failed to wipe the device: %w", err)
 		}
@@ -155,7 +155,7 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 	}
 
 	// Bootstrap OSD.
-	_, err = shared.RunCommand("ceph-osd", "--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr))
+	_, err = processExec.RunCommand("ceph-osd", "--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr))
 	if err != nil {
 		return fmt.Errorf("Failed to bootstrap OSD: %w", err)
 	}
