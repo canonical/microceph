@@ -14,3 +14,7 @@ type RunnerImpl struct{}
 func (c RunnerImpl) RunCommand(name string, arg ...string) (string, error) {
 	return shared.RunCommand(name, arg...)
 }
+
+// Singleton runner: make this patch-able for testing purposes.
+// By default executes via shared.RunCommand()
+var processExec Runner = RunnerImpl{}
