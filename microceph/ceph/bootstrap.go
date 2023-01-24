@@ -76,34 +76,19 @@ func Bootstrap(s common.StateInterface) error {
 		return err
 	}
 
-	// Bootstrap the initial metadata server.
-	mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
-
-	err = os.MkdirAll(mdsDataPath, 0700)
+	err = initMds(s, dataPath)
 	if err != nil {
-		return fmt.Errorf("Failed to bootstrap metadata server: %w", err)
+		return err
 	}
 
-	err = bootstrapMds(s.ClusterState().Name(), mdsDataPath)
+	err = enableMsgr2()
 	if err != nil {
-		return fmt.Errorf("Failed to bootstrap metadata server: %w", err)
+		return err
 	}
 
-	err = snapStart("mds", true)
+	err = startOSDs(s, dataPath)
 	if err != nil {
-		return fmt.Errorf("Failed to start metadata server: %w", err)
-	}
-
-	// Enable msgr2.
-	_, err = cephRun("mon", "enable-msgr2")
-	if err != nil {
-		return fmt.Errorf("Failed to enable msgr2: %w", err)
-	}
-
-	// Start OSD service.
-	err = snapStart("osd", true)
-	if err != nil {
-		return fmt.Errorf("Failed to start OSD service: %w", err)
+		return err
 	}
 
 	// Update the database.
@@ -238,4 +223,44 @@ func updateDatabase(s common.StateInterface, fsid string, adminKey string) error
 		return nil
 	})
 	return err
+}
+
+func enableMsgr2() error {
+	// Enable msgr2.
+	_, err := cephRun("mon", "enable-msgr2")
+	if err != nil {
+		return fmt.Errorf("Failed to enable msgr2: %w", err)
+	}
+	return nil
+}
+
+func startOSDs(s common.StateInterface, path string) error {
+	// Start OSD service.
+	err := snapStart("osd", true)
+	if err != nil {
+		return fmt.Errorf("Failed to start OSD service: %w", err)
+	}
+	return nil
+}
+
+func initMds(s common.StateInterface, dataPath string) error {
+	// Bootstrap the initial metadata server.
+	mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
+
+	err := os.MkdirAll(mdsDataPath, 0700)
+	if err != nil {
+		return fmt.Errorf("Failed to bootstrap metadata server: %w", err)
+	}
+
+	err = bootstrapMds(s.ClusterState().Name(), mdsDataPath)
+	if err != nil {
+		return fmt.Errorf("Failed to bootstrap metadata server: %w", err)
+	}
+
+	err = snapStart("mds", true)
+	if err != nil {
+		return fmt.Errorf("Failed to start metadata server: %w", err)
+	}
+	return nil
+
 }
