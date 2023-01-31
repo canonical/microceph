@@ -33,21 +33,17 @@ func Bootstrap(s common.StateInterface) error {
 	// Generate a new FSID.
 	fsid := uuid.NewRandom().String()
 
-	// Generate the initial ceph.conf.
-	fd, err := os.OpenFile(filepath.Join(confPath, "ceph.conf"), os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
+	conf := newCephConfig(confPath)
+	err := conf.WriteConfig(
+		map[string]any{
+			"fsid":     fsid,
+			"runDir":   runPath,
+			"monitors": s.ClusterState().Address().Hostname(),
+			"addr":     s.ClusterState().Address().Hostname(),
+		},
+	)
 	if err != nil {
-		return fmt.Errorf("Couldn't write ceph.conf: %w", err)
-	}
-	defer fd.Close()
-
-	err = cephConfTpl.Execute(fd, map[string]any{
-		"fsid":     fsid,
-		"runDir":   runPath,
-		"monitors": s.ClusterState().Address().Hostname(),
-		"addr":     s.ClusterState().Address().Hostname(),
-	})
-	if err != nil {
-		return fmt.Errorf("Couldn't render ceph.conf: %w", err)
+		return err
 	}
 
 	path, err := createKeyrings(confPath)
