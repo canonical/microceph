@@ -55,34 +55,27 @@ func updateConfig(s common.StateInterface) error {
 		monitorAddresses[i] = remote.Address.Addr().String()
 	}
 
-	// Generate ceph.conf.
-	fd, err := os.OpenFile(filepath.Join(confPath, "ceph.conf"), os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
-	if err != nil {
-		return fmt.Errorf("Couldn't write ceph.conf: %w", err)
-	}
-	defer fd.Close()
-
-	err = cephConfTpl.Execute(fd, map[string]any{
-		"fsid":     config["fsid"],
-		"runDir":   runPath,
-		"monitors": strings.Join(monitorAddresses, ","),
-		"addr":     s.ClusterState().Address().Hostname(),
-	})
+	conf := newCephConfig(confPath)
+	err = conf.WriteConfig(
+		map[string]any{
+			"fsid":     config["fsid"],
+			"runDir":   runPath,
+			"monitors": strings.Join(monitorAddresses, ","),
+			"addr":     s.ClusterState().Address().Hostname(),
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("Couldn't render ceph.conf: %w", err)
 	}
 
 	// Generate ceph.client.admin.keyring
-	fd, err = os.OpenFile(filepath.Join(confPath, "ceph.client.admin.keyring"), os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
-	if err != nil {
-		return fmt.Errorf("Couldn't write ceph.conf: %w", err)
-	}
-	defer fd.Close()
-
-	err = cephKeyringTpl.Execute(fd, map[string]any{
-		"name": "client.admin",
-		"key":  config["keyring.client.admin"],
-	})
+	keyring := newCephKeyring(confPath)
+	err = keyring.WriteConfig(
+		map[string]any{
+			"name": "client.admin",
+			"key":  config["keyring.client.admin"],
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("Couldn't render ceph.client.admin.keyring: %w", err)
 	}
