@@ -8,8 +8,7 @@ import (
 )
 
 type configWriterSuite struct {
-	suite.Suite
-	tmp string
+	baseSuite
 }
 
 func TestConfigWriter(t *testing.T) {
@@ -18,16 +17,7 @@ func TestConfigWriter(t *testing.T) {
 
 // Set up test suite
 func (s *configWriterSuite) SetupTest() {
-	tmp, err := os.MkdirTemp("", "microceph-test")
-	if err != nil {
-		s.T().Fatal("error creating tmp:", err)
-	}
-
-	s.tmp = tmp
-}
-
-func (s *configWriterSuite) TearDownTest() {
-	os.RemoveAll(s.tmp)
+	s.baseSuite.SetupTest()
 }
 
 // Test ceph config writing
