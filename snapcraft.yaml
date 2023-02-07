@@ -243,8 +243,8 @@ parts:
       export CGO_LDFLAGS_ALLOW="(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
 
       # Build the binaries
-      go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microceph" ./cmd/microceph
-      go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
+      go build -gcflags "all=-N -l" -o "${SNAPCRAFT_PART_INSTALL}/bin/microceph" ./cmd/microceph
+      go build -gcflags "all=-N -l" -o "${SNAPCRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
     prime:
       - bin/microceph
       - bin/microcephd
