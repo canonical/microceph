@@ -41,9 +41,27 @@ func (s *configWriterSuite) TestWriteCephConfig() {
 	assert.Contains(s.T(), string(data), "fsid = fsid1234")
 }
 
+// Test ceph config writing
+func (s *configWriterSuite) TestWriteRadosGWConfig() {
+	config := newRadosGWConfig(s.tmp)
+	err := config.WriteConfig(
+		map[string]any{
+			"monitors": "foohost",
+		},
+	)
+	assert.Equal(s.T(), nil, err)
+	// Check that the file exists
+	_, err = os.Stat(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+	// Check contents of the file
+	data, err := os.ReadFile(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+	assert.Contains(s.T(), string(data), "foohost")
+}
+
 // Test ceph keyring writing
 func (s *configWriterSuite) TestWriteCephKeyring() {
-	keyring := newCephKeyring(s.tmp)
+	keyring := newCephKeyring(s.tmp, "ceph.keyring")
 	err := keyring.WriteConfig(
 		map[string]any{
 			"name": "client.admin",

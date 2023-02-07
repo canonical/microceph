@@ -74,6 +74,15 @@ apps:
       - network
       - network-bind
 
+  rgw:
+    command: commands/rgw.start
+    daemon: simple
+    install-mode: disable
+    plugs:
+      - hardware-observe
+      - network
+      - network-bind
+
   # Commands
   ceph:
     command: commands/ceph
@@ -97,6 +106,7 @@ parts:
       - ceph-mgr
       - ceph-mon
       - ceph-osd
+      - radosgw
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -112,9 +122,13 @@ parts:
       - bin/ceph-osd
       - bin/monmaptool
       - bin/rbd
+      - bin/radosgw
+      - bin/radosgw-admin
       - lib/*/ceph
       - lib/*/libaio.so*
+      - lib/*/libasn1.so*
       - lib/*/libboost_context.so*
+      - lib/*/libboost_filesystem.so*
       - lib/*/libboost_iostreams.so*
       - lib/*/libboost_program_options.so*
       - lib/*/libboost_python310.so*
@@ -134,17 +148,20 @@ parts:
       - lib/*/libnghttp2.so*
       - lib/*/libnuma.so*
       - lib/*/liboath.so*
-      - lib/*/libpmemobj.so*
       - lib/*/libpmem.so*
+      - lib/*/libpmemobj.so*
       - lib/*/libpsl.so*
       - lib/*/libpython3.10.so*
       - lib/*/librabbitmq.so*
       - lib/*/librados.so*
+      - lib/*/libradosgw.so*
       - lib/*/librbd.so*
       - lib/*/librdmacm.so*
+      - lib/*/libroken.so*
       - lib/*/librtmp.so*
       - lib/*/libsasl2.so*
       - lib/*/libsnappy.so*
+      - lib/*/libwind.so*
       - lib/python3
       - lib/*/rados-classes
       - share/ceph
@@ -225,8 +242,8 @@ parts:
       export CGO_LDFLAGS_ALLOW="(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
 
       # Build the binaries
-      go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microceph" ./cmd/microceph
-      go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
+      go build -gcflags "all=-N -l" -o "${SNAPCRAFT_PART_INSTALL}/bin/microceph" ./cmd/microceph
+      go build -gcflags "all=-N -l" -o "${SNAPCRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
     prime:
       - bin/microceph
       - bin/microcephd

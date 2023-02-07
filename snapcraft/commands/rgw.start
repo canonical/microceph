@@ -1,0 +1,7 @@
+#!/bin/sh
+conf="${SNAP_DATA}/conf/radosgw.conf"
+
+if [ -n "${conf}" ] ; then
+    exec radosgw -f --cluster ceph --name "client.radosgw.gateway" -c "${conf}"
+fi
+
