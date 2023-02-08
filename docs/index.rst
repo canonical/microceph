@@ -3,14 +3,11 @@
 Starter pack
 ======================================================
 
-**A single sentence that says what the product is, succinctly and memorably.**
-consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et
-dolore magna aliqua.
+**MicroCeph is the easiest way to bootstrap an edge Ceph cluster**
 
-**A paragraph of one to three short sentences, that describe what the product
-does.** Urna cursus eget nunc scelerisque viverra mauris in. Nibh mauris
-cursus mattis molestie a iaculis at vestibulum rhoncus est pellentesque
-elit. Diam phasellus vestibulum lorem sed.
+Microceph manages the complexity of distributing keys between, and managing
+placement of, Ceph daemons. It handles bootstrapping the monitor cluster as
+well as adding disks to the cluster.
 
 **A third paragraph of similar length, this time explaining what need the
 product meets.** Dui ut ornare lectus sit amet est. Nunc sed augue lacus
