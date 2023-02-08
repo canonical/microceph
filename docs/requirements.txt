@@ -1,0 +1,6 @@
+sphinx
+sphinx-autobuild
+sphinx-design
+pyenchant
+sphinxcontrib-spelling
+furo
