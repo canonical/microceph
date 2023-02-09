@@ -1,4 +1,4 @@
-Deploy a widget
+Configure Ceph RadosGW
 ==================================================================
 
 Malesuada fames ac turpis egestas sed tempus. Volutpat maecenas volutpat

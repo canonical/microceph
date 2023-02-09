@@ -1,24 +1,24 @@
 How-to guides
 =============
 
-These how-to guides cover key operations and processes in Microceph.
+These how-to guides will cover key operations and processes in Microceph.
 
-Fictional
--------------
+.. Fictional
+.. -------------
 
-.. toctree::
-   :maxdepth: 1
+.. .. toctree::
+..    :maxdepth: 1
 
-   Prettify an instance <prettify>
-   Unroll a network <unroll>
+..    Prettify an instance <prettify>
+..    Unroll a network <unroll>
 
 
-Actual
----------
+.. Actual
+.. ---------
 
-.. toctree::
-   :maxdepth: 1
+.. .. toctree::
+..    :maxdepth: 1
 
-   Manage rate-limiting <rate-limiting>
-   Spawn new instance <spawning>
+..    Manage rate-limiting <rate-limiting>
+..    Spawn new instance <spawning>
 
