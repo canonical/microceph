@@ -52,12 +52,8 @@ Project and community
 
 Microceph is a member of the Ubuntu family. It’s an open source project that warmly welcomes community projects, contributions, suggestions, fixes and constructive feedback.
 
-.. * :ref:`Code of conduct <home>`
-.. * :ref:`Get support <home>`
-.. * :ref:`Join our online chat <home>`
 * `Contribute <https://github.com/canonical/microceph>`_
 * `Roadmap <https://github.com/canonical/microceph/issues>`_
-.. * :ref:`Thinking about using Microceph for your next project? Get in touch! <home>`
 
 
 .. toctree::
