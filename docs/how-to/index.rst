@@ -1,7 +1,7 @@
 How-to guides
 =============
 
-These how-to guides cover key operations and processes in Example Product.
+These how-to guides cover key operations and processes in Microceph.
 
 Fictional
 -------------

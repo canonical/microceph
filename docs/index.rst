@@ -28,7 +28,7 @@ In this documentation
 
    ..  grid-item:: :doc:`Tutorial <tutorial/index>`
 
-       **Start here**: a hands-on introduction to Example Product for new users
+       **Start here**: a hands-on introduction to Microceph for new users
 
    ..  grid-item:: :doc:`How-to guides <how-to/index>`
 
@@ -50,14 +50,14 @@ In this documentation
 Project and community
 ---------------------
 
-Example Project is a member of the Ubuntu family. It’s an open source project that warmly welcomes community projects, contributions, suggestions, fixes and constructive feedback.
+Microceph is a member of the Ubuntu family. It’s an open source project that warmly welcomes community projects, contributions, suggestions, fixes and constructive feedback.
 
 * :ref:`Code of conduct <home>`
 * :ref:`Get support <home>`
 * :ref:`Join our online chat <home>`
 * :ref:`Contribute <home>`
 * :ref:`Roadmap <home>`
-* :ref:`Thinking about using Example Product for your next project? Get in touch! <home>`
+* :ref:`Thinking about using Microceph for your next project? Get in touch! <home>`
 
 
 .. toctree::

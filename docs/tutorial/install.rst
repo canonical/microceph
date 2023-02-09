@@ -1,4 +1,4 @@
-Install Example Product using Multipass
+Install Microceph using Multipass
 ======================================================
 
 Lorem ipsum
