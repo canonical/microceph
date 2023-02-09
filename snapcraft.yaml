@@ -88,6 +88,10 @@ apps:
     command: commands/ceph
     plugs:
       - network
+  "radosgw-admin":
+    command: commands/radosgw-admin
+    plugs:
+      - network
   microceph:
     command: commands/microceph
     plugs:
