@@ -19,8 +19,15 @@ func Join(s common.StateInterface) error {
 	logPath := filepath.Join(os.Getenv("SNAP_COMMON"), "logs")
 
 	// Create our various paths.
-	for _, path := range []string{confPath, runPath, dataPath, logPath} {
-		err := os.MkdirAll(path, 0700)
+	paths := map[string]os.FileMode{
+		confPath: 0755,
+		runPath:  0700,
+		dataPath: 0700,
+		logPath:  0700,
+	}
+
+	for path, perm := range paths {
+		err := os.MkdirAll(path, perm)
 		if err != nil {
 			return fmt.Errorf("Unable to create %q: %w", path, err)
 		}
