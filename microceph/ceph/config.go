@@ -69,7 +69,7 @@ func updateConfig(s common.StateInterface) error {
 	}
 
 	// Generate ceph.client.admin.keyring
-	keyring := newCephKeyring(confPath)
+	keyring := newCephKeyring(confPath, "ceph.keyring")
 	err = keyring.WriteConfig(
 		map[string]any{
 			"name": "client.admin",
