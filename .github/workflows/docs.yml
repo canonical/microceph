@@ -1,0 +1,56 @@
+name: Docs
+on:
+  - push
+  - pull_request
+
+jobs:
+  spelling:
+    name: spelling
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        python-version: ['3.10']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install tox tox-gh-actions
+      - name: Spellcheck docs
+        run: tox -e spelling
+
+  docs:
+    name: docs
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        python-version: ['3.10']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install tox tox-gh-actions
+      - name: Build docs
+        run: tox -e docs
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: docs site
+          path: "_build"
+          retention-days: 5
