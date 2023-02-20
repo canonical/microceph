@@ -38,6 +38,7 @@ jobs:
           sudo snap install --dangerous microceph_*.snap
           sudo snap connect microceph:block-devices
           sudo snap connect microceph:hardware-observe
+          sudo snap connect microceph:dm-crypt
 
           sudo microceph cluster bootstrap
 
@@ -62,7 +63,7 @@ jobs:
             # names (/dev/sdiY) that are not used inside GitHub Action runners
             minor="${loop_dev##/dev/loop}"
             sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
-            sudo microceph disk add --wipe "/dev/sdi${l}"
+            sudo microceph disk add --wipe "/dev/sdi${l}" --encrypt
           done
 
           # Wait for OSDs to become up

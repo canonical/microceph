@@ -34,6 +34,7 @@ apps:
     daemon: simple
     plugs:
       - block-devices
+      - dm-crypt
       - hardware-observe
       - network
       - network-bind
@@ -70,6 +71,7 @@ apps:
     stop-timeout: 5m
     plugs:
       - block-devices
+      - dm-crypt
       - hardware-observe
       - network
       - network-bind
@@ -92,6 +94,8 @@ apps:
     command: commands/microceph
     plugs:
       - network
+      - block-devices
+      - dm-crypt
   rbd:
     command: commands/rbd
     plugs:
