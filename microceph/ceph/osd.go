@@ -11,6 +11,7 @@ import (
 
 	"github.com/canonical/microcluster/state"
 	"github.com/lxc/lxd/lxd/resources"
+	"github.com/lxc/lxd/lxd/revert"
 	"github.com/lxc/lxd/shared"
 	"github.com/pborman/uuid"
 
@@ -70,6 +71,9 @@ func nextOSD(s *state.State) (int64, error) {
 
 // AddOSD adds an OSD to the cluster, given a device path and a flag for wiping
 func AddOSD(s *state.State, path string, wipe bool) error {
+	revert := revert.New()
+	defer revert.Fail()
+
 	// Validate the path.
 	if !shared.IsBlockdevPath(path) {
 		return fmt.Errorf("Invalid disk path: %s", path)
@@ -124,6 +128,28 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 		return fmt.Errorf("Failed to find next OSD number: %w", err)
 	}
 
+	// Record the disk.
+	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := database.CreateDisk(ctx, tx, database.Disk{Member: s.Name(), Path: path, OSD: int(nr)})
+		if err != nil {
+			return fmt.Errorf("Failed to record disk: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// if we fail later, make sure we free up the record
+
+	revert.Add(func() {
+		s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+			database.DeleteDisk(ctx, tx, s.Name(), path)
+			return nil
+		})
+	})
+
 	// Create directory.
 	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
 	osdDataPath := filepath.Join(dataPath, "osd", fmt.Sprintf("ceph-%d", nr))
@@ -166,25 +192,13 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 		return fmt.Errorf("Failed to write stamp file: %w", err)
 	}
 
-	// Record the disk.
-	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := database.CreateDisk(ctx, tx, database.Disk{Member: s.Name(), Path: path, OSD: int(nr)})
-		if err != nil {
-			return fmt.Errorf("Failed to record disk: %w", err)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
 	// Spawn the OSD.
 	err = snapReload("osd")
 	if err != nil {
 		return err
 	}
 
+	revert.Success() // Revert functions added are not run on return.
 	return nil
 }
 
