@@ -57,6 +57,7 @@ func Bootstrap(s common.StateInterface) error {
 	if err != nil {
 		return err
 	}
+
 	defer os.RemoveAll(path)
 
 	adminKey, err := parseKeyring(filepath.Join(confPath, "ceph.client.admin.keyring"))
@@ -146,6 +147,7 @@ func createMonMap(s common.StateInterface, path string, fsid string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to add monitor map: %w", err)
 	}
+
 	return nil
 }
 
