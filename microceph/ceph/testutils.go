@@ -51,6 +51,13 @@ func (s *baseSuite) copyCephConfigs() {
 	}
 }
 
+// readCephConfig reads a config file from the test directory
+func (s *baseSuite) readCephConfig(conf string) string {
+	// Read the config file
+	data, _ := os.ReadFile(filepath.Join(s.tmp, "SNAP_DATA", "conf", conf))
+	return string(data)
+}
+
 func (s *baseSuite) SetupTest() {
 	s.createTmp()
 }
