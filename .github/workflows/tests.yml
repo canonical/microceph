@@ -32,7 +32,7 @@ jobs:
       - name: Build snaps
         run: snapcraft
 
-      - name: Run system tests
+      - name: Install and setup
         run: |
           set -eux
           sudo snap install --dangerous microceph_*.snap
@@ -50,6 +50,13 @@ jobs:
           sleep 30
           sudo microceph.ceph health | grep -xF "HEALTH_WARN OSD count 0 < osd_pool_default_size 3"
 
+          # Set up crush rules with an OSD failure domain
+          sudo microceph.ceph osd crush rule rm replicated_rule
+          sudo microceph.ceph osd crush rule create-replicated single default osd
+
+      - name: Add OSDs
+        run: |
+          set -eux
           # Add OSDs backed by loop devices on /mnt (ephemeral "large" disk attached to GitHub action runners)
           i=0
           for l in a b c; do
@@ -68,11 +75,35 @@ jobs:
           # Wait for OSDs to become up
           sleep 30
 
+      - name: Enable RGW
+        run: |
+          set -ux
+
+          sudo microceph enable rgw
+          # Wait for RGW to settle
+          for i in $(seq 1 8); do
+              res=$( ( sudo microceph.ceph status | grep -cF "rgw: 1 daemon" ) || true )
+              if [[ $res -gt 0 ]] ; then
+                  echo "Found rgw daemon"
+                  break
+              else
+                  echo -n '.'
+                  sleep 5
+              fi
+          done
+
+      - name: Run system tests
+        run: |
+          set -eux
           # Show ceph's status
           sudo microceph.ceph status
 
-          # Confirm ceph is healthy
+          # Confirm ceph is healthy and services started
           sudo microceph.ceph health | grep -xF "HEALTH_OK"
+          sudo microceph.ceph status | grep -F "mon: 1 daemons"
+          sudo microceph.ceph status | grep -E "mgr: .*active, "
+          sudo microceph.ceph status | grep -F "osd: 3 osds"
+          sudo microceph.ceph status | grep -F "rgw: 1 daemon"
 
           # Check health after restart
           sudo snap stop microceph ; sleep 1 ; sudo snap start microceph ; sleep 15
