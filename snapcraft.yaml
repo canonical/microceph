@@ -104,6 +104,7 @@ parts:
       - ceph-common
       - ceph-mds
       - ceph-mgr
+      - ceph-mgr-dashboard
       - ceph-mon
       - ceph-osd
       - radosgw
