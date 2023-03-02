@@ -69,3 +69,15 @@ func GetServices(ctx context.Context, c *client.Client) (types.Services, error) 
 
 	return services, nil
 }
+
+// EnableRGW requests Ceph configures the RGW service.
+func EnableRGW(ctx context.Context, c *client.Client, data *types.RGWService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*30)
+	defer cancel()
+	err := c.Query(queryCtx, "PUT", api.NewURL().Path("services", "rgw"), data, nil)
+	if err != nil {
+		return fmt.Errorf("Failed enabling RGW: %w", err)
+	}
+
+	return nil
+}
