@@ -65,6 +65,60 @@ UPDATE disks
  WHERE id = ?
 `)
 
+// diskColumns returns a string of column names to be used with a SELECT statement for the entity.
+// Use this function when building statements to retrieve database entries matching the Disk entity.
+func diskColumns() string {
+	return "disks.id, internal_cluster_members.name AS member, disks.osd, disks.path"
+}
+
+// getDisks can be used to run handwritten sql.Stmts to return a slice of objects.
+func getDisks(ctx context.Context, stmt *sql.Stmt, args ...any) ([]Disk, error) {
+	objects := make([]Disk, 0)
+
+	dest := func(scan func(dest ...any) error) error {
+		d := Disk{}
+		err := scan(&d.ID, &d.Member, &d.OSD, &d.Path)
+		if err != nil {
+			return err
+		}
+
+		objects = append(objects, d)
+
+		return nil
+	}
+
+	err := query.SelectObjects(ctx, stmt, dest, args...)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to fetch from \"disks\" table: %w", err)
+	}
+
+	return objects, nil
+}
+
+// getDisks can be used to run handwritten query strings to return a slice of objects.
+func getDisksRaw(ctx context.Context, tx *sql.Tx, sql string, args ...any) ([]Disk, error) {
+	objects := make([]Disk, 0)
+
+	dest := func(scan func(dest ...any) error) error {
+		d := Disk{}
+		err := scan(&d.ID, &d.Member, &d.OSD, &d.Path)
+		if err != nil {
+			return err
+		}
+
+		objects = append(objects, d)
+
+		return nil
+	}
+
+	err := query.Scan(ctx, tx, sql, dest, args...)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to fetch from \"disks\" table: %w", err)
+	}
+
+	return objects, nil
+}
+
 // GetDisks returns all available disks.
 // generator: disk GetMany
 func GetDisks(ctx context.Context, tx *sql.Tx, filters ...DiskFilter) ([]Disk, error) {
@@ -141,25 +195,12 @@ func GetDisks(ctx context.Context, tx *sql.Tx, filters ...DiskFilter) ([]Disk, e
 		}
 	}
 
-	// Dest function for scanning a row.
-	dest := func(scan func(dest ...any) error) error {
-		d := Disk{}
-		err := scan(&d.ID, &d.Member, &d.OSD, &d.Path)
-		if err != nil {
-			return err
-		}
-
-		objects = append(objects, d)
-
-		return nil
-	}
-
 	// Select.
 	if sqlStmt != nil {
-		err = query.SelectObjects(ctx, sqlStmt, dest, args...)
+		objects, err = getDisks(ctx, sqlStmt, args...)
 	} else {
 		queryStr := strings.Join(queryParts[:], "ORDER BY")
-		err = query.Scan(ctx, tx, queryStr, dest, args...)
+		objects, err = getDisksRaw(ctx, tx, queryStr, args...)
 	}
 
 	if err != nil {
