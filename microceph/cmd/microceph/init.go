@@ -31,7 +31,7 @@ func (c *cmdInit) Command() *cobra.Command {
 
 func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	// Connect to the daemon.
-	m, err := microcluster.App(context.Background(), c.common.FlagStateDir, c.common.FlagLogVerbose, c.common.FlagLogDebug)
+	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return err
 	}

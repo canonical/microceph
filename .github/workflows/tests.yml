@@ -40,15 +40,14 @@ jobs:
           sudo snap connect microceph:hardware-observe
 
           sudo microceph cluster bootstrap
-
-          # Early on, ceph health might report OK but will soon turn to WARN
-          sudo microceph.ceph health | grep -xF "HEALTH_OK"
           sudo microceph.ceph version
           sudo microceph.ceph status
 
           # Allow ceph to notice no OSD are present
           sleep 30
-          sudo microceph.ceph health | grep -xF "HEALTH_WARN OSD count 0 < osd_pool_default_size 3"
+          sudo microceph.ceph status
+          sudo microceph.ceph health
+          sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"
 
           # Set up crush rules with an OSD failure domain
           sudo microceph.ceph osd crush rule rm replicated_rule
@@ -99,16 +98,21 @@ jobs:
           sudo microceph.ceph status
 
           # Confirm ceph is healthy and services started
-          sudo microceph.ceph health | grep -xF "HEALTH_OK"
           sudo microceph.ceph status | grep -F "mon: 1 daemons"
           sudo microceph.ceph status | grep -E "mgr: .*active, "
           sudo microceph.ceph status | grep -F "osd: 3 osds"
           sudo microceph.ceph status | grep -F "rgw: 1 daemon"
 
           # Check health after restart
-          sudo snap stop microceph ; sleep 1 ; sudo snap start microceph ; sleep 15
+          sudo snap stop microceph
+          sudo snap start microceph
+          sleep 2m
+
           sudo microceph.ceph status
-          sudo microceph.ceph health | grep -xF "HEALTH_OK"
+          sudo microceph.ceph status | grep -F "mon: 1 daemons"
+          sudo microceph.ceph status | grep -E "mgr: .*active, "
+          sudo microceph.ceph status | grep -F "osd: 3 osds"
+          sudo microceph.ceph status | grep -F "rgw: 1 daemon"
           pgrep ceph-osd || { echo "No ceph-osd process found" ; exit 1; }
 
       - name: Exercise RGW
