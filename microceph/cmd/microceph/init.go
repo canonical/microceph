@@ -64,7 +64,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		address = util.CanonicalNetworkAddress(address, 7000)
+		address = util.CanonicalNetworkAddress(address, 7443)
 
 		wantsBootstrap, err := cli.AskBool("Would you like to create a new MicroCeph cluster? (yes/no) [default=no]: ", "no")
 		if err != nil {
