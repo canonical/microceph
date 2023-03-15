@@ -158,10 +158,16 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
+			diskEncrypt, err := cli.AskBool("Would you like the disk to be encrypted? [default=no]: ", "no")
+			if err != nil {
+				return err
+			}
+
 			// Add the disk.
 			req := &types.DisksPost{
-				Path: diskPath,
-				Wipe: diskWipe,
+				Path:    diskPath,
+				Wipe:    diskWipe,
+				Encrypt: diskEncrypt,
 			}
 
 			err = client.AddDisk(context.Background(), lc, req)
