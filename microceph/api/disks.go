@@ -37,7 +37,7 @@ func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	err = ceph.AddOSD(s, req.Path, req.Wipe)
+	err = ceph.AddOSD(s, req.Path, req.Wipe, req.Encrypt)
 	if err != nil {
 		return response.SmartError(err)
 	}

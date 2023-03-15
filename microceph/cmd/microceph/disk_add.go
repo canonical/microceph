@@ -14,7 +14,8 @@ type cmdDiskAdd struct {
 	common *CmdControl
 	disk   *cmdDisk
 
-	flagWipe bool
+	flagWipe    bool
+	flagEncrypt bool
 }
 
 func (c *cmdDiskAdd) Command() *cobra.Command {
@@ -25,6 +26,7 @@ func (c *cmdDiskAdd) Command() *cobra.Command {
 	}
 
 	cmd.PersistentFlags().BoolVar(&c.flagWipe, "wipe", false, "Wipe the disk prior to use")
+	cmd.PersistentFlags().BoolVar(&c.flagEncrypt, "encrypt", false, "Encrypt the disk prior to use")
 
 	return cmd
 }
@@ -45,8 +47,9 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	req := &types.DisksPost{
-		Path: args[0],
-		Wipe: c.flagWipe,
+		Path:    args[0],
+		Wipe:    c.flagWipe,
+		Encrypt: c.flagEncrypt,
 	}
 
 	err = client.AddDisk(context.Background(), cli, req)

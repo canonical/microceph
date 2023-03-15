@@ -38,6 +38,10 @@ jobs:
           sudo snap install --dangerous microceph_*.snap
           sudo snap connect microceph:block-devices
           sudo snap connect microceph:hardware-observe
+          sudo snap connect microceph:dm-crypt
+
+          # Daemon needs restart for the added dm-crypt connection
+          sudo snap restart microceph.daemon
 
           sudo microceph cluster bootstrap
           sudo microceph.ceph version
@@ -68,7 +72,7 @@ jobs:
             # names (/dev/sdiY) that are not used inside GitHub Action runners
             minor="${loop_dev##/dev/loop}"
             sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
-            sudo microceph disk add --wipe "/dev/sdi${l}"
+            sudo microceph disk add --wipe "/dev/sdi${l}" --encrypt
           done
 
           # Wait for OSDs to become up
@@ -133,3 +137,4 @@ jobs:
           name: snaps
           path: "*.snap"
           retention-days: 5
+        
