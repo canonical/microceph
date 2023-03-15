@@ -38,3 +38,15 @@ Install Microceph
     for i in $(seq 1 3); do
         lxc exec microceph-$i -- sh -c 'snap install microceph'
     done
+
+Update management
+~~~~~~~~~~~~~~~~~
+
+For the time being, it's recommended that updates be postponed indefinitely.
+This can be achieved with the following command (Supported with snapd from version 2.58 onwards):
+
+.. code-block:: shell
+
+    for i in $(seq 1 3); do
+        lxc exec microceph-$i -- sh -c 'snap refresh --hold microceph'
+    done
