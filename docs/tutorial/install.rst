@@ -42,7 +42,7 @@ Install Microceph
 Update management
 ~~~~~~~~~~~~~~~~~
 
-For the time being, it's recommended that updates be postponed indefinitely.
+Updates are not managed from within microceph itself. As such, users are the ones who will manage them. Thus, automatic snap updates should be postponed indefinitely.
 This can be achieved with the following command (Supported with snapd from version 2.58 onwards):
 
 .. code-block:: shell
