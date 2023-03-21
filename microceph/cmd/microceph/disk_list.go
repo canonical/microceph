@@ -19,6 +19,7 @@ type cmdDiskList struct {
 	common                *CmdControl
 	disk                  *cmdDisk
 	flgShowAvailableDisks bool
+	flagFormat            string
 
 	apiClient client.ApiReader
 }
@@ -31,6 +32,7 @@ func (c *cmdDiskList) Command() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&c.flgShowAvailableDisks, "available", "a", false, i18n.G("Show only available local disks"))
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
 
 	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
 		m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
@@ -48,14 +50,14 @@ func (c *cmdDiskList) Command() *cobra.Command {
 func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 
 	if !c.flgShowAvailableDisks {
-		err := listConfiguredDisks(c.apiClient, utils.TableFormatTable)
+		err := listConfiguredDisks(c.apiClient, c.flagFormat)
 		if err != nil {
 			return err
 		}
 	}
 
 	if c.flgShowAvailableDisks {
-		err := listLocalDisks(c.apiClient, utils.TableFormatTable)
+		err := listLocalDisks(c.apiClient, c.flagFormat)
 		if err != nil {
 			return err
 		}

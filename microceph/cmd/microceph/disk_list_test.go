@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/canonical/microceph/microceph/api/types"
 	tests2 "github.com/canonical/microceph/microceph/tests"
+	"github.com/lxc/lxd/lxc/utils"
 	"github.com/lxc/lxd/shared/api"
 	"github.com/pborman/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"gopkg.in/yaml.v3"
 	"io"
 	"os"
 	"strconv"
@@ -60,6 +63,7 @@ func Test_cmdDiskList_Run(t *testing.T) {
 	tests := []struct {
 		name               string
 		showAvailableDisks bool
+		formatString       string
 		mockDisks          disks
 		mockResources      resources
 		wantErr            bool
@@ -214,6 +218,66 @@ func Test_cmdDiskList_Run(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name:               "JSON format configured disks",
+			showAvailableDisks: false,
+			formatString:       "json",
+			mockDisks: disks{
+				mustBeRendered: true,
+				data: []types.Disk{
+					{
+						OSD:      0,
+						Path:     "/tmp/folder-1",
+						Location: "node-1",
+					},
+					{
+						OSD:      1,
+						Path:     "/tmp/folder-2",
+						Location: "node-2",
+					},
+					{
+						OSD:      2,
+						Path:     "/tmp/folder-3",
+						Location: "node-3",
+					},
+				},
+				error: nil,
+			},
+			mockResources: resources{
+				data: &api.ResourcesStorage{},
+			},
+			wantErr: false,
+		},
+		{
+			name:               "YAML format configured disks",
+			showAvailableDisks: false,
+			formatString:       "yaml",
+			mockDisks: disks{
+				mustBeRendered: true,
+				data: []types.Disk{
+					{
+						OSD:      0,
+						Path:     "/tmp/folder-1",
+						Location: "node-1",
+					},
+					{
+						OSD:      1,
+						Path:     "/tmp/folder-2",
+						Location: "node-2",
+					},
+					{
+						OSD:      2,
+						Path:     "/tmp/folder-3",
+						Location: "node-3",
+					},
+				},
+				error: nil,
+			},
+			mockResources: resources{
+				data: &api.ResourcesStorage{},
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -226,6 +290,10 @@ func Test_cmdDiskList_Run(t *testing.T) {
 
 			cmd := c.Command()
 			c.flgShowAvailableDisks = tt.showAvailableDisks
+			c.flagFormat = tt.formatString
+			if c.flagFormat == "" {
+				c.flagFormat = utils.TableFormatTable
+			}
 
 			saveStdout := os.Stdout
 			r, w, _ := os.Pipe()
@@ -242,7 +310,7 @@ func Test_cmdDiskList_Run(t *testing.T) {
 			outputString := string(out)
 
 			//validate output for table formats
-			validateOutput(t, outputString, tt.mockDisks.data, tt.mockResources.data, tt.mockDisks.mustBeRendered, tt.mockResources.mustBeRendered)
+			validateOutput(t, outputString, tt.formatString, tt.mockDisks.data, tt.mockResources.data, tt.mockDisks.mustBeRendered, tt.mockResources.mustBeRendered)
 
 			println(outputString)
 
@@ -250,34 +318,58 @@ func Test_cmdDiskList_Run(t *testing.T) {
 	}
 }
 
-func validateOutput(t *testing.T, outputString string, configuredDisks []types.Disk, availableDisks *api.ResourcesStorage, shouldRenderConfiguredDisks bool, shouldRenderAvailableDisks bool) {
+func validateOutput(t *testing.T, outputString string, formatString string, configuredDisks []types.Disk, availableDisks *api.ResourcesStorage, shouldRenderConfiguredDisks bool, shouldRenderAvailableDisks bool) {
 	if shouldRenderConfiguredDisks {
-		for _, disk := range configuredDisks {
-			assert.Contains(t, outputString, strconv.FormatInt(disk.OSD, 10))
-			assert.Contains(t, outputString, disk.Location)
-			assert.Contains(t, outputString, disk.Path)
+		if formatString == utils.TableFormatTable {
+			for _, disk := range configuredDisks {
+				assert.Contains(t, outputString, strconv.FormatInt(disk.OSD, 10))
+				assert.Contains(t, outputString, disk.Location)
+				assert.Contains(t, outputString, disk.Path)
+			}
+		} else if formatString == utils.TableFormatJSON {
+			var disks []types.Disk
+			json.Unmarshal([]byte(outputString), &disks)
+			assert.Equal(t, configuredDisks, disks)
+		} else if formatString == utils.TableFormatYAML {
+			var disks []types.Disk
+			yaml.Unmarshal([]byte(outputString), &disks)
+			assert.Equal(t, configuredDisks, disks)
 		}
 	} else {
-		for _, disk := range configuredDisks {
-			assert.NotContains(t, outputString, strconv.FormatInt(disk.OSD, 10))
-			assert.NotContains(t, outputString, disk.Location)
-			assert.NotContains(t, outputString, disk.Path)
+		if formatString == utils.TableFormatTable {
+			for _, disk := range configuredDisks {
+				assert.NotContains(t, outputString, strconv.FormatInt(disk.OSD, 10))
+				assert.NotContains(t, outputString, disk.Location)
+				assert.NotContains(t, outputString, disk.Path)
+			}
 		}
 	}
 
 	if shouldRenderAvailableDisks {
-		for _, disk := range availableDisks.Disks {
-			assert.Contains(t, outputString, disk.Model)
-			assert.Contains(t, outputString, fmt.Sprintf("%dB", disk.Size))
-			assert.Contains(t, outputString, disk.Type)
-			assert.Contains(t, outputString, fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID))
+		if formatString == utils.TableFormatTable {
+			for _, disk := range availableDisks.Disks {
+				assert.Contains(t, outputString, disk.Model)
+				assert.Contains(t, outputString, fmt.Sprintf("%dB", disk.Size))
+				assert.Contains(t, outputString, disk.Type)
+				assert.Contains(t, outputString, fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID))
+			}
+		} else if formatString == utils.TableFormatJSON {
+			var disks []api.ResourcesStorageDisk
+			json.Unmarshal([]byte(outputString), &disks)
+			assert.Equal(t, availableDisks, disks)
+		} else if formatString == utils.TableFormatYAML {
+			var disks []api.ResourcesStorageDisk
+			yaml.Unmarshal([]byte(outputString), &disks)
+			assert.Equal(t, availableDisks, disks)
 		}
 	} else {
-		for _, disk := range availableDisks.Disks {
-			assert.NotContains(t, outputString, disk.Model)
-			assert.NotContains(t, outputString, fmt.Sprintf("%dB", disk.Size))
-			assert.NotContains(t, outputString, disk.Type)
-			assert.NotContains(t, outputString, fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID))
+		if formatString == utils.TableFormatTable {
+			for _, disk := range availableDisks.Disks {
+				assert.NotContains(t, outputString, disk.Model)
+				assert.NotContains(t, outputString, fmt.Sprintf("%dB", disk.Size))
+				assert.NotContains(t, outputString, disk.Type)
+				assert.NotContains(t, outputString, fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID))
+			}
 		}
 	}
 }
