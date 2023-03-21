@@ -46,36 +46,44 @@ func Test_cmdDiskList_Execute(t *testing.T) {
 func Test_cmdDiskList_Run(t *testing.T) {
 
 	type disks struct {
-		data  types.Disks
-		error error
+		mustBeRendered bool
+		data           types.Disks
+		error          error
 	}
 
 	type resources struct {
-		data  *api.ResourcesStorage
-		error error
+		mustBeRendered bool
+		data           *api.ResourcesStorage
+		error          error
 	}
 
 	tests := []struct {
-		name          string
-		mockDisks     disks
-		mockResources resources
-		wantErr       bool
+		name               string
+		showAvailableDisks bool
+		mockDisks          disks
+		mockResources      resources
+		wantErr            bool
 	}{
 		{
-			name: "Success Empty List",
+			name:               "Render empty list",
+			showAvailableDisks: false,
 			mockDisks: disks{
-				data:  types.Disks{},
-				error: nil,
+				mustBeRendered: true,
+				data:           types.Disks{},
+				error:          nil,
 			},
 			mockResources: resources{
-				data:  &api.ResourcesStorage{},
-				error: nil,
+				mustBeRendered: true,
+				data:           &api.ResourcesStorage{},
+				error:          nil,
 			},
 			wantErr: false,
 		},
 		{
-			name: "Success 2 Disks",
+			name:               "Render 2 configured disks",
+			showAvailableDisks: false,
 			mockDisks: disks{
+				mustBeRendered: true,
 				data: []types.Disk{
 					{
 						OSD:      0,
@@ -91,31 +99,35 @@ func Test_cmdDiskList_Run(t *testing.T) {
 				error: nil,
 			},
 			mockResources: resources{
-				data:  &api.ResourcesStorage{},
-				error: nil,
+				mustBeRendered: true,
+				data:           &api.ResourcesStorage{},
+				error:          nil,
 			},
 			wantErr: false,
 		},
 		{
-			name: "Success 2 Resources",
+			name:               "Don't render 2 available disks without flag",
+			showAvailableDisks: false,
 			mockDisks: disks{
-				data:  types.Disks{},
-				error: nil,
+				mustBeRendered: true,
+				data:           types.Disks{},
+				error:          nil,
 			},
 			mockResources: resources{
+				mustBeRendered: false,
 				data: &api.ResourcesStorage{
 					Disks: []api.ResourcesStorageDisk{
 						{
-							Model:  "Virtual Warp Drive",
-							Size:   1000,
-							ID:     uuid.NewUUID().String(),
-							Device: "/dev/sda1",
+							Model:    "Virtual Warp Drive",
+							Size:     1000,
+							DeviceID: uuid.NewUUID().String(),
+							Type:     "warp",
 						},
 						{
-							Model:  "Virtual Flux Drive",
-							Size:   1000,
-							ID:     uuid.NewUUID().String(),
-							Device: "/dev/sdb1",
+							Model:    "Virtual Flux Drive",
+							Size:     1000,
+							DeviceID: uuid.NewUUID().String(),
+							Type:     "flux",
 						},
 					},
 					Total: 0,
@@ -125,8 +137,41 @@ func Test_cmdDiskList_Run(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Success 2 Resources / 3 Disks",
+			name:               "Render 2 available disks with --available flag",
+			showAvailableDisks: true,
 			mockDisks: disks{
+				mustBeRendered: true,
+				data:           types.Disks{},
+				error:          nil,
+			},
+			mockResources: resources{
+				mustBeRendered: true,
+				data: &api.ResourcesStorage{
+					Disks: []api.ResourcesStorageDisk{
+						{
+							Model:    "Virtual Warp Drive",
+							Size:     1000,
+							DeviceID: uuid.NewUUID().String(),
+							Type:     "warp",
+						},
+						{
+							Model:    "Virtual Flux Drive",
+							Size:     1000,
+							DeviceID: uuid.NewUUID().String(),
+							Type:     "flux",
+						},
+					},
+					Total: 0,
+				},
+				error: nil,
+			},
+			wantErr: false,
+		},
+		{
+			name:               "Only render configured discs by default",
+			showAvailableDisks: false,
+			mockDisks: disks{
+				mustBeRendered: true,
 				data: []types.Disk{
 					{
 						OSD:      0,
@@ -147,21 +192,20 @@ func Test_cmdDiskList_Run(t *testing.T) {
 				error: nil,
 			},
 			mockResources: resources{
+				mustBeRendered: false,
 				data: &api.ResourcesStorage{
 					Disks: []api.ResourcesStorageDisk{
 						{
-							Model:  "Virtual Warp Drive",
-							Size:   1000,
-							ID:     uuid.NewUUID().String(),
-							Device: "/dev/sda1",
-							Type:   "warp",
+							Model:    "Virtual Warp Drive",
+							Size:     1000,
+							DeviceID: uuid.NewUUID().String(),
+							Type:     "warp",
 						},
 						{
-							Model:  "Virtual Flux Drive",
-							Size:   1000,
-							ID:     uuid.NewUUID().String(),
-							Device: "/dev/sdb1",
-							Type:   "flux",
+							Model:    "Virtual Flux Drive",
+							Size:     1000,
+							DeviceID: uuid.NewUUID().String(),
+							Type:     "flux",
 						},
 					},
 					Total: 0,
@@ -180,11 +224,14 @@ func Test_cmdDiskList_Run(t *testing.T) {
 				apiClient: apiMock,
 			}
 
+			cmd := c.Command()
+			c.flgShowAvailableDisks = tt.showAvailableDisks
+
 			saveStdout := os.Stdout
 			r, w, _ := os.Pipe()
 			os.Stdout = w
 
-			if err := c.Run(c.Command(), []string{}); (err != nil) != tt.wantErr {
+			if err := c.Run(cmd, []string{}); (err != nil) != tt.wantErr {
 				t.Errorf("Run() error = %v, wantErr %v", err, tt.wantErr)
 			}
 
@@ -194,21 +241,43 @@ func Test_cmdDiskList_Run(t *testing.T) {
 
 			outputString := string(out)
 
-			for _, disk := range tt.mockDisks.data {
-				assert.Contains(t, outputString, strconv.FormatInt(disk.OSD, 10))
-				assert.Contains(t, outputString, disk.Location)
-				assert.Contains(t, outputString, disk.Path)
-			}
-
-			for _, disk := range tt.mockResources.data.Disks {
-				assert.Contains(t, outputString, disk.Model)
-				assert.Contains(t, outputString, fmt.Sprintf("%dB", disk.Size))
-				assert.Contains(t, outputString, disk.Type)
-				assert.Contains(t, outputString, disk.DevicePath)
-			}
+			//validate output for table formats
+			validateOutput(t, outputString, tt.mockDisks.data, tt.mockResources.data, tt.mockDisks.mustBeRendered, tt.mockResources.mustBeRendered)
 
 			println(outputString)
 
 		})
+	}
+}
+
+func validateOutput(t *testing.T, outputString string, configuredDisks []types.Disk, availableDisks *api.ResourcesStorage, shouldRenderConfiguredDisks bool, shouldRenderAvailableDisks bool) {
+	if shouldRenderConfiguredDisks {
+		for _, disk := range configuredDisks {
+			assert.Contains(t, outputString, strconv.FormatInt(disk.OSD, 10))
+			assert.Contains(t, outputString, disk.Location)
+			assert.Contains(t, outputString, disk.Path)
+		}
+	} else {
+		for _, disk := range configuredDisks {
+			assert.NotContains(t, outputString, strconv.FormatInt(disk.OSD, 10))
+			assert.NotContains(t, outputString, disk.Location)
+			assert.NotContains(t, outputString, disk.Path)
+		}
+	}
+
+	if shouldRenderAvailableDisks {
+		for _, disk := range availableDisks.Disks {
+			assert.Contains(t, outputString, disk.Model)
+			assert.Contains(t, outputString, fmt.Sprintf("%dB", disk.Size))
+			assert.Contains(t, outputString, disk.Type)
+			assert.Contains(t, outputString, fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID))
+		}
+	} else {
+		for _, disk := range availableDisks.Disks {
+			assert.NotContains(t, outputString, disk.Model)
+			assert.NotContains(t, outputString, fmt.Sprintf("%dB", disk.Size))
+			assert.NotContains(t, outputString, disk.Type)
+			assert.NotContains(t, outputString, fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID))
+		}
 	}
 }

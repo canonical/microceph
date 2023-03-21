@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/lxc/lxd/lxc/utils"
 	"os"
 	"time"
 
@@ -139,7 +140,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 
 	apiClient := client.NewClient(lc)
 	if wantsDisks {
-		err = listLocalDisks(apiClient)
+		err = listLocalDisks(apiClient, utils.TableFormatTable)
 		if err != nil {
 			return err
 		}
