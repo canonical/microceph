@@ -11,8 +11,9 @@ import (
 )
 
 type cmdDiskAdd struct {
-	common *CmdControl
-	disk   *cmdDisk
+	common    *CmdControl
+	disk      *cmdDisk
+	apiClient client.ApiWriter
 
 	flagWipe bool
 }
@@ -26,6 +27,16 @@ func (c *cmdDiskAdd) Command() *cobra.Command {
 
 	cmd.PersistentFlags().BoolVar(&c.flagWipe, "wipe", false, "Wipe the disk prior to use")
 
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+		if err != nil {
+			return err
+		}
+		cli, err := m.LocalClient()
+		c.apiClient = client.NewClient(cli)
+		return err
+	}
+
 	return cmd
 }
 
@@ -34,22 +45,12 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
-	if err != nil {
-		return err
-	}
-
-	cli, err := m.LocalClient()
-	if err != nil {
-		return err
-	}
-
 	req := &types.DisksPost{
 		Path: args[0],
 		Wipe: c.flagWipe,
 	}
 
-	err = client.AddDisk(context.Background(), cli, req)
+	err := c.apiClient.AddDisk(context.Background(), req)
 	if err != nil {
 		return err
 	}

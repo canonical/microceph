@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 
-	microCli "github.com/canonical/microcluster/client"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/lxc/lxd/lxc/utils"
 	"github.com/lxc/lxd/shared/units"
@@ -16,8 +15,9 @@ import (
 )
 
 type cmdDiskList struct {
-	common *CmdControl
-	disk   *cmdDisk
+	common    *CmdControl
+	disk      *cmdDisk
+	apiClient client.ApiReader
 }
 
 func (c *cmdDiskList) Command() *cobra.Command {
@@ -27,22 +27,23 @@ func (c *cmdDiskList) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+		if err != nil {
+			return err
+		}
+		cli, err := m.LocalClient()
+		c.apiClient = client.NewClient(cli)
+		return err
+	}
+
 	return cmd
 }
 
 func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
-	if err != nil {
-		return err
-	}
-
-	cli, err := m.LocalClient()
-	if err != nil {
-		return err
-	}
 
 	// List configured disks.
-	disks, err := client.GetDisks(context.Background(), cli)
+	disks, err := c.apiClient.GetDisks(context.Background())
 	if err != nil {
 		return err
 	}
@@ -62,7 +63,7 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// List local disks.
-	err = listLocalDisks(cli)
+	err = listLocalDisks(c.apiClient)
 	if err != nil {
 		return err
 	}
@@ -70,15 +71,15 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func listLocalDisks(cli *microCli.Client) error {
+func listLocalDisks(cli client.ApiReader) error {
 	// List configured disks.
-	disks, err := client.GetDisks(context.Background(), cli)
+	disks, err := cli.GetDisks(context.Background())
 	if err != nil {
 		return err
 	}
 
 	// List physical disks.
-	resources, err := client.GetResources(context.Background(), cli)
+	resources, err := cli.GetResources(context.Background())
 	if err != nil {
 		return err
 	}

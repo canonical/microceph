@@ -137,8 +137,9 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	apiClient := client.NewClient(lc)
 	if wantsDisks {
-		err = listLocalDisks(lc)
+		err = listLocalDisks(apiClient)
 		if err != nil {
 			return err
 		}
@@ -164,7 +165,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 				Wipe: diskWipe,
 			}
 
-			err = client.AddDisk(context.Background(), lc, req)
+			err = apiClient.AddDisk(context.Background(), req)
 			if err != nil {
 				return err
 			}

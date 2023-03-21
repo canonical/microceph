@@ -37,14 +37,16 @@ func (c *cmdStatus) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	apiClient := client.NewClient(cli)
+
 	// Get configured disks.
-	disks, err := client.GetDisks(context.Background(), cli)
+	disks, err := apiClient.GetDisks(context.Background())
 	if err != nil {
 		return err
 	}
 
 	// Get services.
-	services, err := client.GetServices(context.Background(), cli)
+	services, err := apiClient.GetServices(context.Background())
 	if err != nil {
 		return err
 	}

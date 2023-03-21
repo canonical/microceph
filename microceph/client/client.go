@@ -12,12 +12,56 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
+type ApiDisksGetter interface {
+	GetDisks(ctx context.Context) (types.Disks, error)
+}
+
+type ApiResourcesGetter interface {
+	GetResources(ctx context.Context) (*api.ResourcesStorage, error)
+}
+
+type ApiServicesGetter interface {
+	GetServices(ctx context.Context) (types.Services, error)
+}
+
+type ApiDisksAppender interface {
+	AddDisk(ctx context.Context, data *types.DisksPost) error
+}
+
+type ApiRGWEnabler interface {
+	EnableRGW(ctx context.Context, data *types.RGWService) error
+}
+
+type ApiReader interface {
+	ApiDisksGetter
+	ApiResourcesGetter
+	ApiServicesGetter
+}
+
+type ApiWriter interface {
+	ApiDisksAppender
+	ApiRGWEnabler
+}
+
+type ApiClient interface {
+	ApiReader
+	ApiWriter
+}
+
+type microCli struct {
+	restClient *client.Client
+}
+
+func NewClient(c *client.Client) ApiClient {
+	return microCli{restClient: c}
+}
+
 // AddDisk requests Ceph sets up a new OSD.
-func AddDisk(ctx context.Context, c *client.Client, data *types.DisksPost) error {
+func (m microCli) AddDisk(ctx context.Context, data *types.DisksPost) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
-	err := c.Query(queryCtx, "POST", api.NewURL().Path("disks"), data, nil)
+	err := m.restClient.Query(queryCtx, "POST", api.NewURL().Path("disks"), data, nil)
 	if err != nil {
 		return fmt.Errorf("Failed adding new disk: %w", err)
 	}
@@ -26,13 +70,13 @@ func AddDisk(ctx context.Context, c *client.Client, data *types.DisksPost) error
 }
 
 // GetDisks returns the list of configured disks.
-func GetDisks(ctx context.Context, c *client.Client) (types.Disks, error) {
+func (m microCli) GetDisks(ctx context.Context) (types.Disks, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
 	disks := types.Disks{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("disks"), nil, &disks)
+	err := m.restClient.Query(queryCtx, "GET", api.NewURL().Path("disks"), nil, &disks)
 	if err != nil {
 		return nil, fmt.Errorf("Failed listing disks: %w", err)
 	}
@@ -41,13 +85,13 @@ func GetDisks(ctx context.Context, c *client.Client) (types.Disks, error) {
 }
 
 // GetResources returns the list of storage devices on the system.
-func GetResources(ctx context.Context, c *client.Client) (*api.ResourcesStorage, error) {
+func (m microCli) GetResources(ctx context.Context) (*api.ResourcesStorage, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
 	storage := api.ResourcesStorage{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("resources"), nil, &storage)
+	err := m.restClient.Query(queryCtx, "GET", api.NewURL().Path("resources"), nil, &storage)
 	if err != nil {
 		return nil, fmt.Errorf("Failed listing storage devices: %w", err)
 	}
@@ -56,13 +100,13 @@ func GetResources(ctx context.Context, c *client.Client) (*api.ResourcesStorage,
 }
 
 // GetServices returns the list of configured ceph services.
-func GetServices(ctx context.Context, c *client.Client) (types.Services, error) {
+func (m microCli) GetServices(ctx context.Context) (types.Services, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
 	services := types.Services{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("services"), nil, &services)
+	err := m.restClient.Query(queryCtx, "GET", api.NewURL().Path("services"), nil, &services)
 	if err != nil {
 		return nil, fmt.Errorf("Failed listing services: %w", err)
 	}
@@ -71,10 +115,10 @@ func GetServices(ctx context.Context, c *client.Client) (types.Services, error) 
 }
 
 // EnableRGW requests Ceph configures the RGW service.
-func EnableRGW(ctx context.Context, c *client.Client, data *types.RGWService) error {
+func (m microCli) EnableRGW(ctx context.Context, data *types.RGWService) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("services", "rgw"), data, nil)
+	err := m.restClient.Query(queryCtx, "PUT", api.NewURL().Path("services", "rgw"), data, nil)
 	if err != nil {
 		return fmt.Errorf("Failed enabling RGW: %w", err)
 	}
