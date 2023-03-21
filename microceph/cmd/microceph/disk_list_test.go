@@ -4,22 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/api/types"
-	tests2 "github.com/canonical/microceph/microceph/tests"
-	"github.com/lxc/lxd/lxc/utils"
-	"github.com/lxc/lxd/shared/api"
-	"github.com/pborman/uuid"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
-	"gopkg.in/yaml.v3"
 	"io"
 	"os"
 	"strconv"
 	"testing"
+
+	"github.com/pborman/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"gopkg.in/yaml.v3"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	tests2 "github.com/canonical/microceph/microceph/mocks"
+	"github.com/lxc/lxd/lxc/utils"
+	"github.com/lxc/lxd/shared/api"
 )
 
 // make sure it fails like before on empty config
-func Test_cmdDiskList_Execute(t *testing.T) {
+func TestCmdDiskListExecute(t *testing.T) {
 	tests := []struct {
 		name    string
 		common  *CmdControl
@@ -46,7 +48,7 @@ func Test_cmdDiskList_Execute(t *testing.T) {
 	}
 }
 
-func Test_cmdDiskList_Run(t *testing.T) {
+func TestCmdDiskListRun(t *testing.T) {
 
 	type disks struct {
 		mustBeRendered bool
@@ -285,7 +287,7 @@ func Test_cmdDiskList_Run(t *testing.T) {
 			apiMock.On("GetDisks", mock.Anything).Return(tt.mockDisks.data, tt.mockDisks.error)
 			apiMock.On("GetResources", mock.Anything).Return(tt.mockResources.data, tt.mockResources.error)
 			c := &cmdDiskList{
-				apiClient: apiMock,
+				apiClient: &apiMock,
 			}
 
 			cmd := c.Command()

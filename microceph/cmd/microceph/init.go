@@ -3,17 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/lxc/lxd/lxc/utils"
 	"os"
 	"time"
 
-	"github.com/canonical/microcluster/microcluster"
-	"github.com/lxc/lxd/lxd/util"
-	cli "github.com/lxc/lxd/shared/cmd"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microcluster/microcluster"
+	"github.com/lxc/lxd/lxc/utils"
+	"github.com/lxc/lxd/lxd/util"
+	cli "github.com/lxc/lxd/shared/cmd"
 )
 
 type cmdInit struct {

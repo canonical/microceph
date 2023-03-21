@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
-	"github.com/canonical/microceph/microceph/api/types"
-	tests2 "github.com/canonical/microceph/microceph/tests"
-	"github.com/stretchr/testify/mock"
 	"testing"
+
+	"github.com/stretchr/testify/mock"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	tests2 "github.com/canonical/microceph/microceph/mocks"
 )
 
 // make sure it fails like before on empty config
-func Test_cmdDiskAdd_Execute(t *testing.T) {
+func TestCmdDiskAddExecute(t *testing.T) {
 	tests := []struct {
 		name    string
 		common  *CmdControl
@@ -35,7 +37,7 @@ func Test_cmdDiskAdd_Execute(t *testing.T) {
 	}
 }
 
-func Test_cmdDiskAdd_Run(t *testing.T) {
+func TestCmdDiskAddRun(t *testing.T) {
 	tests := []struct {
 		name    string
 		wipe    bool
@@ -62,7 +64,7 @@ func Test_cmdDiskAdd_Run(t *testing.T) {
 		apiMock.On("AddDisk", mock.Anything, req).Return(nil)
 
 		c := &cmdDiskAdd{
-			apiClient: apiMock,
+			apiClient: &apiMock,
 		}
 		cmd := c.Command()
 		c.flagWipe = tt.wipe

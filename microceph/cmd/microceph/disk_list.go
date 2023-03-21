@@ -3,16 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/lxc/lxd/shared/i18n"
 	"os"
 	"sort"
 
-	"github.com/canonical/microcluster/microcluster"
-	"github.com/lxc/lxd/lxc/utils"
-	"github.com/lxc/lxd/shared/units"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microcluster/microcluster"
+	"github.com/lxc/lxd/lxc/utils"
+	"github.com/lxc/lxd/shared/i18n"
+	"github.com/lxc/lxd/shared/units"
 )
 
 type cmdDiskList struct {

@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
-	"github.com/canonical/microceph/microceph/api/types"
-	tests2 "github.com/canonical/microceph/microceph/tests"
-	"github.com/stretchr/testify/mock"
 	"testing"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	tests2 "github.com/canonical/microceph/microceph/mocks"
+	"github.com/stretchr/testify/mock"
 )
 
 // make sure it fails like before on empty config
-func Test_cmdDisableRGW_Execute(t *testing.T) {
+func TestCmdDisableRGWExecute(t *testing.T) {
 	tests := []struct {
 		name    string
 		common  *CmdControl
@@ -35,7 +36,7 @@ func Test_cmdDisableRGW_Execute(t *testing.T) {
 	}
 }
 
-func Test_cmdDisableRGW_Run(t *testing.T) {
+func TestCmdDisableRGWRun(t *testing.T) {
 	tests := []struct {
 		name    string
 		wantErr bool
@@ -52,7 +53,7 @@ func Test_cmdDisableRGW_Run(t *testing.T) {
 		}
 		apiMock.On("EnableRGW", mock.Anything, req).Return(nil)
 		c := &cmdDisableRGW{
-			apiClient: apiMock,
+			apiClient: &apiMock,
 		}
 
 		if err := c.Run(c.Command(), []string{}); (err != nil) != tt.wantErr {
