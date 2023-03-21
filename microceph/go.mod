@@ -3,8 +3,8 @@ module github.com/canonical/microceph/microceph
 go 1.18
 
 require (
-	github.com/canonical/microcluster v0.0.0-20230313205906-0d8b4a458098
-	github.com/lxc/lxd v0.0.0-20230310224854-36b345fbd578
+	github.com/canonical/microcluster v0.0.0-20230313210313-e1b810cb8513
+	github.com/lxc/lxd v0.0.0-20230320141943-afa20048df16
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pborman/uuid v1.2.1
 	github.com/spf13/cobra v1.6.1
@@ -19,7 +19,7 @@ require (
 	github.com/digitalocean/go-smbios v0.0.0-20180907143718-390a4f403a8e // indirect
 	github.com/flosch/pongo2 v0.0.0-20200913210552-0d938eb266f3 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
-	github.com/fvbommel/sortorder v1.0.2 // indirect
+	github.com/fvbommel/sortorder v1.1.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-macaroon-bakery/macaroon-bakery/v3 v3.0.1 // indirect
 	github.com/go-macaroon-bakery/macaroonpb v1.0.0 // indirect
@@ -55,7 +55,7 @@ require (
 	golang.org/x/sys v0.6.0 // indirect
 	golang.org/x/term v0.6.0 // indirect
 	golang.org/x/text v0.8.0 // indirect
-	google.golang.org/protobuf v1.29.0 // indirect
+	google.golang.org/protobuf v1.30.0 // indirect
 	gopkg.in/errgo.v1 v1.0.1 // indirect
 	gopkg.in/httprequest.v1 v1.2.1 // indirect
 	gopkg.in/macaroon.v2 v2.1.0 // indirect
