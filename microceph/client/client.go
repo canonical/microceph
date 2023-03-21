@@ -14,7 +14,7 @@ import (
 
 // AddDisk requests Ceph sets up a new OSD.
 func AddDisk(ctx context.Context, c *client.Client, data *types.DisksPost) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*30)
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
 	err := c.Query(queryCtx, "POST", api.NewURL().Path("disks"), data, nil)
@@ -72,7 +72,7 @@ func GetServices(ctx context.Context, c *client.Client) (types.Services, error) 
 
 // EnableRGW requests Ceph configures the RGW service.
 func EnableRGW(ctx context.Context, c *client.Client, data *types.RGWService) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*30)
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 	err := c.Query(queryCtx, "PUT", api.NewURL().Path("services", "rgw"), data, nil)
 	if err != nil {
