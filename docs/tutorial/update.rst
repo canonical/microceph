@@ -1,7 +1,8 @@
 Update management
 ~~~~~~~~~~~~~~~~~
 
-Microceph will not manages its own updates - users are required to do so. In order to set up microceph to manage updates correctly, the following steps need to be taken.
+Updates in Microceph are managed by the usual snap mechanisms. However, because snaps automatically deploy updates, this can be problematic in Microceph clusters that need an ordered rollout of updates.
+As such, we strongly advise that automatic updates be disabled for Microceph. Documentation about snaps updates can be consulted `here <https://snapcraft.io/docs/keeping-snaps-up-to-date>`_.
 
 Disable automatic updates
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -10,7 +11,7 @@ On each node of the cluster where microceph has been installed, we must run the 
 
 .. code-block:: shell
 
-    snap refresh --hold microceph
+    sudo snap refresh --hold microceph
 
 This will prevent automatic updates from happening.
 
@@ -48,8 +49,8 @@ With a healthy cluster, we need to run the following command on each node:
 
 .. code-block:: shell
 
-    snap refresh microceph
-    snap refresh --hold microceph
+    sudo snap refresh microceph
+    sudo snap refresh --hold microceph
 
 The order on which we run the commands is important. It should be as follows:
 
@@ -62,3 +63,11 @@ The output of the 'microceph.ceph status' command should provide us with the hos
 At present time, managers and monitors reside on the same nodes, but that may not always be the case.
 
 With that done, we should verify the cluster together to make it's settled and healthy once again.
+
+Additionally, we may consult that the new version has been refreshed correctly by running:
+
+.. code-block:: shell
+
+    snap list microceph
+
+And verifying that it matches our expectation.
