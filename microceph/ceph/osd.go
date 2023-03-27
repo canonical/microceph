@@ -95,22 +95,38 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 	for _, disk := range storage.Disks {
 		// Check if full disk.
 		if disk.Device == dev {
-			path = fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID)
+			candidate := fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID)
+			// check if candidate exists
+			if shared.PathExists(candidate) {
+				path = candidate
+			} else {
+				candidate = fmt.Sprintf("/dev/disk/by-path/%s", disk.DevicePath)
+				if shared.PathExists(candidate) {
+					path = candidate
+				}
+			}
 			break
 		}
-
 		// Check if partition.
 		found := false
 		for _, part := range disk.Partitions {
 			if part.Device == dev {
-				path = fmt.Sprintf("/dev/disk/by-id/%s-part%d", disk.DeviceID, part.Partition)
+				candidate := fmt.Sprintf("/dev/disk/by-id/%s-part%d", disk.DeviceID, part.Partition)
+				if shared.PathExists(candidate) {
+					path = candidate
+				} else {
+					candidate = fmt.Sprintf("/dev/disk/by-path/%s-part%d", disk.DevicePath, part.Partition)
+					if shared.PathExists(candidate) {
+						path = candidate
+					}
+				}
 				break
 			}
 		}
-
 		if found {
 			break
 		}
+		// Fallthrough. We didn't find a /dev/disk path for this device, use the original path.
 	}
 
 	// Wipe the block device if requested.
