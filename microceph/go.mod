@@ -3,8 +3,8 @@ module github.com/canonical/microceph/microceph
 go 1.18
 
 require (
-	github.com/canonical/microcluster v0.0.0-20230313210313-e1b810cb8513
-	github.com/lxc/lxd v0.0.0-20230320141943-afa20048df16
+	github.com/canonical/microcluster v0.0.0-20230323033829-3e5dfc18be05
+	github.com/lxc/lxd v0.0.0-20230327083044-d6d3aa355604
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pborman/uuid v1.2.1
 	github.com/spf13/cobra v1.6.1
