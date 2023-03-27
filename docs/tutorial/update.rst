@@ -2,7 +2,7 @@ Update management
 ~~~~~~~~~~~~~~~~~
 
 Updates in Microceph are managed by the usual snap mechanisms. However, because snaps automatically deploy updates, this can be problematic in Microceph clusters that need an ordered rollout of updates.
-As such, we strongly advise that automatic updates be disabled for Microceph. Documentation about snaps updates can be consulted `here <https://snapcraft.io/docs/keeping-snaps-up-to-date>`_.
+As such, we strongly advise that automatic updates be disabled for Microceph. Documentation about snap updates can be consulted `here <https://snapcraft.io/docs/keeping-snaps-up-to-date>`_.
 
 Disable automatic updates
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -52,11 +52,11 @@ With a healthy cluster, we need to run the following command on each node:
     sudo snap refresh microceph
     sudo snap refresh --hold microceph
 
-The order on which we run the commands is important. It should be as follows:
+The order in which we run the commands is important. It should be as follows:
 
-1. Managers
-2. Monitors
-3. All other entities (i.e: OSDs)
+1. Managers (mgr)
+2. Monitors (mon)
+3. All other entities (osd, rgw, etc.)
 
 The output of the 'microceph.ceph status' command should provide us with the hostnames of the mons and managers ('microceph-1' et al in this example).
 
