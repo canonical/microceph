@@ -96,17 +96,20 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 		// Check if full disk.
 		if disk.Device == dev {
 			candidate := fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID)
+
 			// check if candidate exists
-			if shared.PathExists(candidate) {
+			if shared.PathExists(candidate) && !shared.IsDir(candidate) {
 				path = candidate
 			} else {
 				candidate = fmt.Sprintf("/dev/disk/by-path/%s", disk.DevicePath)
-				if shared.PathExists(candidate) {
+				if shared.PathExists(candidate) && !shared.IsDir(candidate) {
 					path = candidate
 				}
 			}
+
 			break
 		}
+
 		// Check if partition.
 		found := false
 		for _, part := range disk.Partitions {
@@ -120,9 +123,11 @@ func AddOSD(s *state.State, path string, wipe bool) error {
 						path = candidate
 					}
 				}
+
 				break
 			}
 		}
+
 		if found {
 			break
 		}
