@@ -49,6 +49,8 @@ fsid = {{.fsid}}
 mon host = {{.monitors}}
 auth allow insecure global id reclaim = false
 public addr = {{.addr}}
+ms bind ipv4 = {{.ipv4}}
+ms bind ipv6 = {{.ipv6}}
 `)),
 		configFile: "ceph.conf",
 		configDir:  configDir,
