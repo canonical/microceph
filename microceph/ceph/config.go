@@ -56,12 +56,15 @@ func updateConfig(s common.StateInterface) error {
 	}
 
 	conf := newCephConfig(confPath)
+	address := s.ClusterState().Address().Hostname()
 	err = conf.WriteConfig(
 		map[string]any{
 			"fsid":     config["fsid"],
 			"runDir":   runPath,
 			"monitors": strings.Join(monitorAddresses, ","),
-			"addr":     s.ClusterState().Address().Hostname(),
+			"addr":     address,
+			"ipv4":     strings.Contains(address, "."),
+			"ipv6":     strings.Contains(address, ":"),
 		},
 	)
 	if err != nil {
