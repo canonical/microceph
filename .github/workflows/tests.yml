@@ -21,6 +21,11 @@ jobs:
           sudo iptables -F FORWARD  || true
           sudo ip6tables -F FORWARD || true
 
+      - name: set up python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
       - name: Install dependencies
         run: |
           sudo snap refresh
@@ -28,6 +33,13 @@ jobs:
           sudo lxd init --auto
           sudo snap install snapcraft --classic
           snap list
+          # Python
+          sudo python -m pip install --upgrade pip
+          sudo pip install flake8 pep8-naming boto3
+
+      - name: Lint Check
+        run: |
+          flake8 . --count --show-source --statistics
 
       - name: Build snaps
         run: snapcraft
@@ -118,13 +130,8 @@ jobs:
       - name: Exercise RGW
         run: |
           set -eux
-          sudo microceph.radosgw-admin user create --uid=test --display-name=test
-          sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey
-          sudo apt-get -qq install s3cmd
-          echo hello-radosgw > ~/test.txt
-          s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl mb s3://testbucket
-          s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/test.txt s3://testbucket
-          curl -s http://localhost/testbucket/test.txt | grep -F hello-radosgw
+          sudo microceph.radosgw-admin user create --uid=test --display-name=test > keys.json
+          sudo python3 scripts/appS3.py http://localhost:80 keys.json --obj-num 2
 
       - name: Upload artifacts
         if: always()
