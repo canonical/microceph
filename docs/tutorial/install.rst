@@ -7,9 +7,10 @@ Setup VMs
 
 .. code-block:: shell
 
-    lxc launch images:ubuntu/22.04/cloud microceph-1 --vm
-    lxc launch images:ubuntu/22.04/cloud microceph-2 --vm
-    lxc launch images:ubuntu/22.04/cloud microceph-3 --vm
+    lxc launch images:ubuntu/22.04/cloud microceph-1 --vm -c limits.cpu=2 -c limits.memory=4GiB
+    lxc launch images:ubuntu/22.04/cloud microceph-2 --vm -c limits.cpu=2 -c limits.memory=4GiB
+    lxc launch images:ubuntu/22.04/cloud microceph-3 --vm -c limits.cpu=2 -c limits.memory=4GiB
+
 
 Add storage
 ~~~~~~~~~~~
