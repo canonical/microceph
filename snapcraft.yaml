@@ -19,13 +19,13 @@ layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET/rados-classes:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET/rados-classes
   /etc/ceph:
-    symlink: $SNAP_DATA/conf
+    bind: $SNAP_DATA/conf
   /usr/share/ceph:
-    symlink: $SNAP/share/ceph
+    bind: $SNAP/share/ceph
   /var/lib/ceph:
-    symlink: $SNAP_COMMON/data
+    bind: $SNAP_COMMON/data
   /var/log/ceph:
-    symlink: $SNAP_COMMON/logs
+    bind: $SNAP_COMMON/logs
 
 apps:
   # Service
