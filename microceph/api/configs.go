@@ -65,7 +65,7 @@ func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
 	// Restart Daemons on host.
 	daemons := configTable[req.Key].Daemons
 	for i := range daemons {
-		err = ceph.RestartCephDaemon(daemons[i])
+		err = ceph.RestartCephService(daemons[i])
 		if err != nil {
 			return response.SmartError(err)
 		}
@@ -96,7 +96,7 @@ func cmdConfigsDelete(s *state.State, r *http.Request) response.Response {
 	// Restart Daemons on host.
 	daemons := configTable[req.Key].Daemons
 	for i := range daemons {
-		err = ceph.RestartCephDaemon(daemons[i])
+		err = ceph.RestartCephService(daemons[i])
 		if err != nil {
 			return response.SmartError(err)
 		}

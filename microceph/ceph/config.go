@@ -21,10 +21,10 @@ type ConfigExtras struct{
 	Cb      *func(s common.StateInterface, c types.Config)
 }
 
-type ConfigItem map[string]ConfigExtras
+type ConfigTable map[string]ConfigExtras
 
 // Check if certain key is present in the map.
-func (c ConfigItem) isKeyPresent(key string) bool {
+func (c ConfigTable) isKeyPresent(key string) bool {
 	if _, ok := c[key]; !ok {
         return false
     }
@@ -33,15 +33,15 @@ func (c ConfigItem) isKeyPresent(key string) bool {
 }
 
 // Return keys of the given set
-func (c ConfigItem) Keys() (keys []string) {
+func (c ConfigTable) Keys() (keys []string) {
     for k := range c {
         keys = append(keys, k)
     }
     return keys
 }
 
-func GetConfigTable() ConfigItem {
-	return ConfigItem{
+func GetConfigTable() ConfigTable {
+	return ConfigTable{
 		"public_network":  {"global", []string{"mon", "osd"}, "", nil},
 		"cluster_network": {"global", []string{"osd"}, "", nil},
 	}
@@ -54,10 +54,6 @@ type ConfigDump []struct{
 	Section string
 	Name    string
 	Value   string
-}
-
-func RestartCephDaemon(daemon string) error {
-	return snapReload(daemon)
 }
 
 func SetConfigItem(s common.StateInterface, c types.Config) error {
