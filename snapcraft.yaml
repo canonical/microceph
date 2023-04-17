@@ -100,6 +100,10 @@ apps:
     command: commands/rbd
     plugs:
       - network
+  rados:
+    command: commands/rados
+    plugs:
+      - network
 
 parts:
   ceph:
@@ -127,6 +131,7 @@ parts:
       - bin/ceph-osd
       - bin/monmaptool
       - bin/rbd
+      - bin/rados
       - bin/radosgw
       - bin/radosgw-admin
       - lib/*/ceph
@@ -160,6 +165,7 @@ parts:
       - lib/*/librabbitmq.so*
       - lib/*/librados.so*
       - lib/*/libradosgw.so*
+      - lib/*/libradosstriper.so.*
       - lib/*/librbd.so*
       - lib/*/librdmacm.so*
       - lib/*/libroken.so*
