@@ -4,18 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/Rican7/retry"
 	"github.com/Rican7/retry/backoff"
 	"github.com/Rican7/retry/strategy"
 	"github.com/canonical/microcluster/state"
+	"github.com/lxc/lxd/shared/logger"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/tidwall/gjson"
 )
 
-type Set map[string]int
+type Set map[string]struct{}
 
 func (sub Set) isIn(super Set) bool {
 	flag := true
@@ -38,20 +40,38 @@ var serviceWorkerTable = map[string](func () (Set, error)) {
 	"mon": getMons,
 }
 
-func RestartCephService(service string) error {
-
-	if _, ok := serviceWorkerTable[service]; !ok {
-		return fmt.Errorf("No handler defined for service %s", service)
+// Restarts (in order) all Ceph Services provided in the input slice on the host.
+func RestartCephServices(services []string) error {
+	for i := range services {
+		err := RestartCephService(services[i])
+		if err != nil {
+			logger.Error(fmt.Sprintf("Service %s restart failed: %v ", services[i], err))
+			return err
+		}
 	}
 
+	return nil
+}
+
+// Restart provided ceph service ("mon"/"osd"...) on the host.
+func RestartCephService(service string) error {
+	if _, ok := serviceWorkerTable[service]; !ok {
+		errStr := fmt.Sprintf("No handler defined for service %s", service)
+		logger.Error(errStr)
+		return fmt.Errorf(errStr)
+	}
+
+	// Fetch a Set{} of available daemons for the service.
 	workers, err := serviceWorkerTable[service]()
 	if err != nil {
+		logger.Errorf("Failed fetching service %s workers", service)
 		return err
 	}
 
-	// Reload the service.
-	snapReload(service)
+	// Restart the service.
+	snapRestart(service, false)
 
+	// Check all the daemons available before Restart are up.
 	err = retry.Retry(func(i uint) error {
 		iWorkers, err := serviceWorkerTable[service]()
 		if err != nil {
@@ -60,12 +80,14 @@ func RestartCephService(service string) error {
 
 		// All still not up
 		if !workers.isIn(iWorkers) {
-			return fmt.Errorf(
+			errStr := fmt.Sprintf(
 				"Attempt %d: Workers: %v not all present in %v", i, workers, iWorkers,
 			)
+			logger.Error(errStr)
+			return fmt.Errorf(errStr)
 		}
 		return nil
-	}, strategy.Delay(5), strategy.Limit(10), strategy.Backoff(backoff.Linear(5)))
+	}, strategy.Delay(5), strategy.Limit(10), strategy.Backoff(backoff.Linear(10*time.Second)))
 	if err != nil {
 		return err
 	}
@@ -74,7 +96,7 @@ func RestartCephService(service string) error {
 }
 
 func getMons() (Set, error) {
-	var retval Set
+	retval := Set{}
 	output, err := processExec.RunCommand("ceph", "mon", "dump", "-f", "json-pretty")
 	if err != nil {
 		return nil, err
@@ -83,14 +105,14 @@ func getMons() (Set, error) {
 	// Get a list of mons.
 	mons := gjson.Get(output, "mons.#.name")
 	for _, key := range mons.Array() {
-		retval[key.String()] = 1
+		retval[key.String()] = struct{}{}
 	}
 
 	return retval, nil
 }
 
 func getUpOsds() (Set, error) {
-	var retval Set
+	retval := Set{}
 	output, err := processExec.RunCommand("ceph", "osd", "dump", "-f", "json-pretty")
 	if err != nil {
 		return nil, err
@@ -99,7 +121,7 @@ func getUpOsds() (Set, error) {
 	// Get a list of uuid of osds in up state.
 	upOsds := gjson.Get(output, "osds.#(up==1)#.uuid")
 	for _, element := range upOsds.Array() {
-		retval[element.String()] = 1
+		retval[element.String()] = struct{}{}
 	}
 	return retval, nil
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/spf13/cobra"
 )
 
@@ -10,7 +9,6 @@ type cmdClusterConfig struct {
 	cluster *cmdCluster
 }
 
-var allowList = ceph.GetConfigTable()
 func (c *cmdClusterConfig) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",

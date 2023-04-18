@@ -42,13 +42,17 @@ func snapStop(service string, disable bool) error {
 	return nil
 }
 
-// snapReload restarts a service via snapctl.
-func snapReload(service string) error {
+// Restarts (optionally reloads) a service via snapctl.
+func snapRestart(service string, isReload bool) error {
 	args := []string{
 		"restart",
-		"--reload",
-		fmt.Sprintf("microceph.%s", service),
 	}
+
+	if isReload {
+		args = append(args, "--reload")
+	}
+
+	args = append(args, fmt.Sprintf("microceph.%s", service))
 
 	_, err := processExec.RunCommand("snapctl", args...)
 	if err != nil {

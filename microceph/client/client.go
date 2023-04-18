@@ -8,10 +8,9 @@ import (
 	"time"
 
 	"github.com/canonical/microcluster/client"
-	restTypes "github.com/canonical/microcluster/rest/types"
 	"github.com/canonical/microcluster/state"
-	"github.com/lxc/lxd/lxd/cluster/request"
 	"github.com/lxc/lxd/shared/api"
+	"github.com/lxc/lxd/shared/logger"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )
@@ -54,37 +53,44 @@ func GetConfig(ctx context.Context, c *client.Client, data *types.Config) (types
 	return configs, nil
 }
 
-// IsForwardedRequest determines if this request has been forwarded from another cluster member.
-func IsForwardedRequest(r *http.Request) bool {
-	return r.Header.Get("User-Agent") == request.UserAgentNotifier
-}
+func RestartService(ctx context.Context, c *client.Client, data *types.Services) (error) {
+	// 120 second timeout for waiting.
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
 
-func ForwardConfigRequestToClusterMembers(s *state.State, r *http.Request, data *types.Config, handle func(ctx context.Context, c *client.Client, data *types.Config) error) (error) {
-	// Get a collection of clients every other cluster member, with the notification user-agent set.
-	cluster, err := s.Cluster(r)
+	err := c.Query(queryCtx, "POST", api.NewURL().Path("services", "restart"), data, nil)
 	if err != nil {
-		return fmt.Errorf("Failed to get a client for every cluster member: %w", err)
+		url := c.URL()
+		return fmt.Errorf("Failed Forwarding To: %s: %w", url.String(), err)
 	}
 
-	err = cluster.Query(s.Context, true, func(ctx context.Context, c *client.Client) error {
-		addrPort, err := restTypes.ParseAddrPort(s.Address().URL.Host)
-		if err != nil {
-			return fmt.Errorf("Failed to parse addr:port of listen address %q: %w", s.Address().URL.Host, err)
-		}
+	return nil
+}
 
-		// Asynchronously send a POST to each other cluster member.
-		err = handle(ctx, c, data)
-		if err != nil {
-			clientURL := c.URL()
-			return fmt.Errorf("Failed Forwarding To: %q, From: %s: %w", clientURL.String(), addrPort, err)
-		}
+// Sends the desired list of services to be restarted on every other member of the cluster.
+func SendRestartRequestToClusterMembers(s *state.State, r *http.Request, services []string) (error) {
+	// Populate the restart request data.
+	var data types.Services
+	for _, service := range services {
+		data = append(data, types.Service{Service: service})
+	}
 
-		return nil
-	})
+	// Get a collection of clients to every other cluster member, with the notification user-agent set.
+	cluster, err := s.Cluster(r)
 	if err != nil {
+		logger.Error(fmt.Sprintf("Failed to get a client for every cluster member: %v", err))
 		return err
 	}
 
+	for _, remoteClient := range cluster {
+		// In order send restart to each cluster member and wait.
+		err = RestartService(s.Context, &remoteClient, &data)
+		if err != nil {
+			logger.Error(fmt.Sprintf("Restart error: %v", err))
+			return err
+		}
+	}
+	
 	return nil
 }
 

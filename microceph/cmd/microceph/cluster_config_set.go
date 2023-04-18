@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
@@ -27,6 +28,7 @@ func (c *cmdClusterConfigSet) Command() *cobra.Command {
 }
 
 func (c *cmdClusterConfigSet) Run(cmd *cobra.Command, args []string) error {
+	allowList := ceph.GetConfigTable()
 	if len(args) != 2 {
 		return cmd.Help()
 	}

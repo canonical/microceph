@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/lxc/lxd/lxc/utils"
@@ -28,7 +29,9 @@ func (c *cmdClusterConfigGet) Command() *cobra.Command {
 }
 
 func (c *cmdClusterConfigGet) Run(cmd *cobra.Command, args []string) error {
-	// Get can be called with a single key or without any key for all configs.
+	allowList := ceph.GetConfigTable()
+
+	// Get can be called with a single key.
 	if len(args) != 1 {
 		return cmd.Help()
 	}

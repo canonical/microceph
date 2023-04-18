@@ -11,11 +11,7 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
-	"github.com/canonical/microceph/microceph/common"
 )
-
-// Config table for ConfigExtras
-var configTable = ceph.GetConfigTable()
 
 // /1.0/configs endpoint.
 var configsCmd = rest.Endpoint{
@@ -35,7 +31,7 @@ func cmdConfigsGet(s *state.State, r *http.Request) response.Response {
 	}
 
 	// Fetch configs.
-	configs, err := ceph.ListConfigs(common.CephState{State: s}, req.Key)
+	configs, err := ceph.ListConfigs()
 	if err != nil {
 		return response.InternalError(err)
 	}
@@ -45,62 +41,50 @@ func cmdConfigsGet(s *state.State, r *http.Request) response.Response {
 
 func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
 	var req types.Config
+	configTable := ceph.GetConfigTable()
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		return response.InternalError(err)
 	}
 
-	if !client.IsForwardedRequest(r) {
-		// Call set on the original Request but not on Forwarded Requests.
-		err = ceph.SetConfigItem(common.CephState{State: s}, req)
-		if err != nil {
-			return response.SmartError(err)
-		}
-
-		// Forward request to cluster members
-		err = client.ForwardConfigRequestToClusterMembers(s, r, &req, client.SetConfig)
+	// Configure the key/value
+	err = ceph.SetConfigItem(req)
+	if err != nil {
+		return response.SmartError(err)
 	}
 
-	// Restart Daemons on host.
-	daemons := configTable[req.Key].Daemons
-	for i := range daemons {
-		err = ceph.RestartCephService(daemons[i])
-		if err != nil {
-			return response.SmartError(err)
-		}
-	}
+	services := configTable[req.Key].Daemons
+	go func() {
+		client.SendRestartRequestToClusterMembers(s, r, services)
+		// Restart Daemons on host.
+		ceph.RestartCephServices(services)
+	}()
 
 	return response.EmptySyncResponse
 }
 
 func cmdConfigsDelete(s *state.State, r *http.Request) response.Response {
 	var req types.Config
+	configTable := ceph.GetConfigTable()
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		return response.InternalError(err)
 	}
 
-	if !client.IsForwardedRequest(r) {
-		// Call set on the original Request but not on Forwarded Requests.
-		err = ceph.RemoveConfigItem(common.CephState{State: s}, req)
-		if err != nil {
-			return response.SmartError(err)
-		}
-
-		// Forward request to cluster members
-		err = client.ForwardConfigRequestToClusterMembers(s, r, &req, client.ClearConfig)
+	// Clean the key/value
+	err = ceph.RemoveConfigItem(req)
+	if err != nil {
+		return response.SmartError(err)
 	}
 
-	// Restart Daemons on host.
-	daemons := configTable[req.Key].Daemons
-	for i := range daemons {
-		err = ceph.RestartCephService(daemons[i])
-		if err != nil {
-			return response.SmartError(err)
-		}
-	}
+	services := configTable[req.Key].Daemons
+	go func() {
+		client.SendRestartRequestToClusterMembers(s, r, services)
+		// Restart Daemons on host.
+		ceph.RestartCephServices(services)
+	}()
 
 	return response.EmptySyncResponse
 }
