@@ -28,6 +28,7 @@ journey through the product.
    install
    initial_setup
    add_osds
+   update
 
 Follow the core tutorial steps in sequence; they take you on a learning journey through the product.
 
