@@ -36,5 +36,5 @@ Install Microceph
 .. code-block:: shell
 
     for i in $(seq 1 3); do
-        lxc exec microceph-$i -- sh -c 'snap install microceph'
+        lxc exec microceph-$i -- sh -c 'snap install microceph && snap refresh --hold microceph'
     done
