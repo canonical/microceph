@@ -23,17 +23,21 @@ var configsCmd = rest.Endpoint{
 }
 
 func cmdConfigsGet(s *state.State, r *http.Request) response.Response {
+	var err error
 	var req types.Config
+	var configs types.Configs
 
-	err := json.NewDecoder(r.Body).Decode(&req)
+	err = json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		return response.InternalError(err)
 	}
 
-	// Fetch configs.
-	configs, err := ceph.ListConfigs()
-	if err != nil {
-		return response.InternalError(err)
+	// If a valid key string is passed, fetch that key.
+	if len(req.Key) > 0 {
+		configs, err = ceph.GetConfigItem(req)
+	} else {
+		// Fetch all configs.
+		configs, err = ceph.ListConfigs()
 	}
 
 	return response.SyncResponse(true, configs)
@@ -55,12 +59,8 @@ func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
 	}
 
 	services := configTable[req.Key].Daemons
-	go func() {
-		client.SendRestartRequestToClusterMembers(s, r, services)
-		// Restart Daemons on host.
-		ceph.RestartCephServices(services)
-	}()
-
+	client.ConfigChangeRefresh(s, services, req.Wait)
+	
 	return response.EmptySyncResponse
 }
 
@@ -80,11 +80,7 @@ func cmdConfigsDelete(s *state.State, r *http.Request) response.Response {
 	}
 
 	services := configTable[req.Key].Daemons
-	go func() {
-		client.SendRestartRequestToClusterMembers(s, r, services)
-		// Restart Daemons on host.
-		ceph.RestartCephServices(services)
-	}()
+	client.ConfigChangeRefresh(s, services, req.Wait)
 
 	return response.EmptySyncResponse
 }

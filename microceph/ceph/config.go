@@ -14,9 +14,11 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 )
 
+// Config Table is the source of additional information for each supported config key
+// Refer to GetConfigTable()
 type ConfigTable map[string]struct{
 	Who     string // Ceph Config internal <who> against each key
-	Daemons []string // Daemons that need to be restarted post config change.
+	Daemons []string // List of Daemons that need to be restarted across the cluster for the config change to take effect.
 }
 
 // Check if certain key is present in the map.
@@ -24,7 +26,7 @@ func (c ConfigTable) isKeyPresent(key string) bool {
 	if _, ok := c[key]; !ok {
 		return false
 	}
-	
+
 	return true
 }
 
@@ -53,7 +55,7 @@ type ConfigDump []ConfigDumpItem
 
 func SetConfigItem(c types.Config) error {
 	configTable := GetConfigTable()
-	
+
 	args := []string{
 		"config",
 		"set",
@@ -63,34 +65,40 @@ func SetConfigItem(c types.Config) error {
 		"-f",
 		"json-pretty",
 	}
-	
+
 	_, err := processExec.RunCommand("ceph", args...)
 	if err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
-func GetConfigItem(c types.Config) (types.Config, error) {
+func GetConfigItem(c types.Config) (types.Configs, error) {
 	var err error
 	configTable := GetConfigTable()
-	
+	ret := make(types.Configs, 1)
+	who := "mon"
+
+	// workaround to query global configs from mon entity
+	if configTable[c.Key].Who != "global" {
+		who = configTable[c.Key].Who
+	}
+
 	args := []string{
 		"config",
 		"get",
-		configTable[c.Key].Who,
+		who,
 		c.Key,
-		"-f",
-		"json-pretty",
 	}
-	
-	c.Value, err = processExec.RunCommand("ceph", args...)
+
+	ret[0].Key = c.Key
+	ret[0].Value, err = processExec.RunCommand("ceph", args...)
 	if err != nil {
-		return c, err
+		return nil, err
 	}
-	
-	return c, nil
+
+	return ret, nil
 }
 
 func RemoveConfigItem(c types.Config) error {
@@ -100,15 +108,13 @@ func RemoveConfigItem(c types.Config) error {
 		"rm",
 		configTable[c.Key].Who,
 		c.Key,
-		"-f",
-		"json-pretty",
 	}
-	
+
 	_, err := processExec.RunCommand("ceph", args...)
 	if err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -122,12 +128,12 @@ func ListConfigs() (types.Configs, error) {
 		"-f",
 		"json-pretty",
 	}
-	
+
 	output, err := processExec.RunCommand("ceph", args...)
 	if err != nil {
 		return configs, err
 	}
-	
+
 	json.Unmarshal([]byte(output), &dump)
 	// Only take configs permitted in config table.
 	for _, configItem := range dump {
@@ -138,7 +144,7 @@ func ListConfigs() (types.Configs, error) {
 			})
 		}
 	}
-	
+
 	return configs, nil
 }
 
@@ -146,35 +152,35 @@ func ListConfigs() (types.Configs, error) {
 func updateConfig(s common.StateInterface) error {
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
 	runPath := filepath.Join(os.Getenv("SNAP_DATA"), "run")
-	
+
 	// Get the configuration and servers.
 	var err error
 	var configItems []database.ConfigItem
 	var monitors []database.Service
-	
+
 	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		configItems, err = database.GetConfigItems(ctx, tx)
 		if err != nil {
 			return err
 		}
-		
+
 		serviceName := "mon"
 		monitors, err = database.GetServices(ctx, tx, database.ServiceFilter{Service: &serviceName})
 		if err != nil {
 			return err
 		}
-		
+
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	
+
 	config := map[string]string{}
 	for _, item := range configItems {
 		config[item.Key] = item.Value
 	}
-	
+
 	monitorAddresses := make([]string, len(monitors))
 	remotes := s.ClusterState().Remotes().RemotesByName()
 	for i, monitor := range monitors {
@@ -182,10 +188,10 @@ func updateConfig(s common.StateInterface) error {
 		if !ok {
 			continue
 		}
-		
+
 		monitorAddresses[i] = remote.Address.Addr().String()
 	}
-	
+
 	conf := newCephConfig(confPath)
 	address := s.ClusterState().Address().Hostname()
 	err = conf.WriteConfig(
@@ -201,7 +207,7 @@ func updateConfig(s common.StateInterface) error {
 	if err != nil {
 		return fmt.Errorf("Couldn't render ceph.conf: %w", err)
 	}
-	
+
 	// Generate ceph.client.admin.keyring
 	keyring := newCephKeyring(confPath, "ceph.keyring")
 	err = keyring.WriteConfig(
@@ -213,6 +219,6 @@ func updateConfig(s common.StateInterface) error {
 	if err != nil {
 		return fmt.Errorf("Couldn't render ceph.client.admin.keyring: %w", err)
 	}
-	
+
 	return nil
 }

@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -43,7 +42,7 @@ func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
 
 	err := json.NewDecoder(r.Body).Decode(&services)
 	if err != nil {
-		logger.Error(fmt.Sprintf("Failed decoding restart services: %v", err))
+		logger.Errorf("Failed decoding restart services: %v", err)
 		return response.InternalError(err)
 	}
 
@@ -51,7 +50,7 @@ func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
 		err = ceph.RestartCephService(service.Service)
 		if err != nil {
 			url := s.Address().String()
-			logger.Error(fmt.Sprintf("Failed restarting %s on host %s", service.Service, url))
+			logger.Errorf("Failed restarting %s on host %s", service.Service, url)
 			return response.SyncResponse(false, err)
 		}
 	}

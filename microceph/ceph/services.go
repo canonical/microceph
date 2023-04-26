@@ -45,7 +45,7 @@ func RestartCephServices(services []string) error {
 	for i := range services {
 		err := RestartCephService(services[i])
 		if err != nil {
-			logger.Error(fmt.Sprintf("Service %s restart failed: %v ", services[i], err))
+			logger.Errorf("Service %s restart failed: %v ", services[i], err)
 			return err
 		}
 	}
@@ -56,9 +56,9 @@ func RestartCephServices(services []string) error {
 // Restart provided ceph service ("mon"/"osd"...) on the host.
 func RestartCephService(service string) error {
 	if _, ok := serviceWorkerTable[service]; !ok {
-		errStr := fmt.Sprintf("No handler defined for service %s", service)
-		logger.Error(errStr)
-		return fmt.Errorf(errStr)
+		err := fmt.Errorf("No handler defined for service %s", service)
+		logger.Errorf("%v", err)
+		return err
 	}
 
 	// Fetch a Set{} of available daemons for the service.
@@ -80,11 +80,11 @@ func RestartCephService(service string) error {
 
 		// All still not up
 		if !workers.isIn(iWorkers) {
-			errStr := fmt.Sprintf(
+			err := fmt.Errorf(
 				"Attempt %d: Workers: %v not all present in %v", i, workers, iWorkers,
 			)
-			logger.Error(errStr)
-			return fmt.Errorf(errStr)
+			logger.Errorf("%v", err)
+			return (err)
 		}
 		return nil
 	}, strategy.Delay(5), strategy.Limit(10), strategy.Backoff(backoff.Linear(10*time.Second)))
@@ -99,9 +99,11 @@ func getMons() (Set, error) {
 	retval := Set{}
 	output, err := processExec.RunCommand("ceph", "mon", "dump", "-f", "json-pretty")
 	if err != nil {
+		logger.Errorf("Failed fetching Mon dump: %v", err)
 		return nil, err
 	}
 
+	logger.Debugf("Mon Dump:\n%s", output)
 	// Get a list of mons.
 	mons := gjson.Get(output, "mons.#.name")
 	for _, key := range mons.Array() {
@@ -115,9 +117,11 @@ func getUpOsds() (Set, error) {
 	retval := Set{}
 	output, err := processExec.RunCommand("ceph", "osd", "dump", "-f", "json-pretty")
 	if err != nil {
+		logger.Errorf("Failed fetching OSD dump: %v", err)
 		return nil, err
 	}
 
+	logger.Debugf("OSD Dump:\n%s", output)
 	// Get a list of uuid of osds in up state.
 	upOsds := gjson.Get(output, "osds.#(up==1)#.uuid")
 	for _, element := range upOsds.Array() {

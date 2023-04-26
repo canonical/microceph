@@ -4,7 +4,6 @@ package client
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/canonical/microcluster/client"
@@ -13,10 +12,11 @@ import (
 	"github.com/lxc/lxd/shared/logger"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/ceph"
 )
 
 func SetConfig(ctx context.Context, c *client.Client, data *types.Config) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
 	err := c.Query(queryCtx, "PUT", api.NewURL().Path("configs"), data, nil)
@@ -28,7 +28,7 @@ func SetConfig(ctx context.Context, c *client.Client, data *types.Config) error 
 }
 
 func ClearConfig(ctx context.Context, c *client.Client, data *types.Config) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
 	err := c.Query(queryCtx, "DELETE", api.NewURL().Path("configs"), data, nil)
@@ -53,6 +53,30 @@ func GetConfig(ctx context.Context, c *client.Client, data *types.Config) (types
 	return configs, nil
 }
 
+// Perform ordered (one after other) restart of provided Ceph services across the ceph cluster.
+func ConfigChangeRefresh(s *state.State, services []string, wait bool) error {
+	if wait {
+		// Execute restart synchronously
+		err := SendRestartRequestToClusterMembers(s, services)
+		if err != nil {
+			return err
+		}
+
+		// Restart on current host.
+		err = ceph.RestartCephServices(services)
+		if err != nil {
+			return err
+		}
+	} else { // Execute restart asynchronously
+		go func() {
+			SendRestartRequestToClusterMembers(s, services)
+			ceph.RestartCephServices(services) // Restart on current host.
+		}()
+	}
+
+	return nil
+}
+
 func RestartService(ctx context.Context, c *client.Client, data *types.Services) (error) {
 	// 120 second timeout for waiting.
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
@@ -68,7 +92,7 @@ func RestartService(ctx context.Context, c *client.Client, data *types.Services)
 }
 
 // Sends the desired list of services to be restarted on every other member of the cluster.
-func SendRestartRequestToClusterMembers(s *state.State, r *http.Request, services []string) (error) {
+func SendRestartRequestToClusterMembers(s *state.State, services []string) (error) {
 	// Populate the restart request data.
 	var data types.Services
 	for _, service := range services {
@@ -76,9 +100,9 @@ func SendRestartRequestToClusterMembers(s *state.State, r *http.Request, service
 	}
 
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
-	cluster, err := s.Cluster(r)
+	cluster, err := s.Cluster(nil);
 	if err != nil {
-		logger.Error(fmt.Sprintf("Failed to get a client for every cluster member: %v", err))
+		logger.Errorf("Failed to get a client for every cluster member: %v", err)
 		return err
 	}
 
@@ -86,7 +110,7 @@ func SendRestartRequestToClusterMembers(s *state.State, r *http.Request, service
 		// In order send restart to each cluster member and wait.
 		err = RestartService(s.Context, &remoteClient, &data)
 		if err != nil {
-			logger.Error(fmt.Sprintf("Restart error: %v", err))
+			logger.Errorf("Restart error: %v", err)
 			return err
 		}
 	}
