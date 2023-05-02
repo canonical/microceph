@@ -6,13 +6,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/canonical/microcluster/microcluster"
-	"github.com/lxc/lxd/lxd/util"
-	cli "github.com/lxc/lxd/shared/cmd"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microcluster/microcluster"
+	"github.com/lxc/lxd/lxc/utils"
+	"github.com/lxc/lxd/lxd/util"
+	cli "github.com/lxc/lxd/shared/cmd"
 )
 
 type cmdInit struct {
@@ -137,8 +138,9 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	apiClient := client.NewClient(lc)
 	if wantsDisks {
-		err = listLocalDisks(lc)
+		err = listLocalDisks(apiClient, utils.TableFormatTable)
 		if err != nil {
 			return err
 		}
@@ -170,7 +172,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 				Encrypt: diskEncrypt,
 			}
 
-			err = client.AddDisk(context.Background(), lc, req)
+			err = apiClient.AddDisk(context.Background(), req)
 			if err != nil {
 				return err
 			}

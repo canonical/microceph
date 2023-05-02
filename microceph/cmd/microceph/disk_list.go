@@ -6,18 +6,22 @@ import (
 	"os"
 	"sort"
 
-	microCli "github.com/canonical/microcluster/client"
-	"github.com/canonical/microcluster/microcluster"
-	"github.com/lxc/lxd/lxc/utils"
-	"github.com/lxc/lxd/shared/units"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microcluster/microcluster"
+	"github.com/lxc/lxd/lxc/utils"
+	"github.com/lxc/lxd/shared/i18n"
+	"github.com/lxc/lxd/shared/units"
 )
 
 type cmdDiskList struct {
-	common *CmdControl
-	disk   *cmdDisk
+	common                *CmdControl
+	disk                  *cmdDisk
+	flgShowAvailableDisks bool
+	flagFormat            string
+
+	apiClient client.ApiReader
 }
 
 func (c *cmdDiskList) Command() *cobra.Command {
@@ -27,22 +31,43 @@ func (c *cmdDiskList) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
+	cmd.Flags().BoolVarP(&c.flgShowAvailableDisks, "available", "a", false, i18n.G("Show only available local disks"))
+	cmd.Flags().StringVarP(&c.flagFormat, "format", "f", "table", i18n.G("Format (csv|json|table|yaml|compact)")+"``")
+
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+		if err != nil {
+			return err
+		}
+		cli, err := m.LocalClient()
+		c.apiClient = client.NewClient(cli)
+		return err
+	}
+
 	return cmd
 }
 
 func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
-	if err != nil {
-		return err
+
+	if !c.flgShowAvailableDisks {
+		err := listConfiguredDisks(c.apiClient, c.flagFormat)
+		if err != nil {
+			return err
+		}
 	}
 
-	cli, err := m.LocalClient()
-	if err != nil {
-		return err
+	if c.flgShowAvailableDisks {
+		err := listLocalDisks(c.apiClient, c.flagFormat)
+		if err != nil {
+			return err
+		}
 	}
 
-	// List configured disks.
-	disks, err := client.GetDisks(context.Background(), cli)
+	return nil
+}
+
+func listConfiguredDisks(cli client.ApiReader, format string) error {
+	disks, err := cli.GetDisks(context.Background())
 	if err != nil {
 		return err
 	}
@@ -55,30 +80,21 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	header := []string{"OSD", "LOCATION", "PATH"}
 	sort.Sort(utils.ByName(data))
 
-	fmt.Println("Disks configured in MicroCeph:")
-	err = utils.RenderTable(utils.TableFormatTable, header, data, disks)
-	if err != nil {
-		return err
+	if format == utils.TableFormatTable {
+		fmt.Println("Disks configured in MicroCeph:")
 	}
-
-	// List local disks.
-	err = listLocalDisks(cli)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return utils.RenderTable(format, header, data, disks)
 }
 
-func listLocalDisks(cli *microCli.Client) error {
+func listLocalDisks(cli client.ApiReader, format string) error {
 	// List configured disks.
-	disks, err := client.GetDisks(context.Background(), cli)
+	disks, err := cli.GetDisks(context.Background())
 	if err != nil {
 		return err
 	}
 
 	// List physical disks.
-	resources, err := client.GetResources(context.Background(), cli)
+	resources, err := cli.GetResources(context.Background())
 	if err != nil {
 		return err
 	}
@@ -117,16 +133,12 @@ func listLocalDisks(cli *microCli.Client) error {
 		data = append(data, []string{disk.Model, units.GetByteSizeStringIEC(int64(disk.Size), 2), disk.Type, devicePath})
 	}
 
-	fmt.Println("")
-	fmt.Println("Available unpartitioned disks on this system:")
-
+	if format == utils.TableFormatTable {
+		fmt.Println("")
+		fmt.Println("Available unpartitioned disks on this system:")
+	}
 	header := []string{"MODEL", "CAPACITY", "TYPE", "PATH"}
 	sort.Sort(utils.ByName(data))
 
-	err = utils.RenderTable(utils.TableFormatTable, header, data, disks)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return utils.RenderTable(format, header, data, resources)
 }
