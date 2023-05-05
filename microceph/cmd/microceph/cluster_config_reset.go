@@ -31,7 +31,7 @@ func (c *cmdClusterConfigReset) Command() *cobra.Command {
 }
 
 func (c *cmdClusterConfigReset) Run(cmd *cobra.Command, args []string) error {
-	allowList := ceph.GetConfigTable()
+	allowList := ceph.GetConstConfigTable()
 	if len(args) != 1 {
 		return cmd.Help()
 	}

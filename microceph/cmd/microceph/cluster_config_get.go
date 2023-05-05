@@ -29,7 +29,7 @@ func (c *cmdClusterConfigGet) Command() *cobra.Command {
 }
 
 func (c *cmdClusterConfigGet) Run(cmd *cobra.Command, args []string) error {
-	allowList := ceph.GetConfigTable()
+	allowList := ceph.GetConstConfigTable()
 
 	// Get can be called with a single key.
 	if len(args) != 1 {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -44,6 +45,16 @@ func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
 	if err != nil {
 		logger.Errorf("Failed decoding restart services: %v", err)
 		return response.InternalError(err)
+	}
+
+	// Check if provided services are valid and available in microceph
+	for _, service := range(services) {
+		valid_services := ceph.GetConfigTableServiceSet()
+		if _, ok := valid_services[service.Service]; !ok {
+			err := fmt.Errorf("%s is not a valid ceph service", service.Service)
+			logger.Errorf("%v", err)
+			return response.InternalError(err)
+		}
 	}
 
 	for _, service := range services {

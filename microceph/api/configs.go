@@ -39,13 +39,16 @@ func cmdConfigsGet(s *state.State, r *http.Request) response.Response {
 		// Fetch all configs.
 		configs, err = ceph.ListConfigs()
 	}
+	if err != nil {
+		return response.SmartError(err)
+	}
 
 	return response.SyncResponse(true, configs)
 }
 
 func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
 	var req types.Config
-	configTable := ceph.GetConfigTable()
+	configTable := ceph.GetConstConfigTable()
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
@@ -66,7 +69,7 @@ func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
 
 func cmdConfigsDelete(s *state.State, r *http.Request) response.Response {
 	var req types.Config
-	configTable := ceph.GetConfigTable()
+	configTable := ceph.GetConstConfigTable()
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {

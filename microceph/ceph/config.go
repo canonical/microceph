@@ -38,10 +38,22 @@ func (c ConfigTable) Keys() (keys []string) {
 	return keys
 }
 
-func GetConfigTable() ConfigTable {
+// Since we can't have const maps, we encapsulate the map into a func
+// so that each request for the map gaurantees consistent definition.
+func GetConstConfigTable() ConfigTable {
 	return ConfigTable{
 		"public_network":  {"global", []string{"mon", "osd"}},
 		"cluster_network": {"global", []string{"osd"}},
+	}
+}
+
+func GetConfigTableServiceSet() Set {
+	return Set{
+		"mon": struct{}{},
+		"mgr": struct{}{},
+		"osd": struct{}{},
+		"mds": struct{}{},
+		"rgw": struct{}{},
 	}
 }
 
@@ -54,7 +66,7 @@ type ConfigDumpItem struct{
 type ConfigDump []ConfigDumpItem
 
 func SetConfigItem(c types.Config) error {
-	configTable := GetConfigTable()
+	configTable := GetConstConfigTable()
 
 	args := []string{
 		"config",
@@ -76,7 +88,7 @@ func SetConfigItem(c types.Config) error {
 
 func GetConfigItem(c types.Config) (types.Configs, error) {
 	var err error
-	configTable := GetConfigTable()
+	configTable := GetConstConfigTable()
 	ret := make(types.Configs, 1)
 	who := "mon"
 
@@ -102,7 +114,7 @@ func GetConfigItem(c types.Config) (types.Configs, error) {
 }
 
 func RemoveConfigItem(c types.Config) error {
-	configTable := GetConfigTable()
+	configTable := GetConstConfigTable()
 	args := []string{
 		"config",
 		"rm",
@@ -121,7 +133,7 @@ func RemoveConfigItem(c types.Config) error {
 func ListConfigs() (types.Configs, error) {
 	var dump ConfigDump
 	var configs types.Configs
-	configTable := GetConfigTable()
+	configTable := GetConstConfigTable()
 	args := []string{
 		"config",
 		"dump",
