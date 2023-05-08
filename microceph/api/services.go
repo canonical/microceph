@@ -2,13 +2,16 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
+
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
-	"net/http"
 
 	"github.com/canonical/microcluster/rest"
 	"github.com/canonical/microcluster/state"
 	"github.com/lxc/lxd/lxd/response"
+	"github.com/lxc/lxd/shared/logger"
 
 	"github.com/canonical/microceph/microceph/ceph"
 )
@@ -27,6 +30,43 @@ func cmdServicesGet(s *state.State, r *http.Request) response.Response {
 	}
 
 	return response.SyncResponse(true, services)
+}
+
+// Service Reload Endpoint.
+var restartServiceCmd = rest.Endpoint{
+	Path: "services/restart",
+	Post: rest.EndpointAction{Handler: cmdRestartServicePost, ProxyTarget: true},
+}
+
+func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
+	var services types.Services
+
+	err := json.NewDecoder(r.Body).Decode(&services)
+	if err != nil {
+		logger.Errorf("Failed decoding restart services: %v", err)
+		return response.InternalError(err)
+	}
+
+	// Check if provided services are valid and available in microceph
+	for _, service := range(services) {
+		valid_services := ceph.GetConfigTableServiceSet()
+		if _, ok := valid_services[service.Service]; !ok {
+			err := fmt.Errorf("%s is not a valid ceph service", service.Service)
+			logger.Errorf("%v", err)
+			return response.InternalError(err)
+		}
+	}
+
+	for _, service := range services {
+		err = ceph.RestartCephService(service.Service)
+		if err != nil {
+			url := s.Address().String()
+			logger.Errorf("Failed restarting %s on host %s", service.Service, url)
+			return response.SyncResponse(false, err)
+		}
+	}
+
+	return response.EmptySyncResponse
 }
 
 var rgwServiceCmd = rest.Endpoint{

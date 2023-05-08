@@ -5,14 +5,15 @@ go 1.18
 require (
 	github.com/canonical/microcluster v0.0.0-20230501200316-dd78e864d2f1
 	github.com/lxc/lxd v0.0.0-20230501200206-976cd2bfee6a
+	github.com/Rican7/retry v0.3.1
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pborman/uuid v1.2.1
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.8.2
+	github.com/tidwall/gjson v1.14.4
 )
 
 require (
-	github.com/Rican7/retry v0.3.1 // indirect
 	github.com/armon/go-proxyproto v0.0.0-20210323213023-7e956b284f0a // indirect
 	github.com/canonical/go-dqlite v1.11.9 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -51,6 +52,8 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/objx v0.5.0 // indirect
 	github.com/zitadel/oidc/v2 v2.5.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.0 // indirect
 	golang.org/x/crypto v0.8.0 // indirect
 	golang.org/x/net v0.9.0 // indirect
 	golang.org/x/oauth2 v0.7.0 // indirect
