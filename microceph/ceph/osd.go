@@ -193,6 +193,12 @@ func checkEncryptSupport() error {
 		return fmt.Errorf("Missing /dev/mapper/control: %w", err)
 	}
 
+	// Check if the dm-crypt interface is not connected.
+	if !isIntfConnected("dm-crypt") {
+		helper := fmt.Sprint("Use \"sudo snap connect microceph:dm-crypt\" to enable encryption.")
+		return fmt.Errorf("dm-crypt interface connection missing: \n%s", helper)
+	}
+
 	// Check if we have the dm_crypt module
 	inf, err := os.Stat("/sys/module/dm_crypt")
 	if err != nil || inf == nil || !inf.IsDir() {

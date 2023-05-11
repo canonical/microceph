@@ -2,7 +2,26 @@ package ceph
 
 import (
 	"fmt"
+
+	"github.com/lxc/lxd/shared/logger"
 )
+
+// Check if a snapd interface is connected to microceph
+func isIntfConnected(name string) bool {
+	args := []string{
+		"is-connected",
+		name,
+	}
+
+	_, err := processExec.RunCommand("snapctl", args...)
+	if err != nil { // Non-zero return code when connection not present.
+		logger.Errorf("Failure: check is-connected %s: %v", name, err)
+		return false
+	}
+
+	// 0 return code when connection is present
+	return true
+}
 
 // snapStart starts a service via snapctl, optionally enabling it.
 func snapStart(service string, enable bool) error {

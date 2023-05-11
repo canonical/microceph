@@ -38,7 +38,7 @@ jobs:
           sudo snap install --dangerous microceph_*.snap
           sudo snap connect microceph:block-devices
           sudo snap connect microceph:hardware-observe
-          sudo snap connect microceph:dm-crypt
+          # defer dm-crypt enablement for later.
 
           # Daemon needs restart for the added dm-crypt connection
           sudo snap restart microceph.daemon
@@ -57,9 +57,26 @@ jobs:
           sudo microceph.ceph osd crush rule rm replicated_rule
           sudo microceph.ceph osd crush rule create-replicated single default osd
 
+      - name: Add OSD with failure
+        run: |
+          set -eux
+          loop_file="$(sudo mktemp -p /mnt XXXX.img)"
+          sudo truncate -s 1G "${loop_file}"
+          loop_dev="$(sudo losetup --show -f "${loop_file}")"
+
+          minor="${loop_dev##/dev/loop}"
+          sudo mknod -m 0660 "/dev/sdi21" b 7 "${minor}"
+
+          set +e
+          sudo microceph disk add --wipe "/dev/sdi21" --encrypt || rc="$?"
+          if [[ $rc -eq 0 ]] ; then echo "FDE should fail without dmcrypt: $rc"; exit 1; fi
+
       - name: Add OSDs
         run: |
           set -eux
+          # Enable dm-crypt connection and restart microceph daemon
+          sudo snap connect microceph:dm-crypt
+          sudo snap restart microceph.daemon
           # Add OSDs backed by loop devices on /mnt (ephemeral "large" disk attached to GitHub action runners)
           i=0
           for l in a b c; do
