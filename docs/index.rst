@@ -1,13 +1,16 @@
 .. _home:
 
-Starter pack
+Microceph Documentation
 ======================================================
 
-**MicroCeph is the easiest way to bootstrap an edge Ceph cluster**
+**MicroCeph is the easiest way to get up and running with Ceph**
 
-Microceph manages the complexity of distributing keys between, and managing
-placement of, Ceph daemons. It handles bootstrapping the monitor cluster as
-well as adding disks to the cluster.
+MicroCeph is a lightweight way of deploying a Ceph cluster using just a few commands. Ceph is a highly scalable, open-source distributed storage system designed to provide excellent performance, reliability, and flexibility for object, block, and file-level storage.
+
+MicroCeph streamlines Ceph cluster management by simplifying key distribution, service placement and disk administration for quick, effortless deployment and operations. 
+
+MicroCeph is focused on providing a lightweight deployment and management experience for all sizes of Ceph cluster, spanning private clouds, edge clouds, as well as home labs and developer workstations.
+
 
 .. **A third paragraph of similar length, this time explaining what need the
 .. product meets.** Dui ut ornare lectus sit amet est. Nunc sed augue lacus
