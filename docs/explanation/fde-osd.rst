@@ -20,6 +20,16 @@ Implementation
 Full disk encryption for OSDs has to be requested when adding disks. MicroCeph will then generate a random key, store it in the Ceph cluster configuration, and use it to encrypt the given disk via `LUKS/cryptsetup <https://gitlab.com/cryptsetup/cryptsetup/-/wikis/home>`_.
 
 
+Prerequisites
+-------------
+
+To use FDE, the following prerequisites must be met:
+
+- The `dm-crypt` kernel module must be available. Note that some cloud-optimized kernels do not ship dm-crypt by default. Check by running `sudo modinfo dm-crypt`
+- The snap dm-crypt plug has to be connected: `sudo snap connect microceph:dm-crypt`
+- The installed snapd daemon version must be >= 2.59.1
+
+
 Limitations
 -----------
 
