@@ -7,7 +7,7 @@ class Cluster:
     a Cluster can exist without having been bootstrapped.
     '''
     def __init__(self, size):
-        self.size = size 
+        self.size = size
         self.members = []
 
     def bootstrap(self, channel, client, log, image):
