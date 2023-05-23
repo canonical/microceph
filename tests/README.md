@@ -8,8 +8,8 @@ optional arguments:
   -h, --help         show this help message and exit
   --create           Create a cluster
   -n N               Node count. Defaults to 3.
-  --channel CHANNEL  Snap channel
-  --image IMAGE      lxd image to use for cluster nodes
+  --channel CHANNEL  Snap channel. Defaults to latest/stable.
+  --image IMAGE      lxd image to use for cluster nodes. Defaults to ubuntu/22.04/cloud.
   --cleanup          Remove all microceph lxd instances
 ```
 
