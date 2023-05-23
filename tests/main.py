@@ -12,11 +12,11 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--create', action='store_true')
-    parser.add_argument('-n', type=int, default=3)
-    parser.add_argument('--channel', default='latest/stable')
-    parser.add_argument('--image', default='ubuntu/22.04/cloud')
-    parser.add_argument('--cleanup', action='store_true')
+    parser.add_argument('--create', action='store_true', help='Create a cluster')
+    parser.add_argument('-n', type=int, default=3, help='Node count.  Defaults to 3.')
+    parser.add_argument('--channel', default='latest/stable', help='Snap channel')
+    parser.add_argument('--image', default='ubuntu/22.04/cloud', help='lxd image to use for cluster nodes')
+    parser.add_argument('--cleanup', action='store_true', help='Remove all microceph lxd instances')
     args = parser.parse_args()
 
     client = pylxd.Client()
