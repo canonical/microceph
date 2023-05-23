@@ -5,6 +5,7 @@ import re
 
 def create_node(client, log, image):
     name = 'microceph-' + str(uuid.uuid4())[0:5]
+    osd = create_osd(client, log)
     config = {'name': name,
               'source': {'type': 'image',
                          'mode': 'pull',
@@ -17,7 +18,10 @@ def create_node(client, log, image):
               'devices': {'root': {'path': '/',
                                    'pool': 'default',
                                    'size': '8GB',
-                                   'type': 'disk'}}}
+                                   'type': 'disk'},
+                          'osd': {'pool': 'default',
+                                  'source': osd,
+                                  'type': 'disk'}}}
     log.info('creating node ' + name)
     inst = client.instances.create(config, wait=True)
     inst.description = 'microceph_managed'
@@ -26,6 +30,21 @@ def create_node(client, log, image):
     instance_ready(inst, log)
     snapd_ready(inst, log)
     return inst
+
+
+def create_osd(client, log):
+    '''
+    creates a block device for use as osd
+    '''
+    rnd = str(uuid.uuid4())[0:5]
+    name = 'microceph-osd-{}'.format(rnd)
+    storage_pool = client.storage_pools.get('default')
+    storage_pool.volumes.create({'name': name,
+                                 'type': 'custom',
+                                 'content_type': 'block',
+                                 'description': 'microceph-managed',
+                                 'config': {'size': '8GiB'}})
+    return name
 
 
 def snapd_ready(instance, log):
@@ -162,5 +181,11 @@ def cleanup(client, log):
         if 'microceph_managed' in i.description:
             log.info('found ' + i.name)
             i.stop(wait=True)
-            i.delete()
+            i.delete(wait=True)
             log.info(i.name + ' deleted')
+
+    for v in client.storage_pools.get('default').volumes.all():
+        #todo: pylxd doesnt appear to be propogating v.description
+        if re.search('microceph-osd-.{5}', v.name):
+            v.delete()
+            log.info('block device {} deleted'.format(v.name))
