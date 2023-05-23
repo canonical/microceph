@@ -8,7 +8,7 @@ optional arguments:
   -h, --help         show this help message and exit
   --create           Create a cluster
   -n N               Node count. Defaults to 3.
-  --channel CHANNEL  Snap channel. Defaults to latest/stable.
+  --channel CHANNEL  Snap channel. Defaults to latest/stable. If value is a local path, an offline installation will be attempted.
   --image IMAGE      lxd image to use for cluster nodes. Defaults to ubuntu/22.04/cloud.
   --cleanup          Remove all microceph lxd instances
 ```
@@ -33,4 +33,10 @@ lxc exec microceph-1178e -- /snap/bin/microceph cluster list
 +-----------------+--------------------+-------+------------------------------------------------------------------+--------+
 | microceph-c5db2 | 10.11.228.155:7443 | voter | dd24adb9d6169e1cd9f4adae022a901850808665f4fef696a62d13acaa035eac | ONLINE |
 +-----------------+--------------------+-------+------------------------------------------------------------------+--------+
+```
+
+Alternatively, a local `snapcraft` artifact can be imported in place of 'channel':
+
+```
+python3 main.py --create --channel ../microceph_0+git.1cb2c77_amd64.snap
 ```

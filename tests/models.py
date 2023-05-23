@@ -1,4 +1,5 @@
 import utils
+import os.path
 
 
 class Cluster:
@@ -44,18 +45,25 @@ class Snap:
         '''
         self.name = name
 
-        log.info('downloading snap {} {}'.format(name, channel))
-        err = inst.execute(['snap', 'download', self.name,
-                            '--channel={}'.format(channel),
-                            '--target-directory=/tmp/',
-                            '--basename={}'.format(self.name)])
-        if err.exit_code != 0:
-            log.info(err.stderr)
-            log.info(err.stdout)
-            log.info('snap install failed')
-            exit(1)
-        log.info(err.stdout)
+        # determine whether this is a local artifact or a snapcraft channel
+        self.local = os.path.exists(channel)
 
-        log.info('retrieving initial snap')
-        self.snap = inst.files.get('/tmp/{}.snap'.format(self.name))
-        self.assertion = inst.files.get('/tmp/{}.assert'.format(self.name))
+        if self.local:
+            log.info('importing snap {} from {}'.format(name, channel))
+            self.snap = open(channel, mode='rb').read()
+        else:
+            log.info('downloading snap {} {}'.format(name, channel))
+            err = inst.execute(['snap', 'download', self.name,
+                                '--channel={}'.format(channel),
+                                '--target-directory=/tmp/',
+                                '--basename={}'.format(self.name)])
+            if err.exit_code != 0:
+                log.info(err.stderr)
+                log.info(err.stdout)
+                log.info('snap install failed')
+                exit(1)
+            log.info(err.stdout)
+
+            log.info('retrieving initial snap')
+            self.snap = inst.files.get('/tmp/{}.snap'.format(self.name))
+            self.assertion = inst.files.get('/tmp/{}.assert'.format(self.name))

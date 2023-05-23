@@ -85,18 +85,25 @@ def install_snap(instance, snap, log):
     given an Instance, install the Snap
     '''
     instance.files.put('/root/{}.snap'.format(snap.name), snap.snap)
-    instance.files.put('/root/{}.assert'.format(snap.name), snap.assertion)
-    cmd = instance.execute(['snap', 'ack', '/root/{}.assert'.format(snap.name)])
-    if cmd.exit_code != 0:
-        log.info(cmd.stderr)
-        exit(1)
-    log.info(cmd.stdout)
+    if snap.local:
+        cmd = instance.execute(['snap', 'install', '/root/{}.snap'.format(snap.name), '--dangerous'])
+        if cmd.exit_code != 0:
+            log.info(cmd.stderr)
+            exit(1)
+        log.info(cmd.stdout)
+    else:
+        instance.files.put('/root/{}.assert'.format(snap.name), snap.assertion)
+        cmd = instance.execute(['snap', 'ack', '/root/{}.assert'.format(snap.name)])
+        if cmd.exit_code != 0:
+            log.info(cmd.stderr)
+            exit(1)
+        log.info(cmd.stdout)
 
-    cmd = instance.execute(['snap', 'install', '/root/{}.snap'.format(snap.name)])
-    if cmd.exit_code != 0:
-        log.info(cmd.stderr)
-        exit(1)
-    log.info(cmd.stdout)
+        cmd = instance.execute(['snap', 'install', '/root/{}.snap'.format(snap.name)])
+        if cmd.exit_code != 0:
+            log.info(cmd.stderr)
+            exit(1)
+        log.info(cmd.stdout)
 
 
 def microceph_running(node, log):
