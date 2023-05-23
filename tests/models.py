@@ -17,8 +17,6 @@ class Cluster:
 
         for i in range(self.size):
             node = utils.create_node(client, log, image)
-            node.description = 'microceph_managed'
-            node.save(wait=True)
             self.members.append(node)
 
             # use the first node to download the Snap, then pass it along.

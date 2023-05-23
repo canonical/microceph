@@ -20,6 +20,8 @@ def create_node(client, log, image):
                                    'type': 'disk'}}}
     log.info('creating node ' + name)
     inst = client.instances.create(config, wait=True)
+    inst.description = 'microceph_managed'
+    inst.save(wait=True)
     inst.start(wait=True)
     instance_ready(inst, log)
     snapd_ready(inst, log)
