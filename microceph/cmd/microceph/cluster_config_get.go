@@ -13,8 +13,8 @@ import (
 )
 
 type cmdClusterConfigGet struct {
-	common  *CmdControl
-	cluster *cmdCluster
+	common        *CmdControl
+	cluster       *cmdCluster
 	clusterConfig *cmdClusterConfig
 }
 
@@ -22,7 +22,7 @@ func (c *cmdClusterConfigGet) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <key>",
 		Short: "Get specified Ceph Cluster config",
-		RunE: c.Run,
+		RunE:  c.Run,
 	}
 
 	return cmd

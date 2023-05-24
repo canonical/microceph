@@ -12,8 +12,8 @@ import (
 )
 
 type cmdClusterConfigList struct {
-	common  *CmdControl
-	cluster *cmdCluster
+	common        *CmdControl
+	cluster       *cmdCluster
 	clusterConfig *cmdClusterConfig
 }
 
@@ -21,7 +21,7 @@ func (c *cmdClusterConfigList) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all set Ceph level configs",
-		RunE: c.Run,
+		RunE:  c.Run,
 	}
 
 	return cmd

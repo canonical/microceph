@@ -12,7 +12,6 @@ import (
 	"github.com/lxc/lxd/shared/logger"
 
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/ceph"
 )
 
 func SetConfig(ctx context.Context, c *client.Client, data *types.Config) error {
@@ -53,31 +52,7 @@ func GetConfig(ctx context.Context, c *client.Client, data *types.Config) (types
 	return configs, nil
 }
 
-// Perform ordered (one after other) restart of provided Ceph services across the ceph cluster.
-func ConfigChangeRefresh(s *state.State, services []string, wait bool) error {
-	if wait {
-		// Execute restart synchronously
-		err := SendRestartRequestToClusterMembers(s, services)
-		if err != nil {
-			return err
-		}
-
-		// Restart on current host.
-		err = ceph.RestartCephServices(services)
-		if err != nil {
-			return err
-		}
-	} else { // Execute restart asynchronously
-		go func() {
-			SendRestartRequestToClusterMembers(s, services)
-			ceph.RestartCephServices(services) // Restart on current host.
-		}()
-	}
-
-	return nil
-}
-
-func RestartService(ctx context.Context, c *client.Client, data *types.Services) (error) {
+func RestartService(ctx context.Context, c *client.Client, data *types.Services) error {
 	// 120 second timeout for waiting.
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
@@ -92,7 +67,7 @@ func RestartService(ctx context.Context, c *client.Client, data *types.Services)
 }
 
 // Sends the desired list of services to be restarted on every other member of the cluster.
-func SendRestartRequestToClusterMembers(s *state.State, services []string) (error) {
+func SendRestartRequestToClusterMembers(s *state.State, services []string) error {
 	// Populate the restart request data.
 	var data types.Services
 	for _, service := range services {
@@ -100,7 +75,7 @@ func SendRestartRequestToClusterMembers(s *state.State, services []string) (erro
 	}
 
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
-	cluster, err := s.Cluster(nil);
+	cluster, err := s.Cluster(nil)
 	if err != nil {
 		logger.Errorf("Failed to get a client for every cluster member: %v", err)
 		return err
@@ -114,7 +89,7 @@ func SendRestartRequestToClusterMembers(s *state.State, services []string) (erro
 			return err
 		}
 	}
-	
+
 	return nil
 }
 

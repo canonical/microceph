@@ -35,7 +35,7 @@ func (sub Set) isIn(super Set) bool {
 }
 
 // Table to map fetchFunc for workers (daemons) to a service.
-var serviceWorkerTable = map[string](func () (Set, error)) {
+var serviceWorkerTable = map[string](func() (Set, error)){
 	"osd": getUpOsds,
 	"mon": getMons,
 }

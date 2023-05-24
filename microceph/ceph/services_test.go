@@ -70,4 +70,3 @@ func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 	err := RestartCephServices(ts)
 	assert.Equal(s.T(), err, nil)
 }
-
