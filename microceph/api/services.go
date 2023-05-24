@@ -48,7 +48,7 @@ func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
 	}
 
 	// Check if provided services are valid and available in microceph
-	for _, service := range(services) {
+	for _, service := range services {
 		valid_services := ceph.GetConfigTableServiceSet()
 		if _, ok := valid_services[service.Service]; !ok {
 			err := fmt.Errorf("%s is not a valid ceph service", service.Service)

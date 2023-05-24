@@ -17,8 +17,8 @@ import (
 var configsCmd = rest.Endpoint{
 	Path: "configs",
 
-	Get:  rest.EndpointAction{Handler: cmdConfigsGet, ProxyTarget: true},
-	Put: rest.EndpointAction{Handler: cmdConfigsPut, ProxyTarget: true},
+	Get:    rest.EndpointAction{Handler: cmdConfigsGet, ProxyTarget: true},
+	Put:    rest.EndpointAction{Handler: cmdConfigsPut, ProxyTarget: true},
 	Delete: rest.EndpointAction{Handler: cmdConfigsDelete, ProxyTarget: true},
 }
 
@@ -63,7 +63,7 @@ func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
 
 	services := configTable[req.Key].Daemons
 	client.ConfigChangeRefresh(s, services, req.Wait)
-	
+
 	return response.EmptySyncResponse
 }
 

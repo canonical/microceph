@@ -77,7 +77,7 @@ func ConfigChangeRefresh(s *state.State, services []string, wait bool) error {
 	return nil
 }
 
-func RestartService(ctx context.Context, c *client.Client, data *types.Services) (error) {
+func RestartService(ctx context.Context, c *client.Client, data *types.Services) error {
 	// 120 second timeout for waiting.
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
@@ -92,7 +92,7 @@ func RestartService(ctx context.Context, c *client.Client, data *types.Services)
 }
 
 // Sends the desired list of services to be restarted on every other member of the cluster.
-func SendRestartRequestToClusterMembers(s *state.State, services []string) (error) {
+func SendRestartRequestToClusterMembers(s *state.State, services []string) error {
 	// Populate the restart request data.
 	var data types.Services
 	for _, service := range services {
@@ -100,7 +100,7 @@ func SendRestartRequestToClusterMembers(s *state.State, services []string) (erro
 	}
 
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
-	cluster, err := s.Cluster(nil);
+	cluster, err := s.Cluster(nil)
 	if err != nil {
 		logger.Errorf("Failed to get a client for every cluster member: %v", err)
 		return err
@@ -114,7 +114,7 @@ func SendRestartRequestToClusterMembers(s *state.State, services []string) (erro
 			return err
 		}
 	}
-	
+
 	return nil
 }
 

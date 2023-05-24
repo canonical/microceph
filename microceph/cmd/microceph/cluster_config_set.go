@@ -12,8 +12,8 @@ import (
 )
 
 type cmdClusterConfigSet struct {
-	common  *CmdControl
-	cluster *cmdCluster
+	common        *CmdControl
+	cluster       *cmdCluster
 	clusterConfig *cmdClusterConfig
 
 	flagWait bool
@@ -23,7 +23,7 @@ func (c *cmdClusterConfigSet) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set <Key> <Value>",
 		Short: "Set specified Ceph Cluster config",
-		RunE: c.Run,
+		RunE:  c.Run,
 	}
 
 	cmd.Flags().BoolVar(&c.flagWait, "wait", false, "Wait for required ceph services to restart post config set.")
@@ -51,9 +51,9 @@ func (c *cmdClusterConfigSet) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	req := &types.Config{
-		Key: args[0],
+		Key:   args[0],
 		Value: args[1],
-		Wait: c.flagWait,
+		Wait:  c.flagWait,
 	}
 
 	err = client.SetConfig(context.Background(), cli, req)

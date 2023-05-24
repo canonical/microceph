@@ -12,8 +12,8 @@ import (
 )
 
 type cmdClusterConfigReset struct {
-	common  *CmdControl
-	cluster *cmdCluster
+	common        *CmdControl
+	cluster       *cmdCluster
 	clusterConfig *cmdClusterConfig
 
 	flagWait bool
@@ -23,7 +23,7 @@ func (c *cmdClusterConfigReset) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset <key>",
 		Short: "Clear specified Ceph Cluster config",
-		RunE: c.Run,
+		RunE:  c.Run,
 	}
 
 	cmd.Flags().BoolVar(&c.flagWait, "wait", false, "Wait for required ceph services to restart post config reset.")
@@ -51,7 +51,7 @@ func (c *cmdClusterConfigReset) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	req := &types.Config{
-		Key: args[0],
+		Key:  args[0],
 		Wait: c.flagWait,
 	}
 

@@ -16,8 +16,8 @@ import (
 
 // Config Table is the source of additional information for each supported config key
 // Refer to GetConfigTable()
-type ConfigTable map[string]struct{
-	Who     string // Ceph Config internal <who> against each key
+type ConfigTable map[string]struct {
+	Who     string   // Ceph Config internal <who> against each key
 	Daemons []string // List of Daemons that need to be restarted across the cluster for the config change to take effect.
 }
 
@@ -58,7 +58,7 @@ func GetConfigTableServiceSet() Set {
 }
 
 // Struct to get Config Items from config dump json output.
-type ConfigDumpItem struct{
+type ConfigDumpItem struct {
 	Section string
 	Name    string
 	Value   string
@@ -151,8 +151,8 @@ func ListConfigs() (types.Configs, error) {
 	for _, configItem := range dump {
 		if configTable.isKeyPresent(configItem.Name) {
 			configs = append(configs, types.Config{
-				Key: configItem.Name,
-				Value:  configItem.Value,
+				Key:   configItem.Name,
+				Value: configItem.Value,
 			})
 		}
 	}
