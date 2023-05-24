@@ -72,7 +72,7 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 		interf := common.CephState{State: s}
 		return ceph.Bootstrap(interf)
 	}
-	h.OnJoin = func(s *state.State) error {
+	h.PostJoin = func(s *state.State) error {
 		interf := common.CephState{State: s}
 		return ceph.Join(interf)
 	}
