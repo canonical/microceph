@@ -12,7 +12,6 @@ import (
 	"github.com/lxc/lxd/shared/logger"
 
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/ceph"
 )
 
 func SetConfig(ctx context.Context, c *client.Client, data *types.Config) error {
@@ -51,30 +50,6 @@ func GetConfig(ctx context.Context, c *client.Client, data *types.Config) (types
 	}
 
 	return configs, nil
-}
-
-// Perform ordered (one after other) restart of provided Ceph services across the ceph cluster.
-func ConfigChangeRefresh(s *state.State, services []string, wait bool) error {
-	if wait {
-		// Execute restart synchronously
-		err := SendRestartRequestToClusterMembers(s, services)
-		if err != nil {
-			return err
-		}
-
-		// Restart on current host.
-		err = ceph.RestartCephServices(services)
-		if err != nil {
-			return err
-		}
-	} else { // Execute restart asynchronously
-		go func() {
-			SendRestartRequestToClusterMembers(s, services)
-			ceph.RestartCephServices(services) // Restart on current host.
-		}()
-	}
-
-	return nil
 }
 
 func RestartService(ctx context.Context, c *client.Client, data *types.Services) error {

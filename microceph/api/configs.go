@@ -62,7 +62,7 @@ func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
 	}
 
 	services := configTable[req.Key].Daemons
-	client.ConfigChangeRefresh(s, services, req.Wait)
+	configChangeRefresh(s, services, req.Wait)
 
 	return response.EmptySyncResponse
 }
@@ -83,7 +83,31 @@ func cmdConfigsDelete(s *state.State, r *http.Request) response.Response {
 	}
 
 	services := configTable[req.Key].Daemons
-	client.ConfigChangeRefresh(s, services, req.Wait)
+	configChangeRefresh(s, services, req.Wait)
 
 	return response.EmptySyncResponse
+}
+
+// Perform ordered (one after other) restart of provided Ceph services across the ceph cluster.
+func configChangeRefresh(s *state.State, services []string, wait bool) error {
+	if wait {
+		// Execute restart synchronously
+		err := client.SendRestartRequestToClusterMembers(s, services)
+		if err != nil {
+			return err
+		}
+
+		// Restart on current host.
+		err = ceph.RestartCephServices(services)
+		if err != nil {
+			return err
+		}
+	} else { // Execute restart asynchronously
+		go func() {
+			client.SendRestartRequestToClusterMembers(s, services)
+			ceph.RestartCephServices(services) // Restart on current host.
+		}()
+	}
+
+	return nil
 }
