@@ -52,32 +52,15 @@ def snapd_ready(instance, log):
     configures a given Instance
     blocks until snapd is "ready"
     '''
-    # "(execute) returns a tuple of (exit_code, stdout, stderr).
-    #  This method will block while the command is executed"
-    # snapd appears to perform some bootstrapping actions after this exits
-    cmd = instance.execute(['apt', 'install', 'snapd', '-y'])
-    if cmd.exit_code != 0:
-        log.info(cmd.stderr)
-        exit(1)
-    log.info('snapd installed')
-
+    wrap_cmd(instance, 'apt install snapd -y', log)
     '''
     snapd appears to perform some bootstrapping asynchronously with
     'apt install', so subsequent 'snap install's can fail for a moment.
     therefore we run this 'snap refesh' as a dummy-op to ensure snapd is
     up before continuing.
     '''
-    count = 30
-    for i in range(count):
-        out = instance.execute(['snap', 'refresh'])
-        if out.exit_code == 0:
-            log.info(out.stdout)
-            break
-        if i == count - 1:
-            log.info('timed out waiting for snapd on {}'.format(instance.name))
-            exit(1)
-        log.info(out.stderr)
-        time.sleep(2)
+    poll_cmd(instance, 'snap refresh', log)
+    return
 
 
 def instance_ready(instance, log):
@@ -85,18 +68,40 @@ def instance_ready(instance, log):
     waits until an instance is executable.
     pylxd's wait=True parameter alone does not guarantee the agent is running.
     '''
+    poll_cmd(instance, 'hostname', log)
+    return
+
+
+def poll_cmd(instance, cmd, log):
+    '''
+    given a shell string, retries for up to a minute for return code == 1.
+    '''
     count = 30
     for i in range(count):
         try:
-            if instance.execute(['hostname']).exit_code == 0:
-                return
+            res = instance.execute(cmd.split())
+            log.info(res.stdout)
+            if res.exit_code == 0:
+                return res
+            else:
+                log.info(res.stderr)
         except BrokenPipeError:
             continue
+        except ConnectionResetError:
+            continue
         if i == count - 1:
-            log.info('timed out waiting for lxd agent on {}'.format(instance.name))
-            exit(1)
-        log.info('waiting for lxd agent on ' + instance.name)
+            raise RuntimeError('timed out waiting for command `{}` on {}'.format(cmd, instance.name))
+        log.info('waiting for command `{}` on {}'.format(cmd, instance.name))
         time.sleep(2)
+
+
+def wrap_cmd(instance, cmd, log):
+    log.info('executing `{}` on {}'.format(cmd, instance.name))
+    res = instance.execute(cmd.split())
+    if res.exit_code != 0:
+        raise RuntimeError(res.stderr)
+    log.info(res.stdout)
+    return res
 
 
 def install_snap(instance, snap, log):
@@ -105,48 +110,25 @@ def install_snap(instance, snap, log):
     '''
     instance.files.put('/root/{}.snap'.format(snap.name), snap.snap)
     if snap.local:
-        cmd = instance.execute(['snap', 'install', '/root/{}.snap'.format(snap.name), '--dangerous'])
-        if cmd.exit_code != 0:
-            log.info(cmd.stderr)
-            exit(1)
-        log.info(cmd.stdout)
+        wrap_cmd(instance, 'snap install /root/{}.snap --dangerous'.format(snap.name), log)
     else:
         instance.files.put('/root/{}.assert'.format(snap.name), snap.assertion)
-        cmd = instance.execute(['snap', 'ack', '/root/{}.assert'.format(snap.name)])
-        if cmd.exit_code != 0:
-            log.info(cmd.stderr)
-            exit(1)
-        log.info(cmd.stdout)
-
-        cmd = instance.execute(['snap', 'install', '/root/{}.snap'.format(snap.name)])
-        if cmd.exit_code != 0:
-            log.info(cmd.stderr)
-            exit(1)
-        log.info(cmd.stdout)
+        wrap_cmd(instance, 'snap ack /root/{}.assert'.format(snap.name), log)
+        wrap_cmd(instance, 'snap install /root/{}.snap'.format(snap.name), log)
 
 
-def microceph_running(node, log):
-    count = 30
-    for i in range(count):
-        cmd = node.execute(['stat', '/var/snap/microceph/common/state/control.socket'])
-        if cmd.exit_code == 0:
-            return
-        else:
-            log.info('waiting for microceph to start on {}'.format(node.name))
-        if i == count - 1:
-            log.info('timed out waiting for microceph to start on {}'.format(node.name))
-            exit(1)
-
-
-def bootstrap_microceph(node, log):
-    cmd = node.execute(['/snap/bin/microceph', 'cluster', 'bootstrap'])
-    if cmd.exit_code != 0:
-        log.info(cmd.stderr)
-        exit(1)
-    log.info(cmd.stdout)
+def microceph_running(instance, log):
+    '''
+    microceph takes some amount of time to start up immediately after 'snap install'
+    '''
+    poll_cmd(instance, 'test -e /var/snap/microceph/common/state/control.socket', log)
+    return
 
 
 def microceph_ready(node, log):
+    '''
+    waits for and asserts microceph is 'ready' on given instance
+    '''
     count = 30
     for i in range(count):
         cmd = node.execute(['/snap/bin/microceph', 'cluster', 'list'])
@@ -163,30 +145,20 @@ def microceph_ready(node, log):
 
 
 def join_cluster(leader, node, log):
-    join_key = leader.execute(['/snap/bin/microceph', 'cluster', 'add', node.name])
-    if join_key.exit_code != 0:
-        log.info(join_key.stderr)
-        exit(1)
-
-    join = node.execute(['/snap/bin/microceph', 'cluster', 'join', join_key.stdout])
-    if join.exit_code != 0:
-        log.info(join.stderr)
-        exit(1)
-    else:
-        log.info(join.stdout)
-        return
+    join_key = wrap_cmd(leader, '/snap/bin/microceph cluster add {}'.format(node.name), log)
+    wrap_cmd(node, '/snap/bin/microceph cluster joiny {}'.format(join_key.stdout), log)
+    return
 
 
 def cleanup(client, log):
     for i in client.instances.all():
         if 'microceph_managed' in i.description:
-            log.info('found ' + i.name)
             i.stop(wait=True)
             i.delete(wait=True)
             log.info(i.name + ' deleted')
 
     for v in client.storage_pools.get('default').volumes.all():
-        #todo: pylxd doesnt appear to be propogating v.description
+        # todo: pylxd doesnt appear to be propogating v.description
         if re.search('microceph-osd-.{5}', v.name):
             v.delete()
             log.info('block device {} deleted'.format(v.name))

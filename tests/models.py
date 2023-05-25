@@ -28,7 +28,7 @@ class Cluster:
             utils.microceph_running(node, log)
 
             if i == 0:
-                utils.bootstrap_microceph(node, log)
+                utils.wrap_cmd(node, '/snap/bin/microceph cluster bootstrap', log)
             else:
                 utils.join_cluster(self.members[0], node, log)
 
