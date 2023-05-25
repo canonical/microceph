@@ -146,7 +146,7 @@ def microceph_ready(node, log):
 
 def join_cluster(leader, node, log):
     join_key = wrap_cmd(leader, '/snap/bin/microceph cluster add {}'.format(node.name), log)
-    wrap_cmd(node, '/snap/bin/microceph cluster joiny {}'.format(join_key.stdout), log)
+    wrap_cmd(node, '/snap/bin/microceph cluster join {}'.format(join_key.stdout), log)
     return
 
 
