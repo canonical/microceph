@@ -10,6 +10,7 @@ def main():
 
     logger = logging.getLogger(__name__)
     logging.basicConfig(level=logging.INFO)
+    logging.getLogger('ws4py').setLevel(logging.WARNING)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--create', action='store_true', help='Create a cluster')
