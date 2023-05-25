@@ -33,6 +33,10 @@ class Cluster:
                 utils.join_cluster(self.members[0], node, log)
 
             utils.microceph_ready(node, log)
+            utils.wrap_cmd(node, 'snap connect microceph:block-devices', log)
+            utils.wrap_cmd(node, 'snap connect microceph:hardware-observe', log)
+            utils.wrap_cmd(node, 'snap connect microceph:dm-crypt', log)
+            utils.wrap_cmd(node, '/snap/bin/microceph disk add /dev/sdb', log)
 
 
 class Snap:
