@@ -157,8 +157,9 @@ def microceph_ready(node, log):
             log.info('{} is ready'.format(node.name))
             return
         if i == count - 1:
-            log.info('timed out waiting for microceph to become readt on {}'.format(node.name))
+            log.info('timed out waiting for microceph to become ready on {}'.format(node.name))
             exit(1)
+        time.sleep(2)
 
 
 def join_cluster(leader, node, log):
