@@ -100,7 +100,8 @@ def wrap_cmd(instance, cmd, log):
     res = instance.execute(cmd.split())
     if res.exit_code != 0:
         raise RuntimeError(res.stderr)
-    log.info(res.stdout)
+    if res.stdout:
+        log.info(res.stdout)
     return res
 
 
