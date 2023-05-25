@@ -168,7 +168,8 @@ def join_cluster(leader, node, log):
 def cleanup(client, log):
     for i in client.instances.all():
         if "microceph_managed" in i.description:
-            i.stop(wait=True)
+            if i.status == "Running":
+                i.stop(wait=True)
             i.delete(wait=True)
             log.info(i.name + " deleted")
 
