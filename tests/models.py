@@ -60,7 +60,7 @@ class Snap:
             if err.exit_code != 0:
                 log.info(err.stderr)
                 log.info(err.stdout)
-                log.info('snap install failed')
+                log.info('snap download failed')
                 exit(1)
             log.info(err.stdout)
 
