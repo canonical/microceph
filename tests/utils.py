@@ -78,21 +78,21 @@ def poll_cmd(instance, cmd, log):
     '''
     count = 30
     for i in range(count):
+        if i == count - 1:
+            raise RuntimeError('timed out waiting for command `{}` on {}'.format(cmd, instance.name))
+
+        log.info('waiting for command `{}` on {}'.format(cmd, instance.name))
+        time.sleep(2)
         try:
-            res = instance.execute(cmd.split())
-            log.info(res.stdout)
+            res = wrap_cmd(instance, cmd, log)
             if res.exit_code == 0:
                 return res
-            else:
-                log.info(res.stderr)
+        except RuntimeError:
+            continue
         except BrokenPipeError:
             continue
         except ConnectionResetError:
             continue
-        if i == count - 1:
-            raise RuntimeError('timed out waiting for command `{}` on {}'.format(cmd, instance.name))
-        log.info('waiting for command `{}` on {}'.format(cmd, instance.name))
-        time.sleep(2)
 
 
 def wrap_cmd(instance, cmd, log):
