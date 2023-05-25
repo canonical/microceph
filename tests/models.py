@@ -45,11 +45,10 @@ class Snap:
     '''
     def __init__(self, name, channel, inst, log):
         '''
-        to initialize a Snap, we need a name, channel, and surrogate Instance
+        To initialize a Snap, we need a name, channel, and surrogate Instance.
+        A Snap may potentially be initialized with a host file path rather than a channel.
         '''
         self.name = name
-
-        # determine whether this is a local artifact or a snapcraft channel
         self.local = os.path.exists(channel)
 
         if self.local:
