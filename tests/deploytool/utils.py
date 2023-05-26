@@ -165,14 +165,15 @@ def join_cluster(leader, node, log):
 
 def cleanup(client, log):
     for i in client.instances.all():
-        if "microceph_managed" in i.description:
-            if i.status == "Running":
-                i.stop(wait=True)
-            i.delete(wait=True)
-            log.info(i.name + " deleted")
+        if re.search("^microceph-[a-f0-9]{5}$", i.name):
+            if "microceph_managed" in i.description:
+                if i.status == "Running":
+                    i.stop(wait=True)
+                i.delete(wait=True)
+                log.info(i.name + " deleted")
 
     for v in client.storage_pools.get("default").volumes.all():
         # todo: pylxd doesnt appear to be propogating v.description
-        if re.search("microceph-osd-.{5}", v.name):
+        if re.search("^microceph-osd-[a-f0-9]{5}$", v.name):
             v.delete()
             log.info("block device {} deleted".format(v.name))
