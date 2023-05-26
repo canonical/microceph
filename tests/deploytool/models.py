@@ -36,7 +36,10 @@ class Cluster:
             utils.microceph_ready(node, log)
             utils.wrap_cmd(node, "snap connect microceph:block-devices", log)
             utils.wrap_cmd(node, "snap connect microceph:hardware-observe", log)
-            utils.wrap_cmd(node, "snap connect microceph:dm-crypt", log)
+            try:
+                utils.wrap_cmd(node, "snap connect microceph:dm-crypt", log)
+            except RuntimeError as err:
+                log.info("snap may not implement microceph:dm-crypt : {}".format(err))
             utils.wrap_cmd(node, "/snap/bin/microceph disk add /dev/sdb", log)
 
 
