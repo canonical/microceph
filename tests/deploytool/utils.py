@@ -142,18 +142,16 @@ def microceph_ready(node, log):
     for i in range(count):
         cmd = node.execute(["/snap/bin/microceph", "cluster", "list"])
         if cmd.exit_code != 0:
-            log.info(cmd.stderr)
-            exit(1)
+            raise RuntimeError(cmd.stderr)
         if re.search("{}.*ONLINE".format(node.name), cmd.stdout):
             log.info("{} is ready".format(node.name))
             return
         if i == count - 1:
-            log.info(
+            raise RuntimeError(
                 "timed out waiting for microceph to become ready on {}".format(
                     node.name
                 )
             )
-            exit(1)
         time.sleep(2)
 
 

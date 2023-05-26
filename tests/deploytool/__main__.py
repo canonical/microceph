@@ -33,7 +33,6 @@ def main():
 
     if args.cleanup:
         utils.cleanup(client, logger)
-        exit(0)
 
     if args.create:
         ceph = models.Cluster(args.n)
@@ -44,4 +43,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

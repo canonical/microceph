@@ -69,10 +69,8 @@ class Snap:
                 ]
             )
             if err.exit_code != 0:
-                log.info(err.stderr)
-                log.info(err.stdout)
                 log.info("snap download failed")
-                exit(1)
+                raise RuntimeError(err.stderr)
             log.info(err.stdout)
 
             log.info("retrieving initial snap")
