@@ -1,8 +1,8 @@
 Create a cluster for end-to-end testing.
 
 ```
-python3 main.py -h
-usage: main.py [-h] [--create] [-n N] [--channel CHANNEL] [--image IMAGE] [--cleanup]
+python3 -m deploytool -h
+usage: __main__.py [-h] [--create] [-n N] [--channel CHANNEL] [--image IMAGE] [--cleanup]
 
 optional arguments:
   -h, --help         show this help message and exit
@@ -16,7 +16,7 @@ optional arguments:
 Example:
 
 ```
-python3 main.py --create -n 3 --image ubuntu/lunar
+python3 -m deploytool --create -n 3 --image ubuntu/lunar
 ...truncated...
 INFO:__main__:cluster created with members:
 INFO:__main__:microceph-1178e
@@ -38,5 +38,5 @@ lxc exec microceph-1178e -- /snap/bin/microceph cluster list
 Alternatively, a local `snapcraft` artifact can be imported in place of 'channel':
 
 ```
-python3 main.py --create --channel ../microceph_0+git.1cb2c77_amd64.snap
+python3 -m deploytool --create --channel ../microceph_0+git.1cb2c77_amd64.snap
 ```

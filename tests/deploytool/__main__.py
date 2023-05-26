@@ -2,8 +2,8 @@ import argparse
 import pylxd
 import logging
 
-import models
-import utils
+from deploytool import models
+from deploytool import utils
 
 
 def main():

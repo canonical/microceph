@@ -1,4 +1,4 @@
-import utils
+from deploytool import utils
 import os.path
 
 
