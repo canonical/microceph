@@ -1,5 +1,6 @@
 from deploytool import utils
 import os.path
+import subprocess
 
 
 class Cluster:
@@ -16,31 +17,32 @@ class Cluster:
         """
         given a cluster, create the nodes in lxd.
         """
-
+        microceph = Snap("microceph", channel, log)
         for i in range(self.size):
-            node = utils.create_node(client, log, image)
-            self.members.append(node)
-
-            # use the first node to download the Snap, then pass it along.
             if i == 0:
-                microceph = Snap("microceph", channel, node, log)
-
-            utils.install_snap(node, microceph, log)
-            utils.microceph_running(node, log)
-
-            if i == 0:
-                utils.wrap_cmd(node, "/snap/bin/microceph cluster bootstrap", log)
+                self.add_node(channel, client, log, image, microceph, initial=True)
             else:
-                utils.join_cluster(self.members[0], node, log)
+                self.add_node(channel, client, log, image, microceph, initial=False)
 
-            utils.microceph_ready(node, log)
-            utils.wrap_cmd(node, "snap connect microceph:block-devices", log)
-            utils.wrap_cmd(node, "snap connect microceph:hardware-observe", log)
-            try:
-                utils.wrap_cmd(node, "snap connect microceph:dm-crypt", log)
-            except RuntimeError as err:
-                log.info("snap may not implement microceph:dm-crypt : {}".format(err))
-            utils.wrap_cmd(node, "/snap/bin/microceph disk add /dev/sdb", log)
+    def add_node(self, channel, client, log, image, microceph, initial):
+        node = utils.create_node(client, log, image)
+        self.members.append(node)
+        utils.install_snap(node, microceph, log)
+        utils.microceph_running(node, log)
+
+        if initial:
+            utils.wrap_cmd(node, "/snap/bin/microceph cluster bootstrap", log)
+        else:
+            utils.join_cluster(self.members[0], node, log)
+
+        utils.microceph_ready(node, log)
+        utils.wrap_cmd(node, "snap connect microceph:block-devices", log)
+        utils.wrap_cmd(node, "snap connect microceph:hardware-observe", log)
+        try:
+            utils.wrap_cmd(node, "snap connect microceph:dm-crypt", log)
+        except RuntimeError as err:
+            log.info("snap may not implement microceph:dm-crypt : {}".format(err))
+        utils.wrap_cmd(node, "/snap/bin/microceph disk add /dev/sdb", log)
 
 
 class Snap:
@@ -48,9 +50,8 @@ class Snap:
     a snap assertion and data file
     """
 
-    def __init__(self, name, channel, inst, log):
+    def __init__(self, name, channel, log):
         """
-        To initialize a Snap, we need a name, channel, and surrogate Instance.
         A Snap may potentially be initialized with a host file path rather than a channel.
         """
         self.name = name
@@ -60,22 +61,20 @@ class Snap:
             log.info("importing snap {} from {}".format(name, channel))
             self.snap = open(channel, mode="rb").read()
         else:
+            if not os.path.exists(".cache"):
+                os.mkdir(".cache")
             log.info("downloading snap {} {}".format(name, channel))
-            err = inst.execute(
+            subprocess.run(
                 [
                     "snap",
                     "download",
                     self.name,
                     "--channel={}".format(channel),
-                    "--target-directory=/tmp/",
+                    "--target-directory=.cache",
                     "--basename={}".format(self.name),
                 ]
             )
-            if err.exit_code != 0:
-                log.info("snap download failed")
-                raise RuntimeError(err.stderr)
-            log.info(err.stdout)
-
-            log.info("retrieving initial snap")
-            self.snap = inst.files.get("/tmp/{}.snap".format(self.name))
-            self.assertion = inst.files.get("/tmp/{}.assert".format(self.name))
+            with open(".cache/{}.snap".format(name), mode="rb") as f:
+                self.snap = f.read()
+            with open(".cache/{}.assert".format(name), mode="rb") as f:
+                self.assertion = f.read()
