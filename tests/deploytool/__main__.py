@@ -4,6 +4,7 @@ import logging
 
 from deploytool import models
 from deploytool import utils
+from deploytool import tests
 
 
 def main():
@@ -27,6 +28,7 @@ def main():
     parser.add_argument(
         "--cleanup", action="store_true", help="Remove all microceph lxd instances"
     )
+    parser.add_argument("--runtests", action="store_true", help="Run test suite.")
     args = parser.parse_args()
 
     client = pylxd.Client()
@@ -40,6 +42,12 @@ def main():
         logger.info("cluster created with members:")
         for m in ceph.members:
             logger.info(m.name)
+
+    if args.runtests:
+        if args.create:
+            tests.main(ceph, logger)
+        else:
+            logging.info("--runtests requires --create. Exiting.")
 
 
 if __name__ == "__main__":

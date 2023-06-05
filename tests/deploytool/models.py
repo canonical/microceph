@@ -17,17 +17,19 @@ class Cluster:
         """
         given a cluster, create the nodes in lxd.
         """
-        microceph = Snap("microceph", channel, log)
+        self.microceph = Snap("microceph", channel, log)
+        self.image = image
+
         for i in range(self.size):
             if i == 0:
-                self.add_node(channel, client, log, image, microceph, initial=True)
+                self.add_node(client, log, initial=True)
             else:
-                self.add_node(channel, client, log, image, microceph, initial=False)
+                self.add_node(client, log, initial=False)
 
-    def add_node(self, channel, client, log, image, microceph, initial):
-        node = utils.create_node(client, log, image)
+    def add_node(self, client, log, initial):
+        node = utils.create_node(client, log, self.image)
         self.members.append(node)
-        utils.install_snap(node, microceph, log)
+        utils.install_snap(node, self.microceph, log)
         utils.microceph_running(node, log)
 
         if initial:

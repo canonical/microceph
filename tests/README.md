@@ -2,7 +2,7 @@ Create a cluster for end-to-end testing.
 
 ```
 python3 -m deploytool -h
-usage: __main__.py [-h] [--create] [-n N] [--channel CHANNEL] [--image IMAGE] [--cleanup]
+usage: __main__.py [-h] [--create] [-n N] [--channel CHANNEL] [--image IMAGE] [--cleanup] [--runtests]
 
 optional arguments:
   -h, --help         show this help message and exit
@@ -11,6 +11,7 @@ optional arguments:
   --channel CHANNEL  Snap channel. Defaults to latest/stable. If value is a local path, an offline installation will be attempted.
   --image IMAGE      lxd image to use for cluster nodes. Defaults to ubuntu/22.04/cloud.
   --cleanup          Remove all microceph lxd instances
+  --runtests         Run test suite.
 ```
 
 Example:
