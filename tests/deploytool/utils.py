@@ -86,7 +86,7 @@ def poll_cmd(instance, cmd, log):
                 "timed out waiting for command `{}` on {}".format(cmd, instance.name)
             )
 
-        log.info("waiting for command `{}` on {}".format(cmd, instance.name))
+        log.debug("waiting for command `{}` on {}".format(cmd, instance.name))
         time.sleep(2)
         try:
             res = wrap_cmd(instance, cmd, log)
@@ -101,12 +101,12 @@ def poll_cmd(instance, cmd, log):
 
 
 def wrap_cmd(instance, cmd, log):
-    log.info("executing `{}` on {}".format(cmd, instance.name))
+    log.debug("executing `{}` on {}".format(cmd, instance.name))
     res = instance.execute(cmd.split())
     if res.exit_code != 0:
         raise RuntimeError(res.stderr)
     if res.stdout:
-        log.info(res.stdout)
+        log.debug(res.stdout)
     return res
 
 

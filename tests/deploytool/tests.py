@@ -18,7 +18,7 @@ def assert_ceph_healthy(cluster, log, timeout):
     res = utils.wrap_cmd(leader, "/snap/bin/microceph.ceph status --format json", log)
     ceph_status_json = res.stdout
     ceph_status = json.loads(ceph_status_json)["health"]["status"]
-    log.info("ceph status is: {}".format(ceph_status))
+    log.debug("ceph status is: {}".format(ceph_status))
 
     if ceph_status != "HEALTH_OK":
         sleep(1)

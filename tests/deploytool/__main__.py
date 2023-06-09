@@ -29,9 +29,13 @@ def main():
         "--cleanup", action="store_true", help="Remove all microceph lxd instances"
     )
     parser.add_argument("--runtests", action="store_true", help="Run test suite.")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
     args = parser.parse_args()
 
     client = pylxd.Client()
+
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
 
     if args.cleanup:
         utils.cleanup(client, logger)
