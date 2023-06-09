@@ -27,6 +27,11 @@ def create_node(client, log, image):
     inst = client.instances.create(config, wait=True)
     inst.start(wait=True)
     instance_ready(inst, log)
+
+    # the default kvm-clock doesnt appear to be good enough for ceph's
+    # clock-skew detection.
+    wrap_cmd(inst, "apt install chrony -y", log)
+
     snapd_ready(inst, log)
     return inst
 
