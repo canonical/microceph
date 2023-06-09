@@ -8,6 +8,7 @@ from deploytool import utils
 def main(cluster, log):
     assert_ceph_healthy(cluster, log, 10)
     grow_cluster(cluster, log)
+    bounce_cluster(cluster, log)
 
 
 def assert_ceph_healthy(cluster, log, timeout):
@@ -32,3 +33,15 @@ def grow_cluster(cluster, log):
     client = pylxd.Client()
     cluster.add_node(client, log, initial=False)
     assert_ceph_healthy(cluster, log, 30)
+
+
+def bounce_cluster(cluster, log):
+    """
+    a cluster should survive a full reboot, ignoring quorum availability.
+    """
+    for n in cluster.members:
+        n.restart(wait=True)
+
+    utils.instance_ready(cluster.members[0], log)
+    assert_ceph_healthy(cluster, log, 60)
+    log.info("bounce_cluster PASSED")
