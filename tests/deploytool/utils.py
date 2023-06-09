@@ -49,7 +49,7 @@ def create_osd(client, log):
             "type": "custom",
             "content_type": "block",
             "description": "microceph-managed",
-            "config": {"size": "8GiB"},
+            "config": {"size": "4GiB"},
         }
     )
     return name
