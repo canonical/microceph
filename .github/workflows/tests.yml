@@ -47,6 +47,11 @@ jobs:
           sudo microceph.ceph version
           sudo microceph.ceph status
 
+          # Verify metadata.yaml
+          meta=/var/snap/microceph/current/conf/metadata.yaml
+          cat $meta
+          grep -q ceph-version $meta
+
           # Allow ceph to notice no OSD are present
           sleep 30
           sudo microceph.ceph status
