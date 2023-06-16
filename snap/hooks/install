@@ -1,0 +1,5 @@
+#!/bin/sh
+set -uex
+conf="${SNAP_DATA}/conf"
+mkdir -p -m 0755 "${conf}"
+cp "${SNAP}/share/metadata.yaml" "${conf}"

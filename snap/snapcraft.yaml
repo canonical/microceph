@@ -9,6 +9,13 @@ description: |-
 
 confinement: strict
 
+slots:
+  ceph-conf:
+    interface: content
+    source:
+      read:
+        - "$SNAP_DATA/conf"
+
 environment:
   LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/erasure-code
   PYTHONPATH: $SNAP/lib/python3/dist-packages
@@ -112,6 +119,18 @@ apps:
 parts:
   ceph:
     plugin: nil
+    override-prime: |
+      snapcraftctl prime
+      pkg_version=$(
+            dpkg-deb -f \
+            $CRAFT_PART_SRC/../stage_packages/ceph-common*.deb Version)
+      git_version=$(
+            git -C $CRAFT_PROJECT_DIR describe \
+                --always \
+                --dirty \
+                --tags \
+                --abbrev=10 | sed -s 's/^v//')
+      printf "ceph-version: ${pkg_version}\nmicroceph-git: ${git_version}\n" > share/metadata.yaml
     stage-packages:
       - ceph-common
       - ceph-mds
