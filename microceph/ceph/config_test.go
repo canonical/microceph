@@ -29,9 +29,9 @@ func addConfigSetExpectations(r *mocks.Runner, key string, value string) {
 	}...).Return(value, nil).Once()
 }
 
-func addConfigOpExpectations(r *mocks.Runner, op string, key string, value string) {
+func addConfigOpExpectations(r *mocks.Runner, op, who, key, value string) {
 	r.On("RunCommand", []interface{}{
-		"ceph", "config", op, "global", key,
+		"ceph", "config", op, who, key,
 	}...).Return(value, nil).Once()
 }
 
@@ -59,7 +59,7 @@ func (s *configSuite) TestGetConfig() {
 	t := types.Config{Key: "cluster_network", Value: "0.0.0.0/16"}
 
 	r := mocks.NewRunner(s.T())
-	addConfigOpExpectations(r, "get", t.Key, t.Value)
+	addConfigOpExpectations(r, "get", "mon", t.Key, t.Value)
 	processExec = r
 
 	_, err := GetConfigItem(t)
@@ -70,7 +70,7 @@ func (s *configSuite) TestResetConfig() {
 	t := types.Config{Key: "cluster_network", Value: "0.0.0.0/16"}
 
 	r := mocks.NewRunner(s.T())
-	addConfigOpExpectations(r, "rm", t.Key, t.Value)
+	addConfigOpExpectations(r, "rm", "global", t.Key, t.Value)
 	processExec = r
 
 	err := RemoveConfigItem(t)
