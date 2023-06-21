@@ -7,7 +7,7 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microcluster/microcluster"
-	"github.com/lxc/lxd/lxc/utils"
+	lxdCmd "github.com/lxc/lxd/shared/cmd"
 	"github.com/spf13/cobra"
 )
 
@@ -58,7 +58,7 @@ func (c *cmdClusterConfigList) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	header := []string{"#", "Key", "Value"}
-	err = utils.RenderTable(utils.TableFormatTable, header, data, configs)
+	err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, data, configs)
 	if err != nil {
 		return err
 	}

@@ -8,7 +8,7 @@ import (
 
 	microCli "github.com/canonical/microcluster/client"
 	"github.com/canonical/microcluster/microcluster"
-	"github.com/lxc/lxd/lxc/utils"
+	lxdCmd "github.com/lxc/lxd/shared/cmd"
 	"github.com/lxc/lxd/shared/units"
 	"github.com/spf13/cobra"
 
@@ -53,10 +53,10 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	header := []string{"OSD", "LOCATION", "PATH"}
-	sort.Sort(utils.ByName(data))
+	sort.Sort(lxdCmd.SortColumnsNaturally(data))
 
 	fmt.Println("Disks configured in MicroCeph:")
-	err = utils.RenderTable(utils.TableFormatTable, header, data, disks)
+	err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, data, disks)
 	if err != nil {
 		return err
 	}
@@ -121,9 +121,9 @@ func listLocalDisks(cli *microCli.Client) error {
 	fmt.Println("Available unpartitioned disks on this system:")
 
 	header := []string{"MODEL", "CAPACITY", "TYPE", "PATH"}
-	sort.Sort(utils.ByName(data))
+	sort.Sort(lxdCmd.SortColumnsNaturally(data))
 
-	err = utils.RenderTable(utils.TableFormatTable, header, data, disks)
+	err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, data, disks)
 	if err != nil {
 		return err
 	}
