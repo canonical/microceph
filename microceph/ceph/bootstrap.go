@@ -101,6 +101,12 @@ func Bootstrap(s common.StateInterface) error {
 		return err
 	}
 
+	// ensure crush rules
+	err = ensureCrushRules()
+	if err != nil {
+		return err
+	}
+
 	// Re-generate the configuration from the database.
 	err = updateConfig(s)
 	if err != nil {
@@ -268,4 +274,24 @@ func initMds(s common.StateInterface, dataPath string) error {
 	}
 	return nil
 
+}
+
+// ensureCrushRules removes the default replicated rule and adds a microceph default rule with failure domain OSD
+func ensureCrushRules() error {
+	// Remove the default replicated rule it it exists.
+	if haveCrushRule("replicated_rule") {
+		err := removeCrushRule("replicated_rule")
+		if err != nil {
+			return fmt.Errorf("Failed to remove default replicated rule: %w", err)
+		}
+	}
+	// Add a microceph default rule with failure domain OSD if it does not exist.
+	if haveCrushRule("microceph_auto_rule") {
+		return nil
+	}
+	err := addCrushRule("microceph_auto_osd", "osd")
+	if err != nil {
+		return fmt.Errorf("Failed to add microceph default rule: %w", err)
+	}
+	return nil
 }
