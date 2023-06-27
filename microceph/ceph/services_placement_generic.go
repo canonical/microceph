@@ -1,0 +1,132 @@
+package ceph
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/database"
+)
+
+// Maps the addService function to respective services.
+func GetAddServiceTable() map[string](func(string, string) error) {
+	return map[string](func(string, string) error){
+		"mon": joinMon,
+		"mgr": joinMgr,
+		"mds": joinMds,
+		// Add more services here, for using the generic Interface implementation.
+	}
+}
+
+// Used by services: mon, mgr, mds
+type GenericServicePlacement struct {
+	Name string
+}
+
+func (gsp *GenericServicePlacement) PopulateParams(s common.StateInterface, payload string) error {
+	// No params needed to initialise generic service
+	return nil
+}
+
+func (gsp *GenericServicePlacement) HospitalityCheck(s common.StateInterface) error {
+	return genericHospitalityCheck(gsp.Name)
+}
+
+func (gsp *GenericServicePlacement) ServiceInit(s common.StateInterface) error {
+	var ok bool
+	var addService func(string, string) error
+	hostname := s.ClusterState().Name()
+	pathConsts := common.GetPathConst()
+	pathFileMode := common.GetPathFileMode()
+	serviceDataPath := filepath.Join(pathConsts.DataPath, gsp.Name, fmt.Sprintf("ceph-%s", hostname))
+	addServiceTable := GetAddServiceTable()
+
+	// Fetch addService handler for gsp.Name service
+	addService, ok = addServiceTable[gsp.Name]
+	if !ok {
+		err := fmt.Errorf("%s is not registered in the generic implementation", gsp.Name)
+		logger.Error(err.Error())
+		return err
+	}
+
+	// Make required directories
+	err := os.MkdirAll(serviceDataPath, pathFileMode[pathConsts.DataPath])
+	if err != nil {
+		logger.Error(err.Error())
+		return fmt.Errorf("failed to add datapath %s for service %s: %w", serviceDataPath, gsp.Name, err)
+	}
+
+	err = addService(hostname, serviceDataPath)
+	if err != nil {
+		logger.Error(err.Error())
+		return fmt.Errorf("failed to add service %s: %w", gsp.Name, err)
+	}
+
+	err = snapStart(gsp.Name, true)
+	if err != nil {
+		logger.Error(err.Error())
+		return fmt.Errorf("failed to perform snap start for service %s: %w", gsp.Name, err)
+	}
+
+	return nil
+}
+
+func (gsp *GenericServicePlacement) PostPlacementCheck(s common.StateInterface) error {
+	return genericPostPlacementCheck(gsp.Name)
+}
+
+func (gsp *GenericServicePlacement) DbUpdate(s common.StateInterface) error {
+	return genericDbUpdate(s, gsp.Name)
+}
+
+// Generic Method Implementations
+func genericHospitalityCheck(service string) error {
+	// Check if service already exists on host.
+	err := snapCheckActive(service)
+	if err == nil {
+		retErr := fmt.Errorf("%s service already active on host", service)
+		logger.Error(retErr.Error())
+		return retErr
+	}
+
+	return nil
+}
+
+func genericPostPlacementCheck(service string) error {
+	// Check in a loop if the service stays up.
+	attempts := 4
+
+	for attempts > 0 {
+		ret := snapCheckActive(service)
+		if ret != nil {
+			return ret
+		}
+
+		// simple delay, since only checking if the service stays up.
+		time.Sleep(time.Duration(attempts) * time.Second)
+		attempts-- // Decrease attempt by one.
+	}
+
+	return nil
+}
+
+func genericDbUpdate(s common.StateInterface, service string) error {
+	// Update the database.
+	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+		// Record the roles.
+		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: service})
+		if err != nil {
+			return fmt.Errorf("failed to record role: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}

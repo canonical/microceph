@@ -57,20 +57,20 @@ func bootstrapMon(hostname string, path string, monmap string, keyring string) e
 func joinMon(hostname string, path string) error {
 	tmpPath, err := os.MkdirTemp("", "")
 	if err != nil {
-		return fmt.Errorf("Unable to create temporary path: %w", err)
+		return fmt.Errorf("unable to create temporary path: %w", err)
 	}
 	defer os.RemoveAll(tmpPath)
 
 	monmap := filepath.Join(tmpPath, "mon.map")
 	_, err = cephRun("mon", "getmap", "-o", monmap)
 	if err != nil {
-		return fmt.Errorf("Failed to retrieve monmap: %w", err)
+		return fmt.Errorf("failed to retrieve monmap: %w", err)
 	}
 
 	keyring := filepath.Join(tmpPath, "mon.keyring")
 	_, err = cephRun("auth", "get", "mon.", "-o", keyring)
 	if err != nil {
-		return fmt.Errorf("Failed to retrieve mon keyring: %w", err)
+		return fmt.Errorf("failed to retrieve mon keyring: %w", err)
 	}
 
 	return bootstrapMon(hostname, path, monmap, keyring)

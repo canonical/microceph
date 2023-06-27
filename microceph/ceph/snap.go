@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/canonical/lxd/shared/logger"
 )
@@ -76,6 +77,26 @@ func snapRestart(service string, isReload bool) error {
 	_, err := processExec.RunCommand("snapctl", args...)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// Check if a particular snap service is active or inactive
+func snapCheckActive(service string) error {
+	args := []string{
+		"services",
+		fmt.Sprintf("microceph.%s", service),
+	}
+
+	out, err := processExec.RunCommand("snapctl", args...)
+	if err != nil {
+		return err
+	}
+
+	// Check if the particular service is inactive.
+	if strings.Contains(out, "inactive") {
+		return fmt.Errorf("%s service is not active", service)
 	}
 
 	return nil

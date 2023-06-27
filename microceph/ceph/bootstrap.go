@@ -16,21 +16,11 @@ import (
 
 // Bootstrap will initialize a new Ceph deployment.
 func Bootstrap(s common.StateInterface) error {
-
-	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
-	runPath := filepath.Join(os.Getenv("SNAP_DATA"), "run")
-	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
-	logPath := filepath.Join(os.Getenv("SNAP_COMMON"), "logs")
+	pathConsts := common.GetPathConst()
+	pathFileMode := common.GetPathFileMode()
 
 	// Create our various paths.
-	paths := map[string]os.FileMode{
-		confPath: 0755,
-		runPath:  0700,
-		dataPath: 0700,
-		logPath:  0700,
-	}
-
-	for path, perm := range paths {
+	for path, perm := range pathFileMode {
 		err := os.MkdirAll(path, perm)
 		if err != nil {
 			return fmt.Errorf("Unable to create %q: %w", path, err)
@@ -39,12 +29,11 @@ func Bootstrap(s common.StateInterface) error {
 
 	// Generate a new FSID.
 	fsid := uuid.NewRandom().String()
-
-	conf := newCephConfig(confPath)
+	conf := newCephConfig(pathConsts.ConfPath)
 	err := conf.WriteConfig(
 		map[string]any{
 			"fsid":     fsid,
-			"runDir":   runPath,
+			"runDir":   pathConsts.RunPath,
 			"monitors": s.ClusterState().Address().Hostname(),
 			"addr":     s.ClusterState().Address().Hostname(),
 		},
@@ -53,14 +42,14 @@ func Bootstrap(s common.StateInterface) error {
 		return err
 	}
 
-	path, err := createKeyrings(confPath)
+	path, err := createKeyrings(pathConsts.ConfPath)
 	if err != nil {
 		return err
 	}
 
 	defer os.RemoveAll(path)
 
-	adminKey, err := parseKeyring(filepath.Join(confPath, "ceph.client.admin.keyring"))
+	adminKey, err := parseKeyring(filepath.Join(pathConsts.ConfPath, "ceph.client.admin.keyring"))
 	if err != nil {
 		return fmt.Errorf("Failed parsing admin keyring: %w", err)
 	}
@@ -70,17 +59,17 @@ func Bootstrap(s common.StateInterface) error {
 		return err
 	}
 
-	err = initMon(s, dataPath, path)
+	err = initMon(s, pathConsts.DataPath, path)
 	if err != nil {
 		return err
 	}
 
-	err = initMgr(s, dataPath)
+	err = initMgr(s, pathConsts.DataPath)
 	if err != nil {
 		return err
 	}
 
-	err = initMds(s, dataPath)
+	err = initMds(s, pathConsts.DataPath)
 	if err != nil {
 		return err
 	}
@@ -90,7 +79,7 @@ func Bootstrap(s common.StateInterface) error {
 		return err
 	}
 
-	err = startOSDs(s, dataPath)
+	err = startOSDs(s, pathConsts.DataPath)
 	if err != nil {
 		return err
 	}

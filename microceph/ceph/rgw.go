@@ -13,15 +13,13 @@ import (
 
 // EnableRGW enables the RGW service on the cluster and adds initial configuration given a service port number.
 func EnableRGW(s common.StateInterface, port int) error {
-	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
-	runPath := filepath.Join(os.Getenv("SNAP_DATA"), "run")
-	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
+	pathConsts := common.GetPathConst()
 
 	// Create RGW configuration.
-	conf := newRadosGWConfig(confPath)
+	conf := newRadosGWConfig(pathConsts.ConfPath)
 	err := conf.WriteConfig(
 		map[string]any{
-			"runDir":   runPath,
+			"runDir":   pathConsts.RunPath,
 			"monitors": s.ClusterState().Address().Hostname(),
 			"rgwPort":  port,
 		},
@@ -30,12 +28,12 @@ func EnableRGW(s common.StateInterface, port int) error {
 		return err
 	}
 	// Create RGW keyring.
-	path := filepath.Join(dataPath, "radosgw", "ceph-radosgw.gateway")
+	path := filepath.Join(pathConsts.DataPath, "radosgw", "ceph-radosgw.gateway")
 	if err = createRGWKeyring(path); err != nil {
 		return err
 	}
 	// Symlink the keyring to the conf directory for usage with the radosgw-admin command.
-	if err = symlinkRGWKeyring(path, confPath); err != nil {
+	if err = symlinkRGWKeyring(path, pathConsts.ConfPath); err != nil {
 		return err
 	}
 	// Record the changes to the database.
@@ -52,8 +50,7 @@ func EnableRGW(s common.StateInterface, port int) error {
 
 // DisableRGW disables the RGW service on the cluster.
 func DisableRGW(s common.StateInterface) error {
-	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
-	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
+	pathConsts := common.GetPathConst()
 
 	err := stopRGW()
 	if err != nil {
@@ -66,21 +63,21 @@ func DisableRGW(s common.StateInterface) error {
 	}
 
 	// Remove the keyring symlink.
-	err = os.Remove(filepath.Join(confPath, "ceph.client.radosgw.gateway.keyring"))
+	err = os.Remove(filepath.Join(pathConsts.ConfPath, "ceph.client.radosgw.gateway.keyring"))
 	if err != nil {
-		return fmt.Errorf("Failed to remove RGW keyring symlink: %w", err)
+		return fmt.Errorf("failed to remove RGW keyring symlink: %w", err)
 	}
 
 	// Remove the keyring.
-	err = os.Remove(filepath.Join(dataPath, "radosgw", "ceph-radosgw.gateway", "keyring"))
+	err = os.Remove(filepath.Join(pathConsts.DataPath, "radosgw", "ceph-radosgw.gateway", "keyring"))
 	if err != nil {
-		return fmt.Errorf("Failed to remove RGW keyring: %w", err)
+		return fmt.Errorf("failed to remove RGW keyring: %w", err)
 	}
 
 	// Remove the configuration.
-	err = os.Remove(filepath.Join(confPath, "radosgw.conf"))
+	err = os.Remove(filepath.Join(pathConsts.ConfPath, "radosgw.conf"))
 	if err != nil {
-		return fmt.Errorf("Failed to remove RGW configuration: %w", err)
+		return fmt.Errorf("failed to remove RGW configuration: %w", err)
 	}
 
 	return nil
@@ -166,10 +163,10 @@ func createRGWKeyring(path string) error {
 }
 
 // symlinkRGWKeyring creates a symlink to the RGW keyring in the conf directory for use with the radosgw-admin command.
-func symlinkRGWKeyring(keyPath, confPath string) error {
+func symlinkRGWKeyring(keyPath, ConfPath string) error {
 	if err := os.Symlink(
 		filepath.Join(keyPath, "keyring"),
-		filepath.Join(confPath, "ceph.client.radosgw.gateway.keyring")); err != nil {
+		filepath.Join(ConfPath, "ceph.client.radosgw.gateway.keyring")); err != nil {
 		return fmt.Errorf("Failed to create symlink to RGW keyring: %w", err)
 	}
 
