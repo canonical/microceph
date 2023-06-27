@@ -238,19 +238,11 @@ func setHostFailureDomain() error {
 // updateFailureDomain checks if we need to update the crush rules failure domain.
 // Once we have at least 3 nodes with at least 1 OSD each, we set the failure domain to host.
 func updateFailureDomain(s *state.State) error {
-	var numNodes int
-
-	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		records, err := database.MembersDiskCnt(ctx, tx)
-		if err != nil {
-			return fmt.Errorf("Failed to fetch disks: %w", err)
-		}
-		numNodes = len(records)
-		return nil
-	})
+	numNodes, err := database.MemberCounter.Count(s)
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to count members: %w", err)
 	}
+
 	if numNodes >= 3 {
 		err = setHostFailureDomain()
 		if err != nil {

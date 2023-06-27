@@ -5,9 +5,19 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/canonical/microcluster/cluster"
+	"github.com/canonical/microcluster/state"
 	"github.com/lxc/lxd/lxd/db/query"
 	"github.com/lxc/lxd/shared/api"
 )
+
+// MemberCounterInterface is for counting member nodes. Introduced for mocking.
+//
+//go:generate mockery --name MemberCounterInterface
+type MemberCounterInterface interface {
+	Count(s *state.State) (int, error)
+}
+
+type MemberCounterImpl struct{}
 
 type MemberDisk struct {
 	Member   string `db:"member"`
@@ -52,3 +62,24 @@ func MembersDiskCnt(ctx context.Context, tx *sql.Tx) ([]MemberDisk, error) {
 
 	return objects, err
 }
+
+// Count returns the number of nodes in the cluster with at least one disk
+func (m MemberCounterImpl) Count(s *state.State) (int, error) {
+	var numNodes int
+
+	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+		records, err := MembersDiskCnt(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("Failed to fetch disks: %w", err)
+		}
+		numNodes = len(records)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return numNodes, nil
+}
+
+// Singleton for the MemberCounterImpl, to be mocked in unit testing
+var MemberCounter MemberCounterInterface = MemberCounterImpl{}
