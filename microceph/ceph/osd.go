@@ -237,6 +237,7 @@ func setHostFailureDomain() error {
 
 // updateFailureDomain checks if we need to update the crush rules failure domain.
 // Once we have at least 3 nodes with at least 1 OSD each, we set the failure domain to host.
+// Currently this function only handles scale-up scenarios, i.e. adding a new node.
 func updateFailureDomain(s *state.State) error {
 	numNodes, err := database.MemberCounter.Count(s)
 	if err != nil {
