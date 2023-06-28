@@ -212,6 +212,47 @@ func checkEncryptSupport() error {
 	return nil
 }
 
+// setHostFailureDomain sets the host failure domain for the given host.
+func setHostFailureDomain() error {
+	var err error
+
+	if !haveCrushRule("microceph_auto_host") {
+		err = addCrushRule("microceph_auto_host", "host")
+		if err != nil {
+			return err
+		}
+	}
+	osdPools, err := getPoolsForDomain("osd")
+	if err != nil {
+		return err
+	}
+	for _, pool := range osdPools {
+		err = setPoolCrushRule(pool, "microceph_auto_host")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// updateFailureDomain checks if we need to update the crush rules failure domain.
+// Once we have at least 3 nodes with at least 1 OSD each, we set the failure domain to host.
+// Currently this function only handles scale-up scenarios, i.e. adding a new node.
+func updateFailureDomain(s *state.State) error {
+	numNodes, err := database.MemberCounter.Count(s)
+	if err != nil {
+		return fmt.Errorf("Failed to count members: %w", err)
+	}
+
+	if numNodes >= 3 {
+		err = setHostFailureDomain()
+		if err != nil {
+			return fmt.Errorf("Failed to set host failure domain: %w", err)
+		}
+	}
+	return nil
+}
+
 // AddOSD adds an OSD to the cluster, given a device path and a flag for wiping
 func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 	revert := revert.New()
@@ -373,6 +414,12 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 
 	// Spawn the OSD.
 	err = snapRestart("osd", true)
+	if err != nil {
+		return err
+	}
+
+	// Maybe update the failure domain
+	err = updateFailureDomain(s)
 	if err != nil {
 		return err
 	}

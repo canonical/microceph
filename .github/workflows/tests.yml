@@ -4,8 +4,8 @@ on:
   - pull_request
 
 jobs:
-  system-tests:
-    name: System tests
+  build-microceph:
+    name: Build microceph snap
     runs-on: ubuntu-22.04
     env:
       SNAPCRAFT_BUILD_ENVIRONMENT: "lxd"
@@ -32,161 +32,168 @@ jobs:
       - name: Build snaps
         run: snapcraft
 
-      - name: Install and setup
-        run: |
-          set -eux
-          sudo snap install --dangerous microceph_*.snap
-          sudo snap connect microceph:block-devices
-          sudo snap connect microceph:hardware-observe
-          # defer dm-crypt enablement for later.
-
-          # Daemon needs restart for the added dm-crypt connection
-          sudo snap restart microceph.daemon
-
-          sudo microceph cluster bootstrap
-          sudo microceph.ceph version
-          sudo microceph.ceph status
-
-          # Verify metadata.yaml
-          meta=/var/snap/microceph/current/conf/metadata.yaml
-          cat $meta
-          grep -q ceph-version $meta
-
-          # Allow ceph to notice no OSD are present
-          sleep 30
-          sudo microceph.ceph status
-          sudo microceph.ceph health
-          sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"
-
-          # Set up crush rules with an OSD failure domain
-          sudo microceph.ceph osd crush rule rm replicated_rule
-          sudo microceph.ceph osd crush rule create-replicated single default osd
-
-      - name: Add OSD with failure
-        run: |
-          set -eux
-          loop_file="$(sudo mktemp -p /mnt XXXX.img)"
-          sudo truncate -s 1G "${loop_file}"
-          loop_dev="$(sudo losetup --show -f "${loop_file}")"
-
-          minor="${loop_dev##/dev/loop}"
-          sudo mknod -m 0660 "/dev/sdi21" b 7 "${minor}"
-
-          set +e
-          sudo microceph disk add --wipe "/dev/sdi21" --encrypt || rc="$?"
-          if [[ $rc -eq 0 ]] ; then echo "FDE should fail without dmcrypt: $rc"; exit 1; fi
-
-      - name: Add OSDs
-        run: |
-          set -eux
-          # Enable dm-crypt connection and restart microceph daemon
-          sudo snap connect microceph:dm-crypt
-          sudo snap restart microceph.daemon
-          # Add OSDs backed by loop devices on /mnt (ephemeral "large" disk attached to GitHub action runners)
-          i=0
-          for l in a b c; do
-            loop_file="$(sudo mktemp -p /mnt XXXX.img)"
-            sudo truncate -s 1G "${loop_file}"
-            loop_dev="$(sudo losetup --show -f "${loop_file}")"
-
-            # XXX: the block-devices plug doesn't allow accessing /dev/loopX
-            # devices so we make those same devices available under alternate
-            # names (/dev/sdiY) that are not used inside GitHub Action runners
-            minor="${loop_dev##/dev/loop}"
-            sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
-            sudo microceph disk add --wipe "/dev/sdi${l}" --encrypt
-          done
-
-          # Wait for OSDs to become up
-          sleep 30
-
-      - name: Enable RGW
-        run: |
-          set -ux
-
-          sudo microceph enable rgw
-          # Wait for RGW to settle
-          for i in $(seq 1 8); do
-              res=$( ( sudo microceph.ceph status | grep -cF "rgw: 1 daemon" ) || true )
-              if [[ $res -gt 0 ]] ; then
-                  echo "Found rgw daemon"
-                  break
-              else
-                  echo -n '.'
-                  sleep 5
-              fi
-          done
-
-      - name: Run system tests
-        run: |
-          set -eux
-          # Show ceph's status
-          sudo microceph.ceph status
-
-          # Confirm ceph is healthy and services started
-          sudo microceph.ceph status | grep -F "mon: 1 daemons"
-          sudo microceph.ceph status | grep -E "mgr: .*active, "
-          sudo microceph.ceph status | grep -F "osd: 3 osds"
-          sudo microceph.ceph status | grep -F "rgw: 1 daemon"
-
-          # Check health after restart
-          sudo snap stop microceph
-          sudo snap start microceph
-          sleep 2m
-
-          sudo microceph.ceph status
-          sudo microceph.ceph status | grep -F "mon: 1 daemons"
-          sudo microceph.ceph status | grep -E "mgr: .*active, "
-          sudo microceph.ceph status | grep -F "osd: 3 osds"
-          sudo microceph.ceph status | grep -F "rgw: 1 daemon"
-          pgrep ceph-osd || { echo "No ceph-osd process found" ; exit 1; }
-
-      - name: Exercise RGW
-        run: |
-          set -eux
-          sudo microceph.radosgw-admin user create --uid=test --display-name=test
-          sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey
-          sudo apt-get -qq install s3cmd
-          echo hello-radosgw > ~/test.txt
-          s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl mb s3://testbucket
-          s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/test.txt s3://testbucket
-          curl -s http://localhost/testbucket/test.txt | grep -F hello-radosgw
-
-      - name: Test Cluster Config
-        run: |
-          set -eux
-          cip=$(ip -4 -j route | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
-          
-          # pre config set timestamp for service age
-          ts=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
-
-          # set config
-          sudo microceph cluster config set cluster_network $cip/8 --wait
-
-          # post config set timestamp for service age
-          ts2=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
-
-          # Check config output
-          output=$(sudo microceph cluster config get cluster_network | grep -cim1 'cluster_network')
-          if [[ $output -lt 1 ]] ; then echo "config check failed: $output"; exit 1; fi
-
-          # Check service restarted
-          if [ $ts2 -lt $ts ]; then echo "config check failed: TS1: $ts2 TS2: $ts3"; exit 1; fi
-
-          # reset config
-          sudo microceph cluster config reset cluster_network --wait
-
-          # post config reset timestamp for service age
-          ts3=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
-
-          # Check service restarted
-          if [ $ts3 -lt $ts2 ]; then echo "config check failed: TS2: $ts2 TS3: $ts3"; exit 1; fi
-
-      - name: Upload artifacts
+      - name: Upload snap artifact
         if: always()
         uses: actions/upload-artifact@v3
         with:
           name: snaps
           path: "*.snap"
           retention-days: 5
-        
+
+  single-system-tests:
+    name: Single node testing
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snaps
+    - name: Install and setup
+      run: |
+        set -eux
+        sudo snap install --dangerous microceph_*.snap
+        sudo snap connect microceph:block-devices
+        sudo snap connect microceph:hardware-observe
+        # defer dm-crypt enablement for later.
+
+        # Daemon needs restart for the added dm-crypt connection
+        sudo snap restart microceph.daemon
+
+        sudo microceph cluster bootstrap
+        sudo microceph.ceph version
+        sudo microceph.ceph status
+
+        # Verify metadata.yaml
+        meta=/var/snap/microceph/current/conf/metadata.yaml
+        cat $meta
+        grep -q ceph-version $meta
+
+        # Allow ceph to notice no OSD are present
+        sleep 30
+        sudo microceph.ceph status
+        sudo microceph.ceph health
+        sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"
+
+        # Verify auto crush rule
+        sudo microceph.ceph osd crush rule ls | grep -F microceph_auto_osd
+
+    - name: Add OSD with failure
+      run: |
+        set -eux
+        loop_file="$(sudo mktemp -p /mnt XXXX.img)"
+        sudo truncate -s 1G "${loop_file}"
+        loop_dev="$(sudo losetup --show -f "${loop_file}")"
+
+        minor="${loop_dev##/dev/loop}"
+        sudo mknod -m 0660 "/dev/sdi21" b 7 "${minor}"
+
+        set +e
+        sudo microceph disk add --wipe "/dev/sdi21" --encrypt || rc="$?"
+        if [[ $rc -eq 0 ]] ; then echo "FDE should fail without dmcrypt: $rc"; exit 1; fi
+
+    - name: Add OSDs
+      run: |
+        set -eux
+        # Enable dm-crypt connection and restart microceph daemon
+        sudo snap connect microceph:dm-crypt
+        sudo snap restart microceph.daemon
+        # Add OSDs backed by loop devices on /mnt (ephemeral "large" disk attached to GitHub action runners)
+        i=0
+        for l in a b c; do
+          loop_file="$(sudo mktemp -p /mnt XXXX.img)"
+          sudo truncate -s 1G "${loop_file}"
+          loop_dev="$(sudo losetup --show -f "${loop_file}")"
+
+          # XXX: the block-devices plug doesn't allow accessing /dev/loopX
+          # devices so we make those same devices available under alternate
+          # names (/dev/sdiY) that are not used inside GitHub Action runners
+          minor="${loop_dev##/dev/loop}"
+          sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
+          sudo microceph disk add --wipe "/dev/sdi${l}" --encrypt
+        done
+
+        # Wait for OSDs to become up
+        sleep 30
+
+    - name: Enable RGW
+      run: |
+        set -ux
+
+        sudo microceph enable rgw
+        # Wait for RGW to settle
+        for i in $(seq 1 8); do
+            res=$( ( sudo microceph.ceph status | grep -cF "rgw: 1 daemon" ) || true )
+            if [[ $res -gt 0 ]] ; then
+                echo "Found rgw daemon"
+                break
+            else
+                echo -n '.'
+                sleep 5
+            fi
+        done
+
+    - name: Run system tests
+      run: |
+        set -eux
+        # Show ceph's status
+        sudo microceph.ceph status
+
+        # Confirm ceph is healthy and services started
+        sudo microceph.ceph status | grep -F "mon: 1 daemons"
+        sudo microceph.ceph status | grep -E "mgr: .*active, "
+        sudo microceph.ceph status | grep -F "osd: 3 osds"
+        sudo microceph.ceph status | grep -F "rgw: 1 daemon"
+
+        # Check health after restart
+        sudo snap stop microceph
+        sudo snap start microceph
+        sleep 2m
+
+        sudo microceph.ceph status
+        sudo microceph.ceph status | grep -F "mon: 1 daemons"
+        sudo microceph.ceph status | grep -E "mgr: .*active, "
+        sudo microceph.ceph status | grep -F "osd: 3 osds"
+        sudo microceph.ceph status | grep -F "rgw: 1 daemon"
+        pgrep ceph-osd || { echo "No ceph-osd process found" ; exit 1; }
+
+    - name: Exercise RGW
+      run: |
+        set -eux
+        sudo microceph.radosgw-admin user create --uid=test --display-name=test
+        sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey
+        sudo apt-get -qq install s3cmd
+        echo hello-radosgw > ~/test.txt
+        s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl mb s3://testbucket
+        s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/test.txt s3://testbucket
+        curl -s http://localhost/testbucket/test.txt | grep -F hello-radosgw
+
+    - name: Test Cluster Config
+      run: |
+        set -eux
+        cip=$(ip -4 -j route | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
+
+        # pre config set timestamp for service age
+        ts=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
+
+        # set config
+        sudo microceph cluster config set cluster_network $cip/8 --wait
+
+        # post config set timestamp for service age
+        ts2=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
+
+        # Check config output
+        output=$(sudo microceph cluster config get cluster_network | grep -cim1 'cluster_network')
+        if [[ $output -lt 1 ]] ; then echo "config check failed: $output"; exit 1; fi
+
+        # Check service restarted
+        if [ $ts2 -lt $ts ]; then echo "config check failed: TS1: $ts2 TS2: $ts3"; exit 1; fi
+
+        # reset config
+        sudo microceph cluster config reset cluster_network --wait
+
+        # post config reset timestamp for service age
+        ts3=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
+
+        # Check service restarted
+        if [ $ts3 -lt $ts2 ]; then echo "config check failed: TS2: $ts2 TS3: $ts3"; exit 1; fi
