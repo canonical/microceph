@@ -70,6 +70,12 @@ func getCrushRuleID(name string) (string, error) {
 func getPoolsForDomain(domain string) ([]string, error) {
 	var pools []string
 
+	// check if the crush rule exists and bail if not
+	if !haveCrushRule(fmt.Sprintf("microceph_auto_%s", domain)) {
+		// nothing to do, bail
+		return pools, nil
+	}
+
 	ruleID, err := getCrushRuleID(fmt.Sprintf("microceph_auto_%s", domain))
 	if err != nil {
 		return nil, err

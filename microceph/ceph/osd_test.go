@@ -23,7 +23,7 @@ func TestOSD(t *testing.T) {
 
 // Expect: run ceph osd crush rule ls
 func addCrushRuleLsExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph", 4)...).Return("ok", nil).Once()
+	r.On("RunCommand", cmdAny("ceph", 4)...).Return("microceph_auto_osd", nil).Once()
 }
 
 // Expect: run ceph osd crush rule create-replicated
@@ -52,6 +52,11 @@ func addOsdPoolSetExpectations(r *mocks.Runner) {
 	r.On("RunCommand", cmdAny("ceph", 6)...).Return("ok", nil).Once()
 }
 
+// Expect: run ceph osd crush rule rm
+func addCrushRuleRmExpectations(r *mocks.Runner) {
+	r.On("RunCommand", cmdAny("ceph", 5)...).Return("ok", nil).Once()
+}
+
 func (s *osdSuite) SetupTest() {
 
 	s.baseSuite.SetupTest()
@@ -62,10 +67,15 @@ func (s *osdSuite) SetupTest() {
 // TestSetHostFailureDomain tests the setHostFailureDomain function
 func (s *osdSuite) TestSetHostFailureDomain() {
 	r := mocks.NewRunner(s.T())
+	// list and create crush rule
 	addCrushRuleLsExpectations(r)
 	addCrushRuleCreateExpectations(r)
+	// list and dump crush rule
+	addCrushRuleLsExpectations(r)
 	addCrushRuleDumpExpectations(r)
+	// list crush rule json
 	addCrushRuleLsJsonExpectations(r)
+	// set osd pool
 	addOsdPoolSetExpectations(r)
 
 	processExec = r
@@ -88,11 +98,19 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 	}
 
 	r := mocks.NewRunner(s.T())
+	// list and create crush rule
 	addCrushRuleLsExpectations(r)
 	addCrushRuleCreateExpectations(r)
+	// list and dump crush rule
+	addCrushRuleLsExpectations(r)
 	addCrushRuleDumpExpectations(r)
+	// list crush rule json
 	addCrushRuleLsJsonExpectations(r)
+	// set osd pool
 	addOsdPoolSetExpectations(r)
+	// remove crush rule
+	addCrushRuleRmExpectations(r)
+
 	processExec = r
 
 	c := mocks.NewMemberCounterInterface(s.T())

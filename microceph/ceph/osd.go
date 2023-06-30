@@ -249,6 +249,11 @@ func updateFailureDomain(s *state.State) error {
 		if err != nil {
 			return fmt.Errorf("Failed to set host failure domain: %w", err)
 		}
+		err := removeCrushRule("microceph_auto_osd")
+		if err != nil {
+			return fmt.Errorf("Failed to remove microceph_auto_osd rule: %w", err)
+		}
+
 	}
 	return nil
 }
