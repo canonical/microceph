@@ -9,3 +9,5 @@ Discussion and clarification of key topics
    fde-osd
    cluster-cfg
    snap-content-interface
+   scaling-microceph
+
