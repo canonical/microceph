@@ -216,11 +216,13 @@ func checkEncryptSupport() error {
 func setHostFailureDomain() error {
 	var err error
 
-	if !haveCrushRule("microceph_auto_host") {
-		err = addCrushRule("microceph_auto_host", "host")
-		if err != nil {
-			return err
-		}
+	if haveCrushRule("microceph_auto_host") {
+		// Already setup up, nothing to do.
+		return nil
+	}
+	err = addCrushRule("microceph_auto_host", "host")
+	if err != nil {
+		return err
 	}
 	osdPools, err := getPoolsForDomain("osd")
 	if err != nil {
@@ -249,11 +251,12 @@ func updateFailureDomain(s *state.State) error {
 		if err != nil {
 			return fmt.Errorf("Failed to set host failure domain: %w", err)
 		}
-		err := removeCrushRule("microceph_auto_osd")
-		if err != nil {
-			return fmt.Errorf("Failed to remove microceph_auto_osd rule: %w", err)
+		if haveCrushRule("microceph_auto_osd") {
+			err := removeCrushRule("microceph_auto_osd")
+			if err != nil {
+				return fmt.Errorf("Failed to remove microceph_auto_osd rule: %w", err)
+			}
 		}
-
 	}
 	return nil
 }
