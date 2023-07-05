@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/canonical/lxd/lxd/util"
 	"github.com/canonical/microcluster/microcluster"
-	"github.com/lxc/lxd/lxd/util"
 	"github.com/spf13/cobra"
 )
 

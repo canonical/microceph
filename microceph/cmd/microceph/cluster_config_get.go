@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	lxdCmd "github.com/canonical/lxd/shared/cmd"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microcluster/microcluster"
-	lxdCmd "github.com/lxc/lxd/shared/cmd"
 	"github.com/spf13/cobra"
 )
 
