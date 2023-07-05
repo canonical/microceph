@@ -4,10 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/canonical/lxd/lxd/db/query"
+	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microcluster/cluster"
 	"github.com/canonical/microcluster/state"
-	"github.com/lxc/lxd/lxd/db/query"
-	"github.com/lxc/lxd/shared/api"
 )
 
 // MemberCounterInterface is for counting member nodes. Introduced for mocking.
