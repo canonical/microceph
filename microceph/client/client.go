@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microcluster/client"
 	"github.com/canonical/microcluster/state"
-	"github.com/lxc/lxd/shared/api"
-	"github.com/lxc/lxd/shared/logger"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )

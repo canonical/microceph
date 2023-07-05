@@ -4,9 +4,9 @@ import (
 	"context"
 	"sort"
 
+	"github.com/canonical/lxd/shared"
+	lxdCmd "github.com/canonical/lxd/shared/cmd"
 	"github.com/canonical/microcluster/microcluster"
-	"github.com/lxc/lxd/shared"
-	lxdCmd "github.com/lxc/lxd/shared/cmd"
 	"github.com/spf13/cobra"
 )
 

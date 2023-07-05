@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/canonical/lxd/lxd/db/query"
+	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microcluster/cluster"
-	"github.com/lxc/lxd/lxd/db/query"
-	"github.com/lxc/lxd/shared/api"
 )
 
 var _ = api.ServerEnvironment{}
@@ -95,7 +95,7 @@ func getDisks(ctx context.Context, stmt *sql.Stmt, args ...any) ([]Disk, error) 
 	return objects, nil
 }
 
-// getDisks can be used to run handwritten query strings to return a slice of objects.
+// getDisksRaw can be used to run handwritten query strings to return a slice of objects.
 func getDisksRaw(ctx context.Context, tx *sql.Tx, sql string, args ...any) ([]Disk, error) {
 	objects := make([]Disk, 0)
 

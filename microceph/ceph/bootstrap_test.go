@@ -1,12 +1,13 @@
 package ceph
 
 import (
+	"testing"
+
+	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microcluster/state"
-	"github.com/lxc/lxd/shared/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	"testing"
 )
 
 type bootstrapSuite struct {

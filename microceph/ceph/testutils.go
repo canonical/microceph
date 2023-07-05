@@ -1,12 +1,13 @@
 package ceph
 
 import (
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
 )
 
 type baseSuite struct {

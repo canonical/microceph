@@ -3,8 +3,9 @@ package ceph
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/tidwall/gjson"
 	"strings"
+
+	"github.com/tidwall/gjson"
 )
 
 // removeCrushRule removes a named crush rule

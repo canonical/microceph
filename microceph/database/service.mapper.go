@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/canonical/lxd/lxd/db/query"
+	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microcluster/cluster"
-	"github.com/lxc/lxd/lxd/db/query"
-	"github.com/lxc/lxd/shared/api"
 )
 
 var _ = api.ServerEnvironment{}
@@ -103,7 +103,7 @@ func getServices(ctx context.Context, stmt *sql.Stmt, args ...any) ([]Service, e
 	return objects, nil
 }
 
-// getServices can be used to run handwritten query strings to return a slice of objects.
+// getServicesRaw can be used to run handwritten query strings to return a slice of objects.
 func getServicesRaw(ctx context.Context, tx *sql.Tx, sql string, args ...any) ([]Service, error) {
 	objects := make([]Service, 0)
 

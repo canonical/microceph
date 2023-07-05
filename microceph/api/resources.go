@@ -3,10 +3,10 @@ package api
 import (
 	"net/http"
 
+	"github.com/canonical/lxd/lxd/resources"
+	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/microcluster/rest"
 	"github.com/canonical/microcluster/state"
-	"github.com/lxc/lxd/lxd/resources"
-	"github.com/lxc/lxd/lxd/response"
 )
 
 // /1.0/resources endpoint.

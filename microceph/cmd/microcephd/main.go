@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microcluster/config"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/canonical/microcluster/state"
-	"github.com/lxc/lxd/shared/logger"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api"

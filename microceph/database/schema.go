@@ -5,7 +5,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/lxc/lxd/lxd/db/schema"
+	"github.com/canonical/lxd/lxd/db/schema"
 )
 
 // SchemaExtensions is a list of schema extensions that can be passed to the MicroCluster daemon.
