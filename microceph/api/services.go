@@ -8,10 +8,10 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
 
+	"github.com/canonical/lxd/lxd/response"
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microcluster/rest"
 	"github.com/canonical/microcluster/state"
-	"github.com/lxc/lxd/lxd/response"
-	"github.com/lxc/lxd/shared/logger"
 
 	"github.com/canonical/microceph/microceph/ceph"
 )
