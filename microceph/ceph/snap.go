@@ -3,7 +3,7 @@ package ceph
 import (
 	"fmt"
 
-	"github.com/lxc/lxd/shared/logger"
+	"github.com/canonical/lxd/shared/logger"
 )
 
 // Check if a snapd interface is connected to microceph

@@ -12,10 +12,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/canonical/lxd/lxd/resources"
+	"github.com/canonical/lxd/lxd/revert"
+	"github.com/canonical/lxd/shared"
 	"github.com/canonical/microcluster/state"
-	"github.com/lxc/lxd/lxd/resources"
-	"github.com/lxc/lxd/lxd/revert"
-	"github.com/lxc/lxd/shared"
 	"github.com/pborman/uuid"
 
 	"github.com/canonical/microceph/microceph/api/types"

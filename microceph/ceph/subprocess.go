@@ -1,6 +1,6 @@
 package ceph
 
-import "github.com/lxc/lxd/shared"
+import "github.com/canonical/lxd/shared"
 
 // Runner launches processes
 type Runner interface {

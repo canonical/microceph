@@ -4,10 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/common"
-	"github.com/canonical/microceph/microceph/database"
 	"os"
 	"path/filepath"
+
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/database"
 )
 
 // EnableRGW enables the RGW service on the cluster and adds initial configuration given a service port number.
