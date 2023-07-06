@@ -28,7 +28,7 @@ CREATE TABLE disks (
   member_id                     INTEGER  NOT  NULL,
   path                          TEXT     NOT  NULL,
   osd                           INTEGER  NOT  NULL,
-  FOREIGN KEY (member_id) REFERENCES "internal_cluster_members" (id)
+  FOREIGN KEY (member_id) REFERENCES "internal_cluster_members" (id) ON DELETE CASCADE,
   UNIQUE(member_id, path),
   UNIQUE(osd)
 );
@@ -37,7 +37,7 @@ CREATE TABLE services (
   id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
   member_id                     INTEGER  NOT  NULL,
   service                       TEXT     NOT  NULL,
-  FOREIGN KEY (member_id) REFERENCES "internal_cluster_members" (id)
+  FOREIGN KEY (member_id) REFERENCES "internal_cluster_members" (id) ON DELETE CASCADE,
   UNIQUE(member_id, service)
 );
   `
