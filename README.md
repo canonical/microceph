@@ -136,8 +136,9 @@ $ sudo microceph.ceph status
 
 ## 👍 How Can I Contribute ?
 
-1. Excited about [MicroCeph](https://snapcraft.io/microceph) ? Join our [Stargazers](https://github.com/canonical/microceph/stargazers)
-2. Write reviews or tutorials to help spread the knowledge 📖
-3. Participate in [Pull Requests](https://github.com/canonical/microceph/pulls) and help fix [Issues](https://github.com/canonical/microceph/issues)
+1. Checkout [Microceph Hacking Guide](/HACKING.md) to start building and contributing to the codebase.
+2. Excited about [MicroCeph](https://snapcraft.io/microceph) ? Join our [Stargazers](https://github.com/canonical/microceph/stargazers)
+3. Write reviews or tutorials to help spread the knowledge 📖
+4. Participate in [Pull Requests](https://github.com/canonical/microceph/pulls) and help fix [Issues](https://github.com/canonical/microceph/issues)
 
 You can also find us on Matrix @[Ubuntu Ceph](https://matrix.to/#/#ubuntu-ceph:matrix.org)
