@@ -1,10 +1,16 @@
 # MicroCeph
 
+[![microceph](https://snapcraft.io/microceph/badge.svg)](https://snapcraft.io/microceph)
+[![microceph](https://snapcraft.io/microceph/trending.svg?name=0)](https://snapcraft.io/microceph)
+[![Go Report Card](https://goreportcard.com/badge/github.com/canonical/microceph/microceph)](https://goreportcard.com/report/github.com/canonical/microceph/microceph)
 [![Documentation Status](https://readthedocs.com/projects/canonical-microceph/badge/?version=latest)](https://canonical-microceph.readthedocs-hosted.com/en/latest/?badge=latest)
 
 <p align="center">
 <a href="https://snapcraft.io/microceph">MicroCeph</a> is snap-deployed Ceph with built-in clustering.
 </p>
+
+[![Get it from the Snap Store](https://snapcraft.io/static/images/badges/en/snap-store-black.svg)](https://snapcraft.io/microceph)
+
 
 ## Table of Contents
 1. [💡 Philosophy](#💡-philosophy)

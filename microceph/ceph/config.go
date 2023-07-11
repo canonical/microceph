@@ -39,7 +39,7 @@ func (c ConfigTable) Keys() (keys []string) {
 }
 
 // Since we can't have const maps, we encapsulate the map into a func
-// so that each request for the map gaurantees consistent definition.
+// so that each request for the map guarantees consistent definition.
 func GetConstConfigTable() ConfigTable {
 	return ConfigTable{
 		"public_network":  {"global", []string{"mon", "osd"}},
