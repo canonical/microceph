@@ -32,6 +32,45 @@ func cmdServicesGet(s *state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, services)
 }
 
+// Service Enable Endpoint.
+var monServiceCmd = rest.Endpoint{
+	Path: "services/mon",
+	Put:  rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+}
+
+var mgrServiceCmd = rest.Endpoint{
+	Path: "services/mgr",
+	Put:  rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+}
+
+var mdsServiceCmd = rest.Endpoint{
+	Path: "services/mds",
+	Put:  rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+}
+
+var rgwServiceCmd = rest.Endpoint{
+	Path:   "services/rgw",
+	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Delete: rest.EndpointAction{Handler: cmdRGWServiceDelete, ProxyTarget: true},
+}
+
+func cmdEnableServicePut(s *state.State, r *http.Request) response.Response {
+	var payload types.EnableService
+
+	err := json.NewDecoder(r.Body).Decode(&payload)
+	if err != nil {
+		logger.Errorf("Failed decoding enable service request: %v", err)
+		return response.InternalError(err)
+	}
+
+	err = ceph.ServicePlacementHandler(common.CephState{State: s}, payload)
+	if err != nil {
+		return response.SyncResponse(false, err)
+	}
+
+	return response.SyncResponse(true, nil)
+}
+
 // Service Reload Endpoint.
 var restartServiceCmd = rest.Endpoint{
 	Path: "services/restart",
@@ -69,14 +108,7 @@ func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
 	return response.EmptySyncResponse
 }
 
-var rgwServiceCmd = rest.Endpoint{
-	Path: "services/rgw",
-
-	Put: rest.EndpointAction{Handler: cmdRGWServicePut, ProxyTarget: true},
-}
-
-// cmdRGWServicePutRGW is the handler for PUT /1.0/services/rgw.
-func cmdRGWServicePut(s *state.State, r *http.Request) response.Response {
+func cmdRGWServiceDelete(s *state.State, r *http.Request) response.Response {
 	var req types.RGWService
 
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -84,11 +116,7 @@ func cmdRGWServicePut(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	if req.Enabled {
-		err = ceph.EnableRGW(common.CephState{State: s}, req.Port)
-	} else {
-		err = ceph.DisableRGW(common.CephState{State: s})
-	}
+	err = ceph.DisableRGW(common.CephState{State: s})
 	if err != nil {
 		return response.SmartError(err)
 	}

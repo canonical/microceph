@@ -10,24 +10,25 @@ import (
 	"github.com/canonical/microceph/microceph/client"
 )
 
-type cmdDisableRGW struct {
+type cmdEnableMGR struct {
 	common     *CmdControl
+	wait       bool
 	flagTarget string
 }
 
-func (c *cmdDisableRGW) Command() *cobra.Command {
+func (c *cmdEnableMGR) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "rgw",
-		Short: "Disable the RGW service on this node",
+		Use:   "mgr [--target <server>] [--wait <bool>]",
+		Short: "Enable the MGR service on the --target server (default: this server)",
 		RunE:  c.Run,
 	}
 	cmd.PersistentFlags().StringVar(&c.flagTarget, "target", "", "Server hostname (default: this server)")
+	cmd.Flags().BoolVar(&c.wait, "wait", true, "Wait for mgr service to be up.")
 	return cmd
 }
 
-// Run handles the disable rgw command.
-func (c *cmdDisableRGW) Run(cmd *cobra.Command, args []string) error {
-
+// Run handles the enable mgr command.
+func (c *cmdEnableMGR) Run(cmd *cobra.Command, args []string) error {
 	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return err
@@ -37,13 +38,14 @@ func (c *cmdDisableRGW) Run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	cli = cli.UseTarget(c.flagTarget)
 
-	req := &types.RGWService{
-		Enabled: false,
+	req := &types.EnableService{
+		Name:    "mgr",
+		Wait:    c.wait,
+		Payload: "",
 	}
 
-	err = client.DisableRGW(context.Background(), cli, req)
+	err = client.SendServicePlacementReq(context.Background(), cli, req, c.flagTarget)
 	if err != nil {
 		return err
 	}

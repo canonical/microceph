@@ -160,6 +160,8 @@ jobs:
     - name: Exercise RGW
       run: |
         set -eux
+        sudo microceph.ceph status
+        sudo systemctl status snap.microceph.rgw
         sudo microceph.radosgw-admin user create --uid=test --display-name=test
         sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey
         sudo apt-get -qq install s3cmd
