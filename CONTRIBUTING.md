@@ -12,6 +12,7 @@ other projects.
 The agreement can be found, and signed, here:
 https://ubuntu.com/legal/contributors
 
+Refer to [Microceph Hacking Guide](/HACKING.md) for a basic outline of the codebase and build tools.
 
 ## Contributor guidelines
 
