@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/Rican7/retry v0.3.1
 	github.com/canonical/lxd v0.0.0-20230705090120-570f7071eeb2
-	github.com/canonical/microcluster v0.0.0-20230705110230-9cde8f141cb4
+	github.com/canonical/microcluster v0.0.0-20230705140256-7726061a60bb
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pborman/uuid v1.2.1
 	github.com/spf13/cobra v1.7.0
