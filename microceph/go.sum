@@ -54,8 +54,8 @@ github.com/canonical/go-dqlite v1.20.0 h1:pnkn0oS0hPXWeODjvjWONKGb5KYh8kK0aruDPz
 github.com/canonical/go-dqlite v1.20.0/go.mod h1:Uvy943N8R4CFUAs59A1NVaziWY9nJ686lScY7ywurfg=
 github.com/canonical/lxd v0.0.0-20230705090120-570f7071eeb2 h1:pOkOFlpAzO+aHKTQ2igNNLUX7wVZ35SXgj76edsP8TQ=
 github.com/canonical/lxd v0.0.0-20230705090120-570f7071eeb2/go.mod h1:iRepjqZoVVmu2NXI55FgUAnCgoqggPTKTYMqTA4P6Qk=
-github.com/canonical/microcluster v0.0.0-20230705110230-9cde8f141cb4 h1:Z41belWqB5g0EnP+73LkMOGVWn2Rv5292BYl757Cje8=
-github.com/canonical/microcluster v0.0.0-20230705110230-9cde8f141cb4/go.mod h1:vrMOrNO0Iu0lgGaFlKBwZdLXYNdogOgk6WqD4SneSDI=
+github.com/canonical/microcluster v0.0.0-20230705140256-7726061a60bb h1:rTBytbpzzHmWkptalBUDt5xtaA+Wi2TCNtuzJectBC0=
+github.com/canonical/microcluster v0.0.0-20230705140256-7726061a60bb/go.mod h1:vrMOrNO0Iu0lgGaFlKBwZdLXYNdogOgk6WqD4SneSDI=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/chzyer/logex v1.1.10/go.mod h1:+Ywpsq7O8HXn0nuIou7OrIPyXbp3wmkHB+jjWRnGsAI=
 github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e/go.mod h1:nSuG5e5PlCu98SY8svDHJxuZscDgtXS6KTTbou5AhLI=
