@@ -6,7 +6,6 @@ import (
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
 
-	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 )
 
@@ -37,13 +36,8 @@ func (c *cmdDisableRGW) Run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	cli = cli.UseTarget(c.flagTarget)
 
-	req := &types.RGWService{
-		Enabled: false,
-	}
-
-	err = client.DisableRGW(context.Background(), cli, req)
+	err = client.DeleteService(context.Background(), cli, c.flagTarget, "rgw")
 	if err != nil {
 		return err
 	}

@@ -28,13 +28,17 @@ func GetServices(ctx context.Context, c *client.Client) (types.Services, error) 
 	return services, nil
 }
 
-// DisableRGW requests Ceph configures the RGW service.
-func DisableRGW(ctx context.Context, c *client.Client, data *types.RGWService) error {
+// DeleteService requests MicroCeph deconfigures a service on a given target node.
+func DeleteService(ctx context.Context, c *client.Client, target string, service string) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
-	err := c.Query(queryCtx, "DELETE", api.NewURL().Path("services", "rgw"), data, nil)
+
+	// Send this request to target.
+	c = c.UseTarget(target)
+
+	err := c.Query(queryCtx, "DELETE", api.NewURL().Path("services", service), nil, nil)
 	if err != nil {
-		return fmt.Errorf("failed disabling RGW: %w", err)
+		return fmt.Errorf("failed disabling service %s: %w", service, err)
 	}
 
 	return nil

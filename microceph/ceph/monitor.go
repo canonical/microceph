@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"fmt"
+	"github.com/canonical/lxd/shared/logger"
 	"os"
 	"path/filepath"
 )
@@ -74,4 +75,14 @@ func joinMon(hostname string, path string) error {
 	}
 
 	return bootstrapMon(hostname, path, monmap, keyring)
+}
+
+// removeMon removes a monitor from the cluster.
+func removeMon(hostname string) error {
+	_, err := cephRun("mon", "rm", hostname)
+	if err != nil {
+		logger.Errorf("failed to remove monitor %q: %v", hostname, err)
+		return fmt.Errorf("failed to remove monitor %q: %w", hostname, err)
+	}
+	return nil
 }
