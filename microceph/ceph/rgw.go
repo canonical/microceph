@@ -57,7 +57,7 @@ func DisableRGW(s common.StateInterface) error {
 		return fmt.Errorf("Failed to stop RGW service: %w", err)
 	}
 
-	err = rgwRemoveServiceDatabase(s)
+	err = removeServiceDatabase(s, "rgw")
 	if err != nil {
 		return err
 	}
@@ -94,24 +94,6 @@ func rgwCreateServiceDatabase(s common.StateInterface) error {
 		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "rgw"})
 		if err != nil {
 			return fmt.Errorf("Failed to record role: %w", err)
-		}
-
-		return nil
-	})
-	return err
-}
-
-// rgwRemoveServiceDatabase removes a rgw service record from the database.
-func rgwRemoveServiceDatabase(s common.StateInterface) error {
-	if s.ClusterState().Database == nil {
-		return fmt.Errorf("no database")
-	}
-
-	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
-		// Remove the service.
-		err := database.DeleteService(ctx, tx, s.ClusterState().Name(), "rgw")
-		if err != nil {
-			return fmt.Errorf("Failed to remove role: %w", err)
 		}
 
 		return nil

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
@@ -32,22 +33,22 @@ func cmdServicesGet(s *state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, services)
 }
 
-// Service Enable Endpoint.
+// Service endpoints.
 var monServiceCmd = rest.Endpoint{
-	Path: "services/mon",
-	Put:  rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Path:   "services/mon",
+	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
 }
-
 var mgrServiceCmd = rest.Endpoint{
-	Path: "services/mgr",
-	Put:  rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Path:   "services/mgr",
+	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
 }
-
 var mdsServiceCmd = rest.Endpoint{
-	Path: "services/mds",
-	Put:  rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Path:   "services/mds",
+	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
 }
-
 var rgwServiceCmd = rest.Endpoint{
 	Path:   "services/rgw",
 	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
@@ -108,16 +109,28 @@ func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
 	return response.EmptySyncResponse
 }
 
-func cmdRGWServiceDelete(s *state.State, r *http.Request) response.Response {
-	var req types.RGWService
-
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
+// cmdDeleteService handles service deletion.
+func cmdDeleteService(s *state.State, r *http.Request) response.Response {
+	which := path.Base(r.URL.Path)
+	_, ok := ceph.GetConfigTableServiceSet()[which]
+	if !ok {
+		err := fmt.Errorf("%s is not a valid ceph service", which)
+		logger.Errorf("%v", err)
 		return response.InternalError(err)
 	}
 
-	err = ceph.DisableRGW(common.CephState{State: s})
+	err := ceph.DeleteService(common.CephState{State: s}, which)
 	if err != nil {
+		return response.SyncResponse(false, err)
+	}
+
+	return response.SyncResponse(true, nil)
+}
+
+func cmdRGWServiceDelete(s *state.State, r *http.Request) response.Response {
+	err := ceph.DisableRGW(common.CephState{State: s})
+	if err != nil {
+		logger.Errorf("Failed disabling RGW: %v", err)
 		return response.SmartError(err)
 	}
 

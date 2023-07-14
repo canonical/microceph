@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Rican7/retry"
@@ -155,4 +158,61 @@ func ListServices(s *state.State) (types.Services, error) {
 	}
 
 	return services, nil
+}
+
+// cleanService removes conf data for a service from the cluster.
+func cleanService(hostname, service string) error {
+	paths := common.GetPathConst()
+	dataPath := filepath.Join(paths.DataPath, service, fmt.Sprintf("ceph-%s", hostname))
+	err := os.RemoveAll(dataPath)
+	if err != nil {
+		logger.Errorf("failed to remove service %q data: %v", service, err)
+		return fmt.Errorf("failed to remove service %q data: %w", service, err)
+	}
+	return nil
+}
+
+// removeServiceDatabase removes a service record from the database.
+func removeServiceDatabase(s common.StateInterface, service string) error {
+	if s.ClusterState().Database == nil {
+		return fmt.Errorf("no database")
+	}
+
+	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+		err := database.DeleteService(ctx, tx, s.ClusterState().Name(), service)
+		if err != nil {
+			logger.Errorf("failed to remove service from db %q: %v", service, err)
+			return fmt.Errorf("failed to remove service from db %q: %w", service, err)
+		}
+
+		return nil
+	})
+	return err
+}
+
+// DeleteService deletes a service from the node.
+func DeleteService(s common.StateInterface, service string) error {
+	err := snapStop(service, true)
+	if err != nil {
+		logger.Errorf("failed to stop daemon %q: %v", service, err)
+		return fmt.Errorf("failed to stop daemon %q: %w", service, err)
+	}
+
+	if service == "mon" {
+		err = removeMon(s.ClusterState().Name())
+		if err != nil {
+			return err
+		}
+	}
+
+	err = cleanService(s.ClusterState().Name(), service)
+	if err != nil {
+		return fmt.Errorf("failed to clean service %q: %w", service, err)
+	}
+	err = removeServiceDatabase(s, service)
+	if err != nil {
+		return fmt.Errorf("failed to remove service %q from database: %w", service, err)
+	}
+	return nil
+
 }

@@ -3,6 +3,8 @@ package ceph
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/mocks"
@@ -69,4 +71,13 @@ func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 	// Handler is defined for both mon and osd services.
 	err := RestartCephServices(ts)
 	assert.Equal(s.T(), err, nil)
+}
+
+// TestCleanService tests the cleanService function.
+func (s *servicesSuite) TestCleanService() {
+	s.copyCephConfigs()
+	svcPath := filepath.Join(s.tmp, "SNAP_COMMON", "data", "mon", "ceph-foo-host")
+	os.MkdirAll(svcPath, 0770)
+	cleanService("foo-host", "mon")
+	assert.NoDirExists(s.T(), svcPath)
 }
