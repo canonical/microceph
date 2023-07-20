@@ -1,24 +1,44 @@
-Migrate Automatic Services Between Nodes
+========================================
+Migrate essential services between nodes
 ========================================
 
-MicroCeph automatically deploys required services for Ceph (MON, MDS and MGRs). Sometimes, e.g. for maintenance reasons, it can be useful to move those automatic services from one node to another.
+MicroCeph automatically deploys essential Ceph services when needed. Essential
+services include:
 
-This is the purpose of the `microceph cluster migrate` command. It will enable automatic services on a target node and disable them on the source node.
+* MON (`monitor service`_)
+* MDS (`metadata service`_)
+* MGR (`manager service`_)
 
-  .. code-block:: shell
+It can be useful however to have the ability to move (or migrate) essential
+services from one node to another, such as during a maintenance window.
 
-     $ sudo microceph cluster migrate <src> <dst>
+This is the purpose of the :command:`cluster migrate` command. It enables
+essential services on a target node and disables them on the source node.
 
-Both `<src>` and `<dst>` should be node names and are required parameters.
+The syntax is:
 
-Note:
+.. code-block:: none
 
-- it's not possible (and not useful) to have more than one instance of automatic services on one node.
-- RGW services are not automatic; they are always enabled and disabled specifically on a node.
+   sudo microceph cluster migrate <source> <destination>
 
-Use the `microceph status` command to verify distribution of services among nodes.
+Where the source and destination are node names. For example:
 
-
-
+.. code-block:: none
 
 
+
+.. note::
+
+   * It's not possible, nor useful, to have more than one instance of
+     an essential service on any given node.
+   * RGW services (RADOS Gateway) are not considered essential; they are
+     enabled and disabled explicitly on a node.
+
+Use the :command:`microceph status` command to verify distribution of services
+among nodes.
+
+<!-- LINKS -->
+
+_manager service: https://docs.ceph.com/en/latest/mgr/
+_monitor service: https://docs.ceph.com/en/latest/cephadm/services/mon/
+_metadata service: https://docs.ceph.com/en/latest/cephadm/services/mds/
