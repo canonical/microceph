@@ -198,6 +198,8 @@ parts:
       - lib/*/libwind.so*
       - lib/python3
       - lib/*/rados-classes
+      - lib/*/libtcmalloc.so*
+      - lib/*/libunwind.so*
       - share/ceph
 
   deps:
