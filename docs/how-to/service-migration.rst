@@ -1,19 +1,21 @@
-========================================
-Migrate essential services between nodes
-========================================
+==========================================
+Migrate automatically-provisioned services
+==========================================
 
-MicroCeph automatically deploys essential Ceph services when needed. Essential
+MicroCeph deploys automatically-provisioned Ceph services when needed. These
 services include:
 
-* MON (`monitor service`_)
-* MDS (`metadata service`_)
-* MGR (`manager service`_)
+* MON - `monitor service`_
+* MDS - `metadata service`_
+* MGR - `manager service`_
 
-It can be useful however to have the ability to move (or migrate) essential
-services from one node to another, such as during a maintenance window.
+It can however be useful to have the ability to move (or migrate) these
+services from one node to another. This may be desirable during a maintenance
+window for instance where these services must remain available.
 
 This is the purpose of the :command:`cluster migrate` command. It enables
-essential services on a target node and disables them on the source node.
+automatically-provisioned services on a target node and disables them on the
+source node.
 
 The syntax is:
 
@@ -21,24 +23,23 @@ The syntax is:
 
    sudo microceph cluster migrate <source> <destination>
 
-Where the source and destination are node names. For example:
+Where the source and destination are node names that are available via the
+:command:`microceph status` command.
 
-.. code-block:: none
+Post-migration, the :command:`microceph status` command can be used to verify
+the distribution of services among nodes.
 
+**Notes:**
 
+* It's not possible, nor useful, to have more than one instance of an
+  automatically-provisioned service on any given node.
 
-.. note::
+* RADOS Gateway services are not considered to be of the
+  automatically-provisioned type; they are enabled and disabled explicitly on a
+  node.
 
-   * It's not possible, nor useful, to have more than one instance of
-     an essential service on any given node.
-   * RGW services (RADOS Gateway) are not considered essential; they are
-     enabled and disabled explicitly on a node.
+.. LINKS
 
-Use the :command:`microceph status` command to verify distribution of services
-among nodes.
-
-<!-- LINKS -->
-
-_manager service: https://docs.ceph.com/en/latest/mgr/
-_monitor service: https://docs.ceph.com/en/latest/cephadm/services/mon/
-_metadata service: https://docs.ceph.com/en/latest/cephadm/services/mds/
+.. _manager service: https://docs.ceph.com/en/latest/mgr/
+.. _monitor service: https://docs.ceph.com/en/latest/cephadm/services/mon/
+.. _metadata service: https://docs.ceph.com/en/latest/cephadm/services/mds/
