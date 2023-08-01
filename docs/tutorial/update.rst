@@ -1,5 +1,5 @@
 Update management
-~~~~~~~~~~~~~~~~~
+=================
 
 Updates in Microceph are managed by the usual snap mechanisms. However, because snaps automatically deploy updates, this can be problematic in Microceph clusters that need an ordered rollout of updates.
 As such, we strongly advise that automatic updates be disabled for Microceph. Documentation about snap updates can be consulted `here <https://snapcraft.io/docs/keeping-snaps-up-to-date>`_.
