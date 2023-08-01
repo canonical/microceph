@@ -1,71 +1,83 @@
-Start Ceph services on any node of the MicroCeph cluster
-========================================================
+==================================
+Enable additional service instance
+==================================
 
-MicroCeph will automatically start Mon, Mgr, and Mds services on the first three deployed nodes in the cluster. Users who wish to enable additional instances of these services for scalability or resilience can do so by utilizing the enable command and specifying a node via the --target parameter.
+To ensure a base level of resiliency, MicroCeph will always try to enable a
+sufficient number of instances for certain services in the cluster. This
+number is set to three by default.
 
-.. list-table:: Supported Ceph Services
-   :widths: 30 70
-   :header-rows: 1
+These services affected by this include:
 
-   * - Name
-     - Description
-   * - mon
-     - Ceph Monitor Service
-   * - mgr
-     - Ceph Manager Service
-   * - mds
-     - Ceph Metadata Daemon Service
-   * - rgw
-     - Ceph Radosgw Service
+* MON (`monitor service`_)
+* MDS (`metadata service`_)
+* MGR (`manager service`_)
+* RGW (`RADOS Gateway service`)
 
-The enable command is used as follows:
-  .. code-block:: shell
+Cluster designs that call for additional service instances however can be
+satisfied by manual means.
 
-    $ sudo microceph enable <service> --target <node_hostname> ...
+This is the purpose of the :command:`enable` command. It manually enables a
+new instance of a service on a node.
 
-.. note:: Some services can be provided with additional parameters while enabling them, these can be listed for any service by issuing respective help command.
+The syntax is:
 
-  .. code-block:: shell
+.. code-block:: none
 
-    $ sudo microceph enable <service> --help
+   sudo microceph enable <service> --target <destination> ...
 
-1. Enable radosgw service:
+Where the service is one of the aforementioned services in lowercase. Valid
+service values are therefore 'mon', 'mds', 'mgr', and 'rgw'. The destination is
+a node name as discerned by the output of the :command:`status` command.
 
-  .. code-block:: shell
+For a given service, the :command:`enable` command may support extra
+parameters. These can be discovered by querying for help for the respective
+service:
 
-    $ sudo microceph status
-    MicroCeph deployment summary:
-    - node1-2c3eb41e-14e8-465d-9877-df36f5d80922 (10.111.153.78)
-      Services: mds, mgr, mon, osd
-      Disks: 3
-    - workbook (192.168.29.152)
-      Services: mds, mgr, mon
-      Disks: 0
-    $ sudo microceph enable rgw --target node1 --port 8080 
-    $ sudo microceph status
-    MicroCeph deployment summary:
-    - node1 (10.111.153.78)
-      Services: mds, mgr, mon, rgw, osd
-      Disks: 3
-    - workbook (192.168.29.152)
-      Services: mds, mgr, mon
-      Disks: 0
+.. code-block:: none
 
-2. Enable mon Service:
+   sudo microceph enable <service> --help
 
-  .. code-block:: shell
+Example: enable an RGW service
+------------------------------
 
-    $ sudo microceph enable mon --target <node_hostname> 
+First check the status of the cluster to get node names and an overview of
+existing services:
 
-3. Enable mgr Service:
+.. code-block:: none
 
-  .. code-block:: shell
+   sudo microceph status
 
-    $ sudo microceph enable mgr --target <node_hostname> 
+   MicroCeph deployment summary:
+   - node1-2c3eb41e-14e8-465d-9877-df36f5d80922 (10.111.153.78)
+     Services: mds, mgr, mon, osd
+     Disks: 3
+   - workbook (192.168.29.152)
+     Services: mds, mgr, mon
+     Disks: 0
 
-4. Enable mds Service:
+View any possible extra parameters for the RGW service:
 
-  .. code-block:: shell
+.. code-block:: none
 
-   $ sudo microceph enable mgr --target <node_hostname> 
+   sudo microceph enable rgw --help
 
+To enable the RGW service on node1 and specify a value for extra parameter
+`port`:
+
+.. code-block:: none
+
+   sudo microceph enable rgw --target node1 --port 8080
+
+Finally, view cluster status again and verify expected changes:
+
+.. code-block:: none
+
+   sudo microceph status
+
+   MicroCeph deployment summary:
+   - node1 (10.111.153.78)
+     Services: mds, mgr, mon, rgw, osd
+     Disks: 3
+   - workbook (192.168.29.152)
+     Services: mds, mgr, mon
+     Disks: 0
