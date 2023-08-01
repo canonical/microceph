@@ -41,5 +41,5 @@ the distribution of services among nodes.
 .. LINKS
 
 .. _manager service: https://docs.ceph.com/en/latest/mgr/
-.. _monitor service: https://docs.ceph.com/en/latest/cephadm/services/mon/
-.. _metadata service: https://docs.ceph.com/en/latest/cephadm/services/mds/
+.. _monitor service: https://docs.ceph.com/en/latest/man/8/ceph-mon/
+.. _metadata service: https://docs.ceph.com/en/latest/man/8/ceph-mds/
