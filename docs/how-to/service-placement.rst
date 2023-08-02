@@ -1,6 +1,6 @@
-==================================
-Enable additional service instance
-==================================
+===================================
+Enable additional service instances
+===================================
 
 To ensure a base level of resiliency, MicroCeph will always try to enable a
 sufficient number of instances for certain services in the cluster. This
@@ -11,7 +11,7 @@ These services affected by this include:
 * MON (`Monitor service`_)
 * MDS (`Metadata service`_)
 * MGR (`Manager service`_)
-* RGW (`RADOS Gateway service`)
+* RGW (`RADOS Gateway service`_)
 
 Cluster designs that call for additional service instances however can be
 satisfied by manual means.
