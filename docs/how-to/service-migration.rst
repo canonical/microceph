@@ -5,9 +5,9 @@ Migrate automatically-provisioned services
 MicroCeph deploys automatically-provisioned Ceph services when needed. These
 services include:
 
-* MON - `monitor service`_
-* MDS - `metadata service`_
-* MGR - `manager service`_
+* MON - `Monitor service`_
+* MDS - `Metadata service`_
+* MGR - `Manager service`_
 
 It can however be useful to have the ability to move (or migrate) these
 services from one node to another. This may be desirable during a maintenance
@@ -24,10 +24,14 @@ The syntax is:
    sudo microceph cluster migrate <source> <destination>
 
 Where the source and destination are node names that are available via the
-:command:`microceph status` command.
+:command:`status` command:
 
-Post-migration, the :command:`microceph status` command can be used to verify
-the distribution of services among nodes.
+.. code-block:: none
+
+   sudo microceph status
+
+Post-migration, the :command:`status` command can also be used to verify the
+distribution of services among nodes.
 
 **Notes:**
 
@@ -40,6 +44,6 @@ the distribution of services among nodes.
 
 .. LINKS
 
-.. _manager service: https://docs.ceph.com/en/latest/mgr/
-.. _monitor service: https://docs.ceph.com/en/latest/man/8/ceph-mon/
-.. _metadata service: https://docs.ceph.com/en/latest/man/8/ceph-mds/
+.. _Manager service: https://docs.ceph.com/en/latest/mgr/
+.. _Monitor service: https://docs.ceph.com/en/latest/man/8/ceph-mon/
+.. _Metadata service: https://docs.ceph.com/en/latest/man/8/ceph-mds/
