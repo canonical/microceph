@@ -14,7 +14,7 @@ These services affected by this include:
 
 Cluster designs that call for extra service instances, however, can be
 satisfied by manual means. In addition to the above-listed services, the
-following service can also be added on a node:
+following service can be added manually to a node:
 
 * RGW (`RADOS Gateway service`_)
 
