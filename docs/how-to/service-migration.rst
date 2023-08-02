@@ -24,10 +24,14 @@ The syntax is:
    sudo microceph cluster migrate <source> <destination>
 
 Where the source and destination are node names that are available via the
-:command:`microceph status` command.
+:command:`status` command:
 
-Post-migration, the :command:`microceph status` command can be used to verify
-the distribution of services among nodes.
+.. code-block:: none
+
+   sudo microceph status
+
+Post-migration, the :command:`status` command can also be used to verify the
+distribution of services among nodes.
 
 **Notes:**
 
