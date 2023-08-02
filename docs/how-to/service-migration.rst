@@ -1,24 +1,45 @@
-Migrate Automatic Services Between Nodes
-========================================
+==========================================
+Migrate automatically-provisioned services
+==========================================
 
-MicroCeph automatically deploys required services for Ceph (MON, MDS and MGRs). Sometimes, e.g. for maintenance reasons, it can be useful to move those automatic services from one node to another.
+MicroCeph deploys automatically-provisioned Ceph services when needed. These
+services include:
 
-This is the purpose of the `microceph cluster migrate` command. It will enable automatic services on a target node and disable them on the source node.
+* MON - `monitor service`_
+* MDS - `metadata service`_
+* MGR - `manager service`_
 
-  .. code-block:: shell
+It can however be useful to have the ability to move (or migrate) these
+services from one node to another. This may be desirable during a maintenance
+window for instance where these services must remain available.
 
-     $ sudo microceph cluster migrate <src> <dst>
+This is the purpose of the :command:`cluster migrate` command. It enables
+automatically-provisioned services on a target node and disables them on the
+source node.
 
-Both `<src>` and `<dst>` should be node names and are required parameters.
+The syntax is:
 
-Note:
+.. code-block:: none
 
-- it's not possible (and not useful) to have more than one instance of automatic services on one node.
-- RGW services are not automatic; they are always enabled and disabled specifically on a node.
+   sudo microceph cluster migrate <source> <destination>
 
-Use the `microceph status` command to verify distribution of services among nodes.
+Where the source and destination are node names that are available via the
+:command:`microceph status` command.
 
+Post-migration, the :command:`microceph status` command can be used to verify
+the distribution of services among nodes.
 
+**Notes:**
 
+* It's not possible, nor useful, to have more than one instance of an
+  automatically-provisioned service on any given node.
 
+* RADOS Gateway services are not considered to be of the
+  automatically-provisioned type; they are enabled and disabled explicitly on a
+  node.
 
+.. LINKS
+
+.. _manager service: https://docs.ceph.com/en/latest/mgr/
+.. _monitor service: https://docs.ceph.com/en/latest/man/8/ceph-mon/
+.. _metadata service: https://docs.ceph.com/en/latest/man/8/ceph-mds/
