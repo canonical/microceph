@@ -8,9 +8,9 @@ number is set to three by default.
 
 These services affected by this include:
 
-* MON (`monitor service`_)
-* MDS (`metadata service`_)
-* MGR (`manager service`_)
+* MON (`Monitor service`_)
+* MDS (`Metadata service`_)
+* MGR (`Manager service`_)
 * RGW (`RADOS Gateway service`)
 
 Cluster designs that call for additional service instances however can be
@@ -25,9 +25,13 @@ The syntax is:
 
    sudo microceph enable <service> --target <destination> ...
 
-Where the service is one of the aforementioned services in lowercase. Valid
-service values are therefore 'mon', 'mds', 'mgr', and 'rgw'. The destination is
-a node name as discerned by the output of the :command:`status` command.
+Where the service value is one of 'mon', 'mds', 'mgr', and 'rgw'. The
+destination is a node name as discerned by the output of the :command:`status`
+command:
+
+.. code-block:: none
+
+   sudo microceph status
 
 For a given service, the :command:`enable` command may support extra
 parameters. These can be discovered by querying for help for the respective
@@ -81,3 +85,10 @@ Finally, view cluster status again and verify expected changes:
    - workbook (192.168.29.152)
      Services: mds, mgr, mon
      Disks: 0
+
+.. LINKS
+
+.. _Manager service: https://docs.ceph.com/en/latest/mgr/
+.. _Monitor service: https://docs.ceph.com/en/latest/man/8/ceph-mon/
+.. _Metadata service: https://docs.ceph.com/en/latest/man/8/ceph-mds/
+.. _RADOS Gateway service: https://docs.ceph.com/en/latest/radosgw/
