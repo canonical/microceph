@@ -11,10 +11,12 @@ These services affected by this include:
 * MON (`Monitor service`_)
 * MDS (`Metadata service`_)
 * MGR (`Manager service`_)
-* RGW (`RADOS Gateway service`_)
 
-Cluster designs that call for additional service instances however can be
-satisfied by manual means.
+Cluster designs that call for extra service instances, however, can be
+satisfied by manual means. In addition to the above-listed services, the
+following service can also be added on a node:
+
+* RGW (`RADOS Gateway service`_)
 
 This is the purpose of the :command:`enable` command. It manually enables a
 new instance of a service on a node.
