@@ -12,20 +12,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: Clear FORWARD firewall rules
-        run: |
-          # Docker can inject rules causing firewall conflicts
-          sudo iptables -P FORWARD ACCEPT  || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD  || true
-          sudo ip6tables -F FORWARD || true
+        run: tests/scripts/actionutils.sh cleaript
 
       - name: Install dependencies
         run: |
-          sudo snap refresh
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
+          tests/scripts/actionutils.sh setup_lxd
+
           sudo snap install snapcraft --classic
           snap list
 
@@ -41,7 +37,7 @@ jobs:
           retention-days: 5
 
   single-system-tests:
-    name: Single node testing
+    name: Single node with encryption
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
@@ -49,33 +45,25 @@ jobs:
       uses: actions/download-artifact@v3
       with:
         name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
     - name: Install and setup
       run: |
-        set -eux
-        sudo snap install --dangerous microceph_*.snap
-        sudo snap connect microceph:block-devices
-        sudo snap connect microceph:hardware-observe
-        # defer dm-crypt enablement for later.
+        tests/scripts/actionutils.sh install_microceph
 
-        # Daemon needs restart for the added dm-crypt connection
-        sudo snap restart microceph.daemon
-
-        sudo microceph cluster bootstrap
-        sudo microceph.ceph version
-        sudo microceph.ceph status
-
+        set -uex
         # Verify metadata.yaml
         meta=/var/snap/microceph/current/conf/metadata.yaml
         cat $meta
         grep -q ceph-version $meta
 
-        # Allow ceph to notice no OSD are present
-        sleep 30
-        sudo microceph.ceph status
-        sudo microceph.ceph health
+        # Verify health and auto crush rule
         sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"
-
-        # Verify auto crush rule
         sudo microceph.ceph osd crush rule ls | grep -F microceph_auto_osd
 
     - name: Add OSD with failure
@@ -93,45 +81,10 @@ jobs:
         if [[ $rc -eq 0 ]] ; then echo "FDE should fail without dmcrypt: $rc"; exit 1; fi
 
     - name: Add OSDs
-      run: |
-        set -eux
-        # Enable dm-crypt connection and restart microceph daemon
-        sudo snap connect microceph:dm-crypt
-        sudo snap restart microceph.daemon
-        # Add OSDs backed by loop devices on /mnt (ephemeral "large" disk attached to GitHub action runners)
-        i=0
-        for l in a b c; do
-          loop_file="$(sudo mktemp -p /mnt XXXX.img)"
-          sudo truncate -s 1G "${loop_file}"
-          loop_dev="$(sudo losetup --show -f "${loop_file}")"
-
-          # XXX: the block-devices plug doesn't allow accessing /dev/loopX
-          # devices so we make those same devices available under alternate
-          # names (/dev/sdiY) that are not used inside GitHub Action runners
-          minor="${loop_dev##/dev/loop}"
-          sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
-          sudo microceph disk add --wipe "/dev/sdi${l}" --encrypt
-        done
-
-        # Wait for OSDs to become up
-        sleep 30
+      run: tests/scripts/actionutils.sh add_encrypted_osds
 
     - name: Enable RGW
-      run: |
-        set -ux
-
-        sudo microceph enable rgw
-        # Wait for RGW to settle
-        for i in $(seq 1 8); do
-            res=$( ( sudo microceph.ceph status | grep -cF "rgw: 1 daemon" ) || true )
-            if [[ $res -gt 0 ]] ; then
-                echo "Found rgw daemon"
-                break
-            else
-                echo -n '.'
-                sleep 5
-            fi
-        done
+      run: tests/scripts/actionutils.sh enable_rgw
 
     - name: Run system tests
       run: |
@@ -199,3 +152,62 @@ jobs:
 
         # Check service restarted
         if [ $ts3 -lt $ts2 ]; then echo "config check failed: TS2: $ts2 TS3: $ts3"; exit 1; fi
+
+  multi-node-tests:
+    name: Multi node testing
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Clear FORWARD firewall rules
+      run: tests/scripts/actionutils.sh cleaript
+
+    - name: Free disk
+      run: tests/scripts/actionutils.sh free_runner_disk
+
+    - name: Install dependencies
+      run: tests/scripts/actionutils.sh setup_lxd
+
+    - name: Create containers with loopback devices
+      run: tests/scripts/actionutils.sh create_containers
+
+    - name: Install local microceph snap
+      run: tests/scripts/actionutils.sh install_multinode
+
+    - name: Bootstrap
+      run: tests/scripts/actionutils.sh bootstrap_head
+
+    - name: Setup cluster
+      run: tests/scripts/actionutils.sh cluster_nodes
+
+    - name: Add OSDs
+      run: tests/scripts/actionutils.sh add_multinode_osds
+
+    - name: Test osds present
+      run: |
+        set -uex
+        lxc exec node-head -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
+
+    - name: Test osd host rule
+      run: |
+        set -uex
+        lxc exec node-head -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host
+        lxc exec node-head -- sh -c "microceph.ceph osd pool ls detail" | grep -F "crush_rule 1"
+
+    - name: Test migrate services
+      run: |
+        set -uex
+        lxc exec node-head -- sh -c "microceph cluster migrate node-wrk1 node-wrk3"
+        sleep 2
+        lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk1 | grep -E "^  Services: osd$"
+        lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk3 | grep -E "^  Services: mds, mgr, mon$"
