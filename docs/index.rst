@@ -1,26 +1,22 @@
-.. _home:
+=========
+MicroCeph
+=========
 
-Microceph Documentation
-======================================================
+MicroCeph is the easiest way to get up and running with Ceph.
 
-**MicroCeph is the easiest way to get up and running with Ceph**
+MicroCeph is a lightweight way of deploying a Ceph cluster using just a few
+commands. Ceph is a highly scalable, open-source distributed storage system
+designed to provide excellent performance, reliability, and flexibility for
+object, block, and file-level storage.
 
-MicroCeph is a lightweight way of deploying a Ceph cluster using just a few commands. Ceph is a highly scalable, open-source distributed storage system designed to provide excellent performance, reliability, and flexibility for object, block, and file-level storage.
+Ceph cluster management is streamlined by simplifying key distribution, service
+placement, and disk administration for quick, effortless deployment and
+operations. This applies to clusters that span private clouds, edge clouds, as
+well as home labs and single workstations.
 
-MicroCeph streamlines Ceph cluster management by simplifying key distribution, service placement and disk administration for quick, effortless deployment and operations. 
-
-MicroCeph is focused on providing a lightweight deployment and management experience for all sizes of Ceph cluster, spanning private clouds, edge clouds, as well as home labs and developer workstations.
-
-
-.. **A third paragraph of similar length, this time explaining what need the
-.. product meets.** Dui ut ornare lectus sit amet est. Nunc sed augue lacus
-.. viverra vitae congue eu consequat ac libero id faucibus nisl tincidunt eget
-.. nullam.
-
-.. **Finally, a paragraph that describes whom the product is useful for.** Nunc
-.. non blandit massa enim nec dui nunc mattis enim. Ornare arcu odio ut sem
-.. nulla pharetra diam porttitor leo a diam sollicitudin tempor id eu. Ipsum
-.. dolor sit amet consectetur adipiscing elit pellentesque habitant.
+MicroCeph is focused on providing a modern deployment and management experience
+to traditional Ceph cluster administrators as well as software storage
+developers.
 
 ---------
 
@@ -53,11 +49,12 @@ In this documentation
 Project and community
 ---------------------
 
-Microceph is a member of the Ubuntu family. It’s an open source project that warmly welcomes community projects, contributions, suggestions, fixes and constructive feedback.
+MicroCeph is a member of the Ubuntu family. It’s an open source project that
+warmly welcomes community projects, contributions, suggestions, fixes and
+constructive feedback.
 
 * `Contribute <https://github.com/canonical/microceph>`_
 * `Roadmap <https://github.com/canonical/microceph/issues>`_
-
 
 .. toctree::
    :hidden:
