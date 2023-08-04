@@ -6,7 +6,7 @@ To ensure a base level of resiliency, MicroCeph will always try to enable a
 sufficient number of instances for certain services in the cluster. This
 number is set to three by default.
 
-These services affected by this include:
+The services affected by this include:
 
 * MON (`Monitor service`_)
 * MDS (`Metadata service`_)
