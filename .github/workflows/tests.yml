@@ -190,10 +190,38 @@ jobs:
     - name: Setup cluster
       run: tests/scripts/actionutils.sh cluster_nodes
 
-    - name: Add OSDs
-      run: tests/scripts/actionutils.sh add_multinode_osds
+    - name: Add 2 OSDs
+      run: |
+        for c in node-wrk1 node-wrk2 ; do
+          tests/scripts/actionutils.sh add_osd_to_node $c
+        done
+        lxc exec node-head -- sh -c "microceph.ceph -s"
 
-    - name: Test osds present
+    - name: Test failure domain scale up
+      run: |
+        set -uex
+        # We still have failure domain OSD
+        lxc exec node-head -- sh -c "sudo microceph.ceph osd crush rule ls" | grep -F microceph_auto_osd
+        # Add a 3rd OSD, should switch to host failure domain
+        tests/scripts/actionutils.sh add_osd_to_node node-head
+        for i in $(seq 1 8); do
+            res=$( ( lxc exec node-head -- sh -c 'sudo microceph.ceph -s | grep -F osd: | sed -E "s/.* ([[:digit:]]*) in .*/\1/"' ) || true )
+            if [[ $res -gt 2 ]] ; then
+                echo "Found >2 OSDs"
+                break
+            else
+                echo -n '.'
+                sleep 2
+            fi
+        done
+        # Expect exactly one rule with host failure dom
+        rules=$( lxc exec node-head -- sh -c "sudo microceph.ceph osd crush rule ls" )
+        echo $rules
+        echo $rules | grep -F microceph_auto_host
+        num=$( echo $rules | wc -l)
+        if [ $num != '1' ] ; then echo "Expect exactly one rule" ; exit 1 ; fi 
+
+    - name: Test 3 osds present
       run: |
         set -uex
         lxc exec node-head -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
@@ -211,3 +239,4 @@ jobs:
         sleep 2
         lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk1 | grep -E "^  Services: osd$"
         lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk3 | grep -E "^  Services: mds, mgr, mon$"
+

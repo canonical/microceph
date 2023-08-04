@@ -126,18 +126,24 @@ function cluster_nodes() {
         tok=$( lxc exec node-head -- sh -c "microceph cluster add node-wrk${i}" )
         lxc exec node-wrk${i} -- sh -c "microceph cluster join $tok"
     done
-    sleep 4
+    for i in $(seq 1 8); do
+        res=$( ( lxc exec node-head -- sh -c 'microceph status | grep -cE "^- node"' ) || true )
+        if [[ $res -gt 3 ]] ; then
+            echo "Found >3 nodes"
+            break
+        else
+            echo -n '.'
+            sleep 2
+        fi
+    done
     lxc exec node-head -- sh -c 'microceph status'
     lxc exec node-head -- sh -c 'microceph.ceph -s'
 }
 
-function add_multinode_osds() {
-    # Add disks on first 3 nodes, node-wrk3 remains empty to save resources
-    for container in node-head node-wrk1 node-wrk2 ; do
-        lxc exec $container -- sh -c "microceph disk add /dev/sdia"
-    done
-    sleep 4
-    lxc exec node-head -- sh -c "microceph.ceph -s"
+function add_osd_to_node() {
+    local container="${1?missing}"
+    lxc exec $container -- sh -c "microceph disk add /dev/sdia"
+    sleep 1
 }
 
 function free_runner_disk() {
