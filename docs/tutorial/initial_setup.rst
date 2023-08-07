@@ -26,7 +26,7 @@ You should now have a Ceph monitor cluster with quorum:
 
 .. code-block:: shell
 
-    $ lxc exec microceph-1 microceph.ceph status
+    $ lxc exec microceph-1 ceph status
     cluster:
         id:     a95eaf13-c3fe-466a-8278-d92186effbec
         health: HEALTH_WARN
