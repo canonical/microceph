@@ -24,7 +24,7 @@ In order to do so, we run the following command on one of the nodes:
 
 .. code-block:: shell
 
-    microceph.ceph status
+    ceph status
 
 The output should be something like the following:
 
@@ -58,7 +58,7 @@ The order in which we run the commands is important. It should be as follows:
 2. Monitors (mon)
 3. All other entities (osd, rgw, etc.)
 
-The output of the 'microceph.ceph status' command should provide us with the hostnames of the mons and managers ('microceph-1' et al in this example).
+The output of the 'ceph status' command should provide us with the hostnames of the mons and managers ('microceph-1' et al in this example).
 
 At present time, managers and monitors reside on the same nodes, but that may not always be the case.
 
