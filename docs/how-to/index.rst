@@ -9,4 +9,5 @@ These how-to guides will cover key operations and processes in Microceph.
    cluster-cfg
    service-placement
    service-migration
+   metrics
 
