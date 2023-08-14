@@ -27,13 +27,12 @@ func (_m *StateInterface) ClusterState() *state.State {
 	return r0
 }
 
-type mockConstructorTestingTNewStateInterface interface {
+// NewStateInterface creates a new instance of StateInterface. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
+// The first argument is typically a *testing.T value.
+func NewStateInterface(t interface {
 	mock.TestingT
 	Cleanup(func())
-}
-
-// NewStateInterface creates a new instance of StateInterface. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
-func NewStateInterface(t mockConstructorTestingTNewStateInterface) *StateInterface {
+}) *StateInterface {
 	mock := &StateInterface{}
 	mock.Mock.Test(t)
 

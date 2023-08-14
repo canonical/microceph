@@ -8,6 +8,14 @@ type DisksPost struct {
 	Encrypt bool   `json:"encrypt" yaml:"encrypt"`
 }
 
+// DisksDelete holds an OSD number and a flag for forcing the removal
+type DisksDelete struct {
+	OSD              int64 `json:"osdid" yaml:"osdid"`
+	BypassSafety     bool  `json:"bypass_safety" yaml:"bypass_safety"`
+	ConfirmDowngrade bool  `json:"confirm_downgrade" yaml:"confirm_downgrade"`
+	Timeout          int64 `json:"timeout" yaml:"timeout"`
+}
+
 // Disks is a slice of disks
 type Disks []Disk
 

@@ -42,8 +42,9 @@ func (c ConfigTable) Keys() (keys []string) {
 // so that each request for the map guarantees consistent definition.
 func GetConstConfigTable() ConfigTable {
 	return ConfigTable{
-		"public_network":  {"global", []string{"mon", "osd"}},
-		"cluster_network": {"global", []string{"osd"}},
+		"public_network":              {"global", []string{"mon", "osd"}},
+		"cluster_network":             {"global", []string{"osd"}},
+		"osd_pool_default_crush_rule": {"global", []string{}},
 	}
 }
 

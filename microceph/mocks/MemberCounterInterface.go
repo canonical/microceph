@@ -35,6 +35,30 @@ func (_m *MemberCounterInterface) Count(s *state.State) (int, error) {
 	return r0, r1
 }
 
+// CountExclude provides a mock function with given fields: s, exclude
+func (_m *MemberCounterInterface) CountExclude(s *state.State, exclude int64) (int, error) {
+	ret := _m.Called(s, exclude)
+
+	var r0 int
+	var r1 error
+	if rf, ok := ret.Get(0).(func(*state.State, int64) (int, error)); ok {
+		return rf(s, exclude)
+	}
+	if rf, ok := ret.Get(0).(func(*state.State, int64) int); ok {
+		r0 = rf(s, exclude)
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	if rf, ok := ret.Get(1).(func(*state.State, int64) error); ok {
+		r1 = rf(s, exclude)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // NewMemberCounterInterface creates a new instance of MemberCounterInterface. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewMemberCounterInterface(t interface {

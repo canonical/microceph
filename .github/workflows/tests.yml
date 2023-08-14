@@ -52,6 +52,9 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Free disk
+      run: tests/scripts/actionutils.sh free_runner_disk
+
     - name: Install and setup
       run: |
         tests/scripts/actionutils.sh install_microceph
@@ -91,23 +94,34 @@ jobs:
         set -eux
         # Show ceph's status
         sudo microceph.ceph status
-
+        # Ceph status expectations for a single node cluster
+        test_single() {
+            local status="$1"
+            ( echo "$status" | grep -qF "mon: 1 daemons" ) || { echo fail ; return ; }
+            ( echo "$status" | grep -qE "mgr: .*active, " )|| { echo fail ; return ; }
+            ( echo "$status" | grep -qF "osd: 3 osds" )    || { echo fail ; return ; }
+            ( echo "$status" | grep -qF "rgw: 1 daemon" )  || { echo fail ; return ; }
+            echo ok
+        }
         # Confirm ceph is healthy and services started
-        sudo microceph.ceph status | grep -F "mon: 1 daemons"
-        sudo microceph.ceph status | grep -E "mgr: .*active, "
-        sudo microceph.ceph status | grep -F "osd: 3 osds"
-        sudo microceph.ceph status | grep -F "rgw: 1 daemon"
-
+        res=$( test_single "$( sudo microceph.ceph status )" )
+        [ $res = "ok" ] || { echo "single node status fails" ; exit 1 ; }
         # Check health after restart
         sudo snap stop microceph
         sudo snap start microceph
-        sleep 2m
-
-        sudo microceph.ceph status
-        sudo microceph.ceph status | grep -F "mon: 1 daemons"
-        sudo microceph.ceph status | grep -E "mgr: .*active, "
-        sudo microceph.ceph status | grep -F "osd: 3 osds"
-        sudo microceph.ceph status | grep -F "rgw: 1 daemon"
+        for i in $(seq 1 16); do
+            status=$( sudo microceph.ceph status )
+            echo "$status"
+            res=$( test_single "$status" )
+            if [ $res = "ok" ] ; then
+                echo "Single tests pass"
+                break
+            else
+                echo "Single tests fail, retry $i/16"
+                sleep 15
+            fi
+        done
+        sleep 1
         pgrep ceph-osd || { echo "No ceph-osd process found" ; exit 1; }
 
     - name: Exercise RGW
@@ -201,7 +215,7 @@ jobs:
       run: |
         set -uex
         # We still have failure domain OSD
-        lxc exec node-head -- sh -c "sudo microceph.ceph osd crush rule ls" | grep -F microceph_auto_osd
+        lxc exec node-head -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 1
         # Add a 3rd OSD, should switch to host failure domain
         tests/scripts/actionutils.sh add_osd_to_node node-head
         for i in $(seq 1 8); do
@@ -214,23 +228,40 @@ jobs:
                 sleep 2
             fi
         done
-        # Expect exactly one rule with host failure dom
-        rules=$( lxc exec node-head -- sh -c "sudo microceph.ceph osd crush rule ls" )
-        echo $rules
-        echo $rules | grep -F microceph_auto_host
-        num=$( echo $rules | wc -l)
-        if [ $num != '1' ] ; then echo "Expect exactly one rule" ; exit 1 ; fi 
-
+        sleep 1
+        lxc exec node-head -- sh -c "sudo microceph.ceph -s"
+        # Now default to host rule
+        lxc exec node-head -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 2
     - name: Test 3 osds present
       run: |
         set -uex
         lxc exec node-head -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
 
-    - name: Test osd host rule
+    - name: Test crush rules
       run: |
         set -uex
         lxc exec node-head -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host
-        lxc exec node-head -- sh -c "microceph.ceph osd pool ls detail" | grep -F "crush_rule 1"
+        lxc exec node-head -- sh -c "microceph.ceph osd pool ls detail" | grep -F "crush_rule 2"
+
+    - name: Add another OSD
+      run: |
+        tests/scripts/actionutils.sh add_osd_to_node node-wrk3
+        for i in $(seq 1 8); do
+            res=$( ( lxc exec node-head -- sh -c 'sudo microceph.ceph -s | grep -F osd: | sed -E "s/.* ([[:digit:]]*) in .*/\1/"' ) || true )
+            if [[ $res -gt 3 ]] ; then
+                echo "Found >3 OSDs"
+                break
+            else
+                echo -n '.'
+                sleep 2
+            fi
+        done
+
+    - name: Remove OSD again
+      run: |
+        set -uex
+        lxc exec node-wrk3 -- sh -c "microceph disk remove 3"
+        lxc exec node-head -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
 
     - name: Test migrate services
       run: |
@@ -239,4 +270,3 @@ jobs:
         sleep 2
         lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk1 | grep -E "^  Services: osd$"
         lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk3 | grep -E "^  Services: mds, mgr, mon$"
-
