@@ -15,7 +15,7 @@ operations. This applies to clusters that span private clouds, edge clouds, as
 well as home labs and single workstations.
 
 MicroCeph is focused on providing a modern deployment and management experience
-to traditional Ceph administrators and software storage developers.
+to Ceph administrators and storage software developers.
 
 ---------
 
