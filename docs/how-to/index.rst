@@ -10,4 +10,5 @@ These how-to guides will cover key operations and processes in Microceph.
    service-placement
    service-migration
    metrics
+   alerts
 
