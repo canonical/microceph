@@ -49,12 +49,12 @@ A simple configuration file is provided below:
 
     # microceph.yaml
     global:
-    external_labels:
-        monitor: 'microceph-demo'
+        external_labels:
+            monitor: 'microceph'
 
     # Scrape Job
     scrape_configs:
-    - job_name: 'microceph'
+      - job_name: 'microceph'
 
         # Ceph's default for scrape_interval is 15s.
         scrape_interval: 15s
