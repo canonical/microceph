@@ -18,44 +18,43 @@ The microceph cluster configuration CLI supports setting, getting, resetting and
 
   .. code-block:: shell
 
-    $ sudo microceph cluster config set cluster_network 10.5.2.165/16
+    $ sudo microceph cluster config set cluster_network 10.5.0.0/16
 
 2. Config value for a particular key could be queried using the 'get' command:
 
   .. code-block:: shell
 
     $ sudo microceph cluster config get cluster_network
-    +---+-----------------+---------------+
-    | # |       KEY       |     VALUE     |
-    +---+-----------------+---------------+
-    | 0 | cluster_network | 10.5.2.165/16 |
-    +---+-----------------+---------------+
+    +---+-----------------+-------------+
+    | # |       KEY       |     VALUE   |
+    +---+-----------------+-------------+
+    | 0 | cluster_network | 10.5.0.0/16 |
+    +---+-----------------+-------------+
 
 3. A list of all the configured keys can be fetched using the 'list' command:
 
   .. code-block:: shell
 
-    $ sudo microceph cluster config set public_network 10.5.2.165/16
+    $ sudo microceph cluster config set public_network 10.5.0.0/16
     $ sudo microceph cluster config list
-    +---+-----------------+---------------+
-    | # |       KEY       |     VALUE     |
-    +---+-----------------+---------------+
-    | 0 | cluster_network | 10.5.2.165/16 |
-    +---+-----------------+---------------+
-    | 1 | public_network  | 10.5.2.165/16 |
-    +---+-----------------+---------------+
+    +---+-----------------+-------------+
+    | # |       KEY       |     VALUE   |
+    +---+-----------------+-------------+
+    | 0 | cluster_network | 10.5.0.0/16 |
+    +---+-----------------+-------------+
+    | 1 | public_network  | 10.5.0.0/16 |
+    +---+-----------------+-------------+
 
 4. Resetting a config key (i.e. setting the key to its default value) can performed using the 'reset' command:
 
   .. code-block:: shell
 
+   $ sudo microceph cluster config reset cluster_network
    $ sudo microceph cluster config reset public_network
    $ sudo microceph cluster config list
-   +---+-----------------+---------------+
-   | # |       KEY       |     VALUE     |
-   +---+-----------------+---------------+
-   | 0 | cluster_network | 10.5.2.165/16 |
-   +---+-----------------+---------------+
+   +---+-----+-------+
+   | # | KEY | VALUE |
+   +---+-----+-------+
 
 For more explanations and implementation details refer to `explanation <../../explanation/cluster-cfg/>`_
 
