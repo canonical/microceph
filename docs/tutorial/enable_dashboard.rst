@@ -39,8 +39,8 @@ Let's visit the service URL and see our dashboard.
 
   Ceph Dashboard WebUI
 
-Configure SSL Key/Certicate pair
---------------------------------
+Configure SSL Key/Certificate pair
+----------------------------------
 
 Users may wish to configure their own set of SSL certificates for ceph-dashboard. This can be done simply using the ceph cli command:
 
