@@ -21,24 +21,6 @@ It can also generate a self signed certificate to quickly configure TLS.
 
     ceph dashboard create-self-signed-cert
 
-For more details on SSL/TLS config visit `Ceph-Dashboard configuration <https://docs.ceph.com/en/quincy/mgr/dashboard/#configuration>`_.
-
-Enabled ceph-mgr services can be queried as:
-
-..  code-block:: none
-
-    ceph mgr services
-    {
-        "dashboard": "https://10.5.3.199:8443/",
-        "prometheus": "http://10.5.3.199:9283/"
-    }
-
-Let's visit the service URL and see our dashboard.
-
-.. figure:: assets/dashboard.jpeg
-
-  Ceph Dashboard WebUI
-
 Configure SSL Key/Certificate pair
 ----------------------------------
 
@@ -50,13 +32,42 @@ Users may wish to configure their own set of SSL certificates for ceph-dashboard
     SSL certificate updated
     ceph dashboard set-ssl-certificate-key -i server.key
     SSL certificate key updated
+
+For more details on SSL/TLS config visit `Ceph-Dashboard configuration <https://docs.ceph.com/en/quincy/mgr/dashboard/#configuration>`_.
+
+..  caution::
+
+    MicroCeph snap is a confined ceph application, therefore it does not have access to files at arbitrary locations on the host machine. Therefore, it is required to have the SSL certificate/key files at $HOMEDIR, since MicroCeph can read files located at the home directory. 
+
+Check active dashboard service URL
+----------------------------------
+
+Enabled ceph-mgr services can be queried as:
+
+..  code-block:: none
+
     ceph mgr services
     {
-        "dashboard": "https://10.5.1.107:8443/"
-        "prometheus": "http://10.5.1.107:9283/"
+        "dashboard": "https://10.5.3.199:8443/",
+        "prometheus": "http://10.5.3.199:9283/"
     }
 
-**Warning:** MicroCeph snap is a confined ceph application, therefore it does not have access to files at arbitrary locations on the host machine. Therefore, it is required to have the SSL certificate/key files at $HOMEDIR, since MicroCeph can read files located at the home directory. 
+Creating Admin user
+-------------------
+
+..  code-block:: none
+
+    ceph dashboard ac-user-create <username> -i <file-containing-password> administrator
+
+..  caution::
+
+    Since MicroCeph can only acces external files located at $HOMEDIR, <file-containing-password> should also be located at the home directory.
+
+Let's visit the service URL and see our dashboard.
+
+.. figure:: assets/dashboard.jpeg
+
+  Ceph Dashboard WebUI
 
 Integration with Prometheus and Alertmanager
 --------------------------------------------
