@@ -26,7 +26,8 @@ func (c *Config) GetPath() string {
 
 // WriteConfig writes the configuration file given a data bag
 func (c *Config) WriteConfig(data map[string]any) error {
-	fd, err := os.OpenFile(c.GetPath(), os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
+	mode := int(0640) // rw: user, r: group, others: none.
+	fd, err := os.OpenFile(c.GetPath(), os.O_CREATE|os.O_TRUNC|os.O_RDWR, os.FileMode(mode))
 	if err != nil {
 		return fmt.Errorf("Couldn't write %s: %w", c.configFile, err)
 	}
