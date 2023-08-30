@@ -84,7 +84,7 @@ func copyTestConf(dir string, conf string) error {
 	if err != nil {
 		return err
 	}
-	err = os.WriteFile(filepath.Join(dir, "SNAP_DATA", "conf", conf), source, 0644)
+	err = os.WriteFile(filepath.Join(dir, "SNAP_DATA", "conf", conf), source, 0640)
 	if err != nil {
 		return err
 	}

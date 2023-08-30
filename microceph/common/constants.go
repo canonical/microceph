@@ -27,7 +27,7 @@ func GetPathConst() PathConst {
 func GetPathFileMode() PathFileMode {
 	pathConsts := GetPathConst()
 	return PathFileMode{
-		pathConsts.ConfPath: 0755,
+		pathConsts.ConfPath: 0750,
 		pathConsts.RunPath:  0700,
 		pathConsts.DataPath: 0700,
 		pathConsts.LogPath:  0700,
