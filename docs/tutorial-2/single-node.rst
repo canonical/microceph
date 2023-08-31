@@ -18,7 +18,7 @@ three individual disks are required to be available on the host machine.
 
 The disk subsystem can be summarised via the :command:`lsblk` command. In this
 tutorial, it looks like this (loopback devices have been suppressed in the
-output for purposes of brevity and clarity:
+output for purposes of brevity and clarity):
 
 .. code-block:: none
 
@@ -89,6 +89,11 @@ yet any storage available.
 Add storage
 -----------
 
+.. warning::
+
+   This step will remove the data found on the target storage disks. Make sure
+   you don't lose data unintentionally.
+
 Add the three disks to the cluster by using the :command:`disk add` command:
 
 .. code-block:: none
@@ -97,13 +102,13 @@ Add the three disks to the cluster by using the :command:`disk add` command:
    sudo microceph disk add /dev/sdb --wipe
    sudo microceph disk add /dev/sdc --wipe
 
-Rechcek status:
+Recheck status:
 
 .. code-block:: none
 
    sudo microceph status
 
-The output should now show three disks and the additional presense of the OSD
+The output should now show three disks and the additional presence of the OSD
 service:
 
 .. code-block:: none
@@ -117,6 +122,31 @@ Manage the cluster
 ------------------
 
 Your Ceph cluster is now deployed and can be managed by following the resources
-found in the :doc:`Howto <../how-to/index>` section. The cluster can be managed
-using native Ceph tooling if snap-level commands are not yet avaiable for a
-desired task.
+found in the :doc:`Howto <../how-to/index>` section.
+
+The cluster can also be managed using native Ceph tooling if snap-level
+commands are not yet available for a desired task. This is the standard
+:command:`ceph status` command for instance:
+
+.. code-block:: none
+
+   ceph status
+
+The cluster built during this tutorial gives the following output:
+
+.. code-block:: none
+
+     cluster:
+       id:     4c2190cd-9a31-4949-a3e6-8d8f60408278
+       health: HEALTH_OK
+
+     services:
+       mon: 1 daemons, quorum node-mees (age 7d)
+       mgr: node-mees(active, since 7d)
+       osd: 3 osds: 3 up (since 7d), 3 in (since 7d)
+
+     data:
+       pools:   1 pools, 1 pgs
+       objects: 2 objects, 577 KiB
+       usage:   96 MiB used, 2.7 TiB / 2.7 TiB avail
+       pgs:     1 active+clean
