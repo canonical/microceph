@@ -153,6 +153,7 @@ parts:
       - bin/ceph-mgr
       - bin/ceph-mon
       - bin/ceph-osd
+      - bin/ceph-conf
       - bin/monmaptool
       - bin/rbd
       - bin/rados
