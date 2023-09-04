@@ -33,7 +33,9 @@ To use FDE, the following prerequisites must be met:
 Limitations
 -----------
 
-**Warning:** It is important to note that MicroCeph FDE *only* encompasses OSDs. Other data, such as state information for monitors, logs, configuration etc., will *not* be encrypted by this mechanism.
+**Warning:**
+- It is important to note that MicroCeph FDE *only* encompasses OSDs. Other data, such as state information for monitors, logs, configuration etc., will *not* be encrypted by this mechanism.
+- Also note that the encryption key will be stored on the Ceph monitors as part of the Ceph key/value store
 
 
 Usage
