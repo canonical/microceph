@@ -5,12 +5,19 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/common"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/canonical/lxd/lxd/resources"
 	"github.com/canonical/lxd/lxd/revert"
@@ -212,24 +219,25 @@ func checkEncryptSupport() error {
 	return nil
 }
 
-// setHostFailureDomain sets the host failure domain for the given host.
-func setHostFailureDomain() error {
+// switchFailureDomain switches the crush rules failure domain from old to new
+func switchFailureDomain(old string, new string) error {
 	var err error
 
-	if haveCrushRule("microceph_auto_host") {
-		// Already setup up, nothing to do.
-		return nil
-	}
-	err = addCrushRule("microceph_auto_host", "host")
+	newRule := fmt.Sprintf("microceph_auto_%s", new)
+	logger.Debugf("Setting default crush rule to %v", newRule)
+	err = setDefaultCrushRule(newRule)
 	if err != nil {
 		return err
 	}
-	osdPools, err := getPoolsForDomain("osd")
+
+	osdPools, err := getPoolsForDomain(old)
+	logger.Debugf("Found pools %v for domain %v", osdPools, old)
 	if err != nil {
 		return err
 	}
 	for _, pool := range osdPools {
-		err = setPoolCrushRule(pool, "microceph_auto_host")
+		logger.Debugf("Setting pool %v crush rule to %v", pool, newRule)
+		err = setPoolCrushRule(pool, newRule)
 		if err != nil {
 			return err
 		}
@@ -247,15 +255,9 @@ func updateFailureDomain(s *state.State) error {
 	}
 
 	if numNodes >= 3 {
-		err = setHostFailureDomain()
+		err = switchFailureDomain("osd", "host")
 		if err != nil {
 			return fmt.Errorf("Failed to set host failure domain: %w", err)
-		}
-		if haveCrushRule("microceph_auto_osd") {
-			err := removeCrushRule("microceph_auto_osd")
-			if err != nil {
-				return fmt.Errorf("Failed to remove microceph_auto_osd rule: %w", err)
-			}
 		}
 	}
 	return nil
@@ -334,8 +336,7 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 
 	// Wipe the block device if requested.
 	if wipe {
-		// FIXME: Do a Go implementation.
-		_, err := processExec.RunCommand("dd", "if=/dev/zero", fmt.Sprintf("of=%s", path), "bs=4M", "count=10", "status=none")
+		err = timeoutWipe(path)
 		if err != nil {
 			return fmt.Errorf("Failed to wipe the device: %w", err)
 		}
@@ -438,28 +439,407 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 
 // ListOSD lists current OSD disks
 func ListOSD(s *state.State) (types.Disks, error) {
-	disks := types.Disks{}
+	return database.OSDQuery.List(s)
+}
 
-	// Get the OSDs from the database.
-	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		records, err := database.GetDisks(ctx, tx)
-		if err != nil {
-			return fmt.Errorf("Failed to fetch disks: %w", err)
-		}
-
-		for _, disk := range records {
-			disks = append(disks, types.Disk{
-				Location: disk.Member,
-				OSD:      int64(disk.OSD),
-				Path:     disk.Path,
-			})
-		}
-
-		return nil
-	})
+// RemoveOSD removes an OSD disk
+func RemoveOSD(s common.StateInterface, osd int64, bypassSafety bool, timeout int64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(timeout))
+	defer cancel()
+	err := doRemoveOSD(ctx, s, osd, bypassSafety)
 	if err != nil {
-		return nil, err
+		// Checking if the error is a context deadline exceeded error
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("timeout (%ds) reached while removing osd.%d, abort", timeout, osd)
+		}
+		return err
+	}
+	return nil
+
+}
+
+// sanityCheck checks if input is valid
+func sanityCheck(s common.StateInterface, osd int64) error {
+	// check osd is positive
+	if osd < 0 {
+		return fmt.Errorf("OSD must be a positive integer")
 	}
 
-	return disks, nil
+	// check if the OSD exists in the database
+	exists, err := database.OSDQuery.HaveOSD(s.ClusterState(), osd)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("ods.%d not found", osd)
+	}
+	return nil
+}
+
+// IsDowngradeNeeded checks if we need to downgrade the failure domain from 'host' to 'osd' level
+// if we remove the given OSD
+func IsDowngradeNeeded(s common.StateInterface, osd int64) (bool, error) {
+	currentRule, err := getDefaultCrushRule()
+	if err != nil {
+		return false, err
+	}
+	hostRule, err := getCrushRuleID("microceph_auto_host")
+	if err != nil {
+		return false, err
+	}
+	if currentRule != hostRule {
+		// either we're at 'osd' level or we're using a custom rule
+		// in both cases we won't downgrade
+		logger.Infof("No need to downgrade auto failure domain, current rule is %v", currentRule)
+		return false, nil
+	}
+	numNodes, err := database.MemberCounter.CountExclude(s.ClusterState(), osd)
+	logger.Infof("Number of nodes excluding osd.%v: %v", osd, numNodes)
+	if err != nil {
+		return false, err
+	}
+	if numNodes < 3 { // need to scale down
+		return true, nil
+	}
+	return false, nil
+}
+
+// scaleDownFailureDomain scales down the failure domain from 'host' to 'osd' level
+func scaleDownFailureDomain(s common.StateInterface, osd int64) error {
+	needDowngrade, err := IsDowngradeNeeded(s, osd)
+	logger.Debugf("Downgrade needed: %v", needDowngrade)
+	if err != nil {
+		return err
+	}
+	if !needDowngrade {
+		return nil
+	}
+	err = switchFailureDomain("host", "osd")
+	if err != nil {
+		return fmt.Errorf("Failed to switch failure domain: %w", err)
+	}
+	return nil
+}
+
+// reweightOSD reweights the given OSD to the given weight
+func reweightOSD(ctx context.Context, osd int64, weight float64) {
+	logger.Debugf("Reweighting osd.%d to %f", osd, weight)
+	_, err := processExec.RunCommand(
+		"ceph", "osd", "crush", "reweight",
+		fmt.Sprintf("osd.%d", osd),
+		fmt.Sprintf("%f", weight),
+	)
+	if err != nil {
+		// only log a warn, don't treat fail to reweight as a fatal error
+		logger.Warnf("Failed to reweight osd.%d: %v", osd, err)
+	}
+}
+
+func doPurge(osd int64) error {
+	// run ceph osd purge command
+	_, err := processExec.RunCommand(
+		"ceph", "osd", "purge", fmt.Sprintf("osd.%d", osd),
+		"--yes-i-really-mean-it",
+	)
+	return err
+}
+
+func purgeOSD(osd int64) error {
+	var err error
+	retries := 10
+	var backoff time.Duration
+
+	for i := 0; i < retries; i++ {
+		err = doPurge(osd)
+		if err == nil {
+			// Success: break the retry loop
+			break
+		}
+		// we're getting a RunError from processExec.RunCommand, and it
+		// wraps the original exit error if there's one
+		exitError, ok := err.(shared.RunError).Unwrap().(*exec.ExitError)
+		if !ok {
+			// not an exit error, abort and bubble up the error
+			logger.Warnf("Purge failed with non-exit error: %v", err)
+			break
+		}
+		if syscall.Errno(exitError.ExitCode()) != syscall.EBUSY {
+			// not a busy error, abort and bubble up the error
+			logger.Warnf("Purge failed with unexpected exit error: %v", exitError)
+			break
+		}
+		// purge failed with EBUSY - retry after a delay, and make delay exponential
+		logger.Infof("Purge failed %v, retrying in %v", err, backoff)
+		backoff = time.Duration(math.Pow(2, float64(i))) * time.Millisecond * 100
+		time.Sleep(backoff)
+	}
+
+	if err != nil {
+		logger.Errorf("Failed to purge osd.%d: %v", osd, err)
+		return fmt.Errorf("Failed to purge osd.%d: %w", osd, err)
+	}
+	logger.Infof("osd.%d purged", osd)
+	return nil
+}
+
+func wipeDevice(s common.StateInterface, osd int64) {
+	var err error
+	// get the device path
+	path, _ := database.OSDQuery.Path(s.ClusterState(), osd)
+	// wipe the device, retry with exponential backoff
+	retries := 8
+	var backoff time.Duration
+	for i := 0; i < retries; i++ {
+		err = timeoutWipe(path)
+		if err == nil {
+			// Success: break the retry loop
+			break
+		}
+		// wipe failed - retry after a delay, and make delay exponential
+		logger.Infof("Wipe failed %v, retrying in %v", err, backoff)
+		backoff = time.Duration(math.Pow(2, float64(i))) * time.Millisecond * 100
+		time.Sleep(backoff)
+	}
+	if err != nil {
+		// log a warning, but don't treat wipe failure as a fatal error
+		// e.g. if the device is broken, we still want to remove it from the cluster
+		logger.Warnf("Fault during device wipe: %v", err)
+	}
+}
+
+// timeoutWipe wipes the given device with a timeout, in order not to hang on broken disks
+func timeoutWipe(path string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := processExec.RunCommandContext(
+		ctx,
+		"dd", "if=/dev/zero",
+		fmt.Sprintf("of=%s", path),
+		"bs=4M", "count=10", "status=none",
+	)
+	return err
+}
+
+func doRemoveOSD(ctx context.Context, s common.StateInterface, osd int64, bypassSafety bool) error {
+	var err error
+
+	// general sanity
+	err = sanityCheck(s, osd)
+	if err != nil {
+		return err
+	}
+
+	if !bypassSafety {
+		// check: at least 3 OSDs
+		err = checkMinOSDs(s, osd)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = scaleDownFailureDomain(s, osd)
+	if err != nil {
+		return err
+	}
+
+	// check if the osd is still in the cluster -- if we're being re-run, it might not be
+	isPresent, err := haveOSDInCeph(osd)
+	if err != nil {
+		return fmt.Errorf("Failed to check if osd.%d is present in Ceph: %w", osd, err)
+	}
+	// reweight/drain data
+	if isPresent {
+		reweightOSD(ctx, osd, 0)
+	}
+	// perform safety check for stopping
+	if isPresent && !bypassSafety {
+		err = safetyCheckStop(osd)
+		if err != nil {
+			return err
+		}
+	}
+	// take the OSD out and down
+	if isPresent {
+		err = outDownOSD(osd)
+		if err != nil {
+			return err
+		}
+	}
+	// stop the OSD service
+	if isPresent {
+		err = killOSD(osd)
+	}
+	if err != nil {
+		return err
+	}
+	// perform safety check for destroying
+	if isPresent && !bypassSafety {
+		err = safetyCheckDestroy(osd)
+		if err != nil {
+			return err
+		}
+	}
+	// purge the OSD
+	if isPresent {
+		err = purgeOSD(osd)
+		if err != nil {
+			return err
+		}
+	}
+	// Wipe the underlying blocking device
+	wipeDevice(s, osd)
+	// Remove osd config
+	err = removeOSDConfig(osd)
+	if err != nil {
+		return err
+	}
+	// Remove db entry
+	err = database.OSDQuery.Delete(s.ClusterState(), osd)
+	if err != nil {
+		logger.Errorf("Failed to remove osd.%d from database: %v", osd, err)
+		return fmt.Errorf("Failed to remove osd.%d from database: %w", osd, err)
+	}
+	return nil
+}
+
+func checkMinOSDs(s common.StateInterface, osd int64) error {
+	// check if we have at least 3 OSDs post-removal
+	disks, err := database.OSDQuery.List(s.ClusterState())
+	if err != nil {
+		return err
+	}
+	if len(disks) <= 3 {
+		return fmt.Errorf("Cannot remove osd.%d we need at least 3 OSDs, have %d", osd, len(disks))
+	}
+	return nil
+}
+
+func outDownOSD(osd int64) error {
+	_, err := processExec.RunCommand("ceph", "osd", "out", fmt.Sprintf("osd.%d", osd))
+	if err != nil {
+		logger.Errorf("Failed to take osd.%d out: %v", osd, err)
+		return fmt.Errorf("Failed to take osd.%d out: %w", osd, err)
+	}
+	_, err = processExec.RunCommand("ceph", "osd", "down", fmt.Sprintf("osd.%d", osd))
+	if err != nil {
+		logger.Errorf("Failed to take osd.%d down: %v", osd, err)
+		return fmt.Errorf("Failed to take osd.%d down: %w", osd, err)
+	}
+	return nil
+}
+
+func safetyCheckStop(osd int64) error {
+	var safeStop bool
+
+	retries := 12
+	var backoff time.Duration
+
+	for i := 0; i < retries; i++ {
+		safeStop = testSafeStop(osd)
+		if safeStop {
+			// Success: break the retry loop
+			break
+		}
+		backoff = time.Duration(math.Pow(2, float64(i))) * time.Millisecond * 100
+		logger.Infof("osd.%d not ok to stop, retrying in %v", osd, backoff)
+		time.Sleep(backoff)
+	}
+	if !safeStop {
+		logger.Errorf("osd.%d failed to reach ok-to-stop", osd)
+		return fmt.Errorf("osd.%d failed to reach ok-to-stop", osd)
+	}
+	logger.Infof("osd.%d ok to stop", osd)
+	return nil
+}
+
+func safetyCheckDestroy(osd int64) error {
+	var safeDestroy bool
+
+	retries := 12
+	var backoff time.Duration
+
+	for i := 0; i < retries; i++ {
+		safeDestroy = testSafeDestroy(osd)
+		if safeDestroy {
+			// Success: break the retry loop
+			break
+		}
+		backoff = time.Duration(math.Pow(2, float64(i))) * time.Millisecond * 100
+		logger.Infof("osd.%d not safe to destroy, retrying in %v", osd, backoff)
+		time.Sleep(backoff)
+	}
+	if !safeDestroy {
+		logger.Errorf("osd.%d failed to reach safe-to-destroy", osd)
+		return fmt.Errorf("osd.%d failed to reach safe-to-destroy", osd)
+	}
+	logger.Infof("osd.%d safe to destroy", osd)
+	return nil
+}
+
+func testSafeDestroy(osd int64) bool {
+	// run ceph osd safe-to-destroy
+	_, err := processExec.RunCommand("ceph", "osd", "safe-to-destroy", fmt.Sprintf("osd.%d", osd))
+	return err == nil
+}
+
+func testSafeStop(osd int64) bool {
+	// run ceph osd ok-to-stop
+	_, err := processExec.RunCommand("ceph", "osd", "ok-to-stop", fmt.Sprintf("osd.%d", osd))
+	return err == nil
+}
+
+func removeOSDConfig(osd int64) error {
+	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
+	osdDataPath := filepath.Join(dataPath, "osd", fmt.Sprintf("ceph-%d", osd))
+	err := os.RemoveAll(osdDataPath)
+	if err != nil {
+		logger.Errorf("Failed to remove osd.%d config: %v", osd, err)
+		return fmt.Errorf("Failed to remove osd.%d config: %w", osd, err)
+	}
+	return nil
+}
+
+type Node struct {
+	ID   int64  `json:"id"`
+	Type string `json:"type"`
+}
+
+type JSONData struct {
+	Nodes []Node `json:"nodes"`
+}
+
+// haveOSDInCeph checks if the given OSD is present in the ceph cluster
+func haveOSDInCeph(osd int64) (bool, error) {
+	// run ceph osd tree
+	out, err := processExec.RunCommand("ceph", "osd", "tree", "-f", "json")
+	if err != nil {
+		logger.Errorf("Failed to get ceph osd tree: %v", err)
+		return false, fmt.Errorf("Failed to get ceph osd tree: %w", err)
+	}
+	// parse the json output
+	var tree JSONData
+	err = json.Unmarshal([]byte(out), &tree)
+	if err != nil {
+		logger.Errorf("Failed to parse ceph osd tree: %v", err)
+		return false, fmt.Errorf("Failed to parse ceph osd tree: %w", err)
+	}
+	// query the tree for the given OSD
+	for _, node := range tree.Nodes {
+		if node.Type == "osd" && node.ID == osd {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// killOSD terminates the osd process for an osd.id
+func killOSD(osd int64) error {
+	cmdline := fmt.Sprintf("ceph-osd .* --id %d", osd)
+	_, err := processExec.RunCommand("pkill", "-f", cmdline)
+	if err != nil {
+		logger.Errorf("Failed to kill osd.%d: %v", osd, err)
+		return fmt.Errorf("Failed to kill osd.%d: %w", osd, err)
+	}
+	return nil
 }

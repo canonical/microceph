@@ -3,7 +3,9 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
@@ -91,4 +93,38 @@ func GetResources(ctx context.Context, c *client.Client) (*api.ResourcesStorage,
 	}
 
 	return &storage, nil
+}
+
+// RemoveDisk requests Ceph removes an OSD.
+func RemoveDisk(ctx context.Context, c *client.Client, data *types.DisksDelete) error {
+	timeout := time.Second * time.Duration(data.Timeout+5) // wait a bit longer than the operation timeout
+	queryCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// get disks and determine osd location
+	disks, err := GetDisks(ctx, c)
+	if err != nil {
+		return fmt.Errorf("Failed to get disks: %w", err)
+	}
+	var location string
+	for _, disk := range disks {
+		if disk.OSD == data.OSD {
+			location = disk.Location
+			break
+		}
+	}
+	if location == "" {
+		return fmt.Errorf("Failed to find location for osd.%d", data.OSD)
+	}
+	c = c.UseTarget(location)
+
+	err = c.Query(queryCtx, "DELETE", api.NewURL().Path("disks", strconv.FormatInt(data.OSD, 10)), data, nil)
+	if err != nil {
+		// Checking if the error is a context deadline exceeded error
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("Failed to remove disk, timeout (%ds) reached - abort", data.Timeout)
+		}
+		return fmt.Errorf("Failed to remove disk: %w", err)
+	}
+	return nil
 }
