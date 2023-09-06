@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/common"
 	"math"
 	"os"
 	"os/exec"
@@ -18,6 +16,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/common"
 
 	"github.com/canonical/lxd/lxd/resources"
 	"github.com/canonical/lxd/lxd/revert"
@@ -265,6 +266,8 @@ func updateFailureDomain(s *state.State) error {
 
 // AddOSD adds an OSD to the cluster, given a device path and a flag for wiping
 func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
+	logger.Debugf("Adding OSD %s", path)
+
 	revert := revert.New()
 	defer revert.Fail()
 
@@ -347,6 +350,7 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 	if err != nil {
 		return fmt.Errorf("Failed to find next OSD number: %w", err)
 	}
+	logger.Debugf("nextOSD number is %d for disk %s", nr, path)
 
 	// Record the disk.
 	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
@@ -360,6 +364,8 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 	if err != nil {
 		return err
 	}
+
+	logger.Debugf("Created disk record for osd.%d", nr)
 
 	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
 	osdDataPath := filepath.Join(dataPath, "osd", fmt.Sprintf("ceph-%d", nr))
@@ -422,9 +428,10 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 	}
 
 	// Spawn the OSD.
+	logger.Debugf("Spawning OSD %d", nr)
 	err = snapRestart("osd", true)
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to start osd.%d: %w", nr, err)
 	}
 
 	// Maybe update the failure domain
@@ -434,6 +441,7 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 	}
 
 	revert.Success() // Revert functions added are not run on return.
+	logger.Debugf("Added osd.%d", nr)
 	return nil
 }
 

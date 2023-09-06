@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/gorilla/mux"
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/microcluster/rest"
@@ -32,6 +34,8 @@ var disksDelCmd = rest.Endpoint{
 	Delete: rest.EndpointAction{Handler: cmdDisksDelete, ProxyTarget: true},
 }
 
+var mu sync.Mutex
+
 func cmdDisksGet(s *state.State, r *http.Request) response.Response {
 	disks, err := ceph.ListOSD(s)
 	if err != nil {
@@ -44,16 +48,19 @@ func cmdDisksGet(s *state.State, r *http.Request) response.Response {
 func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 	var req types.DisksPost
 
+	logger.Debugf("cmdDisksPost: %v", req)
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		return response.InternalError(err)
 	}
 
+	mu.Lock()
+	defer mu.Unlock()
 	err = ceph.AddOSD(s, req.Path, req.Wipe, req.Encrypt)
 	if err != nil {
 		return response.SmartError(err)
 	}
-
+	logger.Debugf("cmdDisksPost done: %v", req)
 	return response.EmptySyncResponse
 }
 
@@ -75,6 +82,9 @@ func cmdDisksDelete(s *state.State, r *http.Request) response.Response {
 	if err != nil {
 		return response.BadRequest(err)
 	}
+
+	mu.Lock()
+	defer mu.Unlock()
 
 	cs := common.CephState{State: s}
 	needDowngrade, err := ceph.IsDowngradeNeeded(cs, osdid)
