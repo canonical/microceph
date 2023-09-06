@@ -11,4 +11,6 @@ These how-to guides will cover key operations and processes in Microceph.
    service-migration
    metrics
    alerts
+   remove-osd
+
 
