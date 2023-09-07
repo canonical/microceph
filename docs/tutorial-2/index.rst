@@ -12,3 +12,4 @@ require any deep understanding of Ceph.
    :maxdepth: 1
 
    single-node
+   multi-node
