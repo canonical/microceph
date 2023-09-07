@@ -51,14 +51,20 @@ Prevent the software from being auto-updated:
 
    sudo snap refresh --hold microceph
 
-Repeat the above three steps for node-2 and node-3.
+.. caution::
+
+   Allowing the snap to be auto-updated can lead to unintended consequences. In
+   enterprise environments especially, it is better to research the
+   ramifications of software changes before those changes are implemented.
+
+Repeat the above two steps for node-2 and node-3.
 
 Prepare the cluster
 -------------------
 
 On **node-1** we will now:
 
-* initialis the cluster
+* initialise the cluster
 * create registration tokens
 
 Initialise the cluster with the :command:`cluster bootstrap` command:
@@ -87,6 +93,10 @@ Token for node-3:
    eyJuYW1lIjoibm9kZS0zIiwic2VjcmV0IjoiYTZjYWJjOTZiNDJkYjg0YTRkZTFiY2MzY2VkYTI1M2Y4MTU1ZTNhYjAwYWUyOWY1MDA4ZWQzY2RmOTYzMjBmMiIsImZpbmdlcnByaW50IjoiMmU0MmEzYjEwYTg1MDcwYTQ1MDcyODQxZjAyNWY5NGE0OTc4NWU5MGViMzZmZGY0ZDRmODhhOGQyYjQ0MmUyMyIsImpvaW5fYWRkcmVzc2VzIjpbIjEwLjI0Ni4xMTQuMTE6NzQ0MyJdfQ==
 
 Keep these tokens in a safe place. They'll be needed in the next step.
+
+.. note::
+
+   Tokens are randomly generated; each one is unique.
 
 Join the non-primary nodes to the cluster
 -----------------------------------------
@@ -157,13 +167,11 @@ Your Ceph cluster is now deployed and can be managed by following the resources
 found in the :doc:`Howto <../how-to/index>` section.
 
 The cluster can also be managed using native Ceph tooling if snap-level
-commands are not yet available for a desired task by appending a native command
-to the :command:`microceph` command. This is the equivalent to the standard
-:command:`ceph status` command for instance:
+commands are not yet available for a desired task:
 
 .. code-block:: none
 
-   microceph.ceph status
+   ceph status
 
 This gives:
 
@@ -184,6 +192,3 @@ This gives:
        usage:   336 MiB used, 60 GiB / 60 GiB avail
        pgs:     100.000% pgs unknown
                 1 unknown
-
-Naturally you are free to use Ceph commands directly: :command:`sudo ceph
-status`.
