@@ -54,8 +54,8 @@ Next, prevent the software from being auto-updated:
 
 .. caution::
 
-   Allowing the snap to be auto-updated can lead to unintended consequences.
-   In enterprise environments especially, it is better to research the
+   Allowing the snap to be auto-updated can lead to unintended consequences. In
+   enterprise environments especially, it is better to research the
    ramifications of software changes before those changes are implemented.
 
 Initialise the cluster
@@ -128,13 +128,11 @@ Your Ceph cluster is now deployed and can be managed by following the resources
 found in the :doc:`Howto <../how-to/index>` section.
 
 The cluster can also be managed using native Ceph tooling if snap-level
-commands are not yet available for a desired task by appending a native command
-to the :command:`microceph` command. This is the equivalent to the standard
-:command:`ceph status` command for instance:
+commands are not yet available for a desired task:
 
 .. code-block:: none
 
-   microceph.ceph status
+   ceph status
 
 The cluster built during this tutorial gives the following output:
 
@@ -154,6 +152,3 @@ The cluster built during this tutorial gives the following output:
        objects: 2 objects, 577 KiB
        usage:   96 MiB used, 2.7 TiB / 2.7 TiB avail
        pgs:     1 active+clean
-
-Naturally you are free to use Ceph commands directly: :command:`sudo ceph
-status`.
