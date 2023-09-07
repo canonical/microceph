@@ -2,13 +2,14 @@
 Single-node
 ===========
 
-This tutorial shows how to install MicroCeph on a single machine.
+This tutorial will show how to install MicroCeph on a single machine, thereby
+creating a single-node "cluster".
 
 Ensure storage requirements
 ---------------------------
 
 Three OSDs will be required to form a minimal Ceph cluster. This means that
-three individual disks are required to be available on the host machine.
+three entire disks are required to be available on the machine.
 
 .. note::
 
@@ -16,9 +17,9 @@ three individual disks are required to be available on the host machine.
    This will filter down to MicroCeph which will allow for easier
    proof-of-concept and developer deployments.
 
-The disk subsystem can be summarised via the :command:`lsblk` command. In this
-tutorial, it looks like this (loopback devices have been suppressed in the
-output for purposes of brevity and clarity):
+The disk subsystem can be inspected with the :command:`lsblk` command. In this
+tutorial, the command's output is shown below. Any output related to possible
+loopback devices has been suppressed for the purpose of clarity:
 
 .. code-block:: none
 
@@ -39,7 +40,7 @@ There are four disks available, here we will use disks ``/dev/sda``,
 Install the software
 --------------------
 
-To install the most recent stable release of MicroCeph:
+Install the most recent stable release of MicroCeph:
 
 .. code-block:: none
 
@@ -53,8 +54,8 @@ Next, prevent the software from being auto-updated:
 
 .. caution::
 
-   Allowing the snap to be auto-updated can lead to unintended consequences.
-   In enterprise environments especially, it is better to research the
+   Allowing the snap to be auto-updated can lead to unintended consequences. In
+   enterprise environments especially, it is better to research the
    ramifications of software changes before those changes are implemented.
 
 Initialise the cluster
@@ -102,6 +103,8 @@ Add the three disks to the cluster by using the :command:`disk add` command:
    sudo microceph disk add /dev/sdb --wipe
    sudo microceph disk add /dev/sdc --wipe
 
+Adjust the above commands according to the storage disks at your disposal.
+
 Recheck status:
 
 .. code-block:: none
@@ -125,8 +128,7 @@ Your Ceph cluster is now deployed and can be managed by following the resources
 found in the :doc:`Howto <../how-to/index>` section.
 
 The cluster can also be managed using native Ceph tooling if snap-level
-commands are not yet available for a desired task. This is the standard
-:command:`ceph status` command for instance:
+commands are not yet available for a desired task:
 
 .. code-block:: none
 
