@@ -9,8 +9,6 @@ MicroCeph's scalability is courtesy of its foundation on Ceph, which has excelle
 
 Note it is strongly recommended to use uniformly-sized machines, particularly with smaller clusters, to ensure Ceph fully utilizes all available disk space.
 
-.. _failure_domain::
-
 Failure Domains
 ---------------
 
@@ -42,7 +40,7 @@ Similarly, when scaling down the cluster by removing OSDs or nodes, the automati
 Disk removal
 ~~~~~~~~~~~~
 
-The :doc:`../reference/commands/disk-remove` command is used to remove OSDs.
+The :doc:`../reference/command-disk-remove` command is used to remove OSDs.
 
 Automatic failure domain downgrades
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
