@@ -1,5 +1,3 @@
-.. _Scaling:
-
 Scaling MicroCeph
 =================
 
@@ -11,6 +9,7 @@ MicroCeph's scalability is courtesy of its foundation on Ceph, which has excelle
 
 Note it is strongly recommended to use uniformly-sized machines, particularly with smaller clusters, to ensure Ceph fully utilizes all available disk space.
 
+.. _failure_domain::
 
 Failure Domains
 ---------------
@@ -40,6 +39,26 @@ Scaling Down
 
 Similarly, when scaling down the cluster by removing OSDs or nodes, the automatic failure domain rules will be downgraded, from the host level to the osd level. This is done once a cluster has less than 3 nodes with at least one OSD each. MicroCeph will ask for confirmation if such a downgrade is necessary.
 
+Disk removal
+~~~~~~~~~~~~
+
+The :doc:`../reference/commands/disk-remove` command is used to remove OSDs.
+
+Automatic failure domain downgrades
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The removal operation will abort if it would lead to a downgrade in failure
+domain. In such a case, the command's ``--confirm-failure-domain-downgrade``
+option overrides this behaviour and allows the downgrade to proceed.
+
+Cluster health and safety checks
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The removal operation will wait for data to be cleanly redistributed before
+evicting the OSD. There may be cases however, such as when a cluster is not
+healthy to begin with, where the redistribution of data is not feasible. In
+such situations, the command's ``--bypass-safety-checks`` option disable these
+safety checks.
 
 Custom Crush Rules
 ++++++++++++++++++
