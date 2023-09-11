@@ -40,7 +40,7 @@ Similarly, when scaling down the cluster by removing OSDs or nodes, the automati
 Disk removal
 ~~~~~~~~~~~~
 
-The :doc:`../reference/command-disk-remove` command is used to remove OSDs.
+The :doc:`../reference/commands/disk-remove` command is used to remove OSDs.
 
 Automatic failure domain downgrades
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
