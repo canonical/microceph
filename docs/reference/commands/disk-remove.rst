@@ -2,17 +2,19 @@
 ``disk remove``
 ===============
 
+**Overview**
+
 The :command:`disk remove` command removes a single disk from the cluster.
 
-.. important::
+.. note::
 
-   The ``disk remove`` command is currently only available on the
-   ``latest/edge`` channel.
+   The ``disk remove`` command is currently only supported in channel
+   ``latest/edge`` of the microstack snap.
 
 For important background information related to disk removal, see the
 :doc:`../../explanation/scaling` page.
 
-The command's syntax is:
+**Syntax**
 
 .. code-block:: none
 
@@ -23,15 +25,15 @@ The command's syntax is:
    The OSD ID identifies the OSD associated with the disk. It can be determined
    with the (native Ceph) :command:`ceph osd tree` command.
 
-The command's options are:
+**Options**
 
 .. list-table::
    :header-rows: 1
    :widths: 25 20 8
 
-   * - Option
-     - Meaning
-     - Default
+   * - option
+     - meaning
+     - default
 
    * - ``--bypass-safety-checks``
      - bypasses safety checks

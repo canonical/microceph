@@ -15,6 +15,11 @@ The following resources provide extra context to the disk removal operation:
 * the :doc:`../../explanation/scaling` page
 * the :doc:`disk remove <../reference/command-disk-remove>` command reference
 
+.. note::
+
+   This feature is currently only supported in channel ``latest/edge`` of the
+   microstack snap.
+
 Procedure
 ---------
 
