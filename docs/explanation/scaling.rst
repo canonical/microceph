@@ -40,7 +40,8 @@ Similarly, when scaling down the cluster by removing OSDs or nodes, the automati
 Disk removal
 ~~~~~~~~~~~~
 
-The :doc:`../reference/commands/disk-remove` command is used to remove OSDs.
+The :doc:`../reference/commands/disk` command (:command:`disk remove`) is used
+to remove OSDs.
 
 Automatic failure domain downgrades
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -57,6 +58,11 @@ evicting the OSD. There may be cases however, such as when a cluster is not
 healthy to begin with, where the redistribution of data is not feasible. In
 such situations, the command's ``--bypass-safety-checks`` option disable these
 safety checks.
+
+.. warning::
+
+   The ``--bypass-safety-checks`` option is intended as a last resort measure
+   only. Its usage may result in data loss.
 
 Custom Crush Rules
 ++++++++++++++++++

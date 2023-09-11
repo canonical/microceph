@@ -8,12 +8,12 @@ Overview
 There are valid reasons for wanting to remove a disk from a Ceph cluster. A
 common use case is the need to replace one that has been identified as nearing
 its shelf life. Another example is the desire to scale down the cluster through
-the removal of an cluster node (machine).
+the removal of a cluster node (machine).
 
 The following resources provide extra context to the disk removal operation:
 
 * the :doc:`../../explanation/scaling` page
-* the :doc:`disk remove <../reference/commands/disk-remove>` command reference
+* the :doc:`disk <../reference/commands/disk>` command reference
 
 .. note::
 
@@ -49,7 +49,8 @@ Example output:
        pgs:     2/6 objects misplaced (33.333%)
                 1 active+clean+remapped
 
-Then determine the ID of the OSD associated with the disk:
+Then determine the ID of the OSD associated with the disk with the (native
+Ceph) :command:`ceph osd tree` command:
 
 .. code-block:: none
 
@@ -79,7 +80,6 @@ To remove the disk:
 .. code-block:: none
 
    sudo microceph disk remove osd.4
-    Removing osd.4, timeout 300s
 
 Verify that the OSD has been removed:
 
