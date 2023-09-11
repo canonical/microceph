@@ -1,20 +1,51 @@
-===============
-``disk remove``
-===============
+========
+``disk``
+========
 
-**Overview**
+Manages disks in MicroCeph.
 
-The :command:`disk remove` command removes a single disk from the cluster.
+Usage:
+
+.. code-block:: none
+
+   microceph disk [options]
+   microceph disk [command]
+
+Available commands:
+
+.. code-block:: none
+
+   add         Add a Ceph disk (OSD)
+   list        List servers in the cluster
+   remove      Remove a Ceph disk (OSD)
+
+Global options:
+
+.. code-block:: none
+
+   -d, --debug       Show all debug messages
+   -h, --help        Print help
+       --state-dir   Path to store state information
+   -v, --verbose     Show all information messages
+       --version     Print version number
+
+Sub-commands
+------------
+
+``remove``
+~~~~~~~~~~
+
+The :command:`remove` command removes a single disk from the cluster.
 
 .. note::
 
-   The ``disk remove`` command is currently only supported in channel
+   The ``remove`` command is currently only supported in channel
    ``latest/edge`` of the microstack snap.
 
 For important background information related to disk removal, see the
 :doc:`../../explanation/scaling` page.
 
-**Syntax**
+Syntax:
 
 .. code-block:: none
 
@@ -25,7 +56,7 @@ For important background information related to disk removal, see the
    The OSD ID identifies the OSD associated with the disk. It can be determined
    with the (native Ceph) :command:`ceph osd tree` command.
 
-**Options**
+Options:
 
 .. list-table::
    :header-rows: 1
