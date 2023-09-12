@@ -126,6 +126,3 @@ Output:
        objects: 2 objects, 577 KiB
        usage:   68 MiB used, 991 GiB / 992 GiB avail
        pgs:     1 active+clean
-
-.. LINKS
-.. _CRUSH map: https://docs.ceph.com/en/latest/rados/operations/crush-map/
