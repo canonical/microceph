@@ -5,12 +5,6 @@ These how-to guides will cover key operations and processes in Microceph.
 
 .. toctree::
    :maxdepth: 1
+   :glob:
 
-   cluster-cfg
-   service-placement
-   service-migration
-   metrics
-   alerts
-   remove-osd
-
-
+   *
