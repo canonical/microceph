@@ -203,7 +203,7 @@ func checkEncryptSupport() error {
 
 	// Check if the dm-crypt interface is not connected.
 	if !isIntfConnected("dm-crypt") {
-		helper := fmt.Sprint("Use \"sudo snap connect microceph:dm-crypt\" to enable encryption.")
+		helper := fmt.Sprint("Use \"sudo snap connect microceph:dm-crypt ; sudo snap restart microceph.daemon\" to enable encryption.")
 		return fmt.Errorf("dm-crypt interface connection missing: \n%s", helper)
 	}
 
