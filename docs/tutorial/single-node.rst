@@ -13,7 +13,7 @@ three entire disks are required to be available on the machine.
 
 .. note::
 
-   Upstream Ceph development is underway to allow for loopback device support.
+   Development is underway to allow for loopback device support.
    This will filter down to MicroCeph which will allow for easier
    proof-of-concept and developer deployments.
 
