@@ -3,9 +3,11 @@ package types
 
 // DisksPost hold a path and a flag for enabling device wiping
 type DisksPost struct {
-	Path    string `json:"path" yaml:"path"`
-	Wipe    bool   `json:"wipe" yaml:"wipe"`
-	Encrypt bool   `json:"encrypt" yaml:"encrypt"`
+	Path    string  `json:"path" yaml:"path"`
+	Wipe    bool    `json:"wipe" yaml:"wipe"`
+	Encrypt bool    `json:"encrypt" yaml:"encrypt"`
+	WALDev  *string `json:"waldev" yaml:"waldev"`
+	DBDev   *string `json:"dbdev" yaml:"dbdev"`
 }
 
 // DisksDelete holds an OSD number and a flag for forcing the removal

@@ -56,7 +56,7 @@ func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 
 	mu.Lock()
 	defer mu.Unlock()
-	err = ceph.AddOSD(s, req.Path, req.Wipe, req.Encrypt)
+	err = ceph.AddOSD(s, req.Path, req.Wipe, req.Encrypt, req.WALDev, req.DBDev)
 	if err != nil {
 		return response.SmartError(err)
 	}

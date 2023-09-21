@@ -265,7 +265,7 @@ func updateFailureDomain(s *state.State) error {
 }
 
 // AddOSD adds an OSD to the cluster, given a device path and a flag for wiping
-func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
+func AddOSD(s *state.State, path string, wipe bool, encrypt bool, waldev *string, dbdev *string) error {
 	logger.Debugf("Adding OSD %s", path)
 
 	revert := revert.New()
@@ -416,7 +416,15 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 	}
 
 	// Bootstrap OSD.
-	_, err = processExec.RunCommand("ceph-osd", "--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr))
+	args := []string{"--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr)}
+	if waldev != nil {
+		args = append(args, *waldev)
+	}
+	if dbdev != nil {
+		args = append(args, *dbdev)
+	}
+
+	_, err = processExec.RunCommand("ceph-osd", args...)
 	if err != nil {
 		return fmt.Errorf("Failed to bootstrap OSD: %w", err)
 	}
