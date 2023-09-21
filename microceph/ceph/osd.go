@@ -418,10 +418,10 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool, waldev *string
 	// Bootstrap OSD.
 	args := []string{"--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr)}
 	if waldev != nil {
-		args = append(args, *waldev)
+		args = append(args, []string{"--bluestore-block-wal-path", *waldev}...)
 	}
 	if dbdev != nil {
-		args = append(args, *dbdev)
+		args = append(args, []string{"--bluestore-block-db-path", *dbdev}...)
 	}
 
 	_, err = processExec.RunCommand("ceph-osd", args...)
