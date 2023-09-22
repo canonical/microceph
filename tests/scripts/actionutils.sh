@@ -271,6 +271,33 @@ function remove_node() {
     sudo microceph status
 }
 
+function test_migration() {
+    local src="${1?missing}"
+    local dst="${2?missing}"
+
+    lxc exec node-head -- sh -c "microceph cluster migrate $src $dst"
+    for i in $(seq 1 8); do
+        if lxc exec node-head -- sh -c "microceph status | grep -F -A 1 $src | grep -E \"^  Services: osd$\"" ; then
+            if lxc exec node-head -- sh -c "microceph status | grep -F -A 1 $dst | grep -E \"^  Services: mds, mgr, mon$\"" ; then
+                echo "Services migrated"
+                break
+            fi
+        fi
+        echo "."
+        sleep 2
+    done
+    lxc exec node-head -- sh -c "microceph status"
+    lxc exec node-head -- sh -c "microceph.ceph -s"
+
+    if lxc exec node-head -- sh -c "microceph status | grep -F -A 1 $src | grep -E \"^  Services: osd$\"" ; then
+        if lxc exec node-head -- sh -c "microceph status | grep -F -A 1 $dst | grep -E \"^  Services: mds, mgr, mon$\"" ; then
+            return
+        fi
+    fi
+    echo "Never reached migration target"
+    return -1
+}
+
 function headexec() {
     local run="${1?missing}"
     shift

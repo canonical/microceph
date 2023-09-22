@@ -261,16 +261,11 @@ jobs:
     - name: Remove OSD again
       run: |
         set -uex
-        lxc exec node-wrk3 -- sh -c "microceph disk remove 3"
+        lxc exec node-head -- sh -c "microceph disk remove 4"
         lxc exec node-head -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
 
     - name: Test migrate services
-      run: |
-        set -uex
-        lxc exec node-head -- sh -c "microceph cluster migrate node-wrk1 node-wrk3"
-        sleep 2
-        lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk1 | grep -E "^  Services: osd$"
-        lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk3 | grep -E "^  Services: mds, mgr, mon$"
+      run: ~/actionutils.sh test_migration node-wrk1 node-wrk3
 
     - name: Enable services on wrk1
       run: ~/actionutils.sh headexec enable_services node-wrk1
