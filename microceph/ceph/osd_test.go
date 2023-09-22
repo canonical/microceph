@@ -113,20 +113,18 @@ func (s *osdSuite) SetupTest() {
 // TestSwitchHostFailureDomain tests the switchFailureDomain function
 func (s *osdSuite) TestSwitchHostFailureDomain() {
 	r := mocks.NewRunner(s.T())
-	// list and create two crush rules
-	addCrushRuleLsExpectations(r)
-	addCrushRuleCreateExpectations(r)
-	addCrushRuleCreateExpectations(r)
-	// dump crush rules
+
+	// dump crush rules to resolve names
 	addCrushRuleDumpExpectations(r)
 	// set default crush rule
 	addSetDefaultRuleExpectations(r)
-	// list and dump crush rule
+	// list to check if crush rule exists
 	addCrushRuleLsExpectations(r)
+	// dump crush rules to resolve names
 	addCrushRuleDumpExpectations(r)
-	// list crush rule json
+	// list pools
 	addCrushRuleLsJsonExpectations(r)
-	// set osd pool
+	// set pool crush rule
 	addOsdPoolSetExpectations(r)
 
 	processExec = r
@@ -149,20 +147,18 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 	}
 
 	r := mocks.NewRunner(s.T())
-	// list and create two crush rules
-	addCrushRuleLsExpectations(r)
-	addCrushRuleCreateExpectations(r)
-	addCrushRuleCreateExpectations(r)
-	// dump crush rules
+
+	// dump crush rules to resolve names
 	addCrushRuleDumpExpectations(r)
 	// set default crush rule
 	addSetDefaultRuleExpectations(r)
-	// list and dump crush rule
+	// list to check if crush rule exists
 	addCrushRuleLsExpectations(r)
+	// dump crush rules to resolve names
 	addCrushRuleDumpExpectations(r)
-	// list crush rule json
+	// list pools
 	addCrushRuleLsJsonExpectations(r)
-	// set osd pool
+	// set pool crush rule
 	addOsdPoolSetExpectations(r)
 
 	processExec = r
