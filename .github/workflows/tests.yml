@@ -36,6 +36,26 @@ jobs:
           path: "*.snap"
           retention-days: 5
 
+  unit-tests:
+    name: Run Unit tests
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo add-apt-repository ppa:dqlite/dev
+          sudo apt-get update
+          sudo apt-get install -y libdqlite-dev golang-go
+
+      - name: Run unit-tests
+        run: |
+          cd microceph
+          make check-unit
+
   single-system-tests:
     name: Single node with encryption
     runs-on: ubuntu-22.04
