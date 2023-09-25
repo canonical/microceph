@@ -17,7 +17,11 @@ type cmdDiskAdd struct {
 	flagWipe    bool
 	flagEncrypt bool
 	walDevice   string
+	walEncrypt  bool
+	walWipe     bool
 	dbDevice    string
+	dbEncrypt   bool
+	dbWipe      bool
 }
 
 func (c *cmdDiskAdd) Command() *cobra.Command {
@@ -30,7 +34,11 @@ func (c *cmdDiskAdd) Command() *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&c.flagWipe, "wipe", false, "Wipe the disk prior to use")
 	cmd.PersistentFlags().BoolVar(&c.flagEncrypt, "encrypt", false, "Encrypt the disk prior to use")
 	cmd.PersistentFlags().StringVar(&c.walDevice, "wal-device", "", "The device used for WAL")
+	cmd.PersistentFlags().BoolVar(&c.walWipe, "wal-wipe", false, "Wipe the WAL device prior to use")
+	cmd.PersistentFlags().BoolVar(&c.walEncrypt, "wal-encrypt", false, "Encrypt the WAL device prior to use")
 	cmd.PersistentFlags().StringVar(&c.dbDevice, "db-device", "", "The device used for the DB")
+	cmd.PersistentFlags().BoolVar(&c.dbWipe, "db-wipe", false, "Wipe the DB device prior to use")
+	cmd.PersistentFlags().BoolVar(&c.dbEncrypt, "db-encrypt", false, "Encrypt the DB device prior to use")
 
 	return cmd
 }
