@@ -389,6 +389,9 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 
 	// Wipe and/or encrypt the disk if needed.
 	err = prepareDisk(&data, "", osdDataPath, nr)
+	if err != nil {
+		return fmt.Errorf("Failed to prepare data device: %w", err)
+	}
 
 	// if we fail later, make sure we free up the record
 	revert.Add(func() {
