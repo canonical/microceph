@@ -1,0 +1,65 @@
+name: Upgrade a stable cluster to candidate
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch: null
+
+jobs:
+
+  upgrade-quincy-tests:
+    name: Test quincy upgrades
+    runs-on: ubuntu-22.04
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install dependencies
+      run: ~/actionutils.sh setup_lxd
+
+    - name: Create containers with loopback devices
+      run: ~/actionutils.sh create_containers
+
+    - name: Install quincy stable from store
+      run: ~/actionutils.sh install_store quincy/stable
+
+    - name: Bootstrap
+      run: ~/actionutils.sh bootstrap_head
+
+    - name: Setup cluster
+      run: ~/actionutils.sh cluster_nodes
+
+    - name: Add 3 OSDs
+      run: |
+        for c in node-head node-wrk1 node-wrk2 ; do
+          ~/actionutils.sh add_osd_to_node $c
+        done
+        ~/actionutils.sh headexec wait_for_osds 3
+
+    - name: Enable RGW
+      run: ~/actionutils.sh headexec enable_rgw
+
+    - name: Exercise RGW
+      run: ~/actionutils.sh headexec testrgw
+
+    - name: Upgrade to candidate
+      run: ~/actionutils.sh refresh_snap quincy/candidate
+
+    - name: Wait until 3 OSDs are up
+      run:  ~/actionutils.sh headexec wait_for_osds 3
+
+    - name: Exercise RGW again
+      run: ~/actionutils.sh headexec testrgw
+
+      
+

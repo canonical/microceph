@@ -15,12 +15,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
+
       - name: Clear FORWARD firewall rules
-        run: tests/scripts/actionutils.sh cleaript
+        run: ~/actionutils.sh cleaript
 
       - name: Install dependencies
         run: |
-          tests/scripts/actionutils.sh setup_lxd
+          ~/actionutils.sh setup_lxd
 
           sudo snap install snapcraft --classic
           snap list
@@ -72,12 +75,15 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
     - name: Free disk
-      run: tests/scripts/actionutils.sh free_runner_disk
+      run: ~/actionutils.sh free_runner_disk
 
     - name: Install and setup
       run: |
-        tests/scripts/actionutils.sh install_microceph
+        ~/actionutils.sh install_microceph
 
         set -uex
         # Verify metadata.yaml
@@ -104,10 +110,10 @@ jobs:
         if [[ $rc -eq 0 ]] ; then echo "FDE should fail without dmcrypt: $rc"; exit 1; fi
 
     - name: Add OSDs
-      run: tests/scripts/actionutils.sh add_encrypted_osds
+      run: ~/actionutils.sh add_encrypted_osds
 
     - name: Enable RGW
-      run: tests/scripts/actionutils.sh enable_rgw
+      run: ~/actionutils.sh enable_rgw
 
     - name: Run system tests
       run: |
@@ -145,17 +151,7 @@ jobs:
         pgrep ceph-osd || { echo "No ceph-osd process found" ; exit 1; }
 
     - name: Exercise RGW
-      run: |
-        set -eux
-        sudo microceph.ceph status
-        sudo systemctl status snap.microceph.rgw
-        sudo microceph.radosgw-admin user create --uid=test --display-name=test
-        sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey
-        sudo apt-get -qq install s3cmd
-        echo hello-radosgw > ~/test.txt
-        s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl mb s3://testbucket
-        s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/test.txt s3://testbucket
-        curl -s http://localhost/testbucket/test.txt | grep -F hello-radosgw
+      run: ~/actionutils.sh testrgw
 
     - name: Test Cluster Config
       run: |
@@ -203,31 +199,34 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
     - name: Clear FORWARD firewall rules
-      run: tests/scripts/actionutils.sh cleaript
+      run: ~/actionutils.sh cleaript
 
     - name: Free disk
-      run: tests/scripts/actionutils.sh free_runner_disk
+      run: ~/actionutils.sh free_runner_disk
 
     - name: Install dependencies
-      run: tests/scripts/actionutils.sh setup_lxd
+      run: ~/actionutils.sh setup_lxd
 
     - name: Create containers with loopback devices
-      run: tests/scripts/actionutils.sh create_containers
+      run: ~/actionutils.sh create_containers
 
     - name: Install local microceph snap
-      run: tests/scripts/actionutils.sh install_multinode
+      run: ~/actionutils.sh install_multinode
 
     - name: Bootstrap
-      run: tests/scripts/actionutils.sh bootstrap_head
+      run: ~/actionutils.sh bootstrap_head
 
     - name: Setup cluster
-      run: tests/scripts/actionutils.sh cluster_nodes
+      run: ~/actionutils.sh cluster_nodes
 
     - name: Add 2 OSDs
       run: |
         for c in node-wrk1 node-wrk2 ; do
-          tests/scripts/actionutils.sh add_osd_to_node $c
+          ~/actionutils.sh add_osd_to_node $c
         done
         lxc exec node-head -- sh -c "microceph.ceph -s"
 
@@ -237,17 +236,8 @@ jobs:
         # We still have failure domain OSD
         lxc exec node-head -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 1
         # Add a 3rd OSD, should switch to host failure domain
-        tests/scripts/actionutils.sh add_osd_to_node node-head
-        for i in $(seq 1 8); do
-            res=$( ( lxc exec node-head -- sh -c 'sudo microceph.ceph -s | grep -F osd: | sed -E "s/.* ([[:digit:]]*) in .*/\1/"' ) || true )
-            if [[ $res -gt 2 ]] ; then
-                echo "Found >2 OSDs"
-                break
-            else
-                echo -n '.'
-                sleep 2
-            fi
-        done
+        ~/actionutils.sh add_osd_to_node node-head
+        ~/actionutils.sh headexec wait_for_osds 3
         sleep 1
         lxc exec node-head -- sh -c "sudo microceph.ceph -s"
         # Now default to host rule
@@ -265,17 +255,8 @@ jobs:
 
     - name: Add another OSD
       run: |
-        tests/scripts/actionutils.sh add_osd_to_node node-wrk3
-        for i in $(seq 1 8); do
-            res=$( ( lxc exec node-head -- sh -c 'sudo microceph.ceph -s | grep -F osd: | sed -E "s/.* ([[:digit:]]*) in .*/\1/"' ) || true )
-            if [[ $res -gt 3 ]] ; then
-                echo "Found >3 OSDs"
-                break
-            else
-                echo -n '.'
-                sleep 2
-            fi
-        done
+        ~/actionutils.sh add_osd_to_node node-wrk3
+        ~/actionutils.sh headexec wait_for_osds 4
 
     - name: Remove OSD again
       run: |
@@ -290,3 +271,66 @@ jobs:
         sleep 2
         lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk1 | grep -E "^  Services: osd$"
         lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk3 | grep -E "^  Services: mds, mgr, mon$"
+
+  upgrade-quincy-tests:
+    name: Test quincy upgrades
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install dependencies
+      run: ~/actionutils.sh setup_lxd
+
+    - name: Create containers with loopback devices
+      run: ~/actionutils.sh create_containers
+
+    - name: Install quincy stable from store
+      run: ~/actionutils.sh install_store quincy/stable
+
+    - name: Bootstrap
+      run: ~/actionutils.sh bootstrap_head
+
+    - name: Setup cluster
+      run: ~/actionutils.sh cluster_nodes
+
+    - name: Add 3 OSDs
+      run: |
+        for c in node-head node-wrk1 node-wrk2 ; do
+          ~/actionutils.sh add_osd_to_node $c
+        done
+        ~/actionutils.sh headexec wait_for_osds 3
+
+    - name: Enable RGW
+      run: ~/actionutils.sh headexec enable_rgw
+
+    - name: Exercise RGW
+      run: ~/actionutils.sh headexec testrgw
+
+    - name: Install local build
+      run: ~/actionutils.sh install_multinode
+
+    - name: Wait until 3 OSDs are up
+      run:  ~/actionutils.sh headexec wait_for_osds 3
+
+    - name: Exercise RGW again
+      run: ~/actionutils.sh headexec testrgw
+      
