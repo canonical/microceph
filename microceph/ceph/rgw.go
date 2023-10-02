@@ -23,6 +23,7 @@ func EnableRGW(s common.StateInterface, port int) error {
 			"monitors": s.ClusterState().Address().Hostname(),
 			"rgwPort":  port,
 		},
+		0644,
 	)
 	if err != nil {
 		return err

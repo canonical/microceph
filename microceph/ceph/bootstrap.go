@@ -37,6 +37,7 @@ func Bootstrap(s common.StateInterface) error {
 			"monitors": s.ClusterState().Address().Hostname(),
 			"addr":     s.ClusterState().Address().Hostname(),
 		},
+		0644,
 	)
 	if err != nil {
 		return err
