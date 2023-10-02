@@ -216,6 +216,7 @@ func updateConfig(s common.StateInterface) error {
 			"ipv4":     strings.Contains(address, "."),
 			"ipv6":     strings.Contains(address, ":"),
 		},
+		0644,
 	)
 	if err != nil {
 		return fmt.Errorf("Couldn't render ceph.conf: %w", err)
@@ -228,6 +229,7 @@ func updateConfig(s common.StateInterface) error {
 			"name": "client.admin",
 			"key":  config["keyring.client.admin"],
 		},
+		0640,
 	)
 	if err != nil {
 		return fmt.Errorf("Couldn't render ceph.client.admin.keyring: %w", err)

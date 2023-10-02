@@ -31,6 +31,7 @@ func (s *configWriterSuite) TestWriteCephConfig() {
 			"monitors": "foohost",
 			"addr":     "foohost",
 		},
+		0644,
 	)
 	assert.Equal(s.T(), nil, err)
 	// Check that the file exists
@@ -49,6 +50,7 @@ func (s *configWriterSuite) TestWriteRadosGWConfig() {
 		map[string]any{
 			"monitors": "foohost",
 		},
+		0644,
 	)
 	assert.Equal(s.T(), nil, err)
 	// Check that the file exists
@@ -68,6 +70,7 @@ func (s *configWriterSuite) TestWriteCephKeyring() {
 			"name": "client.admin",
 			"key":  "secretkey",
 		},
+		0644,
 	)
 	assert.Equal(s.T(), nil, err)
 	// Check that the file exists and has the right contents
