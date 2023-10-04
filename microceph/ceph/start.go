@@ -49,7 +49,7 @@ func Start(s common.StateInterface) error {
 				continue
 			}
 
-			err = updateConfig(s)
+			err = UpdateConfig(s)
 			if err != nil {
 				time.Sleep(10 * time.Second)
 				continue

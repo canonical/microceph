@@ -61,6 +61,9 @@ func main() {
 	var cmdDisk = cmdDisk{common: &commonCmd}
 	app.AddCommand(cmdDisk.Command())
 
+	var cmdClient = cmdClient{common: &commonCmd}
+	app.AddCommand(cmdClient.Command())
+
 	app.InitDefaultHelpCmd()
 
 	err := app.Execute()

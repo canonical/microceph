@@ -127,6 +127,39 @@ function refresh_snap() {
     done
 }
 
+function check_client_configs() {
+    # Issue cluster wide client config set.
+    lxc exec node-head -- sh -c "microceph client config set rbd_cache true"
+    # Issue host specific client config set for each worker node.
+    for id in 1 2 3 ; do
+        lxc exec node-wrk${id} -- sh -c "microceph client config set rbd_cache_size $((512*$id))"
+    done
+
+    # Verify client configs post set on each node.
+    for id in 1 2 3 ; do
+        res1=$(lxc exec node-wrk${id} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache = true'")
+        res2=$(lxc exec node-wrk${id} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache_size = $((512*$id))'")
+        if (($res1 -ne "1")) || (($res2 -ne "1")) ; then
+            # required configs not present.
+            exit 1
+        fi
+    done
+
+    # Reset client configs
+    lxc exec node-head -- sh -c "microceph client config reset rbd_cache"
+    lxc exec node-head -- sh -c "microceph client config reset rbd_cache_size"
+
+    # Verify client configs post reset on each node.
+    for id in 1 2 3 ; do
+        res1=$(lxc exec node-wrk${id} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache '")
+        res2=$(lxc exec node-wrk${id} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache_size'")
+        if (($res1 -ne "0")) || (($res2 -ne "0")) ; then
+            # Incorrect configs present.
+            exit 1
+        fi
+    done
+}
+
 function bootstrap_head() {
     # Bootstrap microceph on the head node
     lxc exec node-head -- sh -c "microceph cluster bootstrap"

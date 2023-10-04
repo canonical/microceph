@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,11 +15,24 @@ import (
 	"github.com/canonical/microcluster/state"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/tidwall/gjson"
 )
 
-type Set map[string]struct{}
+type Set map[string]interface{}
+
+func (sub Set) Keys() []string {
+	keys := make([]string, len(sub))
+	count := 0
+
+	for key := range sub {
+		keys[count] = key
+		count++
+	}
+
+	return keys
+}
 
 func (sub Set) isIn(super Set) bool {
 	flag := true

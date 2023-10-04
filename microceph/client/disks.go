@@ -14,44 +14,6 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
-func SetConfig(ctx context.Context, c *microCli.Client, data *types.Config) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
-	defer cancel()
-
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("configs"), data, nil)
-	if err != nil {
-		return fmt.Errorf("Failed setting cluster config: %w, Key: %s, Value: %s", err, data.Key, data.Value)
-	}
-
-	return nil
-}
-
-func ClearConfig(ctx context.Context, c *microCli.Client, data *types.Config) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
-	defer cancel()
-
-	err := c.Query(queryCtx, "DELETE", api.NewURL().Path("configs"), data, nil)
-	if err != nil {
-		return fmt.Errorf("Failed clearing cluster config: %w, Key: %s", err, data.Key)
-	}
-
-	return nil
-}
-
-func GetConfig(ctx context.Context, c *microCli.Client, data *types.Config) (types.Configs, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
-
-	configs := types.Configs{}
-
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("configs"), data, &configs)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to fetch cluster config: %w, Key: %s", err, data.Key)
-	}
-
-	return configs, nil
-}
-
 // AddDisk requests Ceph sets up a new OSD.
 func AddDisk(ctx context.Context, c *microCli.Client, data *types.DisksPost) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
@@ -59,7 +21,7 @@ func AddDisk(ctx context.Context, c *microCli.Client, data *types.DisksPost) err
 
 	err := c.Query(queryCtx, "POST", api.NewURL().Path("disks"), data, nil)
 	if err != nil {
-		return fmt.Errorf("Failed adding new disk: %w", err)
+		return fmt.Errorf("failed adding new disk: %w", err)
 	}
 
 	return nil
@@ -74,7 +36,7 @@ func GetDisks(ctx context.Context, c *microCli.Client) (types.Disks, error) {
 
 	err := c.Query(queryCtx, "GET", api.NewURL().Path("disks"), nil, &disks)
 	if err != nil {
-		return nil, fmt.Errorf("Failed listing disks: %w", err)
+		return nil, fmt.Errorf("failed listing disks: %w", err)
 	}
 
 	return disks, nil
@@ -89,7 +51,7 @@ func GetResources(ctx context.Context, c *microCli.Client) (*api.ResourcesStorag
 
 	err := c.Query(queryCtx, "GET", api.NewURL().Path("resources"), nil, &storage)
 	if err != nil {
-		return nil, fmt.Errorf("Failed listing storage devices: %w", err)
+		return nil, fmt.Errorf("failed listing storage devices: %w", err)
 	}
 
 	return &storage, nil
@@ -104,7 +66,7 @@ func RemoveDisk(ctx context.Context, c *microCli.Client, data *types.DisksDelete
 	// get disks and determine osd location
 	disks, err := GetDisks(ctx, c)
 	if err != nil {
-		return fmt.Errorf("Failed to get disks: %w", err)
+		return fmt.Errorf("failed to get disks: %w", err)
 	}
 	var location string
 	for _, disk := range disks {
@@ -114,7 +76,7 @@ func RemoveDisk(ctx context.Context, c *microCli.Client, data *types.DisksDelete
 		}
 	}
 	if location == "" {
-		return fmt.Errorf("Failed to find location for osd.%d", data.OSD)
+		return fmt.Errorf("failed to find location for osd.%d", data.OSD)
 	}
 	c = c.UseTarget(location)
 
@@ -122,9 +84,9 @@ func RemoveDisk(ctx context.Context, c *microCli.Client, data *types.DisksDelete
 	if err != nil {
 		// Checking if the error is a context deadline exceeded error
 		if errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("Failed to remove disk, timeout (%ds) reached - abort", data.Timeout)
+			return fmt.Errorf("failed to remove disk, timeout (%ds) reached - abort", data.Timeout)
 		}
-		return fmt.Errorf("Failed to remove disk: %w", err)
+		return fmt.Errorf("failed to remove disk: %w", err)
 	}
 	return nil
 }
