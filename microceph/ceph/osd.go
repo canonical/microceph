@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/common"
 
@@ -80,12 +81,39 @@ func nextOSD(s *state.State) (int64, error) {
 	}
 }
 
+func prepareDisk(disk *types.DiskParameter, suffix string, osdPath string, osdID int64) error {
+	if disk.Wipe {
+		err := timeoutWipe(disk.Path)
+		if err != nil {
+			return fmt.Errorf("Failed to wipe device %s: %w", disk.Path, err)
+		}
+	}
+	if disk.Encrypt {
+		err := checkEncryptSupport()
+		if err != nil {
+			return fmt.Errorf("Encryption unsupported on this machine: %w", err)
+		}
+		path, err := setupEncryptedOSD(disk.Path, osdPath, osdID, suffix)
+		if err != nil {
+			return fmt.Errorf("Failed to encrypt device %s: %w", disk.Path, err)
+		}
+		disk.Path = path
+	}
+	// Only the data device needs to be symlinked (suffix != "").
+	// Other devices (WAL and DB) are automatically handled by Ceph itself.
+	if suffix != "" {
+		return nil
+	}
+	return os.Symlink(disk.Path, filepath.Join(osdPath, "block"))
+}
+
 // setupEncryptedOSD sets up an encrypted OSD on the given disk.
 //
-// Takes a path to the disk device as well as the osd data path and the osd id.
+// Takes a path to the disk device as well as the OSD data path, the OSD id and
+// a suffix (to differentiate invocations between data, WAL and DB devices).
 // Returns the path to the encrypted device and an error if any.
-func setupEncryptedOSD(devicePath string, osdDataPath string, osdID int64) (string, error) {
-	if err := os.Symlink(devicePath, filepath.Join(osdDataPath, "unencrypted")); err != nil {
+func setupEncryptedOSD(devicePath string, osdDataPath string, osdID int64, suffix string) (string, error) {
+	if err := os.Symlink(devicePath, filepath.Join(osdDataPath, "unencrypted"+suffix)); err != nil {
 		return "", fmt.Errorf("Failed to add unencrypted block symlink: %w", err)
 	}
 
@@ -96,7 +124,7 @@ func setupEncryptedOSD(devicePath string, osdDataPath string, osdID int64) (stri
 	}
 
 	// Store key in ceph key value store
-	if err = storeKey(key, osdID); err != nil {
+	if err = storeKey(key, osdID, suffix); err != nil {
 		return "", fmt.Errorf("Key store error: %w", err)
 	}
 
@@ -106,7 +134,7 @@ func setupEncryptedOSD(devicePath string, osdDataPath string, osdID int64) (stri
 	}
 
 	// Open the encrypted device
-	encryptedDevicePath, err := openEncryptedDevice(devicePath, osdID, key)
+	encryptedDevicePath, err := openEncryptedDevice(devicePath, osdID, key, suffix)
 	if err != nil {
 		return "", fmt.Errorf("Failed to open: %w", err)
 	}
@@ -151,9 +179,9 @@ func encryptDevice(path string, key []byte) error {
 }
 
 // Store the key in the ceph key value store, under a name that derives from the osd id.
-func storeKey(key []byte, osdID int64) error {
+func storeKey(key []byte, osdID int64, suffix string) error {
 	// Run the ceph config-key set command
-	_, err := processExec.RunCommand("ceph", "config-key", "set", fmt.Sprintf("microceph:osd.%d/key", osdID), string(key))
+	_, err := processExec.RunCommand("ceph", "config-key", "set", fmt.Sprintf("microceph:osd%s.%d/key", suffix, osdID), string(key))
 	if err != nil {
 		return fmt.Errorf("Failed to store key: %w", err)
 	}
@@ -161,7 +189,7 @@ func storeKey(key []byte, osdID int64) error {
 }
 
 // Open the encrypted device and return its path.
-func openEncryptedDevice(path string, osdID int64, key []byte) (string, error) {
+func openEncryptedDevice(path string, osdID int64, key []byte, suffix string) (string, error) {
 	// Run the cryptsetup open command, expect key on stdin
 	cmd := exec.Command(
 		"cryptsetup",
@@ -169,7 +197,7 @@ func openEncryptedDevice(path string, osdID int64, key []byte) (string, error) {
 		"--key-file", "-",
 		"luksOpen",
 		path,
-		fmt.Sprintf("luksosd-%d", osdID),
+		fmt.Sprintf("luksosd%s-%d", suffix, osdID),
 	)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -187,7 +215,7 @@ NOTE: OSD Encryption requires a snapd >= 2.59.1
 Verify your version of snapd by running "snap version"
 `, path, err, out)
 	}
-	return fmt.Sprintf("/dev/mapper/luksosd-%d", osdID), nil
+	return fmt.Sprintf("/dev/mapper/luksosd%s-%d", suffix, osdID), nil
 }
 
 // checkEncryptSupport checks if the kernel supports encryption.
@@ -264,36 +292,18 @@ func updateFailureDomain(s *state.State) error {
 	return nil
 }
 
-// AddOSD adds an OSD to the cluster, given a device path and a flag for wiping
-func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
-	logger.Debugf("Adding OSD %s", path)
-
-	revert := revert.New()
-	defer revert.Fail()
-
+func setStablePath(storage *api.ResourcesStorage, param *types.DiskParameter) error {
 	// Validate the path.
-	if !shared.IsBlockdevPath(path) {
-		return fmt.Errorf("Invalid disk path: %s", path)
-	}
-	// Check if we need to support encryption
-	if encrypt {
-		if err := checkEncryptSupport(); err != nil {
-			return fmt.Errorf("Encryption unsupported on this machine: %w", err)
-		}
+	if !shared.IsBlockdevPath(param.Path) {
+		return fmt.Errorf("Invalid disk path: %s", param.Path)
 	}
 
-	_, _, major, minor, _, _, err := shared.GetFileStat(path)
+	_, _, major, minor, _, _, err := shared.GetFileStat(param.Path)
 	if err != nil {
 		return fmt.Errorf("Invalid disk path: %w", err)
 	}
 
 	dev := fmt.Sprintf("%d:%d", major, minor)
-
-	// Lookup a stable path for it.
-	storage, err := resources.GetStorage()
-	if err != nil {
-		return fmt.Errorf("Unable to list system disks: %w", err)
-	}
 
 	for _, disk := range storage.Disks {
 		// Check if full disk.
@@ -302,11 +312,11 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 
 			// check if candidate exists
 			if shared.PathExists(candidate) && !shared.IsDir(candidate) {
-				path = candidate
+				param.Path = candidate
 			} else {
 				candidate = fmt.Sprintf("/dev/disk/by-path/%s", disk.DevicePath)
 				if shared.PathExists(candidate) && !shared.IsDir(candidate) {
-					path = candidate
+					param.Path = candidate
 				}
 			}
 
@@ -314,35 +324,42 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 		}
 
 		// Check if partition.
-		found := false
 		for _, part := range disk.Partitions {
 			if part.Device == dev {
 				candidate := fmt.Sprintf("/dev/disk/by-id/%s-part%d", disk.DeviceID, part.Partition)
 				if shared.PathExists(candidate) {
-					path = candidate
+					param.Path = candidate
 				} else {
 					candidate = fmt.Sprintf("/dev/disk/by-path/%s-part%d", disk.DevicePath, part.Partition)
 					if shared.PathExists(candidate) {
-						path = candidate
+						param.Path = candidate
 					}
 				}
 
 				break
 			}
 		}
-
-		if found {
-			break
-		}
-		// Fallthrough. We didn't find a /dev/disk path for this device, use the original path.
 	}
 
-	// Wipe the block device if requested.
-	if wipe {
-		err = timeoutWipe(path)
-		if err != nil {
-			return fmt.Errorf("Failed to wipe the device: %w", err)
-		}
+	return nil
+}
+
+// AddOSD adds an OSD to the cluster, given the data, WAL and DB devices and their respective
+// flags for wiping and encrypting.
+func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
+	logger.Debugf("Adding OSD %s", data.Path)
+
+	revert := revert.New()
+	defer revert.Fail()
+
+	// Lookup a stable path for it.
+	storage, err := resources.GetStorage()
+	if err != nil {
+		return fmt.Errorf("Unable to list system disks: %w", err)
+	}
+
+	if err := setStablePath(storage, &data); err != nil {
+		return fmt.Errorf("Failed to set stable disk path: %w", err)
 	}
 
 	// Get a OSD number.
@@ -350,11 +367,11 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 	if err != nil {
 		return fmt.Errorf("Failed to find next OSD number: %w", err)
 	}
-	logger.Debugf("nextOSD number is %d for disk %s", nr, path)
+	logger.Debugf("nextOSD number is %d for disk %s", nr, data.Path)
 
 	// Record the disk.
 	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := database.CreateDisk(ctx, tx, database.Disk{Member: s.Name(), Path: path, OSD: int(nr)})
+		_, err := database.CreateDisk(ctx, tx, database.Disk{Member: s.Name(), Path: data.Path, OSD: int(nr)})
 		if err != nil {
 			return fmt.Errorf("Failed to record disk: %w", err)
 		}
@@ -367,6 +384,9 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 
 	logger.Debugf("Created disk record for osd.%d", nr)
 
+	// Keep the old path in case it changes after encrypting.
+	oldPath := data.Path
+
 	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
 	osdDataPath := filepath.Join(dataPath, "osd", fmt.Sprintf("ceph-%d", nr))
 
@@ -374,7 +394,7 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 	revert.Add(func() {
 		os.RemoveAll(osdDataPath)
 		s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-			database.DeleteDisk(ctx, tx, s.Name(), path)
+			database.DeleteDisk(ctx, tx, s.Name(), oldPath)
 			return nil
 		})
 	})
@@ -382,28 +402,19 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 	// Create directory.
 	err = os.MkdirAll(osdDataPath, 0700)
 	if err != nil {
-		return fmt.Errorf("Failed to bootstrap monitor: %w", err)
+		return fmt.Errorf("Failed to create OSD directory: %w", err)
+	}
+
+	// Wipe and/or encrypt the disk if needed.
+	err = prepareDisk(&data, "", osdDataPath, nr)
+	if err != nil {
+		return fmt.Errorf("Failed to prepare data device: %w", err)
 	}
 
 	// Generate keyring.
 	err = genAuth(filepath.Join(osdDataPath, "keyring"), fmt.Sprintf("osd.%d", nr), []string{"mgr", "allow profile osd"}, []string{"mon", "allow profile osd"}, []string{"osd", "allow *"})
 	if err != nil {
 		return fmt.Errorf("Failed to generate OSD keyring: %w", err)
-	}
-
-	var blockPath string
-	if encrypt {
-		blockPath, err = setupEncryptedOSD(path, osdDataPath, nr)
-		if err != nil {
-			return err
-		}
-	} else {
-		blockPath = path
-	}
-
-	// Setup device symlink.
-	if err = os.Symlink(blockPath, filepath.Join(osdDataPath, "block")); err != nil {
-		return fmt.Errorf("Failed to add block symlink: %w", err)
 	}
 
 	// Generate OSD uuid.
@@ -416,7 +427,31 @@ func AddOSD(s *state.State, path string, wipe bool, encrypt bool) error {
 	}
 
 	// Bootstrap OSD.
-	_, err = processExec.RunCommand("ceph-osd", "--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr))
+	args := []string{"--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr)}
+	if wal != nil {
+		if err = setStablePath(storage, wal); err != nil {
+			return fmt.Errorf("Failed to set stable path for WAL: %w", err)
+		}
+
+		err = prepareDisk(wal, ".wal", osdDataPath, nr)
+		if err != nil {
+			return fmt.Errorf("Failed to set up WAL device: %w", err)
+		}
+		args = append(args, []string{"--bluestore-block-wal-path", wal.Path}...)
+	}
+	if db != nil {
+		if err = setStablePath(storage, db); err != nil {
+			return fmt.Errorf("Failed to set stable path for DB: %w", err)
+		}
+
+		err = prepareDisk(db, ".db", osdDataPath, nr)
+		if err != nil {
+			return fmt.Errorf("Failed to set up DB device: %w", err)
+		}
+		args = append(args, []string{"--bluestore-block-db-path", db.Path}...)
+	}
+
+	_, err = processExec.RunCommand("ceph-osd", args...)
 	if err != nil {
 		return fmt.Errorf("Failed to bootstrap OSD: %w", err)
 	}

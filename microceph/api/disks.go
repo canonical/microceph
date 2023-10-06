@@ -47,6 +47,9 @@ func cmdDisksGet(s *state.State, r *http.Request) response.Response {
 
 func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 	var req types.DisksPost
+	var wal *types.DiskParameter
+	var db *types.DiskParameter
+	var data types.DiskParameter
 
 	logger.Debugf("cmdDisksPost: %v", req)
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -56,7 +59,16 @@ func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 
 	mu.Lock()
 	defer mu.Unlock()
-	err = ceph.AddOSD(s, req.Path, req.Wipe, req.Encrypt)
+
+	data = types.DiskParameter{req.Path, req.Encrypt, req.Wipe}
+	if req.WALDev != nil {
+		wal = &types.DiskParameter{*req.WALDev, req.WALEncrypt, req.WALWipe}
+	}
+	if req.DBDev != nil {
+		db = &types.DiskParameter{*req.DBDev, req.DBEncrypt, req.DBWipe}
+	}
+
+	err = ceph.AddOSD(s, data, wal, db)
 	if err != nil {
 		return response.SmartError(err)
 	}
