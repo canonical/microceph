@@ -709,12 +709,9 @@ func doRemoveOSD(ctx context.Context, s common.StateInterface, osd int64, bypass
 			return err
 		}
 	}
-	// stop the OSD service
+	// stop the OSD service, but don't fail if it's not running
 	if isPresent {
-		err = killOSD(osd)
-	}
-	if err != nil {
-		return err
+		_ = killOSD(osd)
 	}
 	// perform safety check for destroying
 	if isPresent && !bypassSafety {
@@ -775,7 +772,7 @@ func outDownOSD(osd int64) error {
 func safetyCheckStop(osd int64) error {
 	var safeStop bool
 
-	retries := 12
+	retries := 16
 	var backoff time.Duration
 
 	for i := 0; i < retries; i++ {
@@ -799,7 +796,7 @@ func safetyCheckStop(osd int64) error {
 func safetyCheckDestroy(osd int64) error {
 	var safeDestroy bool
 
-	retries := 12
+	retries := 16
 	var backoff time.Duration
 
 	for i := 0; i < retries; i++ {
@@ -878,7 +875,7 @@ func haveOSDInCeph(osd int64) (bool, error) {
 
 // killOSD terminates the osd process for an osd.id
 func killOSD(osd int64) error {
-	cmdline := fmt.Sprintf("ceph-osd .* --id %d", osd)
+	cmdline := fmt.Sprintf("ceph-osd .* --id %d$", osd)
 	_, err := processExec.RunCommand("pkill", "-f", cmdline)
 	if err != nil {
 		logger.Errorf("Failed to kill osd.%d: %v", osd, err)

@@ -27,11 +27,6 @@ func addCrushRuleLsExpectations(r *mocks.Runner) {
 	r.On("RunCommand", cmdAny("ceph", 4)...).Return("microceph_auto_osd", nil).Once()
 }
 
-// Expect: run ceph osd crush rule create-replicated
-func addCrushRuleCreateExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph", 7)...).Return("ok", nil).Once()
-}
-
 // Expect: run ceph osd crush rule dump
 func addCrushRuleDumpExpectations(r *mocks.Runner) {
 	json := `{ "rule_id": 77 }`

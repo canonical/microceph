@@ -28,7 +28,7 @@ func (c *cmdDiskRemove) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
-	cmd.PersistentFlags().Int64Var(&c.flagTimeout, "timeout", 300, "Timeout to wait for safe removal (seconds), default=300")
+	cmd.PersistentFlags().Int64Var(&c.flagTimeout, "timeout", 1800, "Timeout to wait for safe removal (seconds), default=1800")
 	cmd.PersistentFlags().BoolVar(&c.flagBypassSafety, "bypass-safety-checks", false, "Bypass safety checks")
 	cmd.PersistentFlags().BoolVar(&c.flagConfirmDowngrade, "confirm-failure-domain-downgrade", false, "Confirm failure domain downgrade if required")
 
