@@ -272,6 +272,20 @@ jobs:
         lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk1 | grep -E "^  Services: osd$"
         lxc exec node-head -- sh -c "microceph status" | grep -F -A 1 node-wrk3 | grep -E "^  Services: mds, mgr, mon$"
 
+    - name: Enable services on wrk1
+      run: ~/actionutils.sh headexec enable_services node-wrk1
+
+    - name: Test remove node wrk3
+      run: |
+        set -uex
+        ~/actionutils.sh headexec remove_node node-wrk3
+        if lxc exec node-head -- sh -c "microceph status" | grep -q "^- node-wrk3 " ; then
+            echo "Failed: node-wrk3 still present"
+            exit 1
+        fi
+        lxc exec node-head -- sh -c "microceph.ceph -s" | fgrep "mon: 3 daemons"
+
+
   upgrade-quincy-tests:
     name: Test quincy upgrades
     runs-on: ubuntu-22.04

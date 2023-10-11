@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microcluster/client"
+	microCli "github.com/canonical/microcluster/client"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
-func SetConfig(ctx context.Context, c *client.Client, data *types.Config) error {
+func SetConfig(ctx context.Context, c *microCli.Client, data *types.Config) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
@@ -26,7 +26,7 @@ func SetConfig(ctx context.Context, c *client.Client, data *types.Config) error 
 	return nil
 }
 
-func ClearConfig(ctx context.Context, c *client.Client, data *types.Config) error {
+func ClearConfig(ctx context.Context, c *microCli.Client, data *types.Config) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
@@ -38,7 +38,7 @@ func ClearConfig(ctx context.Context, c *client.Client, data *types.Config) erro
 	return nil
 }
 
-func GetConfig(ctx context.Context, c *client.Client, data *types.Config) (types.Configs, error) {
+func GetConfig(ctx context.Context, c *microCli.Client, data *types.Config) (types.Configs, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
@@ -53,7 +53,7 @@ func GetConfig(ctx context.Context, c *client.Client, data *types.Config) (types
 }
 
 // AddDisk requests Ceph sets up a new OSD.
-func AddDisk(ctx context.Context, c *client.Client, data *types.DisksPost) error {
+func AddDisk(ctx context.Context, c *microCli.Client, data *types.DisksPost) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
@@ -66,7 +66,7 @@ func AddDisk(ctx context.Context, c *client.Client, data *types.DisksPost) error
 }
 
 // GetDisks returns the list of configured disks.
-func GetDisks(ctx context.Context, c *client.Client) (types.Disks, error) {
+func GetDisks(ctx context.Context, c *microCli.Client) (types.Disks, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
@@ -81,7 +81,7 @@ func GetDisks(ctx context.Context, c *client.Client) (types.Disks, error) {
 }
 
 // GetResources returns the list of storage devices on the system.
-func GetResources(ctx context.Context, c *client.Client) (*api.ResourcesStorage, error) {
+func GetResources(ctx context.Context, c *microCli.Client) (*api.ResourcesStorage, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
@@ -96,7 +96,7 @@ func GetResources(ctx context.Context, c *client.Client) (*api.ResourcesStorage,
 }
 
 // RemoveDisk requests Ceph removes an OSD.
-func RemoveDisk(ctx context.Context, c *client.Client, data *types.DisksDelete) error {
+func RemoveDisk(ctx context.Context, c *microCli.Client, data *types.DisksDelete) error {
 	timeout := time.Second * time.Duration(data.Timeout+5) // wait a bit longer than the operation timeout
 	queryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
