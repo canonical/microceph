@@ -10,7 +10,6 @@ matrix:
     output: .sphinx/.wordlist.dic
   sources:
   - _build/**/*.html
-  - \!_build/sphinxenv/**/*
   pipeline:
   - pyspelling.filters.html:
       comments: false
@@ -23,6 +22,7 @@ matrix:
       - spellexception
       - link
       - title
+      - strong.command
       - div.relatedlinks
       - div.visually-hidden
       - img

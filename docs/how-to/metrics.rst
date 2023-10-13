@@ -22,19 +22,19 @@ Enabling Ceph-Mgr Prometheus module
 
 Ceph-Mgr Prometheus module is responsible for serving the metrics endpoint which can then be scraped by Prometheus itself. We can enable the module by executing the following command on a MicroCeph node:
 
-..  code-block:: none
+.. code-block:: none
 
-    ceph mgr module enable prometheus
+   ceph mgr module enable prometheus
 
 Configuring metrics endpoint
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 By default, it will accept HTTP requests on port 9283 on all IPv4 and IPv6 addresses on the host. However this can configured using the following ceph-mgr config keys to fine tune to requirements.
 
-..  code-block:: none
+.. code-block:: none
 
-    ceph config set mgr mgr/prometheus/server_addr <addr>
-    ceph config set mgr mgr/prometheus/port <port>
+   ceph config set mgr mgr/prometheus/server_addr <addr>
+   ceph config set mgr mgr/prometheus/port <port>
 
 For details on how metrics endpoint can be further configured visit `Ceph Prometheus module <https://docs.ceph.com/en/quincy/mgr/prometheus/>`_
 
@@ -69,7 +69,7 @@ Start Prometheus with provided configuration file.
 
     prometheus --config.file=microceph.yaml
 
-The default port used is 9090 hence collected metrics can be observed at <prometheus_addr>:9090 as:
+The default port used is 9090 hence collected metrics can be observed at ``<prometheus_addr>:9090`` as:
 
 .. figure:: assets/prometheus_console.jpg
 

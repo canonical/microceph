@@ -1,14 +1,9 @@
 openstack
-microstack
-microceph
+ceph
 Howto
 configs
 osd
-ceph
-addr
-prometheus
 config
-sudo
 IPv
 cfg
 CFG
@@ -35,7 +30,6 @@ cryptsetup
 dm
 modinfo
 subcommands
-multinode
 backend
 backfilling
 overstrained

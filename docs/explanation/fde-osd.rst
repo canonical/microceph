@@ -25,10 +25,14 @@ Prerequisites
 
 To use FDE, the following prerequisites must be met:
 
-- The `dm-crypt` kernel module must be available. Note that some cloud-optimised kernels do not ship dm-crypt by default. Check by running `sudo modinfo dm-crypt`
-- The snap dm-crypt plug has to be connected, and the microceph.daemon subsequently restarted: `sudo snap connect microceph:dm-crypt ; sudo snap restart microceph.daemon`
 - The installed snapd daemon version must be >= 2.59.1
+- The ``dm-crypt`` kernel module must be available. Note that some cloud-optimised kernels do not ship dm-crypt by default. Check by running ``sudo modinfo dm-crypt``
+- The snap dm-crypt plug has to be connected, and ``microceph.daemon`` subsequently restarted:
 
+  .. code-block:: none
+
+     sudo snap connect microceph:dm-crypt
+     sudo snap restart microceph.daemon
 
 Limitations
 -----------
