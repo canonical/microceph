@@ -37,7 +37,7 @@ Removes a single disk from the cluster.
 .. note::
 
    The ``remove`` command is currently only supported in channel
-   ``latest/edge`` of the microstack snap.
+   ``latest/edge`` of the :command:`microceph` snap.
 
 Syntax:
 

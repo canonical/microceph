@@ -9,7 +9,7 @@ MicroCeph supports automatic full disk encryption (FDE) on OSDs.
 
 Full disk encryption is a security measure that protects the data on a storage device by encrypting all the information on the disk. FDE helps maintain data confidentiality in case the disk is lost or stolen by rendering the data inaccessible without the correct decryption key or password.
 
-In the event of disk loss or theft, unauthorized individuals are unable to access the encrypted data, as the encryption renders the information unreadable without the proper credentials. This helps prevent data breaches and protects sensitive information from being misused.
+In the event of disk loss or theft, unauthorised individuals are unable to access the encrypted data, as the encryption renders the information unreadable without the proper credentials. This helps prevent data breaches and protects sensitive information from being misused.
 
 FDE also eliminates the need for wiping or physically destroying a disk when it is replaced, as the encrypted data remains secure even if the disk is no longer in use. The data on the disk is effectively rendered useless without the decryption key.
 
@@ -25,10 +25,14 @@ Prerequisites
 
 To use FDE, the following prerequisites must be met:
 
-- The `dm-crypt` kernel module must be available. Note that some cloud-optimized kernels do not ship dm-crypt by default. Check by running `sudo modinfo dm-crypt`
-- The snap dm-crypt plug has to be connected, and the microceph.daemon subsequently restarted: `sudo snap connect microceph:dm-crypt ; sudo snap restart microceph.daemon`
 - The installed snapd daemon version must be >= 2.59.1
+- The ``dm-crypt`` kernel module must be available. Note that some cloud-optimised kernels do not ship dm-crypt by default. Check by running ``sudo modinfo dm-crypt``
+- The snap dm-crypt plug has to be connected, and ``microceph.daemon`` subsequently restarted:
 
+  .. code-block:: none
+
+     sudo snap connect microceph:dm-crypt
+     sudo snap restart microceph.daemon
 
 Limitations
 -----------
