@@ -1,5 +1,6 @@
-Cluster Network Configurations in MicroCeph
-===========================================
+==============================
+Cluster network configurations
+==============================
 
 Overview
 --------

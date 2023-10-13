@@ -1,6 +1,6 @@
-==========
-Multi-node
-==========
+==================
+Multi-node install
+==================
 
 This tutorial will show how to install MicroCeph on three machines, thereby
 creating a multi-node cluster.

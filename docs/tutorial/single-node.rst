@@ -1,6 +1,6 @@
-===========
-Single-node
-===========
+===================
+Single-node install
+===================
 
 This tutorial will show how to install MicroCeph on a single machine, thereby
 creating a single-node "cluster".
@@ -13,7 +13,7 @@ three entire disks are required to be available on the machine.
 
 .. note::
 
-   Development is underway to allow for loopback device support.
+   Upstream Ceph development is underway to allow for loopback device support.
    This will filter down to MicroCeph which will allow for easier
    proof-of-concept and developer deployments.
 

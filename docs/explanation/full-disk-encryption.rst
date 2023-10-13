@@ -1,5 +1,6 @@
-Full Disk Encryption on OSDs
-============================
+====================
+Full disk encryption
+====================
 
 
 Overview

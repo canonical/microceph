@@ -1,5 +1,6 @@
-MicroCeph Content Interface
-===========================
+====================================
+Snap content interface for MicroCeph
+====================================
 
 Overview
 --------

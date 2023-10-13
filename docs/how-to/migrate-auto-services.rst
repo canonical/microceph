@@ -1,6 +1,6 @@
-==========================================
-Migrate automatically-provisioned services
-==========================================
+============================================
+Migrating automatically-provisioned services
+============================================
 
 MicroCeph deploys automatically-provisioned Ceph services when needed. These
 services include:

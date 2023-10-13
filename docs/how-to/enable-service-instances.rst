@@ -1,6 +1,6 @@
-===================================
-Enable additional service instances
-===================================
+=====================================
+Enabling additional service instances
+=====================================
 
 To ensure a base level of resiliency, MicroCeph will always try to enable a
 sufficient number of instances for certain services in the cluster. This
