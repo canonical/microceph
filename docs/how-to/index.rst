@@ -1,7 +1,7 @@
 How-to guides
 =============
 
-These how-to guides will cover key operations and processes in Microceph.
+These how-to guides will cover key operations and processes in MicroCeph.
 
 .. toctree::
    :maxdepth: 1

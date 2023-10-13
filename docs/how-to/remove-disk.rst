@@ -18,7 +18,7 @@ The following resources provide extra context to the disk removal operation:
 .. note::
 
    This feature is currently only supported in channel ``latest/edge`` of the
-   microstack snap.
+   **microstack** snap.
 
 Procedure
 ---------

@@ -7,12 +7,12 @@ Overview
 
 MicroCeph's scalability is courtesy of its foundation on Ceph, which has excellent scaling capabilities. To scale out, either add machines to the existing cluster nodes or introduce additional disks (OSDs) on the nodes.
 
-Note it is strongly recommended to use uniformly-sized machines, particularly with smaller clusters, to ensure Ceph fully utilizes all available disk space.
+Note it is strongly recommended to use uniformly-sized machines, particularly with smaller clusters, to ensure Ceph fully utilises all available disk space.
 
 Failure Domains
 ---------------
 
-In the realm of Ceph, the concept of `failure domains`_ comes into play in order to provide data safety. A failure domain is an entity or a category across which object replicas are spread. This could be OSDs, hosts, racks, or even larger aggregates like rooms or data centers. The key purpose of failure domains is to mitigate the risk of extensive data loss that could occur if a larger aggregate (e.g. machine or rack) crashes or becomes otherwise unavailable.
+In the realm of Ceph, the concept of `failure domains`_ comes into play in order to provide data safety. A failure domain is an entity or a category across which object replicas are spread. This could be OSDs, hosts, racks, or even larger aggregates like rooms or data centres. The key purpose of failure domains is to mitigate the risk of extensive data loss that could occur if a larger aggregate (e.g. machine or rack) crashes or becomes otherwise unavailable.
 
 This spreading of data or objects across various failure domains is managed through the Ceph's Controlled Replication Under Scalable Hashing (CRUSH_) rules. The CRUSH algorithm enables Ceph to distribute data replicas over various failure domains efficiently and without any central directory, thus providing consistent performance as you scale. 
 
@@ -76,7 +76,7 @@ Maintaining uniformly sized machines is an important aspect of scaling up MicroC
 
 1. Balanced Cluster: Having nodes with a similar configuration drives a balanced distribution of data and load in the cluster. It ensures all nodes are optimally performing and no single node is overstrained, enhancing the cluster's overall efficiency.
 
-2. Space Utilization: With similar sized machines, Ceph can optimally use all available disk space rather than having some remain underutilized and hence wasted.
+2. Space Utilisation: With similar sized machines, Ceph can optimally use all available disk space rather than having some remain underutilised and hence wasted.
 
 3. Easy Management: Uniform machines are simpler to manage as each has similar capabilities and resource needs.
 
