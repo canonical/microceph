@@ -46,11 +46,16 @@ func (c *cmdClusterRemove) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	logger.Debugf("Removing cluster member %v, force: %v", args[0], c.flagForce)
+	return removeNode(cli, args[0], c.flagForce)
+}
+
+func removeNode(cli *microCli.Client, node string, force bool) error {
+
+	logger.Debugf("Removing cluster member %v, force: %v", node, force)
 
 	// check prerquisites unless we're forcing
-	if !c.flagForce {
-		ok, err := checkPrerequisites(cli, args[0])
+	if !force {
+		ok, err := checkPrerequisites(cli, node)
 		if err != nil {
 			return fmt.Errorf("Error checking prereqs: %v", err)
 		}
@@ -60,18 +65,18 @@ func (c *cmdClusterRemove) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// delete from ceph
-	err = deleteNodeServices(cli, args[0])
+	err := deleteNodeServices(cli, node)
 	if err != nil {
 		// forcing makes errs non-fatal
-		if !c.flagForce {
+		if !force {
 			return err
 		}
-		logger.Warnf("Error deleting services from node %v: %v", args[0], err)
+		logger.Warnf("Error deleting services from node %v: %v", node, err)
 	}
 
 	// delete from cluster db
-	err = cli.DeleteClusterMember(context.Background(), args[0], c.flagForce)
-	logger.Debugf("DeleteClusterMember %v: %v", args[0], err)
+	err = client.MClient.DeleteClusterMember(cli, node, force)
+	logger.Debugf("DeleteClusterMember %v: %v", node, err)
 	if err != nil {
 		return err
 	}

@@ -14,6 +14,7 @@ type ClientInterface interface {
 	GetDisks(*microCli.Client) (types.Disks, error)
 	GetServices(*microCli.Client) (types.Services, error)
 	DeleteService(*microCli.Client, string, string) error
+	DeleteClusterMember(*microCli.Client, string, bool) error
 }
 
 type ClientImpl struct{}
@@ -47,6 +48,11 @@ func (c ClientImpl) GetServices(cli *microCli.Client) (types.Services, error) {
 // DeleteService wraps the DeleteService function
 func (c ClientImpl) DeleteService(cli *microCli.Client, target string, service string) error {
 	return DeleteService(context.Background(), cli, target, service)
+}
+
+// DeleteClusterMember wraps the DeleteClusterMember function
+func (c ClientImpl) DeleteClusterMember(cli *microCli.Client, name string, force bool) error {
+	return cli.DeleteClusterMember(context.Background(), name, force)
 }
 
 // mocking point for unit tests
