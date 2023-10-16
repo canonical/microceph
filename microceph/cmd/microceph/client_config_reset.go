@@ -25,7 +25,7 @@ type cmdClientConfigReset struct {
 func (c *cmdClientConfigReset) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset <key>",
-		Short: "Clear specified Ceph Client config",
+		Short: "Removes specified Ceph Client configs",
 		RunE:  c.Run,
 	}
 

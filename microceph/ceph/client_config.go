@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 )
@@ -21,6 +20,7 @@ type ClientConfigT struct {
 	CacheTargetDirty    string
 }
 
+// GetClientConfigForHost fetches all the applicable client configurations for the provided host.
 func GetClientConfigForHost(s common.StateInterface, hostname string) (ClientConfigT, error) {
 	retval := ClientConfigT{}
 
@@ -30,11 +30,9 @@ func GetClientConfigForHost(s common.StateInterface, hostname string) (ClientCon
 		return ClientConfigT{}, fmt.Errorf("could not query database for client configs: %v", err)
 	}
 
-	logger.Infof("Client Configs for host %s, %v", hostname, configs)
-
+	setterTable := GetClientConfigSet()
 	for _, config := range configs {
 		// Populate client config table using the database values.
-		setterTable := GetClientConfigSet()
 		err = setFieldValue(&retval, fmt.Sprint(setterTable[config.Key]), config.Value)
 		if err != nil {
 			return ClientConfigT{}, fmt.Errorf("failed object population: %v", err)
@@ -44,6 +42,7 @@ func GetClientConfigForHost(s common.StateInterface, hostname string) (ClientCon
 	return retval, nil
 }
 
+// setFieldValue populates the individual client configuration values into ClientConfigT object fields.
 func setFieldValue(ogp *ClientConfigT, field string, value string) error {
 	r := reflect.ValueOf(ogp)
 	f := reflect.Indirect(r).FieldByName(field)
@@ -54,6 +53,7 @@ func setFieldValue(ogp *ClientConfigT, field string, value string) error {
 	return fmt.Errorf("cannot set field %s", field)
 }
 
+// GetClientConfigSet provides the mapping between client config key and fieldname for population through reflection.
 func GetClientConfigSet() Set {
 	return Set{
 		"rbd_cache":                          "IsCache",

@@ -22,7 +22,7 @@ type cmdClientConfigList struct {
 func (c *cmdClientConfigList) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List all set Ceph level configs",
+		Short: "Lists all configured Ceph Client configs",
 		RunE:  c.Run,
 	}
 

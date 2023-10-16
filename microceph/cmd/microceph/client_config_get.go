@@ -23,7 +23,7 @@ type cmdClientConfigGet struct {
 func (c *cmdClientConfigGet) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <key>",
-		Short: "Get specified Ceph Client config",
+		Short: "Fetches specified Ceph Client config",
 		RunE:  c.Run,
 	}
 
