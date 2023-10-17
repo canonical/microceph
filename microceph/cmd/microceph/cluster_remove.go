@@ -55,12 +55,9 @@ func removeNode(cli *microCli.Client, node string, force bool) error {
 
 	// check prerquisites unless we're forcing
 	if !force {
-		ok, err := checkPrerequisites(cli, node)
+		err := checkPrerequisites(cli, node)
 		if err != nil {
-			return fmt.Errorf("Error checking prereqs: %v", err)
-		}
-		if !ok {
-			return fmt.Errorf("Prerequisites not met, not removing: %v", err)
+			return err
 		}
 	}
 
@@ -84,11 +81,11 @@ func removeNode(cli *microCli.Client, node string, force bool) error {
 	return nil
 }
 
-func checkPrerequisites(cli *microCli.Client, name string) (bool, error) {
+func checkPrerequisites(cli *microCli.Client, name string) error {
 	// check if member exists
 	clusterMembers, err := client.MClient.GetClusterMembers(cli)
 	if err != nil {
-		return false, err
+		return fmt.Errorf("Error getting cluster members: %v", err)
 	}
 	found := false
 	for _, member := range clusterMembers {
@@ -97,13 +94,13 @@ func checkPrerequisites(cli *microCli.Client, name string) (bool, error) {
 		}
 	}
 	if !found {
-		return false, fmt.Errorf("Node %v not found", name)
+		return fmt.Errorf("Node %v not found", name)
 	}
 
 	// check if any OSDs present
 	disks, err := client.MClient.GetDisks(cli)
 	if err != nil {
-		return false, err
+		return fmt.Errorf("Error getting disks: %v", err)
 	}
 	found = false
 	for _, disk := range disks {
@@ -113,13 +110,13 @@ func checkPrerequisites(cli *microCli.Client, name string) (bool, error) {
 	}
 	logger.Debugf("Disks: %v, found: %v", disks, found)
 	if found {
-		return false, fmt.Errorf("Node %v still has disks configured, remove before proceeding", name)
+		return fmt.Errorf("Node %v still has disks configured, remove before proceeding", name)
 	}
 
 	// check if this node has the last mon
 	services, err := client.MClient.GetServices(cli)
 	if err != nil {
-		return false, err
+		return fmt.Errorf("Error getting services: %v", err)
 	}
 	// create a map of service names to bool values
 	// init with false
@@ -137,10 +134,10 @@ func checkPrerequisites(cli *microCli.Client, name string) (bool, error) {
 	}
 	logger.Debugf("Services: %v, foundMap: %v", services, foundMap)
 	if !foundMap["mon"] || !foundMap["mgr"] || !foundMap["mds"] {
-		return false, fmt.Errorf("Need at least one mon, mds, and mgr besides %v", name)
+		return fmt.Errorf("Need at least one mon, mds, and mgr besides %v", name)
 	}
 
-	return true, nil
+	return nil
 }
 
 func deleteNodeServices(cli *microCli.Client, name string) error {
