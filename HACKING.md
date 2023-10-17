@@ -79,6 +79,7 @@ sudo snap install --dangerous microceph_*.snap
 ```bash
 # Locally built snaps do no auto-connect the available plugs on install, they can be connected manually using;
 sudo snap connect microceph:block-devices
+sudo snap connect microceph:raw-volume
 sudo snap connect microceph:hardware-observe
 sudo snap connect microceph:dm-crypt
 sudo snap restart microceph.daemon
