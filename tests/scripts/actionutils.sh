@@ -204,6 +204,40 @@ function testrgw() {
     ( curl -s http://localhost/testbucket/test.txt | grep -F hello-radosgw ) || return -1
 }
 
+function enable_services() {
+    local node="${1?missing}"
+    for s in mon mds mgr ; do
+        sudo microceph enable $s --target $node
+    done
+    for i in $(seq 1 8); do
+        if sudo microceph.ceph -s | grep -q "mon: .*daemons.*${node}" ; then
+            echo "Found mon on ${node}"
+            break
+        else
+            echo -n '.'
+            sleep 2
+        fi
+    done
+    sudo microceph.ceph -s
+}
+
+function remove_node() {
+    local node="${1?missing}"
+    sudo microceph cluster remove $node
+    for i in $(seq 1 8); do
+        if sudo microceph.ceph -s | grep -q "mon: .*daemons.*${node}" ; then
+            echo -n '.'
+            sleep 2
+        else
+            echo "No mon on ${node}"
+            break
+        fi
+    done
+    sleep 1
+    sudo microceph.ceph -s
+    sudo microceph status
+}
+
 function headexec() {
     local run="${1?missing}"
     shift
