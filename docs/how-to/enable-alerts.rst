@@ -1,9 +1,10 @@
-Enable alerts on MicroCeph using Prometheus Alertmanager
-========================================================
+=======================================
+Enabling Prometheus Alertmanager alerts
+=======================================
 
 Pre-Requisite
 -------------
-In order to configure alerts, your MicroCeph deployment must enable metrics collections with Prometheus. Follow :doc:`this How-To <metrics>` if you haven't configured it. Also, Alertmanager is distributed as a separate binary which should be installed and running.
+In order to configure alerts, your MicroCeph deployment must enable metrics collections with Prometheus. Follow :doc:`this How-To <enable-metrics>` if you haven't configured it. Also, Alertmanager is distributed as a separate binary which should be installed and running.
 
 Introduction
 ------------

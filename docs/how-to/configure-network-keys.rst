@@ -1,5 +1,6 @@
-Configure cluster_network/ public_network in MicroCeph
-======================================================
+========================
+Configuring network keys
+========================
 
 The MicroCeph cluster configuration CLI supports setting, getting, resetting and listing supported config keys mentioned below.
 
@@ -56,5 +57,5 @@ The MicroCeph cluster configuration CLI supports setting, getting, resetting and
    | # | KEY | VALUE |
    +---+-----+-------+
 
-For more explanations and implementation details refer to :doc:`explanation <../explanation/cluster-cfg>`
+For more explanations and implementation details refer to :doc:`explanation <../explanation/cluster-configurations>`
 

@@ -1,5 +1,6 @@
-Scaling
-=================
+===============
+Cluster scaling
+===============
 
 
 Overview

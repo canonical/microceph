@@ -1,5 +1,6 @@
-Enable MicroCeph metrics collection with Prometheus
-===================================================
+===========================================
+Enabling metrics collection with Prometheus
+===========================================
 
 Introduction
 ------------
