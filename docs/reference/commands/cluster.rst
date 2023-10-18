@@ -2,27 +2,27 @@
 ``cluster``
 ===========
 
-Manage the MicroCeph cluster
+Manages the MicroCeph cluster.
 
 Usage:
 
 .. code-block:: none
 
-   microceph cluster [options]
+   microceph cluster [flags]
    microceph cluster [command]
 
 Available commands:
 
 .. code-block:: none
 
-  add         Generates a token for a new server
-  bootstrap   Sets up a new cluster
-  config      Manage Ceph Cluster configs
-  join        Joins an existing cluster
-  list        List servers in the cluster
-  migrate     Migrate automatic services from one node to another
-  remove      Removes a server from the cluster
-  sql         Runs a SQL query against the cluster database
+   add         Generates a token for a new server
+   bootstrap   Sets up a new cluster
+   config      Manage Ceph Cluster configs
+   join        Joins an existing cluster
+   list        List servers in the cluster
+   migrate     Migrate automatic services from one node to another
+   remove      Removes a server from the cluster
+   sql         Runs a SQL query against the cluster database
 
 
 Global options:
@@ -44,7 +44,7 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster add <NAME> [flags]
+   microceph cluster add <NAME> [flags]
 
 
 ``bootstrap``
@@ -56,7 +56,7 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster bootstrap [flags]
+   microceph cluster bootstrap [flags]
 
 ``config``
 ----------
@@ -67,17 +67,17 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster config [flags]
-  microceph cluster config [command]
+   microceph cluster config [flags]
+   microceph cluster config [command]
 
 Available Commands:
 
 .. code-block:: none
 
-  get         Get specified Ceph Cluster config
-  list        List all set Ceph level configs
-  reset       Clear specified Ceph Cluster config
-  set         Set specified Ceph Cluster config
+   get         Get specified Ceph Cluster config
+   list        List all set Ceph level configs
+   reset       Clear specified Ceph Cluster config
+   set         Set specified Ceph Cluster config
 
 
 ``config get``
@@ -89,7 +89,7 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster config get <key> [flags]
+   microceph cluster config get <key> [flags]
 
 
 ``config list``
@@ -101,7 +101,7 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster config list [flags]
+   microceph cluster config list [flags]
 
 
 ``config reset``
@@ -113,13 +113,13 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster config reset <key> [flags]
+   microceph cluster config reset <key> [flags]
 
 Flags:
 
 .. code-block:: none
 
-  --wait   Wait for required ceph services to restart post config reset.
+   --wait   Wait for required ceph services to restart post config reset.
 
 
 ``config set``
@@ -131,14 +131,14 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster config set <Key> <Value> [flags]
+   microceph cluster config set <Key> <Value> [flags]
 
 
 Flags:
 
 .. code-block:: none
 
-  --wait   Wait for required ceph services to restart post config set.
+   --wait   Wait for required ceph services to restart post config set.
 
 
 ``join``
@@ -150,7 +150,7 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster join <TOKEN> [flags]
+   microceph cluster join <TOKEN> [flags]
 
 
 ``list``
@@ -162,7 +162,7 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster list [flags]
+   microceph cluster list [flags]
 
 
 ``migrate``
@@ -175,7 +175,7 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster migrate <SRC> <DST [flags]
+   microceph cluster migrate <SRC> <DST [flags]
 
 
 ``remove``
@@ -187,14 +187,14 @@ Syntax:
 
 .. code-block:: none
 
-  microceph cluster remove <NAME> [flags]
+   microceph cluster remove <NAME> [flags]
 
 
-Options:
+Flags:
 
 .. code-block:: none
 
-  -f, --force   Forcibly remove the cluster member
+   -f, --force   Forcibly remove the cluster member
 
 
 ``sql``
@@ -206,5 +206,4 @@ Usage:
 
 .. code-block:: none
 
-  microceph cluster sql <query> [flags]
-
+   microceph cluster sql <query> [flags]
