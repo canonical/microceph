@@ -118,23 +118,23 @@ func checkPrerequisites(cli *microCli.Client, name string) error {
 	if err != nil {
 		return fmt.Errorf("Error getting services: %v", err)
 	}
-	// create a map of service names to bool values
+	// create a map of service names counters
 	// init with false
-	foundMap := map[string]bool{
-		"mon": false,
-		"mgr": false,
-		"mds": false,
+	foundMap := map[string]int{
+		"mon": 0,
+		"mgr": 0,
+		"mds": 0,
 	}
-	// loop through services and check if we have any services that are not on the named node
+	// loop through services and check service counts
 	for _, service := range services {
 		if service.Location == name {
 			continue
 		}
-		foundMap[service.Service] = true
+		foundMap[service.Service]++
 	}
 	logger.Debugf("Services: %v, foundMap: %v", services, foundMap)
-	if !foundMap["mon"] || !foundMap["mgr"] || !foundMap["mds"] {
-		return fmt.Errorf("Need at least one mon, mds, and mgr besides %v", name)
+	if foundMap["mon"] < 3 || foundMap["mgr"] < 1 || foundMap["mds"] < 1 {
+		return fmt.Errorf("Need at least 3 mon, 1 mds, and 1 mgr besides %v", name)
 	}
 
 	return nil
