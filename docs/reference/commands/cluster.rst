@@ -61,7 +61,7 @@ Usage:
 ``config``
 ----------
 
-Manage Ceph Cluster configs
+Manages Ceph Cluster configs.
 
 Usage:
 
@@ -83,7 +83,7 @@ Available Commands:
 ``config get``
 --------------
 
-Get specified Ceph Cluster config
+Gets specified Ceph Cluster config.
 
 Usage:
 
@@ -95,7 +95,7 @@ Usage:
 ``config list``
 ---------------
 
-List all set Ceph level configs
+Lists all set Ceph level configs.
 
 Usage:
 
@@ -107,7 +107,7 @@ Usage:
 ``config reset``
 ----------------
 
-Clear specified Ceph Cluster config
+Clears specified Ceph Cluster config.
 
 Usage:
 
@@ -125,7 +125,7 @@ Flags:
 ``config set``
 --------------
 
-Set specified Ceph Cluster config
+Sets specified Ceph Cluster config.
 
 Usage:
 
@@ -144,7 +144,7 @@ Flags:
 ``join``
 --------
 
-Joins an existing cluster
+Joins an existing cluster.
 
 Usage:
 
@@ -156,7 +156,7 @@ Usage:
 ``list``
 --------
 
-List servers in the cluster
+Lists servers in the cluster.
 
 Usage:
 
@@ -168,8 +168,7 @@ Usage:
 ``migrate``
 -----------
 
-
-Migrate automatic services from one node to another
+Migrates automatic services from one node to another.
 
 Usage:
 
@@ -181,7 +180,7 @@ Usage:
 ``remove``
 ----------
 
-Removes a server from the cluster
+Removes a server from the cluster.
 
 Syntax:
 
@@ -200,7 +199,7 @@ Flags:
 ``sql``
 -------
 
-Runs a SQL query against the cluster database
+Runs a SQL query against the cluster database.
 
 Usage:
 
