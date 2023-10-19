@@ -20,37 +20,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-type Set map[string]interface{}
-
-func (sub Set) Keys() []string {
-	keys := make([]string, len(sub))
-	count := 0
-
-	for key := range sub {
-		keys[count] = key
-		count++
-	}
-
-	return keys
-}
-
-func (sub Set) isIn(super Set) bool {
-	flag := true
-
-	// mark flag false if any key from subset is not present in superset.
-	for key := range sub {
-		_, ok := super[key]
-		if !ok {
-			flag = false
-			break // Break the loop.
-		}
-	}
-
-	return flag
-}
-
 // Table to map fetchFunc for workers (daemons) to a service.
-var serviceWorkerTable = map[string](func() (Set, error)){
+var serviceWorkerTable = map[string](func() (common.Set, error)){
 	"osd": getUpOsds,
 	"mon": getMons,
 }
@@ -94,7 +65,7 @@ func RestartCephService(service string) error {
 		}
 
 		// All still not up
-		if !workers.isIn(iWorkers) {
+		if !workers.IsIn(iWorkers) {
 			err := fmt.Errorf(
 				"Attempt %d: Workers: %v not all present in %v", i, workers, iWorkers,
 			)
@@ -110,8 +81,8 @@ func RestartCephService(service string) error {
 	return nil
 }
 
-func getMons() (Set, error) {
-	retval := Set{}
+func getMons() (common.Set, error) {
+	retval := common.Set{}
 	output, err := processExec.RunCommand("ceph", "mon", "dump", "-f", "json-pretty")
 	if err != nil {
 		logger.Errorf("Failed fetching Mon dump: %v", err)
@@ -128,8 +99,8 @@ func getMons() (Set, error) {
 	return retval, nil
 }
 
-func getUpOsds() (Set, error) {
-	retval := Set{}
+func getUpOsds() (common.Set, error) {
+	retval := common.Set{}
 	output, err := processExec.RunCommand("ceph", "osd", "dump", "-f", "json-pretty")
 	if err != nil {
 		logger.Errorf("Failed fetching OSD dump: %v", err)

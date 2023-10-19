@@ -54,8 +54,8 @@ func setFieldValue(ogp *ClientConfigT, field string, value string) error {
 }
 
 // GetClientConfigSet provides the mapping between client config key and fieldname for population through reflection.
-func GetClientConfigSet() Set {
-	return Set{
+func GetClientConfigSet() common.Set {
+	return common.Set{
 		"rbd_cache":                          "IsCache",
 		"rbd_cache_size":                     "CacheSize",
 		"rbd_cache_writethrough_until_flush": "IsCacheWritethrough",

@@ -49,8 +49,8 @@ func GetConstConfigTable() ConfigTable {
 	}
 }
 
-func GetConfigTableServiceSet() Set {
-	return Set{
+func GetConfigTableServiceSet() common.Set {
+	return common.Set{
 		"mon": struct{}{},
 		"mgr": struct{}{},
 		"osd": struct{}{},
