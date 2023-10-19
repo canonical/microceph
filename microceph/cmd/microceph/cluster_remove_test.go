@@ -30,25 +30,19 @@ func (s *clusterRemoveSuite) TestRemoveNode() {
 	client.MClient = m
 	m.On("GetClusterMembers", mock.Anything).Return([]string{"foonode", "barnode", "quuxnode"}, nil).Once()
 	m.On("GetDisks", mock.Anything).Return(types.Disks{}, nil).Once()
+
+	services := []string{"mon", "mon", "mgr", "mds", "mon", "mgr", "mds", "mon", "mgr", "mds"}
+	var servicesData types.Services
+	for _, service := range services {
+		// Add each service to the array
+		servicesData = append(servicesData, types.Service{Service: service})
+		// For the first entry, set location to "foonode"
+		if service == "mon" && servicesData[0].Location == "" {
+			servicesData[0].Location = "foonode"
+		}
+	}
 	m.On("GetServices", mock.Anything).Return(
-		types.Services{
-			{
-				Service:  "mon",
-				Location: "foonode",
-			},
-			{
-				Service:  "mon",
-				Location: "barnode",
-			},
-			{
-				Service:  "mgr",
-				Location: "barnode",
-			},
-			{
-				Service:  "mds",
-				Location: "barnode",
-			},
-		},
+		servicesData,
 		nil,
 	)
 	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(nil).Once()
