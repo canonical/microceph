@@ -33,7 +33,7 @@ Global flags:
 ``mds``
 -------
 
-Enable the MDS service on the --target server (default: this server)
+Enables the MDS service on the --target server (default: this server).
 
 Usage:
 
@@ -53,7 +53,7 @@ Flags:
 ``mgr``
 -------
 
-Enable the MGR service on the --target server (default: this server)
+Enables the MGR service on the --target server (default: this server).
 
 Usage:
 
@@ -73,7 +73,7 @@ Flags:
 ``mon``
 -------
 
-Enable the MON service on the --target server (default: this server)
+Enables the MON service on the --target server (default: this server).
 
 Usage:
 
@@ -93,7 +93,7 @@ Flags:
 ``rgw``
 -------
 
-Enable the RGW service on the --target server (default: this server)
+Enables the RGW service on the --target server (default: this server).
 
 Usage:
 

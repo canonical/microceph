@@ -2,7 +2,7 @@
 ``status``
 ==========
 
-Checks the cluster status.
+Reports the status of the cluster.
 
 Usage:
 

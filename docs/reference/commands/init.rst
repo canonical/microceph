@@ -2,7 +2,7 @@
 ``init``
 ========
 
-Interactive configuration of MicroCeph.
+Initialises MicroCeph (in interactive mode).
 
 Usage:
 
