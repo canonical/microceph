@@ -1,0 +1,49 @@
+=========
+``{cmd}``
+=========
+
+{cmd_help}
+
+Usage:
+
+.. code-block:: none
+
+   microceph {cmd} [flags]
+   microceph {cmd} [command]
+
+Available commands:
+
+.. code-block:: none
+
+   {subcmd}    {subcmd_help}
+
+
+Global options:
+
+.. code-block:: none
+
+   -d, --debug       Show all debug messages
+   -h, --help        Print help
+       --state-dir   Path to store state information
+   -v, --verbose     Show all information messages
+       --version     Print version number
+
+
+``subcmd``
+----------
+
+{subcmd_help}
+
+
+Usage:
+
+.. code-block:: none
+
+   microceph {cmd} {subcmd} {params}
+
+
+Flags:
+
+.. code-block:: none
+
+   {flag}    {flag_help}
