@@ -8,7 +8,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph disk [options]
+   microceph disk [flags]
    microceph disk [command]
 
 Available commands:
@@ -19,7 +19,7 @@ Available commands:
    list        List servers in the cluster
    remove      Remove a Ceph disk (OSD)
 
-Global options:
+Global flags:
 
 .. code-block:: none
 
@@ -29,23 +29,65 @@ Global options:
    -v, --verbose     Show all information messages
        --version     Print version number
 
+
+``add``
+-------
+
+Adds a disk to the cluster, alongside optional devices for write-ahead logging and database management.
+
+Usage:
+
+.. code-block:: none
+
+   microceph disk add <PATH> [flags]
+
+Flags:
+
+.. code-block:: none
+
+   --db-device string    The device used for the DB
+   --db-encrypt          Encrypt the DB device prior to use
+   --db-wipe             Wipe the DB device prior to use
+   --encrypt             Encrypt the disk prior to use
+   --wal-device string   The device used for WAL
+   --wal-encrypt         Encrypt the WAL device prior to use
+   --wal-wipe            Wipe the WAL device prior to use
+   --wipe                Wipe the disk prior to use
+
+
+.. note::
+
+   Only the data device is mandatory. The WAL and DB devices can improve
+   performance by delegating the management of some subsystems to additional
+   block devices. The WAL block device stores the internal journal whereas
+   the DB one stores metadata. Using either of those should be advantageous
+   as long as they are faster than the data device. WAL should take priority
+   over DB if there isn't enough storage for both.
+
+``list``
+--------
+
+List servers in the cluster
+
+Usage:
+
+.. code-block:: none
+
+   microceph disk list [flags]
+
+
 ``remove``
 ----------
 
 Removes a single disk from the cluster.
 
-.. note::
-
-   The ``remove`` command is currently only supported in channel
-   ``latest/edge`` of the :command:`microceph` snap.
-
-Syntax:
+Usage:
 
 .. code-block:: none
 
-   microceph disk remove <osd-id> [options]
+   microceph disk remove <osd-id> [flags]
 
-Options:
+Flags:
 
 .. code-block:: none
 

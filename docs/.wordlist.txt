@@ -4,6 +4,7 @@ APIs
 balancer
 Charmhub
 CLI
+DB
 dropdown
 Diátaxis
 EBS
@@ -18,6 +19,8 @@ Juju
 Kubernetes
 Kubeflow
 Makefile
+MicroCeph
+microceph
 MyST
 namespace
 namespaces
@@ -33,6 +36,7 @@ subdirectories
 subtree
 subfolders
 UI
+WAL
 Jira
 VM
 YAML
