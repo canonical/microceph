@@ -285,6 +285,8 @@ jobs:
         fi
         lxc exec node-head -- sh -c "microceph.ceph -s" | fgrep "mon: 3 daemons"
 
+    - name: Test client configurations
+      run: ~/actionutils.sh check_client_configs
 
   upgrade-quincy-tests:
     name: Test quincy upgrades

@@ -103,7 +103,7 @@ func Bootstrap(s common.StateInterface) error {
 	}
 
 	// Re-generate the configuration from the database.
-	err = updateConfig(s)
+	err = UpdateConfig(s)
 	if err != nil {
 		return fmt.Errorf("Failed to re-generate the configuration: %w", err)
 	}

@@ -25,7 +25,7 @@ func Join(s common.StateInterface) error {
 	}
 
 	// Generate the configuration from the database.
-	err := updateConfig(s)
+	err := UpdateConfig(s)
 	if err != nil {
 		return fmt.Errorf("Failed to generate the configuration: %w", err)
 	}

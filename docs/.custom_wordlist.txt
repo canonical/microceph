@@ -1,5 +1,6 @@
 openstack
 ceph
+sudo
 Howto
 configs
 osd
@@ -9,6 +10,7 @@ cfg
 CFG
 
 MicroCeph
+microceph
 OSDs
 MSD
 Ceph
@@ -45,8 +47,15 @@ Pre
 mds
 mon
 rgw
+rbd
+RBD
 MgrReports
 scalable
 Mattermost
 integratable
 cfg
+conf
+qemu
+writethrough
+writeback
+

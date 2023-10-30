@@ -51,6 +51,13 @@ auth allow insecure global id reclaim = false
 public addr = {{.addr}}
 ms bind ipv4 = {{.ipv4}}
 ms bind ipv6 = {{.ipv6}}
+
+[client]
+{{if .isCache}}rbd_cache = {{.isCache}}{{end}}
+{{if .cacheSize}}rbd_cache_size = {{.cacheSize}}{{end}}
+{{if .isCacheWritethrough}}rbd_cache_writethrough_until_flush = {{.isCacheWritethrough}}{{end}}
+{{if .cacheMaxDirty}}rbd_cache_max_dirty = {{.cacheMaxDirty}}{{end}}
+{{if .cacheTargetDirty}}rbd_cache_target_dirty = {{.cacheTargetDirty}}{{end}}
 `)),
 		configFile: "ceph.conf",
 		configDir:  configDir,

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
@@ -48,8 +49,8 @@ func GetConstConfigTable() ConfigTable {
 	}
 }
 
-func GetConfigTableServiceSet() Set {
-	return Set{
+func GetConfigTableServiceSet() common.Set {
+	return common.Set{
 		"mon": struct{}{},
 		"mgr": struct{}{},
 		"osd": struct{}{},
@@ -162,7 +163,7 @@ func ListConfigs() (types.Configs, error) {
 }
 
 // updates the ceph config file.
-func updateConfig(s common.StateInterface) error {
+func UpdateConfig(s common.StateInterface) error {
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
 	runPath := filepath.Join(os.Getenv("SNAP_DATA"), "run")
 
@@ -207,19 +208,30 @@ func updateConfig(s common.StateInterface) error {
 
 	conf := newCephConfig(confPath)
 	address := s.ClusterState().Address().Hostname()
+	clientConfig, err := GetClientConfigForHost(s, s.ClusterState().Name())
+	if err != nil {
+		logger.Errorf("Failed to pull Client Configurations: %v", err)
+		return err
+	}
+
 	err = conf.WriteConfig(
 		map[string]any{
-			"fsid":     config["fsid"],
-			"runDir":   runPath,
-			"monitors": strings.Join(monitorAddresses, ","),
-			"addr":     address,
-			"ipv4":     strings.Contains(address, "."),
-			"ipv6":     strings.Contains(address, ":"),
+			"fsid":                config["fsid"],
+			"runDir":              runPath,
+			"monitors":            strings.Join(monitorAddresses, ","),
+			"addr":                address,
+			"ipv4":                strings.Contains(address, "."),
+			"ipv6":                strings.Contains(address, ":"),
+			"isCache":             clientConfig.IsCache,
+			"cacheSize":           clientConfig.CacheSize,
+			"isCacheWritethrough": clientConfig.IsCacheWritethrough,
+			"cacheMaxDirty":       clientConfig.CacheMaxDirty,
+			"cacheTargetDirty":    clientConfig.CacheTargetDirty,
 		},
 		0644,
 	)
 	if err != nil {
-		return fmt.Errorf("Couldn't render ceph.conf: %w", err)
+		return fmt.Errorf("couldn't render ceph.conf: %w", err)
 	}
 
 	// Generate ceph.client.admin.keyring
@@ -232,7 +244,7 @@ func updateConfig(s common.StateInterface) error {
 		0640,
 	)
 	if err != nil {
-		return fmt.Errorf("Couldn't render ceph.client.admin.keyring: %w", err)
+		return fmt.Errorf("couldn't render ceph.client.admin.keyring: %w", err)
 	}
 
 	return nil

@@ -18,4 +18,7 @@ var Endpoints = []rest.Endpoint{
 	mgrServiceCmd,
 	monServiceCmd,
 	rgwServiceCmd,
+	clientCmd,
+	clientConfigsCmd,
+	clientConfigsKeyCmd,
 }
