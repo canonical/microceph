@@ -12,8 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -30,56 +28,6 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
 )
-
-func nextOSD(s *state.State) (int64, error) {
-	// Get the used OSD ids from Ceph.
-	osds, err := cephRun("osd", "ls")
-	if err != nil {
-		return -1, err
-	}
-
-	cephIds := []int64{}
-	for _, line := range strings.Split(osds, "\n") {
-		if line == "" {
-			continue
-		}
-
-		id, err := strconv.ParseInt(line, 10, 64)
-		if err != nil {
-			continue
-		}
-
-		cephIds = append(cephIds, id)
-	}
-
-	// Get the used OSD ids from the database.
-	dbIds := []int64{}
-	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		disks, err := database.GetDisks(ctx, tx)
-		if err != nil {
-			return fmt.Errorf("Failed to fetch disks: %w", err)
-		}
-
-		for _, disk := range disks {
-			dbIds = append(dbIds, int64(disk.OSD))
-		}
-
-		return nil
-	})
-	if err != nil {
-		return -1, err
-	}
-
-	// Find next available.
-	nextID := int64(0)
-	for {
-		if !shared.Int64InSlice(nextID, cephIds) && !shared.Int64InSlice(nextID, dbIds) {
-			return nextID, nil
-		}
-
-		nextID++
-	}
-}
 
 func prepareDisk(disk *types.DiskParameter, suffix string, osdPath string, osdID int64) error {
 	if disk.Wipe {
@@ -362,20 +310,13 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 		return fmt.Errorf("Failed to set stable disk path: %w", err)
 	}
 
-	// Get a OSD number.
-	nr, err := nextOSD(s)
-	if err != nil {
-		return fmt.Errorf("Failed to find next OSD number: %w", err)
-	}
-	logger.Debugf("nextOSD number is %d for disk %s", nr, data.Path)
-
 	// Record the disk.
+	var nr int64
 	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := database.CreateDisk(ctx, tx, database.Disk{Member: s.Name(), Path: data.Path, OSD: int(nr)})
+		nr, err = database.CreateDisk(ctx, tx, database.Disk{Member: s.Name(), Path: data.Path})
 		if err != nil {
 			return fmt.Errorf("Failed to record disk: %w", err)
 		}
-
 		return nil
 	})
 	if err != nil {
@@ -384,9 +325,6 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 
 	logger.Debugf("Created disk record for osd.%d", nr)
 
-	// Keep the old path in case it changes after encrypting.
-	oldPath := data.Path
-
 	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
 	osdDataPath := filepath.Join(dataPath, "osd", fmt.Sprintf("ceph-%d", nr))
 
@@ -394,7 +332,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	revert.Add(func() {
 		os.RemoveAll(osdDataPath)
 		s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-			database.DeleteDisk(ctx, tx, s.Name(), oldPath)
+			database.DeleteDisk(ctx, tx, s.Name(), data.Path)
 			return nil
 		})
 	})
@@ -514,7 +452,7 @@ func sanityCheck(s common.StateInterface, osd int64) error {
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("ods.%d not found", osd)
+		return fmt.Errorf("osd.%d not found", osd)
 	}
 	return nil
 }

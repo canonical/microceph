@@ -13,6 +13,7 @@ import (
 var SchemaExtensions = map[int]schema.Update{
 	1: schemaUpdate1,
 	2: schemaUpdate2,
+	3: schemaUpdate3,
 }
 
 func schemaUpdate1(ctx context.Context, tx *sql.Tx) error {
@@ -62,6 +63,26 @@ CREATE TABLE client_config (
 CREATE UNIQUE INDEX cc_index ON client_config(coalesce(member_id, 0), key);
   `
 
+	_, err := tx.Exec(stmt)
+
+	return err
+}
+
+// schemaUpdate3 generates the diskpaths table, copying the data from the disks table.
+func schemaUpdate3(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE disks2 (
+  id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
+  member_id                     INTEGER  NOT  NULL,
+  path                          TEXT     NOT  NULL,
+  FOREIGN KEY (member_id) REFERENCES "internal_cluster_members" (id) ON DELETE CASCADE,
+  UNIQUE(member_id, path)
+);
+INSERT INTO disks2 (id, member_id, path)
+SELECT osd, member_id, path FROM disks;
+DROP TABLE disks;
+ALTER TABLE disks2 RENAME TO disks;
+  `
 	_, err := tx.Exec(stmt)
 
 	return err

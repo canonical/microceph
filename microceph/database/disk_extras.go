@@ -32,7 +32,7 @@ var _ = api.ServerEnvironment{}
 
 var membersDiskCnt = cluster.RegisterStmt(`
 SELECT internal_cluster_members.name AS member, count(disks.id) AS num_disks 
-  FROM disks 
+  FROM disks
   JOIN internal_cluster_members ON disks.member_id = internal_cluster_members.id 
   GROUP BY internal_cluster_members.id 
 `)
@@ -41,7 +41,7 @@ var membersDiskCntExclude = cluster.RegisterStmt(`
 SELECT internal_cluster_members.name AS member, count(disks.id) AS num_disks
 FROM disks
 JOIN internal_cluster_members ON disks.member_id = internal_cluster_members.id
-WHERE disks.OSD != ?
+WHERE disks.id != ?
 GROUP BY internal_cluster_members.id
 `)
 
@@ -135,38 +135,38 @@ type OSDQueryInterface interface {
 
 type OSDQueryImpl struct{}
 
-var osdCount = cluster.RegisterStmt(`
-SELECT count(disks.id) AS num_disks
+var haveOsd = cluster.RegisterStmt(`
+SELECT count(*)
 FROM disks
-WHERE disks.OSD = ?
+WHERE disks.id = ?
 `)
 
 var osdPath = cluster.RegisterStmt(`
 SELECT disks.path
 FROM disks
-WHERE disks.OSD = ?
+WHERE disks.id = ?
 `)
 
 // HaveOSD returns either false or true depending on whether the given OSD is present in the cluster
 func (o OSDQueryImpl) HaveOSD(s *state.State, osd int64) (bool, error) {
-	var numDisks int
+	var present int
 
 	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		sqlStmt, err := cluster.Stmt(tx, osdCount)
+		sqlStmt, err := cluster.Stmt(tx, haveOsd)
 		if err != nil {
-			return fmt.Errorf("Failed to get \"osdCount\" prepared statement: %w", err)
+			return fmt.Errorf("Failed to get \"haveOsd\" prepared statement: %w", err)
 		}
 
-		err = sqlStmt.QueryRow(osd).Scan(&numDisks)
+		err = sqlStmt.QueryRow(osd).Scan(&present)
 		if err != nil {
-			return fmt.Errorf("Failed to get \"osdCount\" objects: %w", err)
+			return fmt.Errorf("Failed to get \"haveOsd\" objects: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
 		return false, err
 	}
-	return numDisks > 0, nil
+	return present > 0, nil
 }
 
 // Path returns the path of the given OSD
@@ -206,7 +206,6 @@ func (o OSDQueryImpl) Delete(s *state.State, osd int64) error {
 // List OSD records
 func (o OSDQueryImpl) List(s *state.State) (types.Disks, error) {
 	disks := types.Disks{}
-
 	// Get the OSDs from the database.
 	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
 		records, err := GetDisks(ctx, tx)
@@ -216,8 +215,8 @@ func (o OSDQueryImpl) List(s *state.State) (types.Disks, error) {
 
 		for _, disk := range records {
 			disks = append(disks, types.Disk{
+				OSD:      int64(disk.ID),
 				Location: disk.Member,
-				OSD:      int64(disk.OSD),
 				Path:     disk.Path,
 			})
 		}
@@ -227,7 +226,6 @@ func (o OSDQueryImpl) List(s *state.State) (types.Disks, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return disks, nil
 }
 
