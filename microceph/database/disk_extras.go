@@ -31,17 +31,17 @@ type MemberDisk struct {
 var _ = api.ServerEnvironment{}
 
 var membersDiskCnt = cluster.RegisterStmt(`
-SELECT internal_cluster_members.name AS member, count(diskpaths.id) AS num_disks 
-  FROM diskpaths
-  JOIN internal_cluster_members ON diskpaths.member_id = internal_cluster_members.id 
+SELECT internal_cluster_members.name AS member, count(disks.id) AS num_disks 
+  FROM disks
+  JOIN internal_cluster_members ON disks.member_id = internal_cluster_members.id 
   GROUP BY internal_cluster_members.id 
 `)
 
 var membersDiskCntExclude = cluster.RegisterStmt(`
-SELECT internal_cluster_members.name AS member, count(diskpaths.id) AS num_disks
-FROM diskpaths
-JOIN internal_cluster_members ON diskpaths.member_id = internal_cluster_members.id
-WHERE diskpaths.id != ?
+SELECT internal_cluster_members.name AS member, count(disks.id) AS num_disks
+FROM disks
+JOIN internal_cluster_members ON disks.member_id = internal_cluster_members.id
+WHERE disks.id != ?
 GROUP BY internal_cluster_members.id
 `)
 
@@ -137,14 +137,14 @@ type OSDQueryImpl struct{}
 
 var haveOsd = cluster.RegisterStmt(`
 SELECT count(*)
-FROM diskpaths
-WHERE diskpaths.id = ?
+FROM disks
+WHERE disks.id = ?
 `)
 
 var osdPath = cluster.RegisterStmt(`
-SELECT diskpaths.path
-FROM diskpaths
-WHERE diskpaths.id = ?
+SELECT disks.path
+FROM disks
+WHERE disks.id = ?
 `)
 
 // HaveOSD returns either false or true depending on whether the given OSD is present in the cluster
@@ -198,7 +198,7 @@ func (o OSDQueryImpl) Delete(s *state.State, osd int64) error {
 		return err
 	}
 	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		return DeleteDiskPath(ctx, tx, s.Name(), path)
+		return DeleteDisk(ctx, tx, s.Name(), path)
 	})
 	return err
 }
@@ -208,7 +208,7 @@ func (o OSDQueryImpl) List(s *state.State) (types.Disks, error) {
 	disks := types.Disks{}
 	// Get the OSDs from the database.
 	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		records, err := GetDiskPaths(ctx, tx)
+		records, err := GetDisks(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("Failed to fetch disks: %w", err)
 		}

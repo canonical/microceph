@@ -313,7 +313,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	// Record the disk.
 	var nr int64
 	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-		nr, err = database.CreateDiskPath(ctx, tx, database.DiskPath{Member: s.Name(), Path: data.Path})
+		nr, err = database.CreateDisk(ctx, tx, database.Disk{Member: s.Name(), Path: data.Path})
 		if err != nil {
 			return fmt.Errorf("Failed to record disk: %w", err)
 		}
@@ -332,7 +332,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	revert.Add(func() {
 		os.RemoveAll(osdDataPath)
 		s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-			database.DeleteDiskPath(ctx, tx, s.Name(), data.Path)
+			database.DeleteDisk(ctx, tx, s.Name(), data.Path)
 			return nil
 		})
 	})
