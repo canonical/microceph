@@ -58,6 +58,12 @@ Usage:
 
    microceph cluster bootstrap [flags]
 
+Flags:
+
+.. code-block:: none
+
+   --mon-ip string   Public address for bootstrapping ceph mon service.
+
 ``config``
 ----------
 

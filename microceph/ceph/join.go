@@ -103,12 +103,46 @@ func Join(s common.StateInterface) error {
 	}
 
 	// Update the database.
-	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+	err = updateDatabasePostJoin(s, services)
+	if err != nil {
+		return fmt.Errorf("failed to update DB post join: %w", err)
+	}
+
+	// Start OSD service.
+	err = snapStart("osd", true)
+	if err != nil {
+		return fmt.Errorf("failed to start OSD service: %w", err)
+	}
+
+	return nil
+}
+
+func updateDatabasePostJoin(s common.StateInterface, services []string) error {
+	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the roles.
 		for _, service := range services {
 			_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: service})
 			if err != nil {
-				return fmt.Errorf("Failed to record role: %w", err)
+				return fmt.Errorf("failed to record role: %w", err)
+			}
+
+			if service == "mon" {
+				// Fetch public network
+				configItem, err := database.GetConfigItem(ctx, tx, "public_network")
+				if err != nil {
+					return err
+				}
+
+				monHost, err := common.Network.FindIpOnSubnet(configItem.Value)
+				if err != nil {
+					return fmt.Errorf("failed to locate ip on subnet %s: %w", configItem.Value, err)
+				}
+
+				key := fmt.Sprintf("mon.host.%s", s.ClusterState().Name())
+				_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: key, Value: monHost})
+				if err != nil {
+					return fmt.Errorf("failed to record mon host: %w", err)
+				}
 			}
 		}
 
@@ -116,12 +150,6 @@ func Join(s common.StateInterface) error {
 	})
 	if err != nil {
 		return err
-	}
-
-	// Start OSD service.
-	err = snapStart("osd", true)
-	if err != nil {
-		return fmt.Errorf("Failed to start OSD service: %w", err)
 	}
 
 	return nil

@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microcluster/state"
 	"github.com/stretchr/testify/assert"
@@ -56,6 +58,11 @@ func addEnableMsgr2Expectations(r *mocks.Runner) {
 	r.On("RunCommand", cmdAny("snapctl", 3)...).Return("ok", nil).Once()
 }
 
+// Expect: mock
+func addNetworkExpectations(nw *mocks.NetworkIntf, s common.StateInterface) {
+	nw.On("FindNetworkAddress", "1.1.1.1").Return("1.1.1.1/24", nil)
+}
+
 func (s *bootstrapSuite) SetupTest() {
 
 	s.baseSuite.SetupTest()
@@ -78,16 +85,20 @@ func (s *bootstrapSuite) SetupTest() {
 // Test a bootstrap run, mocking subprocess calls but without a live database
 func (s *bootstrapSuite) TestBootstrap() {
 	r := mocks.NewRunner(s.T())
+	nw := mocks.NewNetworkIntf(s.T())
+
 	addCreateKeyringExpectations(r)
 	addCreateMonMapExpectations(r)
 	addInitMonExpectations(r)
 	addInitMgrExpectations(r)
 	addInitMdsExpectations(r)
 	addEnableMsgr2Expectations(r)
+	addNetworkExpectations(nw, s.TestStateInterface)
 
 	processExec = r
+	common.Network = nw
 
-	err := Bootstrap(s.TestStateInterface)
+	err := Bootstrap(s.TestStateInterface, types.Bootstrap{MonIp: "1.1.1.1", PubNet: "1.1.1.1/24"})
 
 	// we expect a missing database error
 	assert.EqualError(s.T(), err, "no database")

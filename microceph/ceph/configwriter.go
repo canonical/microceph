@@ -49,6 +49,7 @@ fsid = {{.fsid}}
 mon host = {{.monitors}}
 auth allow insecure global id reclaim = false
 public addr = {{.addr}}
+public_network = {{.pubnet}}
 ms bind ipv4 = {{.ipv4}}
 ms bind ipv6 = {{.ipv6}}
 

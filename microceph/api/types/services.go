@@ -26,3 +26,9 @@ type RGWService struct {
 	Port    int  `json:"port" yaml:"port"`
 	Enabled bool `json:"enabled" yaml:"enabled"`
 }
+
+// Bootstrap holds the parameters required for bootstrapping the ceph cluster.
+type Bootstrap struct {
+	MonIp  string `json:"monip" yaml:"monip"`
+	PubNet string `json:"pubnet" yaml:"pubnet"`
+}

@@ -9,6 +9,7 @@ import (
 const ClientConfigGlobalHostConst = "*"
 
 const CliForcePrompt = "If you are *ABSOLUTELY CERTAIN* that is what you want, pass --yes-i-really-mean-it."
+const BootstrapPortConst = 7443
 
 type PathConst struct {
 	ConfPath string
