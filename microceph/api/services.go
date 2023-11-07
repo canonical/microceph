@@ -22,7 +22,6 @@ var servicesCmd = rest.Endpoint{
 	Path: "services",
 
 	Get: rest.EndpointAction{Handler: cmdServicesGet, ProxyTarget: true},
-	Put: rest.EndpointAction{Handler: cmdServicesPut, ProxyTarget: false},
 }
 
 func cmdServicesGet(s *state.State, r *http.Request) response.Response {
@@ -32,24 +31,6 @@ func cmdServicesGet(s *state.State, r *http.Request) response.Response {
 	}
 
 	return response.SyncResponse(true, services)
-}
-
-// cmdServicesPut bootstraps the internal ceph cluster.
-func cmdServicesPut(s *state.State, r *http.Request) response.Response {
-	var data types.Bootstrap
-
-	err := json.NewDecoder(r.Body).Decode(&data)
-	if err != nil {
-		logger.Errorf("Failed decoding ceph bootstrap request: %v", err)
-		return response.InternalError(err)
-	}
-
-	err = ceph.Bootstrap(common.CephState{State: s}, data)
-	if err != nil {
-		return response.SyncResponse(false, err)
-	}
-
-	return response.EmptySyncResponse
 }
 
 // Service endpoints.

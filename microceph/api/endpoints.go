@@ -21,4 +21,7 @@ var Endpoints = []rest.Endpoint{
 	clientCmd,
 	clientConfigsCmd,
 	clientConfigsKeyCmd,
+	// Operation Endpoints
+	opsCmd,
+	opsBootstrapCmd,
 }

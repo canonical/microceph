@@ -6,7 +6,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/Rican7/retry"
+	"github.com/Rican7/retry/backoff"
+	"github.com/Rican7/retry/strategy"
 	"github.com/canonical/lxd/lxd/util"
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microceph/microceph/common"
@@ -52,21 +56,32 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 	address := util.NetworkInterfaceAddress()
 	address = util.CanonicalNetworkAddress(address, common.BootstrapPortConst)
 
-	return m.NewCluster(hostname, address, time.Minute*5)
-	// Get parameter data for Ceph bootstrap.
-	var e error
-	var data types.Bootstrap
-	if len(c.flagMonIp) > 0 {
-		data, e = getCephBootstrapData(c.flagMonIp)
-	} else {
-		data, e = getCephBootstrapData(util.NetworkInterfaceAddress())
-	}
-	if e != nil {
-		return fmt.Errorf("failed to parse bootstrap data: %w", e)
+	// if no mon-ip is provided use the default one available.
+	if len(c.flagMonIp) == 0 {
+		c.flagMonIp = util.NetworkInterfaceAddress()
 	}
 
-	// Bootstrap microceph daemon.
+	// Get parameter data for Ceph bootstrap.
+	data, err := getCephBootstrapData(c.flagMonIp)
+	if err != nil {
+		return fmt.Errorf("bootstrap failed, unable to parse data %v: %w", c, err)
+	}
+
+	// Bootstrap microcluster.
 	err = m.NewCluster(hostname, address, time.Second*30)
+	if err != nil {
+		return err
+	}
+
+	// Poll microcluster status.
+	err = retry.Retry(func(i uint) error {
+		_, err = m.Status()
+		if err != nil {
+			logger.Debugf("microceph status poll attempt #%d", i)
+			return err
+		}
+		return nil
+	}, strategy.Delay(1*time.Second), strategy.Limit(10), strategy.Backoff(backoff.Linear(500*time.Millisecond)))
 	if err != nil {
 		return err
 	}
@@ -84,11 +99,11 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func getCephBootstrapData(monip string) (types.Bootstrap, error) {
-	cephPublicNetwork, err := common.Network.FindNetworkAddress(monip)
+func getCephBootstrapData(monIp string) (types.Bootstrap, error) {
+	cephPublicNetwork, err := common.Network.FindNetworkAddress(monIp)
 	if err != nil {
-		return types.Bootstrap{}, fmt.Errorf("failed to locate %s on host: %w", monip, err)
+		return types.Bootstrap{}, fmt.Errorf("failed to locate %s on host: %w", monIp, err)
 	}
 
-	return types.Bootstrap{MonIp: monip, PubNet: cephPublicNetwork}, nil
+	return types.Bootstrap{MonIp: monIp, PubNet: cephPublicNetwork}, nil
 }

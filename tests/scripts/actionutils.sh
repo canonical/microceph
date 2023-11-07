@@ -74,6 +74,7 @@ function enable_rgw() {
 }
 
 function create_containers() {
+    set -x
     # Create public network for internal ceph cluster
     lxc network create public
     nw=$(lxc network list --format=csv | grep "public" | cut -d, -f4)
@@ -95,7 +96,8 @@ function create_containers() {
         lxc start $container
 
         # allocate ip address on the attached network
-        lxc exec $container -- sh -c "ip a add ${gw}${i}/${mask} dev"
+        dev_name=$(lxc exec $container -- sh -c "ip a | grep ': eth' | tail -n 1 | cut -d@ -f1 | cut -d ' ' -f2")
+        lxc exec $container -- sh -c "ip a add ${gw}${i}/${mask} dev ${dev_name}"
 
         # Create loopback devices on the host but access through container
         loop_file="$(sudo mktemp -p /mnt mctest-${i}-XXXX.img)"
@@ -209,8 +211,8 @@ function cluster_nodes() {
         lxc exec node-wrk${i} -- sh -c "microceph cluster join $tok"
 
         # verify ceph.conf
-        res1=$(lxc exec node-wrk${id} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'mon host = $mon_ips'")
-        res2=$(lxc exec node-wrk${id} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'public_network = ${bootstrap_ip}/${mask}'")
+        res1=$(lxc exec "node-wrk${i}" -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'mon host = $mon_ips'")
+        res2=$(lxc exec "node-wrk${i}" -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'public_network = ${bootstrap_ip}/${mask}'")
         if (($res1 -ne "0")) || (($res2 -ne "0")) ; then
             # Incorrect configs present.
             exit 1
@@ -322,10 +324,10 @@ function test_migration() {
     local src="${1?missing}"
     local dst="${2?missing}"
 
-    lxc exec node-head -- sh -c "microceph cluster migrate $src $dst"
+    lxc exec node-wrk0 -- sh -c "microceph cluster migrate $src $dst"
     for i in $(seq 1 8); do
-        if lxc exec node-head -- sh -c "microceph status | grep -F -A 1 $src | grep -E \"^  Services: osd$\"" ; then
-            if lxc exec node-head -- sh -c "microceph status | grep -F -A 1 $dst | grep -E \"^  Services: mds, mgr, mon$\"" ; then
+        if lxc exec node-wrk0 -- sh -c "microceph status | grep -F -A 1 $src | grep -E \"^  Services: osd$\"" ; then
+            if lxc exec node-wrk0 -- sh -c "microceph status | grep -F -A 1 $dst | grep -E \"^  Services: mds, mgr, mon$\"" ; then
                 echo "Services migrated"
                 break
             fi
@@ -333,11 +335,11 @@ function test_migration() {
         echo "."
         sleep 2
     done
-    lxc exec node-head -- sh -c "microceph status"
-    lxc exec node-head -- sh -c "microceph.ceph -s"
+    lxc exec node-wrk0 -- sh -c "microceph status"
+    lxc exec node-wrk0 -- sh -c "microceph.ceph -s"
 
-    if lxc exec node-head -- sh -c "microceph status | grep -F -A 1 $src | grep -E \"^  Services: osd$\"" ; then
-        if lxc exec node-head -- sh -c "microceph status | grep -F -A 1 $dst | grep -E \"^  Services: mds, mgr, mon$\"" ; then
+    if lxc exec node-wrk0 -- sh -c "microceph status | grep -F -A 1 $src | grep -E \"^  Services: osd$\"" ; then
+        if lxc exec node-wrk0 -- sh -c "microceph status | grep -F -A 1 $dst | grep -E \"^  Services: mds, mgr, mon$\"" ; then
             return
         fi
     fi

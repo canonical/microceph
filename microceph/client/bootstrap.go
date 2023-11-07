@@ -14,7 +14,7 @@ func BootstrapCephCluster(ctx context.Context, c *client.Client, data *types.Boo
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("services"), data, nil)
+	err := c.Query(queryCtx, "POST", api.NewURL().Path("ops", "bootstrap"), data, nil)
 	if err != nil {
 		return fmt.Errorf("failed to bootstrap ceph cluster with parameters %v: %w", data, err)
 	}

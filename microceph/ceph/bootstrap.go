@@ -110,10 +110,36 @@ func Bootstrap(s common.StateInterface, data apiTypes.Bootstrap) error {
 		return err
 	}
 
+	// Configure default crush rules.
+	err = setDefaultNetworks(pubNet, pubNet)
+
 	// Re-generate the configuration from the database.
 	err = UpdateConfig(s)
 	if err != nil {
 		return fmt.Errorf("failed to re-generate the configuration: %w", err)
+	}
+
+	return nil
+}
+
+// setDefaultNetworks configures the public and cluster networks on mon KV store.
+func setDefaultNetworks(pn string, cn string) error {
+	// Public Network
+	err := SetConfigItem(apiTypes.Config{
+		Key:   "public_network",
+		Value: pn,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Cluster Network
+	err = SetConfigItem(apiTypes.Config{
+		Key:   "cluster_network",
+		Value: cn,
+	})
+	if err != nil {
+		return err
 	}
 
 	return nil

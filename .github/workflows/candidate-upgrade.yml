@@ -41,7 +41,7 @@ jobs:
 
     - name: Add 3 OSDs
       run: |
-        for c in node-head node-wrk1 node-wrk2 ; do
+        for c in node-wrk0 node-wrk1 node-wrk2 ; do
           ~/actionutils.sh add_osd_to_node $c
         done
         ~/actionutils.sh headexec wait_for_osds 3

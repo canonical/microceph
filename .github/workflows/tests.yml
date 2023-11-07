@@ -228,30 +228,30 @@ jobs:
         for c in node-wrk1 node-wrk2 ; do
           ~/actionutils.sh add_osd_to_node $c
         done
-        lxc exec node-head -- sh -c "microceph.ceph -s"
+        lxc exec node-wrk0 -- sh -c "microceph.ceph -s"
 
     - name: Test failure domain scale up
       run: |
         set -uex
         # We still have failure domain OSD
-        lxc exec node-head -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 1
+        lxc exec node-wrk0 -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 1
         # Add a 3rd OSD, should switch to host failure domain
-        ~/actionutils.sh add_osd_to_node node-head
+        ~/actionutils.sh add_osd_to_node node-wrk0
         ~/actionutils.sh headexec wait_for_osds 3
         sleep 1
-        lxc exec node-head -- sh -c "sudo microceph.ceph -s"
+        lxc exec node-wrk0 -- sh -c "sudo microceph.ceph -s"
         # Now default to host rule
-        lxc exec node-head -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 2
+        lxc exec node-wrk0 -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 2
     - name: Test 3 osds present
       run: |
         set -uex
-        lxc exec node-head -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
+        lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
 
     - name: Test crush rules
       run: |
         set -uex
-        lxc exec node-head -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host
-        lxc exec node-head -- sh -c "microceph.ceph osd pool ls detail" | grep -F "crush_rule 2"
+        lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host
+        lxc exec node-wrk0 -- sh -c "microceph.ceph osd pool ls detail" | grep -F "crush_rule 2"
 
     - name: Add another OSD
       run: |
@@ -261,11 +261,16 @@ jobs:
     - name: Remove OSD again
       run: |
         set -uex
-        lxc exec node-head -- sh -c "microceph disk remove 4"
-        lxc exec node-head -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
+        lxc exec node-wrk0 -- sh -c "microceph disk remove 4"
+        lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
 
     - name: Test migrate services
-      run: ~/actionutils.sh test_migration node-wrk1 node-wrk3
+      run: |
+        set -uex
+        lxc exec node-wrk0 -- sh -c "microceph cluster migrate node-wrk1 node-wrk3"
+        sleep 2
+        lxc exec node-wrk0 -- sh -c "microceph status" | grep -F -A 1 node-wrk1 | grep -E "^  Services: osd$"
+        lxc exec node-wrk0 -- sh -c "microceph status" | grep -F -A 1 node-wrk3 | grep -E "^  Services: mds, mgr, mon$"
 
     - name: Enable services on wrk1
       run: ~/actionutils.sh headexec enable_services node-wrk1
@@ -274,11 +279,11 @@ jobs:
       run: |
         set -uex
         ~/actionutils.sh headexec remove_node node-wrk3
-        if lxc exec node-head -- sh -c "microceph status" | grep -q "^- node-wrk3 " ; then
+        if lxc exec node-wrk0 -- sh -c "microceph status" | grep -q "^- node-wrk3 " ; then
             echo "Failed: node-wrk3 still present"
             exit 1
         fi
-        lxc exec node-head -- sh -c "microceph.ceph -s" | fgrep "mon: 3 daemons"
+        lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | fgrep "mon: 3 daemons"
 
     - name: Test client configurations
       run: ~/actionutils.sh check_client_configs
@@ -325,7 +330,7 @@ jobs:
 
     - name: Add 3 OSDs
       run: |
-        for c in node-head node-wrk1 node-wrk2 ; do
+        for c in node-wrk0 node-wrk1 node-wrk2 ; do
           ~/actionutils.sh add_osd_to_node $c
         done
         ~/actionutils.sh headexec wait_for_osds 3
