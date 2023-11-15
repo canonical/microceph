@@ -5,7 +5,7 @@ Enabling metrics collection with Prometheus
 Introduction
 ------------
 
-Metrics play an important role in understanding why your MicroCeph deployment is working in certain ways. This is important if you wish serve dependable storage services. Metrics or Measurements are vital operation state samples which becomes the foundation for subsequent analysis of your cluster's behaviour.
+Metrics play an important role in understanding the operation of your MicroCeph deployment. These metrics or measurements form the basis for analysing and understanding your cluster's behaviour and are essential for providing reliable services.
 
 A popular and mature open-source tool used for scraping and recording metrics over time is Prometheus. Ceph is also designed to be easily integratable with Prometheus. This tutorial documents the procedure and related information for configuring Prometheus to scrape MicroCeph's metrics endpoint.
 
