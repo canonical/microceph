@@ -81,7 +81,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 			}
 
 			// Bootstrap the cluster.
-			err = m.NewCluster(hostName, address, time.Second*30)
+			err = m.NewCluster(hostName, address, time.Minute*2)
 			if err != nil {
 				return err
 			}
@@ -93,7 +93,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			err = m.JoinCluster(hostName, address, token, time.Second*30)
+			err = m.JoinCluster(hostName, address, token, time.Minute*2)
 			if err != nil {
 				return err
 			}
