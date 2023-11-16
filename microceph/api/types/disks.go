@@ -33,7 +33,8 @@ type Disk struct {
 }
 
 type DiskParameter struct {
-	Path    string
-	Encrypt bool
-	Wipe    bool
+	Path     string
+	Encrypt  bool
+	Wipe     bool
+	LoopSize uint64
 }

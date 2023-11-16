@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/canonical/lxd/lxd/response"
@@ -60,14 +61,26 @@ func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 	mu.Lock()
 	defer mu.Unlock()
 
-	data = types.DiskParameter{req.Path, req.Encrypt, req.Wipe}
-	if req.WALDev != nil {
-		wal = &types.DiskParameter{*req.WALDev, req.WALEncrypt, req.WALWipe}
-	}
-	if req.DBDev != nil {
-		db = &types.DiskParameter{*req.DBDev, req.DBEncrypt, req.DBWipe}
+	// check if we want OSDs backed by files
+	if strings.HasPrefix(req.Path, "loop,") {
+		logger.Debugf("cmdDisksPost: adding loopback OSDs")
+		err = ceph.AddLoopBackOSDs(s, req.Path)
+		if err != nil {
+			return response.SmartError(err)
+		}
+		return response.EmptySyncResponse
 	}
 
+	// handle physical devices
+	data = types.DiskParameter{req.Path, req.Encrypt, req.Wipe, 0}
+	if req.WALDev != nil {
+		wal = &types.DiskParameter{*req.WALDev, req.WALEncrypt, req.WALWipe, 0}
+	}
+	if req.DBDev != nil {
+		db = &types.DiskParameter{*req.DBDev, req.DBEncrypt, req.DBWipe, 0}
+	}
+
+	// add a regular block device
 	err = ceph.AddOSD(s, data, wal, db)
 	if err != nil {
 		return response.SmartError(err)

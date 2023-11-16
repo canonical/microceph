@@ -283,6 +283,55 @@ jobs:
     - name: Test client configurations
       run: ~/actionutils.sh check_client_configs
 
+  loop-file-tests:
+    name: Test with loopback file OSDs
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install and setup
+      run: ~/actionutils.sh install_microceph
+
+    - name: Add loopback file OSDs
+      run: |
+        set -uex
+        sudo microceph disk add loop,1G,4
+        ~/actionutils.sh wait_for_osds 4
+        sudo microceph.ceph -s
+
+    - name: Enable RGW
+      run: ~/actionutils.sh enable_rgw
+
+    - name: Exercise RGW
+      run: ~/actionutils.sh testrgw
+
+    - name: Remove OSD
+      run: |
+        set -uex
+        sudo microceph disk remove osd.1
+        ~/actionutils.sh wait_for_osds 3
+        sudo microceph.ceph -s
+
+
   upgrade-quincy-tests:
     name: Test quincy upgrades
     runs-on: ubuntu-22.04

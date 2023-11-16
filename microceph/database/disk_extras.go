@@ -131,6 +131,7 @@ type OSDQueryInterface interface {
 	Path(s *state.State, osd int64) (string, error)
 	Delete(s *state.State, osd int64) error
 	List(s *state.State) (types.Disks, error)
+	UpdatePath(s *state.State, osd int64, path string) error
 }
 
 type OSDQueryImpl struct{}
@@ -144,6 +145,12 @@ WHERE disks.id = ?
 var osdPath = cluster.RegisterStmt(`
 SELECT disks.path
 FROM disks
+WHERE disks.id = ?
+`)
+
+var updatePath = cluster.RegisterStmt(`
+UPDATE disks
+SET path = ?
 WHERE disks.id = ?
 `)
 
@@ -227,6 +234,26 @@ func (o OSDQueryImpl) List(s *state.State) (types.Disks, error) {
 		return nil, err
 	}
 	return disks, nil
+}
+
+// UpdatePath updates the path of the given OSD
+func (o OSDQueryImpl) UpdatePath(s *state.State, osd int64, path string) error {
+	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+		sqlStmt, err := cluster.Stmt(tx, updatePath)
+		if err != nil {
+			return fmt.Errorf("failed to get \"updatePath\" prepared statement: %w", err)
+		}
+
+		_, err = sqlStmt.Exec(path, osd)
+		if err != nil {
+			return fmt.Errorf("failed to get \"updatePath\" objects: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // Singleton for the OSDQueryImpl, to be mocked in unit testing

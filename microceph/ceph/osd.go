@@ -12,6 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -292,22 +295,164 @@ func setStablePath(storage *api.ResourcesStorage, param *types.DiskParameter) er
 	return nil
 }
 
+// parseBackingSpec parses a loopback file specification.
+// The specification is of the form "loop,<size><unit>,<number>".
+// The function returns the size in MB and the number of disks.
+func parseBackingSpec(spec string) (uint64, int, error) {
+	r := regexp.MustCompile("loop,([1-9][0-9]*[MGT]),([1-9][0-9]*)")
+
+	match := r.FindStringSubmatch(spec)
+	if match != nil {
+		// Parse the size and unit from the first matched group.
+		sizeStr := match[1][:len(match[1])-1]
+		unit := match[1][len(match[1])-1:]
+
+		size, err := strconv.ParseUint(sizeStr, 10, 64)
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to parse size from spec %s: %w", spec, err)
+		}
+
+		// Convert the size to MB.
+		switch strings.ToUpper(unit) {
+		case "G":
+			size *= 1024
+		case "T":
+			size *= 1024 * 1024
+		}
+
+		num, err := strconv.Atoi(match[2])
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to parse number disks from spec %s: %w", spec, err)
+		}
+
+		return size, num, nil
+	}
+
+	return 0, 0, fmt.Errorf("illegal spec: %s", spec)
+}
+
+// getFreeSpace returns the number of free megabytes of disk capacity
+// available at the given path.
+func getFreeSpace(path string) (uint64, error) {
+	var stat syscall.Statfs_t
+
+	// Perform a system call to get file system statistics.
+	err := syscall.Statfs(path, &stat)
+	if err != nil {
+		return 0, err
+	}
+
+	// Calculate free space in bytes and convert to megabytes.
+	// stat.Bavail gives free blocks available to a non-superuser.
+	// stat.Bsize gives the size of each block in bytes.
+	freeSpace := stat.Bavail * uint64(stat.Bsize) / 1024 / 1024
+
+	return freeSpace, nil
+}
+
+// createBackingFile creates a backing file of the given size in MB
+// and returns the file name.
+func createBackingFile(dir string, size uint64) (string, error) {
+	backing := filepath.Join(dir, "osd-backing.img")
+	_, err := processExec.RunCommand("truncate", "-s", fmt.Sprintf("%dM", size), backing)
+	if err != nil {
+		return "", fmt.Errorf("failed to create backing file %s: %w", backing, err)
+	}
+	return backing, nil
+}
+
+// AddLoopBackOSDs adds OSDs to the cluster backed by loopback files
+func AddLoopBackOSDs(s *state.State, spec string) error {
+	size, num, err := parseBackingSpec(spec)
+	if err != nil {
+		return err
+	}
+	// check available capacity for backing files under $SNAP_COMMON
+	freeSpace, err := getFreeSpace(os.Getenv("SNAP_COMMON"))
+	if err != nil {
+		return err
+	}
+	if freeSpace < size*uint64(num) {
+		return fmt.Errorf("insufficient free space for %d loopback files of size %dMB", num, size)
+	}
+	// create backing files in a loop and add them to the cluster
+	for i := 0; i < num; i++ {
+		err = AddOSD(s, types.DiskParameter{LoopSize: size}, nil, nil)
+		if err != nil {
+			return fmt.Errorf("failed to add loop OSD: %w", err)
+		}
+	}
+	return nil
+}
+
+// bootstrapOSD bootstraps an OSD.
+func bootstrapOSD(osdDataPath string, nr int64, wal, db *types.DiskParameter, storage *api.ResourcesStorage) error {
+	var err error
+
+	args := []string{"--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr)}
+	if wal != nil {
+		if err = setStablePath(storage, wal); err != nil {
+			return fmt.Errorf("Failed to set stable path for WAL: %w", err)
+		}
+
+		err = prepareDisk(wal, ".wal", osdDataPath, nr)
+		if err != nil {
+			return fmt.Errorf("Failed to set up WAL device: %w", err)
+		}
+		args = append(args, []string{"--bluestore-block-wal-path", wal.Path}...)
+	}
+	if db != nil {
+		if err = setStablePath(storage, db); err != nil {
+			return fmt.Errorf("Failed to set stable path for DB: %w", err)
+		}
+
+		err = prepareDisk(db, ".db", osdDataPath, nr)
+		if err != nil {
+			return fmt.Errorf("Failed to set up DB device: %w", err)
+		}
+		args = append(args, []string{"--bluestore-block-db-path", db.Path}...)
+	}
+
+	_, err = processExec.RunCommand("ceph-osd", args...)
+	if err != nil {
+		return fmt.Errorf("Failed to bootstrap OSD: %w", err)
+	}
+
+	// Write the stamp file.
+	err = os.WriteFile(filepath.Join(osdDataPath, "ready"), []byte(""), 0600)
+	if err != nil {
+		return fmt.Errorf("Failed to write stamp file: %w", err)
+	}
+	return nil
+}
+
 // AddOSD adds an OSD to the cluster, given the data, WAL and DB devices and their respective
 // flags for wiping and encrypting.
 func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
 	logger.Debugf("Adding OSD %s", data.Path)
 
+	var err error
+
+	// sanity: loopback file and WAL/DB are mutually exclusive
+	if data.LoopSize != 0 && (wal != nil || db != nil) {
+		return fmt.Errorf("loopback and WAL/DB are mutually exclusive")
+	}
+
 	revert := revert.New()
 	defer revert.Fail()
 
-	// Lookup a stable path for it.
-	storage, err := resources.GetStorage()
-	if err != nil {
-		return fmt.Errorf("Unable to list system disks: %w", err)
-	}
+	var storage *api.ResourcesStorage
 
-	if err := setStablePath(storage, &data); err != nil {
-		return fmt.Errorf("Failed to set stable disk path: %w", err)
+	if data.LoopSize == 0 {
+		// We have a physical device.
+		// Lookup a stable path for it.
+		storage, err = resources.GetStorage()
+		if err != nil {
+			return fmt.Errorf("Unable to list system disks: %w", err)
+		}
+		if err := setStablePath(storage, &data); err != nil {
+			return fmt.Errorf("Failed to set stable disk path: %w", err)
+		}
 	}
 
 	// Record the disk.
@@ -343,6 +488,23 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 		return fmt.Errorf("Failed to create OSD directory: %w", err)
 	}
 
+	// do we have a loopback file request?
+	if data.LoopSize != 0 {
+		backing, err := createBackingFile(osdDataPath, data.LoopSize)
+		if err != nil {
+			return err
+		}
+		data.Path = backing
+		// update db, it didn't have a path before
+		err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+			err = database.OSDQuery.UpdatePath(s, nr, backing)
+			if err != nil {
+				return fmt.Errorf("failed to update disk record: %w", err)
+			}
+			return nil
+		})
+	}
+
 	// Wipe and/or encrypt the disk if needed.
 	err = prepareDisk(&data, "", osdDataPath, nr)
 	if err != nil {
@@ -365,39 +527,9 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	}
 
 	// Bootstrap OSD.
-	args := []string{"--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr)}
-	if wal != nil {
-		if err = setStablePath(storage, wal); err != nil {
-			return fmt.Errorf("Failed to set stable path for WAL: %w", err)
-		}
-
-		err = prepareDisk(wal, ".wal", osdDataPath, nr)
-		if err != nil {
-			return fmt.Errorf("Failed to set up WAL device: %w", err)
-		}
-		args = append(args, []string{"--bluestore-block-wal-path", wal.Path}...)
-	}
-	if db != nil {
-		if err = setStablePath(storage, db); err != nil {
-			return fmt.Errorf("Failed to set stable path for DB: %w", err)
-		}
-
-		err = prepareDisk(db, ".db", osdDataPath, nr)
-		if err != nil {
-			return fmt.Errorf("Failed to set up DB device: %w", err)
-		}
-		args = append(args, []string{"--bluestore-block-db-path", db.Path}...)
-	}
-
-	_, err = processExec.RunCommand("ceph-osd", args...)
+	err = bootstrapOSD(osdDataPath, nr, wal, db, storage)
 	if err != nil {
-		return fmt.Errorf("Failed to bootstrap OSD: %w", err)
-	}
-
-	// Write the stamp file.
-	err = os.WriteFile(filepath.Join(osdDataPath, "ready"), []byte(""), 0600)
-	if err != nil {
-		return fmt.Errorf("Failed to write stamp file: %w", err)
+		return err
 	}
 
 	// Spawn the OSD.
@@ -563,10 +695,8 @@ func purgeOSD(osd int64) error {
 	return nil
 }
 
-func wipeDevice(s common.StateInterface, osd int64) {
+func wipeDevice(s common.StateInterface, path string) {
 	var err error
-	// get the device path
-	path, _ := database.OSDQuery.Path(s.ClusterState(), osd)
 	// wipe the device, retry with exponential backoff
 	retries := 8
 	var backoff time.Duration
@@ -665,8 +795,13 @@ func doRemoveOSD(ctx context.Context, s common.StateInterface, osd int64, bypass
 			return err
 		}
 	}
-	// Wipe the underlying blocking device
-	wipeDevice(s, osd)
+
+	err = clearStorage(s, osd)
+	if err != nil {
+		// log error but don't fail, we still want to remove the OSD from the cluster
+		logger.Errorf("Failed to clear storage for osd.%d: %v", osd, err)
+	}
+
 	// Remove osd config
 	err = removeOSDConfig(osd)
 	if err != nil {
@@ -678,6 +813,30 @@ func doRemoveOSD(ctx context.Context, s common.StateInterface, osd int64, bypass
 		logger.Errorf("Failed to remove osd.%d from database: %v", osd, err)
 		return fmt.Errorf("Failed to remove osd.%d from database: %w", osd, err)
 	}
+	return nil
+}
+
+func clearStorage(s common.StateInterface, osd int64) error {
+	path, err := database.OSDQuery.Path(s.ClusterState(), osd)
+	if err != nil {
+		return err
+	}
+	fileInfo, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	// Typically we'll be dealing with a symlink, but lets check for safety
+	if fileInfo.Mode()&os.ModeSymlink != 0 {
+		fileInfo, err = os.Stat(path) // Follow the symlink
+		if err != nil {
+			return err
+		}
+	}
+	if fileInfo.Mode()&os.ModeDevice != 0 {
+		// wipe the device
+		wipeDevice(s, path)
+	}
+	// backing files etc. are being removed later along with config
 	return nil
 }
 
