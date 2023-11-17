@@ -20,14 +20,14 @@ func Join(s common.StateInterface) error {
 	for path, perm := range pathFileMode {
 		err := os.MkdirAll(path, perm)
 		if err != nil {
-			return fmt.Errorf("Unable to create %q: %w", path, err)
+			return fmt.Errorf("unable to create %q: %w", path, err)
 		}
 	}
 
 	// Generate the configuration from the database.
 	err := UpdateConfig(s)
 	if err != nil {
-		return fmt.Errorf("Failed to generate the configuration: %w", err)
+		return fmt.Errorf("failed to generate the configuration: %w", err)
 	}
 
 	// Query existing core services.

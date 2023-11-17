@@ -18,8 +18,9 @@ import (
 // Config Table is the source of additional information for each supported config key
 // Refer to GetConfigTable()
 type ConfigTable map[string]struct {
-	Who     string   // Ceph Config internal <who> against each key
-	Daemons []string // List of Daemons that need to be restarted across the cluster for the config change to take effect.
+	NeedForced bool     // If the user should use flagForce to set this key.
+	Who        string   // Ceph Config internal <who> against each key
+	Daemons    []string // List of Daemons that need to be restarted across the cluster for the config change to take effect.
 }
 
 // Check if certain key is present in the map.
@@ -43,8 +44,9 @@ func (c ConfigTable) Keys() (keys []string) {
 // so that each request for the map guarantees consistent definition.
 func GetConstConfigTable() ConfigTable {
 	return ConfigTable{
-		"cluster_network":             {"global", []string{"osd"}},
-		"osd_pool_default_crush_rule": {"global", []string{}},
+		"public_network":              {true, "global", []string{"mon", "osd"}},
+		"cluster_network":             {false, "global", []string{"osd"}},
+		"osd_pool_default_crush_rule": {false, "global", []string{}},
 	}
 }
 
@@ -69,10 +71,15 @@ type ConfigDump []ConfigDumpItem
 func SetConfigItem(c types.Config) error {
 	configTable := GetConstConfigTable()
 
+	config := configTable[c.Key]
+	if config.NeedForced && !c.Force {
+		return fmt.Errorf("setting key %s is not allowed", c.Key)
+	}
+
 	args := []string{
 		"config",
 		"set",
-		configTable[c.Key].Who,
+		config.Who,
 		c.Key,
 		c.Value,
 		"-f",
@@ -116,10 +123,15 @@ func GetConfigItem(c types.Config) (types.Configs, error) {
 
 func RemoveConfigItem(c types.Config) error {
 	configTable := GetConstConfigTable()
+	config := configTable[c.Key]
+	if config.NeedForced && !c.Force {
+		return fmt.Errorf("resetting key %s is not allowed", c.Key)
+	}
+
 	args := []string{
 		"config",
 		"rm",
-		configTable[c.Key].Who,
+		config.Who,
 		c.Key,
 	}
 
@@ -208,8 +220,6 @@ func UpdateConfig(s common.StateInterface) error {
 			"fsid":                config["fsid"],
 			"runDir":              runPath,
 			"monitors":            strings.Join(monitorAddresses, ","),
-			"pubnet":              config["public_network"],
-			"addr":                address,
 			"ipv4":                strings.Contains(address, "."),
 			"ipv6":                strings.Contains(address, ":"),
 			"isCache":             clientConfig.IsCache,

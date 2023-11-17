@@ -60,7 +60,7 @@ func addEnableMsgr2Expectations(r *mocks.Runner) {
 
 // Expect: mock
 func addNetworkExpectations(nw *mocks.NetworkIntf, s common.StateInterface) {
-	nw.On("FindNetworkAddress", "1.1.1.1").Return("1.1.1.1/24", nil)
+	nw.On("FindIpOnSubnet", "1.1.1.1/24").Return("1.1.1.1", nil)
 }
 
 func (s *bootstrapSuite) SetupTest() {
@@ -98,7 +98,7 @@ func (s *bootstrapSuite) TestBootstrap() {
 	processExec = r
 	common.Network = nw
 
-	err := Bootstrap(s.TestStateInterface, types.Bootstrap{MonIp: "1.1.1.1", PubNet: "1.1.1.1/24"})
+	err := Bootstrap(s.TestStateInterface, types.Bootstrap{MonIp: "1.1.1.1", PublicNet: "1.1.1.1/24"})
 
 	// we expect a missing database error
 	assert.EqualError(s.T(), err, "no database")

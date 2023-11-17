@@ -29,6 +29,7 @@ type RGWService struct {
 
 // Bootstrap holds the parameters required for bootstrapping the ceph cluster.
 type Bootstrap struct {
-	MonIp  string `json:"monip" yaml:"monip"`
-	PubNet string `json:"pubnet" yaml:"pubnet"`
+	MonIp      string `json:"monip" yaml:"monip"`
+	PublicNet  string `json:"public-net" yaml:"public-net"`
+	ClusterNet string `json:"cluster-net" yaml:"cluster-net"`
 }

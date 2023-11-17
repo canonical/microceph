@@ -6,6 +6,7 @@ type Config struct {
 	Key   string `json:"key" yaml:"key"`
 	Value string `json:"value" yaml:"value"`
 	Wait  bool   `json:"wait" yaml:"wait"`
+	Force bool   `json:"force" yaml:"force"`
 }
 
 // Configs is a slice of configs

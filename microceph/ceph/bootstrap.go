@@ -10,6 +10,8 @@ import (
 
 	"github.com/pborman/uuid"
 
+	"github.com/canonical/lxd/lxd/util"
+	"github.com/canonical/microceph/microceph/api/types"
 	apiTypes "github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
@@ -31,7 +33,7 @@ func Bootstrap(s common.StateInterface, data apiTypes.Bootstrap) error {
 	// Generate a new FSID.
 	fsid := uuid.NewRandom().String()
 	conf := newCephConfig(pathConsts.ConfPath)
-	pubNet, err := common.Network.FindNetworkAddress(data.MonIp)
+	err := prepareCephBootstrapData(&data)
 	if err != nil {
 		return err
 	}
@@ -42,8 +44,6 @@ func Bootstrap(s common.StateInterface, data apiTypes.Bootstrap) error {
 			"runDir": pathConsts.RunPath,
 			// First monitor bootstrap IP as passed to microcluster.
 			"monitors": data.MonIp,
-			"addr":     data.MonIp,
-			"pubnet":   pubNet,
 		},
 		0644,
 	)
@@ -110,8 +110,11 @@ func Bootstrap(s common.StateInterface, data apiTypes.Bootstrap) error {
 		return err
 	}
 
-	// Configure default crush rules.
-	err = setDefaultNetworks(pubNet, pubNet)
+	// Configure defaults cluster configs for network.
+	err = setDefaultNetworks(data.PublicNet, data.ClusterNet)
+	if err != nil {
+		return err
+	}
 
 	// Re-generate the configuration from the database.
 	err = UpdateConfig(s)
@@ -128,6 +131,7 @@ func setDefaultNetworks(pn string, cn string) error {
 	err := SetConfigItem(apiTypes.Config{
 		Key:   "public_network",
 		Value: pn,
+		Force: true,
 	})
 	if err != nil {
 		return err
@@ -140,6 +144,34 @@ func setDefaultNetworks(pn string, cn string) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func prepareCephBootstrapData(data *types.Bootstrap) error {
+	var err error
+
+	// if no mon-ip is provided.
+	if len(data.MonIp) == 0 && len(data.PublicNet) == 0 {
+		data.MonIp = util.NetworkInterfaceAddress()
+	} else if len(data.PublicNet) != 0 {
+		data.MonIp, err = common.Network.FindIpOnSubnet(data.PublicNet)
+		if err != nil {
+			return fmt.Errorf("failed to locate %s on host: %w", data.MonIp, err)
+		}
+	}
+
+	if len(data.PublicNet) == 0 {
+		data.PublicNet, err = common.Network.FindNetworkAddress(data.MonIp)
+		if err != nil {
+			return fmt.Errorf("failed to locate %s on host: %w", data.MonIp, err)
+		}
+	}
+
+	if len(data.ClusterNet) == 0 {
+		// Cluster Network defaults to Public Network.
+		data.ClusterNet = data.PublicNet
 	}
 
 	return nil
@@ -267,7 +299,7 @@ func populateDatabase(s common.StateInterface, fsid string, adminKey string, dat
 			return fmt.Errorf("failed to record mon host: %w", err)
 		}
 
-		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "public_network", Value: data.PubNet})
+		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "public_network", Value: data.PublicNet})
 		if err != nil {
 			return fmt.Errorf("failed to record public_network: %w", err)
 		}

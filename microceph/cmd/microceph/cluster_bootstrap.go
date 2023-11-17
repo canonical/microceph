@@ -22,7 +22,9 @@ type cmdClusterBootstrap struct {
 	common  *CmdControl
 	cluster *cmdCluster
 
-	flagMonIp string
+	flagMonIp      string
+	flagPubNet     string
+	flagClusterNet string
 }
 
 func (c *cmdClusterBootstrap) Command() *cobra.Command {
@@ -33,6 +35,8 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&c.flagMonIp, "mon-ip", "", "Public address for bootstrapping ceph mon service.")
+	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public Network for Ceph daemons to bind to.")
+	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster Network for Ceph daemons to bind to.")
 	return cmd
 }
 
@@ -55,17 +59,6 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 	// Get system address for microcluster bootstrap.
 	address := util.NetworkInterfaceAddress()
 	address = util.CanonicalNetworkAddress(address, common.BootstrapPortConst)
-
-	// if no mon-ip is provided use the default one available.
-	if len(c.flagMonIp) == 0 {
-		c.flagMonIp = util.NetworkInterfaceAddress()
-	}
-
-	// Get parameter data for Ceph bootstrap.
-	data, err := getCephBootstrapData(c.flagMonIp)
-	if err != nil {
-		return fmt.Errorf("bootstrap failed, unable to parse data %v: %w", c, err)
-	}
 
 	// Bootstrap microcluster.
 	err = m.NewCluster(hostname, address, time.Second*30)
@@ -91,19 +84,17 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Set parameter data for Ceph bootstrap.
+	data := types.Bootstrap{
+		MonIp:      c.flagMonIp,
+		PublicNet:  c.flagPubNet,
+		ClusterNet: c.flagClusterNet,
+	}
+
 	err = client.BootstrapCephCluster(context.Background(), cli, &data)
 	if err != nil {
 		return fmt.Errorf("bootstrap command failed: %w", err)
 	}
 
 	return nil
-}
-
-func getCephBootstrapData(monIp string) (types.Bootstrap, error) {
-	cephPublicNetwork, err := common.Network.FindNetworkAddress(monIp)
-	if err != nil {
-		return types.Bootstrap{}, fmt.Errorf("failed to locate %s on host: %w", monIp, err)
-	}
-
-	return types.Bootstrap{MonIp: monIp, PubNet: cephPublicNetwork}, nil
 }

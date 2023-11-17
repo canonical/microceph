@@ -187,8 +187,7 @@ function bootstrap_head() {
 
     # Verify ceph.conf
     res1=$(lxc exec node-wrk0 -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'mon host = $mon_ip'")
-    res2=$(lxc exec node-wrk0 -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'public_network = ${mon_ip}/${mask}'")
-    if (($res1 -ne "1")) || (($res2 -ne "1")) ; then
+    if (($res1 -ne "1")) ; then
         # required configs not present.
         exit 1
     fi
@@ -212,8 +211,7 @@ function cluster_nodes() {
 
         # verify ceph.conf
         res1=$(lxc exec "node-wrk${i}" -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'mon host = $mon_ips'")
-        res2=$(lxc exec "node-wrk${i}" -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'public_network = ${bootstrap_ip}/${mask}'")
-        if (($res1 -ne "0")) || (($res2 -ne "0")) ; then
+        if (($res1 -ne "0")) ; then
             # Incorrect configs present.
             exit 1
         fi
