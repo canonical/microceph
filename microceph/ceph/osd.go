@@ -302,33 +302,32 @@ func parseBackingSpec(spec string) (uint64, int, error) {
 	r := regexp.MustCompile("loop,([1-9][0-9]*[MGT]),([1-9][0-9]*)")
 
 	match := r.FindStringSubmatch(spec)
-	if match != nil {
-		// Parse the size and unit from the first matched group.
-		sizeStr := match[1][:len(match[1])-1]
-		unit := match[1][len(match[1])-1:]
+	if match == nil {
+		return 0, 0, fmt.Errorf("illegal spec: %s", spec)
+	}
+	// Parse the size and unit from the first matched group.
+	sizeStr := match[1][:len(match[1])-1]
+	unit := match[1][len(match[1])-1:]
 
-		size, err := strconv.ParseUint(sizeStr, 10, 64)
-		if err != nil {
-			return 0, 0, fmt.Errorf("failed to parse size from spec %s: %w", spec, err)
-		}
-
-		// Convert the size to MB.
-		switch strings.ToUpper(unit) {
-		case "G":
-			size *= 1024
-		case "T":
-			size *= 1024 * 1024
-		}
-
-		num, err := strconv.Atoi(match[2])
-		if err != nil {
-			return 0, 0, fmt.Errorf("failed to parse number disks from spec %s: %w", spec, err)
-		}
-
-		return size, num, nil
+	size, err := strconv.ParseUint(sizeStr, 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to parse size from spec %s: %w", spec, err)
 	}
 
-	return 0, 0, fmt.Errorf("illegal spec: %s", spec)
+	// Convert the size to MB.
+	switch strings.ToUpper(unit) {
+	case "G":
+		size *= 1024
+	case "T":
+		size *= 1024 * 1024
+	}
+
+	num, err := strconv.Atoi(match[2])
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to parse number disks from spec %s: %w", spec, err)
+	}
+
+	return size, num, nil
 }
 
 // getFreeSpace returns the number of free megabytes of disk capacity
