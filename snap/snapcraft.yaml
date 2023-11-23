@@ -140,6 +140,7 @@ parts:
       - ceph-mon
       - ceph-osd
       - radosgw
+      - coreutils
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -159,6 +160,7 @@ parts:
       - bin/rados
       - bin/radosgw
       - bin/radosgw-admin
+      - bin/truncate
       - lib/*/ceph
       - lib/*/libaio.so*
       - lib/*/libasn1.so*

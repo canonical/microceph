@@ -26,9 +26,15 @@ type cmdDiskAdd struct {
 
 func (c *cmdDiskAdd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "add <PATH>",
+		Use:   "add <SPEC>",
 		Short: "Add a new Ceph disk (OSD)",
-		RunE:  c.Run,
+		Long: `Add a new Ceph disk (OSD) for <SPEC>.
+    SPEC is either a path to a block device such as /dev/sdb or a specification for a loop file.
+    The specification for a loop file is of the form "loop,<size>,<nr>"
+    The size is a number with M, G, or T suffixes for megabytes, gigabytes, or terabytes.
+    The nr is the number of loop OSDs to create.
+    A spec of "loop,8G,3" will create 3 loop OSDs of 8GB each.`,
+		RunE: c.Run,
 	}
 
 	cmd.PersistentFlags().BoolVar(&c.flagWipe, "wipe", false, "Wipe the disk prior to use")
