@@ -2,11 +2,12 @@
 package main
 
 import (
+	"bufio"
 	"os"
 
-	"github.com/spf13/cobra"
-
+	cli "github.com/canonical/lxd/shared/cmd"
 	"github.com/canonical/microceph/microceph/version"
+	"github.com/spf13/cobra"
 )
 
 // CmdControl has functions that are common to the microctl commands.
@@ -14,6 +15,7 @@ import (
 type CmdControl struct {
 	cmd *cobra.Command //nolint:structcheck,unused // FIXME: Remove the nolint flag when this is in use.
 
+	Asker          cli.Asker // Asker object for prompts on CLI.
 	FlagHelp       bool
 	FlagVersion    bool
 	FlagLogDebug   bool
@@ -23,7 +25,7 @@ type CmdControl struct {
 
 func main() {
 	// common flags.
-	commonCmd := CmdControl{}
+	commonCmd := CmdControl{Asker: cli.NewAsker(bufio.NewReader(os.Stdin))}
 
 	app := &cobra.Command{
 		Use:               "microceph",
