@@ -33,13 +33,27 @@ Global flags:
 ``add``
 -------
 
-Adds a disk to the cluster, alongside optional devices for write-ahead logging and database management.
+Adds a new Ceph disk (OSD) to the cluster, alongside optional devices for write-ahead logging and database management.
+
+The command takes a parameter SPEC which is either a path to a block device such as /dev/sdb or a specification for one or more loop files.
+
+The specification for loop files is of the form "loop,<size>,<nr>"
+
+- size is a number with M, G, or T suffixes for megabytes, gigabytes, or terabytes.
+- nr is the number of file-backed loop OSDs to create.
+
+For instance, a spec of `loop,8G,3` will create 3 file-backed loop OSDs of 8GB each.
+
+While loop files provide a convenient way to quickly set up small test and development clusters, for
+production deployments it is **strongly** recommended to use dedicated block devices for safety and
+performance reasons.
+
 
 Usage:
 
 .. code-block:: none
 
-   microceph disk add <PATH> [flags]
+   microceph disk add <SPEC> [flags]
 
 Flags:
 
@@ -48,7 +62,7 @@ Flags:
    --db-device string    The device used for the DB
    --db-encrypt          Encrypt the DB device prior to use
    --db-wipe             Wipe the DB device prior to use
-   --encrypt             Encrypt the disk prior to use
+   --encrypt             Encrypt the disk prior to use (only block devices)
    --wal-device string   The device used for WAL
    --wal-encrypt         Encrypt the WAL device prior to use
    --wal-wipe            Wipe the WAL device prior to use
@@ -63,6 +77,10 @@ Flags:
    the DB one stores metadata. Using either of those should be advantageous
    as long as they are faster than the data device. WAL should take priority
    over DB if there isn't enough storage for both.
+
+   WAL and DB devices can only be used with data devices that reside on a
+   block device, not with loop files. Loop files do not support encryption.
+
 
 ``list``
 --------

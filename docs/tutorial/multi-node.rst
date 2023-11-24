@@ -2,8 +2,9 @@
 Multi-node install
 ==================
 
-This tutorial will show how to install MicroCeph on three machines, thereby
-creating a multi-node cluster.
+This tutorial will show how to install MicroCeph on three machines,
+thereby creating a multi-node cluster. For this tutorial, we will
+utilise physical block devices for storage.
 
 Ensure storage requirements
 ---------------------------
