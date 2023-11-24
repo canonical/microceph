@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/lxd/util"
-	cli "github.com/canonical/lxd/shared/cmd"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
 
@@ -60,40 +59,39 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 
 		// Get system address.
 		address := util.NetworkInterfaceAddress()
-		address, err = cli.AskString(fmt.Sprintf("Please choose the address MicroCeph will be listening on [default=%s]: ", address), address, nil)
+		address, err = c.common.Asker.AskString(fmt.Sprintf("Please choose the address MicroCeph will be listening on [default=%s]: ", address), address, nil)
 		if err != nil {
 			return err
 		}
 		address = util.CanonicalNetworkAddress(address, 7443)
 
-		wantsBootstrap, err := cli.AskBool("Would you like to create a new MicroCeph cluster? (yes/no) [default=no]: ", "no")
+		wantsBootstrap, err := c.common.Asker.AskBool("Would you like to create a new MicroCeph cluster? (yes/no) [default=no]: ", "no")
 		if err != nil {
 			return err
 		}
 
 		if wantsBootstrap {
 			mode = "bootstrap"
-
 			// Offer overriding the name.
-			hostName, err = cli.AskString(fmt.Sprintf("Please choose a name for this system [default=%s]: ", hostName), hostName, nil)
+			hostName, err = c.common.Asker.AskString(fmt.Sprintf("Please choose a name for this system [default=%s]: ", hostName), hostName, nil)
 			if err != nil {
 				return err
 			}
 
 			// Bootstrap the cluster.
-			err = m.NewCluster(hostName, address, time.Minute*2)
+			err = m.NewCluster(hostName, address, nil, time.Minute*2)
 			if err != nil {
 				return err
 			}
 		} else {
 			mode = "join"
 
-			token, err := cli.AskString("Please enter your join token: ", "", nil)
+			token, err := c.common.Asker.AskString("Please enter your join token: ", "", nil)
 			if err != nil {
 				return err
 			}
 
-			err = m.JoinCluster(hostName, address, token, time.Minute*2)
+			err = m.JoinCluster(hostName, address, token, nil, time.Minute*2)
 			if err != nil {
 				return err
 			}
@@ -104,14 +102,14 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 
 	// Add additional servers.
 	if mode != "join" {
-		wantsMachines, err := cli.AskBool("Would you like to add additional servers to the cluster? (yes/no) [default=no]: ", "no")
+		wantsMachines, err := c.common.Asker.AskBool("Would you like to add additional servers to the cluster? (yes/no) [default=no]: ", "no")
 		if err != nil {
 			return err
 		}
 
 		if wantsMachines {
 			for {
-				tokenName, err := cli.AskString("What's the name of the new MicroCeph server? (empty to exit): ", "", func(input string) error { return nil })
+				tokenName, err := c.common.Asker.AskString("What's the name of the new MicroCeph server? (empty to exit): ", "", func(input string) error { return nil })
 				if err != nil {
 					return err
 				}
@@ -132,7 +130,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Add some disks.
-	wantsDisks, err := cli.AskBool("Would you like to add additional local disks to MicroCeph? (yes/no) [default=yes]: ", "yes")
+	wantsDisks, err := c.common.Asker.AskBool("Would you like to add additional local disks to MicroCeph? (yes/no) [default=yes]: ", "yes")
 	if err != nil {
 		return err
 	}
@@ -144,7 +142,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 		}
 
 		for {
-			diskPath, err := cli.AskString("What's the disk path? (empty to exit): ", "", func(input string) error { return nil })
+			diskPath, err := c.common.Asker.AskString("What's the disk path? (empty to exit): ", "", func(input string) error { return nil })
 			if err != nil {
 				return err
 			}
@@ -153,12 +151,12 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 				break
 			}
 
-			diskWipe, err := cli.AskBool("Would you like the disk to be wiped? [default=no]: ", "no")
+			diskWipe, err := c.common.Asker.AskBool("Would you like the disk to be wiped? [default=no]: ", "no")
 			if err != nil {
 				return err
 			}
 
-			diskEncrypt, err := cli.AskBool("Would you like the disk to be encrypted? [default=no]: ", "no")
+			diskEncrypt, err := c.common.Asker.AskBool("Would you like the disk to be encrypted? [default=no]: ", "no")
 			if err != nil {
 				return err
 			}

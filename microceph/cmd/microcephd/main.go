@@ -27,7 +27,7 @@ var Debug bool
 var Verbose bool
 
 type cmdGlobal struct {
-	cmd *cobra.Command //nolint:structcheck,unused // FIXME: Remove the nolint flag when this is in use.
+	// cmd *cobra.Command //nolint:structcheck,unused // FIXME: Remove the nolint flag when this is in use.
 
 	flagHelp    bool
 	flagVersion bool
@@ -51,8 +51,8 @@ type cmdDaemon struct {
 
 func (c *cmdDaemon) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "microd",
-		Short:   "Example daemon for MicroCluster - This will start a daemon with a running control socket and no database",
+		Use:     "microcephd",
+		Short:   "Daemon for MicroCeph",
 		Version: version.Version,
 	}
 
@@ -68,14 +68,16 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	h := &config.Hooks{}
-	h.OnBootstrap = func(s *state.State) error {
+	h.OnBootstrap = func(s *state.State, initConfig map[string]string) error {
 		interf := common.CephState{State: s}
 		return ceph.Bootstrap(interf)
 	}
-	h.PostJoin = func(s *state.State) error {
+
+	h.PostJoin = func(s *state.State, initConfig map[string]string) error {
 		interf := common.CephState{State: s}
 		return ceph.Join(interf)
 	}
+
 	h.OnStart = func(s *state.State) error {
 		interf := common.CephState{State: s}
 		return ceph.Start(interf)
