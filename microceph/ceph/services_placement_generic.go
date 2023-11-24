@@ -38,42 +38,7 @@ func (gsp *GenericServicePlacement) HospitalityCheck(s common.StateInterface) er
 }
 
 func (gsp *GenericServicePlacement) ServiceInit(s common.StateInterface) error {
-	var ok bool
-	var addService func(string, string) error
-	hostname := s.ClusterState().Name()
-	pathConsts := common.GetPathConst()
-	pathFileMode := common.GetPathFileMode()
-	serviceDataPath := filepath.Join(pathConsts.DataPath, gsp.Name, fmt.Sprintf("ceph-%s", hostname))
-	addServiceTable := GetAddServiceTable()
-
-	// Fetch addService handler for gsp.Name service
-	addService, ok = addServiceTable[gsp.Name]
-	if !ok {
-		err := fmt.Errorf("%s is not registered in the generic implementation", gsp.Name)
-		logger.Error(err.Error())
-		return err
-	}
-
-	// Make required directories
-	err := os.MkdirAll(serviceDataPath, pathFileMode[pathConsts.DataPath])
-	if err != nil {
-		logger.Error(err.Error())
-		return fmt.Errorf("failed to add datapath %s for service %s: %w", serviceDataPath, gsp.Name, err)
-	}
-
-	err = addService(hostname, serviceDataPath)
-	if err != nil {
-		logger.Error(err.Error())
-		return fmt.Errorf("failed to add service %s: %w", gsp.Name, err)
-	}
-
-	err = snapStart(gsp.Name, true)
-	if err != nil {
-		logger.Error(err.Error())
-		return fmt.Errorf("failed to perform snap start for service %s: %w", gsp.Name, err)
-	}
-
-	return nil
+	return genericServiceInit(s, gsp.Name)
 }
 
 func (gsp *GenericServicePlacement) PostPlacementCheck(s common.StateInterface) error {
@@ -92,6 +57,45 @@ func genericHospitalityCheck(service string) error {
 		retErr := fmt.Errorf("%s service already active on host", service)
 		logger.Error(retErr.Error())
 		return retErr
+	}
+
+	return nil
+}
+
+func genericServiceInit(s common.StateInterface, name string) error {
+	var ok bool
+	var addService func(string, string) error
+	hostname := s.ClusterState().Name()
+	pathConsts := common.GetPathConst()
+	pathFileMode := common.GetPathFileMode()
+	serviceDataPath := filepath.Join(pathConsts.DataPath, name, fmt.Sprintf("ceph-%s", hostname))
+	addServiceTable := GetAddServiceTable()
+
+	// Fetch addService handler for name service
+	addService, ok = addServiceTable[name]
+	if !ok {
+		err := fmt.Errorf("%s is not registered in the generic implementation", name)
+		logger.Error(err.Error())
+		return err
+	}
+
+	// Make required directories
+	err := os.MkdirAll(serviceDataPath, pathFileMode[pathConsts.DataPath])
+	if err != nil {
+		logger.Error(err.Error())
+		return fmt.Errorf("failed to add datapath %s for service %s: %w", serviceDataPath, name, err)
+	}
+
+	err = addService(hostname, serviceDataPath)
+	if err != nil {
+		logger.Error(err.Error())
+		return fmt.Errorf("failed to add service %s: %w", name, err)
+	}
+
+	err = snapStart(name, true)
+	if err != nil {
+		logger.Error(err.Error())
+		return fmt.Errorf("failed to perform snap start for service %s: %w", name, err)
 	}
 
 	return nil

@@ -7,15 +7,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pborman/uuid"
 
+	apiTypes "github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 )
 
 // Bootstrap will initialize a new Ceph deployment.
-func Bootstrap(s common.StateInterface) error {
+func Bootstrap(s common.StateInterface, data common.BootstrapConfig) error {
 	pathConsts := common.GetPathConst()
 	pathFileMode := common.GetPathFileMode()
 
@@ -23,19 +25,27 @@ func Bootstrap(s common.StateInterface) error {
 	for path, perm := range pathFileMode {
 		err := os.MkdirAll(path, perm)
 		if err != nil {
-			return fmt.Errorf("Unable to create %q: %w", path, err)
+			return fmt.Errorf("unable to create %q: %w", path, err)
 		}
 	}
 
 	// Generate a new FSID.
 	fsid := uuid.NewRandom().String()
 	conf := newCephConfig(pathConsts.ConfPath)
-	err := conf.WriteConfig(
+	err := prepareCephBootstrapData(s, &data)
+	if err != nil {
+		return err
+	}
+
+	err = conf.WriteConfig(
 		map[string]any{
-			"fsid":     fsid,
-			"runDir":   pathConsts.RunPath,
-			"monitors": s.ClusterState().Address().Hostname(),
-			"addr":     s.ClusterState().Address().Hostname(),
+			"fsid":   fsid,
+			"runDir": pathConsts.RunPath,
+			// First monitor bootstrap IP as passed to microcluster.
+			"monitors": data.MonIp,
+			"pubNet":   data.PublicNet,
+			"ipv4":     strings.Contains(data.PublicNet, "."),
+			"ipv6":     strings.Contains(data.PublicNet, ":"),
 		},
 		0644,
 	)
@@ -52,10 +62,10 @@ func Bootstrap(s common.StateInterface) error {
 
 	adminKey, err := parseKeyring(filepath.Join(pathConsts.ConfPath, "ceph.client.admin.keyring"))
 	if err != nil {
-		return fmt.Errorf("Failed parsing admin keyring: %w", err)
+		return fmt.Errorf("failed parsing admin keyring: %w", err)
 	}
 
-	err = createMonMap(s, path, fsid)
+	err = createMonMap(s, path, fsid, data.MonIp)
 	if err != nil {
 		return err
 	}
@@ -86,7 +96,7 @@ func Bootstrap(s common.StateInterface) error {
 	}
 
 	// Update the database.
-	err = updateDatabase(s, fsid, adminKey)
+	err = populateDatabase(s, fsid, adminKey, data)
 	if err != nil {
 		return err
 	}
@@ -102,10 +112,66 @@ func Bootstrap(s common.StateInterface) error {
 		return err
 	}
 
+	// Configure defaults cluster configs for network.
+	err = setDefaultNetworks(data.ClusterNet)
+	if err != nil {
+		return err
+	}
+
 	// Re-generate the configuration from the database.
 	err = UpdateConfig(s)
 	if err != nil {
-		return fmt.Errorf("Failed to re-generate the configuration: %w", err)
+		return fmt.Errorf("failed to re-generate the configuration: %w", err)
+	}
+
+	return nil
+}
+
+// setDefaultNetworks configures the public and cluster networks on mon KV store.
+func setDefaultNetworks(cn string) error {
+	// Cluster Network
+	err := SetConfigItem(apiTypes.Config{
+		Key:   "cluster_network",
+		Value: cn,
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func prepareCephBootstrapData(s common.StateInterface, data *common.BootstrapConfig) error {
+	var err error
+
+	// if no mon-ip is provided.
+	if len(data.MonIp) == 0 {
+		if len(data.PublicNet) == 0 {
+			// Use default value
+			data.MonIp = s.ClusterState().Address().Hostname()
+		} else {
+			data.MonIp, err = common.Network.FindIpOnSubnet(data.PublicNet)
+			if err != nil {
+				return fmt.Errorf("failed to locate %s on host: %w", data.MonIp, err)
+			}
+		}
+	}
+
+	// If public network value is provided by user
+	if len(data.PublicNet) != 0 {
+		if !common.Network.IsIpOnSubnet(data.MonIp, data.PublicNet) {
+			return fmt.Errorf("monIp %s is not available on public network %s", data.MonIp, data.PublicNet)
+		}
+	} else {
+		data.PublicNet, err = common.Network.FindNetworkAddress(data.MonIp)
+		if err != nil {
+			return fmt.Errorf("failed to locate %s on host: %w", data.MonIp, err)
+		}
+	}
+
+	if len(data.ClusterNet) == 0 {
+		// Cluster Network defaults to Public Network.
+		data.ClusterNet = data.PublicNet
 	}
 
 	return nil
@@ -137,16 +203,16 @@ func createKeyrings(confPath string) (string, error) {
 	return path, nil
 }
 
-func createMonMap(s common.StateInterface, path string, fsid string) error {
+func createMonMap(s common.StateInterface, path string, fsid string, address string) error {
 	// Generate initial monitor map.
 	err := genMonmap(filepath.Join(path, "mon.map"), fsid)
 	if err != nil {
-		return fmt.Errorf("Failed to generate monitor map: %w", err)
+		return fmt.Errorf("failed to generate monitor map: %w", err)
 	}
 
-	err = addMonmap(filepath.Join(path, "mon.map"), s.ClusterState().Name(), s.ClusterState().Address().Hostname())
+	err = addMonmap(filepath.Join(path, "mon.map"), s.ClusterState().Name(), address)
 	if err != nil {
-		return fmt.Errorf("Failed to add monitor map: %w", err)
+		return fmt.Errorf("failed to add monitor map: %w", err)
 	}
 
 	return nil
@@ -194,7 +260,8 @@ func initMgr(s common.StateInterface, dataPath string) error {
 	return nil
 }
 
-func updateDatabase(s common.StateInterface, fsid string, adminKey string) error {
+// populateDatabase injects the bootstrap entries to the internal database.
+func populateDatabase(s common.StateInterface, fsid string, adminKey string, data common.BootstrapConfig) error {
 	if s.ClusterState().Database == nil {
 		return fmt.Errorf("no database")
 	}
@@ -202,28 +269,39 @@ func updateDatabase(s common.StateInterface, fsid string, adminKey string) error
 		// Record the roles.
 		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mon"})
 		if err != nil {
-			return fmt.Errorf("Failed to record role: %w", err)
+			return fmt.Errorf("failed to record role: %w", err)
 		}
 
 		_, err = database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mgr"})
 		if err != nil {
-			return fmt.Errorf("Failed to record role: %w", err)
+			return fmt.Errorf("failed to record role: %w", err)
 		}
 
 		_, err = database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mds"})
 		if err != nil {
-			return fmt.Errorf("Failed to record role: %w", err)
+			return fmt.Errorf("failed to record role: %w", err)
 		}
 
 		// Record the configuration.
 		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "fsid", Value: fsid})
 		if err != nil {
-			return fmt.Errorf("Failed to record fsid: %w", err)
+			return fmt.Errorf("failed to record fsid: %w", err)
 		}
 
 		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "keyring.client.admin", Value: adminKey})
 		if err != nil {
-			return fmt.Errorf("Failed to record keyring: %w", err)
+			return fmt.Errorf("failed to record keyring: %w", err)
+		}
+
+		key := fmt.Sprintf("mon.host.%s", s.ClusterState().Name())
+		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: key, Value: data.MonIp})
+		if err != nil {
+			return fmt.Errorf("failed to record mon host: %w", err)
+		}
+
+		_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "public_network", Value: data.PublicNet})
+		if err != nil {
+			return fmt.Errorf("failed to record public_network: %w", err)
 		}
 
 		return nil

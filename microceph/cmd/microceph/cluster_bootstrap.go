@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/lxd/util"
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
 )
@@ -14,6 +15,10 @@ import (
 type cmdClusterBootstrap struct {
 	common  *CmdControl
 	cluster *cmdCluster
+
+	flagMonIp      string
+	flagPubNet     string
+	flagClusterNet string
 }
 
 func (c *cmdClusterBootstrap) Command() *cobra.Command {
@@ -23,6 +28,9 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
+	cmd.Flags().StringVar(&c.flagMonIp, "mon-ip", "", "Public address for bootstrapping ceph mon service.")
+	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public Network for Ceph daemons to bind to.")
+	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster Network for Ceph daemons to bind to.")
 	return cmd
 }
 
@@ -33,18 +41,46 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 
 	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
-		return fmt.Errorf("Unable to configure MicroCeph: %w", err)
+		return fmt.Errorf("unable to configure MicroCeph: %w", err)
 	}
 
 	// Get system hostname.
 	hostname, err := os.Hostname()
 	if err != nil {
-		return fmt.Errorf("Failed to retrieve system hostname: %w", err)
+		return fmt.Errorf("failed to retrieve system hostname: %w", err)
 	}
 
-	// Get system address.
+	// Get system address for microcluster bootstrap.
 	address := util.NetworkInterfaceAddress()
-	address = util.CanonicalNetworkAddress(address, 7443)
+	address = util.CanonicalNetworkAddress(address, common.BootstrapPortConst)
 
-	return m.NewCluster(hostname, address, nil, time.Minute*5)
+	// Set parameter data for Ceph bootstrap.
+	data := common.BootstrapConfig{
+		MonIp:      c.flagMonIp,
+		PublicNet:  c.flagPubNet,
+		ClusterNet: c.flagClusterNet,
+	}
+
+	err = preCheckBootstrapConfig(data)
+	if err != nil {
+		return err
+	}
+
+	// Bootstrap microcluster.
+	err = m.NewCluster(hostname, address, common.EncodeBootstrapConfig(data), time.Second*30)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func preCheckBootstrapConfig(data common.BootstrapConfig) error {
+	if len(data.MonIp) != 0 && len(data.PublicNet) != 0 {
+		if !common.Network.IsIpOnSubnet(data.MonIp, data.PublicNet) {
+			return fmt.Errorf("monIp %s is not available on public network %s", data.MonIp, data.PublicNet)
+		}
+	}
+
+	return nil
 }
