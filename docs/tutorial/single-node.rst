@@ -5,36 +5,6 @@ Single-node install
 This tutorial will show how to install MicroCeph on a single machine, thereby
 creating a single-node "cluster".
 
-Ensure storage requirements
----------------------------
-
-Three OSDs will be required to form a minimal Ceph cluster. This means that
-three entire disks are required to be available on the machine.
-
-.. note::
-
-   Development is underway to allow for loopback device support. This will
-   allow for easier proof-of-concept and developer deployments.
-
-The disk subsystem can be inspected with the :command:`lsblk` command. In this
-tutorial, the command's output is shown below. Any output related to possible
-loopback devices has been suppressed for the purpose of clarity:
-
-.. code-block:: none
-
-   lsblk | grep -v loop
-
-   NAME        MAJ:MIN RM   SIZE RO TYPE MOUNTPOINTS
-   sda           8:0    0 931.5G  0 disk
-   sdb           8:16   0 931.5G  0 disk
-   sdc           8:32   0 931.5G  0 disk
-   sdd           8:48   0 931.5G  0 disk
-   nvme0n1     259:0    0 372.6G  0 disk
-   ├─nvme0n1p1 259:1    0   512M  0 part /boot/efi
-   └─nvme0n1p2 259:2    0 372.1G  0 part /
-
-There are four disks available, here we will use disks ``/dev/sda``,
-``/dev/sdb``, and ``/dev/sdc``.
 
 Install the software
 --------------------
@@ -89,20 +59,31 @@ yet any storage available.
 Add storage
 -----------
 
-.. warning::
+Three OSDs will be required to form a minimal Ceph cluster. In a
+production system, typically we would assign a physical block device
+to an OSD. However for this tutorial, we will make use of file backed
+OSDs for simplicity.
 
-   This step will remove the data found on the target storage disks. Make sure
-   you don't lose data unintentionally.
-
-Add the three disks to the cluster by using the :command:`disk add` command:
+Add the three file-backed OSDs to the cluster by using the
+:command:`disk add` command. In the example, three 4GiB files are being
+created -- adjust the size to your needs, with a recommended minimum
+of 2GiB per OSD:
 
 .. code-block:: none
 
-   sudo microceph disk add /dev/sda --wipe
-   sudo microceph disk add /dev/sdb --wipe
-   sudo microceph disk add /dev/sdc --wipe
+   sudo microceph disk add loop,4G,3
 
-Adjust the above commands according to the storage disks at your disposal.
+.. warning::
+
+   While loop files offer a convenient way for setting up small test
+   and development clusters, it is **strongly** recommended to utilise
+   dedicated block devices in production environments for enhanced
+   safety and performance. Utilising loop files involves extra
+   overhead compared to physical block devices, leading to a
+   performance penalty. From a safety perspective, if multiple
+   file-backed OSDs are housed on the same disk, any malfunctions on
+   that disk will simultaneously affect all those OSDs, essentially
+   causing them to share a common failure domain.
 
 Recheck status:
 
