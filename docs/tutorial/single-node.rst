@@ -60,15 +60,14 @@ Add storage
 -----------
 
 Three OSDs will be required to form a minimal Ceph cluster. In a
-production system, typically we would assign one physical block device
-for an OSD. However for this tutorial, we will make use of file backed
-OSDs for simplicity. In this configuration, we won't be using real
-block devices for storage but instead simulate using regular files.
+production system, typically we would assign a physical block device
+to an OSD. However for this tutorial, we will make use of file backed
+OSDs for simplicity.
 
 Add the three file-backed OSDs to the cluster by using the
-:command:`disk add` command. In the example, three 4Gb files are being
+:command:`disk add` command. In the example, three 4GiB files are being
 created -- adjust the size to your needs, with a recommended minimum
-of 2G per OSD:
+of 2GiB per OSD:
 
 .. code-block:: none
 
@@ -76,10 +75,15 @@ of 2G per OSD:
 
 .. warning::
 
-   While loop files provide a convenient way to quickly set up small
-   test and development clusters, for production deployments it is
-   **strongly** recommended to use dedicated block devices for safety
-   and performance reasons.
+   While loop files offer a convenient way for setting up small test
+   and development clusters, it is **strongly** recommended to utilize
+   dedicated block devices in production environments for enhanced
+   safety and performance. Utilizing loop files involves extra
+   overhead compared to physical block devices, leading to a
+   performance penalty. From a safety perspective, if multiple
+   file-backed OSDs are housed on the same disk, any malfunctions on
+   that disk will simultaneously affect all those OSDs, essentially
+   causing them to share a common failure domain.
 
 Recheck status:
 
