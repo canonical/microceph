@@ -76,9 +76,9 @@ of 2GiB per OSD:
 .. warning::
 
    While loop files offer a convenient way for setting up small test
-   and development clusters, it is **strongly** recommended to utilize
+   and development clusters, it is **strongly** recommended to utilise
    dedicated block devices in production environments for enhanced
-   safety and performance. Utilizing loop files involves extra
+   safety and performance. Utilising loop files involves extra
    overhead compared to physical block devices, leading to a
    performance penalty. From a safety perspective, if multiple
    file-backed OSDs are housed on the same disk, any malfunctions on

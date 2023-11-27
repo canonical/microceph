@@ -13,6 +13,7 @@ EKS
 favicon
 Furo
 Gb
+GiB
 Grafana
 IAM
 installable
