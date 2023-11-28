@@ -11,10 +11,10 @@ clusters.
 
 .. warning::
 
-   Due to the extra overhead involved in loop file usage, for production
-   environments, it is **strongly** recommended to use dedicated block devices.
-   Basing a Ceph cluster on a single disk also necessarily creates a common
-   failure domain for all OSDs.
+   Using dedicated block devices will result in the best IOPS performance for
+   connecting clients. Basing a Ceph cluster on a single disk also necessarily
+   leads to a common failure domain for all OSDs. For these reasons, loop files
+   should not be used in production environments.
 
 Install the software
 --------------------
@@ -85,8 +85,9 @@ created:
 .. note::
 
    Although you can adjust the file size and file number to your needs, with a
-   recommended minimum of 2GiB per OSD, due to the overhead demanded by loop
-   file usage, it is suggested to increase the number of files carefully.
+   recommended minimum of 2GiB per OSD, there is no obvious benefit to running
+   more than three OSDs via loop files. Be wary that an OSD, whether based on
+   a physical device or a file, is resource intensive.
 
 Recheck status:
 
