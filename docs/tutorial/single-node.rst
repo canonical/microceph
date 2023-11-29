@@ -5,6 +5,16 @@ Single-node install
 This tutorial will show how to install MicroCeph on a single machine, thereby
 creating a single-node "cluster".
 
+The above will be achieved through the use of loop files placed on the root
+disk, which is a convenient way for setting up small test and development
+clusters.
+
+.. warning::
+
+   Using dedicated block devices will result in the best IOPS performance for
+   connecting clients. Basing a Ceph cluster on a single disk also necessarily
+   leads to a common failure domain for all OSDs. For these reasons, loop files
+   should not be used in production environments.
 
 Install the software
 --------------------
@@ -66,24 +76,18 @@ OSDs for simplicity.
 
 Add the three file-backed OSDs to the cluster by using the
 :command:`disk add` command. In the example, three 4GiB files are being
-created -- adjust the size to your needs, with a recommended minimum
-of 2GiB per OSD:
+created:
 
 .. code-block:: none
 
    sudo microceph disk add loop,4G,3
 
-.. warning::
+.. note::
 
-   While loop files offer a convenient way for setting up small test
-   and development clusters, it is **strongly** recommended to utilise
-   dedicated block devices in production environments for enhanced
-   safety and performance. Utilising loop files involves extra
-   overhead compared to physical block devices, leading to a
-   performance penalty. From a safety perspective, if multiple
-   file-backed OSDs are housed on the same disk, any malfunctions on
-   that disk will simultaneously affect all those OSDs, essentially
-   causing them to share a common failure domain.
+   Although you can adjust the file size and file number to your needs, with a
+   recommended minimum of 2GiB per OSD, there is no obvious benefit to running
+   more than three OSDs via loop files. Be wary that an OSD, whether based on
+   a physical device or a file, is resource intensive.
 
 Recheck status:
 
@@ -105,14 +109,14 @@ Manage the cluster
 ------------------
 
 Your Ceph cluster is now deployed and can be managed by following the resources
-found in the :doc:`Howto <../how-to/index>` section.
+found in the :doc:`How-to <../how-to/index>` section.
 
 The cluster can also be managed using native Ceph tooling if snap-level
 commands are not yet available for a desired task:
 
 .. code-block:: none
 
-   ceph status
+   sudo ceph status
 
 The cluster built during this tutorial gives the following output:
 
