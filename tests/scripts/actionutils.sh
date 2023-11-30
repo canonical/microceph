@@ -73,13 +73,19 @@ function enable_rgw() {
     done
 }
 
+function get_lxd_network() {
+    local nw_name="${1?missing}"
+    nw=$(lxc network list --format=csv | grep "${nw_name}" | cut -d, -f4)
+    echo "$nw"
+}
+
 function create_containers() {
     set -x
     # Create public network for internal ceph cluster
     lxc network create public
-    nw=$(lxc network list --format=csv | grep "public" | cut -d, -f4)
-    gw=$(echo $nw | cut -d/ -f1)
-    mask=$(echo $nw | cut -d/ -f2)
+    local nw=$(get_lxd_network public)
+    gw=$(echo "$nw" | cut -d/ -f1)
+    mask=$(echo "$nw" | cut -d/ -f2)
     # Create head node and 3 worker containers
     for i in 0 1 2 3 ; do
         container="node-wrk${i}" # node name
@@ -140,93 +146,118 @@ function refresh_snap() {
 }
 
 function check_client_configs() {
+    set -x
+
     # Issue cluster wide client config set.
     lxc exec node-wrk0 -- sh -c "microceph client config set rbd_cache true"
     # Issue host specific client config set for each worker node.
-    for id in 1 2 3 ; do
-        lxc exec node-wrk${id} -- sh -c "microceph client config set rbd_cache_size $((512*$id))"
+    for id in 1 2 ; do
+        lxc exec node-wrk${id} -- sh -c "microceph client config set rbd_cache_size $((512*$id)) --target node-wrk${id}"
     done
 
     # Verify client configs post set on each node.
-    for id in 1 2 3 ; do
+    for id in 1 2 ; do
         res1=$(lxc exec node-wrk${id} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache = true'")
         res2=$(lxc exec node-wrk${id} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache_size = $((512*$id))'")
-        if (($res1 -ne "1")) || (($res2 -ne "1")) ; then
-            # required configs not present.
+        if (($res1 != "1")) || (($res2 != "1")) ; then
+            echo "required configs not present"
             exit 1
         fi
     done
 
     # Reset client configs
-    lxc exec node-wrk0 -- sh -c "microceph client config reset rbd_cache"
-    lxc exec node-wrk0 -- sh -c "microceph client config reset rbd_cache_size"
+    lxc exec node-wrk0 -- sh -c "microceph client config reset rbd_cache --yes-i-really-mean-it"
+    lxc exec node-wrk0 -- sh -c "microceph client config reset rbd_cache_size --yes-i-really-mean-it"
 
     # Verify client configs post reset on each node.
-    for id in 1 2 3 ; do
+    for id in 1 2 ; do
         res1=$(lxc exec node-wrk${id} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache '")
         res2=$(lxc exec node-wrk${id} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache_size'")
-        if (($res1 -ne "0")) || (($res2 -ne "0")) ; then
-            # Incorrect configs present.
+        if (($res1 != "0")) || (($res2 != "0")) ; then
+            echo "incorrect configs present"
             exit 1
         fi
     done
+}
+
+function verify_bootstrap_configs() {
+    set -x
+
+    local node="${1?missing}"
+    local nw="${2?missing}"
+    local mon_ips="${@:3}"
+
+    # Check mon hosts entries.
+    mon_hosts=$(lxc exec "${node}" -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep 'mon host'")
+    for i in $mon_ips ; do
+        res_host=$(echo "${mon_hosts}" | grep -c "${i}")
+        if  (($res_host != "1")) ; then
+            echo $res_host
+            echo "mon host entry ${$i} not present in ceph.conf"
+            exit 1
+        fi
+    done
+
+    # Check public_network entry in ceph.conf
+    local res_pub=$(lxc exec "${node}" -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'public_network = ${nw}'")
+    if (($res_pub != "1")) ; then
+        lxc exec "${node}" -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf"
+        echo "public_network ${nw} not present in ceph.conf"
+        exit 1
+    fi
 }
 
 function bootstrap_head() {
     set -x
 
-    arg=$1
-    if [$arg = "custom"]; then
+    local arg=$1
+    if [ $arg = "custom" ]; then
         # Bootstrap microceph on the head node
-        nw=$(lxc network list --format=csv | grep "public" | cut -d, -f4)
-        gw=$(echo $nw | cut -d/ -f1)
-        mask=$(echo $nw | cut -d/ -f2)
-        mon_ip="${gw}0"
-        lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --mon-ip $mon_ip"
+        local nw=$(get_lxd_network public)
+        local gw=$(echo "$nw" | cut -d/ -f1)
+        local mask=$(echo "$nw" | cut -d/ -f2)
+        local mon_ip="${gw}0"
+        lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --public-network=$nw"
+        sleep 5
+        # Verify ceph.conf
+        verify_bootstrap_configs node-wrk0 "${nw}" "${mon_ip}"
     else
         lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap"
     fi
+
     lxc exec node-wrk0 -- sh -c "microceph status"
     sleep 4
     lxc exec node-wrk0 -- sh -c 'microceph.ceph -s | egrep "mon: 1 daemons, quorum node-wrk0"'
-
-    # Verify ceph.conf
-    res1=$(lxc exec node-wrk0 -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'mon host = $mon_ip'")
-    if (($res1 -ne "1")) ; then
-        # required configs not present.
-        exit 1
-    fi
 }
+
 
 function cluster_nodes() {
     set -x
+    local arg=$1
 
     # Add/join microceph nodes to the cluster
-    nw=$(lxc network list --format=csv | grep "public" | cut -d, -f4)
-    gw=$(echo $nw | cut -d/ -f1)
-    mask=$(echo $nw | cut -d/ -f2)
-    bootstrap_ip="${gw}0"
-    mon_ips=${bootstrap_ip}
+    local nw=$(get_lxd_network public)
+    local gw=$(echo "$nw" | cut -d/ -f1)
+    local mask=$(echo "$nw" | cut -d/ -f2)
+    local mon_ips="${gw}0"
     for i in 1 2 3 ; do
-        node_mon_ip="${gw}${i}/${mask}"
+        local node_mon_ip="${gw}${i}"
 
         # join MicroCeph cluster
         tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk${i}" )
         lxc exec node-wrk${i} -- sh -c "microceph cluster join $tok"
 
-        # verify ceph.conf
-        res1=$(lxc exec "node-wrk${i}" -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'mon host = $mon_ips'")
-        if (($res1 -ne "0")) ; then
-            # Incorrect configs present.
-            exit 1
+        if [ $arg = "custom" ]; then
+            # verify ceph.conf
+            verify_bootstrap_configs "node-wrk${i}" "${nw}" $mon_ips
         fi
 
-        # append mon_ips
-        mon_ips="$mon_ips,$node_mon_ip"
+        # append mon_ips as a space separated entry.
+        mon_ips="$mon_ips $node_mon_ip"
     done
 
     for i in $(seq 1 8); do
-        res=$( ( lxc exec node-wrk0 -- sh -c 'microceph status | grep -cE "^- node"' ) || true )
+        local res=$( ( lxc exec node-wrk0 -- sh -c 'microceph status | grep -cE "^- node"' ) || true )
         if [[ $res -gt 3 ]] ; then
             echo "Found >3 nodes"
             break

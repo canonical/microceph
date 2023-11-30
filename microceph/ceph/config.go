@@ -196,7 +196,7 @@ func UpdateConfig(s common.StateInterface) error {
 	// Check if host has IP address on the configured public network.
 	_, err = common.Network.FindIpOnSubnet(config["public_network"])
 	if err != nil {
-		return fmt.Errorf("failed to locate IP on public network: %w", err)
+		return fmt.Errorf("failed to locate IP on public network %s: %w", config["public_network"], err)
 	}
 	clientConfig, err := GetClientConfigForHost(s, s.ClusterState().Name())
 	if err != nil {

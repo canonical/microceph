@@ -221,7 +221,7 @@ jobs:
       run: ~/actionutils.sh bootstrap_head custom
 
     - name: Setup cluster
-      run: ~/actionutils.sh cluster_nodes
+      run: ~/actionutils.sh cluster_nodes custom
 
     - name: Add 2 OSDs
       run: |

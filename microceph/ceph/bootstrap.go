@@ -113,7 +113,7 @@ func Bootstrap(s common.StateInterface, data common.BootstrapConfig) error {
 	}
 
 	// Configure defaults cluster configs for network.
-	err = setDefaultNetworks(data.ClusterNet)
+	err = setDefaultNetwork(data.ClusterNet)
 	if err != nil {
 		return err
 	}
@@ -127,8 +127,8 @@ func Bootstrap(s common.StateInterface, data common.BootstrapConfig) error {
 	return nil
 }
 
-// setDefaultNetworks configures the public and cluster networks on mon KV store.
-func setDefaultNetworks(cn string) error {
+// setDefaultNetwork configures the cluster network on mon KV store.
+func setDefaultNetwork(cn string) error {
 	// Cluster Network
 	err := SetConfigItem(apiTypes.Config{
 		Key:   "cluster_network",
@@ -144,12 +144,13 @@ func setDefaultNetworks(cn string) error {
 func prepareCephBootstrapData(s common.StateInterface, data *common.BootstrapConfig) error {
 	var err error
 
-	// if no mon-ip is provided.
+	// if no mon-ip is provided, either deduce from public network or fallback to default.
 	if len(data.MonIp) == 0 {
 		if len(data.PublicNet) == 0 {
-			// Use default value
+			// Use default value if public addres is also not provided.
 			data.MonIp = s.ClusterState().Address().Hostname()
 		} else {
+			// deduce mon-ip from the public network parameter.
 			data.MonIp, err = common.Network.FindIpOnSubnet(data.PublicNet)
 			if err != nil {
 				return fmt.Errorf("failed to locate %s on host: %w", data.MonIp, err)
@@ -157,12 +158,13 @@ func prepareCephBootstrapData(s common.StateInterface, data *common.BootstrapCon
 		}
 	}
 
-	// If public network value is provided by user
 	if len(data.PublicNet) != 0 {
+		// Verify that the public network and mon-ip params are coherent.
 		if !common.Network.IsIpOnSubnet(data.MonIp, data.PublicNet) {
 			return fmt.Errorf("monIp %s is not available on public network %s", data.MonIp, data.PublicNet)
 		}
 	} else {
+		// Deduce Public network based on mon-ip param.
 		data.PublicNet, err = common.Network.FindNetworkAddress(data.MonIp)
 		if err != nil {
 			return fmt.Errorf("failed to locate %s on host: %w", data.MonIp, err)

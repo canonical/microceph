@@ -78,7 +78,7 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 func preCheckBootstrapConfig(data common.BootstrapConfig) error {
 	if len(data.MonIp) != 0 && len(data.PublicNet) != 0 {
 		if !common.Network.IsIpOnSubnet(data.MonIp, data.PublicNet) {
-			return fmt.Errorf("monIp %s is not available on public network %s", data.MonIp, data.PublicNet)
+			return fmt.Errorf("provided mon-ip %s is not available on provided public network %s", data.MonIp, data.PublicNet)
 		}
 	}
 

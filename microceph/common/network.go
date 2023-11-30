@@ -16,7 +16,8 @@ type NetworkIntf interface {
 type networkImpl struct{}
 
 // FindIpOnSubnet scans the host's network interfaces to check if an IP is available
-// for the provided subnet. It returns the found IP address or an empty string.
+// for the provided subnet. It returns the FIRST found IP address or an empty string
+// in case of errors.
 func (nwi networkImpl) FindIpOnSubnet(subnet string) (string, error) {
 	_, sn, err := net.ParseCIDR(subnet)
 	if err != nil {
