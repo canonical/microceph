@@ -9,10 +9,10 @@
 <a href="https://snapcraft.io/microceph">MicroCeph</a> is snap-deployed Ceph with built-in clustering.
 </p>
 
-[![Get it from the Snap Store](https://snapcraft.io/static/images/badges/en/snap-store-black.svg)](https://snapcraft.io/microceph)
+[![Get it from the Snap Store][snap-button]][snap-microceph]
 
+## Table of contents
 
-## Table of Contents
 * [💡 Philosophy](#-philosophy)
 * [🎯 Features](#-features)
 * [⚡️Quickstart](#-quickstart)
@@ -22,15 +22,18 @@
 
 ## 💡 Philosophy
 
-Deploying and operating a Ceph cluster is complex because Ceph is designed to be a general-purpose storage solution. This is a significant overhead for small Ceph clusters. [MicroCeph](https://snapcraft.io/microceph) solves this by being _opinionated_ and _focused_ on the small scale. With MicroCeph, deploying and operating a Ceph cluster is as easy as a [Snap!](https://snapcraft.io/microceph)
+Deploying and operating a Ceph cluster is complex because Ceph is designed to
+be a general-purpose storage solution. This is a significant overhead for small
+Ceph clusters. MicroCeph solves this by being _opinionated_ and _focused_ on
+the small scale. With MicroCeph, deploying and operating a Ceph cluster is as
+easy as a [Snap][snap-microceph]!
 
 ## 🎯 Features
 
-1. Quick and consistent deployment with minimal overhead.
-2. Single-command operations (for bootstrapping, adding OSDs, service enablement, etc).
-3. Isolated from the host and upgrade-friendly.
-4. Built-in clustering so you don't have to worry about it!
-5. Tailored for small scale (or just your Laptop).
+* Quick and consistent deployment with minimal overhead
+* Single-command operations (for bootstrapping, adding OSDs, service enablement, etc)
+* Isolated from the host and upgrade-friendly
+* Built-in clustering so you don't have to worry about it!
 
 ## ⚡️Quickstart
 
@@ -74,6 +77,8 @@ file (the actual license) for more information.
 
 <!-- LINKS -->
 
+[snap-button]: https://snapcraft.io/static/images/badges/en/snap-store-black.svg
+[snap-microceph]: https://snapcraft.io/microceph
 [rtd-microceph]: https://canonical-microceph.readthedocs-hosted.com/
 [docs-dir-microceph]: https://github.com/canonical/microceph/tree/main/docs
 [contrib-microceph]: ./CONTRIBUTING.md
