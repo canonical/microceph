@@ -15,6 +15,7 @@
 ## Table of Contents
 * [💡 Philosophy](#-philosophy)
 * [🎯 Features](#-features)
+* [󱐋 Quickstart](#-quickstart)
 * [📖 Documentation](#-documentation)
 * [💫 Project & community](#-project--community)
 * [📰 License](#-license)
@@ -31,7 +32,23 @@ Deploying and operating a Ceph cluster is complex because Ceph is designed to be
 4. Built-in clustering so you don't have to worry about it!
 5. Tailored for small scale (or just your Laptop).
 
-## ⚡️Quickstart
+## 󱐋 Quickstart
+
+The below commands will set you up with a testing environment on a single
+machine using file-backed OSDs - you'll need about 15 GiB of available space on
+your root drive:
+
+    sudo snap install microceph --channel quincy/edge
+    sudo snap refresh --hold microceph
+    sudo microceph cluster bootstrap
+    sudo microceph disk add loop,4G,3
+    sudo ceph status
+
+You're done!
+
+You can remove everything cleanly with:
+
+    sudo snap remove microceph
 
 ## 📖 Documentation
 
