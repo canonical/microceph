@@ -43,7 +43,6 @@ func (c ConfigTable) Keys() (keys []string) {
 // so that each request for the map guarantees consistent definition.
 func GetConstConfigTable() ConfigTable {
 	return ConfigTable{
-		"public_network":              {"global", []string{"mon", "osd"}},
 		"cluster_network":             {"global", []string{"osd"}},
 		"osd_pool_default_crush_rule": {"global", []string{}},
 	}
@@ -170,16 +169,9 @@ func UpdateConfig(s common.StateInterface) error {
 	// Get the configuration and servers.
 	var err error
 	var configItems []database.ConfigItem
-	var monitors []database.Service
 
 	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		configItems, err = database.GetConfigItems(ctx, tx)
-		if err != nil {
-			return err
-		}
-
-		serviceName := "mon"
-		monitors, err = database.GetServices(ctx, tx, database.ServiceFilter{Service: &serviceName})
 		if err != nil {
 			return err
 		}
@@ -195,33 +187,32 @@ func UpdateConfig(s common.StateInterface) error {
 		config[item.Key] = item.Value
 	}
 
-	monitorAddresses := make([]string, len(monitors))
-	remotes := s.ClusterState().Remotes().RemotesByName()
-	for i, monitor := range monitors {
-		remote, ok := remotes[monitor.Member]
-		if !ok {
-			continue
-		}
-
-		monitorAddresses[i] = remote.Address.Addr().String()
-	}
-
+	// REF: https://docs.ceph.com/en/quincy/rados/configuration/network-config-ref/#ceph-daemons
+	// The mon host configuration option only needs to be sufficiently up to date such that a
+	// client can reach one monitor that is currently online.
+	monitorAddresses := getMonitorAddresses(config)
 	conf := newCephConfig(confPath)
-	address := s.ClusterState().Address().Hostname()
+
+	// Check if host has IP address on the configured public network.
+	_, err = common.Network.FindIpOnSubnet(config["public_network"])
+	if err != nil {
+		return fmt.Errorf("failed to locate IP on public network %s: %w", config["public_network"], err)
+	}
 	clientConfig, err := GetClientConfigForHost(s, s.ClusterState().Name())
 	if err != nil {
 		logger.Errorf("Failed to pull Client Configurations: %v", err)
 		return err
 	}
 
+	// Populate Template
 	err = conf.WriteConfig(
 		map[string]any{
 			"fsid":                config["fsid"],
 			"runDir":              runPath,
 			"monitors":            strings.Join(monitorAddresses, ","),
-			"addr":                address,
-			"ipv4":                strings.Contains(address, "."),
-			"ipv6":                strings.Contains(address, ":"),
+			"pubNet":              config["public_network"],
+			"ipv4":                strings.Contains(config["public_network"], "."),
+			"ipv6":                strings.Contains(config["public_network"], ":"),
 			"isCache":             clientConfig.IsCache,
 			"cacheSize":           clientConfig.CacheSize,
 			"isCacheWritethrough": clientConfig.IsCacheWritethrough,
@@ -248,4 +239,15 @@ func UpdateConfig(s common.StateInterface) error {
 	}
 
 	return nil
+}
+
+// getMonitorAddresses scans a provided config key/value map and returns a list of mon hosts found.
+func getMonitorAddresses(configs map[string]string) []string {
+	monHosts := []string{}
+	for k, v := range configs {
+		if strings.Contains(k, "mon.host.") {
+			monHosts = append(monHosts, v)
+		}
+	}
+	return monHosts
 }
