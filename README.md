@@ -31,6 +31,8 @@ Deploying and operating a Ceph cluster is complex because Ceph is designed to be
 4. Built-in clustering so you don't have to worry about it!
 5. Tailored for small scale (or just your Laptop).
 
+## ⚡️Quickstart
+
 ## 📖 Documentation
 
 The documentation is found in the [`docs`][docs-dir-microceph] directory. It is
