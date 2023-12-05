@@ -9,6 +9,11 @@ description: |-
 
 confinement: strict
 
+package-repositories:
+  - type: apt
+    cloud: bobcat
+    priority: always
+
 slots:
   ceph-conf:
     interface: content
@@ -180,7 +185,7 @@ parts:
       - lib/*/libicuuc.so*
       - lib/*/liblber-2.5.so*
       - lib/*/libldap-2.5.so*
-      - lib/*/liblua5.3.so*
+      - lib/*/liblua5.4.so*
       - lib/*/libndctl.so*
       - lib/*/libnghttp2.so*
       - lib/*/libnuma.so*
