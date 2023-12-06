@@ -1,12 +1,12 @@
-name: Upgrade a q/stable cluster to r/candidate
+name: Upgrade a q/stable cluster to q/candidate
 on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch: null
 
 jobs:
   # a2b upgrade implies a/stable -> b/candidate release upgrade.
-  q2r-upgrade-test:
-    name: Test quincy/stable to reef/candidate upgrades
+  q2q-upgrade-test:
+    name: Test quincy/stable to quincy/candidate upgrades
     runs-on: ubuntu-22.04
     steps:
 
@@ -53,7 +53,7 @@ jobs:
       run: ~/actionutils.sh headexec testrgw
 
     - name: Upgrade to candidate
-      run: ~/actionutils.sh refresh_snap reef/candidate
+      run: ~/actionutils.sh refresh_snap quincy/candidate
 
     - name: Wait until 3 OSDs are up
       run:  ~/actionutils.sh headexec wait_for_osds 3
