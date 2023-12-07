@@ -1,6 +1,8 @@
-========================
-Configuring network keys
-========================
+============================
+Configuring Cluster network
+============================
+
+If you configure a cluster network, OSDs will route heartbeat, object replication and recovery traffic over the cluster network. This may improve performance compared to using a single network. 
 
 The MicroCeph cluster configuration CLI supports setting, getting, resetting and listing supported config keys mentioned below.
 
@@ -12,8 +14,6 @@ The MicroCeph cluster configuration CLI supports setting, getting, resetting and
      - Description
    * - cluster_network
      - Set this key to desired CIDR to configure cluster network
-   * - public_network
-     - Set this key to desired CIDR to configure public network
 
 1. Supported config keys can be configured using the 'set' command:
 
@@ -36,14 +36,11 @@ The MicroCeph cluster configuration CLI supports setting, getting, resetting and
 
   .. code-block:: shell
 
-    $ sudo microceph cluster config set public_network 10.5.0.0/16
     $ sudo microceph cluster config list
     +---+-----------------+-------------+
     | # |       KEY       |     VALUE   |
     +---+-----------------+-------------+
     | 0 | cluster_network | 10.5.0.0/16 |
-    +---+-----------------+-------------+
-    | 1 | public_network  | 10.5.0.0/16 |
     +---+-----------------+-------------+
 
 4. Resetting a config key (i.e. setting the key to its default value) can performed using the 'reset' command:
@@ -51,7 +48,6 @@ The MicroCeph cluster configuration CLI supports setting, getting, resetting and
   .. code-block:: shell
 
    $ sudo microceph cluster config reset cluster_network
-   $ sudo microceph cluster config reset public_network
    $ sudo microceph cluster config list
    +---+-----+-------+
    | # | KEY | VALUE |

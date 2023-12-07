@@ -343,7 +343,7 @@ function remove_node() {
     for i in $(seq 1 8); do
         if sudo microceph.ceph -s | grep -q "mon: .*daemons.*${node}" ; then
             echo -n '.'
-            sleep 2
+            sleep 5
         else
             echo "No mon on ${node}"
             break
