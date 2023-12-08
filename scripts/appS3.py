@@ -32,15 +32,16 @@ def app_handle(args):
             object_name
         )
         primary_object_one.put(Body=data)
-        # Store for
+        object_size = primary_object_one.content_length/(1024*1024)
+        # Store for cleanup.
         objects.append(
-            (object_name, primary_object_one.content_length/(1024*1024))
+            (object_name, object_size)
         )
+        # Print object IO summary:
+        print("Object #{}: {}/{} -> Size: {}MB".format(i, bucket_name, object_name, object_size))
 
     # Print Summary
-    print("IO Summary: Object Count {}".format(args.obj_num))
-    for obj, size in objects:
-        print("Object: {}/{} -> Size: {}MB".format(bucket_name, obj, size))
+    print("IO Summary: Object Count {}, Total Size {}MB".format(args.obj_num, sum(size for _, size in objects)))
 
     # Cleanup (if asked for)
     if not args.no_delete:
@@ -59,7 +60,7 @@ def rand_str(length: int):
 if __name__ == "__main__":
     argparse = argparse.ArgumentParser(
         description="An application which uses S3 for storage",
-        epilog="Ex: python3 appS3.py --keys keys.txt",
+        epilog="Ex: python3 appS3.py <S3 Endpoint> --keys keys.txt",
     )
 
     argparse.add_argument(

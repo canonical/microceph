@@ -16,7 +16,7 @@ func GetS3User(ctx context.Context, c *client.Client, user *types.S3User) (strin
 	defer cancel()
 
 	ret := ""
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("services", "rgw", "user"), user, &ret)
+	err := c.Query(queryCtx, "GET", api.NewURL().Path("client", "s3"), user, &ret)
 	if err != nil {
 		logger.Error(err.Error())
 		return ret, err
@@ -31,7 +31,7 @@ func ListS3Users(ctx context.Context, c *client.Client) ([]string, error) {
 
 	ret := []string{} // List of usernames
 	// GET request with no user name fetches all users.
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("services", "rgw", "user"), &types.S3User{Name: ""}, &ret)
+	err := c.Query(queryCtx, "GET", api.NewURL().Path("client", "s3"), &types.S3User{Name: ""}, &ret)
 	if err != nil {
 		logger.Error(err.Error())
 		return ret, err
@@ -45,7 +45,7 @@ func CreateS3User(ctx context.Context, c *client.Client, user *types.S3User) (st
 	defer cancel()
 
 	ret := ""
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("services", "rgw", "user"), user, &ret)
+	err := c.Query(queryCtx, "PUT", api.NewURL().Path("client", "s3"), user, &ret)
 	if err != nil {
 		logger.Error(err.Error())
 		return ret, err
@@ -59,7 +59,7 @@ func DeleteS3User(ctx context.Context, c *client.Client, user *types.S3User) err
 	defer cancel()
 
 	ret := types.S3User{}
-	err := c.Query(queryCtx, "DELETE", api.NewURL().Path("services", "rgw", "user"), user, &ret)
+	err := c.Query(queryCtx, "DELETE", api.NewURL().Path("client", "s3"), user, &ret)
 	if err != nil {
 		logger.Error(err.Error())
 		return err

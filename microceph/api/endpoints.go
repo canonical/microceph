@@ -20,5 +20,5 @@ var Endpoints = []rest.Endpoint{
 	clientCmd,
 	clientConfigsCmd,
 	clientConfigsKeyCmd,
-	s3Cmd,
+	clientS3Cmd,
 }

@@ -25,7 +25,11 @@ jobs:
       run: ~/actionutils.sh free_runner_disk
 
     - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      run: |
+        # boto3 for appS3 test script.
+        sudo python -m pip install --upgrade pip
+        sudo pip install boto3
+        ~/actionutils.sh setup_lxd
 
     - name: Create containers with loopback devices
       run: ~/actionutils.sh create_containers
@@ -50,7 +54,7 @@ jobs:
       run: ~/actionutils.sh headexec enable_rgw
 
     - name: Exercise RGW
-      run: ~/actionutils.sh headexec testrgw
+      run: ~/actionutils.sh headexec testrgw_old
 
     - name: Upgrade to candidate
       run: ~/actionutils.sh refresh_snap quincy/candidate
@@ -59,4 +63,4 @@ jobs:
       run:  ~/actionutils.sh headexec wait_for_osds 3
 
     - name: Exercise RGW again
-      run: ~/actionutils.sh headexec testrgw
+      run: ~/actionutils.sh testrgw_on_lxd node-wrk0

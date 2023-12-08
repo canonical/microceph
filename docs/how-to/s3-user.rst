@@ -1,5 +1,5 @@
-Use S3 user management on MicroCeph
-===================================
+Manage S3 users on MicroCeph
+=============================
 
 MicroCeph provides an easy to use interface for creating, viewing and deleting s3 users for interfacing with the RGW endpoint.
 This enables smooth and easy access to Object Storage.

@@ -39,6 +39,27 @@ jobs:
           path: "*.snap"
           retention-days: 5
 
+  lint-check:
+    name: Build microceph snap
+    runs-on: ubuntu-22.04
+    env:
+      SNAPCRAFT_BUILD_ENVIRONMENT: "lxd"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          # Python script dependencies
+          sudo python -m pip install --upgrade pip
+          sudo pip install flake8 pep8-naming
+
+      - name: Lint check help scripts.
+        run: |
+          flake8 ./scripts/ --count --show-source --statistics
+
   unit-tests:
     name: Run Unit tests
     runs-on: ubuntu-22.04
@@ -85,11 +106,7 @@ jobs:
       run: |
         # Python script dependencies
         sudo python -m pip install --upgrade pip
-        sudo pip install flake8 pep8-naming boto3
-
-    - name: Lint check
-      run: |
-        flake8 . --count --show-source --statistics
+        sudo pip install boto3
 
     - name: Install and setup
       run: |
@@ -219,7 +236,11 @@ jobs:
       run: ~/actionutils.sh free_runner_disk
 
     - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      run: |
+        # Python script dependencies
+        sudo python -m pip install --upgrade pip
+        sudo pip install boto3
+        ~/actionutils.sh setup_lxd
 
     - name: Create containers with loopback devices
       run: ~/actionutils.sh create_containers
@@ -314,6 +335,12 @@ jobs:
     - name: Copy utils
       run: cp tests/scripts/actionutils.sh $HOME
 
+    - name: Install dependencies
+      run: |
+        # Python script dependencies
+        sudo python -m pip install --upgrade pip
+        sudo pip install boto3
+
     - name: Clear FORWARD firewall rules
       run: ~/actionutils.sh cleaript
 
@@ -370,7 +397,11 @@ jobs:
       run: ~/actionutils.sh free_runner_disk
 
     - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      run: |
+        # Python script dependencies
+        sudo python -m pip install --upgrade pip
+        sudo pip install boto3
+        ~/actionutils.sh setup_lxd
 
     - name: Create containers with loopback devices
       run: ~/actionutils.sh create_containers
@@ -394,8 +425,8 @@ jobs:
     - name: Enable RGW
       run: ~/actionutils.sh headexec enable_rgw
 
-    - name: Exercise RGW
-      run: ~/actionutils.sh headexec testrgw
+    - name: Exercise RGW before upgrade
+      run: ~/actionutils.sh headexec testrgw_old
 
     - name: Install local build
       run: ~/actionutils.sh install_multinode
@@ -403,6 +434,11 @@ jobs:
     - name: Wait until 3 OSDs are up
       run:  ~/actionutils.sh headexec wait_for_osds 3
 
+    - name: Install boto3 on head node.
+      run: |
+        ~/actionutils.sh headexec install_boto3
+
     - name: Exercise RGW again
-      run: ~/actionutils.sh headexec testrgw
-      
+      run: |
+        ~/actionutils.sh testrgw_on_lxd node-wrk0
+

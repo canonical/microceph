@@ -12,14 +12,14 @@ import (
 )
 
 // /1.0/resources endpoint.
-var s3Cmd = rest.Endpoint{
-	Path:   "services/rgw/user",
-	Get:    rest.EndpointAction{Handler: cmdS3Get, ProxyTarget: true},
-	Put:    rest.EndpointAction{Handler: cmdS3Put, ProxyTarget: true},
-	Delete: rest.EndpointAction{Handler: cmdS3Delete, ProxyTarget: true},
+var clientS3Cmd = rest.Endpoint{
+	Path:   "client/s3",
+	Get:    rest.EndpointAction{Handler: cmdClientS3Get, ProxyTarget: true},
+	Put:    rest.EndpointAction{Handler: cmdClientS3Put, ProxyTarget: true},
+	Delete: rest.EndpointAction{Handler: cmdClientS3Delete, ProxyTarget: true},
 }
 
-func cmdS3Get(s *state.State, r *http.Request) response.Response {
+func cmdClientS3Get(s *state.State, r *http.Request) response.Response {
 	var err error
 	var req types.S3User
 
@@ -44,7 +44,7 @@ func cmdS3Get(s *state.State, r *http.Request) response.Response {
 	}
 }
 
-func cmdS3Put(s *state.State, r *http.Request) response.Response {
+func cmdClientS3Put(s *state.State, r *http.Request) response.Response {
 	var err error
 	var req types.S3User
 
@@ -61,7 +61,7 @@ func cmdS3Put(s *state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, output)
 }
 
-func cmdS3Delete(s *state.State, r *http.Request) response.Response {
+func cmdClientS3Delete(s *state.State, r *http.Request) response.Response {
 	var err error
 	var req types.S3User
 
