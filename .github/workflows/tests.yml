@@ -81,6 +81,16 @@ jobs:
     - name: Free disk
       run: ~/actionutils.sh free_runner_disk
 
+    - name: Install dependencies
+      run: |
+        # Python script dependencies
+        sudo python -m pip install --upgrade pip
+        sudo pip install flake8 pep8-naming boto3
+
+    - name: Lint check
+      run: |
+        flake8 . --count --show-source --statistics
+
     - name: Install and setup
       run: |
         ~/actionutils.sh install_microceph

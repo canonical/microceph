@@ -309,15 +309,11 @@ function testrgw() {
     sudo microceph.ceph status
     sudo systemctl status snap.microceph.rgw
     if ! microceph.radosgw-admin user list | grep -q test ; then
-        sudo microceph.radosgw-admin user create --uid=test --display-name=test
-        sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey
+        set -eux
+        sudo microceph s3-user create testUser --json > keys.json
     fi
-    sudo apt-get update -qq
-    sudo apt-get -qq install s3cmd
-    echo hello-radosgw > ~/test.txt
-    s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl mb s3://testbucket
-    s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/test.txt s3://testbucket
-    ( curl -s http://localhost/testbucket/test.txt | grep -F hello-radosgw ) || return -1
+    sudo python3 ./scripts/appS3.py http://localhost:80 keys.json --obj-num 2
+    sudo microceph s3-user delete testUser
 }
 
 function enable_services() {

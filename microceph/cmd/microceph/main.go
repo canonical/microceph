@@ -66,6 +66,9 @@ func main() {
 	var cmdClient = cmdClient{common: &commonCmd}
 	app.AddCommand(cmdClient.Command())
 
+	var cmdS3 = cmdS3{common: &commonCmd}
+	app.AddCommand(cmdS3.Command())
+
 	app.InitDefaultHelpCmd()
 
 	err := app.Execute()
