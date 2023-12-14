@@ -18,7 +18,7 @@ Optional but Recommended: Preparation Steps
 
 Carry out these precautionary steps before initiating the upgrade:
 
-1. **Back up your data**: to avoid any potential data loss, it is recommended to back up all your important data before starting the upgrade.
+1. **Back up your data**: as a general precaution, it is recommended to take a backup of your data (such as stored S3 objects, RBD volumes, or cephfs filesystems).
 
 2. **Prevent OSDs from dropping out of the cluster**: Run the following command to avoid OSDs from unintentionally dropping out of the cluster during the upgrade process:
 
