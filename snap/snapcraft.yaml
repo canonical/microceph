@@ -3,9 +3,10 @@ base: core22
 version: git
 grade: stable
 source-code: https://github.com/canonical/microceph.git
+license: AGPL-3.0
 summary: Simple clustered Ceph deployment
 description: |-
- Self-contained self-deployment with clustering.
+ MicroCeph is snap-deployed Ceph with built-in clustering.
 
 confinement: strict
 
