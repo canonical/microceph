@@ -3,14 +3,14 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/common"
-	"github.com/gorilla/mux"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
+
+	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/gorilla/mux"
 
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/microcluster/rest"
@@ -50,9 +50,9 @@ func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 	var req types.DisksPost
 	var wal *types.DiskParameter
 	var db *types.DiskParameter
-	var data types.DiskParameter
+	var disks []types.DiskParameter
 
-	logger.Debugf("cmdDisksPost: %v", req)
+	logger.Infof("cmdDisksPost: %v", req)
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		return response.InternalError(err)
@@ -61,32 +61,36 @@ func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// check if we want OSDs backed by files
-	if strings.HasPrefix(req.Path, "loop,") {
-		logger.Debugf("cmdDisksPost: adding loopback OSDs")
-		err = ceph.AddLoopBackOSDs(s, req.Path)
-		if err != nil {
-			return response.SmartError(err)
+	// No usable diskpath were provided.
+	if len(req.Path) == 0 {
+		return response.SyncResponse(true, types.DiskAddResponse{})
+	}
+
+	// prepare a slice of disk parameters for requested disks or loop spec.
+	disks = make([]types.DiskParameter, len(req.Path))
+	for i, diskPath := range req.Path {
+		disks[i] = types.DiskParameter{
+			Path:     diskPath,
+			Encrypt:  req.Encrypt,
+			Wipe:     req.Wipe,
+			LoopSize: 0,
 		}
-		return response.EmptySyncResponse
 	}
 
-	// handle physical devices
-	data = types.DiskParameter{req.Path, req.Encrypt, req.Wipe, 0}
 	if req.WALDev != nil {
-		wal = &types.DiskParameter{*req.WALDev, req.WALEncrypt, req.WALWipe, 0}
-	}
-	if req.DBDev != nil {
-		db = &types.DiskParameter{*req.DBDev, req.DBEncrypt, req.DBWipe, 0}
+		wal = &types.DiskParameter{Path: *req.WALDev, Encrypt: req.WALEncrypt, Wipe: req.WALWipe, LoopSize: 0}
 	}
 
-	// add a regular block device
-	err = ceph.AddOSD(s, data, wal, db)
-	if err != nil {
-		return response.SmartError(err)
+	if req.DBDev != nil {
+		db = &types.DiskParameter{Path: *req.DBDev, Encrypt: req.DBEncrypt, Wipe: req.DBWipe, LoopSize: 0}
 	}
-	logger.Debugf("cmdDisksPost done: %v", req)
-	return response.EmptySyncResponse
+
+	resp := ceph.AddBulkDisks(s, disks, wal, db)
+	if len(resp.ValidationError) == 0 {
+		response.SyncResponse(false, resp)
+	}
+
+	return response.SyncResponse(true, resp)
 }
 
 // cmdDisksDelete is the handler for DELETE /1.0/disks/{osdid}.

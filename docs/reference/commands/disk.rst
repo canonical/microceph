@@ -33,16 +33,24 @@ Global flags:
 ``add``
 -------
 
-Adds a new Ceph disk (OSD) to the cluster, alongside optional devices for write-ahead logging and database management.
+Adds one or more new Ceph disks (OSDs) to the cluster, alongside optional
+devices for write-ahead logging and database management.
+The command takes arguments which is either one or more paths to block
+devices such as /dev/sdb, or a specification for loop files.
 
-The command takes a parameter <spec> which is either a path to a block device such as /dev/sdb or a specification for one or more loop files.
+For block devices, add a space separated list of paths,
+e.g. "/dev/sda /dev/sdb ...". You may also add WAL and DB devices,
+but doing this is mutually exclusive with adding more than one OSD
+block device at a time.
 
-The specification for loop files is of the form `loop,<size>,<nr>`
+The specification for loop files is of the form loop,<size>,<nr>
 
-- `size` is an integer with `M`, `G`, or `T` suffixes for megabytes, gigabytes, or terabytes.
-- `nr` is the number of file-backed loop OSDs to create.
+size is an integer with M, G, or T suffixes for megabytes, gigabytes,
+or terabytes.
+nr is the number of file-backed loop OSDs to create.
+For instance, a spec of loop,8G,3 will create 3 file-backed OSDs, 8GB each.
 
-For instance, a spec of `loop,8G,3` will create 3 file-backed loop OSDs of 8GB each.
+Note that loop files can't be used with encryption nor WAL/DB devices.
 
 
 Usage:
@@ -55,6 +63,7 @@ Flags:
 
 .. code-block:: none
 
+   --all-available       add all available devices as OSDs
    --db-device string    The device used for the DB
    --db-encrypt          Encrypt the DB device prior to use
    --db-wipe             Wipe the DB device prior to use

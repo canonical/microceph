@@ -3,15 +3,28 @@ package types
 
 // DisksPost hold a path and a flag for enabling device wiping
 type DisksPost struct {
-	Path       string  `json:"path" yaml:"path"`
-	Wipe       bool    `json:"wipe" yaml:"wipe"`
-	Encrypt    bool    `json:"encrypt" yaml:"encrypt"`
-	WALDev     *string `json:"waldev" yaml:"waldev"`
-	WALWipe    bool    `json:"walwipe" yaml:"walwipe"`
-	WALEncrypt bool    `json:"walencrypt" yaml:"walencrypt"`
-	DBDev      *string `json:"dbdev" yaml:"dbdev"`
-	DBWipe     bool    `json:"dbwipe" yaml:"dbwipe"`
-	DBEncrypt  bool    `json:"dbencrypt" yaml:"dbencrypt"`
+	Path       []string `json:"path" yaml:"path"`
+	Wipe       bool     `json:"wipe" yaml:"wipe"`
+	Encrypt    bool     `json:"encrypt" yaml:"encrypt"`
+	WALDev     *string  `json:"waldev" yaml:"waldev"`
+	WALWipe    bool     `json:"walwipe" yaml:"walwipe"`
+	WALEncrypt bool     `json:"walencrypt" yaml:"walencrypt"`
+	DBDev      *string  `json:"dbdev" yaml:"dbdev"`
+	DBWipe     bool     `json:"dbwipe" yaml:"dbwipe"`
+	DBEncrypt  bool     `json:"dbencrypt" yaml:"dbencrypt"`
+}
+
+// DiskAddReport holds report for single disk addition i.e. success/failure and optional error for failures.
+type DiskAddReport struct {
+	Path   string `json:"path" yaml:"path"`
+	Report string `json:"report" yaml:"report"`
+	Error  string `json:"error" yaml:"error"`
+}
+
+// DiskAddResponse holds response data for disk addition.
+type DiskAddResponse struct {
+	ValidationError string          `json:"validation_error" yaml:"validation_error"`
+	Reports         []DiskAddReport `json:"report" yaml:"report"`
 }
 
 // DisksDelete holds an OSD number and a flag for forcing the removal
