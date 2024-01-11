@@ -11,7 +11,6 @@ var Endpoints = []rest.Endpoint{
 	disksDelCmd,
 	resourcesCmd,
 	servicesCmd,
-	rgwServiceCmd,
 	configsCmd,
 	restartServiceCmd,
 	mdsServiceCmd,
@@ -21,4 +20,5 @@ var Endpoints = []rest.Endpoint{
 	clientCmd,
 	clientConfigsCmd,
 	clientConfigsKeyCmd,
+	clientS3Cmd,
 }

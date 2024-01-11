@@ -47,6 +47,7 @@ Pre
 mds
 mon
 rgw
+radosgw
 rbd
 RBD
 MgrReports
@@ -64,3 +65,4 @@ Noout
 Unsetting
 cephfs
 filesystems
+json

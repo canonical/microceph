@@ -303,8 +303,14 @@ function free_runner_disk() {
     sudo docker rmi $(docker images -q)
 }
 
+function install_boto3() {
+    # Python script dependencies
+    sudo apt update && sudo apt install python3-pip
+    sudo pip3 install boto3
+}
 
-function testrgw() {
+# uses pre S3 user management methods for upgrade scenarios.
+function testrgw_old() {
     set -eu
     sudo microceph.ceph status
     sudo systemctl status snap.microceph.rgw
@@ -318,6 +324,30 @@ function testrgw() {
     s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl mb s3://testbucket
     s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/test.txt s3://testbucket
     ( curl -s http://localhost/testbucket/test.txt | grep -F hello-radosgw ) || return -1
+}
+
+function testrgw() {
+    set -eux
+
+    sudo microceph client s3 create testUser --json > keys.json
+    sudo python3 ./scripts/appS3.py http://localhost:80 keys.json --obj-num 2
+
+    # cleanup
+    sudo microceph client s3 delete testUser
+    rm keys.json
+}
+
+function testrgw_on_headnode() {
+    set -eux
+    local container="${1?missing}"
+    local nw=$(get_lxd_network public)
+    gw=$(echo "$nw" | cut -d/ -f1)
+    lxc exec $container -- sh -c "microceph client s3 create testUser --json" > keys.json
+    sudo python3 ./scripts/appS3.py http://${gw}0:80 keys.json --obj-num 2
+
+    # cleanup
+    lxc exec $container -- sh -c "microceph client s3 delete testUser"
+    rm keys.json
 }
 
 function enable_services() {

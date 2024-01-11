@@ -18,11 +18,6 @@ import (
 	"github.com/canonical/microcluster/state"
 )
 
-// Top level client API
-var clientCmd = rest.Endpoint{
-	Path: "client",
-}
-
 // client configs API
 var clientConfigsCmd = rest.Endpoint{
 	Path: "client/configs",
