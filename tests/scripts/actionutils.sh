@@ -337,11 +337,13 @@ function testrgw() {
     rm keys.json
 }
 
-function testrgw_on_lxd() {
+function testrgw_on_headnode() {
     set -eux
     local container="${1?missing}"
+    local nw=$(get_lxd_network public)
+    gw=$(echo "$nw" | cut -d/ -f1)
     lxc exec $container -- sh -c "microceph client s3 create testUser --json" > keys.json
-    sudo python3 ./scripts/appS3.py http://localhost:80 keys.json --obj-num 2
+    sudo python3 ./scripts/appS3.py http://${gw}0:80 keys.json --obj-num 2
 
     # cleanup
     lxc exec $container -- sh -c "microceph client s3 delete testUser"

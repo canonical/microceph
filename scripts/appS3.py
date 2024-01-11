@@ -38,10 +38,16 @@ def app_handle(args):
             (object_name, object_size)
         )
         # Print object IO summary:
-        print("Object #{}: {}/{} -> Size: {}MB".format(i, bucket_name, object_name, object_size))
+        print(
+            "Object #{}: {}/{} -> Size: {}MB"
+            .format(i, bucket_name, object_name, object_size)
+        )
 
     # Print Summary
-    print("IO Summary: Object Count {}, Total Size {}MB".format(args.obj_num, sum(size for _, size in objects)))
+    print(
+        "IO Summary: Object Count {}, Total Size {}MB"
+        .format(args.obj_num, sum(size for _, size in objects))
+    )
 
     # Cleanup (if asked for)
     if not args.no_delete:

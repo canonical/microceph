@@ -63,4 +63,4 @@ jobs:
       run:  ~/actionutils.sh headexec wait_for_osds 3
 
     - name: Exercise RGW again
-      run: ~/actionutils.sh testrgw_on_lxd node-wrk0
+      run: ~/actionutils.sh testrgw_on_headnode
