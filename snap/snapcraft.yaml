@@ -1,6 +1,6 @@
 name: microceph
 base: core22
-version: git
+adopt-info: ceph
 grade: stable
 source-code: https://github.com/canonical/microceph.git
 license: AGPL-3.0
@@ -135,9 +135,20 @@ parts:
             git -C $CRAFT_PROJECT_DIR describe \
                 --always \
                 --dirty \
-                --tags \
                 --abbrev=10 | sed -s 's/^v//')
       printf "ceph-version: ${pkg_version}\nmicroceph-git: ${git_version}\n" > share/metadata.yaml
+    override-stage: |
+      craftctl default
+      pkg_version=$(
+        dpkg-deb -f \
+        $CRAFT_PART_SRC/../stage_packages/ceph-common*.deb \
+        Version | sed -rne 's/([0-9.]+)[-+].*$$/\1/p')
+      git_version=$(
+        git -C $CRAFT_PROJECT_DIR describe \
+          --always \
+          --dirty \
+          --abbrev=10)
+        craftctl set version=${pkg_version}+snap${git_version}
     stage-packages:
       - ceph-common
       - ceph-mds
@@ -281,14 +292,19 @@ parts:
       go get -d -v ./...
     override-build: |
       set -ex
-
       # Setup build environment
       export CGO_CFLAGS="-I${SNAPCRAFT_STAGE}/include/ -I${SNAPCRAFT_STAGE}/usr/local/include/"
       export CGO_LDFLAGS="-L${SNAPCRAFT_STAGE}/lib/ -L${SNAPCRAFT_STAGE}/usr/local/lib/"
       export CGO_LDFLAGS_ALLOW="(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
-
+      pkg_version=$( apt-cache policy ceph-common | awk '/Candidate:/{ print $2 }' )
+      git_version=$(
+        git -C $CRAFT_PROJECT_DIR describe \
+          --always \
+          --dirty \
+          --abbrev=10)
+      export MC_VERSION="ceph-version: $pkg_version; microceph-git: $git_version"
       # Build the binaries
-      go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microceph" ./cmd/microceph
+      go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microceph" -ldflags "-X 'main.Version=${MC_VERSION}'" ./cmd/microceph
       go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
     prime:
       - bin/microceph
