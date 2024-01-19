@@ -12,7 +12,7 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
-func PoolSetReplicationFactor(ctx context.Context, c *microCli.Client, data *types.PoolPost) error {
+func PoolSetReplicationFactor(ctx context.Context, c *microCli.Client, data *types.PoolPut) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 

@@ -980,14 +980,14 @@ func killOSD(osd int64) error {
 	return nil
 }
 
-func SetReplicationFactor(spec string, size int64) error {
+func SetReplicationFactor(pools []string, size int64) error {
 	ssize := fmt.Sprintf("%d", size)
-	if spec == "" {
+    if len(pools) == 1 && pools[0] == "" {
 		// Apply setting globally.
 		_, err := processExec.RunCommand("ceph", "config", "set", "global",
 			"osd_pool_default_size", ssize)
 		if err != nil {
-			return fmt.Errorf("Failed to set global pool size: %w", err)
+			return fmt.Errorf("failed to set pool size default: %w", err)
 		}
 
 		allowSizeOne := "true"
@@ -998,29 +998,27 @@ func SetReplicationFactor(spec string, size int64) error {
 		_, err = processExec.RunCommand("ceph", "config", "set", "global",
 			"mon_allow_pool_size_one", allowSizeOne)
 		if err != nil {
-			return fmt.Errorf("Failed to set size one pool config option: %w", err)
+			return fmt.Errorf("failed to set size one pool config option: %w", err)
 		}
 
 		// This only silences a warning and should thus not return an
-		// error on failu.re
+		// error on failure
 		_, _ = processExec.RunCommand("ceph", "health", "mute", "POOL_NO_REDUNDANCY")
 		return nil
-	} else if spec == "*" {
+	} else if len(pools) == 1 && pools[0] == "*" {
 		// Apply setting to all existing pools.
 		out, err := processExec.RunCommand("ceph", "osd", "pool", "ls")
 		if err != nil {
-			return fmt.Errorf("Failed to list pools: %w", err)
+			return fmt.Errorf("failed to list pools: %w", err)
 		}
 
-		spec = strings.Replace(out, "\n", ",", -1)
+        pools = strings.Split(out, "\n")
 	}
 
-	// Spec is a comma-separated list of pools.
-	pools := strings.Split(spec, ",")
 	for _, pool := range pools {
 		_, err := processExec.RunCommand("ceph", "osd", "pool", "set", pool, ssize)
 		if err != nil {
-			return fmt.Errorf("Failed to set pool size for %s: %w", pool, err)
+			return fmt.Errorf("failed to set pool size for %s: %w", pool, err)
 		}
 	}
 

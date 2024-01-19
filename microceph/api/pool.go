@@ -16,23 +16,23 @@ import (
 // /1.0/pool endpoint.
 var poolsCmd = rest.Endpoint{
 	Path: "pools",
-	Post: rest.EndpointAction{Handler: cmdPoolsPost, ProxyTarget: true},
+	Put: rest.EndpointAction{Handler: cmdPoolsPut, ProxyTarget: true},
 }
 
-func cmdPoolsPost(s *state.State, r *http.Request) response.Response {
-	var req types.PoolPost
+func cmdPoolsPut(s *state.State, r *http.Request) response.Response {
+	var req types.PoolPut
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		return response.InternalError(err)
 	}
 
-	logger.Debugf("cmdPoolPost: %v", req)
+	logger.Debugf("cmdPoolPut: %v", req)
 	err = ceph.SetReplicationFactor(req.Pools, req.Size)
 	if err != nil {
 		return response.SmartError(err)
 	}
 
-	logger.Debugf("cmdPoolPost done: %v", req)
+	logger.Debugf("cmdPoolPut done: %v", req)
 	return response.EmptySyncResponse
 }

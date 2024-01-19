@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
@@ -16,18 +15,19 @@ type cmdPool struct {
 }
 
 type cmdPoolSetRF struct {
-	common *CmdControl
-	poolRF *cmdPool
+	common   *CmdControl
+	poolRF   *cmdPool
+    poolSize int64
 }
 
 func (c *cmdPoolSetRF) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "set-rf <POOLS> <SIZE>",
+		Use:   "set-rf <SIZE> <POOL>...",
 		Short: "Set the replication factor for pools",
 		Long: `Set the replication factor for <POOLS>
-    POOLS is either a comma-separated list of pools such as pool1,pool2, an asterisk
-    or an empty string. If it's an asterisk, the size is set for all existing pools,
-    but not future ones, whereas an empty string implies setting the default pool size.
+    POOLS is either a list of pools an asterisk or an empty string.
+    If it's an asterisk, the size is set for all existing pools, but not
+    future ones, whereas an empty string implies setting the default pool size.
     Otherwise, the size is set for the specified pools.`,
 		RunE: c.Run,
 	}
@@ -36,7 +36,7 @@ func (c *cmdPoolSetRF) Command() *cobra.Command {
 }
 
 func (c *cmdPoolSetRF) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 2 {
+    if len(args) < 1 {
 		return cmd.Help()
 	}
 
@@ -50,14 +50,9 @@ func (c *cmdPoolSetRF) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	size, err := strconv.ParseInt(args[1], 10, 64)
-	if err != nil {
-		return err
-	}
-
-	req := &types.PoolPost{
-		Pools: args[0],
-		Size:  size,
+	req := &types.PoolPut{
+		Pools: args,
+		Size:  c.poolSize,
 	}
 
 	return client.PoolSetReplicationFactor(context.Background(), cli, req)
