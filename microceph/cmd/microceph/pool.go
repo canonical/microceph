@@ -32,6 +32,9 @@ func (c *cmdPoolSetRF) Command() *cobra.Command {
 		RunE: c.Run,
 	}
 
+    cmd.Flags().Int64Var(&c.poolSize, "size", 3, "Pool size")
+    cmd.MarkFlagRequired("size")
+
 	return cmd
 }
 
