@@ -54,7 +54,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 		// Get system name.
 		hostName, err := os.Hostname()
 		if err != nil {
-			return fmt.Errorf("Failed to retrieve system hostname: %w", err)
+			return fmt.Errorf("failed to retrieve system hostname: %w", err)
 		}
 
 		// Get system address.
@@ -163,14 +163,14 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 
 			// Add the disk.
 			req := &types.DisksPost{
-				Path:    diskPath,
+				Path:    []string{diskPath},
 				Wipe:    diskWipe,
 				Encrypt: diskEncrypt,
 			}
 
-			err = client.AddDisk(context.Background(), lc, req)
+			failures, err := client.AddDisk(context.Background(), lc, req)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to add the following disks:\n%v \nerr: %w", failures, err)
 			}
 		}
 	}

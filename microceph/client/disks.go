@@ -15,16 +15,17 @@ import (
 )
 
 // AddDisk requests Ceph sets up a new OSD.
-func AddDisk(ctx context.Context, c *microCli.Client, data *types.DisksPost) error {
+func AddDisk(ctx context.Context, c *microCli.Client, data *types.DisksPost) (types.DiskAddResponse, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
-	err := c.Query(queryCtx, "POST", api.NewURL().Path("disks"), data, nil)
+	errors := types.DiskAddResponse{}
+	err := c.Query(queryCtx, "POST", api.NewURL().Path("disks"), data, &errors)
 	if err != nil {
-		return fmt.Errorf("failed adding new disk: %w", err)
+		return errors, fmt.Errorf("failed to request disk addition %w", err)
 	}
 
-	return nil
+	return errors, nil
 }
 
 // GetDisks returns the list of configured disks.
