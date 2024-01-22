@@ -982,14 +982,14 @@ func killOSD(osd int64) error {
 
 func SetReplicationFactor(pools []string, size int64) error {
 	ssize := fmt.Sprintf("%d", size)
+    _, err := processExec.RunCommand("ceph", "config", "set", "global",
+                                     "osd_pool_default_size", ssize)
+    if err != nil {
+        return fmt.Errorf("failed to set pool size default: %w", err)
+    }
+
     if len(pools) == 1 && pools[0] == "" {
 		// Apply setting globally.
-		_, err := processExec.RunCommand("ceph", "config", "set", "global",
-			"osd_pool_default_size", ssize)
-		if err != nil {
-			return fmt.Errorf("failed to set pool size default: %w", err)
-		}
-
 		allowSizeOne := "true"
 		if size != 1 {
 			allowSizeOne = "false"
