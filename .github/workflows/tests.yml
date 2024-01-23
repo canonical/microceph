@@ -183,6 +183,14 @@ jobs:
         # Check service restarted
         if [ $ts3 -lt $ts2 ]; then echo "config check failed: TS2: $ts2 TS3: $ts3"; exit 1; fi
 
+    - name: Test pool operations
+      run: |
+        set +e
+        sudo microceph.ceph osd pool create mypool
+        sudo microceph pool set-rf --size 1
+        sudo microceph pool set-rf --size 3 mypool
+        sudo microceph pool set-rf --size 1 "*"
+
   multi-node-tests:
     name: Multi node testing
     runs-on: ubuntu-22.04
