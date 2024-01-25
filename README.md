@@ -15,7 +15,7 @@
 
 * [💡 Philosophy](#-philosophy)
 * [🎯 Features](#-features)
-* [⚡️Quickstart](#-quickstart)
+* [⚡️Quickstart](#%EF%B8%8Fquickstart)
 * [📖 Documentation](#-documentation)
 * [💫 Project & community](#-project--community)
 * [📰 License](#-license)

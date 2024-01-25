@@ -134,7 +134,17 @@ storage:
    sudo microceph disk add /dev/vdb --wipe
 
 Adjust the above command per machine according to the storage disks at your
-disposal.
+disposal. You may also provide multiple disks as space separated arguments.
+
+.. code-block:: none
+
+   sudo microceph disk add /dev/vdb /dev/vdc /dev/vdd --wipe
+
+Or use the **--all-available** flag to enlist all physical devices available on the machine.
+
+.. code-block:: none
+
+   sudo microceph disk add --all-available --wipe
 
 Check MicroCeph status
 ----------------------

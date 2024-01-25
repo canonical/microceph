@@ -55,11 +55,11 @@ func (c *cmdDiskRemove) Run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		// check arg is of osd.$id form
 		if len(args[0]) < 4 || args[0][:4] != "osd." {
-			return fmt.Errorf("Error: osd input must be either in the form $id or osd.$id, got %v", args[0])
+			return fmt.Errorf("error: osd input must be either in the form $id or osd.$id, got %v", args[0])
 		}
 		osd, err = strconv.ParseInt(args[0][4:], 10, 64)
 		if err != nil {
-			return fmt.Errorf("Error: osd input must be either in the form $id or osd.$id: got %v", args[0])
+			return fmt.Errorf("error: osd input must be either in the form $id or osd.$id: got %v", args[0])
 		}
 	}
 

@@ -36,17 +36,17 @@ func prepareDisk(disk *types.DiskParameter, suffix string, osdPath string, osdID
 	if disk.Wipe {
 		err := timeoutWipe(disk.Path)
 		if err != nil {
-			return fmt.Errorf("Failed to wipe device %s: %w", disk.Path, err)
+			return fmt.Errorf("failed to wipe device %s: %w", disk.Path, err)
 		}
 	}
 	if disk.Encrypt {
 		err := checkEncryptSupport()
 		if err != nil {
-			return fmt.Errorf("Encryption unsupported on this machine: %w", err)
+			return fmt.Errorf("encryption unsupported on this machine: %w", err)
 		}
 		path, err := setupEncryptedOSD(disk.Path, osdPath, osdID, suffix)
 		if err != nil {
-			return fmt.Errorf("Failed to encrypt device %s: %w", disk.Path, err)
+			return fmt.Errorf("failed to encrypt device %s: %w", disk.Path, err)
 		}
 		disk.Path = path
 	}
@@ -65,29 +65,29 @@ func prepareDisk(disk *types.DiskParameter, suffix string, osdPath string, osdID
 // Returns the path to the encrypted device and an error if any.
 func setupEncryptedOSD(devicePath string, osdDataPath string, osdID int64, suffix string) (string, error) {
 	if err := os.Symlink(devicePath, filepath.Join(osdDataPath, "unencrypted"+suffix)); err != nil {
-		return "", fmt.Errorf("Failed to add unencrypted block symlink: %w", err)
+		return "", fmt.Errorf("failed to add unencrypted block symlink: %w", err)
 	}
 
 	// Create a key for the encrypted device
 	key, err := createKey()
 	if err != nil {
-		return "", fmt.Errorf("Key creation error: %w", err)
+		return "", fmt.Errorf("key creation error: %w", err)
 	}
 
 	// Store key in ceph key value store
 	if err = storeKey(key, osdID, suffix); err != nil {
-		return "", fmt.Errorf("Key store error: %w", err)
+		return "", fmt.Errorf("key store error: %w", err)
 	}
 
 	// Encrypt the device
 	if err = encryptDevice(devicePath, key); err != nil {
-		return "", fmt.Errorf("Failed to encrypt: %w", err)
+		return "", fmt.Errorf("failed to encrypt: %w", err)
 	}
 
 	// Open the encrypted device
 	encryptedDevicePath, err := openEncryptedDevice(devicePath, osdID, key, suffix)
 	if err != nil {
-		return "", fmt.Errorf("Failed to open: %w", err)
+		return "", fmt.Errorf("failed to open: %w", err)
 	}
 	return encryptedDevicePath, nil
 }
@@ -98,7 +98,7 @@ func createKey() ([]byte, error) {
 	key := make([]byte, 96)
 	_, err := rand.Read(key)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to generate random key: %w", err)
+		return nil, fmt.Errorf("failed to generate random key: %w", err)
 	}
 
 	// Encode as base64, this results in 128 bytes.
@@ -116,15 +116,15 @@ func encryptDevice(path string, key []byte) error {
 		path)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("Error in cryptsetup pipe: %s", err)
+		return fmt.Errorf("error in cryptsetup pipe: %s", err)
 	}
 	if _, err = stdin.Write(key); err != nil {
-		return fmt.Errorf("Error writing key to cryptsetup pipe: %s", err)
+		return fmt.Errorf("error writing key to cryptsetup pipe: %s", err)
 	}
 	stdin.Close()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("Failed to luksFormat device: %s, %s, %s", path, err, out)
+		return fmt.Errorf("failed to luksFormat device: %s, %s, %s", path, err, out)
 	}
 	return nil
 }
@@ -134,7 +134,7 @@ func storeKey(key []byte, osdID int64, suffix string) error {
 	// Run the ceph config-key set command
 	_, err := processExec.RunCommand("ceph", "config-key", "set", fmt.Sprintf("microceph:osd%s.%d/key", suffix, osdID), string(key))
 	if err != nil {
-		return fmt.Errorf("Failed to store key: %w", err)
+		return fmt.Errorf("failed to store key: %w", err)
 	}
 	return nil
 }
@@ -152,15 +152,15 @@ func openEncryptedDevice(path string, osdID int64, key []byte, suffix string) (s
 	)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return "", fmt.Errorf("Error in cryptsetup pipe: %s", err)
+		return "", fmt.Errorf("error in cryptsetup pipe: %s", err)
 	}
 	if _, err = stdin.Write(key); err != nil {
-		return "", fmt.Errorf("Error writing key to cryptsetup pipe: %s", err)
+		return "", fmt.Errorf("error writing key to cryptsetup pipe: %s", err)
 	}
 	stdin.Close()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf(`Failed to luksOpen: %s, %s, %s
+		return "", fmt.Errorf(`failed to luksOpen: %s, %s, %s
 
 NOTE: OSD Encryption requires a snapd >= 2.59.1
 Verify your version of snapd by running "snap version"
@@ -177,24 +177,24 @@ Verify your version of snapd by running "snap version"
 func checkEncryptSupport() error {
 	// Check if we have a mapper
 	if _, err := os.Stat("/dev/mapper/control"); err != nil {
-		return fmt.Errorf("Missing /dev/mapper/control: %w", err)
+		return fmt.Errorf("missing /dev/mapper/control: %w", err)
 	}
 
 	// Check if the dm-crypt interface is not connected.
 	if !isIntfConnected("dm-crypt") {
-		helper := fmt.Sprint("Use \"sudo snap connect microceph:dm-crypt ; sudo snap restart microceph.daemon\" to enable encryption.")
+		helper := "use \"sudo snap connect microceph:dm-crypt ; sudo snap restart microceph.daemon\" to enable encryption."
 		return fmt.Errorf("dm-crypt interface connection missing: \n%s", helper)
 	}
 
 	// Check if we have the dm_crypt module
 	inf, err := os.Stat("/sys/module/dm_crypt")
 	if err != nil || inf == nil || !inf.IsDir() {
-		return fmt.Errorf("Missing dm_crypt module: %w", err)
+		return fmt.Errorf("missing dm_crypt module: %w", err)
 	}
 
 	// Check if we can list the /run directory; older snapd had an issue with this, https://github.com/snapcore/snapd/pull/12445
 	if _, err = os.ReadDir("/run"); err != nil {
-		return fmt.Errorf("Can't access /run, might need to update snapd to >=2.59.1: %w", err)
+		return fmt.Errorf("can't access /run, might need to update snapd to >=2.59.1: %w", err)
 	}
 	return nil
 }
@@ -231,13 +231,13 @@ func switchFailureDomain(old string, new string) error {
 func updateFailureDomain(s *state.State) error {
 	numNodes, err := database.MemberCounter.Count(s)
 	if err != nil {
-		return fmt.Errorf("Failed to count members: %w", err)
+		return fmt.Errorf("failed to count members: %w", err)
 	}
 
 	if numNodes >= 3 {
 		err = switchFailureDomain("osd", "host")
 		if err != nil {
-			return fmt.Errorf("Failed to set host failure domain: %w", err)
+			return fmt.Errorf("failed to set host failure domain: %w", err)
 		}
 	}
 	return nil
@@ -246,12 +246,12 @@ func updateFailureDomain(s *state.State) error {
 func setStablePath(storage *api.ResourcesStorage, param *types.DiskParameter) error {
 	// Validate the path.
 	if !shared.IsBlockdevPath(param.Path) {
-		return fmt.Errorf("Invalid disk path: %s", param.Path)
+		return fmt.Errorf("invalid disk path: %s", param.Path)
 	}
 
 	_, _, major, minor, _, _, err := shared.GetFileStat(param.Path)
 	if err != nil {
-		return fmt.Errorf("Invalid disk path: %w", err)
+		return fmt.Errorf("invalid disk path: %w", err)
 	}
 
 	dev := fmt.Sprintf("%d:%d", major, minor)
@@ -391,38 +391,128 @@ func bootstrapOSD(osdDataPath string, nr int64, wal, db *types.DiskParameter, st
 	args := []string{"--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr)}
 	if wal != nil {
 		if err = setStablePath(storage, wal); err != nil {
-			return fmt.Errorf("Failed to set stable path for WAL: %w", err)
+			return fmt.Errorf("failed to set stable path for WAL: %w", err)
 		}
 
 		err = prepareDisk(wal, ".wal", osdDataPath, nr)
 		if err != nil {
-			return fmt.Errorf("Failed to set up WAL device: %w", err)
+			return fmt.Errorf("failed to set up WAL device: %w", err)
 		}
 		args = append(args, []string{"--bluestore-block-wal-path", wal.Path}...)
 	}
 	if db != nil {
 		if err = setStablePath(storage, db); err != nil {
-			return fmt.Errorf("Failed to set stable path for DB: %w", err)
+			return fmt.Errorf("failed to set stable path for DB: %w", err)
 		}
 
 		err = prepareDisk(db, ".db", osdDataPath, nr)
 		if err != nil {
-			return fmt.Errorf("Failed to set up DB device: %w", err)
+			return fmt.Errorf("failed to set up DB device: %w", err)
 		}
 		args = append(args, []string{"--bluestore-block-db-path", db.Path}...)
 	}
 
 	_, err = processExec.RunCommand("ceph-osd", args...)
 	if err != nil {
-		return fmt.Errorf("Failed to bootstrap OSD: %w", err)
+		return fmt.Errorf("failed to bootstrap OSD: %w", err)
 	}
 
 	// Write the stamp file.
 	err = os.WriteFile(filepath.Join(osdDataPath, "ready"), []byte(""), 0600)
 	if err != nil {
-		return fmt.Errorf("Failed to write stamp file: %w", err)
+		return fmt.Errorf("failed to write stamp file: %w", err)
 	}
 	return nil
+}
+
+func validateBulkDiskAdditionArgs(disks []types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
+	// No validation for non-batch requests.
+	if len(disks) == 1 {
+		return nil
+	}
+
+	// check if wal/db devices are provided for batch request.
+	if wal != nil || db != nil {
+		err := fmt.Errorf("wal/db devices are not supported in batch disk addition")
+		logger.Error(err.Error())
+		return err
+	}
+
+	// check if loop spec is provided in batch request arguments.
+	for _, disk := range disks {
+		if strings.HasPrefix(disk.Path, common.LoopSpecId) {
+			err := fmt.Errorf("cannot add loop spec '%s', add a single loop spec or one or more block device paths", disk.Path)
+			logger.Error(err.Error())
+			return err
+		}
+	}
+
+	return nil
+}
+
+// prepareValidationFailureResp generates the failure response for argument validation errors.
+func prepareValidationFailureResp(disks []types.DiskParameter, err error) types.DiskAddResponse {
+	ret := types.DiskAddResponse{ValidationError: err.Error()}
+
+	for _, disk := range disks {
+		// Only append this error for the first disk since
+		ret.Reports = append(ret.Reports, types.DiskAddReport{Path: disk.Path, Report: "Failure", Error: ""})
+	}
+
+	return ret
+}
+
+// AddBulkDisks adds multiple disks as OSDs and generates the API response for request.
+func AddBulkDisks(s *state.State, disks []types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddResponse {
+	ret := types.DiskAddResponse{}
+
+	if len(disks) == 1 {
+		// Add single disk with requested WAL/DB devices.
+		resp := AddSingleDisk(s, disks[0], wal, db)
+		ret.Reports = append(ret.Reports, resp)
+		ret.ValidationError = "" // Validation is done for batch requests.
+		return ret
+	}
+
+	// validate Arguments for batch request.
+	err := validateBulkDiskAdditionArgs(disks, wal, db)
+	if err != nil {
+		// Disk addition is skipped if validation errors are found.
+		return prepareValidationFailureResp(disks, err)
+	} else {
+		ret.ValidationError = ""
+	}
+
+	// Add all requested disks.
+	for _, disk := range disks {
+		resp := AddSingleDisk(s, disk, nil, nil)
+		ret.Reports = append(ret.Reports, resp)
+	}
+
+	return ret
+}
+
+// AddSingleDisk is a wrapper around AddOSD which logs disk addition failures and returns a formatted response.
+func AddSingleDisk(s *state.State, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
+	if strings.Contains(disk.Path, common.LoopSpecId) {
+		// Add file based OSDs.
+		err := AddLoopBackOSDs(s, disk.Path)
+		if err != nil {
+			logger.Errorf("failed to add disk: spec %s, err %v", disk.Path, err)
+			return types.DiskAddReport{Path: disk.Path, Report: "Failure", Error: err.Error()}
+		}
+	} else {
+		// Add physical disk based OSD.
+		err := AddOSD(s, disk, wal, db)
+		if err != nil {
+			logger.Errorf("failed to add disk: path %s, err %v", disk.Path, err)
+			// return failure as response.
+			return types.DiskAddReport{Path: disk.Path, Report: "Failure", Error: err.Error()}
+		}
+	}
+
+	// return success as response.
+	return types.DiskAddReport{Path: disk.Path, Report: "Success", Error: ""}
 }
 
 // AddOSD adds an OSD to the cluster, given the data, WAL and DB devices and their respective
@@ -447,10 +537,10 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 		// Lookup a stable path for it.
 		storage, err = resources.GetStorage()
 		if err != nil {
-			return fmt.Errorf("Unable to list system disks: %w", err)
+			return fmt.Errorf("unable to list system disks: %w", err)
 		}
 		if err := setStablePath(storage, &data); err != nil {
-			return fmt.Errorf("Failed to set stable disk path: %w", err)
+			return fmt.Errorf("failed to set stable disk path: %w", err)
 		}
 	}
 
@@ -459,7 +549,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
 		nr, err = database.CreateDisk(ctx, tx, database.Disk{Member: s.Name(), Path: data.Path})
 		if err != nil {
-			return fmt.Errorf("Failed to record disk: %w", err)
+			return fmt.Errorf("failed to record disk: %w", err)
 		}
 		return nil
 	})
@@ -484,7 +574,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	// Create directory.
 	err = os.MkdirAll(osdDataPath, 0700)
 	if err != nil {
-		return fmt.Errorf("Failed to create OSD directory: %w", err)
+		return fmt.Errorf("failed to create OSD directory: %w", err)
 	}
 
 	// do we have a loopback file request?
@@ -507,13 +597,13 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	// Wipe and/or encrypt the disk if needed.
 	err = prepareDisk(&data, "", osdDataPath, nr)
 	if err != nil {
-		return fmt.Errorf("Failed to prepare data device: %w", err)
+		return fmt.Errorf("failed to prepare data device: %w", err)
 	}
 
 	// Generate keyring.
 	err = genAuth(filepath.Join(osdDataPath, "keyring"), fmt.Sprintf("osd.%d", nr), []string{"mgr", "allow profile osd"}, []string{"mon", "allow profile osd"}, []string{"osd", "allow *"})
 	if err != nil {
-		return fmt.Errorf("Failed to generate OSD keyring: %w", err)
+		return fmt.Errorf("failed to generate OSD keyring: %w", err)
 	}
 
 	// Generate OSD uuid.
@@ -522,7 +612,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	// Write fsid file.
 	err = os.WriteFile(filepath.Join(osdDataPath, "fsid"), []byte(fsid), 0600)
 	if err != nil {
-		return fmt.Errorf("Failed to write fsid: %w", err)
+		return fmt.Errorf("failed to write fsid: %w", err)
 	}
 
 	// Bootstrap OSD.
@@ -535,7 +625,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	logger.Debugf("Spawning OSD %d", nr)
 	err = snapRestart("osd", true)
 	if err != nil {
-		return fmt.Errorf("Failed to start osd.%d: %w", nr, err)
+		return fmt.Errorf("failed to start osd.%d: %w", nr, err)
 	}
 
 	// Maybe update the failure domain
@@ -628,7 +718,7 @@ func scaleDownFailureDomain(s common.StateInterface, osd int64) error {
 	}
 	err = switchFailureDomain("host", "osd")
 	if err != nil {
-		return fmt.Errorf("Failed to switch failure domain: %w", err)
+		return fmt.Errorf("failed to switch failure domain: %w", err)
 	}
 	return nil
 }
@@ -688,7 +778,7 @@ func purgeOSD(osd int64) error {
 
 	if err != nil {
 		logger.Errorf("Failed to purge osd.%d: %v", osd, err)
-		return fmt.Errorf("Failed to purge osd.%d: %w", osd, err)
+		return fmt.Errorf("failed to purge osd.%d: %w", osd, err)
 	}
 	logger.Infof("osd.%d purged", osd)
 	return nil
@@ -756,7 +846,7 @@ func doRemoveOSD(ctx context.Context, s common.StateInterface, osd int64, bypass
 	// check if the osd is still in the cluster -- if we're being re-run, it might not be
 	isPresent, err := haveOSDInCeph(osd)
 	if err != nil {
-		return fmt.Errorf("Failed to check if osd.%d is present in Ceph: %w", osd, err)
+		return fmt.Errorf("failed to check if osd.%d is present in Ceph: %w", osd, err)
 	}
 	// reweight/drain data
 	if isPresent {
@@ -810,7 +900,7 @@ func doRemoveOSD(ctx context.Context, s common.StateInterface, osd int64, bypass
 	err = database.OSDQuery.Delete(s.ClusterState(), osd)
 	if err != nil {
 		logger.Errorf("Failed to remove osd.%d from database: %v", osd, err)
-		return fmt.Errorf("Failed to remove osd.%d from database: %w", osd, err)
+		return fmt.Errorf("failed to remove osd.%d from database: %w", osd, err)
 	}
 	return nil
 }
@@ -846,7 +936,7 @@ func checkMinOSDs(s common.StateInterface, osd int64) error {
 		return err
 	}
 	if len(disks) <= 3 {
-		return fmt.Errorf("Cannot remove osd.%d we need at least 3 OSDs, have %d", osd, len(disks))
+		return fmt.Errorf("cannot remove osd.%d we need at least 3 OSDs, have %d", osd, len(disks))
 	}
 	return nil
 }
@@ -855,12 +945,12 @@ func outDownOSD(osd int64) error {
 	_, err := processExec.RunCommand("ceph", "osd", "out", fmt.Sprintf("osd.%d", osd))
 	if err != nil {
 		logger.Errorf("Failed to take osd.%d out: %v", osd, err)
-		return fmt.Errorf("Failed to take osd.%d out: %w", osd, err)
+		return fmt.Errorf("failed to take osd.%d out: %w", osd, err)
 	}
 	_, err = processExec.RunCommand("ceph", "osd", "down", fmt.Sprintf("osd.%d", osd))
 	if err != nil {
 		logger.Errorf("Failed to take osd.%d down: %v", osd, err)
-		return fmt.Errorf("Failed to take osd.%d down: %w", osd, err)
+		return fmt.Errorf("failed to take osd.%d down: %w", osd, err)
 	}
 	return nil
 }
@@ -931,7 +1021,7 @@ func removeOSDConfig(osd int64) error {
 	err := os.RemoveAll(osdDataPath)
 	if err != nil {
 		logger.Errorf("Failed to remove osd.%d config: %v", osd, err)
-		return fmt.Errorf("Failed to remove osd.%d config: %w", osd, err)
+		return fmt.Errorf("failed to remove osd.%d config: %w", osd, err)
 	}
 	return nil
 }
@@ -951,14 +1041,14 @@ func haveOSDInCeph(osd int64) (bool, error) {
 	out, err := processExec.RunCommand("ceph", "osd", "tree", "-f", "json")
 	if err != nil {
 		logger.Errorf("Failed to get ceph osd tree: %v", err)
-		return false, fmt.Errorf("Failed to get ceph osd tree: %w", err)
+		return false, fmt.Errorf("failed to get ceph osd tree: %w", err)
 	}
 	// parse the json output
 	var tree JSONData
 	err = json.Unmarshal([]byte(out), &tree)
 	if err != nil {
 		logger.Errorf("Failed to parse ceph osd tree: %v", err)
-		return false, fmt.Errorf("Failed to parse ceph osd tree: %w", err)
+		return false, fmt.Errorf("failed to parse ceph osd tree: %w", err)
 	}
 	// query the tree for the given OSD
 	for _, node := range tree.Nodes {
@@ -975,7 +1065,7 @@ func killOSD(osd int64) error {
 	_, err := processExec.RunCommand("pkill", "-f", cmdline)
 	if err != nil {
 		logger.Errorf("Failed to kill osd.%d: %v", osd, err)
-		return fmt.Errorf("Failed to kill osd.%d: %w", osd, err)
+		return fmt.Errorf("failed to kill osd.%d: %w", osd, err)
 	}
 	return nil
 }

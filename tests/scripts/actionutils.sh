@@ -41,7 +41,7 @@ function add_encrypted_osds() {
     i=0
     for l in a b c; do
       loop_file="$(sudo mktemp -p /mnt XXXX.img)"
-      sudo truncate -s 1G "${loop_file}"
+      sudo truncate -s 4G "${loop_file}"
       loop_dev="$(sudo losetup --show -f "${loop_file}")"
 
       # XXX: the block-devices plug doesn't allow accessing /dev/loopX
@@ -49,8 +49,9 @@ function add_encrypted_osds() {
       # names (/dev/sdiY) that are not used inside GitHub Action runners
       minor="${loop_dev##/dev/loop}"
       sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
-      sudo microceph disk add --wipe "/dev/sdi${l}" --encrypt
     done
+
+    sudo microceph disk add /dev/sdia /dev/sdib /dev/sdic --wipe --encrypt
 
     # Wait for OSDs to become up
     sleep 30

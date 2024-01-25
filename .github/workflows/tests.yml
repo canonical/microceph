@@ -106,8 +106,15 @@ jobs:
         sudo mknod -m 0660 "/dev/sdi21" b 7 "${minor}"
 
         set +e
-        sudo microceph disk add --wipe "/dev/sdi21" --encrypt || rc="$?"
+        rc=$(sudo microceph disk add --wipe "/dev/sdi21" --encrypt |& grep -c Failure)
         if [[ $rc -eq 0 ]] ; then echo "FDE should fail without dmcrypt: $rc"; exit 1; fi
+
+        # actually creating additional loop devices is not required since this should fail in validation.
+        rc=$(sudo microceph disk add "/dev/sdi21" "/dev/sdi22" --wal-device "/dev/sdi23" |& grep -c "not supported for batch disk addition")
+        if [[ $rc -eq 0 ]] ; then echo "Batch disk addition should fail with wal device: $rc"; exit 1; fi
+
+        rc=$(sudo microceph disk add "/dev/sdi21" "/dev/sdi22" --db-device "/dev/sdi23" |& grep -c "not supported for batch disk addition")
+        if [[ $rc -eq 0 ]] ; then echo "Batch disk addition should fail with db device: $rc"; exit 1; fi
 
     - name: Add OSDs
       run: ~/actionutils.sh add_encrypted_osds
