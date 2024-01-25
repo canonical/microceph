@@ -15,7 +15,7 @@ import (
 
 // /1.0/pool endpoint.
 var poolsCmd = rest.Endpoint{
-	Path: "pools",
+	Path: "pools-op",
 	Put: rest.EndpointAction{Handler: cmdPoolsPut, ProxyTarget: true},
 }
 

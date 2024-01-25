@@ -67,7 +67,7 @@ func (c *cmdPool) Command() *cobra.Command {
 		Short: "Manage microceph pools",
 	}
 
-	// Set-RF.
+	// set-rf.
 	poolSetRFCmd := cmdPoolSetRF{common: c.common, poolRF: c}
 	cmd.AddCommand(poolSetRFCmd.Command())
 

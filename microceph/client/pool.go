@@ -16,7 +16,7 @@ func PoolSetReplicationFactor(ctx context.Context, c *microCli.Client, data *typ
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("pools"), data, nil)
+	err := c.Query(queryCtx, "PUT", api.NewURL().Path("pools-op"), data, nil)
 	if err != nil {
 		return fmt.Errorf("failed setting replication factor: %w", err)
 	}
