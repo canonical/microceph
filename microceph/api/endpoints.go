@@ -21,4 +21,5 @@ var Endpoints = []rest.Endpoint{
 	clientCmd,
 	clientConfigsCmd,
 	clientConfigsKeyCmd,
+	poolsCmd,
 }

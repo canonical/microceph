@@ -1,3 +1,4 @@
 *.snap
 _build
+*.swp
 .vscode
