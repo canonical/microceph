@@ -165,10 +165,10 @@ func printAddDiskFailures(response types.DiskAddResponse) error {
 
 	if failureCount == 1 {
 		// Print error if only one instance of error is there.
-		fmt.Println("Error: ", errStr)
+		return fmt.Errorf(errStr)
 	} else if failureCount > 1 {
 		// Print error if only one instance of error is there.
-		fmt.Println("Failed adding multiple disks, please check logs for details.")
+		return fmt.Errorf("failed adding multiple (%d) disks, please check logs for details", failureCount)
 	}
 
 	return nil
