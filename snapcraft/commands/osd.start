@@ -8,9 +8,9 @@ cd "${SNAP}"
 
 
 maybe_unlock() {
-    local dev="${1:?missing}"
-    local osdid="${2:?missing}"
-    local key="${3:?missing}"
+    dev="${1:?missing}"
+    osdid="${2:?missing}"
+    key="${3:?missing}"
 
     luksname="luksosd-${osdid}"
 
@@ -22,12 +22,12 @@ maybe_unlock() {
 }
 
 get_key() {
-    local osdid="${1:?missing}"
+    osdid="${1:?missing}"
     ceph config-key get "microceph:osd.${osdid}/key"
 }
 
 is_osd_running() {
-    local osdid="${1:?missing}"
+    osdid="${1:?missing}"
 
     skt="${SNAP_CURRENT}/run/ceph-osd.${osdid}.asok"
 
