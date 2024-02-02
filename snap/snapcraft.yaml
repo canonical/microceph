@@ -312,12 +312,6 @@ parts:
     override-prime: |
       set -x
 
-      # Strip all versions of zfs utils
-      for v in "${CRAFT_PRIME}"/zfs-*; do
-        [ -d "${v}" ] || continue
-        find "${v}/" -type f -exec strip -s {} +
-      done
-
       # Strip libraries (excluding python3 scripts)
       find "${CRAFT_PRIME}"/lib -type f \
         -not -path "${CRAFT_PRIME}/lib/python3/*" \
