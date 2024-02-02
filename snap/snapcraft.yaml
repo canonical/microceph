@@ -129,7 +129,7 @@ parts:
   ceph:
     plugin: nil
     override-prime: |
-      snapcraftctl prime
+      craftctl default
       pkg_version=$(
             dpkg-deb -f \
             $CRAFT_PART_SRC/../stage_packages/ceph-common*.deb Version)
@@ -277,7 +277,7 @@ parts:
       - go
     plugin: nil
     override-pull: |
-      snapcraftctl pull
+      craftctl default
       set -ex
 
       # Download the dependencies
