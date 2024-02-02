@@ -31,9 +31,7 @@ is_osd_running() {
 
     skt="${SNAP_CURRENT}/run/ceph-osd.${osdid}.asok"
 
-    [ ! -S "$skt" ] && return 1
-    nc -N -U "${skt}" </dev/null >/dev/null 2>&1 || return 1
-    return 0
+    nc -z -U "${skt}" >/dev/null 2>&1
 }
 
 spawn() {
