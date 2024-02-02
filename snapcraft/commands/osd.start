@@ -1,4 +1,5 @@
 #!/bin/sh
+set -eu
 
 # shellcheck disable=SC2155
 export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
