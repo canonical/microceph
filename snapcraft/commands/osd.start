@@ -27,7 +27,6 @@ is_osd_running() {
     local osdid="${1:?missing}"
 
     skt="${SNAP_CURRENT}/run/ceph-osd.${osdid}.asok"
-    pidfile="${SNAP_CURRENT}/run/ceph-osd.pid"
 
     [ ! -S "$skt" ] && return 1
     nc -N -U "${skt}" </dev/null >/dev/null 2>&1 || return 1
