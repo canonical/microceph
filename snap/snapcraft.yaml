@@ -235,7 +235,6 @@ parts:
       - bin/uuidgen
 
   dqlite:
-    build-attributes: [core22-step-dependencies]
     after:
       - raft
     source: https://github.com/canonical/dqlite
@@ -258,7 +257,6 @@ parts:
       - lib/*/libuv*
 
   raft:
-    build-attributes: [core22-step-dependencies]
     source: https://github.com/canonical/raft
     source-type: git
     source-depth: 1
@@ -279,7 +277,6 @@ parts:
       - lib/*/libuv.so*
 
   microceph:
-    build-attributes: [core22-step-dependencies]
     source: microceph/
     after:
       - dqlite
