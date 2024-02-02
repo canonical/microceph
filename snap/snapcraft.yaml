@@ -160,6 +160,7 @@ parts:
       - ceph-osd
       - radosgw
       - coreutils
+      - uuid-runtime
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -180,6 +181,7 @@ parts:
       - bin/radosgw
       - bin/radosgw-admin
       - bin/truncate
+      - bin/uuidgen
       - lib/*/ceph
       - lib/*/libaio.so*
       - lib/*/libasn1.so*
@@ -224,15 +226,6 @@ parts:
       - lib/*/libtcmalloc.so*
       - lib/*/libunwind.so*
       - share/ceph
-
-  deps:
-    plugin: nil
-    stage-packages:
-      - uuid-runtime
-    organize:
-      usr/bin/: bin/
-    prime:
-      - bin/uuidgen
 
   dqlite:
     after:
