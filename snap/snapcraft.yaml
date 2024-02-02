@@ -303,8 +303,8 @@ parts:
           --abbrev=10)
       export MC_VERSION="ceph-version: $pkg_version; microceph-git: $git_version"
       # Build the binaries
-      go build -o "${CRAFT_PART_INSTALL}/bin/microceph" -ldflags "-X 'main.Version=${MC_VERSION}'" ./cmd/microceph
-      go build -o "${CRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
+      go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microceph" -ldflags "-X 'main.Version=${MC_VERSION}'" ./cmd/microceph
+      go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
     prime:
       - bin/microceph
       - bin/microcephd
