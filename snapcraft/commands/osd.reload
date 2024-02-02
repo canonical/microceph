@@ -1,4 +1,6 @@
 #!/bin/sh
+
+# shellcheck disable=SC2155
 export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
 
 PID=$(cat "${SNAP_CURRENT}/run/ceph-osd.pid")
