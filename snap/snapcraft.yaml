@@ -292,8 +292,8 @@ parts:
     override-build: |
       set -ex
       # Setup build environment
-      export CGO_CFLAGS="-I${SNAPCRAFT_STAGE}/include/ -I${SNAPCRAFT_STAGE}/usr/local/include/"
-      export CGO_LDFLAGS="-L${SNAPCRAFT_STAGE}/lib/ -L${SNAPCRAFT_STAGE}/usr/local/lib/"
+      export CGO_CFLAGS="-I${CRAFT_STAGE}/include/ -I${CRAFT_STAGE}/usr/local/include/"
+      export CGO_LDFLAGS="-L${CRAFT_STAGE}/lib/ -L${CRAFT_STAGE}/usr/local/lib/"
       export CGO_LDFLAGS_ALLOW="(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
       pkg_version=$( apt-cache policy ceph-common | awk '/Candidate:/{ print $2 }' )
       git_version=$(
@@ -303,8 +303,8 @@ parts:
           --abbrev=10)
       export MC_VERSION="ceph-version: $pkg_version; microceph-git: $git_version"
       # Build the binaries
-      go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microceph" -ldflags "-X 'main.Version=${MC_VERSION}'" ./cmd/microceph
-      go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
+      go build -o "${CRAFT_PART_INSTALL}/bin/microceph" -ldflags "-X 'main.Version=${MC_VERSION}'" ./cmd/microceph
+      go build -o "${CRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
     prime:
       - bin/microceph
       - bin/microcephd
