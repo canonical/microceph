@@ -3,7 +3,6 @@ package ceph
 import (
 	"fmt"
 	"strconv"
-	"strings"
 	"unsafe"
 
 	"github.com/canonical/lxd/shared/logger"
@@ -27,43 +26,23 @@ type logWrapper struct {
 	target targetLogger
 }
 
-func parseLogLevel(level string) (int, error) {
-	level = strings.ToLower(level)
-
-	if level == "panic" {
-		return 0, nil
-	} else if level == "fatal" {
-		return 1, nil
-	} else if level == "error" {
-		return 2, nil
-	} else if level == "warning" {
-		return 3, nil
-	} else if level == "info" {
-		return 4, nil
-	} else if level == "debug" {
-		return 5, nil
-	} else if level == "trace" {
-		return 6, nil
-	}
-
-	return 0, fmt.Errorf("invalid log level: %s", level)
-}
-
 func SetLogLevel(level string) error {
-	ilvl, err := strconv.Atoi(level)
+	lrLevel, err := logrus.ParseLevel(level)
 	if err != nil {
-		// Level is a symbolic string.
-		ilvl, err = parseLogLevel(level)
+		// Has to be an integer level.
+		ilvl, err := strconv.Atoi(level)
 		if err != nil {
 			return err
+		} else if ilvl < 0 || ilvl > int(logrus.TraceLevel) {
+			return fmt.Errorf("invalid log level: %u", ilvl)
 		}
-	} else if ilvl < 0 || ilvl > 6 {
-		return fmt.Errorf("log level must be between 0 and 6")
+
+		lrLevel = logrus.Level(ilvl)
 	}
 
 	wrapper := (*logWrapper)(unsafe.Pointer(&logger.Log))
 	target := (*logrus.Logger)(unsafe.Pointer(&wrapper.target))
-	target.SetLevel(logrus.Level(ilvl))
+	target.SetLevel(lrLevel)
 	return nil
 }
 
