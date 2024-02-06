@@ -201,6 +201,13 @@ jobs:
         sudo microceph pool set-rf --size 1 "*"
         sudo microceph.ceph osd pool get mypool size | fgrep -x "size: 1"
 
+    - name: Test log operations
+      run: |
+        set +e
+        sudo microceph log set-level warning
+        output=$(sudo microceph log get-level)
+        if [[ "$output" != "3" ]] ; then echo "incorrect log level: $output"; exit 1; fi 
+
   multi-node-tests:
     name: Multi node testing
     runs-on: ubuntu-22.04
