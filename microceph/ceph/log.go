@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/sirupsen/logrus"
@@ -25,18 +26,6 @@ type targetLogger interface {
 type logWrapper struct {
 	target targetLogger
 }
-
-func (lw *logWrapper) AddContext(ctx logger.Ctx) logger.Logger {
-	return &logWrapper{lw.target}
-}
-
-func (lw *logWrapper) Debug(string, ...logger.Ctx) {}
-func (lw *logWrapper) Error(string, ...logger.Ctx) {}
-func (lw *logWrapper) Fatal(string, ...logger.Ctx) {}
-func (lw *logWrapper) Warn(string, ...logger.Ctx)  {}
-func (lw *logWrapper) Info(string, ...logger.Ctx)  {}
-func (lw *logWrapper) Panic(string, ...logger.Ctx) {}
-func (lw *logWrapper) Trace(string, ...logger.Ctx) {}
 
 func parseLogLevel(level string) (int, error) {
 	level = strings.ToLower(level)
@@ -72,14 +61,14 @@ func SetLogLevel(level string) error {
 		return fmt.Errorf("log level must be between 0 and 6")
 	}
 
-	wrapper := logger.Log.(*logWrapper)
+	wrapper := (*logWrapper)(unsafe.Pointer(&logger.Log))
 	wrapper.target.(*logrus.Logger).SetLevel(logrus.Level(ilvl))
 
 	return nil
 }
 
 func GetLogLevel() uint32 {
-	wrapper := logger.Log.(*logWrapper)
+	wrapper := (*logWrapper)(unsafe.Pointer(&logger.Log))
 	ilvl := wrapper.target.(*logrus.Logger).GetLevel()
 	return uint32(ilvl)
 }
