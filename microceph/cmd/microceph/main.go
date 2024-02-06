@@ -72,6 +72,9 @@ func main() {
     var cmdPool = cmdPool{common: &commonCmd}
     app.AddCommand(cmdPool.Command())
 
+    var cmdLog = cmdLog{common: &commonCmd}
+    app.AddCommand(cmdLog.Command())
+
 	app.InitDefaultHelpCmd()
 
 	err := app.Execute()
