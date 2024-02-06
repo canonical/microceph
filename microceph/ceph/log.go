@@ -62,13 +62,13 @@ func SetLogLevel(level string) error {
 	}
 
 	wrapper := (*logWrapper)(unsafe.Pointer(&logger.Log))
-	wrapper.target.(*logrus.Logger).SetLevel(logrus.Level(ilvl))
-
+	target := (*logrus.Logger)(unsafe.Pointer(&wrapper.target))
+	target.SetLevel(logrus.Level(ilvl))
 	return nil
 }
 
 func GetLogLevel() uint32 {
 	wrapper := (*logWrapper)(unsafe.Pointer(&logger.Log))
-	ilvl := wrapper.target.(*logrus.Logger).GetLevel()
-	return uint32(ilvl)
+	target := (*logrus.Logger)(unsafe.Pointer(&wrapper.target))
+	return uint32(target.GetLevel())
 }
