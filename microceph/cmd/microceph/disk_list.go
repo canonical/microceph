@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
 
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microceph/microceph/common"
 )
@@ -20,6 +22,7 @@ import (
 type cmdDiskList struct {
 	common *CmdControl
 	disk   *cmdDisk
+	json   bool
 }
 
 func (c *cmdDiskList) Command() *cobra.Command {
@@ -29,6 +32,7 @@ func (c *cmdDiskList) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
+	cmd.PersistentFlags().BoolVar(&c.json, "json", false, "Provide output as Json encoded string.")
 	return cmd
 }
 
@@ -37,6 +41,12 @@ type Disk struct {
 	Size  string
 	Type  string
 	Path  string
+}
+
+// Structure for marshalling to json.
+type DiskListOutput struct {
+	ConfiguredDisks    types.Disks
+	UnpartitionedDisks []Disk
 }
 
 func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
@@ -54,6 +64,10 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	disks, err := client.GetDisks(context.Background(), cli)
 	if err != nil {
 		return fmt.Errorf("internal error: unable to fetch configured disks: %w", err)
+	}
+
+	if c.json {
+		return outputJson(cli)
 	}
 
 	data := make([][]string, len(disks))
@@ -102,6 +116,31 @@ func listLocalDisks(cli *microCli.Client) error {
 		return err
 	}
 
+	return nil
+}
+
+// outputJson prints the json output to stdout.
+func outputJson(cli *microCli.Client) error {
+	output := DiskListOutput{}
+	var err error
+
+	// List configured disks.
+	output.ConfiguredDisks, err = client.GetDisks(context.Background(), cli)
+	if err != nil {
+		return fmt.Errorf("internal error: unable to fetch configured disks: %w", err)
+	}
+
+	output.UnpartitionedDisks, err = getUnpartitionedDisks(cli)
+	if err != nil {
+		return fmt.Errorf("internal error: unable to fetch unpartitoned disks: %w", err)
+	}
+
+	opStr, err := json.Marshal(output)
+	if err != nil {
+		return fmt.Errorf("internal error: unable to encode json output: %w", err)
+	}
+
+	fmt.Printf("%s\n", opStr)
 	return nil
 }
 
