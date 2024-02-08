@@ -82,34 +82,38 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 func outputFormattedTable(configuredDisks types.Disks, availableDisks []Disk) error {
 	var err error
 
-	// Print configured disks.
-	cData := make([][]string, len(configuredDisks))
-	for i, cDisk := range configuredDisks {
-		cData[i] = []string{fmt.Sprintf("%d", cDisk.OSD), cDisk.Location, cDisk.Path}
+	if len(configuredDisks) > 0 {
+		// Print configured disks.
+		cData := make([][]string, len(configuredDisks))
+		for i, cDisk := range configuredDisks {
+			cData[i] = []string{fmt.Sprintf("%d", cDisk.OSD), cDisk.Location, cDisk.Path}
+		}
+
+		header := []string{"OSD", "LOCATION", "PATH"}
+		sort.Sort(lxdCmd.SortColumnsNaturally(cData))
+
+		fmt.Println("Disks configured in MicroCeph:")
+		err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, cData, configuredDisks)
+		if err != nil {
+			return err
+		}
 	}
 
-	header := []string{"OSD", "LOCATION", "PATH"}
-	sort.Sort(lxdCmd.SortColumnsNaturally(cData))
+	if len(availableDisks) > 0 {
+		// Print available disks
+		aData := make([][]string, len(availableDisks))
+		for i, aDisk := range availableDisks {
+			aData[i] = []string{aDisk.Model, aDisk.Size, aDisk.Type, aDisk.Path}
+		}
 
-	fmt.Println("Disks configured in MicroCeph:")
-	err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, cData, configuredDisks)
-	if err != nil {
-		return err
-	}
+		header := []string{"MODEL", "CAPACITY", "TYPE", "PATH"}
+		sort.Sort(lxdCmd.SortColumnsNaturally(aData))
 
-	// Print available disks
-	aData := make([][]string, len(availableDisks))
-	for i, aDisk := range availableDisks {
-		aData[i] = []string{aDisk.Model, aDisk.Size, aDisk.Type, aDisk.Path}
-	}
-
-	header = []string{"MODEL", "CAPACITY", "TYPE", "PATH"}
-	sort.Sort(lxdCmd.SortColumnsNaturally(aData))
-
-	fmt.Println("\nAvailable unpartitioned disks on this system:")
-	err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, aData, aData)
-	if err != nil {
-		return err
+		fmt.Println("\nAvailable unpartitioned disks on this system:")
+		err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, aData, aData)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

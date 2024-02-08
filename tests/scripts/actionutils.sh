@@ -55,6 +55,13 @@ function add_encrypted_osds() {
 
     # Wait for OSDs to become up
     sleep 30
+
+    # verify disks using json output.
+    res=$(sudo microceph disk list --json | jq -r '.ConfiguredDisks[].path' | grep -e "/dev/sdia" -e "/dev/sdib" -e "/dev/sdic" -c)
+    if ($res -ne "3") ; then
+        echo "${res} is not equal to expected disk count (3)"
+        exit 1
+    fi
 }
 
 function enable_rgw() {
