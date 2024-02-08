@@ -183,7 +183,7 @@ func printLocalDisks(cli *microCli.Client) error {
 	// List unpartitioned disks.
 	availableDisks, err := getUnpartitionedDisks(cli)
 	if err != nil {
-		return fmt.Errorf("internal error: unable to fetch unpartitoned disks: %w", err)
+		return fmt.Errorf("internal error: unable to fetch unpartitioned disks: %w", err)
 	}
 
 	return outputFormattedTable(nil, availableDisks)
