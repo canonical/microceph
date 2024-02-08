@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/lxd/util"
+	microCli "github.com/canonical/microcluster/client"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
 
@@ -136,7 +137,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	if wantsDisks {
-		err = listLocalDisks(lc)
+		err = printLocalDisks(lc)
 		if err != nil {
 			return err
 		}
@@ -176,4 +177,14 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func printLocalDisks(cli *microCli.Client) error {
+	// List unpartitioned disks.
+	availableDisks, err := getUnpartitionedDisks(cli)
+	if err != nil {
+		return fmt.Errorf("internal error: unable to fetch unpartitioned disks: %w", err)
+	}
+
+	return outputFormattedTable(nil, availableDisks)
 }

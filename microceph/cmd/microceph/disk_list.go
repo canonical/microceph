@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
 
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microceph/microceph/common"
 )
@@ -20,6 +22,7 @@ import (
 type cmdDiskList struct {
 	common *CmdControl
 	disk   *cmdDisk
+	json   bool
 }
 
 func (c *cmdDiskList) Command() *cobra.Command {
@@ -29,6 +32,7 @@ func (c *cmdDiskList) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
+	cmd.PersistentFlags().BoolVar(&c.json, "json", false, "Provide output as Json encoded string.")
 	return cmd
 }
 
@@ -37,6 +41,12 @@ type Disk struct {
 	Size  string
 	Type  string
 	Path  string
+}
+
+// Structure for marshalling to json.
+type DiskListOutput struct {
+	ConfiguredDisks types.Disks
+	AvailableDisks  []Disk
 }
 
 func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
@@ -51,57 +61,78 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// List configured disks.
-	disks, err := client.GetDisks(context.Background(), cli)
+	configuredDisks, err := client.GetDisks(context.Background(), cli)
 	if err != nil {
 		return fmt.Errorf("internal error: unable to fetch configured disks: %w", err)
 	}
 
-	data := make([][]string, len(disks))
-	for i, disk := range disks {
-		data[i] = []string{fmt.Sprintf("%d", disk.OSD), disk.Location, disk.Path}
+	// List unpartitioned disks.
+	availableDisks, err := getUnpartitionedDisks(cli)
+	if err != nil {
+		return fmt.Errorf("internal error: unable to fetch unpartitoned disks: %w", err)
 	}
 
-	header := []string{"OSD", "LOCATION", "PATH"}
-	sort.Sort(lxdCmd.SortColumnsNaturally(data))
-
-	fmt.Println("Disks configured in MicroCeph:")
-	err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, data, disks)
-	if err != nil {
-		return err
+	if c.json {
+		return outputJson(configuredDisks, availableDisks)
 	}
 
-	// List local disks.
-	err = listLocalDisks(cli)
-	if err != nil {
-		return err
+	return outputFormattedTable(configuredDisks, availableDisks)
+}
+
+func outputFormattedTable(configuredDisks types.Disks, availableDisks []Disk) error {
+	var err error
+
+	if len(configuredDisks) > 0 {
+		// Print configured disks.
+		cData := make([][]string, len(configuredDisks))
+		for i, cDisk := range configuredDisks {
+			cData[i] = []string{fmt.Sprintf("%d", cDisk.OSD), cDisk.Location, cDisk.Path}
+		}
+
+		header := []string{"OSD", "LOCATION", "PATH"}
+		sort.Sort(lxdCmd.SortColumnsNaturally(cData))
+
+		fmt.Println("Disks configured in MicroCeph:")
+		err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, cData, configuredDisks)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(availableDisks) > 0 {
+		// Print available disks
+		aData := make([][]string, len(availableDisks))
+		for i, aDisk := range availableDisks {
+			aData[i] = []string{aDisk.Model, aDisk.Size, aDisk.Type, aDisk.Path}
+		}
+
+		header := []string{"MODEL", "CAPACITY", "TYPE", "PATH"}
+		sort.Sort(lxdCmd.SortColumnsNaturally(aData))
+
+		fmt.Println("\nAvailable unpartitioned disks on this system:")
+		err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, aData, aData)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func listLocalDisks(cli *microCli.Client) error {
-	data := [][]string{}
+// outputJson prints the json output to stdout.
+func outputJson(configuredDisks types.Disks, availableDisks []Disk) error {
+	var err error
+	output := DiskListOutput{
+		ConfiguredDisks: configuredDisks,
+		AvailableDisks:  availableDisks,
+	}
 
-	disks, err := getUnpartitionedDisks(cli)
+	opStr, err := json.Marshal(output)
 	if err != nil {
-		return err
+		return fmt.Errorf("internal error: unable to encode json output: %w", err)
 	}
 
-	for _, disk := range disks {
-		data = append(data, []string{disk.Model, disk.Size, disk.Type, disk.Path})
-	}
-
-	fmt.Println("")
-	fmt.Println("Available unpartitioned disks on this system:")
-
-	header := []string{"MODEL", "CAPACITY", "TYPE", "PATH"}
-	sort.Sort(lxdCmd.SortColumnsNaturally(data))
-
-	err = lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, data, data)
-	if err != nil {
-		return err
-	}
-
+	fmt.Printf("%s\n", opStr)
 	return nil
 }
 
