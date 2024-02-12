@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"math"
 	"os"
 	"os/exec"
@@ -20,11 +18,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/canonical/lxd/lxd/resources"
-	"github.com/canonical/lxd/lxd/revert"
-	"github.com/canonical/lxd/shared"
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
+
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/lxd/shared/revert"
+
+	"github.com/canonical/lxd/lxd/resources"
+	"github.com/canonical/lxd/shared"
 	"github.com/canonical/microcluster/state"
 	"github.com/pborman/uuid"
 
