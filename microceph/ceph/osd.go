@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"math"
 	"os"
 	"os/exec"
@@ -18,13 +20,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/common"
-
 	"github.com/canonical/lxd/lxd/resources"
 	"github.com/canonical/lxd/lxd/revert"
 	"github.com/canonical/lxd/shared"
+	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microcluster/state"
 	"github.com/pborman/uuid"
 
@@ -440,7 +440,7 @@ func validateBulkDiskAdditionArgs(disks []types.DiskParameter, wal *types.DiskPa
 
 	// check if loop spec is provided in batch request arguments.
 	for _, disk := range disks {
-		if strings.HasPrefix(disk.Path, common.LoopSpecId) {
+		if strings.HasPrefix(disk.Path, contants.LoopSpecId) {
 			err := fmt.Errorf("cannot add loop spec '%s', add a single loop spec or one or more block device paths", disk.Path)
 			logger.Error(err.Error())
 			return err
@@ -494,7 +494,7 @@ func AddBulkDisks(s *state.State, disks []types.DiskParameter, wal *types.DiskPa
 
 // AddSingleDisk is a wrapper around AddOSD which logs disk addition failures and returns a formatted response.
 func AddSingleDisk(s *state.State, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
-	if strings.Contains(disk.Path, common.LoopSpecId) {
+	if strings.Contains(disk.Path, contants.LoopSpecId) {
 		// Add file based OSDs.
 		err := AddLoopBackOSDs(s, disk.Path)
 		if err != nil {
@@ -559,8 +559,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 
 	logger.Debugf("Created disk record for osd.%d", nr)
 
-	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
-	osdDataPath := filepath.Join(dataPath, "osd", fmt.Sprintf("ceph-%d", nr))
+	osdDataPath := filepath.Join(contants.GetPathConst().DataPath, "osd", fmt.Sprintf("ceph-%d", nr))
 
 	// if we fail later, make sure we free up the record
 	revert.Add(func() {
@@ -645,7 +644,7 @@ func ListOSD(s *state.State) (types.Disks, error) {
 }
 
 // RemoveOSD removes an OSD disk
-func RemoveOSD(s common.StateInterface, osd int64, bypassSafety bool, timeout int64) error {
+func RemoveOSD(s interfaces.StateInterface, osd int64, bypassSafety bool, timeout int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(timeout))
 	defer cancel()
 	err := doRemoveOSD(ctx, s, osd, bypassSafety)
@@ -661,7 +660,7 @@ func RemoveOSD(s common.StateInterface, osd int64, bypassSafety bool, timeout in
 }
 
 // sanityCheck checks if input is valid
-func sanityCheck(s common.StateInterface, osd int64) error {
+func sanityCheck(s interfaces.StateInterface, osd int64) error {
 	// check osd is positive
 	if osd < 0 {
 		return fmt.Errorf("OSD must be a positive integer")
@@ -680,7 +679,7 @@ func sanityCheck(s common.StateInterface, osd int64) error {
 
 // IsDowngradeNeeded checks if we need to downgrade the failure domain from 'host' to 'osd' level
 // if we remove the given OSD
-func IsDowngradeNeeded(s common.StateInterface, osd int64) (bool, error) {
+func IsDowngradeNeeded(s interfaces.StateInterface, osd int64) (bool, error) {
 	currentRule, err := getDefaultCrushRule()
 	if err != nil {
 		return false, err
@@ -707,7 +706,7 @@ func IsDowngradeNeeded(s common.StateInterface, osd int64) (bool, error) {
 }
 
 // scaleDownFailureDomain scales down the failure domain from 'host' to 'osd' level
-func scaleDownFailureDomain(s common.StateInterface, osd int64) error {
+func scaleDownFailureDomain(s interfaces.StateInterface, osd int64) error {
 	needDowngrade, err := IsDowngradeNeeded(s, osd)
 	logger.Debugf("Downgrade needed: %v", needDowngrade)
 	if err != nil {
@@ -784,7 +783,7 @@ func purgeOSD(osd int64) error {
 	return nil
 }
 
-func wipeDevice(s common.StateInterface, path string) {
+func wipeDevice(s interfaces.StateInterface, path string) {
 	var err error
 	// wipe the device, retry with exponential backoff
 	retries := 8
@@ -821,7 +820,7 @@ func timeoutWipe(path string) error {
 	return err
 }
 
-func doRemoveOSD(ctx context.Context, s common.StateInterface, osd int64, bypassSafety bool) error {
+func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, bypassSafety bool) error {
 	var err error
 
 	// general sanity
@@ -905,7 +904,7 @@ func doRemoveOSD(ctx context.Context, s common.StateInterface, osd int64, bypass
 	return nil
 }
 
-func clearStorage(s common.StateInterface, osd int64) error {
+func clearStorage(s interfaces.StateInterface, osd int64) error {
 	path, err := database.OSDQuery.Path(s.ClusterState(), osd)
 	if err != nil {
 		return err
@@ -929,7 +928,7 @@ func clearStorage(s common.StateInterface, osd int64) error {
 	return nil
 }
 
-func checkMinOSDs(s common.StateInterface, osd int64) error {
+func checkMinOSDs(s interfaces.StateInterface, osd int64) error {
 	// check if we have at least 3 OSDs post-removal
 	disks, err := database.OSDQuery.List(s.ClusterState())
 	if err != nil {
@@ -1072,13 +1071,13 @@ func killOSD(osd int64) error {
 
 func SetReplicationFactor(pools []string, size int64) error {
 	ssize := fmt.Sprintf("%d", size)
-    _, err := processExec.RunCommand("ceph", "config", "set", "global",
-                                     "osd_pool_default_size", ssize)
-    if err != nil {
-        return fmt.Errorf("failed to set pool size default: %w", err)
-    }
+	_, err := processExec.RunCommand("ceph", "config", "set", "global",
+		"osd_pool_default_size", ssize)
+	if err != nil {
+		return fmt.Errorf("failed to set pool size default: %w", err)
+	}
 
-    allowSizeOne := "true"
+	allowSizeOne := "true"
 	if size != 1 {
 		allowSizeOne = "false"
 	}
@@ -1093,21 +1092,21 @@ func SetReplicationFactor(pools []string, size int64) error {
 	// error on failure
 	_, _ = processExec.RunCommand("ceph", "health", "mute", "POOL_NO_REDUNDANCY")
 
-    if len(pools) == 1 && pools[0] == "*" {
+	if len(pools) == 1 && pools[0] == "*" {
 		// Apply setting to all existing pools.
 		out, err := processExec.RunCommand("ceph", "osd", "pool", "ls")
 		if err != nil {
 			return fmt.Errorf("failed to list pools: %w", err)
 		}
 
-        pools = strings.Split(out, "\n")
+		pools = strings.Split(out, "\n")
 	}
 
 	for _, pool := range pools {
-        pool = strings.TrimSpace(pool)
-        if pool == "" {
-            continue
-        }
+		pool = strings.TrimSpace(pool)
+		if pool == "" {
+			continue
+		}
 		_, err := processExec.RunCommand("ceph", "osd", "pool", "set", pool, "size", ssize, "--yes-i-really-mean-it")
 		if err != nil {
 			return fmt.Errorf("failed to set pool size for %s: %w", pool, err)

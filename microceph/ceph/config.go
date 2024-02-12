@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,7 +163,7 @@ func ListConfigs() (types.Configs, error) {
 }
 
 // updates the ceph config file.
-func UpdateConfig(s common.StateInterface) error {
+func UpdateConfig(s interfaces.StateInterface) error {
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
 	runPath := filepath.Join(os.Getenv("SNAP_DATA"), "run")
 

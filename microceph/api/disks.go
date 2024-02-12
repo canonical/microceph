@@ -3,13 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
 
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/gorilla/mux"
 
 	"github.com/canonical/lxd/lxd/response"
@@ -115,7 +115,7 @@ func cmdDisksDelete(s *state.State, r *http.Request) response.Response {
 	mu.Lock()
 	defer mu.Unlock()
 
-	cs := common.CephState{State: s}
+	cs := interfaces.CephState{State: s}
 	needDowngrade, err := ceph.IsDowngradeNeeded(cs, osdid)
 	if err != nil {
 		return response.InternalError(err)

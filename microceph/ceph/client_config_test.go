@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"fmt"
+	"github.com/canonical/microceph/microceph/tests"
 	"reflect"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 )
 
 type ClientConfigSuite struct {
-	baseSuite
+	tests.BaseSuite
 	TestStateInterface *mocks.StateInterface
 }
 
@@ -22,7 +23,7 @@ func TestClientConfig(t *testing.T) {
 }
 
 func (ccs *ClientConfigSuite) SetupTest() {
-	ccs.baseSuite.SetupTest()
+	ccs.BaseSuite.SetupTest()
 
 	ccs.TestStateInterface = mocks.NewStateInterface(ccs.T())
 	state := &state.State{}

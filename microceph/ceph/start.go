@@ -3,15 +3,15 @@ package ceph
 import (
 	"context"
 	"database/sql"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"reflect"
 	"time"
 
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 )
 
 // Start is run on daemon startup.
-func Start(s common.StateInterface) error {
+func Start(s interfaces.StateInterface) error {
 	// Start background loop to refresh the config every minute if needed.
 	go func() {
 		oldMonitors := []string{}

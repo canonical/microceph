@@ -3,12 +3,12 @@ package client
 import (
 	"context"
 	"fmt"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microcluster/client"
 )
 
@@ -78,7 +78,7 @@ func UpdateClientConf(ctx context.Context, c *client.Client) error {
 }
 
 // Sends the update conf request to every other member of the cluster.
-func SendUpdateClientConfRequestToClusterMembers(s common.StateInterface) error {
+func SendUpdateClientConfRequestToClusterMembers(s interfaces.StateInterface) error {
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
 	cluster, err := s.ClusterState().Cluster(nil)
 	if err != nil {

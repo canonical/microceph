@@ -1,5 +1,5 @@
 // Package common interfaces the microcluster cluster state
-package common
+package interfaces
 
 import (
 	"github.com/canonical/microcluster/state"

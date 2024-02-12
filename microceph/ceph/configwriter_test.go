@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"github.com/canonical/microceph/microceph/tests"
 	"os"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 )
 
 type configWriterSuite struct {
-	baseSuite
+	tests.BaseSuite
 }
 
 func TestConfigWriter(t *testing.T) {
@@ -18,12 +19,12 @@ func TestConfigWriter(t *testing.T) {
 
 // Set up test suite
 func (s *configWriterSuite) SetupTest() {
-	s.baseSuite.SetupTest()
+	s.BaseSuite.SetupTest()
 }
 
 // Test ceph config writing
 func (s *configWriterSuite) TestWriteCephConfig() {
-	config := newCephConfig(s.tmp)
+	config := newCephConfig(s.Tmp)
 	err := config.WriteConfig(
 		map[string]any{
 			"fsid":     "fsid1234",
@@ -45,7 +46,7 @@ func (s *configWriterSuite) TestWriteCephConfig() {
 
 // Test ceph config writing
 func (s *configWriterSuite) TestWriteRadosGWConfig() {
-	config := newRadosGWConfig(s.tmp)
+	config := newRadosGWConfig(s.Tmp)
 	err := config.WriteConfig(
 		map[string]any{
 			"monitors": "foohost",
@@ -64,7 +65,7 @@ func (s *configWriterSuite) TestWriteRadosGWConfig() {
 
 // Test ceph keyring writing
 func (s *configWriterSuite) TestWriteCephKeyring() {
-	keyring := newCephKeyring(s.tmp, "ceph.keyring")
+	keyring := newCephKeyring(s.Tmp, "ceph.keyring")
 	err := keyring.WriteConfig(
 		map[string]any{
 			"name": "client.admin",

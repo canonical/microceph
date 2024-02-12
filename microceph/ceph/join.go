@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 
 	"github.com/canonical/lxd/shared/logger"
@@ -12,8 +14,8 @@ import (
 )
 
 // Join will join an existing Ceph deployment.
-func Join(s common.StateInterface) error {
-	pathFileMode := common.GetPathFileMode()
+func Join(s interfaces.StateInterface) error {
+	pathFileMode := contants.GetPathFileMode()
 	var spt = GetServicePlacementTable()
 
 	// Create our various paths.
@@ -117,7 +119,7 @@ func Join(s common.StateInterface) error {
 	return nil
 }
 
-func updateDatabasePostJoin(s common.StateInterface, services []string) error {
+func updateDatabasePostJoin(s interfaces.StateInterface, services []string) error {
 	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the roles.
 		for _, service := range services {
@@ -143,7 +145,7 @@ func updateDatabasePostJoin(s common.StateInterface, services []string) error {
 	return nil
 }
 
-func updateDbForMon(s common.StateInterface, ctx context.Context, tx *sql.Tx) error {
+func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx) error {
 	// Fetch public network
 	configItem, err := database.GetConfigItem(ctx, tx, "public_network")
 	if err != nil {

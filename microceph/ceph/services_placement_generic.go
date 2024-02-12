@@ -4,12 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 )
 
@@ -28,24 +29,24 @@ type GenericServicePlacement struct {
 	Name string
 }
 
-func (gsp *GenericServicePlacement) PopulateParams(s common.StateInterface, payload string) error {
+func (gsp *GenericServicePlacement) PopulateParams(s interfaces.StateInterface, payload string) error {
 	// No params needed to initialise generic service
 	return nil
 }
 
-func (gsp *GenericServicePlacement) HospitalityCheck(s common.StateInterface) error {
+func (gsp *GenericServicePlacement) HospitalityCheck(s interfaces.StateInterface) error {
 	return genericHospitalityCheck(gsp.Name)
 }
 
-func (gsp *GenericServicePlacement) ServiceInit(s common.StateInterface) error {
+func (gsp *GenericServicePlacement) ServiceInit(s interfaces.StateInterface) error {
 	return genericServiceInit(s, gsp.Name)
 }
 
-func (gsp *GenericServicePlacement) PostPlacementCheck(s common.StateInterface) error {
+func (gsp *GenericServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {
 	return genericPostPlacementCheck(gsp.Name)
 }
 
-func (gsp *GenericServicePlacement) DbUpdate(s common.StateInterface) error {
+func (gsp *GenericServicePlacement) DbUpdate(s interfaces.StateInterface) error {
 	return genericDbUpdate(s, gsp.Name)
 }
 
@@ -62,12 +63,12 @@ func genericHospitalityCheck(service string) error {
 	return nil
 }
 
-func genericServiceInit(s common.StateInterface, name string) error {
+func genericServiceInit(s interfaces.StateInterface, name string) error {
 	var ok bool
 	var addService func(string, string) error
 	hostname := s.ClusterState().Name()
-	pathConsts := common.GetPathConst()
-	pathFileMode := common.GetPathFileMode()
+	pathConsts := contants.GetPathConst()
+	pathFileMode := contants.GetPathFileMode()
 	serviceDataPath := filepath.Join(pathConsts.DataPath, name, fmt.Sprintf("ceph-%s", hostname))
 	addServiceTable := GetAddServiceTable()
 
@@ -119,7 +120,7 @@ func genericPostPlacementCheck(service string) error {
 	return nil
 }
 
-func genericDbUpdate(s common.StateInterface, service string) error {
+func genericDbUpdate(s interfaces.StateInterface, service string) error {
 	// Update the database.
 	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the roles.

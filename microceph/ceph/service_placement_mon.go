@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/canonical/microceph/microceph/interfaces"
 
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 )
 
@@ -14,27 +14,27 @@ type MonServicePlacement struct {
 }
 
 // Populate json payload data to the service object.
-func (msp *MonServicePlacement) PopulateParams(s common.StateInterface, payload string) error {
+func (msp *MonServicePlacement) PopulateParams(s interfaces.StateInterface, payload string) error {
 	return nil
 }
 
 // Check if host is hospitable to the new service to be enabled.
-func (msp *MonServicePlacement) HospitalityCheck(s common.StateInterface) error {
+func (msp *MonServicePlacement) HospitalityCheck(s interfaces.StateInterface) error {
 	return genericHospitalityCheck(msp.Name)
 }
 
 // Initialise the new service.
-func (msp *MonServicePlacement) ServiceInit(s common.StateInterface) error {
+func (msp *MonServicePlacement) ServiceInit(s interfaces.StateInterface) error {
 	return genericServiceInit(s, msp.Name)
 }
 
 // Perform Post Placement checks for the service
-func (msp *MonServicePlacement) PostPlacementCheck(s common.StateInterface) error {
+func (msp *MonServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {
 	return genericPostPlacementCheck(msp.Name)
 }
 
 // Perform DB updates to persist the service enablement changes.
-func (msp *MonServicePlacement) DbUpdate(s common.StateInterface) error {
+func (msp *MonServicePlacement) DbUpdate(s interfaces.StateInterface) error {
 	// Update the database.
 	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the role.

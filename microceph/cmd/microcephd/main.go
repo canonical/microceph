@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"math/rand"
 	"os"
 	"time"
@@ -70,18 +71,18 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	h := &config.Hooks{}
 	h.OnBootstrap = func(s *state.State, initConfig map[string]string) error {
 		data := common.BootstrapConfig{}
-		interf := common.CephState{State: s}
+		interf := interfaces.CephState{State: s}
 		common.DecodeBootstrapConfig(initConfig, &data)
 		return ceph.Bootstrap(interf, data)
 	}
 
 	h.PostJoin = func(s *state.State, initConfig map[string]string) error {
-		interf := common.CephState{State: s}
+		interf := interfaces.CephState{State: s}
 		return ceph.Join(interf)
 	}
 
 	h.OnStart = func(s *state.State) error {
-		interf := common.CephState{State: s}
+		interf := interfaces.CephState{State: s}
 		return ceph.Start(interf)
 	}
 

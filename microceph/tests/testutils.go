@@ -1,4 +1,4 @@
-package ceph
+package tests
 
 import (
 	"os"
@@ -10,26 +10,26 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type baseSuite struct {
+type BaseSuite struct {
 	suite.Suite
-	tmp string
+	Tmp string
 }
 
-// createTmp creates a temporary directory for the test
-func (s *baseSuite) createTmp() {
+// CreateTmp creates a temporary directory for the test
+func (s *BaseSuite) CreateTmp() {
 	var err error
-	s.tmp, err = os.MkdirTemp("", "microceph-test")
+	s.Tmp, err = os.MkdirTemp("", "microceph-test")
 	if err != nil {
-		s.T().Fatal("error creating tmp:", err)
+		s.T().Fatal("error creating Tmp:", err)
 	}
 }
 
 // copyCephConfigs copies a test config file to the test directory
-func (s *baseSuite) copyCephConfigs() {
+func (s *BaseSuite) CopyCephConfigs() {
 	var err error
 
 	for _, d := range []string{"SNAP_DATA", "SNAP_COMMON"} {
-		p := filepath.Join(s.tmp, d)
+		p := filepath.Join(s.Tmp, d)
 		err = os.MkdirAll(p, 0770)
 		if err != nil {
 			s.T().Fatal("error creating dir:", err)
@@ -37,7 +37,7 @@ func (s *baseSuite) copyCephConfigs() {
 		os.Setenv(d, p)
 	}
 	for _, d := range []string{"SNAP_DATA/conf", "SNAP_DATA/run", "SNAP_COMMON/data", "SNAP_COMMON/logs"} {
-		p := filepath.Join(s.tmp, d)
+		p := filepath.Join(s.Tmp, d)
 		err = os.Mkdir(p, 0770)
 		if err != nil {
 			s.T().Fatal("error creating dir:", err)
@@ -45,7 +45,7 @@ func (s *baseSuite) copyCephConfigs() {
 	}
 
 	for _, f := range []string{"ceph.client.admin.keyring", "ceph.conf"} {
-		err = copyTestConf(s.tmp, f)
+		err = CopyTestConf(s.Tmp, f)
 		if err != nil {
 			s.T().Fatal("error copying testconf:", err)
 		}
@@ -53,21 +53,23 @@ func (s *baseSuite) copyCephConfigs() {
 }
 
 // readCephConfig reads a config file from the test directory
-func (s *baseSuite) readCephConfig(conf string) string {
+func (s *BaseSuite) ReadCephConfig(conf string) string {
 	// Read the config file
-	data, _ := os.ReadFile(filepath.Join(s.tmp, "SNAP_DATA", "conf", conf))
+	data, _ := os.ReadFile(filepath.Join(s.Tmp, "SNAP_DATA", "conf", conf))
 	return string(data)
 }
 
-func (s *baseSuite) SetupTest() {
-	s.createTmp()
+func (s *BaseSuite) SetupTest() {
+	s.CreateTmp()
+	os.Setenv("TEST_ROOT_PATH", s.Tmp)
+	os.MkdirAll(filepath.Join(s.Tmp, "proc"), 0775)
 }
 
-func (s *baseSuite) TearDownTest() {
-	os.RemoveAll(s.tmp)
+func (s *BaseSuite) TearDownTest() {
+	os.RemoveAll(s.Tmp)
 }
 
-func cmdAny(cmd string, no int) []interface{} {
+func CmdAny(cmd string, no int) []interface{} {
 	any := make([]interface{}, no+1)
 	for i := range any {
 		any[i] = mock.Anything
@@ -76,7 +78,7 @@ func cmdAny(cmd string, no int) []interface{} {
 	return any
 }
 
-func copyTestConf(dir string, conf string) error {
+func CopyTestConf(dir string, conf string) error {
 	_, tfile, _, _ := runtime.Caller(0)
 	pkgDir := path.Join(path.Dir(tfile), "..")
 

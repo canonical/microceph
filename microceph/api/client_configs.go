@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"net/http"
 
 	"github.com/canonical/lxd/lxd/response"
@@ -12,7 +14,6 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microcluster/rest"
 	"github.com/canonical/microcluster/state"
@@ -40,7 +41,7 @@ func cmdClientConfigsGet(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	if req.Host == common.ClientConfigGlobalHostConst {
+	if req.Host == contants.ClientConfigGlobalHostConst {
 		configs, err = database.ClientConfigQuery.GetAll(s)
 	} else {
 		configs, err = database.ClientConfigQuery.GetAllForHost(s, req.Host)
@@ -70,7 +71,7 @@ func cmdClientConfigsPut(s *state.State, r *http.Request) response.Response {
 		return response.BadRequest(err)
 	}
 
-	err = ceph.UpdateConfig(common.CephState{State: s})
+	err = ceph.UpdateConfig(interfaces.CephState{State: s})
 	if err != nil {
 		logger.Error(err.Error())
 		response.InternalError(err)
@@ -97,7 +98,7 @@ func clientConfigsKeyGet(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	if req.Host == common.ClientConfigGlobalHostConst {
+	if req.Host == contants.ClientConfigGlobalHostConst {
 		configs, err = database.ClientConfigQuery.GetAllForKey(s, req.Key)
 	} else {
 		configs, err = database.ClientConfigQuery.GetAllForKeyAndHost(s, req.Key, req.Host)
@@ -142,7 +143,7 @@ func clientConfigsKeyDelete(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	if req.Host == common.ClientConfigGlobalHostConst {
+	if req.Host == contants.ClientConfigGlobalHostConst {
 		err = database.ClientConfigQuery.RemoveAllForKey(s, req.Key)
 	} else {
 		err = database.ClientConfigQuery.RemoveOneForKeyAndHost(s, req.Key, req.Host)
@@ -161,20 +162,20 @@ func clientConfigsKeyDelete(s *state.State, r *http.Request) response.Response {
 func clientConfigUpdate(s *state.State, wait bool) error {
 	if wait {
 		// Execute update conf synchronously
-		err := client.SendUpdateClientConfRequestToClusterMembers(common.CephState{State: s})
+		err := client.SendUpdateClientConfRequestToClusterMembers(interfaces.CephState{State: s})
 		if err != nil {
 			return err
 		}
 
 		// Update on current host.
-		err = ceph.UpdateConfig(common.CephState{State: s})
+		err = ceph.UpdateConfig(interfaces.CephState{State: s})
 		if err != nil {
 			return err
 		}
 	} else { // Execute update asynchronously
 		go func() {
-			client.SendUpdateClientConfRequestToClusterMembers(common.CephState{State: s})
-			ceph.UpdateConfig(common.CephState{State: s}) // Restart on current host.
+			client.SendUpdateClientConfRequestToClusterMembers(interfaces.CephState{State: s})
+			ceph.UpdateConfig(interfaces.CephState{State: s}) // Restart on current host.
 		}()
 	}
 

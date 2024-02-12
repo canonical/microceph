@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"fmt"
+	"github.com/canonical/microceph/microceph/tests"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -11,7 +12,7 @@ import (
 )
 
 type servicesPlacementSuite struct {
-	baseSuite
+	tests.BaseSuite
 	TestStateInterface *mocks.StateInterface
 }
 
@@ -21,7 +22,7 @@ func TestServicesPlacement(t *testing.T) {
 
 // Set up test suite
 func (s *servicesPlacementSuite) SetupTest() {
-	s.baseSuite.SetupTest()
+	s.BaseSuite.SetupTest()
 }
 
 func addSnapServiceActiveExpectations(r *mocks.Runner, service string, retStr string, retErr error) {

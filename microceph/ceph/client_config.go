@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"fmt"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"reflect"
 
 	"github.com/canonical/microceph/microceph/common"
@@ -21,7 +22,7 @@ type ClientConfigT struct {
 }
 
 // GetClientConfigForHost fetches all the applicable client configurations for the provided host.
-func GetClientConfigForHost(s common.StateInterface, hostname string) (ClientConfigT, error) {
+func GetClientConfigForHost(s interfaces.StateInterface, hostname string) (ClientConfigT, error) {
 	retval := ClientConfigT{}
 
 	// Get all client configs for the current host.

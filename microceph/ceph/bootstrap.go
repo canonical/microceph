@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,9 +19,9 @@ import (
 )
 
 // Bootstrap will initialize a new Ceph deployment.
-func Bootstrap(s common.StateInterface, data common.BootstrapConfig) error {
-	pathConsts := common.GetPathConst()
-	pathFileMode := common.GetPathFileMode()
+func Bootstrap(s interfaces.StateInterface, data common.BootstrapConfig) error {
+	pathConsts := contants.GetPathConst()
+	pathFileMode := contants.GetPathFileMode()
 
 	// Create our various paths.
 	for path, perm := range pathFileMode {
@@ -141,7 +143,7 @@ func setDefaultNetwork(cn string) error {
 	return nil
 }
 
-func prepareCephBootstrapData(s common.StateInterface, data *common.BootstrapConfig) error {
+func prepareCephBootstrapData(s interfaces.StateInterface, data *common.BootstrapConfig) error {
 	var err error
 
 	// if no mon-ip is provided, either deduce from public network or fallback to default.
@@ -205,7 +207,7 @@ func createKeyrings(confPath string) (string, error) {
 	return path, nil
 }
 
-func createMonMap(s common.StateInterface, path string, fsid string, address string) error {
+func createMonMap(s interfaces.StateInterface, path string, fsid string, address string) error {
 	// Generate initial monitor map.
 	err := genMonmap(filepath.Join(path, "mon.map"), fsid)
 	if err != nil {
@@ -220,7 +222,7 @@ func createMonMap(s common.StateInterface, path string, fsid string, address str
 	return nil
 }
 
-func initMon(s common.StateInterface, dataPath string, path string) error {
+func initMon(s interfaces.StateInterface, dataPath string, path string) error {
 	// Bootstrap the initial monitor.
 	monDataPath := filepath.Join(dataPath, "mon", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
 
@@ -241,7 +243,7 @@ func initMon(s common.StateInterface, dataPath string, path string) error {
 	return nil
 }
 
-func initMgr(s common.StateInterface, dataPath string) error {
+func initMgr(s interfaces.StateInterface, dataPath string) error {
 	// Bootstrap the initial manager.
 	mgrDataPath := filepath.Join(dataPath, "mgr", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
 
@@ -263,7 +265,7 @@ func initMgr(s common.StateInterface, dataPath string) error {
 }
 
 // populateDatabase injects the bootstrap entries to the internal database.
-func populateDatabase(s common.StateInterface, fsid string, adminKey string, data common.BootstrapConfig) error {
+func populateDatabase(s interfaces.StateInterface, fsid string, adminKey string, data common.BootstrapConfig) error {
 	if s.ClusterState().Database == nil {
 		return fmt.Errorf("no database")
 	}
@@ -320,7 +322,7 @@ func enableMsgr2() error {
 	return nil
 }
 
-func startOSDs(s common.StateInterface, path string) error {
+func startOSDs(s interfaces.StateInterface, path string) error {
 	// Start OSD service.
 	err := snapStart("osd", true)
 	if err != nil {
@@ -329,7 +331,7 @@ func startOSDs(s common.StateInterface, path string) error {
 	return nil
 }
 
-func initMds(s common.StateInterface, dataPath string) error {
+func initMds(s interfaces.StateInterface, dataPath string) error {
 	// Bootstrap the initial metadata server.
 	mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
 

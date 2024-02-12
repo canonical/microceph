@@ -1,8 +1,11 @@
 package common
 
-import "github.com/canonical/lxd/shared/logger"
+import (
+	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/interfaces"
+)
 
-func GetClusterMemberNames(s StateInterface) ([]string, error) {
+func GetClusterMemberNames(s interfaces.StateInterface) ([]string, error) {
 	leader, err := s.ClusterState().Leader()
 	if err != nil {
 		return nil, err

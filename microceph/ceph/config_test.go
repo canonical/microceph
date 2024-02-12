@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"encoding/json"
+	"github.com/canonical/microceph/microceph/tests"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -11,7 +12,7 @@ import (
 )
 
 type configSuite struct {
-	baseSuite
+	tests.BaseSuite
 }
 
 func TestConfig(t *testing.T) {
@@ -20,7 +21,7 @@ func TestConfig(t *testing.T) {
 
 // Set up test suite
 func (s *configSuite) SetupTest() {
-	s.baseSuite.SetupTest()
+	s.BaseSuite.SetupTest()
 }
 
 func addConfigSetExpectations(r *mocks.Runner, key string, value string) {

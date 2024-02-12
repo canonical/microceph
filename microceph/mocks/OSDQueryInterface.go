@@ -27,17 +27,27 @@ func (_m *OSDQueryInterface) Delete(s *state.State, osd int64) error {
 }
 
 // HaveOSD provides a mock function with given fields: s, osd
-func (_m *OSDQueryInterface) HaveOSD(s *state.State, osd int64) bool {
+func (_m *OSDQueryInterface) HaveOSD(s *state.State, osd int64) (bool, error) {
 	ret := _m.Called(s, osd)
 
 	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(*state.State, int64) (bool, error)); ok {
+		return rf(s, osd)
+	}
 	if rf, ok := ret.Get(0).(func(*state.State, int64) bool); ok {
 		r0 = rf(s, osd)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
 
-	return r0
+	if rf, ok := ret.Get(1).(func(*state.State, int64) error); ok {
+		r1 = rf(s, osd)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
 
 // List provides a mock function with given fields: s
@@ -88,6 +98,20 @@ func (_m *OSDQueryInterface) Path(s *state.State, osd int64) (string, error) {
 	}
 
 	return r0, r1
+}
+
+// UpdatePath provides a mock function with given fields: s, osd, path
+func (_m *OSDQueryInterface) UpdatePath(s *state.State, osd int64, path string) error {
+	ret := _m.Called(s, osd, path)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*state.State, int64, string) error); ok {
+		r0 = rf(s, osd, path)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
 }
 
 // NewOSDQueryInterface creates a new instance of OSDQueryInterface. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
