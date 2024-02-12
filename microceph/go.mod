@@ -1,6 +1,6 @@
 module github.com/canonical/microceph/microceph
 
-go 1.21.4
+go 1.21
 
 require (
 	github.com/Rican7/retry v0.3.1
