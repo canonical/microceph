@@ -33,24 +33,22 @@ function install_microceph() {
 
 }
 
-function add_encrypted_osds() {
-    # Enable dm-crypt connection and restart microceph daemon
-    sudo snap connect microceph:dm-crypt
-    sudo snap restart microceph.daemon
-    # Add OSDs backed by loop devices on /mnt (ephemeral "large" disk attached to GitHub action runners)
-    i=0
+function create_loop_devices() {
     for l in a b c; do
       loop_file="$(sudo mktemp -p /mnt XXXX.img)"
       sudo truncate -s 4G "${loop_file}"
       loop_dev="$(sudo losetup --show -f "${loop_file}")"
-
-      # XXX: the block-devices plug doesn't allow accessing /dev/loopX
-      # devices so we make those same devices available under alternate
-      # names (/dev/sdiY) that are not used inside GitHub Action runners
       minor="${loop_dev##/dev/loop}"
+      # create well-known names
       sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
     done
+}
 
+function add_encrypted_osds() {
+    # Enable dm-crypt connection and restart microceph daemon
+    sudo snap connect microceph:dm-crypt
+    sudo snap restart microceph.daemon
+    create_loop_devices
     sudo microceph disk add /dev/sdia /dev/sdib /dev/sdic --wipe --encrypt
 
     # Wait for OSDs to become up

@@ -351,6 +351,66 @@ jobs:
         ~/actionutils.sh wait_for_osds 3
         sudo microceph.ceph -s
 
+  wal-db-tests:
+    name: Test WAL/DB device usage
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install and setup
+      run: ~/actionutils.sh install_microceph
+
+    - name: Add loopback file OSDs
+      run: |
+        set -uex
+        sudo microceph disk add loop,1G,3
+        ~/actionutils.sh wait_for_osds 3
+        sudo microceph.ceph -s
+
+    - name: Add WAL/DB enabled OSD
+      run: |
+        set -uex
+        ~/actionutils.sh create_loop_devices
+        sudo microceph disk list
+        sudo microceph disk add /dev/sdia --wal-device /dev/sdib --db-device /dev/sdic
+        ~/actionutils.sh wait_for_osds 4
+        sudo microceph.ceph -s
+
+    - name: Check that disk list doesn't contain WAL/DB blockdevs
+      run: |
+        set -uex
+        sudo microceph disk list
+        for d in sdb sdc ; do
+            if sudo microceph disk list | grep -q /dev/$d ; then
+                echo "Error: found WAL/DB device: /dev/$d"
+                exit 1
+            fi
+        done
+
+    - name: Enable RGW
+      run: ~/actionutils.sh enable_rgw
+
+    - name: Exercise RGW
+      run: ~/actionutils.sh testrgw
 
   upgrade-quincy-tests:
     name: Test quincy upgrades

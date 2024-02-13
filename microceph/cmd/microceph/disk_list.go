@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/constants"
 	"os"
 	"sort"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microceph/microceph/common"
 )
 
 type cmdDiskList struct {
@@ -150,6 +152,17 @@ func getUnpartitionedDisks(cli *microCli.Client) ([]Disk, error) {
 		return nil, fmt.Errorf("internal error: unable to fetch available disks: %w", err)
 	}
 
+	data, err := filterLocalDisks(resources, disks)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+// filterLocalDisks filters out the disks that are in use or otherwise not suitable for OSDs.
+func filterLocalDisks(resources *api.ResourcesStorage, disks types.Disks) ([]Disk, error) {
+	var err error
 	// Get local hostname.
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -192,6 +205,22 @@ func getUnpartitionedDisks(cli *microCli.Client) ([]Disk, error) {
 			continue
 		}
 
+		// check if disk is mounted or already employed as a journal or db
+		mounted, err := common.IsMounted(devicePath)
+		if err != nil {
+			return nil, fmt.Errorf("internal error: unable to check if disk is mounted: %w", err)
+		}
+		if mounted {
+			continue
+		}
+		isCephDev, err := common.IsCephDevice(devicePath)
+		if err != nil {
+			return nil, fmt.Errorf("internal error checking if disk is ceph device: %w", err)
+		}
+		if isCephDev {
+			continue
+		}
+
 		data = append(data, Disk{
 			Model: disk.Model,
 			Size:  units.GetByteSizeStringIEC(int64(disk.Size), 2),
@@ -199,6 +228,5 @@ func getUnpartitionedDisks(cli *microCli.Client) ([]Disk, error) {
 			Path:  devicePath,
 		})
 	}
-
 	return data, nil
 }
