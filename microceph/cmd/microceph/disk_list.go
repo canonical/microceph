@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/constants"
 	"os"
 	"sort"
 
@@ -168,12 +168,12 @@ func getUnpartitionedDisks(cli *microCli.Client) ([]Disk, error) {
 		}
 
 		// Minimum size set to 2GB i.e. 2*1024*1024*1024
-		if disk.Size < contants.MinOSDSize {
+		if disk.Size < constants.MinOSDSize {
 			logger.Debugf("Ignoring device %s, size less than 2GB", disk.DeviceID)
 			continue
 		}
 
-		devicePath := fmt.Sprintf("%s%s", contants.DevicePathPrefix, disk.DeviceID)
+		devicePath := fmt.Sprintf("%s%s", constants.DevicePathPrefix, disk.DeviceID)
 
 		found := false
 		// check if disk already employed as an OSD.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
@@ -14,7 +14,7 @@ import (
 
 // EnableRGW enables the RGW service on the cluster and adds initial configuration given a service port number.
 func EnableRGW(s interfaces.StateInterface, port int) error {
-	pathConsts := contants.GetPathConst()
+	pathConsts := constants.GetPathConst()
 
 	// Create RGW configuration.
 	conf := newRadosGWConfig(pathConsts.ConfPath)
@@ -52,7 +52,7 @@ func EnableRGW(s interfaces.StateInterface, port int) error {
 
 // DisableRGW disables the RGW service on the cluster.
 func DisableRGW(s interfaces.StateInterface) error {
-	pathConsts := contants.GetPathConst()
+	pathConsts := constants.GetPathConst()
 
 	err := stopRGW()
 	if err != nil {

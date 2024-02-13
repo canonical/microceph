@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"net/http"
 
@@ -41,7 +41,7 @@ func cmdClientConfigsGet(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	if req.Host == contants.ClientConfigGlobalHostConst {
+	if req.Host == constants.ClientConfigGlobalHostConst {
 		configs, err = database.ClientConfigQuery.GetAll(s)
 	} else {
 		configs, err = database.ClientConfigQuery.GetAllForHost(s, req.Host)
@@ -98,7 +98,7 @@ func clientConfigsKeyGet(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	if req.Host == contants.ClientConfigGlobalHostConst {
+	if req.Host == constants.ClientConfigGlobalHostConst {
 		configs, err = database.ClientConfigQuery.GetAllForKey(s, req.Key)
 	} else {
 		configs, err = database.ClientConfigQuery.GetAllForKeyAndHost(s, req.Key, req.Host)
@@ -143,7 +143,7 @@ func clientConfigsKeyDelete(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	if req.Host == contants.ClientConfigGlobalHostConst {
+	if req.Host == constants.ClientConfigGlobalHostConst {
 		err = database.ClientConfigQuery.RemoveAllForKey(s, req.Key)
 	} else {
 		err = database.ClientConfigQuery.RemoveOneForKeyAndHost(s, req.Key, req.Host)

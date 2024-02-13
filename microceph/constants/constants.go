@@ -1,5 +1,5 @@
 // Package common
-package contants
+package constants
 
 import (
 	"os"
@@ -33,7 +33,7 @@ func GetPathConst() PathConst {
 		RunPath:  filepath.Join(os.Getenv("SNAP_DATA"), "run"),
 		DataPath: filepath.Join(os.Getenv("SNAP_COMMON"), "data"),
 		LogPath:  filepath.Join(os.Getenv("SNAP_COMMON"), "logs"),
-		ProcPath: filepath.Join(os.Getenv("TEST_ROOT_PATH"), "proc"),
+		ProcPath: filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/proc"),
 	}
 }
 

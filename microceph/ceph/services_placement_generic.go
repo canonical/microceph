@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
@@ -67,8 +67,8 @@ func genericServiceInit(s interfaces.StateInterface, name string) error {
 	var ok bool
 	var addService func(string, string) error
 	hostname := s.ClusterState().Name()
-	pathConsts := contants.GetPathConst()
-	pathFileMode := contants.GetPathFileMode()
+	pathConsts := constants.GetPathConst()
+	pathFileMode := constants.GetPathFileMode()
 	serviceDataPath := filepath.Join(pathConsts.DataPath, name, fmt.Sprintf("ceph-%s", hostname))
 	addServiceTable := GetAddServiceTable()
 

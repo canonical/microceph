@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"math"
 	"os"
@@ -440,7 +440,7 @@ func validateBulkDiskAdditionArgs(disks []types.DiskParameter, wal *types.DiskPa
 
 	// check if loop spec is provided in batch request arguments.
 	for _, disk := range disks {
-		if strings.HasPrefix(disk.Path, contants.LoopSpecId) {
+		if strings.HasPrefix(disk.Path, constants.LoopSpecId) {
 			err := fmt.Errorf("cannot add loop spec '%s', add a single loop spec or one or more block device paths", disk.Path)
 			logger.Error(err.Error())
 			return err
@@ -494,7 +494,7 @@ func AddBulkDisks(s *state.State, disks []types.DiskParameter, wal *types.DiskPa
 
 // AddSingleDisk is a wrapper around AddOSD which logs disk addition failures and returns a formatted response.
 func AddSingleDisk(s *state.State, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
-	if strings.Contains(disk.Path, contants.LoopSpecId) {
+	if strings.Contains(disk.Path, constants.LoopSpecId) {
 		// Add file based OSDs.
 		err := AddLoopBackOSDs(s, disk.Path)
 		if err != nil {
@@ -559,7 +559,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 
 	logger.Debugf("Created disk record for osd.%d", nr)
 
-	osdDataPath := filepath.Join(contants.GetPathConst().DataPath, "osd", fmt.Sprintf("ceph-%d", nr))
+	osdDataPath := filepath.Join(constants.GetPathConst().DataPath, "osd", fmt.Sprintf("ceph-%d", nr))
 
 	// if we fail later, make sure we free up the record
 	revert.Add(func() {

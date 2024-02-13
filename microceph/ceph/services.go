@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
@@ -147,7 +147,7 @@ func ListServices(s *state.State) (types.Services, error) {
 
 // cleanService removes conf data for a service from the cluster.
 func cleanService(hostname, service string) error {
-	paths := contants.GetPathConst()
+	paths := constants.GetPathConst()
 	dataPath := filepath.Join(paths.DataPath, service, fmt.Sprintf("ceph-%s", hostname))
 	err := os.RemoveAll(dataPath)
 	if err != nil {

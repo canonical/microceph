@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/constants"
 	"sort"
 	"strings"
 
@@ -99,7 +99,7 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 		// Pass space separated params as disk paths.
 		req.Path = args
 
-		if !strings.HasPrefix(req.Path[0], contants.LoopSpecId) {
+		if !strings.HasPrefix(req.Path[0], constants.LoopSpecId) {
 			if c.walDevice != "" {
 				req.WALDev = &c.walDevice
 				req.WALWipe = c.walWipe
@@ -191,7 +191,7 @@ func (c *cmdDiskAdd) validateBatchArgs(args []string) error {
 	}
 
 	for _, diskPath := range args {
-		if strings.HasPrefix(diskPath, contants.LoopSpecId) {
+		if strings.HasPrefix(diskPath, constants.LoopSpecId) {
 			return fmt.Errorf("loop spec %s is not supported as an argument to batch disk addition, use separately", diskPath)
 		}
 	}

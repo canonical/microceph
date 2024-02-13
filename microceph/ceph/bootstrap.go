@@ -5,7 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
@@ -20,8 +20,8 @@ import (
 
 // Bootstrap will initialize a new Ceph deployment.
 func Bootstrap(s interfaces.StateInterface, data common.BootstrapConfig) error {
-	pathConsts := contants.GetPathConst()
-	pathFileMode := contants.GetPathFileMode()
+	pathConsts := constants.GetPathConst()
+	pathFileMode := constants.GetPathFileMode()
 
 	// Create our various paths.
 	for path, perm := range pathFileMode {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/contants"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 
@@ -15,7 +15,7 @@ import (
 
 // Join will join an existing Ceph deployment.
 func Join(s interfaces.StateInterface) error {
-	pathFileMode := contants.GetPathFileMode()
+	pathFileMode := constants.GetPathFileMode()
 	var spt = GetServicePlacementTable()
 
 	// Create our various paths.
