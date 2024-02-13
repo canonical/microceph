@@ -2,24 +2,24 @@ package ceph
 
 import (
 	"fmt"
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/common"
 )
 
 // PlacementIntf is the interface used for running various services in a MicroCeph cluster.
 type PlacementIntf interface {
 	// Populate json payload data to the service object.
-	PopulateParams(common.StateInterface, string) error
+	PopulateParams(interfaces.StateInterface, string) error
 	// Check if host is hospitable to the new service to be enabled.
-	HospitalityCheck(common.StateInterface) error
+	HospitalityCheck(interfaces.StateInterface) error
 	// Initialise the new service.
-	ServiceInit(common.StateInterface) error
+	ServiceInit(interfaces.StateInterface) error
 	// Perform Post Placement checks for the service
-	PostPlacementCheck(common.StateInterface) error
+	PostPlacementCheck(interfaces.StateInterface) error
 	// Perform DB updates to persist the service enablement changes.
-	DbUpdate(common.StateInterface) error
+	DbUpdate(interfaces.StateInterface) error
 }
 
 func GetServicePlacementTable() map[string](PlacementIntf) {
@@ -31,7 +31,7 @@ func GetServicePlacementTable() map[string](PlacementIntf) {
 	}
 }
 
-func ServicePlacementHandler(s common.StateInterface, payload types.EnableService) error {
+func ServicePlacementHandler(s interfaces.StateInterface, payload types.EnableService) error {
 	var ok bool
 	var spt = GetServicePlacementTable()
 	var sp PlacementIntf
@@ -63,7 +63,7 @@ func ServicePlacementHandler(s common.StateInterface, payload types.EnableServic
 	return nil
 }
 
-func EnableService(s common.StateInterface, payload types.EnableService, item PlacementIntf) error {
+func EnableService(s interfaces.StateInterface, payload types.EnableService, item PlacementIntf) error {
 
 	// Populate json payload data to the service object.
 	err := item.PopulateParams(s, payload.Payload)

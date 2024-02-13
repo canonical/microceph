@@ -1,6 +1,8 @@
 package ceph
 
 import (
+	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/tests"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
@@ -13,7 +15,7 @@ import (
 )
 
 type bootstrapSuite struct {
-	baseSuite
+	tests.BaseSuite
 	TestStateInterface *mocks.StateInterface
 }
 
@@ -23,48 +25,48 @@ func TestBootstrap(t *testing.T) {
 
 // Expect: run ceph-authtool 3 times
 func addCreateKeyringExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph-authtool", 8)...).Return("ok", nil).Once()
-	r.On("RunCommand", cmdAny("ceph-authtool", 17)...).Return("ok", nil).Once()
-	r.On("RunCommand", cmdAny("ceph-authtool", 3)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph-authtool", 8)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph-authtool", 17)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph-authtool", 3)...).Return("ok", nil).Once()
 }
 
 // Expect: run monmaptool 2 times
 func addCreateMonMapExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("monmaptool", 8)...).Return("ok", nil).Once()
-	r.On("RunCommand", cmdAny("monmaptool", 17)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("monmaptool", 8)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("monmaptool", 17)...).Return("ok", nil).Once()
 }
 
 // Expect: run ceph-mon and snap start
 func addInitMonExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph-mon", 9)...).Return("ok", nil).Once()
-	r.On("RunCommand", cmdAny("snapctl", 3)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph-mon", 9)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
 }
 
 // Expect: run ceph and snap start
 func addInitMgrExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph", 11)...).Return("ok", nil).Once()
-	r.On("RunCommand", cmdAny("snapctl", 3)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 11)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
 }
 
 // Expect: run ceph and snap start
 func addInitMdsExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph", 13)...).Return("ok", nil).Once()
-	r.On("RunCommand", cmdAny("snapctl", 3)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 13)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
 }
 
 // Expect: run ceph and snap start
 func addEnableMsgr2Expectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph", 2)...).Return("ok", nil).Once()
-	r.On("RunCommand", cmdAny("snapctl", 3)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 2)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
 }
 
 // Expect: check network coherency
-func addNetworkExpectationsBootstrap(nw *mocks.NetworkIntf, s common.StateInterface) {
+func addNetworkExpectationsBootstrap(nw *mocks.NetworkIntf, s interfaces.StateInterface) {
 	nw.On("IsIpOnSubnet", "1.1.1.1", "1.1.1.1/24").Return(true)
 }
 
 // Expect: check Bootstrap data prep
-func addNetworkExpectations(nw *mocks.NetworkIntf, s common.StateInterface) {
+func addNetworkExpectations(nw *mocks.NetworkIntf, s interfaces.StateInterface) {
 	nw.On("IsIpOnSubnet", "1.1.1.1", "1.1.1.1/24").Return(true)
 	nw.On("FindNetworkAddress", "1.1.1.1").Return("1.1.1.1/24", nil)
 	nw.On("FindIpOnSubnet", "1.1.1.1/24").Return("1.1.1.1", nil)
@@ -74,8 +76,8 @@ func addNetworkExpectations(nw *mocks.NetworkIntf, s common.StateInterface) {
 
 func (s *bootstrapSuite) SetupTest() {
 
-	s.baseSuite.SetupTest()
-	s.copyCephConfigs()
+	s.BaseSuite.SetupTest()
+	s.CopyCephConfigs()
 
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
 	u := api.NewURL()

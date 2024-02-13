@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"github.com/canonical/microceph/microceph/tests"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
@@ -14,7 +15,7 @@ import (
 
 // osdSuite is the test suite for adding OSDs.
 type osdSuite struct {
-	baseSuite
+	tests.BaseSuite
 	TestStateInterface *mocks.StateInterface
 }
 
@@ -24,14 +25,14 @@ func TestOSD(t *testing.T) {
 
 // Expect: run ceph osd crush rule ls
 func addCrushRuleLsExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph", 4)...).Return("microceph_auto_osd", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return("microceph_auto_osd", nil).Once()
 }
 
 // Expect: run ceph osd crush rule dump
 func addCrushRuleDumpExpectations(r *mocks.Runner) {
 	json := `{ "rule_id": 77 }`
 
-	r.On("RunCommand", cmdAny("ceph", 5)...).Return(json, nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(json, nil).Once()
 }
 
 // Expect: run ceph osd crush rule ls json
@@ -40,17 +41,17 @@ func addCrushRuleLsJsonExpectations(r *mocks.Runner) {
         "crush_rule": 77
         "pool_name": "foopool",
     }]`
-	r.On("RunCommand", cmdAny("ceph", 5)...).Return(json, nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(json, nil).Once()
 }
 
 // Expect: run ceph osd pool set
 func addOsdPoolSetExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph", 6)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 6)...).Return("ok", nil).Once()
 }
 
 // Expect: run ceph config set
 func addSetDefaultRuleExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph", 7)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()
 }
 
 // Expect: run ceph osd tree
@@ -94,14 +95,14 @@ func addOsdTreeExpectations(r *mocks.Runner) {
   ], "stray" : [{ "id": 77,
           "name": "osd.77",
           "exists": 1} ]}`
-	r.On("RunCommand", cmdAny("ceph", 4)...).Return(json, nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return(json, nil).Once()
 
 }
 
 func (s *osdSuite) SetupTest() {
 
-	s.baseSuite.SetupTest()
-	s.copyCephConfigs()
+	s.BaseSuite.SetupTest()
+	s.CopyCephConfigs()
 
 }
 

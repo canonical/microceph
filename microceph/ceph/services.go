@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"time"
@@ -145,7 +147,7 @@ func ListServices(s *state.State) (types.Services, error) {
 
 // cleanService removes conf data for a service from the cluster.
 func cleanService(hostname, service string) error {
-	paths := common.GetPathConst()
+	paths := constants.GetPathConst()
 	dataPath := filepath.Join(paths.DataPath, service, fmt.Sprintf("ceph-%s", hostname))
 	err := os.RemoveAll(dataPath)
 	if err != nil {
@@ -156,7 +158,7 @@ func cleanService(hostname, service string) error {
 }
 
 // removeServiceDatabase removes a service record from the database.
-func removeServiceDatabase(s common.StateInterface, service string) error {
+func removeServiceDatabase(s interfaces.StateInterface, service string) error {
 	if s.ClusterState().Database == nil {
 		return fmt.Errorf("no database")
 	}
@@ -174,7 +176,7 @@ func removeServiceDatabase(s common.StateInterface, service string) error {
 }
 
 // DeleteService deletes a service from the node.
-func DeleteService(s common.StateInterface, service string) error {
+func DeleteService(s interfaces.StateInterface, service string) error {
 	err := snapStop(service, true)
 	if err != nil {
 		logger.Errorf("failed to stop daemon %q: %v", service, err)

@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	common "github.com/canonical/microceph/microceph/common"
+	interfaces "github.com/canonical/microceph/microceph/interfaces"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -13,11 +13,11 @@ type PlacementIntf struct {
 }
 
 // DbUpdate provides a mock function with given fields: _a0
-func (_m *PlacementIntf) DbUpdate(_a0 common.StateInterface) error {
+func (_m *PlacementIntf) DbUpdate(_a0 interfaces.StateInterface) error {
 	ret := _m.Called(_a0)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(common.StateInterface) error); ok {
+	if rf, ok := ret.Get(0).(func(interfaces.StateInterface) error); ok {
 		r0 = rf(_a0)
 	} else {
 		r0 = ret.Error(0)
@@ -27,11 +27,11 @@ func (_m *PlacementIntf) DbUpdate(_a0 common.StateInterface) error {
 }
 
 // HospitalityCheck provides a mock function with given fields: _a0
-func (_m *PlacementIntf) HospitalityCheck(_a0 common.StateInterface) error {
+func (_m *PlacementIntf) HospitalityCheck(_a0 interfaces.StateInterface) error {
 	ret := _m.Called(_a0)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(common.StateInterface) error); ok {
+	if rf, ok := ret.Get(0).(func(interfaces.StateInterface) error); ok {
 		r0 = rf(_a0)
 	} else {
 		r0 = ret.Error(0)
@@ -41,11 +41,11 @@ func (_m *PlacementIntf) HospitalityCheck(_a0 common.StateInterface) error {
 }
 
 // PopulateParams provides a mock function with given fields: _a0, _a1
-func (_m *PlacementIntf) PopulateParams(_a0 common.StateInterface, _a1 string) error {
+func (_m *PlacementIntf) PopulateParams(_a0 interfaces.StateInterface, _a1 string) error {
 	ret := _m.Called(_a0, _a1)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(common.StateInterface, string) error); ok {
+	if rf, ok := ret.Get(0).(func(interfaces.StateInterface, string) error); ok {
 		r0 = rf(_a0, _a1)
 	} else {
 		r0 = ret.Error(0)
@@ -55,11 +55,11 @@ func (_m *PlacementIntf) PopulateParams(_a0 common.StateInterface, _a1 string) e
 }
 
 // PostPlacementCheck provides a mock function with given fields: _a0
-func (_m *PlacementIntf) PostPlacementCheck(_a0 common.StateInterface) error {
+func (_m *PlacementIntf) PostPlacementCheck(_a0 interfaces.StateInterface) error {
 	ret := _m.Called(_a0)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(common.StateInterface) error); ok {
+	if rf, ok := ret.Get(0).(func(interfaces.StateInterface) error); ok {
 		r0 = rf(_a0)
 	} else {
 		r0 = ret.Error(0)
@@ -69,11 +69,11 @@ func (_m *PlacementIntf) PostPlacementCheck(_a0 common.StateInterface) error {
 }
 
 // ServiceInit provides a mock function with given fields: _a0
-func (_m *PlacementIntf) ServiceInit(_a0 common.StateInterface) error {
+func (_m *PlacementIntf) ServiceInit(_a0 interfaces.StateInterface) error {
 	ret := _m.Called(_a0)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(common.StateInterface) error); ok {
+	if rf, ok := ret.Get(0).(func(interfaces.StateInterface) error); ok {
 		r0 = rf(_a0)
 	} else {
 		r0 = ret.Error(0)

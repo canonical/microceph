@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/canonical/microceph/microceph/constants"
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microcluster/cluster"
 	"github.com/canonical/microcluster/state"
 )
@@ -48,7 +48,7 @@ func (cci ClientConfigItems) GetClientConfigSlice() types.ClientConfigs {
 		if len(configItem.Host) > 0 {
 			host = configItem.Host
 		} else {
-			host = common.ClientConfigGlobalHostConst
+			host = constants.ClientConfigGlobalHostConst
 		}
 
 		ccs[i] = types.ClientConfig{
@@ -184,7 +184,7 @@ func (ccq ClientConfigQueryImpl) GetGlobalConfigs(s *state.State, key string) ([
 
 	// scan handler for global configs.
 	dest := func(scan func(dest ...any) error) error {
-		c := ClientConfigItem{Host: common.ClientConfigGlobalHostConst}
+		c := ClientConfigItem{Host: constants.ClientConfigGlobalHostConst}
 		err := scan(&c.ID, &c.Key, &c.Value)
 		if err != nil {
 			return err
@@ -248,7 +248,7 @@ func createOrUpdateClientConfigItem(ctx context.Context, tx *sql.Tx, object Clie
 	var args []any
 
 	// Populate the statement arguments.
-	if object.Host == common.ClientConfigGlobalHostConst {
+	if object.Host == constants.ClientConfigGlobalHostConst {
 		args = append(args, object.Key)
 		args = append(args, object.Value)
 		stmtIndex = globalClientConfigItemCreateOrUpdate

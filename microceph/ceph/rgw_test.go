@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"github.com/canonical/microceph/microceph/tests"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +14,7 @@ import (
 )
 
 type rgwSuite struct {
-	baseSuite
+	tests.BaseSuite
 	TestStateInterface *mocks.StateInterface
 }
 
@@ -23,18 +24,18 @@ func TestRGW(t *testing.T) {
 
 // Expect: run ceph auth
 func addCreateRGWKeyringExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("ceph", 9)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 9)...).Return("ok", nil).Once()
 }
 
 // Expect: run snapctl service stop
 func addStopRGWExpectations(r *mocks.Runner) {
-	r.On("RunCommand", cmdAny("snapctl", 3)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
 }
 
 // Set up test suite
 func (s *rgwSuite) SetupTest() {
-	s.baseSuite.SetupTest()
-	s.copyCephConfigs()
+	s.BaseSuite.SetupTest()
+	s.CopyCephConfigs()
 
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
 	u := api.NewURL()
@@ -66,7 +67,7 @@ func (s *rgwSuite) TestEnableRGW() {
 	assert.EqualError(s.T(), err, "no database")
 
 	// check that the radosgw.conf file contains expected values
-	conf := s.readCephConfig("radosgw.conf")
+	conf := s.ReadCephConfig("radosgw.conf")
 	assert.Contains(s.T(), conf, "rgw frontends = beast port=80")
 }
 
@@ -83,10 +84,10 @@ func (s *rgwSuite) TestDisableRGW() {
 	assert.EqualError(s.T(), err, "no database")
 
 	// check that the radosgw.conf file is absent
-	_, err = os.Stat(filepath.Join(s.tmp, "SNAP_DATA", "conf", "radosgw.conf"))
+	_, err = os.Stat(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf"))
 	assert.True(s.T(), os.IsNotExist(err))
 
 	// check that the keyring file is absent
-	_, err = os.Stat(filepath.Join(s.tmp, "SNAP_COMMON", "data", "radosgw", "ceph-radosgw.gateway", "keyring"))
+	_, err = os.Stat(filepath.Join(s.Tmp, "SNAP_COMMON", "data", "radosgw", "ceph-radosgw.gateway", "keyring"))
 	assert.True(s.T(), os.IsNotExist(err))
 }

@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/canonical/microceph/microceph/constants"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
 )
@@ -49,7 +49,7 @@ func (c *cmdClientConfigReset) Run(cmd *cobra.Command, args []string) error {
 
 	if !c.flagForce {
 		return fmt.Errorf("WARNING: this will *PERMANENTLY REMOVE* all records of the %s key. %s",
-			args[0], common.CliForcePrompt)
+			args[0], constants.CliForcePrompt)
 	}
 
 	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})

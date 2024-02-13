@@ -3,6 +3,7 @@ package ceph
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/microceph/microceph/tests"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +14,7 @@ import (
 )
 
 type servicesSuite struct {
-	baseSuite
+	tests.BaseSuite
 	// TestStateInterface *mocks.StateInterface
 }
 
@@ -23,7 +24,7 @@ func TestServices(t *testing.T) {
 
 // Set up test suite
 func (s *servicesSuite) SetupTest() {
-	s.baseSuite.SetupTest()
+	s.BaseSuite.SetupTest()
 }
 
 func addOsdDumpExpectations(r *mocks.Runner) {
@@ -75,8 +76,8 @@ func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 
 // TestCleanService tests the cleanService function.
 func (s *servicesSuite) TestCleanService() {
-	s.copyCephConfigs()
-	svcPath := filepath.Join(s.tmp, "SNAP_COMMON", "data", "mon", "ceph-foo-host")
+	s.CopyCephConfigs()
+	svcPath := filepath.Join(s.Tmp, "SNAP_COMMON", "data", "mon", "ceph-foo-host")
 	os.MkdirAll(svcPath, 0770)
 	cleanService("foo-host", "mon")
 	assert.NoDirExists(s.T(), svcPath)

@@ -1,5 +1,5 @@
 // Package common
-package common
+package constants
 
 import (
 	"os"
@@ -22,6 +22,7 @@ type PathConst struct {
 	RunPath  string
 	DataPath string
 	LogPath  string
+	ProcPath string
 }
 
 type PathFileMode map[string]os.FileMode
@@ -32,6 +33,7 @@ func GetPathConst() PathConst {
 		RunPath:  filepath.Join(os.Getenv("SNAP_DATA"), "run"),
 		DataPath: filepath.Join(os.Getenv("SNAP_COMMON"), "data"),
 		LogPath:  filepath.Join(os.Getenv("SNAP_COMMON"), "logs"),
+		ProcPath: filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/proc"),
 	}
 }
 

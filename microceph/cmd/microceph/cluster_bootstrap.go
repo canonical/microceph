@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/canonical/microceph/microceph/constants"
 	"os"
 	"time"
 
@@ -52,7 +53,7 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 
 	// Get system address for microcluster bootstrap.
 	address := util.NetworkInterfaceAddress()
-	address = util.CanonicalNetworkAddress(address, common.BootstrapPortConst)
+	address = util.CanonicalNetworkAddress(address, constants.BootstrapPortConst)
 
 	// Set parameter data for Ceph bootstrap.
 	data := common.BootstrapConfig{

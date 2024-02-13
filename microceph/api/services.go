@@ -3,14 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"net/http"
 	"path"
 
-	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/common"
-
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microcluster/rest"
 	"github.com/canonical/microcluster/state"
 
@@ -64,7 +63,7 @@ func cmdEnableServicePut(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	err = ceph.ServicePlacementHandler(common.CephState{State: s}, payload)
+	err = ceph.ServicePlacementHandler(interfaces.CephState{State: s}, payload)
 	if err != nil {
 		return response.SyncResponse(false, err)
 	}
@@ -119,7 +118,7 @@ func cmdDeleteService(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	err := ceph.DeleteService(common.CephState{State: s}, which)
+	err := ceph.DeleteService(interfaces.CephState{State: s}, which)
 	if err != nil {
 		return response.SyncResponse(false, err)
 	}
@@ -128,7 +127,7 @@ func cmdDeleteService(s *state.State, r *http.Request) response.Response {
 }
 
 func cmdRGWServiceDelete(s *state.State, r *http.Request) response.Response {
-	err := ceph.DisableRGW(common.CephState{State: s})
+	err := ceph.DisableRGW(interfaces.CephState{State: s})
 	if err != nil {
 		logger.Errorf("Failed disabling RGW: %v", err)
 		return response.SmartError(err)
