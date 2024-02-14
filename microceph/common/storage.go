@@ -34,7 +34,8 @@ func IsMounted(device string) (bool, error) {
 			return true, nil
 		}
 	}
-	if err := scanner.Err(); err != nil {
+	err = scanner.Err()
+	if err != nil {
 		return false, err
 	}
 	return false, nil
