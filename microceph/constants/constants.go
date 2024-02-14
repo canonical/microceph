@@ -22,6 +22,7 @@ type PathConst struct {
 	RunPath  string
 	DataPath string
 	LogPath  string
+	RootFs   string
 	ProcPath string
 }
 
@@ -33,6 +34,7 @@ func GetPathConst() PathConst {
 		RunPath:  filepath.Join(os.Getenv("SNAP_DATA"), "run"),
 		DataPath: filepath.Join(os.Getenv("SNAP_COMMON"), "data"),
 		LogPath:  filepath.Join(os.Getenv("SNAP_COMMON"), "logs"),
+		RootFs:   filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/"),
 		ProcPath: filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/proc"),
 	}
 }
