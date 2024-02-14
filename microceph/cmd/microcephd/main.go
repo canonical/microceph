@@ -69,7 +69,7 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	h := &config.Hooks{}
-	h.OnBootstrap = func(s *state.State, initConfig map[string]string) error {
+	h.PostBootstrap = func(s *state.State, initConfig map[string]string) error {
 		data := common.BootstrapConfig{}
 		interf := interfaces.CephState{State: s}
 		common.DecodeBootstrapConfig(initConfig, &data)
