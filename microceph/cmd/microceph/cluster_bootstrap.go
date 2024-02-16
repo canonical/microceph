@@ -17,9 +17,10 @@ type cmdClusterBootstrap struct {
 	common  *CmdControl
 	cluster *cmdCluster
 
-	flagMonIp      string
-	flagPubNet     string
-	flagClusterNet string
+	flagMicroCephIp string
+	flagMonIp       string
+	flagPubNet      string
+	flagClusterNet  string
 }
 
 func (c *cmdClusterBootstrap) Command() *cobra.Command {
@@ -29,6 +30,7 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
+	cmd.Flags().StringVar(&c.flagMicroCephIp, "microceph-ip", "", "Public address for microcephd daemon.")
 	cmd.Flags().StringVar(&c.flagMonIp, "mon-ip", "", "Public address for bootstrapping ceph mon service.")
 	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public Network for Ceph daemons to bind to.")
 	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster Network for Ceph daemons to bind to.")
@@ -51,8 +53,11 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to retrieve system hostname: %w", err)
 	}
 
-	// Get system address for microcluster bootstrap.
-	address := util.NetworkInterfaceAddress()
+	address := c.flagMicroCephIp
+	if address == "" {
+		// Get system address for microcluster bootstrap.
+		address = util.NetworkInterfaceAddress()
+	}
 	address = util.CanonicalNetworkAddress(address, constants.BootstrapPortConst)
 
 	// Set parameter data for Ceph bootstrap.
