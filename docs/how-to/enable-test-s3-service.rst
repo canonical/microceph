@@ -46,6 +46,7 @@ Where [userid] and [displayname] are replaced with appropriate values.
 
 This will return a JSON object:
 .. code-block:: JSON
+   :emphasize-lines: 11,12
 
    {
       "user_id": "[userid]",
@@ -56,9 +57,9 @@ This will return a JSON object:
       "subusers": [],
       "keys": [
          {
-               "user": "tanzu",
-               "access_key": "[20-char text string]",
-               "secret_key": "[40-char text string]"
+            "user": "tanzu",
+            "access_key": "[20-char text string]",
+            "secret_key": "[40-char text string]"
          }
       ],
       "swift_keys": [],
@@ -67,14 +68,16 @@ This will return a JSON object:
       "default_placement": "",
       "default_storage_class": "",
       "placement_tags": [],
-      "bucket_quota": {
+      "bucket_quota": 
+      {
          "enabled": false,
          "check_on_raw": false,
          "max_size": -1,
          "max_size_kb": 0,
          "max_objects": -1
       },
-      "user_quota": {
+      "user_quota": 
+      {
          "enabled": false,
          "check_on_raw": false,
          "max_size": -1,
