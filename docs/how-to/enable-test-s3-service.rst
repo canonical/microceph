@@ -27,7 +27,7 @@ but as of September 2020 has decided to delay the deprecation.
 Currently, ***Microceph supports only path-style bucket references.*** 
 
 Prerequisites
-------------
+-------------
 
 This guide assumes that Microceph has been installed and confiugred as
 specified in this guide. Also, that the [enable service instances](enable-service-instances/)
@@ -39,12 +39,14 @@ Create RADOS user
 On the Microceph node, use the :command:`radosgw-admin` tool.
 
 .. code-block:: none
+
    admin@ceph-lab:~$ sudo radosgw-admin user create --uid=[userid] --display-name="[displayname]"
 
 Where [userid] and [displayname] are replaced with appropriate values.
 
 This will return a JSON object:
 .. code-block:: none
+
    {
       "user_id": "[userid]",
       "display_name": "[displayname]",
@@ -100,7 +102,9 @@ s3cmd with the built-in tool that will go through a series of questions:
 
 Enter the access key copied from **keys.access_key** above. If these keys are 
 lost, they can be retrieved by an administrator with
+
 .. code-block:: none
+
    admin@ceph-lab:~$ sudo radosgw-admin user info --uid=[userid]
 
 1. Secret key
