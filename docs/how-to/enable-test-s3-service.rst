@@ -45,7 +45,7 @@ On the Microceph node, use the :command:`radosgw-admin` tool.
 Where [userid] and [displayname] are replaced with appropriate values.
 
 This will return a JSON object:
-.. code-block:: none
+.. code-block:: JSON
 
    {
       "user_id": "[userid]",
