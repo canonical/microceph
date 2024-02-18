@@ -46,7 +46,7 @@ Where [userid] and [displayname] are replaced with appropriate values.
 
 This will return a JSON object:
 .. code-block:: JSON
-   :emphasize-lines: 11,12
+:emphasize-lines: 11,12
 
    {
       "user_id": "[userid]",
@@ -56,11 +56,11 @@ This will return a JSON object:
       "max_buckets": 1000,
       "subusers": [],
       "keys": [
-         {
-            "user": "tanzu",
-            "access_key": "[20-char text string]",
-            "secret_key": "[40-char text string]"
-         }
+      {
+         "user": "tanzu",
+         "access_key": "[20-char text string]",
+         "secret_key": "[40-char text string]"
+      }
       ],
       "swift_keys": [],
       "caps": [],
