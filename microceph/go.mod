@@ -12,7 +12,8 @@ require (
 	github.com/pborman/uuid v1.2.1
 	github.com/spf13/cobra v1.8.0
 	github.com/stretchr/testify v1.8.4
-	github.com/tidwall/gjson v1.17.0
+	github.com/tidwall/gjson v1.17.1
+	github.com/tidwall/sjson v1.2.5
 )
 
 require (
