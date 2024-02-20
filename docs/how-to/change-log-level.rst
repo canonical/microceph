@@ -2,7 +2,7 @@
 Changing microceph's log level
 ==============================
 
-By default, microceph's daemon runs with the log level set to DEBUG. While that is the desirable
+By default, the microceph daemon runs with the log level set to DEBUG. While that is the desirable
 behaviour for a good amount of use cases, there are instances when this level is prohibitely high -
 for example, embedded devices where storage is much more limited. For these reasons, the microceph
 daemon exposes a way to both get and set the log level.
