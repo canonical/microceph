@@ -62,7 +62,10 @@ Flags:
 
 .. code-block:: none
 
-   --mon-ip string   Public address for bootstrapping ceph mon service.
+   --microceph-ip    string Public address for microcephd daemon.
+   --mon-ip          string Public address for bootstrapping ceph mon service.
+   --public-network  string Public Network for Ceph daemons to bind to.
+   --cluster-network string Cluster Network for Ceph daemons to bind to.
 
 ``config``
 ----------
