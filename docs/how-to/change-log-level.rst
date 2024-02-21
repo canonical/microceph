@@ -1,16 +1,16 @@
 ===============================
-Change log level in Microceph
+Change log level in MicroCeph
 ===============================
 
-By default, the Microceph daemon runs with the log level set to DEBUG. While that is the desirable
+By default, the MicroCeph daemon runs with the log level set to DEBUG. While that is the desirable
 behaviour for a good amount of use cases, there are instances when this level is far too high -
-for example, embedded devices where storage is much more limited. For these reasons, the Microceph
+for example, embedded devices where storage is much more limited. For these reasons, the MicroCeph
 daemon exposes a way to both get and set the log level.
 
 Configuring the log level
 -------------------------
 
-Microceph includes the command `log`, with the sub commands `set-level` and `get-level`. When setting, we support both string and integer formats for the log level. For example:
+MicroCeph includes the command `log`, with the sub commands `set-level` and `get-level`. When setting, we support both string and integer formats for the log level. For example:
 
 .. code-block:: none
 
