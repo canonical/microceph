@@ -34,7 +34,7 @@ func SetLogLevel(level string) error {
 		if err != nil {
 			return err
 		} else if ilvl < 0 || ilvl > int(logrus.TraceLevel) {
-			return fmt.Errorf("invalid log level: %u", ilvl)
+			return fmt.Errorf("invalid log level: %v", ilvl)
 		}
 
 		lrLevel = logrus.Level(ilvl)
