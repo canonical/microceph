@@ -125,6 +125,8 @@ jobs:
     - name: Run system tests
       run: |
         set -eux
+        # List disks
+        sudo microceph disk list
         # Show ceph's status
         sudo microceph.ceph status
         # Ceph status expectations for a single node cluster

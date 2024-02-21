@@ -20,6 +20,7 @@ function install_microceph() {
     sudo snap install --dangerous ~/microceph_*.snap
     sudo snap connect microceph:block-devices
     sudo snap connect microceph:hardware-observe
+    sudo snap connect microceph:mount-observe
     # defer dm-crypt enablement for later.
 
     sudo microceph cluster bootstrap
@@ -129,7 +130,7 @@ function install_multinode() {
     # Install and setup microceph snap
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
         lxc exec $container -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
-        lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe"
+        lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
         # Hack: allow access to sysfs hardware info through lxc
         lxc exec $container -- sh -c "sed -e 's|/sys/devices/\*\*/ r,|/sys/devices/** r,|' -i.bak /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"
         lxc exec $container -- sh -c "apparmor_parser -r /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"
