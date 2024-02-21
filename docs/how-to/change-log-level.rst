@@ -21,7 +21,7 @@ Both commands are equivalent. The mapping from integer to string can be consulte
 help for the ``set-level`` sub-command. Note that any changes made to the log level take effect
 immediately, and need no restarts.
 
-On the other hand, the ``get-level`` sub-ommand takes no arguments and returns an integer level only.
+On the other hand, the ``get-level`` sub-command takes no arguments and returns an integer level only.
 Any value returned by ``get-level`` can be used for ``set-level``.
 
 For example, after setting the level as shown in the example, we can verify in this way:
