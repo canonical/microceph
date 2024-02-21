@@ -50,9 +50,14 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo add-apt-repository ppa:dqlite/dev
+          sudo add-apt-repository ppa:dqlite/dev -y --no-update
           sudo apt-get update
-          sudo apt-get install -y libdqlite-dev golang-go
+          sudo apt-get install -y libdqlite-dev
+
+      - name: Install Go (1.21)
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.21.x
 
       - name: Run unit-tests
         run: |

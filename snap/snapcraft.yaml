@@ -129,7 +129,7 @@ parts:
   ceph:
     plugin: nil
     override-prime: |
-      snapcraftctl prime
+      craftctl default
       pkg_version=$(
             dpkg-deb -f \
             $CRAFT_PART_SRC/../stage_packages/ceph-common*.deb Version)
@@ -160,6 +160,7 @@ parts:
       - ceph-osd
       - radosgw
       - coreutils
+      - uuid-runtime
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -180,6 +181,7 @@ parts:
       - bin/radosgw
       - bin/radosgw-admin
       - bin/truncate
+      - bin/uuidgen
       - lib/*/ceph
       - lib/*/libaio.so*
       - lib/*/libasn1.so*
@@ -225,17 +227,7 @@ parts:
       - lib/*/libunwind.so*
       - share/ceph
 
-  deps:
-    plugin: nil
-    stage-packages:
-      - uuid-runtime
-    organize:
-      usr/bin/: bin/
-    prime:
-      - bin/uuidgen
-
   dqlite:
-    build-attributes: [core22-step-dependencies]
     after:
       - raft
     source: https://github.com/canonical/dqlite
@@ -258,7 +250,6 @@ parts:
       - lib/*/libuv*
 
   raft:
-    build-attributes: [core22-step-dependencies]
     source: https://github.com/canonical/raft
     source-type: git
     source-depth: 1
@@ -279,7 +270,6 @@ parts:
       - lib/*/libuv.so*
 
   microceph:
-    build-attributes: [core22-step-dependencies]
     source: microceph/
     after:
       - dqlite
@@ -287,7 +277,7 @@ parts:
       - go
     plugin: nil
     override-pull: |
-      snapcraftctl pull
+      craftctl default
       set -ex
 
       # Download the dependencies
@@ -295,8 +285,8 @@ parts:
     override-build: |
       set -ex
       # Setup build environment
-      export CGO_CFLAGS="-I${SNAPCRAFT_STAGE}/include/ -I${SNAPCRAFT_STAGE}/usr/local/include/"
-      export CGO_LDFLAGS="-L${SNAPCRAFT_STAGE}/lib/ -L${SNAPCRAFT_STAGE}/usr/local/lib/"
+      export CGO_CFLAGS="-I${CRAFT_STAGE}/include/ -I${CRAFT_STAGE}/usr/local/include/"
+      export CGO_LDFLAGS="-L${CRAFT_STAGE}/lib/ -L${CRAFT_STAGE}/usr/local/lib/"
       export CGO_LDFLAGS_ALLOW="(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
       pkg_version=$( apt-cache policy ceph-common | awk '/Candidate:/{ print $2 }' )
       git_version=$(
@@ -305,12 +295,32 @@ parts:
           --dirty \
           --abbrev=10)
       export MC_VERSION="ceph-version: $pkg_version; microceph-git: $git_version"
+
       # Build the binaries
-      go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microceph" -ldflags "-X 'main.Version=${MC_VERSION}'" ./cmd/microceph
-      go build -o "${SNAPCRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
+      go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microceph" -ldflags "-X 'main.Version=${MC_VERSION}'" ./cmd/microceph
+      go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 ./cmd/microcephd
+
+      # Strip binaries
+      strip -s "${CRAFT_PART_INSTALL}/bin/microceph"
+      strip -s "${CRAFT_PART_INSTALL}/bin/microcephd"
     prime:
       - bin/microceph
       - bin/microcephd
+
+  strip:
+    after:
+      - ceph
+      - dqlite
+      - raft
+      - microceph
+    plugin: nil
+    override-prime: |
+      set -x
+
+      # Strip libraries (excluding python3 scripts)
+      find "${CRAFT_PRIME}"/lib -type f \
+        -not -path "${CRAFT_PRIME}/lib/python3/*" \
+        -exec strip -s {} +
 
   wrappers:
     plugin: dump

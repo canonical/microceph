@@ -38,7 +38,8 @@ endif
 .PHONY: update-gomod
 update-gomod:
 	go get -u ./...
-	go mod tidy
+	go mod tidy --go=1.21
+	go get toolchain@none
 
 # Update lxd-generate generated database helpers.
 .PHONY: update-schema
