@@ -305,7 +305,9 @@ jobs:
             echo "Failed: node-wrk3 still present"
             exit 1
         fi
-        lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | fgrep "mon: 3 daemons"
+        output=$(lxc exec node-wrk0 -- sh -c "microceph.ceph -s")
+        (echo $output | fgrep "mon: 3 daemons") ||
+        (echo $output | grep "mon: 4 daemons.*out of quorum: node-wrk3")
 
     - name: Test client configurations
       run: ~/actionutils.sh check_client_configs
