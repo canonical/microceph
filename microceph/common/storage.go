@@ -13,7 +13,7 @@ import (
 func IsMounted(device string) (bool, error) {
 	// Resolve any symlink and get the absolute path of the device.
 	// Note /proc/mounts contains the absolute path of the device as well.
-	resolvedPath, err := filepath.EvalSymlinks(device)
+	resolvedPath, err := filepath.EvalSymlinks(filepath.Join(constants.GetPathConst().RootFs, device))
 	if err != nil {
 		// Handle errors other than not existing differently as EvalSymlinks takes care of symlink resolution
 		return false, err

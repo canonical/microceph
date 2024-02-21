@@ -22,11 +22,14 @@ func (s *StorageDeviceTestSuite) SetupTest() {
 	// create a temp file to use as a device
 	s.devicePath = filepath.Join(s.Tmp, "device")
 	os.Create(s.devicePath)
+	os.MkdirAll(filepath.Join(s.Tmp, "dev"), 0775)
+	os.Create(filepath.Join(s.Tmp, "dev", "sdb"))
+	os.Create(filepath.Join(s.Tmp, "dev", "sdc"))
 
 	// create a /proc/mounts like file
 	mountsFile := filepath.Join(s.Tmp, "proc", "mounts")
 	mountsContent := "/dev/root / ext4 rw,relatime,discard,errors=remount-ro 0 0\n"
-	mountsContent += "/dev/sdb /mnt ext2 rw,relatime 0 0\n"
+	mountsContent += filepath.Join(s.Tmp, "dev", "sdb") + " /mnt ext2 rw,relatime 0 0\n"
 	_ = os.WriteFile(mountsFile, []byte(mountsContent), 0644)
 
 }
