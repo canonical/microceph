@@ -49,6 +49,7 @@ apps:
       - block-devices
       - dm-crypt
       - hardware-observe
+      - mount-observe
       - network
       - network-bind
     slots:
@@ -111,6 +112,7 @@ apps:
   microceph:
     command: commands/microceph
     plugs:
+      - mount-observe
       - network
       - block-devices
       - dm-crypt
