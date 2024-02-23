@@ -3,14 +3,18 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/interfaces"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
 
+	"github.com/canonical/microceph/microceph/interfaces"
+
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/gorilla/mux"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/microcluster/rest"
@@ -52,8 +56,7 @@ func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 	var db *types.DiskParameter
 	var disks []types.DiskParameter
 
-	logger.Infof("cmdDisksPost: %v", req)
-	err := json.NewDecoder(r.Body).Decode(&req)
+	req, err := parseAndPatchDiskPostParams(r.Body)
 	if err != nil {
 		return response.InternalError(err)
 	}
@@ -136,4 +139,40 @@ func cmdDisksDelete(s *state.State, r *http.Request) response.Response {
 	}
 
 	return response.EmptySyncResponse
+}
+
+// parseAndPatchDiskPostParams parses/patches Disk add command parameters
+// to keep the API compatible with older clients.
+func parseAndPatchDiskPostParams(rb io.ReadCloser) (types.DisksPost, error) {
+	var patchedBody string
+	output := types.DisksPost{}
+
+	body, err := io.ReadAll(rb)
+	if err != nil {
+		return types.DisksPost{}, err
+	}
+
+	buf := string(body)
+
+	logger.Debugf("CmdDiskPost Req Body: %v", buf)
+
+	diskPath := gjson.Get(buf, "path")
+	if !diskPath.IsArray() {
+		patchedBody, err = sjson.Set(buf, "path", []string{diskPath.String()})
+		if err != nil {
+			return types.DisksPost{}, err
+		}
+	} else {
+		// use unpatched buffer if client is using Batch Disk params.
+		patchedBody = buf
+	}
+
+	logger.Debugf("CmdDiskPost Patched Body: %v", patchedBody)
+
+	err = json.Unmarshal([]byte(patchedBody), &output)
+	if err != nil {
+		return types.DisksPost{}, err
+	}
+
+	return output, nil
 }
