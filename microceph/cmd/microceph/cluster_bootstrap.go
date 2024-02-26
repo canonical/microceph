@@ -3,9 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
 	"os"
 	"time"
+
+	"github.com/canonical/microceph/microceph/constants"
 
 	"github.com/canonical/lxd/lxd/util"
 	"github.com/canonical/microceph/microceph/common"
@@ -73,7 +74,7 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Bootstrap microcluster.
-	err = m.NewCluster(hostname, address, common.EncodeBootstrapConfig(data), time.Second*30)
+	err = m.NewCluster(hostname, address, common.EncodeBootstrapConfig(data), time.Second*60)
 	if err != nil {
 		return err
 	}
