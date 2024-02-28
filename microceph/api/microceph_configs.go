@@ -2,20 +2,28 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/canonical/lxd/shared/logger"
 	"net/http"
 
 	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/microcluster/rest"
-	"github.com/canonical/microcluster/state"
-
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
+	"github.com/canonical/microcluster/rest"
+	"github.com/canonical/microcluster/state"
 )
 
-// /1.0/log-level endpoint.
-var logCmd = rest.Endpoint{
-	Path: "log-level",
+// top level microceph API
+var microcephCmd = rest.Endpoint{
+	Path: "microceph",
+}
+
+// microceph configs API
+var microcephConfigsCmd = rest.Endpoint{
+	Path: "microceph/configs",
+}
+
+var logLevelCmd = rest.Endpoint{
+	Path: "microceph/configs/log-level",
 	Put:  rest.EndpointAction{Handler: logLevelPut, ProxyTarget: true},
 	Get:  rest.EndpointAction{Handler: logLevelGet, ProxyTarget: true},
 }

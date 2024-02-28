@@ -15,7 +15,7 @@ func LogLevelSet(ctx context.Context, c *microCli.Client, data *types.LogLevelPu
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("log-level"), data, nil)
+	err := c.Query(queryCtx, "PUT", api.NewURL().Path("microceph", "configs", "log-level"), data, nil)
 	if err != nil {
 		return fmt.Errorf("failed setting log level: %w", err)
 	}
@@ -29,7 +29,7 @@ func LogLevelGet(ctx context.Context, c *microCli.Client) (uint32, error) {
 
 	level := uint32(0)
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("log-level"), nil, &level)
+	err := c.Query(queryCtx, "GET", api.NewURL().Path("microceph", "configs", "log-level"), nil, &level)
 	if err != nil {
 		return 0, fmt.Errorf("failed getting log level: %w", err)
 	}
