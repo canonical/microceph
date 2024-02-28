@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"database/sql"
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"reflect"
 	"time"
@@ -19,6 +20,7 @@ func Start(s interfaces.StateInterface) error {
 		for {
 			// Check that the database is ready.
 			if !s.ClusterState().Database.IsOpen() {
+				logger.Debug("start: database not ready, waiting...")
 				time.Sleep(10 * time.Second)
 				continue
 			}
@@ -39,26 +41,28 @@ func Start(s interfaces.StateInterface) error {
 				return nil
 			})
 			if err != nil {
+				logger.Warnf("start: failed to fetch monitors, retrying: %v", err)
 				time.Sleep(10 * time.Second)
 				continue
 			}
 
 			// Compare to the previous list.
 			if reflect.DeepEqual(oldMonitors, monitors) {
+				logger.Debugf("start: monitors unchanged, sleeping: %v", monitors)
 				time.Sleep(time.Minute)
 				continue
 			}
 
 			err = UpdateConfig(s)
 			if err != nil {
+				logger.Errorf("start: failed to update config, retrying: %v", err)
 				time.Sleep(10 * time.Second)
 				continue
 			}
-
+			logger.Debug("start: updated config, sleeping")
 			oldMonitors = monitors
 			time.Sleep(time.Minute)
 		}
-
 	}()
 
 	return nil

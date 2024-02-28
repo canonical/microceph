@@ -255,6 +255,9 @@ jobs:
     - name: Setup cluster
       run: ~/actionutils.sh cluster_nodes custom
 
+    - name: Verify config
+      run: ~/actionutils.sh test_ceph_conf
+
     - name: Add 2 OSDs
       run: |
         for c in node-wrk1 node-wrk2 ; do
@@ -489,4 +492,3 @@ jobs:
 
     - name: Exercise RGW again
       run: ~/actionutils.sh headexec testrgw
-      
