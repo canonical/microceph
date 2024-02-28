@@ -16,9 +16,10 @@ type cmdDiskRemove struct {
 	common *CmdControl
 	disk   *cmdDisk
 
-	flagBypassSafety     bool
-	flagConfirmDowngrade bool
-	flagTimeout          int64
+	flagBypassSafety           bool
+	flagConfirmDowngrade       bool
+	flagProhibitCrushScaledown bool
+	flagTimeout                int64
 }
 
 func (c *cmdDiskRemove) Command() *cobra.Command {
@@ -31,6 +32,7 @@ func (c *cmdDiskRemove) Command() *cobra.Command {
 	cmd.PersistentFlags().Int64Var(&c.flagTimeout, "timeout", 1800, "Timeout to wait for safe removal (seconds), default=1800")
 	cmd.PersistentFlags().BoolVar(&c.flagBypassSafety, "bypass-safety-checks", false, "Bypass safety checks")
 	cmd.PersistentFlags().BoolVar(&c.flagConfirmDowngrade, "confirm-failure-domain-downgrade", false, "Confirm failure domain downgrade if required")
+	cmd.PersistentFlags().BoolVar(&c.flagProhibitCrushScaledown, "prohibit-crush-scaledown", false, "Remove OSD without scaling down the crush failure domain")
 
 	return cmd
 }
@@ -63,11 +65,16 @@ func (c *cmdDiskRemove) Run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if c.flagConfirmDowngrade && c.flagProhibitCrushScaledown {
+		return fmt.Errorf("bad Request, --confirm-failure-domain-downgrade and --prohibit-crush-scaledown flags are exclusive to each other")
+	}
+
 	req := &types.DisksDelete{
-		OSD:              osd,
-		BypassSafety:     c.flagBypassSafety,
-		ConfirmDowngrade: c.flagConfirmDowngrade,
-		Timeout:          c.flagTimeout,
+		OSD:                    osd,
+		BypassSafety:           c.flagBypassSafety,
+		ConfirmDowngrade:       c.flagConfirmDowngrade,
+		ProhibitCrushScaledown: c.flagProhibitCrushScaledown,
+		Timeout:                c.flagTimeout,
 	}
 
 	fmt.Printf("Removing osd.%d, timeout %ds\n", osd, req.Timeout)
