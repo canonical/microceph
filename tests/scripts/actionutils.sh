@@ -388,6 +388,31 @@ function test_migration() {
     return -1
 }
 
+function test_ceph_conf() {
+    set -uex
+    for n in $( lxc ls -c n --format csv ); do
+        echo "checking node $n"
+        lxc exec $n -- sh <<'EOF'
+# Test: configured rundir must be current
+current=$( realpath /var/snap/microceph/current )
+rundir=$( cat /var/snap/microceph/current/conf/ceph.conf | awk '/run dir/{ print $4 }' )
+p=$( dirname $rundir )
+if [ $p != $current ]; then
+    echo "Error: snap data dir $current, configured run dir: $rundir"
+    cat /var/snap/microceph/current/conf/ceph.conf
+    exit -1
+fi
+
+# Test: must contain public_network
+if ! grep -q public_net /var/snap/microceph/current/conf/ceph.conf ; then
+    echo "Error: didn't find public_net in ceph.conf"
+    cat /var/snap/microceph/current/conf/ceph.conf
+    exit -1
+fi
+EOF
+    done
+}
+
 function headexec() {
     local run="${1?missing}"
     shift

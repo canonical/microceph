@@ -58,5 +58,8 @@ jobs:
     - name: Wait until 3 OSDs are up
       run:  ~/actionutils.sh headexec wait_for_osds 3
 
+    - name: Verify config
+      run: ~/actionutils.sh test_ceph_conf
+
     - name: Exercise RGW again
       run: ~/actionutils.sh headexec testrgw
