@@ -48,7 +48,7 @@ In this documentation
 Project and community
 ---------------------
 
-MicroCeph is a member of the Ubuntu family. It’s an open source project that
+MicroCeph is a member of the Ubuntu family. It's an open source project that
 warmly welcomes community projects, contributions, suggestions, fixes and
 constructive feedback.
 
@@ -58,6 +58,9 @@ constructive feedback.
 * GitHub is also used as our bug tracker
 * To speak with us, you can find us on Matrix in `Ubuntu Ceph`_ or the
   `~openstack-charms`_ channel on Mattermost
+* Optionally enable `Ubuntu Pro`_ on your Ceph nodes. This is a service that
+  provides the `Livepatch Service`_ and the `Expanded Security Maintenance`_
+  (ESM) program.
 
 .. toctree::
    :hidden:
@@ -73,3 +76,6 @@ constructive feedback.
 .. _GitHub: https://github.com/canonical/microceph
 .. _Ubuntu Ceph: https://matrix.to/#/#ubuntu-ceph:matrix.org
 .. _~openstack-charms: https://chat.charmhub.io/charmhub/channels/openstack-charms
+.. _Ubuntu Pro: https://ubuntu.com/pro
+.. _Livepatch Service: https://ubuntu.com/security/livepatch
+.. _Expanded Security Maintenance: https://ubuntu.com/security/esm
