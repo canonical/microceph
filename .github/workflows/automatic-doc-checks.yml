@@ -14,3 +14,20 @@ jobs:
     uses: canonical/documentation-workflows/.github/workflows/documentation-checks.yaml@main
     with:
       working-directory: 'docs'
+
+  openapi-check:
+    name: OpenAPI Spec Check
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: pip install openapi-spec-validator
+
+      - name: Check spec
+        run: |
+          set -eux
+          openapi-spec-validator ./docs/openapi/openapi.yaml
