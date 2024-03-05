@@ -280,7 +280,7 @@ function cluster_nodes() {
 
 function add_osd_to_node() {
     local container="${1?missing}"
-    lxc exec $container -- sh -c "microceph disk add /dev/sdia"
+    lxc exec $container -- sh -c "microceph disk add /dev/sdia --wipe"
     sleep 1
 }
 

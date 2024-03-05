@@ -307,6 +307,18 @@ jobs:
     - name: Enable services on wrk1
       run: ~/actionutils.sh headexec enable_services node-wrk1
 
+    - name: Remove OSD again but don't scaledown crush rule.
+      run: |
+        set -uex
+        lxc exec node-wrk0 -- sh -c "microceph disk remove 3 --prohibit-crush-scaledown --bypass-safety-checks"
+        lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host
+
+    - name: Re-Add OSD
+      run: |
+        set -uex
+        ~/actionutils.sh add_osd_to_node node-wrk0
+        ~/actionutils.sh headexec wait_for_osds 3
+
     - name: Test remove node wrk3
       run: |
         set -uex

@@ -119,18 +119,22 @@ func cmdDisksDelete(s *state.State, r *http.Request) response.Response {
 	defer mu.Unlock()
 
 	cs := interfaces.CephState{State: s}
-	needDowngrade, err := ceph.IsDowngradeNeeded(cs, osdid)
-	if err != nil {
-		return response.InternalError(err)
-	}
-	if needDowngrade && !req.ConfirmDowngrade {
-		errorMsg := fmt.Errorf(
-			"Removing osd.%s would require a downgrade of the automatic crush rule from 'host' to 'osd' level. "+
-				"Likely this will result in additional data movement. Please confirm by setting the "+
-				"'--confirm-failure-domain-downgrade' flag to true",
-			osd,
-		)
-		return response.BadRequest(errorMsg)
+
+	// if check for crush rule scaledown only if crush change is not prohibited.
+	if !req.ProhibitCrushScaledown {
+		needDowngrade, err := ceph.IsDowngradeNeeded(cs, osdid)
+		if err != nil {
+			return response.InternalError(err)
+		}
+		if needDowngrade && !req.ConfirmDowngrade {
+			errorMsg := fmt.Errorf(
+				"removing osd.%s would require a downgrade of the automatic crush rule from 'host' to 'osd' level. "+
+					"Likely this will result in additional data movement. Please confirm by setting the "+
+					"'--confirm-failure-domain-downgrade' flag to true",
+				osd,
+			)
+			return response.BadRequest(errorMsg)
+		}
 	}
 
 	err = ceph.RemoveOSD(cs, osdid, req.BypassSafety, req.Timeout)

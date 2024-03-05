@@ -29,10 +29,11 @@ type DiskAddResponse struct {
 
 // DisksDelete holds an OSD number and a flag for forcing the removal
 type DisksDelete struct {
-	OSD              int64 `json:"osdid" yaml:"osdid"`
-	BypassSafety     bool  `json:"bypass_safety" yaml:"bypass_safety"`
-	ConfirmDowngrade bool  `json:"confirm_downgrade" yaml:"confirm_downgrade"`
-	Timeout          int64 `json:"timeout" yaml:"timeout"`
+	OSD                    int64 `json:"osdid" yaml:"osdid"`
+	BypassSafety           bool  `json:"bypass_safety" yaml:"bypass_safety"`
+	ConfirmDowngrade       bool  `json:"confirm_downgrade" yaml:"confirm_downgrade"`
+	ProhibitCrushScaledown bool  `json:"prohibit_crush_scaledown" yaml:"prohibit_crush_scaledown"`
+	Timeout                int64 `json:"timeout" yaml:"timeout"`
 }
 
 // Disks is a slice of disks
