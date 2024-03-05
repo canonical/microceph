@@ -1,0 +1,98 @@
+openapi: 3.1.0
+info:
+  version: '1.0'
+  title: 'MicroCeph REST APIs'
+paths:
+  /1.0/microceph/config/log-level:
+    put:
+      summary: Set log level for MicroCeph
+      description: Allows the client to configure the logging levels for the MicroCeph daemon.
+      operationId: setLogLevel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: 
+              $ref: "#/components/schemas/Level"
+      responses:
+        '200':
+          description: Successfully set log-level
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema: 
+                $ref: "#/components/schemas/Response"
+    get:
+      summary: Get log level for MicroCeph
+      description: Fetches the current logging level of the MicroCeph daemon.
+      operationId: getLogLevel
+      responses:
+        '200':
+          description: Successfully fetched log-level
+          content:
+            application/json:
+              schema: 
+                type: object
+                properties:
+                  metadata:
+                    type: integer
+                    description: Numerical value of the log-level
+                    $ref: "#/components/schemas/Level"
+                    example: 4
+        default: 
+          description: Default error response
+          content:
+            application/json:
+              schema: 
+                $ref: "#/components/schemas/Response"
+          
+components:
+  schemas:
+    Level:
+      type: string
+      oneOf: 
+        - title: PANIC
+          const: 0
+        - title: FATAL
+          const: 1
+        - title: ERROR
+          const: 2
+        - title: WARNING
+          const: 3
+        - title: INFO
+          const: 4
+        - title: DEBUG
+          const: 5
+        - title: TRACE
+          const: 6
+    Response:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Type of response
+          examples: ["sync", "error"]
+        status:
+          type: string
+          description: Status of operation.
+          examples: ["Success", "Error"]
+        status_code:
+          type: integer
+          description: Success HTTP status code, 0 for errors.
+          examples: [200, 0]
+        operation:
+          type: string
+          description: Operation name.
+        error_code:
+          type: string
+          description: Error HTTP status code, 0 for success.
+        error:
+          type: string
+          description: Description of error.
+          example: "Failed to run: ceph config get test_key: exit status 22"
+        metadata:
+          oneOf: 
+            -  type: object
+            -  type: 'null'
+          description: Response payload, could be null, or a valid json object.
