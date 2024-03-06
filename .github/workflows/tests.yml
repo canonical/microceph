@@ -504,3 +504,44 @@ jobs:
 
     - name: Exercise RGW again
       run: ~/actionutils.sh headexec testrgw
+
+  api-tests:
+    name: Single node MicroCeph API tests
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Check test script
+      run: |
+        pip install black
+        black --check tests/apis/microtester.py
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install and setup
+      run: |
+        ~/actionutils.sh install_microceph
+
+    - name: Install script dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-yaml python3-requests python3-requests-unixsocket
+
+
+    - name: Run API tests
+      run: |
+        sudo python3 tests/apis/microtester.py tests/apis/testsuite/ --sock="/var/snap/microceph/common/state/control.socket"

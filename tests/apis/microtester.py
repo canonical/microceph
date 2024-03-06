@@ -236,7 +236,7 @@ class ResponseListCountExpectation(Expectation):
         # Assert Pre-Requisite
         self.assert_prerequisites(
             id="Check for list API response type",
-            condition=(type(response.get("metadata")) == type([]))
+            condition=(type(response.get("metadata")) == type([])),
         )
 
         # Assert Expectation
@@ -265,7 +265,7 @@ class ResponseDictContainsExpectation(Expectation):
         # Assert Pre-Requisite
         self.assert_prerequisites(
             id="Check for dict API response type",
-            condition=(type(response.get("metadata")) == type({}))
+            condition=(type(response.get("metadata")) == type({})),
         )
 
         # Assert Expectation
