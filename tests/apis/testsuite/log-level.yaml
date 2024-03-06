@@ -1,0 +1,18 @@
+title: MicroCeph log-level API Tests
+tests:
+  - name: Set log level
+    id: setLogLevel
+    path: /1.0/microceph/configs/log-level
+    method: PUT
+    input:
+      level: "4"
+    expectations:
+      response_code: 200
+
+  - name: Get log level
+    id: getLogLevel
+    path: /1.0/microceph/configs/log-level
+    method: Get
+    expectations:
+      response_code: 200
+      response_value: 4
