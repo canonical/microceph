@@ -284,6 +284,14 @@ parts:
       go get -d -v ./...
     override-build: |
       set -ex
+      git_diff="$( git -C $CRAFT_PROJECT_DIR status --porcelain )"
+      if [ -n "$git_diff" ]; then
+        echo "=================================================="
+        echo "STOP the build: dirty worktree detected"
+        echo "$git_diff"
+        echo "=================================================="
+        exit 1
+      fi      
       # Setup build environment
       export CGO_CFLAGS="-I${CRAFT_STAGE}/include/ -I${CRAFT_STAGE}/usr/local/include/"
       export CGO_LDFLAGS="-L${CRAFT_STAGE}/lib/ -L${CRAFT_STAGE}/usr/local/lib/"
