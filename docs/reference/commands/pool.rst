@@ -14,7 +14,7 @@ Available commands:
 
 .. code-block:: none
 
-   set-tf      Set the replication factor for pools
+   set-rf      Set the replication factor for pools
 
 Global flags:
 
