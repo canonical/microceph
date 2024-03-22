@@ -31,10 +31,10 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
-	cmd.Flags().StringVar(&c.flagMicroCephIp, "microceph-ip", "", "Public address for microcephd daemon.")
+	cmd.Flags().StringVar(&c.flagMicroCephIp, "microceph-ip", "", "Network address microceph daemon binds to.")
 	cmd.Flags().StringVar(&c.flagMonIp, "mon-ip", "", "Public address for bootstrapping ceph mon service.")
-	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public Network for Ceph daemons to bind to.")
-	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster Network for Ceph daemons to bind to.")
+	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public network Ceph daemons bind to.")
+	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster network Ceph daemons bind to.")
 	return cmd
 }
 

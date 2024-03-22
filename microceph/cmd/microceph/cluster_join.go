@@ -26,7 +26,7 @@ func (c *cmdClusterJoin) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
-	cmd.Flags().StringVar(&c.flagMicroCephIp, "microceph-ip", "", "Public address for microcephd daemon.")
+	cmd.Flags().StringVar(&c.flagMicroCephIp, "microceph-ip", "", "Network address microceph daemon binds to.")
 	return cmd
 }
 
