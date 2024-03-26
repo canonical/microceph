@@ -87,10 +87,11 @@ function get_lxd_network() {
 }
 
 function create_containers() {
-    set -x
+    set -eux
+    local net_name="${1?missing}"
     # Create public network for internal ceph cluster
-    lxc network create public
-    local nw=$(get_lxd_network public)
+    lxc network create $net_name
+    local nw=$(get_lxd_network $net_name)
     gw=$(echo "$nw" | cut -d/ -f1)
     mask=$(echo "$nw" | cut -d/ -f2)
     # Create head node and 3 worker containers
@@ -105,7 +106,7 @@ function create_containers() {
 
         # Configure and start container
         lxc config device add $container homedir disk source=${HOME} path=/mnt
-        lxc network attach public $container eth2
+        lxc network attach $net_name $container eth2
         lxc start $container
 
         # allocate ip address on the attached network
@@ -215,19 +216,28 @@ function verify_bootstrap_configs() {
 }
 
 function bootstrap_head() {
-    set -x
+    set -ex
 
     local arg=$1
-    if [ $arg = "custom" ]; then
+    if [ $arg = "public" ]; then
         # Bootstrap microceph on the head node
         local nw=$(get_lxd_network public)
         local gw=$(echo "$nw" | cut -d/ -f1)
         local mask=$(echo "$nw" | cut -d/ -f2)
-        local mon_ip="${gw}0"
+        local node_ip="${gw}0"
         lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --public-network=$nw"
         sleep 5
         # Verify ceph.conf
-        verify_bootstrap_configs node-wrk0 "${nw}" "${mon_ip}"
+        verify_bootstrap_configs node-wrk0 "${nw}" "${node_ip}"
+    elif [ $arg = "internal" ]; then
+        # Bootstrap microceph on the head node with custom microceph ip.
+        local nw=$(get_lxd_network internal)
+        local gw=$(echo "$nw" | cut -d/ -f1)
+        local node_ip="${gw}0"
+        lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --microceph-ip=$node_ip"
+        sleep 10
+        # Verify microceph IP
+        lxc exec node-wrk0 -- sh -c "microceph status | grep node-wrk0 | grep $node_ip"
     else
         lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap"
     fi
@@ -239,28 +249,36 @@ function bootstrap_head() {
 
 
 function cluster_nodes() {
-    set -x
+    set -ex
     local arg=$1
 
     # Add/join microceph nodes to the cluster
-    local nw=$(get_lxd_network public)
+    local nw=$(get_lxd_network $arg)
     local gw=$(echo "$nw" | cut -d/ -f1)
     local mask=$(echo "$nw" | cut -d/ -f2)
     local mon_ips="${gw}0"
     for i in 1 2 3 ; do
-        local node_mon_ip="${gw}${i}"
+        local node_ip="${gw}${i}"
 
-        # join MicroCeph cluster
-        tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk${i}" )
-        lxc exec node-wrk${i} -- sh -c "microceph cluster join $tok"
-
-        if [ $arg = "custom" ]; then
-            # verify ceph.conf
-            verify_bootstrap_configs "node-wrk${i}" "${nw}" $mon_ips
+        if [ $arg = "internal" ]; then
+            # join microceph cluster using microceph IP
+            tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk${i}" )
+            lxc exec node-wrk${i} -- sh -c "microceph cluster join $tok  --microceph-ip=${node_ip}"
+            sleep 10
+            # Verify microceph IP
+            lxc exec node-wrk0 -- sh -c "microceph status | grep node-wrk${i} | grep ${node_ip}"
+        else
+            # join microceph cluster using default Microceph IP
+            tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk${i}" )
+            lxc exec node-wrk${i} -- sh -c "microceph cluster join $tok"
         fi
 
-        # append mon_ips as a space separated entry.
-        mon_ips="$mon_ips $node_mon_ip"
+        if [ $arg = "public" ]; then
+            # verify ceph.conf
+            verify_bootstrap_configs "node-wrk${i}" "${nw}" $mon_ips
+            # append mon_ips as a space separated entry.
+            mon_ips="$mon_ips $node_ip"
+        fi
     done
 
     for i in $(seq 1 8); do
