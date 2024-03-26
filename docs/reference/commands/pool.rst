@@ -8,7 +8,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph disk [command]
+   microceph pool [command]
 
 Available commands:
 
