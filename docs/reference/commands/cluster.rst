@@ -62,10 +62,10 @@ Flags:
 
 .. code-block:: none
 
-   --microceph-ip    string Public address for microcephd daemon.
+   --microceph-ip    string Network address microceph daemon binds to.
    --mon-ip          string Public address for bootstrapping ceph mon service.
-   --public-network  string Public Network for Ceph daemons to bind to.
-   --cluster-network string Cluster Network for Ceph daemons to bind to.
+   --public-network  string Public network Ceph daemons bind to.
+   --cluster-network string Cluster network Ceph daemons bind to.
 
 ``config``
 ----------
@@ -160,6 +160,12 @@ Usage:
 .. code-block:: none
 
    microceph cluster join <TOKEN> [flags]
+
+Flags:
+
+.. code-block:: none
+
+   --microceph-ip    string Network address microceph daemon binds to.
 
 
 ``list``
