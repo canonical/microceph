@@ -1,0 +1,41 @@
+title: MicroCeph Disk API Tests
+tests:
+  - name: Check OSD count
+    path: /1.0/disks
+    method: GET
+    expectations:
+      response_code: 200
+      response_list_count: 0
+
+  - name: Add 3 file based OSDs
+    path: /1.0/disks
+    method: POST
+    input:
+      path: "loop,2G,3"
+    expectations:
+      response_code: 200
+      response_dict_contains:
+        validation_error: ""
+
+  - name: Delete OSD 1
+    path: /1.0/disks/1
+    method: DELETE
+    input:
+      bypass_safety: true
+    expectations:
+      response_code: 200
+
+  - name: Add another OSD
+    path: /1.0/disks
+    method: POST
+    input:
+      path: "loop,2G,1"
+    expectations:
+      response_code: 200
+
+  - name: Check OSD count
+    path: /1.0/disks
+    method: GET
+    expectations:
+      response_code: 200
+      response_list_count: 3
