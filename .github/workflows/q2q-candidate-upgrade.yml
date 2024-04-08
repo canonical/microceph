@@ -28,7 +28,7 @@ jobs:
       run: ~/actionutils.sh setup_lxd
 
     - name: Create containers with loopback devices
-      run: ~/actionutils.sh create_containers
+      run: ~/actionutils.sh create_containers public
 
     - name: Install quincy stable from store
       run: ~/actionutils.sh install_store quincy/stable
