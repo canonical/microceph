@@ -5,9 +5,23 @@ import (
 
 	"github.com/canonical/lxd/shared/logger"
 	microCli "github.com/canonical/microcluster/client"
+	"github.com/canonical/microcluster/microcluster"
+	"github.com/canonical/microcluster/state"
 
 	"github.com/canonical/microceph/microceph/client"
 )
+
+// PreRemove cleans up the underlying ceph services before the node is removed from the dqlite cluster.
+func PreRemove(m *microcluster.MicroCluster) func(s *state.State, force bool) error {
+	return func(s *state.State, force bool) error {
+		cli, err := m.LocalClient()
+		if err != nil {
+			return err
+		}
+
+		return removeNode(cli, s.Name(), force)
+	}
+}
 
 func removeNode(cli *microCli.Client, node string, force bool) error {
 
@@ -29,13 +43,6 @@ func removeNode(cli *microCli.Client, node string, force bool) error {
 			return err
 		}
 		logger.Warnf("Error deleting services from node %v: %v", node, err)
-	}
-
-	// delete from cluster db
-	err = client.MClient.DeleteClusterMember(cli, node, force)
-	logger.Debugf("DeleteClusterMember %v: %v", node, err)
-	if err != nil {
-		return err
 	}
 
 	return nil
