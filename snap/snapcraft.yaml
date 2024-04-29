@@ -1,7 +1,8 @@
 name: microceph
-base: core22
+base: core24
 adopt-info: ceph
-grade: stable
+build-base: devel
+grade: devel
 source-code: https://github.com/canonical/microceph.git
 license: AGPL-3.0
 summary: Simple clustered Ceph deployment
@@ -10,10 +11,10 @@ description: |-
 
 confinement: strict
 
-package-repositories:
-  - type: apt
-    cloud: bobcat
-    priority: always
+# package-repositories:
+#   - type: apt
+#     cloud: bobcat
+#     priority: always
 
 slots:
   ceph-conf:
@@ -150,7 +151,8 @@ parts:
           --always \
           --dirty \
           --abbrev=10)
-        craftctl set version=${pkg_version}+snap${git_version}
+        # changed as the original string was longer than 32chars.
+        craftctl set version=${pkg_version}+devel
     stage-packages:
       - ceph-common
       - ceph-mds
@@ -189,7 +191,7 @@ parts:
       - lib/*/libboost_filesystem.so*
       - lib/*/libboost_iostreams.so*
       - lib/*/libboost_program_options.so*
-      - lib/*/libboost_python310.so*
+      - lib/*/libboost_python312.so*
       - lib/*/libboost_thread.so*
       - lib/*/libcephfs.so*
       - lib/*/libcephsqlite.so*
@@ -209,7 +211,7 @@ parts:
       - lib/*/libpmem.so*
       - lib/*/libpmemobj.so*
       - lib/*/libpsl.so*
-      - lib/*/libpython3.10.so*
+      - lib/*/libpython3.12.so*
       - lib/*/librabbitmq.so*
       - lib/*/librados.so*
       - lib/*/libradosgw.so*
