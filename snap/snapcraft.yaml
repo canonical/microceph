@@ -1,8 +1,7 @@
 name: microceph
-base: core24
+base: core22
 adopt-info: ceph
-build-base: devel
-grade: devel
+grade: stable
 source-code: https://github.com/canonical/microceph.git
 license: AGPL-3.0
 summary: Simple clustered Ceph deployment
@@ -11,10 +10,10 @@ description: |-
 
 confinement: strict
 
-# package-repositories:
-#   - type: apt
-#     cloud: bobcat
-#     priority: always
+package-repositories:
+  - type: apt
+    cloud: caracal
+    priority: always
 
 slots:
   ceph-conf:
@@ -163,6 +162,7 @@ parts:
       - radosgw
       - coreutils
       - uuid-runtime
+      - python3-setuptools
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
