@@ -227,6 +227,7 @@ parts:
       - lib/*/rados-classes
       - lib/*/libtcmalloc.so*
       - lib/*/libunwind.so*
+      - lib/*/liblmdb.so*
       - share/ceph
 
   dqlite:
