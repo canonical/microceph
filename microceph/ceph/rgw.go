@@ -13,16 +13,21 @@ import (
 )
 
 // EnableRGW enables the RGW service on the cluster and adds initial configuration given a service port number.
-func EnableRGW(s interfaces.StateInterface, port int) error {
+func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificate string, sslPrivateKey string) error {
 	pathConsts := constants.GetPathConst()
 
 	// Create RGW configuration.
 	conf := newRadosGWConfig(pathConsts.ConfPath)
+	sslConfig := ""
+	if sslCertificate != "" && sslPrivateKey != "" {
+		sslConfig = fmt.Sprintf("ssl_port=%d ssl_certificate=%s ssl_private_key=%s", sslPort, sslCertificate, sslPrivateKey)
+	}
 	err := conf.WriteConfig(
 		map[string]any{
-			"runDir":   pathConsts.RunPath,
-			"monitors": s.ClusterState().Address().Hostname(),
-			"rgwPort":  port,
+			"runDir":    pathConsts.RunPath,
+			"monitors":  s.ClusterState().Address().Hostname(),
+			"rgwPort":   port,
+			"sslConfig": sslConfig,
 		},
 		0644,
 	)

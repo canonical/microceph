@@ -87,7 +87,7 @@ auth allow insecure global id reclaim = false
 
 [client.radosgw.gateway]
 rgw init timeout = 1200
-rgw frontends = beast port={{.rgwPort}}
+rgw frontends = beast port={{.rgwPort}} {{.sslConfig}}
 `)),
 		configFile: "radosgw.conf",
 		configDir:  configDir,

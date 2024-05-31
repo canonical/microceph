@@ -6,7 +6,10 @@ import (
 )
 
 type RgwServicePlacement struct {
-	Port int
+	Port           int
+	SSLPort        int
+	SSLCertificate string
+	SSLPrivateKey  string
 }
 
 func (rgw *RgwServicePlacement) PopulateParams(s interfaces.StateInterface, payload string) error {
@@ -24,7 +27,7 @@ func (rgw *RgwServicePlacement) HospitalityCheck(s interfaces.StateInterface) er
 }
 
 func (rgw *RgwServicePlacement) ServiceInit(s interfaces.StateInterface) error {
-	return EnableRGW(s, rgw.Port)
+	return EnableRGW(s, rgw.Port, rgw.SSLPort, rgw.SSLCertificate, rgw.SSLPrivateKey)
 }
 
 func (rgw *RgwServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {

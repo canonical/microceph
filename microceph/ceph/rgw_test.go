@@ -61,14 +61,32 @@ func (s *rgwSuite) TestEnableRGW() {
 
 	processExec = r
 
-	err := EnableRGW(s.TestStateInterface, 80)
+	err := EnableRGW(s.TestStateInterface, 80, 443, "", "")
 
 	// we expect a missing database error
 	assert.EqualError(s.T(), err, "no database")
 
 	// check that the radosgw.conf file contains expected values
 	conf := s.ReadCephConfig("radosgw.conf")
-	assert.Contains(s.T(), conf, "rgw frontends = beast port=80")
+	assert.Contains(s.T(), conf, "rgw frontends = beast port=80 \n")
+}
+
+// Test enabling RGW
+func (s *rgwSuite) TestEnableRGWWithSSL() {
+	r := mocks.NewRunner(s.T())
+
+	addCreateRGWKeyringExpectations(r)
+
+	processExec = r
+
+	err := EnableRGW(s.TestStateInterface, 80, 443, "/var/snap/microceph/common/server.crt", "/var/snap/microceph/common/server.key")
+
+	// we expect a missing database error
+	assert.EqualError(s.T(), err, "no database")
+
+	// check that the radosgw.conf file contains expected values
+	conf := s.ReadCephConfig("radosgw.conf")
+	assert.Contains(s.T(), conf, "rgw frontends = beast port=80 ssl_port=443 ssl_certificate=/var/snap/microceph/common/server.crt ssl_private_key=/var/snap/microceph/common/server.key\n")
 }
 
 func (s *rgwSuite) TestDisableRGW() {
