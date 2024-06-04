@@ -18,16 +18,14 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 
 	// Create RGW configuration.
 	conf := newRadosGWConfig(pathConsts.ConfPath)
-	sslConfig := ""
-	if sslCertificate != "" && sslPrivateKey != "" {
-		sslConfig = fmt.Sprintf("ssl_port=%d ssl_certificate=%s ssl_private_key=%s", sslPort, sslCertificate, sslPrivateKey)
-	}
 	err := conf.WriteConfig(
 		map[string]any{
-			"runDir":    pathConsts.RunPath,
-			"monitors":  s.ClusterState().Address().Hostname(),
-			"rgwPort":   port,
-			"sslConfig": sslConfig,
+			"runDir":         pathConsts.RunPath,
+			"monitors":       s.ClusterState().Address().Hostname(),
+			"rgwPort":        port,
+			"sslPort":        sslPort,
+			"sslCertificate": sslCertificate,
+			"sslPrivateKey":  sslPrivateKey,
 		},
 		0644,
 	)

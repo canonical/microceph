@@ -68,7 +68,7 @@ func (s *rgwSuite) TestEnableRGW() {
 
 	// check that the radosgw.conf file contains expected values
 	conf := s.ReadCephConfig("radosgw.conf")
-	assert.Contains(s.T(), conf, "rgw frontends = beast port=80 \n")
+	assert.Contains(s.T(), conf, "rgw frontends = beast port=80\n")
 }
 
 // Test enabling RGW
