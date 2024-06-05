@@ -30,7 +30,7 @@ type cmdDiskList struct {
 func (c *cmdDiskList) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List servers in the cluster",
+		Short: "List disks configured in MicroCeph and available unpartitioned disks on this system.",
 		RunE:  c.Run,
 	}
 
