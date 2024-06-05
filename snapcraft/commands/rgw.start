@@ -1,4 +1,9 @@
 #!/bin/sh
+
+. "${SNAP}/commands/common"
+
+wait_for_config
+
 conf="${SNAP_DATA}/conf/radosgw.conf"
 
 if [ -n "${conf}" ] ; then

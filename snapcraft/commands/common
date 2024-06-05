@@ -1,0 +1,20 @@
+wait_for_config() {
+
+  local confpath="${SNAP_DATA}/conf/ceph.conf"
+  local search_str="^run dir = ${SNAP_DATA}/run"
+  local max_attempts=300
+  local attempt=0
+
+  while [ $attempt -lt $max_attempts ]; do
+    if [ -f "${confpath}" ]; then
+      if grep -q "${search_str}" "${confpath}"; then
+        return 0
+      fi
+    fi
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+
+  echo "No updated conf found in ${confpath}"
+  return 1
+}
