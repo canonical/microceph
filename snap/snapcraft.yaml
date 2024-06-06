@@ -191,7 +191,7 @@ parts:
       - lib/*/libboost_filesystem.so*
       - lib/*/libboost_iostreams.so*
       - lib/*/libboost_program_options.so*
-      - lib/*/libboost_python312.so*
+      - lib/*/libboost_python310.so*
       - lib/*/libboost_thread.so*
       - lib/*/libcephfs.so*
       - lib/*/libcephsqlite.so*
@@ -211,7 +211,7 @@ parts:
       - lib/*/libpmem.so*
       - lib/*/libpmemobj.so*
       - lib/*/libpsl.so*
-      - lib/*/libpython3.12.so*
+      - lib/*/libpython3.10.so*
       - lib/*/librabbitmq.so*
       - lib/*/librados.so*
       - lib/*/libradosgw.so*
