@@ -50,6 +50,7 @@ func (s *configWriterSuite) TestWriteRadosGWConfig() {
 	err := config.WriteConfig(
 		map[string]any{
 			"monitors": "foohost",
+			"rgwPort":  80,
 		},
 		0644,
 	)
@@ -61,6 +62,31 @@ func (s *configWriterSuite) TestWriteRadosGWConfig() {
 	data, err := os.ReadFile(config.GetPath())
 	assert.Equal(s.T(), nil, err)
 	assert.Contains(s.T(), string(data), "foohost")
+	assert.Contains(s.T(), string(data), "rgw frontends = beast port=80\n")
+}
+
+// Test ceph config writing
+func (s *configWriterSuite) TestWriteRadosGWSSLConfig() {
+	config := newRadosGWConfig(s.Tmp)
+	err := config.WriteConfig(
+		map[string]any{
+			"monitors":       "foohost",
+			"rgwPort":        80,
+			"sslPort":        443,
+			"sslCertificate": "/var/snap/microceph/common/server.crt",
+			"sslPrivateKey":  "/var/snap/microceph/common/server.key",
+		},
+		0644,
+	)
+	assert.Equal(s.T(), nil, err)
+	// Check that the file exists
+	_, err = os.Stat(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+	// Check contents of the file
+	data, err := os.ReadFile(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+	assert.Contains(s.T(), string(data), "foohost")
+	assert.Contains(s.T(), string(data), "rgw frontends = beast port=80 ssl_port=443 ssl_certificate=/var/snap/microceph/common/server.crt ssl_private_key=/var/snap/microceph/common/server.key")
 }
 
 // Test ceph keyring writing
