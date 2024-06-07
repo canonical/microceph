@@ -145,7 +145,7 @@ func stopRGW() error {
 // Store the SSL material in the ceph key value store.
 func storeSSLMaterial(key string, material []byte) error {
 	// Run the ceph config-key set command
-	_, err := processExec.RunCommand("ceph", "config-key", "set", fmt.Sprintf("microceph:rgw/%s", key), string(material))
+	_, err := processExec.RunCommand("ceph", "config-key", "set", key, string(material))
 	if err != nil {
 		return fmt.Errorf("failed to store key: %w", err)
 	}

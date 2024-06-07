@@ -87,7 +87,7 @@ auth allow insecure global id reclaim = false
 
 [client.radosgw.gateway]
 rgw init timeout = 1200
-rgw frontends = beast{{if or (ne .rgwPort 0) (not .sslCertificateConfigKey) (not .sslPrivateKeyConfigKey)}} port={{.rgwPort}}{{end}}{{if and .sslCertificateConfigKey .sslPrivateKeyConfigKey}} ssl_port={{.sslPort}} ssl_certificate=config://microceph:rgw/{{.sslCertificateConfigKey}} ssl_private_key=config://microceph:rgw/{{.sslPrivateKeyConfigKey}}{{end}}
+rgw frontends = beast{{if or (ne .rgwPort 0) (not .sslCertificateConfigKey) (not .sslPrivateKeyConfigKey)}} port={{.rgwPort}}{{end}}{{if and .sslCertificateConfigKey .sslPrivateKeyConfigKey}} ssl_port={{.sslPort}} ssl_certificate=config://{{.sslCertificateConfigKey}} ssl_private_key=config://{{.sslPrivateKeyConfigKey}}{{end}}
 `)),
 		configFile: "radosgw.conf",
 		configDir:  configDir,
