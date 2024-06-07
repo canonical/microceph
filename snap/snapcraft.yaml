@@ -8,7 +8,7 @@ summary: Simple clustered Ceph deployment
 description: |-
  MicroCeph is snap-deployed Ceph with built-in clustering.
 
-confinement: strict
+confinement: devmode
 
 package-repositories:
   - type: apt
