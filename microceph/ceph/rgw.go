@@ -18,17 +18,30 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 
 	// Create RGW configuration.
 	conf := newRadosGWConfig(pathConsts.ConfPath)
-	if sslCertificate == "" || sslPrivateKey == "" {
+	sslCertificateConfigKey := ""
+	sslPrivateKeyConfigKey := ""
+	if sslCertificate != "" && sslPrivateKey != "" {
+		sslCertificateConfigKey = "ssl_certificate"
+		sslPrivateKeyConfigKey = "ssl_private_key"
+		err := storeSSLMaterial(sslCertificateConfigKey, []byte(sslCertificate))
+		if err != nil {
+			return err
+		}
+		err = storeSSLMaterial(sslPrivateKeyConfigKey, []byte(sslPrivateKey))
+		if err != nil {
+			return err
+		}
+	} else if sslCertificate == "" || sslPrivateKey == "" {
 		port = 80
 	}
 	err := conf.WriteConfig(
 		map[string]any{
-			"runDir":         pathConsts.RunPath,
-			"monitors":       s.ClusterState().Address().Hostname(),
-			"rgwPort":        port,
-			"sslPort":        sslPort,
-			"sslCertificate": sslCertificate,
-			"sslPrivateKey":  sslPrivateKey,
+			"runDir":                  pathConsts.RunPath,
+			"monitors":                s.ClusterState().Address().Hostname(),
+			"rgwPort":                 port,
+			"sslPort":                 sslPort,
+			"sslCertificateConfigKey": sslCertificateConfigKey,
+			"sslPrivateKeyConfigKey":  sslPrivateKeyConfigKey,
 		},
 		0644,
 	)
