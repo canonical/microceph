@@ -67,17 +67,7 @@ function enable_rgw() {
     set -x
     # Enable rgw and wait for it to settle
     sudo microceph enable rgw
-    # Wait for RGW to settle
-    for i in $(seq 1 8); do
-        res=$( ( sudo microceph.ceph status | grep -cF "rgw: 1 daemon" ) || true )
-        if [[ $res -gt 0 ]] ; then
-            echo "Found rgw daemon"
-            break
-        else
-            echo -n '.'
-            sleep 5
-        fi
-    done
+    wait_for_rgw 1
 }
 
 function get_lxd_network() {
@@ -320,6 +310,26 @@ function wait_for_osds() {
         echo "Never reached ${expect} OSDs"
         return -1
     fi    
+}
+
+function wait_for_rgw() {
+    local expect="${1?missing}"
+    res=0
+    for i in $(seq 1 8); do
+        res=$( ( sudo microceph.ceph -s | grep -F rgw: | sed -E "s/.* ([[:digit:]]*) daemon.*/\1/" ) || true )
+        if [[ $res -ge $expect ]] ; then
+            echo "Found ${expect} rgw daemon(s)"
+            break
+        else
+            echo -n '.'
+            sleep 5
+        fi
+    done
+    sudo microceph.ceph -s
+    if [[ $res -lt $expect ]] ; then
+        echo "Never reached ${expect} rgw daemon(s)"
+        return -1
+    fi
 }
 
 function free_runner_disk() {
