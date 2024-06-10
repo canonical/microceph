@@ -4,28 +4,29 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/microceph/microceph/database"
 )
 
 // EnableRGW enables the RGW service on the cluster and adds initial configuration given a service port number.
-func EnableRGW(s interfaces.StateInterface, port int) error {
+func EnableRGW(s interfaces.StateInterface, port int, monitors []string) error {
 	pathConsts := constants.GetPathConst()
 
+	configs := map[string]any{
+		"runDir":   pathConsts.RunPath,
+		"monitors": strings.Join(monitors, ","),
+		"rgwPort":  port,
+	}
+
 	// Create RGW configuration.
-	conf := newRadosGWConfig(pathConsts.ConfPath)
-	err := conf.WriteConfig(
-		map[string]any{
-			"runDir":   pathConsts.RunPath,
-			"monitors": s.ClusterState().Address().Hostname(),
-			"rgwPort":  port,
-		},
-		0644,
-	)
+	rgwConf := newRadosGWConfig(pathConsts.ConfPath)
+	err := rgwConf.WriteConfig(configs, 0644)
 	if err != nil {
 		return err
 	}

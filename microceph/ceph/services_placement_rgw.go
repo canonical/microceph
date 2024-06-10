@@ -2,6 +2,8 @@ package ceph
 
 import (
 	"encoding/json"
+	"fmt"
+
 	"github.com/canonical/microceph/microceph/interfaces"
 )
 
@@ -24,7 +26,13 @@ func (rgw *RgwServicePlacement) HospitalityCheck(s interfaces.StateInterface) er
 }
 
 func (rgw *RgwServicePlacement) ServiceInit(s interfaces.StateInterface) error {
-	return EnableRGW(s, rgw.Port)
+	// fetch configs from db
+	config, err := getConfigDb(s)
+	if err != nil {
+		return fmt.Errorf("failed to get config db: %w", err)
+	}
+
+	return EnableRGW(s, rgw.Port, getMonitorAddresses(config))
 }
 
 func (rgw *RgwServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {
