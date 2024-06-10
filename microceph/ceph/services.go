@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/Rican7/retry"
 	"github.com/Rican7/retry/backoff"
@@ -26,6 +27,7 @@ import (
 var serviceWorkerTable = map[string](func() (common.Set, error)){
 	"osd": getUpOsds,
 	"mon": getMons,
+	"rgw": getUpRgws,
 }
 
 // Restarts (in order) all Ceph Services provided in the input slice on the host.
@@ -81,6 +83,16 @@ func RestartCephService(service string) error {
 	}
 
 	return nil
+}
+
+func getUpRgws() (common.Set, error) {
+	err := snapCheckActive("rgw")
+	if err != nil {
+		return common.Set{}, nil // return empty but without errot
+	}
+
+	// static name set if RGW daemon is active.
+	return common.Set{"microceph.rgw": struct{}{}}, nil
 }
 
 func getMons() (common.Set, error) {
