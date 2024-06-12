@@ -68,6 +68,7 @@ func GetConstConfigTable() ConfigTable {
 		"rgw_keystone_token_cache_size":               {"global", []string{"rgw"}},
 		"rgw_keystone_verify_ssl":                     {"global", []string{"rgw"}},
 		"rgw_keystone_implicit_tenants":               {"global", []string{"rgw"}},
+		"rgw_swift_account_in_url":                    {"global", []string{"rgw"}},
 	}
 }
 
