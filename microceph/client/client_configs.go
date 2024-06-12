@@ -80,7 +80,7 @@ func UpdateClientConf(ctx context.Context, c *client.Client) error {
 // Sends the update conf request to every other member of the cluster.
 func SendUpdateClientConfRequestToClusterMembers(s interfaces.StateInterface) error {
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
-	cluster, err := s.ClusterState().Cluster(nil)
+	cluster, err := s.ClusterState().Cluster(false)
 	if err != nil {
 		logger.Errorf("failed to get a client for every cluster member: %v", err)
 		return err

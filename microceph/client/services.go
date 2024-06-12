@@ -84,7 +84,7 @@ func SendRestartRequestToClusterMembers(s *state.State, services []string) error
 	}
 
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
-	cluster, err := s.Cluster(nil)
+	cluster, err := s.Cluster(false)
 	if err != nil {
 		logger.Errorf("failed to get a client for every cluster member: %v", err)
 		return err
