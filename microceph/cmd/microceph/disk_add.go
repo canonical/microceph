@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
 	"sort"
 	"strings"
 
@@ -13,6 +12,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microceph/microceph/constants"
 )
 
 type cmdDiskAdd struct {

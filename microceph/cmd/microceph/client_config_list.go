@@ -5,10 +5,11 @@ import (
 	"fmt"
 
 	lxdCmd "github.com/canonical/lxd/shared/cmd"
-	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/client"
 )
 
 type cmdClientConfigList struct {

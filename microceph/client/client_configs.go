@@ -3,13 +3,14 @@ package client
 import (
 	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microcluster/client"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/interfaces"
 )
 
 func SetClientConfig(ctx context.Context, c *client.Client, data *types.ClientConfig) error {

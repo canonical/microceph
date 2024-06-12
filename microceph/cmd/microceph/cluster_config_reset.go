@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/canonical/microcluster/microcluster"
+	"github.com/spf13/cobra"
+
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
-	"github.com/canonical/microcluster/microcluster"
-	"github.com/spf13/cobra"
 )
 
 type cmdClusterConfigReset struct {

@@ -1,11 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
+
 	"github.com/canonical/lxd/shared/logger"
 	microCli "github.com/canonical/microcluster/client"
-
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
 

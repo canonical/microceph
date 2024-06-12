@@ -7,9 +7,10 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/lxd/util"
-	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
+
+	"github.com/canonical/microceph/microceph/constants"
 )
 
 type cmdClusterJoin struct {

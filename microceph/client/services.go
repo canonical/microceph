@@ -8,9 +8,10 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microcluster/client"
 	"github.com/canonical/microcluster/state"
+
+	"github.com/canonical/microceph/microceph/api/types"
 )
 
 // GetServices returns the list of configured ceph services.

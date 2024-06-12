@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"math/rand"
 	"os"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/version"
 )
 
