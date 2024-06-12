@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
+
+	"github.com/canonical/microcluster/microcluster"
+	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
-	"github.com/canonical/microcluster/microcluster"
-	"github.com/spf13/cobra"
+	"github.com/canonical/microceph/microceph/constants"
 )
 
 type cmdClientConfigReset struct {
@@ -52,7 +53,7 @@ func (c *cmdClientConfigReset) Run(cmd *cobra.Command, args []string) error {
 			args[0], constants.CliForcePrompt)
 	}
 
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return fmt.Errorf("unable to configure MicroCeph: %w", err)
 	}

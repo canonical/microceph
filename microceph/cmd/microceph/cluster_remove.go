@@ -1,11 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
+
 	"github.com/canonical/lxd/shared/logger"
 	microCli "github.com/canonical/microcluster/client"
-
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
 
@@ -36,7 +35,7 @@ func (c *cmdClusterRemove) Run(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return err
 	}

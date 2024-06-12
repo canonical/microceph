@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
 	"sort"
 	"strings"
 
@@ -13,6 +12,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microceph/microceph/constants"
 )
 
 type cmdDiskAdd struct {
@@ -75,7 +75,7 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("arg validation failed: %w", err)
 	}
 
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return err
 	}

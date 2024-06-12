@@ -27,7 +27,7 @@ func (c *cmdDisableRGW) Command() *cobra.Command {
 // Run handles the disable rgw command.
 func (c *cmdDisableRGW) Run(cmd *cobra.Command, args []string) error {
 
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return err
 	}
