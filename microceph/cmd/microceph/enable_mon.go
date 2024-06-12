@@ -29,7 +29,7 @@ func (c *cmdEnableMON) Command() *cobra.Command {
 
 // Run handles the enable mon command.
 func (c *cmdEnableMON) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return err
 	}
