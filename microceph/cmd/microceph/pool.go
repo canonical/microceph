@@ -17,7 +17,7 @@ type cmdPool struct {
 type cmdPoolSetRF struct {
 	common   *CmdControl
 	poolRF   *cmdPool
-    poolSize int64
+	poolSize int64
 }
 
 func (c *cmdPoolSetRF) Command() *cobra.Command {
@@ -32,14 +32,14 @@ func (c *cmdPoolSetRF) Command() *cobra.Command {
 		RunE: c.Run,
 	}
 
-    cmd.Flags().Int64Var(&c.poolSize, "size", 3, "Pool size")
-    cmd.MarkFlagRequired("size")
+	cmd.Flags().Int64Var(&c.poolSize, "size", 3, "Pool size")
+	cmd.MarkFlagRequired("size")
 
 	return cmd
 }
 
 func (c *cmdPoolSetRF) Run(cmd *cobra.Command, args []string) error {
-    if len(args) < 1 {
+	if len(args) < 1 {
 		return cmd.Help()
 	}
 

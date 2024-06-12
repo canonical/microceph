@@ -50,7 +50,7 @@ func (c *cmdLogGetLevel) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get-level",
 		Short: "Get the current log level, as an integer",
-        RunE: c.Run,
+		RunE:  c.Run,
 	}
 
 	return cmd
