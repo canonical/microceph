@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/canonical/microceph/microceph/tests"
-
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/mocks"
+	"github.com/canonical/microceph/microceph/tests"
 	"github.com/canonical/microcluster/state"
+
+	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -24,21 +24,17 @@ func TestRGW(t *testing.T) {
 }
 
 // Expect: run ceph auth
-func addCreateRGWKeyringExpectations(r *mocks.Runner) {
+func addRGWEnableExpectations(r *mocks.Runner) {
+	// add keyring expectation
 	r.On("RunCommand", tests.CmdAny("ceph", 9)...).Return("ok", nil).Once()
+	// start service expectation
+	r.On("RunCommand", []interface{}{
+		"snapctl", "start", "microceph.rgw", "--enable",
+	}...).Return("ok", nil).Once()
 }
 
 // Expect: run snapctl service stop
-func addStopRGWExpectations(r *mocks.Runner) {
-	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
-}
-
-// Set up test suite
-func (s *rgwSuite) SetupTest() {
-	s.BaseSuite.SetupTest()
-	s.CopyCephConfigs()
-
-	s.TestStateInterface = mocks.NewStateInterface(s.T())
+func addStopRGWExpectations(s *rgwSuite, r *mocks.Runner) {
 	u := api.NewURL()
 
 	state := &state.State{
@@ -52,20 +48,28 @@ func (s *rgwSuite) SetupTest() {
 	}
 
 	s.TestStateInterface.On("ClusterState").Return(state)
+	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
+}
+
+// Set up test suite
+func (s *rgwSuite) SetupTest() {
+	s.BaseSuite.SetupTest()
+	s.CopyCephConfigs()
+
+	s.TestStateInterface = mocks.NewStateInterface(s.T())
 }
 
 // Test enabling RGW
 func (s *rgwSuite) TestEnableRGW() {
 	r := mocks.NewRunner(s.T())
 
-	addCreateRGWKeyringExpectations(r)
+	addRGWEnableExpectations(r)
 
 	processExec = r
 
 	err := EnableRGW(s.TestStateInterface, 80, []string{"10.1.1.1", "10.2.2.2"})
 
-	// we expect a missing database error
-	assert.EqualError(s.T(), err, "no database")
+	assert.NoError(s.T(), err)
 
 	// check that the radosgw.conf file contains expected values
 	conf := s.ReadCephConfig("radosgw.conf")
@@ -76,7 +80,7 @@ func (s *rgwSuite) TestEnableRGW() {
 func (s *rgwSuite) TestDisableRGW() {
 	r := mocks.NewRunner(s.T())
 
-	addStopRGWExpectations(r)
+	addStopRGWExpectations(s, r)
 
 	processExec = r
 

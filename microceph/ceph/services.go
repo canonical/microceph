@@ -31,9 +31,15 @@ var serviceWorkerTable = map[string](func() (common.Set, error)){
 }
 
 // Restarts (in order) all Ceph Services provided in the input slice on the host.
-func RestartCephServices(services []string) error {
+func RestartCephServices(s interfaces.StateInterface, services []string) error {
+	clusterServices, err := ListServices(s.ClusterState())
+	if err != nil {
+		logger.Errorf("failed fetching services from db: %v", err)
+		return err
+	}
+
 	for i := range services {
-		err := RestartCephService(services[i])
+		err := RestartCephService(clusterServices, services[i], s.ClusterState().Name())
 		if err != nil {
 			logger.Errorf("Service %s restart failed: %v ", services[i], err)
 			return err
@@ -44,17 +50,26 @@ func RestartCephServices(services []string) error {
 }
 
 // Restart provided ceph service ("mon"/"osd"...) on the host.
-func RestartCephService(service string) error {
+func RestartCephService(clusterServices types.Services, service string, hostname string) error {
+	// check if incorrect services are requested.
 	if _, ok := serviceWorkerTable[service]; !ok {
-		err := fmt.Errorf("No handler defined for service %s", service)
+		err := fmt.Errorf("no handler defined for service %s", service)
 		logger.Errorf("%v", err)
 		return err
+	}
+
+	// skip restart, if the service is not present on host
+	if !isServicePlacementOnHost(clusterServices, service, hostname) {
+		logger.Info(
+			fmt.Sprintf("%s service is not planned for current host", service),
+		)
+		return nil
 	}
 
 	// Fetch a Set{} of available daemons for the service.
 	workers, err := serviceWorkerTable[service]()
 	if err != nil {
-		logger.Errorf("Failed fetching service %s workers", service)
+		logger.Errorf("failed fetching service %s workers", service)
 		return err
 	}
 
@@ -71,7 +86,7 @@ func RestartCephService(service string) error {
 		// All still not up
 		if !workers.IsIn(iWorkers) {
 			err := fmt.Errorf(
-				"Attempt %d: Workers: %v not all present in %v", i, workers, iWorkers,
+				"attempt %d: Workers: %v not all present in %v", i, workers, iWorkers,
 			)
 			logger.Errorf("%v", err)
 			return (err)
@@ -128,6 +143,16 @@ func getUpOsds() (common.Set, error) {
 		retval[element.String()] = struct{}{}
 	}
 	return retval, nil
+}
+
+func isServicePlacementOnHost(services types.Services, serviceName string, hostname string) bool {
+	for _, service := range services {
+		if service.Service == serviceName && service.Location == hostname {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ListServices retrieves a list of services from the database
