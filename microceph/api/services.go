@@ -3,9 +3,10 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"net/http"
 	"path"
+
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/lxd/shared/logger"
@@ -96,8 +97,14 @@ func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
 		}
 	}
 
+	clusterServices, err := ceph.ListServices(s)
+	if err != nil {
+		logger.Errorf("failed fetching services from db: %v", err)
+		return response.SyncResponse(false, err)
+	}
+
 	for _, service := range services {
-		err = ceph.RestartCephService(service.Service)
+		err = ceph.RestartCephService(clusterServices, service.Service, s.Name())
 		if err != nil {
 			url := s.Address().String()
 			logger.Errorf("Failed restarting %s on host %s", service.Service, url)
