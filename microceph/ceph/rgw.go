@@ -39,10 +39,6 @@ func EnableRGW(s interfaces.StateInterface, port int, monitors []string) error {
 	if err = symlinkRGWKeyring(path, pathConsts.ConfPath); err != nil {
 		return err
 	}
-	// Record the changes to the database.
-	if err = rgwCreateServiceDatabase(s); err != nil {
-		return err
-	}
 
 	if err = startRGW(); err != nil {
 		return err
