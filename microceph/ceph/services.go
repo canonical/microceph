@@ -101,6 +101,16 @@ func RestartCephService(clusterServices types.Services, service string, hostname
 }
 
 func getUpRgws() (common.Set, error) {
+	// check if rgw was up for atleast 2 seconds.
+	rgwSocketFiles := common.FilterFilesInDir(constants.RgwSockPattern, constants.GetPathConst().RunPath)
+	for _, file := range rgwSocketFiles {
+		age := common.GetFileAge(file)
+		if age < constants.RgwRestartAgeThreshold {
+			logger.Info(fmt.Sprintf("File %s age is %f (< 2)", file, age))
+			return common.Set{}, nil
+		}
+	}
+
 	err := snapCheckActive("rgw")
 	if err != nil {
 		return common.Set{}, nil // return empty but without errot

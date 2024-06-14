@@ -8,6 +8,7 @@ require (
 	github.com/Rican7/retry v0.3.1
 	github.com/canonical/lxd v0.0.0-20240416183821-50ee226c5522
 	github.com/canonical/microcluster v0.0.0-20240610151851-0870f2fa6a21
+	github.com/djherbis/times v1.6.0
 	github.com/google/go-cmp v0.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/olekukonko/tablewriter v0.0.5
