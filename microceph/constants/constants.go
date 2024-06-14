@@ -12,9 +12,13 @@ const MinOSDSize = uint64(2147483648) // 2GB i.e. 2*1024*1024*1024
 const ClientConfigGlobalHostConst = "*"
 const BootstrapPortConst = 7443
 
+// Time constants
+const RgwRestartAgeThreshold = 2 // seconds
+
 // string templates
 const LoopSpecId = "loop,"
 const DevicePathPrefix = "/dev/disk/by-id/"
+const RgwSockPattern = "client.radosgw.gateway"
 const CliForcePrompt = "If you understand the *RISK* and you're *ABSOLUTELY CERTAIN* that is what you want, pass --yes-i-really-mean-it."
 
 type PathConst struct {
