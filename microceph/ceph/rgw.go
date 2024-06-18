@@ -58,10 +58,6 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 	if err = symlinkRGWKeyring(path, pathConsts.ConfPath); err != nil {
 		return err
 	}
-	// Record the changes to the database.
-	if err = rgwCreateServiceDatabase(s); err != nil {
-		return err
-	}
 
 	if err = startRGW(); err != nil {
 		return err

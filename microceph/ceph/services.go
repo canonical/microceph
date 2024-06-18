@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/Rican7/retry"
 	"github.com/Rican7/retry/backoff"
@@ -26,12 +27,19 @@ import (
 var serviceWorkerTable = map[string](func() (common.Set, error)){
 	"osd": getUpOsds,
 	"mon": getMons,
+	"rgw": getUpRgws,
 }
 
 // Restarts (in order) all Ceph Services provided in the input slice on the host.
-func RestartCephServices(services []string) error {
+func RestartCephServices(s interfaces.StateInterface, services []string) error {
+	clusterServices, err := ListServices(s.ClusterState())
+	if err != nil {
+		logger.Errorf("failed fetching services from db: %v", err)
+		return err
+	}
+
 	for i := range services {
-		err := RestartCephService(services[i])
+		err := RestartCephService(clusterServices, services[i], s.ClusterState().Name())
 		if err != nil {
 			logger.Errorf("Service %s restart failed: %v ", services[i], err)
 			return err
@@ -42,17 +50,26 @@ func RestartCephServices(services []string) error {
 }
 
 // Restart provided ceph service ("mon"/"osd"...) on the host.
-func RestartCephService(service string) error {
+func RestartCephService(clusterServices types.Services, service string, hostname string) error {
+	// check if incorrect services are requested.
 	if _, ok := serviceWorkerTable[service]; !ok {
-		err := fmt.Errorf("No handler defined for service %s", service)
+		err := fmt.Errorf("no handler defined for service %s", service)
 		logger.Errorf("%v", err)
 		return err
+	}
+
+	// skip restart, if the service is not present on host
+	if !isServicePlacementOnHost(clusterServices, service, hostname) {
+		logger.Info(
+			fmt.Sprintf("%s service is not planned for current host", service),
+		)
+		return nil
 	}
 
 	// Fetch a Set{} of available daemons for the service.
 	workers, err := serviceWorkerTable[service]()
 	if err != nil {
-		logger.Errorf("Failed fetching service %s workers", service)
+		logger.Errorf("failed fetching service %s workers", service)
 		return err
 	}
 
@@ -69,7 +86,7 @@ func RestartCephService(service string) error {
 		// All still not up
 		if !workers.IsIn(iWorkers) {
 			err := fmt.Errorf(
-				"Attempt %d: Workers: %v not all present in %v", i, workers, iWorkers,
+				"attempt %d: Workers: %v not all present in %v", i, workers, iWorkers,
 			)
 			logger.Errorf("%v", err)
 			return (err)
@@ -81,6 +98,26 @@ func RestartCephService(service string) error {
 	}
 
 	return nil
+}
+
+func getUpRgws() (common.Set, error) {
+	// check if rgw was up for atleast 2 seconds.
+	rgwSocketFiles := common.FilterFilesInDir(constants.RgwSockPattern, constants.GetPathConst().RunPath)
+	for _, file := range rgwSocketFiles {
+		age := common.GetFileAge(file)
+		if age < constants.RgwRestartAgeThreshold {
+			logger.Info(fmt.Sprintf("File %s age is %f (< %d)", file, age, constants.RgwRestartAgeThreshold))
+			return common.Set{}, nil
+		}
+	}
+
+	err := snapCheckActive("rgw")
+	if err != nil {
+		return common.Set{}, nil // return empty but without errot
+	}
+
+	// static name set if RGW daemon is active.
+	return common.Set{"microceph.rgw": struct{}{}}, nil
 }
 
 func getMons() (common.Set, error) {
@@ -116,6 +153,16 @@ func getUpOsds() (common.Set, error) {
 		retval[element.String()] = struct{}{}
 	}
 	return retval, nil
+}
+
+func isServicePlacementOnHost(services types.Services, serviceName string, hostname string) bool {
+	for _, service := range services {
+		if service.Service == serviceName && service.Location == hostname {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ListServices retrieves a list of services from the database
