@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/constants"
 	"os"
 	"sort"
 
+	"github.com/canonical/lxd/shared/api"
 	lxdCmd "github.com/canonical/lxd/shared/cmd"
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/lxd/shared/units"
@@ -19,6 +18,7 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 )
 
 type cmdDiskList struct {
@@ -30,7 +30,7 @@ type cmdDiskList struct {
 func (c *cmdDiskList) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List servers in the cluster",
+		Short: "List disks configured in MicroCeph and available unpartitioned disks on this system.",
 		RunE:  c.Run,
 	}
 
@@ -52,7 +52,7 @@ type DiskListOutput struct {
 }
 
 func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return err
 	}

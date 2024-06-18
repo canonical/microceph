@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/canonical/microcluster/microcluster"
+	"github.com/spf13/cobra"
+
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
-	"github.com/canonical/microcluster/microcluster"
-	"github.com/spf13/cobra"
 )
 
 type cmdClusterConfigSet struct {
@@ -40,7 +41,7 @@ func (c *cmdClusterConfigSet) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("Configuring key %s is not allowed. \nPermitted Keys: %v", args[0], allowList.Keys())
 	}
 
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return fmt.Errorf("Unable to configure MicroCeph: %w", err)
 	}

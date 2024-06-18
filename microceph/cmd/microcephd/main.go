@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"math/rand"
 	"os"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/version"
 )
 
@@ -63,7 +63,7 @@ func (c *cmdDaemon) Command() *cobra.Command {
 }
 
 func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.flagStateDir, Verbose: c.global.flagLogVerbose, Debug: c.global.flagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.flagStateDir, Verbose: c.global.flagLogVerbose, Debug: c.global.flagLogDebug})
 	if err != nil {
 		return err
 	}
@@ -86,7 +86,7 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 		return ceph.Start(interf)
 	}
 
-	return m.Start(api.Endpoints, database.SchemaExtensions, h)
+	return m.Start(context.Background(), api.Endpoints, database.SchemaExtensions, nil, h)
 }
 
 func init() {

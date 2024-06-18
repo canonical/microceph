@@ -73,8 +73,8 @@ func (s *configWriterSuite) TestWriteRadosGWSSLConfig() {
 			"monitors":       "foohost",
 			"rgwPort":        80,
 			"sslPort":        443,
-			"sslCertificate": "/var/snap/microceph/common/server.crt",
-			"sslPrivateKey":  "/var/snap/microceph/common/server.key",
+			"sslCertificate": "ssl_certificate",
+			"sslPrivateKey":  "ssl_private_key",
 		},
 		0644,
 	)

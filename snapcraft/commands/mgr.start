@@ -1,2 +1,7 @@
 #!/bin/sh
+
+. "${SNAP}/commands/common"
+
+wait_for_config
+
 exec ceph-mgr -f --cluster ceph --id "$(hostname)"

@@ -8,9 +8,10 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microcluster/client"
 	"github.com/canonical/microcluster/state"
+
+	"github.com/canonical/microceph/microceph/api/types"
 )
 
 // GetServices returns the list of configured ceph services.
@@ -84,7 +85,7 @@ func SendRestartRequestToClusterMembers(s *state.State, services []string) error
 	}
 
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
-	cluster, err := s.Cluster(nil)
+	cluster, err := s.Cluster(false)
 	if err != nil {
 		logger.Errorf("failed to get a client for every cluster member: %v", err)
 		return err

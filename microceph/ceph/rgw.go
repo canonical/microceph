@@ -4,20 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/microceph/microceph/database"
 )
 
 // EnableRGW enables the RGW service on the cluster and adds initial configuration given a service port number.
-func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificate string, sslPrivateKey string) error {
+func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificate string, sslPrivateKey string, monitors []string) error {
 	pathConsts := constants.GetPathConst()
 
-	// Create RGW configuration.
-	conf := newRadosGWConfig(pathConsts.ConfPath)
 	sslCertificateConfigKey := ""
 	sslPrivateKeyConfigKey := ""
 	if sslCertificate != "" && sslPrivateKey != "" {
@@ -34,17 +34,18 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 	} else if sslCertificate == "" || sslPrivateKey == "" {
 		port = 80
 	}
-	err := conf.WriteConfig(
-		map[string]any{
-			"runDir":                  pathConsts.RunPath,
-			"monitors":                s.ClusterState().Address().Hostname(),
-			"rgwPort":                 port,
-			"sslPort":                 sslPort,
-			"sslCertificateConfigKey": sslCertificateConfigKey,
-			"sslPrivateKeyConfigKey":  sslPrivateKeyConfigKey,
-		},
-		0644,
-	)
+	configs := map[string]any{
+		"runDir":                  pathConsts.RunPath,
+		"monitors":                strings.Join(monitors, ","),
+		"rgwPort":                 port,
+		"sslPort":                 sslPort,
+		"sslCertificateConfigKey": sslCertificateConfigKey,
+		"sslPrivateKeyConfigKey":  sslPrivateKeyConfigKey,
+	}
+
+	// Create RGW configuration.
+	rgwConf := newRadosGWConfig(pathConsts.ConfPath)
+	err := rgwConf.WriteConfig(configs, 0644)
 	if err != nil {
 		return err
 	}

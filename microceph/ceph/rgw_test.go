@@ -1,10 +1,11 @@
 package ceph
 
 import (
-	"github.com/canonical/microceph/microceph/tests"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/canonical/microceph/microceph/tests"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -61,7 +62,7 @@ func (s *rgwSuite) TestEnableRGW() {
 
 	processExec = r
 
-	err := EnableRGW(s.TestStateInterface, 80, 443, "", "")
+	err := EnableRGW(s.TestStateInterface, 80, 443, "", "", []string{"10.1.1.1", "10.2.2.2"})
 
 	// we expect a missing database error
 	assert.EqualError(s.T(), err, "no database")
@@ -69,6 +70,7 @@ func (s *rgwSuite) TestEnableRGW() {
 	// check that the radosgw.conf file contains expected values
 	conf := s.ReadCephConfig("radosgw.conf")
 	assert.Contains(s.T(), conf, "rgw frontends = beast port=80\n")
+	assert.Contains(s.T(), conf, "mon host = 10.1.1.1,10.2.2.2")
 }
 
 // Test enabling RGW
@@ -79,7 +81,7 @@ func (s *rgwSuite) TestEnableRGWWithSSL() {
 
 	processExec = r
 
-	err := EnableRGW(s.TestStateInterface, 80, 443, "/var/snap/microceph/common/server.crt", "/var/snap/microceph/common/server.key")
+	err := EnableRGW(s.TestStateInterface, 80, 443, "/var/snap/microceph/common/server.crt", "/var/snap/microceph/common/server.key", []string{"10.1.1.1", "10.2.2.2"})
 
 	// we expect a missing database error
 	assert.EqualError(s.T(), err, "no database")

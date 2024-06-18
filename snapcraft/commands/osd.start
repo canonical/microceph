@@ -6,6 +6,7 @@ export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
 echo $$ > "${SNAP_CURRENT}/run/ceph-osd.pid"
 cd "${SNAP}"
 
+. "${SNAP}/commands/common"
 
 maybe_unlock() {
     dev="${1:?missing}"
@@ -58,6 +59,8 @@ spawn() {
     wait
 }
 trap spawn HUP
+
+wait_for_config
 
 spawn
 exit 0
