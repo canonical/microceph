@@ -106,7 +106,7 @@ func getUpRgws() (common.Set, error) {
 	for _, file := range rgwSocketFiles {
 		age := common.GetFileAge(file)
 		if age < constants.RgwRestartAgeThreshold {
-			logger.Info(fmt.Sprintf("File %s age is %f (< 2)", file, age))
+			logger.Info(fmt.Sprintf("File %s age is %f (< %d)", file, age, constants.RgwRestartAgeThreshold))
 			return common.Set{}, nil
 		}
 	}
