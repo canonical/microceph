@@ -69,11 +69,11 @@ func main() {
 	var cmdClient = cmdClient{common: &commonCmd}
 	app.AddCommand(cmdClient.Command())
 
-    var cmdPool = cmdPool{common: &commonCmd}
-    app.AddCommand(cmdPool.Command())
+	var cmdPool = cmdPool{common: &commonCmd}
+	app.AddCommand(cmdPool.Command())
 
-    var cmdLog = cmdLog{common: &commonCmd}
-    app.AddCommand(cmdLog.Command())
+	var cmdLog = cmdLog{common: &commonCmd}
+	app.AddCommand(cmdLog.Command())
 
 	app.InitDefaultHelpCmd()
 

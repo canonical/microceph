@@ -2,8 +2,9 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/canonical/lxd/shared/logger"
 	"net/http"
+
+	"github.com/canonical/lxd/shared/logger"
 
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/microcluster/rest"
@@ -13,10 +14,10 @@ import (
 	"github.com/canonical/microceph/microceph/ceph"
 )
 
-// /1.0/pool endpoint.
+// /1.0/pools-op endpoint.
 var poolsCmd = rest.Endpoint{
 	Path: "pools-op",
-	Put: rest.EndpointAction{Handler: cmdPoolsPut, ProxyTarget: true},
+	Put:  rest.EndpointAction{Handler: cmdPoolsPut, ProxyTarget: true},
 }
 
 func cmdPoolsPut(s *state.State, r *http.Request) response.Response {
