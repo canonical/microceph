@@ -1,6 +1,9 @@
 addons
+api
 API
 APIs
+Auth
+auth
 balancer
 Charmhub
 CLI
@@ -38,10 +41,13 @@ reST
 reStructuredText
 RTD
 sdb
+ssl
+SSL
 subdirectories
 subfolders
 subtree
 UI
+url
 VM
 WAL
 YAML
