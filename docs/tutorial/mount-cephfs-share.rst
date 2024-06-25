@@ -50,11 +50,11 @@ Create CephFs share:
 Client Operations:
 ------------------
 
-Download 'ceph-commons' package:
+Download 'ceph-common' package:
 
 .. code-block:: none
 
-    $ sudo apt install ceph-commons
+    $ sudo apt install ceph-common
 
 This step is required for ``mount.ceph`` i.e. making mount aware of ceph device type.
 

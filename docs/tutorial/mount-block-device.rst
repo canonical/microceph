@@ -62,11 +62,11 @@ Create RBD image:
 Client Operations:
 ------------------
 
-Download 'ceph-commons' package:
+Download 'ceph-common' package:
 
 .. code-block:: none
 
-    $ sudo apt install ceph-commons
+    $ sudo apt install ceph-common
 
 This step is required even if the client machine is a MicroCeph node itself.
 
