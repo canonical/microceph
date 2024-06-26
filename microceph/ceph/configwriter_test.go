@@ -1,9 +1,11 @@
 package ceph
 
 import (
-	"github.com/canonical/microceph/microceph/tests"
 	"os"
 	"testing"
+
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/tests"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
@@ -24,7 +26,17 @@ func (s *configWriterSuite) SetupTest() {
 
 // Test ceph config writing
 func (s *configWriterSuite) TestWriteCephConfig() {
-	config := newCephConfig(s.Tmp)
+
+	track := constants.GetPathConst
+	defer func() { constants.GetPathConst = track }()
+
+	constants.GetPathConst = func() constants.PathConst {
+		return constants.PathConst{
+			ConfPath: s.Tmp,
+		}
+	}
+
+	config := NewCephConfig(constants.CephConfFileName)
 	err := config.WriteConfig(
 		map[string]any{
 			"fsid":     "fsid1234",
@@ -65,7 +77,7 @@ func (s *configWriterSuite) TestWriteRadosGWConfig() {
 
 // Test ceph keyring writing
 func (s *configWriterSuite) TestWriteCephKeyring() {
-	keyring := newCephKeyring(s.Tmp, "ceph.keyring")
+	keyring := NewCephKeyring(s.Tmp, "ceph.keyring")
 	err := keyring.WriteConfig(
 		map[string]any{
 			"name": "client.admin",

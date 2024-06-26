@@ -5,11 +5,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/pborman/uuid"
 
@@ -33,7 +34,7 @@ func Bootstrap(s interfaces.StateInterface, data common.BootstrapConfig) error {
 
 	// Generate a new FSID.
 	fsid := uuid.NewRandom().String()
-	conf := newCephConfig(pathConsts.ConfPath)
+	conf := NewCephConfig(constants.CephConfFileName)
 	err := prepareCephBootstrapData(s, &data)
 	if err != nil {
 		return err
