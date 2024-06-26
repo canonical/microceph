@@ -34,7 +34,7 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 
 	// Generate a new FSID.
 	fsid := uuid.NewRandom().String()
-	conf := newCephConfig(pathConsts.ConfPath)
+	conf := NewCephConfig(constants.CephConfFileName)
 	err := prepareCephBootstrapData(s, &data)
 	if err != nil {
 		return err

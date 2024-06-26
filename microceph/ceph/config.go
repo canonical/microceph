@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/lxd/shared/logger"
@@ -280,7 +281,7 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 		}
 	}
 
-	conf := newCephConfig(confPath)
+	conf := NewCephConfig(constants.CephConfFileName)
 
 	// Check if host has IP address on the configured public network.
 	_, err = common.Network.FindIpOnSubnet(config["public_network"])
@@ -317,7 +318,7 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	logger.Debugf("updated ceph.conf: %v", conf.GetPath())
 
 	// Generate ceph.client.admin.keyring
-	keyring := newCephKeyring(confPath, "ceph.keyring")
+	keyring := NewCephKeyring(confPath, "ceph.keyring")
 	err = keyring.WriteConfig(
 		map[string]any{
 			"name": "client.admin",
