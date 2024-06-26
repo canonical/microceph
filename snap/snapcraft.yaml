@@ -99,6 +99,14 @@ apps:
       - network
       - network-bind
 
+  "rbd-mirror":
+    command: commands/rbd-mirror.start
+    daemon: simple
+    install-mode: disable
+    plugs:
+      - network
+      - network-bind
+
   # Commands
   ceph:
     command: commands/ceph
@@ -116,6 +124,7 @@ apps:
       - network
       - block-devices
       - dm-crypt
+      - home
   rbd:
     command: commands/rbd
     plugs:
@@ -159,6 +168,8 @@ parts:
       - ceph-mon
       - ceph-osd
       - radosgw
+      - rbd-mirror
+      # Utilities
       - coreutils
       - uuid-runtime
     organize:
@@ -180,6 +191,7 @@ parts:
       - bin/rados
       - bin/radosgw
       - bin/radosgw-admin
+      - bin/rbd-mirror
       - bin/truncate
       - bin/uuidgen
       - lib/*/ceph
