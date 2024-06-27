@@ -193,7 +193,7 @@ func ListConfigs() (types.Configs, error) {
 // this is a backward-compat shim to accomodate older versions of microceph
 // which will ensure that the public_network is set in the database
 func backwardCompatPubnet(s interfaces.StateInterface) error {
-	config, err := getConfigDb(s)
+	config, err := GetConfigDb(s)
 	if err != nil {
 		return fmt.Errorf("failed to get config from db: %w", err)
 	}
@@ -262,7 +262,7 @@ func UpdateConfig(s interfaces.StateInterface) error {
 		return fmt.Errorf("failed to ensure backward compat: %w", err)
 	}
 
-	config, err := getConfigDb(s)
+	config, err := GetConfigDb(s)
 	if err != nil {
 		return fmt.Errorf("failed to get config db: %w", err)
 	}
@@ -333,8 +333,8 @@ func UpdateConfig(s interfaces.StateInterface) error {
 	return nil
 }
 
-// getConfigDb retrieves the configuration from the database.
-func getConfigDb(s interfaces.StateInterface) (map[string]string, error) {
+// GetConfigDb retrieves the configuration from the database.
+func GetConfigDb(s interfaces.StateInterface) (map[string]string, error) {
 	var err error
 	var configItems []database.ConfigItem
 

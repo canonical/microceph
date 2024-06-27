@@ -31,6 +31,7 @@ var Servers = []rest.Server{
 					microcephCmd,
 					microcephConfigsCmd,
 					logLevelCmd,
+					clusterCmd,
 				},
 			},
 		},
