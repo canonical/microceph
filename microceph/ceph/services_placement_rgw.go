@@ -30,7 +30,7 @@ func (rgw *RgwServicePlacement) HospitalityCheck(s interfaces.StateInterface) er
 
 func (rgw *RgwServicePlacement) ServiceInit(s interfaces.StateInterface) error {
 	// fetch configs from db
-	config, err := getConfigDb(s)
+	config, err := GetConfigDb(s)
 	if err != nil {
 		return fmt.Errorf("failed to get config db: %w", err)
 	}
