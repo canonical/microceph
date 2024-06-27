@@ -38,6 +38,10 @@ func (c *cmdCluster) Command() *cobra.Command {
 	clusterSQLCmd := cmdClusterSQL{common: c.common, cluster: c}
 	cmd.AddCommand(clusterSQLCmd.Command())
 
+	// Export
+	clusterExportCmd := cmdClusterExport{common: c.common, cluster: c}
+	cmd.AddCommand(clusterExportCmd.Command())
+
 	// Config Subcommand
 	clusterConfigCmd := cmdClusterConfig{common: c.common, cluster: c}
 	cmd.AddCommand(clusterConfigCmd.Command())
