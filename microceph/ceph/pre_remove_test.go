@@ -1,12 +1,13 @@
-package main
+package ceph
 
 import (
+	"testing"
+
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"testing"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -46,7 +47,6 @@ func (s *clusterRemoveSuite) TestRemoveNode() {
 		nil,
 	)
 	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(nil).Once()
-	m.On("DeleteClusterMember", mock.Anything, "foonode", false).Return(nil).Once()
 
 	err := removeNode(nil, "foonode", false)
 
@@ -68,9 +68,6 @@ func (s *clusterRemoveSuite) TestRemoveNodeWithDisks() {
 	err := removeNode(nil, "foonode", false)
 
 	assert.Error(s.T(), err)
-
-	// assert that we didn't try to delete the node
-	m.AssertNotCalled(s.T(), "DeleteClusterMember", mock.Anything, "foonode", false)
 }
 
 // TestRemoveNodeLastMon tests that we don't try to delete a node that has the last mon
@@ -93,9 +90,6 @@ func (s *clusterRemoveSuite) TestRemoveNodeLastMon() {
 	err := removeNode(nil, "foonode", false)
 
 	assert.Error(s.T(), err)
-
-	// assert that we didn't try to delete the node
-	m.AssertNotCalled(s.T(), "DeleteClusterMember", mock.Anything, "foonode", false)
 }
 
 // TestRemoveNodeForce tests that we don't check prerequisites and delete a node if forced
@@ -114,7 +108,6 @@ func (s *clusterRemoveSuite) TestRemoveNodeForce() {
 		nil,
 	)
 	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(nil).Once()
-	m.On("DeleteClusterMember", mock.Anything, "foonode", true).Return(nil).Once()
 
 	err := removeNode(nil, "foonode", true)
 
