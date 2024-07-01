@@ -2,6 +2,6 @@
 set -uex
 conf="${SNAP_DATA}/conf"
 mkdir -p -m 0755 "${conf}"
-ssl="${SNAP_DATA}/ssl"
+ssl="${SNAP_COMMON}/ssl"
 mkdir -p -m 0755 "${ssl}"
 cp "${SNAP}/share/metadata.yaml" "${conf}"
