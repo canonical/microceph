@@ -25,12 +25,12 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 		if err != nil {
 			return err
 		}
-		sslCertificatePath = filepath.Join(sslDirectory, "server.crt")
+		sslCertificatePath = filepath.Join(pathConsts.SSLFilesPath, "server.crt")
 		err = writeFile(sslCertificatePath, sslCertificate, 0600)
 		if err != nil {
 			return err
 		}
-		sslPrivateKeyPath = filepath.Join(sslDirectory, "server.key")
+		sslPrivateKeyPath = filepath.Join(pathConsts.SSLFilesPath, "server.key")
 		err = writeFile(sslPrivateKeyPath, sslPrivateKey, 0600)
 		if err != nil {
 			return err
