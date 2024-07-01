@@ -21,17 +21,17 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 	sslCertificatePath := ""
 	sslPrivateKeyPath := ""
 	if sslCertificate != "" && sslPrivateKey != "" {
-		err := os.Mkdir(pathConsts.SSLFilesPath, 0600)
+		err := os.Mkdir(pathConsts.SSLFilesPath, 0644)
 		if err != nil {
 			return err
 		}
 		sslCertificatePath = filepath.Join(pathConsts.SSLFilesPath, "server.crt")
-		err = writeFile(sslCertificatePath, sslCertificate, 0600)
+		err = writeFile(sslCertificatePath, sslCertificate, 0644)
 		if err != nil {
 			return err
 		}
 		sslPrivateKeyPath = filepath.Join(pathConsts.SSLFilesPath, "server.key")
-		err = writeFile(sslPrivateKeyPath, sslPrivateKey, 0600)
+		err = writeFile(sslPrivateKeyPath, sslPrivateKey, 0644)
 		if err != nil {
 			return err
 		}
