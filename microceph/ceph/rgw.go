@@ -4,13 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
-
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/microceph/microceph/database"
 )
@@ -185,12 +183,6 @@ func writeFile(path, data string, mode int) error {
 	if err != nil {
 		return fmt.Errorf("Couldn't open %s: %w", path, err)
 	}
-	defer func() {
-		directory := filepath.Dir(path)
-		fileInfo, _ := os.Stat(directory)
-		fileSys := fileInfo.Sys()
-		os.Chown(path, int(fileSys.(*syscall.Stat_t).Uid), int(fileSys.(*syscall.Stat_t).Gid))
-	}()
 	defer fd.Close()
 
 	_, err = fd.Write([]byte(data))
