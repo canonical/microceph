@@ -22,24 +22,26 @@ const RgwSockPattern = "client.radosgw.gateway"
 const CliForcePrompt = "If you understand the *RISK* and you're *ABSOLUTELY CERTAIN* that is what you want, pass --yes-i-really-mean-it."
 
 type PathConst struct {
-	ConfPath string
-	RunPath  string
-	DataPath string
-	LogPath  string
-	RootFs   string
-	ProcPath string
+	ConfPath     string
+	RunPath      string
+	DataPath     string
+	LogPath      string
+	RootFs       string
+	ProcPath     string
+	SSLFilesPath string
 }
 
 type PathFileMode map[string]os.FileMode
 
 func GetPathConst() PathConst {
 	return PathConst{
-		ConfPath: filepath.Join(os.Getenv("SNAP_DATA"), "conf"),
-		RunPath:  filepath.Join(os.Getenv("SNAP_DATA"), "run"),
-		DataPath: filepath.Join(os.Getenv("SNAP_COMMON"), "data"),
-		LogPath:  filepath.Join(os.Getenv("SNAP_COMMON"), "logs"),
-		RootFs:   filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/"),
-		ProcPath: filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/proc"),
+		ConfPath:     filepath.Join(os.Getenv("SNAP_DATA"), "conf"),
+		RunPath:      filepath.Join(os.Getenv("SNAP_DATA"), "run"),
+		DataPath:     filepath.Join(os.Getenv("SNAP_COMMON"), "data"),
+		LogPath:      filepath.Join(os.Getenv("SNAP_COMMON"), "logs"),
+		RootFs:       filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/"),
+		ProcPath:     filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/proc"),
+		SSLFilesPath: filepath.Join(os.Getenv("SNAP_COMMON"), "data/ssl"),
 	}
 }
 

@@ -18,16 +18,20 @@ import (
 func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificate string, sslPrivateKey string, monitors []string) error {
 	pathConsts := constants.GetPathConst()
 
-	sslCertificateConfigKey := ""
-	sslPrivateKeyConfigKey := ""
+	sslCertificatePath := ""
+	sslPrivateKeyPath := ""
 	if sslCertificate != "" && sslPrivateKey != "" {
-		sslCertificateConfigKey = "ssl_certificate"
-		sslPrivateKeyConfigKey = "ssl_private_key"
-		err := storeSSLMaterial(sslCertificateConfigKey, []byte(sslCertificate))
+		err := os.Mkdir(pathConsts.SSLFilesPath, 0600)
 		if err != nil {
 			return err
 		}
-		err = storeSSLMaterial(sslPrivateKeyConfigKey, []byte(sslPrivateKey))
+		sslCertificatePath = filepath.Join(sslDirectory, "server.crt")
+		err = writeFile(sslCertificatePath, sslCertificate, 0600)
+		if err != nil {
+			return err
+		}
+		sslPrivateKeyPath = filepath.Join(sslDirectory, "server.key")
+		err = writeFile(sslPrivateKeyPath, sslPrivateKey, 0600)
 		if err != nil {
 			return err
 		}
@@ -35,12 +39,12 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 		port = 80
 	}
 	configs := map[string]any{
-		"runDir":                  pathConsts.RunPath,
-		"monitors":                strings.Join(monitors, ","),
-		"rgwPort":                 port,
-		"sslPort":                 sslPort,
-		"sslCertificateConfigKey": sslCertificateConfigKey,
-		"sslPrivateKeyConfigKey":  sslPrivateKeyConfigKey,
+		"runDir":             pathConsts.RunPath,
+		"monitors":           strings.Join(monitors, ","),
+		"rgwPort":            port,
+		"sslPort":            sslPort,
+		"sslCertificatePath": sslCertificatePath,
+		"sslPrivateKeyPath":  sslPrivateKeyPath,
 	}
 
 	// Create RGW configuration.
@@ -92,6 +96,12 @@ func DisableRGW(s interfaces.StateInterface) error {
 		return fmt.Errorf("failed to remove RGW keyring: %w", err)
 	}
 
+	// Remove the SSL files.
+	err = os.Remove(pathConsts.SSLFilesPath)
+	if err != nil {
+		return fmt.Errorf("failed to remove RGW SSL files: %w", err)
+	}
+
 	// Remove the configuration.
 	err = os.Remove(filepath.Join(pathConsts.ConfPath, "radosgw.conf"))
 	if err != nil {
@@ -139,16 +149,6 @@ func stopRGW() error {
 	return nil
 }
 
-// Store the SSL material in the ceph key value store.
-func storeSSLMaterial(key string, material []byte) error {
-	// Run the ceph config-key set command
-	_, err := processExec.RunCommand("ceph", "config-key", "set", key, string(material))
-	if err != nil {
-		return fmt.Errorf("failed to store key: %w", err)
-	}
-	return nil
-}
-
 // createRGWKeyring creates the RGW keyring.
 func createRGWKeyring(path string) error {
 	if err := os.MkdirAll(path, 0770); err != nil {
@@ -180,5 +180,19 @@ func symlinkRGWKeyring(keyPath, ConfPath string) error {
 		return fmt.Errorf("Failed to create symlink to RGW keyring: %w", err)
 	}
 
+	return nil
+}
+
+func writeFile(path, data string, mode int) error {
+	fd, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, os.FileMode(mode))
+	if err != nil {
+		return fmt.Errorf("Couldn't open %s: %w", path, err)
+	}
+	defer fd.Close()
+
+	_, err = fd.Write([]byte(data))
+	if err != nil {
+		return fmt.Errorf("Couldn't write to %s: %w", path, err)
+	}
 	return nil
 }
