@@ -26,3 +26,8 @@ type RGWService struct {
 	Port    int  `json:"port" yaml:"port"`
 	Enabled bool `json:"enabled" yaml:"enabled"`
 }
+
+type Remote struct {
+	Name   string
+	Config map[string]string `json:"config" yaml:"config"`
+}
