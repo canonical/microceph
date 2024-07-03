@@ -25,6 +25,10 @@ const CliForcePrompt = "If you understand the *RISK* and you're *ABSOLUTELY CERT
 
 const CephConfFileName = "ceph.conf"
 
+// Misc
+const AdminKeyringFieldName = "keyring.client.admin"
+const AdminKeyringTemplate = "keyring.client.%s"
+
 type PathConst struct {
 	ConfPath     string
 	RunPath      string

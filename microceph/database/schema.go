@@ -14,6 +14,7 @@ var SchemaExtensions = []schema.Update{
 	schemaUpdate1,
 	schemaUpdate2,
 	schemaUpdate3,
+	schemaUpdate4,
 }
 
 func schemaUpdate1(ctx context.Context, tx *sql.Tx) error {
@@ -82,6 +83,29 @@ INSERT INTO disks2 (id, member_id, path)
 SELECT osd, member_id, path FROM disks;
 DROP TABLE disks;
 ALTER TABLE disks2 RENAME TO disks;
+  `
+	_, err := tx.Exec(stmt)
+
+	return err
+}
+
+func schemaUpdate4(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE remote (
+  id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
+  name                          TEXT     NOT  NULL,
+  local_name                    TEXT     NOT  NULL,
+  UNIQUE(name)
+);
+
+CREATE TABLE remote_config (
+  id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
+  remote_id                     INT      NOT  NULL,
+  key                           TEXT     NOT  NULL,
+  value                         TEXT     NOT  NULL,
+  FOREIGN KEY (remote_id) REFERENCES "remote" (id) ON DELETE CASCADE,
+  UNIQUE(remote_id, key)
+);
   `
 	_, err := tx.Exec(stmt)
 
