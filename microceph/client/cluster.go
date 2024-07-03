@@ -10,13 +10,13 @@ import (
 	microCli "github.com/canonical/microcluster/v2/client"
 )
 
-func GetClusterState(ctx context.Context, c *microCli.Client) (string, error) {
+func GetClusterState(ctx context.Context, c *microCli.Client, req types.ClusterStateRequest) (string, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
 	var state string
 
-	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("cluster"), nil, &state)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("cluster"), req, &state)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch cluster state: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
@@ -17,8 +18,8 @@ type cmdClusterExport struct {
 
 func (c *cmdClusterExport) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "export",
-		Short: "Generates a base64 dump of cluster state",
+		Use:   "export <RemoteName>",
+		Short: "Generates cluster token for given Remote cluster",
 		RunE:  c.Run,
 	}
 
@@ -27,11 +28,11 @@ func (c *cmdClusterExport) Command() *cobra.Command {
 }
 
 func (c *cmdClusterExport) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
+	if len(args) != 1 {
 		return cmd.Help()
 	}
 
-	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
 	}
@@ -41,7 +42,9 @@ func (c *cmdClusterExport) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	state, err := client.GetClusterState(cmd.Context(), cli)
+	state, err := client.GetClusterState(cmd.Context(), cli, types.ClusterStateRequest{
+		RemoteName: args[0],
+	})
 	if err != nil {
 		return err
 	}

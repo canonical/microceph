@@ -170,3 +170,27 @@ ALTER TABLE services_new RENAME TO services;
 
 	return err
 }
+
+// schemaUpdate5 adds remote tables
+func schemaUpdate5(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE remote (
+  id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
+  name                          TEXT     NOT  NULL,
+  local_name                    TEXT     NOT  NULL,
+  UNIQUE(name)
+);
+
+CREATE TABLE remote_config (
+  id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
+  remote_id                     INT      NOT  NULL,
+  key                           TEXT     NOT  NULL,
+  value                         TEXT     NOT  NULL,
+  FOREIGN KEY (remote_id) REFERENCES "remote" (id) ON DELETE CASCADE,
+  UNIQUE(remote_id, key)
+);
+  `
+	_, err := tx.Exec(stmt)
+
+	return err
+}

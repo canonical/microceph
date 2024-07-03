@@ -33,6 +33,8 @@ var Servers = map[string]rest.Server{
 					microcephConfigsCmd,
 					logLevelCmd,
 					clusterCmd,
+					remoteCmd,
+					remoteNameCmd,
 				},
 			},
 		},

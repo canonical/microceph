@@ -61,6 +61,9 @@ func main() {
 	var cmdCluster = cmdCluster{common: &commonCmd}
 	app.AddCommand(cmdCluster.Command())
 
+	var cmdRemote = cmdRemote{common: &commonCmd}
+	app.AddCommand(cmdRemote.Command())
+
 	var cmdDisk = cmdDisk{common: &commonCmd}
 	app.AddCommand(cmdDisk.Command())
 
