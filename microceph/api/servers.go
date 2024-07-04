@@ -24,7 +24,6 @@ var Servers = []rest.Server{
 					mdsServiceCmd,
 					mgrServiceCmd,
 					monServiceCmd,
-					rgwServiceCmd,
 					poolsCmd,
 					clientCmd,
 					clientConfigsCmd,
