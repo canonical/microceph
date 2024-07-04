@@ -5,15 +5,13 @@ import (
 	"path/filepath"
 )
 
-func bootstrapMds(hostname string, path string) error {
+func bootstrapRbdMirror(hostname string, path string) error {
 	args := []string{
 		"auth",
 		"get-or-create",
-		fmt.Sprintf("mds.%s", hostname),
-		"mon", "allow profile mds",
-		"mgr", "allow profile mds",
-		"mds", "allow *",
-		"osd", "allow *",
+		fmt.Sprintf("client.rbd-mirror.%s", hostname),
+		"mon", "profile rbd-mirror",
+		"osd", "profile rbd",
 		"-o", filepath.Join(path, "keyring"),
 	}
 

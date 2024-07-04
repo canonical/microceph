@@ -54,6 +54,11 @@ var rgwServiceCmd = rest.Endpoint{
 	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
 	Delete: rest.EndpointAction{Handler: cmdRGWServiceDelete, ProxyTarget: true},
 }
+var rbdMirroServiceCmd = rest.Endpoint{
+	Path:   "services/rbd-mirror",
+	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
+}
 
 func cmdEnableServicePut(s state.State, r *http.Request) response.Response {
 	var payload types.EnableService

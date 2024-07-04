@@ -647,8 +647,6 @@ func ListOSD(ctx context.Context, s state.State) (types.Disks, error) {
 
 // RemoveOSD removes an OSD disk
 func RemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, bypassSafety bool, timeout int64) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(timeout))
-	defer cancel()
 	err := doRemoveOSD(ctx, s, osd, bypassSafety)
 	if err != nil {
 		// Checking if the error is a context deadline exceeded error

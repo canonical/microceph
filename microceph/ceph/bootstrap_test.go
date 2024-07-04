@@ -62,12 +62,12 @@ func addEnableMsgr2Expectations(r *mocks.Runner) {
 }
 
 // Expect: check network coherency
-func addNetworkExpectationsBootstrap(nw *mocks.NetworkIntf, s interfaces.StateInterface) {
+func addNetworkExpectationsBootstrap(nw *mocks.NetworkIntf, _ interfaces.StateInterface) {
 	nw.On("IsIpOnSubnet", "1.1.1.1", "1.1.1.1/24").Return(true)
 }
 
 // Expect: check Bootstrap data prep
-func addNetworkExpectations(nw *mocks.NetworkIntf, s interfaces.StateInterface) {
+func addNetworkExpectations(nw *mocks.NetworkIntf, _ interfaces.StateInterface) {
 	nw.On("IsIpOnSubnet", "1.1.1.1", "1.1.1.1/24").Return(true)
 	nw.On("FindNetworkAddress", "1.1.1.1").Return("1.1.1.1/24", nil)
 	nw.On("FindIpOnSubnet", "1.1.1.1/24").Return("1.1.1.1", nil)
