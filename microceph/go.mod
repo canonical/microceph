@@ -5,7 +5,7 @@ go 1.22.4
 require (
 	github.com/Rican7/retry v0.3.1
 	github.com/canonical/lxd v0.0.0-20240620053341-f9f88f4e77ae
-	github.com/canonical/microcluster v0.0.0-20240620074518-efdde3f746b9
+	github.com/canonical/microcluster v0.0.0-20240703182409-ec0a2d6e0f31
 	github.com/djherbis/times v1.6.0
 	github.com/google/go-cmp v0.6.0
 	github.com/gorilla/mux v1.8.1

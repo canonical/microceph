@@ -8,7 +8,8 @@ import (
 
 var Servers = []rest.Server{
 	{
-		CoreAPI: true,
+		CoreAPI:   true,
+		ServeUnix: true,
 		Resources: []rest.Resources{
 			{
 				PathPrefix: types.ExtendedPathPrefix,
@@ -23,7 +24,6 @@ var Servers = []rest.Server{
 					mdsServiceCmd,
 					mgrServiceCmd,
 					monServiceCmd,
-					rgwServiceCmd,
 					poolsCmd,
 					clientCmd,
 					clientConfigsCmd,

@@ -3,12 +3,13 @@ package ceph
 import (
 	"context"
 	"database/sql"
-	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"reflect"
 	"time"
 
+	"github.com/canonical/lxd/shared/logger"
+
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 )
 
 // Start is run on daemon startup.
@@ -19,7 +20,8 @@ func Start(s interfaces.StateInterface) error {
 
 		for {
 			// Check that the database is ready.
-			if !s.ClusterState().Database.IsOpen() {
+			err := s.ClusterState().Database.IsOpen(context.Background())
+			if err != nil {
 				logger.Debug("start: database not ready, waiting...")
 				time.Sleep(10 * time.Second)
 				continue
@@ -27,7 +29,7 @@ func Start(s interfaces.StateInterface) error {
 
 			// Get the current list of monitors.
 			monitors := []string{}
-			err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+			err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 				serviceName := "mon"
 				services, err := database.GetServices(ctx, tx, database.ServiceFilter{Service: &serviceName})
 				if err != nil {

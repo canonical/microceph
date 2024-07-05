@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/canonical/lxd/lxd/util"
+	"github.com/canonical/lxd/shared/api"
 	microCli "github.com/canonical/microcluster/client"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
@@ -43,7 +45,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 
 	// Check if already initialized.
 	_, err = lc.GetClusterMembers(context.Background())
-	isUninitialized := err != nil && err.Error() == "Daemon not yet initialized"
+	isUninitialized := err != nil && api.StatusErrorCheck(err, http.StatusServiceUnavailable)
 	if err != nil && !isUninitialized {
 		return err
 	}
