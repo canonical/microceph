@@ -128,7 +128,8 @@ Flags:
 
 .. code-block:: none
 
-   --wait   Wait for required ceph services to restart post config reset.
+   --wait           Wait for required ceph services to restart post config reset.
+   --skip-restart   Don't perform the daemon restart for current config.
 
 
 ``config set``
@@ -147,7 +148,8 @@ Flags:
 
 .. code-block:: none
 
-   --wait   Wait for required ceph services to restart post config set.
+   --wait           Wait for required ceph services to restart post config set.
+   --skip-restart   Don't perform the daemon restart for current config.
 
 
 ``join``
