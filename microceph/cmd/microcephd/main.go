@@ -86,6 +86,8 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 		return ceph.Start(interf)
 	}
 
+	h.PreRemove = ceph.PreRemove(m)
+
 	m.AddServers(api.Servers)
 	return m.Start(context.Background(), database.SchemaExtensions, nil, h)
 }
