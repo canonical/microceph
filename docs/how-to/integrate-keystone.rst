@@ -53,6 +53,12 @@ MicroCeph supports setting the following Keystone config keys:
      - Whether to create new users in their own tenants of the same name
    * - rgw_swift_account_in_url
      - Whether the Swift account is encoded in the URL path
+   * - rgw_swift_versioning_enabled
+     - Enables object versioning
+   * - rgw_swift_enforce_content_length
+     - Whether content length header is needed when listing containers
+   * - rgw_swift_custom_header
+     - Enable swift custom header
 
 A user can set/get/list/reset the above mentioned config keys as follows:
 

@@ -69,6 +69,9 @@ func GetConstConfigTable() ConfigTable {
 		"rgw_keystone_verify_ssl":                     {"global", []string{"rgw"}},
 		"rgw_keystone_implicit_tenants":               {"global", []string{"rgw"}},
 		"rgw_swift_account_in_url":                    {"global", []string{"rgw"}},
+		"rgw_swift_versioning_enabled":                {"global", []string{"rgw"}},
+                "rgw_swift_enforce_content_length":            {"global", []string{"rgw"}},
+                "rgw_swift_custom_header":                     {"global", []string{"rgw"}},
 	}
 }
 
