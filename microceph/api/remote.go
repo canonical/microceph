@@ -123,26 +123,13 @@ var CmdRemoteDelete = func(state *state.State, r *http.Request) response.Respons
 }
 
 /*****************HELPER FUNCTIONS**************************/
-// PersisteRemoteAndConfigs adds the remote config to dqlite.
+// PersisteRemoteAndConfigs adds the remote record  to dqlite.
 var PersisteRemoteAndConfigs = func(s interfaces.StateInterface, remote types.Remote) error {
-	// Add Remote and Remote configs in db.
 	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
-		// Record the role.
+		// Record the remote.
 		_, err := database.CreateRemote(ctx, tx, database.Remote{LocalName: remote.LocalName, Name: remote.Name})
 		if err != nil {
 			return fmt.Errorf("failed to record remote %s: %w", remote.Name, err)
-		}
-
-		for k, v := range remote.Config {
-			remoteConfigItem := database.RemoteConfig{
-				Remote: remote.Name,
-				Key:    k,
-				Value:  v,
-			}
-			_, err := database.CreateRemoteConfig(ctx, tx, remoteConfigItem)
-			if err != nil {
-				return fmt.Errorf("failed to record remote %s config (%s=%s): %w", remote.Name, k, v, err)
-			}
 		}
 
 		return nil
