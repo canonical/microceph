@@ -181,15 +181,6 @@ CREATE TABLE remote (
   local_name                    TEXT     NOT  NULL,
   UNIQUE(name)
 );
-
-CREATE TABLE remote_config (
-  id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
-  remote_id                     INT      NOT  NULL,
-  key                           TEXT     NOT  NULL,
-  value                         TEXT     NOT  NULL,
-  FOREIGN KEY (remote_id) REFERENCES "remote" (id) ON DELETE CASCADE,
-  UNIQUE(remote_id, key)
-);
   `
 	_, err := tx.ExecContext(ctx, stmt)
 
