@@ -12,7 +12,7 @@ the removal of a cluster node (machine).
 
 The following resources provide extra context to the disk removal operation:
 
-* the :doc:`../../explanation/cluster-scaling` page
+* the :doc:`../explanation/cluster-scaling` page
 * the :doc:`disk <../reference/commands/disk>` command reference
 
 .. note::
