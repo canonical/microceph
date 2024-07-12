@@ -549,7 +549,7 @@ jobs:
       run: ~/actionutils.sh headexec testrgw
 
     - name: Install local build
-      run: ~/actionutils.sh install_multinode
+      run: ~/actionutils.sh upgrade_multinode
 
     - name: Wait until 3 OSDs are up
       run:  ~/actionutils.sh headexec wait_for_osds 3

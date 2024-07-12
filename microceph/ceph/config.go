@@ -70,8 +70,8 @@ func GetConstConfigTable() ConfigTable {
 		"rgw_keystone_implicit_tenants":               {"global", []string{"rgw"}},
 		"rgw_swift_account_in_url":                    {"global", []string{"rgw"}},
 		"rgw_swift_versioning_enabled":                {"global", []string{"rgw"}},
-                "rgw_swift_enforce_content_length":            {"global", []string{"rgw"}},
-                "rgw_swift_custom_header":                     {"global", []string{"rgw"}},
+		"rgw_swift_enforce_content_length":            {"global", []string{"rgw"}},
+		"rgw_swift_custom_header":                     {"global", []string{"rgw"}},
 	}
 }
 
@@ -254,7 +254,7 @@ func backwardCompatMonitors(s interfaces.StateInterface) ([]string, error) {
 // UpdateConfig updates the ceph.conf file with the current configuration.
 func UpdateConfig(s interfaces.StateInterface) error {
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
-	runPath := filepath.Join(os.Getenv("SNAP_DATA"), "run")
+	runPath := filepath.Join(filepath.Dir(os.Getenv("SNAP_DATA")), "current", "run")
 
 	err := backwardCompatPubnet(s)
 	if err != nil {
