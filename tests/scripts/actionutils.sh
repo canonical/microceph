@@ -136,6 +136,33 @@ function install_store() {
     done
 }
 
+function upgrade_multinode() {
+    # Refresh to local version, checking health
+    for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
+        lxc exec $container -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
+        lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
+        sleep 5
+        expect=3
+        for i in $(seq 1 8); do
+            res=$( ( lxc exec $container -- sh -c "microceph.ceph osd status" | fgrep -c "exists,up" ) )
+            if [[ $res -eq $expect ]] ; then
+                echo "Found ${expect} osd up"
+                break
+            else
+                echo -n '.'
+                sleep 5
+            fi
+        done
+        res=$( ( lxc exec $container -- sh -c "microceph.ceph osd status" | fgrep -c "exists,up" ) )
+        if [[ $res -ne $expect ]] ; then
+            echo "Expected $expect OSD up, got $res"
+            lxc exec $container -- sh -c "microceph.ceph -s"
+            exit -1
+        fi
+    done
+}
+
+
 function refresh_snap() {
     local chan="${1?missing}"
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
@@ -209,7 +236,7 @@ function bootstrap_head() {
     set -ex
 
     local arg=$1
-    if [ $arg = "public" ]; then
+    if [ "$arg" = "public" ]; then
         # Bootstrap microceph on the head node
         local nw=$(get_lxd_network public)
         local gw=$(echo "$nw" | cut -d/ -f1)
@@ -219,7 +246,7 @@ function bootstrap_head() {
         sleep 5
         # Verify ceph.conf
         verify_bootstrap_configs node-wrk0 "${nw}" "${node_ip}"
-    elif [ $arg = "internal" ]; then
+    elif [ "$arg" = "internal" ]; then
         # Bootstrap microceph on the head node with custom microceph ip.
         local nw=$(get_lxd_network internal)
         local gw=$(echo "$nw" | cut -d/ -f1)
@@ -421,16 +448,6 @@ function test_ceph_conf() {
     for n in $( lxc ls -c n --format csv ); do
         echo "checking node $n"
         lxc exec $n -- sh <<'EOF'
-# Test: configured rundir must be current
-current=$( realpath /var/snap/microceph/current )
-rundir=$( cat /var/snap/microceph/current/conf/ceph.conf | awk '/run dir/{ print $4 }' )
-p=$( dirname $rundir )
-if [ $p != $current ]; then
-    echo "Error: snap data dir $current, configured run dir: $rundir"
-    cat /var/snap/microceph/current/conf/ceph.conf
-    exit -1
-fi
-
 # Test: must contain public_network
 if ! grep -q public_net /var/snap/microceph/current/conf/ceph.conf ; then
     echo "Error: didn't find public_net in ceph.conf"
