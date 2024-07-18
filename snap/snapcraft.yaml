@@ -22,6 +22,12 @@ slots:
       read:
         - "$SNAP_DATA/conf"
 
+plugs:
+  etc-ceph:
+    interface: system-files
+    read: /etc/ceph
+    write: /etc/ceph
+
 environment:
   LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/erasure-code
   PYTHONPATH: $SNAP/lib/python3/dist-packages
@@ -52,6 +58,7 @@ apps:
       - mount-observe
       - network
       - network-bind
+      - etc-ceph
     slots:
       - microceph
   mds:
