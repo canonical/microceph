@@ -368,18 +368,21 @@ function free_runner_disk() {
 
 function testrgw() {
     set -eu
+    local default="test"
+    local filename=${1:-default}
     sudo microceph.ceph status
-    sudo systemctl status snap.microceph.rgw
-    if ! microceph.radosgw-admin user list | grep -q test ; then
+    sudo systemctl status snap.microceph.rgw --no-pager
+    if ! $(sudo microceph.radosgw-admin user list | grep -q test) ; then
+        echo "Create S3 user: test"
         sudo microceph.radosgw-admin user create --uid=test --display-name=test
         sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey
     fi
     sudo apt-get update -qq
     sudo apt-get -qq install s3cmd
-    echo hello-radosgw > ~/test.txt
+    echo hello-radosgw > ~/$filename.txt
     s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl mb s3://testbucket
-    s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/test.txt s3://testbucket
-    ( curl -s http://localhost/testbucket/test.txt | grep -F hello-radosgw ) || return -1
+    s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/$filename.txt s3://testbucket
+    ( curl -s http://localhost/testbucket/$filename.txt | grep -F hello-radosgw ) || return -1
 }
 
 function enable_services() {
@@ -463,6 +466,31 @@ function headexec() {
     shift
     set -x
     lxc exec node-wrk0 -- sh -c "/mnt/actionutils.sh $run $@"
+}
+
+function bombard_rgw_configs() {
+    set -x
+
+    # Set random values to rgw configs
+    sudo microceph cluster config set s3_auth_use_keystone "true" --skip-restart
+    sudo microceph cluster config set rgw_keystone_url "example.url.com" --skip-restart
+    sudo microceph cluster config set rgw_keystone_admin_user "admin" --skip-restart
+    sudo microceph cluster config set rgw_keystone_admin_password "admin" --skip-restart
+    sudo microceph cluster config set rgw_keystone_admin_project "project" --skip-restart
+    sudo microceph cluster config set rgw_keystone_admin_domain "domain" --skip-restart
+    sudo microceph cluster config set rgw_keystone_service_token_enabled "true" --skip-restart
+    sudo microceph cluster config set rgw_keystone_service_token_accepted_roles "admin_role" --skip-restart
+    sudo microceph cluster config set rgw_keystone_api_version "3" --skip-restart
+    sudo microceph cluster config set rgw_keystone_accepted_roles "Member,member" --skip-restart
+    sudo microceph cluster config set rgw_keystone_accepted_admin_roles "admin_role" --skip-restart
+    sudo microceph cluster config set rgw_keystone_token_cache_size "500" --skip-restart
+    # Issue last change with daemon restart.
+    sudo microceph cluster config set rgw_keystone_verify_ssl "false" --wait
+
+    # Allow ceph to notice no OSD are present
+    sleep 30
+    sudo microceph.ceph status
+    sudo microceph.ceph health
 }
 
 run="${1}"
