@@ -23,14 +23,14 @@ slots:
         - "$SNAP_DATA/conf"
 
 environment:
-  LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph/erasure-code
+  LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/erasure-code
   PYTHONPATH: $SNAP/lib/python3/dist-packages
 
 layout:
-  /usr/lib/$CRAFT_ARCH_TRIPLET/ceph:
-    symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET/ceph
-  /usr/lib/$CRAFT_ARCH_TRIPLET/rados-classes:
-    symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET/rados-classes
+  /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:
+    symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph
+  /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/rados-classes:
+    symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/rados-classes
   /etc/ceph:
     bind: $SNAP_DATA/conf
   /usr/share/ceph:
