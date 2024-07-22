@@ -12,7 +12,7 @@ confinement: strict
 
 package-repositories:
   - type: apt
-    cloud: bobcat
+    cloud: caracal
     priority: always
 
 slots:
@@ -144,12 +144,13 @@ parts:
       pkg_version=$(
         dpkg-deb -f \
         $CRAFT_PART_SRC/../stage_packages/ceph-common*.deb \
-        Version | sed -rne 's/([0-9.]+)[-+].*$$/\1/p')
+        Version | sed -rne 's/([0-9.]+)[-+].*$$/\1/p' | cut -c1-10)
       git_version=$(
         git -C $CRAFT_PROJECT_DIR describe \
           --always \
           --dirty \
           --abbrev=10)
+        # changed as the original string was longer than 32chars.
         craftctl set version=${pkg_version}+snap${git_version}
     stage-packages:
       - ceph-common
@@ -161,6 +162,7 @@ parts:
       - radosgw
       - coreutils
       - uuid-runtime
+      - python3-setuptools
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -225,6 +227,7 @@ parts:
       - lib/*/rados-classes
       - lib/*/libtcmalloc.so*
       - lib/*/libunwind.so*
+      - lib/*/liblmdb.so*
       - share/ceph
 
   dqlite:

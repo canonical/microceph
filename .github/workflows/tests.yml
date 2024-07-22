@@ -215,6 +215,11 @@ jobs:
         output=$(sudo microceph log get-level)
         if [[ "$output" != "3" ]] ; then echo "incorrect log level: $output"; exit 1; fi 
 
+    - name: Print logs for failure
+      if: failure()
+      run: |
+        sudo snap logs microceph -n 1000
+
   multi-node-tests:
     name: Multi node testing
     runs-on: ubuntu-22.04
@@ -334,6 +339,11 @@ jobs:
     - name: Test client configurations
       run: ~/actionutils.sh check_client_configs
 
+    - name: Print logs for failure
+      if: failure()
+      run: |
+        sudo snap logs microceph -n 1000
+
   multi-node-tests-with-custom-microceph-ip:
     name: Multi node testing with custom microceph IP
     runs-on: ubuntu-22.04
@@ -386,6 +396,11 @@ jobs:
         ~/actionutils.sh headexec wait_for_osds 3
         lxc exec node-wrk0 -- sh -c "microceph.ceph -s"
 
+    - name: Print logs for failure
+      if: failure()
+      run: |
+        sudo snap logs microceph -n 1000
+
   loop-file-tests:
     name: Test with loopback file OSDs
     runs-on: ubuntu-22.04
@@ -433,6 +448,11 @@ jobs:
         sudo microceph disk remove osd.1
         ~/actionutils.sh wait_for_osds 3
         sudo microceph.ceph -s
+
+    - name: Print logs for failure
+      if: failure()
+      run: |
+        sudo snap logs microceph -n 1000
 
   wal-db-tests:
     name: Test WAL/DB device usage
@@ -495,6 +515,11 @@ jobs:
     - name: Exercise RGW
       run: ~/actionutils.sh testrgw
 
+    - name: Print logs for failure
+      if: failure()
+      run: |
+        sudo snap logs microceph -n 1000
+
   upgrade-quincy-tests:
     name: Test quincy upgrades
     runs-on: ubuntu-22.04
@@ -556,3 +581,8 @@ jobs:
 
     - name: Exercise RGW again
       run: ~/actionutils.sh headexec testrgw
+
+    - name: Print logs for failure
+      if: failure()
+      run: |
+        sudo snap logs microceph -n 1000
