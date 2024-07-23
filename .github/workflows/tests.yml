@@ -265,6 +265,11 @@ jobs:
         done
         lxc exec node-wrk0 -- sh -c "microceph.ceph -s"
 
+    - name: Exercise microceph status
+      run: |
+        set -uex
+        lxc exec node-wrk0 -- sh -c "sudo microceph status"
+
     - name: Test failure domain scale up
       run: |
         set -uex
@@ -556,6 +561,12 @@ jobs:
 
     - name: Exercise RGW again
       run: ~/actionutils.sh headexec testrgw
+
+    - name: Exercise microceph status
+      run: |
+        set -uex
+        lxc exec node-wrk0 -- sh -c "sudo microceph status"
+
 
   cluster-tests:
     name: Test MicroCeph Cluster features.
