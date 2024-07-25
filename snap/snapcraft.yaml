@@ -1,5 +1,5 @@
 name: microceph
-base: core22
+base: core24
 adopt-info: ceph
 grade: stable
 source-code: https://github.com/canonical/microceph.git
@@ -9,11 +9,6 @@ description: |-
  MicroCeph is snap-deployed Ceph with built-in clustering.
 
 confinement: strict
-
-package-repositories:
-  - type: apt
-    cloud: caracal
-    priority: always
 
 slots:
   ceph-conf:
@@ -191,7 +186,7 @@ parts:
       - lib/*/libboost_filesystem.so*
       - lib/*/libboost_iostreams.so*
       - lib/*/libboost_program_options.so*
-      - lib/*/libboost_python310.so*
+      - lib/*/libboost_python312.so*
       - lib/*/libboost_thread.so*
       - lib/*/libcephfs.so*
       - lib/*/libcephsqlite.so*
@@ -201,8 +196,10 @@ parts:
       - lib/*/libibverbs.so*
       - lib/*/libicudata.so*
       - lib/*/libicuuc.so*
-      - lib/*/liblber-2.5.so*
-      - lib/*/libldap-2.5.so*
+      - lib/*/liblber.so*
+      - lib/*/libldap.so*
+      - lib/*/libssh.so*
+      - lib/*/libncurses.so*
       - lib/*/liblua5.4.so*
       - lib/*/libndctl.so*
       - lib/*/libnghttp2.so*
@@ -211,7 +208,7 @@ parts:
       - lib/*/libpmem.so*
       - lib/*/libpmemobj.so*
       - lib/*/libpsl.so*
-      - lib/*/libpython3.10.so*
+      - lib/*/libpython3.12.so*
       - lib/*/librabbitmq.so*
       - lib/*/librados.so*
       - lib/*/libradosgw.so*
