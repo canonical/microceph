@@ -3,6 +3,8 @@
 package mocks
 
 import (
+	context "context"
+
 	interfaces "github.com/canonical/microceph/microceph/interfaces"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -13,12 +15,12 @@ type PlacementIntf struct {
 }
 
 // DbUpdate provides a mock function with given fields: _a0
-func (_m *PlacementIntf) DbUpdate(_a0 interfaces.StateInterface) error {
+func (_m *PlacementIntf) DbUpdate(ctx context.Context, _a0 interfaces.StateInterface) error {
 	ret := _m.Called(_a0)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(interfaces.StateInterface) error); ok {
-		r0 = rf(_a0)
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface) error); ok {
+		r0 = rf(ctx, _a0)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -69,12 +71,12 @@ func (_m *PlacementIntf) PostPlacementCheck(_a0 interfaces.StateInterface) error
 }
 
 // ServiceInit provides a mock function with given fields: _a0
-func (_m *PlacementIntf) ServiceInit(_a0 interfaces.StateInterface) error {
+func (_m *PlacementIntf) ServiceInit(ctx context.Context, _a0 interfaces.StateInterface) error {
 	ret := _m.Called(_a0)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(interfaces.StateInterface) error); ok {
-		r0 = rf(_a0)
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface) error); ok {
+		r0 = rf(ctx, _a0)
 	} else {
 		r0 = ret.Error(0)
 	}

@@ -1,9 +1,11 @@
 package ceph
 
 import (
+	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/tests"
 	"testing"
+
+	"github.com/canonical/microceph/microceph/tests"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -60,7 +62,7 @@ func (s *servicesPlacementSuite) TestUnknownServiceFailure() {
 	}
 
 	// Check Enable Service fails for unregistered services.
-	err := ServicePlacementHandler(s.TestStateInterface, payload)
+	err := ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
 	assert.Error(s.T(), err)
 }
 
@@ -74,7 +76,7 @@ func (s *servicesPlacementSuite) TestIllStructuredPayloadFailure() {
 	}
 
 	// Check Enable Service fails for unregistered services.
-	err := ServicePlacementHandler(s.TestStateInterface, payload)
+	err := ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
 	assert.ErrorContains(s.T(), err, "failed to populate the payload")
 }
 
@@ -92,7 +94,7 @@ func (s *servicesPlacementSuite) TestHospitalityCheckFailure() {
 	}
 
 	// Check Enable Service fails for unregistered services.
-	err := ServicePlacementHandler(s.TestStateInterface, payload)
+	err := ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
 	assert.ErrorContains(s.T(), err, "host failed hospitality check")
 }
 
@@ -107,7 +109,7 @@ func (s *servicesPlacementSuite) TestServiceInitFailure() {
 	addPlacementServiceInitFailExpectation(sp, s.TestStateInterface, payload)
 
 	// Check Enable Service fails for unregistered services.
-	err := EnableService(s.TestStateInterface, payload, sp)
+	err := EnableService(context.Background(), s.TestStateInterface, payload, sp)
 	assert.ErrorContains(s.T(), err, "failed to initialise")
 }
 
@@ -122,7 +124,7 @@ func (s *servicesPlacementSuite) TestPostPlacementCheckFailure() {
 	addPostPlacementCheckFailExpectation(sp, s.TestStateInterface, payload)
 
 	// Check Enable Service fails for unregistered services.
-	err := EnableService(s.TestStateInterface, payload, sp)
+	err := EnableService(context.Background(), s.TestStateInterface, payload, sp)
 	assert.ErrorContains(s.T(), err, "service unable to sustain on host")
 }
 
@@ -137,6 +139,6 @@ func (s *servicesPlacementSuite) TestDbUpdateFailure() {
 	addDbUpdateFailExpectation(sp, s.TestStateInterface, payload)
 
 	// Check Enable Service fails for unregistered services.
-	err := EnableService(s.TestStateInterface, payload, sp)
+	err := EnableService(context.Background(), s.TestStateInterface, payload, sp)
 	assert.ErrorContains(s.T(), err, "failed to add DB record for")
 }

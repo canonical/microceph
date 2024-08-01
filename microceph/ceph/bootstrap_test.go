@@ -1,14 +1,15 @@
 package ceph
 
 import (
+	"context"
+	"testing"
+
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/tests"
-	"testing"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/mocks"
-	"github.com/canonical/microcluster/v2/state"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
@@ -81,14 +82,9 @@ func (s *bootstrapSuite) SetupTest() {
 
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
 	u := api.NewURL()
-	state := &state.State{
-		Address: func() *api.URL {
-			return u
-		},
-		Name: func() string {
-			return "foohost"
-		},
-		Database: nil,
+	state := &mocks.MockState{
+		URL:         u,
+		ClusterName: "foohost",
 	}
 	s.TestStateInterface.On("ClusterState").Return(state).Maybe()
 }
@@ -109,10 +105,10 @@ func (s *bootstrapSuite) TestBootstrap() {
 	processExec = r
 	common.Network = nw
 
-	err := Bootstrap(s.TestStateInterface, common.BootstrapConfig{MonIp: "1.1.1.1", PublicNet: "1.1.1.1/24"})
+	err := Bootstrap(context.Background(), s.TestStateInterface, common.BootstrapConfig{MonIp: "1.1.1.1", PublicNet: "1.1.1.1/24"})
 
 	// we expect a missing database error
-	assert.EqualError(s.T(), err, "no database")
+	assert.EqualError(s.T(), err, "no server certificate")
 
 }
 
