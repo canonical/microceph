@@ -1,7 +1,9 @@
 package ceph
 
 import (
+	"context"
 	"fmt"
+
 	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/lxd/shared/logger"
@@ -53,7 +55,7 @@ func ServicePlacementHandler(s interfaces.StateInterface, payload types.EnableSe
 	} else {
 		go func() {
 			// Async call to Enable service.
-			err := EnableService(s, payload, sp)
+			err := EnableService(context.Background(), s, payload, sp)
 			if err != nil {
 				logger.Errorf("failed %s service enablement request: %v", payload.Name, err)
 			}
