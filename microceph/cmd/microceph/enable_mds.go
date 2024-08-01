@@ -29,7 +29,7 @@ func (c *cmdEnableMDS) Command() *cobra.Command {
 
 // Run handles the enable mds command.
 func (c *cmdEnableMDS) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
 	}
