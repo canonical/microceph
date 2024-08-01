@@ -217,6 +217,15 @@ func removeServiceDatabase(ctx context.Context, s interfaces.StateInterface, ser
 			return fmt.Errorf("failed to remove service from db %q: %w", service, err)
 		}
 
+		// Clear mon host entry from config table.
+		if service == "mon" {
+			key := fmt.Sprintf("mon.host.%s", s.ClusterState().Name())
+			err = database.DeleteConfigItem(ctx, tx, key)
+			if err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
 	return err
