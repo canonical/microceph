@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microcluster/microcluster"
+	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"

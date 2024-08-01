@@ -1,7 +1,7 @@
 package api
 
 import (
-	"github.com/canonical/microcluster/rest"
+	"github.com/canonical/microcluster/v2/rest"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )

@@ -4,7 +4,7 @@ package mocks
 
 import (
 	database "github.com/canonical/microceph/microceph/database"
-	state "github.com/canonical/microcluster/state"
+	state "github.com/canonical/microcluster/v2/state"
 	mock "github.com/stretchr/testify/mock"
 )
 

@@ -9,8 +9,8 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microcluster/cluster"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/cluster"
+	"github.com/canonical/microcluster/v2/state"
 )
 
 // MemberCounterInterface is for counting member nodes. Introduced for mocking.

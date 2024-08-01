@@ -3,21 +3,21 @@ package database
 //go:generate -command mapper lxd-generate db mapper -t config.mapper.go
 //go:generate mapper reset
 //
-//go:generate mapper stmt -d github.com/canonical/microcluster/cluster -e ConfigItem objects table=config
-//go:generate mapper stmt -d github.com/canonical/microcluster/cluster -e ConfigItem objects-by-Key table=config
-//go:generate mapper stmt -d github.com/canonical/microcluster/cluster -e ConfigItem id table=config
-//go:generate mapper stmt -d github.com/canonical/microcluster/cluster -e ConfigItem create table=config
-//go:generate mapper stmt -d github.com/canonical/microcluster/cluster -e ConfigItem delete-by-Key table=config
-//go:generate mapper stmt -d github.com/canonical/microcluster/cluster -e ConfigItem update table=config
+//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e ConfigItem objects table=config
+//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e ConfigItem objects-by-Key table=config
+//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e ConfigItem id table=config
+//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e ConfigItem create table=config
+//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e ConfigItem delete-by-Key table=config
+//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e ConfigItem update table=config
 
 //
-//go:generate mapper method -i -d github.com/canonical/microcluster/cluster -e ConfigItem GetMany table=config
-//go:generate mapper method -i -d github.com/canonical/microcluster/cluster -e ConfigItem GetOne table=config
-//go:generate mapper method -i -d github.com/canonical/microcluster/cluster -e ConfigItem ID table=config
-//go:generate mapper method -i -d github.com/canonical/microcluster/cluster -e ConfigItem Exists table=config
-//go:generate mapper method -i -d github.com/canonical/microcluster/cluster -e ConfigItem Create table=config
-//go:generate mapper method -i -d github.com/canonical/microcluster/cluster -e ConfigItem DeleteOne-by-Key table=config
-//go:generate mapper method -i -d github.com/canonical/microcluster/cluster -e ConfigItem Update table=config
+//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e ConfigItem GetMany table=config
+//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e ConfigItem GetOne table=config
+//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e ConfigItem ID table=config
+//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e ConfigItem Exists table=config
+//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e ConfigItem Create table=config
+//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e ConfigItem DeleteOne-by-Key table=config
+//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e ConfigItem Update table=config
 
 // ConfigItem is used to track the Ceph configuration.
 type ConfigItem struct {
