@@ -13,14 +13,14 @@ import (
 )
 
 // Start is run on daemon startup.
-func Start(s interfaces.StateInterface) error {
+func Start(ctx context.Context, s interfaces.StateInterface) error {
 	// Start background loop to refresh the config every minute if needed.
 	go func() {
 		oldMonitors := []string{}
 
 		for {
 			// Check that the database is ready.
-			err := s.ClusterState().Database.IsOpen(context.Background())
+			err := s.ClusterState().Database().IsOpen(context.Background())
 			if err != nil {
 				logger.Debug("start: database not ready, waiting...")
 				time.Sleep(10 * time.Second)
@@ -29,7 +29,7 @@ func Start(s interfaces.StateInterface) error {
 
 			// Get the current list of monitors.
 			monitors := []string{}
-			err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+			err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 				serviceName := "mon"
 				services, err := database.GetServices(ctx, tx, database.ServiceFilter{Service: &serviceName})
 				if err != nil {
@@ -55,7 +55,7 @@ func Start(s interfaces.StateInterface) error {
 				continue
 			}
 
-			err = UpdateConfig(s)
+			err = UpdateConfig(ctx, s)
 			if err != nil {
 				logger.Errorf("start: failed to update config, retrying: %v", err)
 				time.Sleep(10 * time.Second)

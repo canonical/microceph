@@ -16,7 +16,7 @@ var resourcesCmd = rest.Endpoint{
 	Get: rest.EndpointAction{Handler: cmdResourcesGet, ProxyTarget: true},
 }
 
-func cmdResourcesGet(s *state.State, r *http.Request) response.Response {
+func cmdResourcesGet(s state.State, r *http.Request) response.Response {
 	storage, err := resources.GetStorage()
 	if err != nil {
 		return response.InternalError(err)

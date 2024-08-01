@@ -24,7 +24,7 @@ var configsCmd = rest.Endpoint{
 	Delete: rest.EndpointAction{Handler: cmdConfigsDelete, ProxyTarget: true},
 }
 
-func cmdConfigsGet(s *state.State, r *http.Request) response.Response {
+func cmdConfigsGet(s state.State, r *http.Request) response.Response {
 	var err error
 	var req types.Config
 	var configs types.Configs
@@ -48,7 +48,7 @@ func cmdConfigsGet(s *state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, configs)
 }
 
-func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
+func cmdConfigsPut(s state.State, r *http.Request) response.Response {
 	var req types.Config
 	configTable := ceph.GetConstConfigTable()
 
@@ -65,13 +65,13 @@ func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
 
 	if !req.SkipRestart {
 		services := configTable[req.Key].Daemons
-		configChangeRefresh(s, services, req.Wait)
+		configChangeRefresh(r.Context(), s, services, req.Wait)
 	}
 
 	return response.EmptySyncResponse
 }
 
-func cmdConfigsDelete(s *state.State, r *http.Request) response.Response {
+func cmdConfigsDelete(s state.State, r *http.Request) response.Response {
 	var req types.Config
 	configTable := ceph.GetConstConfigTable()
 
@@ -88,23 +88,23 @@ func cmdConfigsDelete(s *state.State, r *http.Request) response.Response {
 
 	if !req.SkipRestart {
 		services := configTable[req.Key].Daemons
-		configChangeRefresh(s, services, req.Wait)
+		configChangeRefresh(r.Context(), s, services, req.Wait)
 	}
 
 	return response.EmptySyncResponse
 }
 
 // Perform ordered (one after other) restart of provided Ceph services across the ceph cluster.
-func configChangeRefresh(s *state.State, services []string, wait bool) error {
+func configChangeRefresh(ctx context.Context, s state.State, services []string, wait bool) error {
 	if wait {
 		// Execute restart synchronously
-		err := client.SendRestartRequestToClusterMembers(s, services)
+		err := client.SendRestartRequestToClusterMembers(ctx, s, services)
 		if err != nil {
 			return err
 		}
 
 		// Restart on current host.
-		err = ceph.RestartCephServices(interfaces.CephState{State: s}, services)
+		err = ceph.RestartCephServices(ctx, interfaces.CephState{State: s}, services)
 		if err != nil {
 			return err
 		}

@@ -17,11 +17,11 @@ type PlacementIntf interface {
 	// Check if host is hospitable to the new service to be enabled.
 	HospitalityCheck(interfaces.StateInterface) error
 	// Initialise the new service.
-	ServiceInit(interfaces.StateInterface) error
+	ServiceInit(context.Context, interfaces.StateInterface) error
 	// Perform Post Placement checks for the service
 	PostPlacementCheck(interfaces.StateInterface) error
 	// Perform DB updates to persist the service enablement changes.
-	DbUpdate(interfaces.StateInterface) error
+	DbUpdate(context.Context, interfaces.StateInterface) error
 }
 
 func GetServicePlacementTable() map[string](PlacementIntf) {
@@ -33,7 +33,7 @@ func GetServicePlacementTable() map[string](PlacementIntf) {
 	}
 }
 
-func ServicePlacementHandler(s interfaces.StateInterface, payload types.EnableService) error {
+func ServicePlacementHandler(ctx context.Context, s interfaces.StateInterface, payload types.EnableService) error {
 	var ok bool
 	var spt = GetServicePlacementTable()
 	var sp PlacementIntf
@@ -47,7 +47,7 @@ func ServicePlacementHandler(s interfaces.StateInterface, payload types.EnableSe
 	}
 
 	if payload.Wait {
-		err := EnableService(s, payload, sp)
+		err := EnableService(ctx, s, payload, sp)
 		if err != nil {
 			logger.Errorf("failed %s service enablement request: %v", payload.Name, err)
 			return err
@@ -65,7 +65,7 @@ func ServicePlacementHandler(s interfaces.StateInterface, payload types.EnableSe
 	return nil
 }
 
-func EnableService(s interfaces.StateInterface, payload types.EnableService, item PlacementIntf) error {
+func EnableService(ctx context.Context, s interfaces.StateInterface, payload types.EnableService, item PlacementIntf) error {
 
 	// Populate json payload data to the service object.
 	err := item.PopulateParams(s, payload.Payload)
@@ -84,7 +84,7 @@ func EnableService(s interfaces.StateInterface, payload types.EnableService, ite
 	}
 
 	// Initialise the new service.
-	err = item.ServiceInit(s)
+	err = item.ServiceInit(ctx, s)
 	if err != nil {
 		retErr := fmt.Errorf("failed to initialise %s service at host: %v", payload.Name, err)
 		logger.Error(retErr.Error())
@@ -100,7 +100,7 @@ func EnableService(s interfaces.StateInterface, payload types.EnableService, ite
 	}
 
 	// Perform DB updates to persist the service enablement changes.
-	err = item.DbUpdate(s)
+	err = item.DbUpdate(ctx, s)
 	if err != nil {
 		retErr := fmt.Errorf("failed to add DB record for %s: %v", payload.Name, err)
 		logger.Error(retErr.Error())

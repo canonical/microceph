@@ -17,8 +17,8 @@ import (
 //
 //go:generate mockery --name MemberCounterInterface
 type MemberCounterInterface interface {
-	Count(s *state.State) (int, error)
-	CountExclude(s *state.State, exclude int64) (int, error)
+	Count(ctx context.Context, s state.State) (int, error)
+	CountExclude(ctx context.Context, s state.State, exclude int64) (int, error)
 }
 
 type MemberCounterImpl struct{}
@@ -87,10 +87,10 @@ func MembersDiskCnt(ctx context.Context, tx *sql.Tx, exclude int64) ([]MemberDis
 }
 
 // Count returns the number of nodes in the cluster with at least one disk
-func (m MemberCounterImpl) Count(s *state.State) (int, error) {
+func (m MemberCounterImpl) Count(ctx context.Context, s state.State) (int, error) {
 	var numNodes int
 
-	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		records, err := MembersDiskCnt(ctx, tx, -1)
 		if err != nil {
 			return fmt.Errorf("Failed to fetch disks: %w", err)
@@ -105,10 +105,10 @@ func (m MemberCounterImpl) Count(s *state.State) (int, error) {
 }
 
 // CountExclude returns the number of nodes in the cluster with at least one disk, excluding the given OSD
-func (m MemberCounterImpl) CountExclude(s *state.State, exclude int64) (int, error) {
+func (m MemberCounterImpl) CountExclude(ctx context.Context, s state.State, exclude int64) (int, error) {
 	var numNodes int
 
-	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		records, err := MembersDiskCnt(ctx, tx, exclude)
 		if err != nil {
 			return fmt.Errorf("Failed to fetch disks: %w", err)
@@ -127,11 +127,11 @@ var MemberCounter MemberCounterInterface = MemberCounterImpl{}
 
 // OSDQueryInterface is for querying OSDs. Introduced for mocking.
 type OSDQueryInterface interface {
-	HaveOSD(s *state.State, osd int64) (bool, error)
-	Path(s *state.State, osd int64) (string, error)
-	Delete(s *state.State, osd int64) error
-	List(s *state.State) (types.Disks, error)
-	UpdatePath(s *state.State, osd int64, path string) error
+	HaveOSD(ctx context.Context, s state.State, osd int64) (bool, error)
+	Path(ctx context.Context, s state.State, osd int64) (string, error)
+	Delete(ctx context.Context, s state.State, osd int64) error
+	List(ctx context.Context, s state.State) (types.Disks, error)
+	UpdatePath(ctx context.Context, s state.State, osd int64, path string) error
 }
 
 type OSDQueryImpl struct{}
@@ -155,10 +155,10 @@ WHERE disks.id = ?
 `)
 
 // HaveOSD returns either false or true depending on whether the given OSD is present in the cluster
-func (o OSDQueryImpl) HaveOSD(s *state.State, osd int64) (bool, error) {
+func (o OSDQueryImpl) HaveOSD(ctx context.Context, s state.State, osd int64) (bool, error) {
 	var present int
 
-	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		sqlStmt, err := cluster.Stmt(tx, haveOsd)
 		if err != nil {
 			return fmt.Errorf("Failed to get \"haveOsd\" prepared statement: %w", err)
@@ -177,10 +177,10 @@ func (o OSDQueryImpl) HaveOSD(s *state.State, osd int64) (bool, error) {
 }
 
 // Path returns the path of the given OSD
-func (o OSDQueryImpl) Path(s *state.State, osd int64) (string, error) {
+func (o OSDQueryImpl) Path(ctx context.Context, s state.State, osd int64) (string, error) {
 	var path string
 
-	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		sqlStmt, err := cluster.Stmt(tx, osdPath)
 		if err != nil {
 			return fmt.Errorf("Failed to get \"osdPath\" prepared statement: %w", err)
@@ -199,22 +199,22 @@ func (o OSDQueryImpl) Path(s *state.State, osd int64) (string, error) {
 }
 
 // Delete OSD records for the given OSD
-func (o OSDQueryImpl) Delete(s *state.State, osd int64) error {
-	path, err := o.Path(s, osd)
+func (o OSDQueryImpl) Delete(ctx context.Context, s state.State, osd int64) error {
+	path, err := o.Path(ctx, s, osd)
 	if err != nil {
 		return err
 	}
-	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return DeleteDisk(ctx, tx, s.Name(), path)
 	})
 	return err
 }
 
 // List OSD records
-func (o OSDQueryImpl) List(s *state.State) (types.Disks, error) {
+func (o OSDQueryImpl) List(ctx context.Context, s state.State) (types.Disks, error) {
 	disks := types.Disks{}
 	// Get the OSDs from the database.
-	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		records, err := GetDisks(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("Failed to fetch disks: %w", err)
@@ -237,8 +237,8 @@ func (o OSDQueryImpl) List(s *state.State) (types.Disks, error) {
 }
 
 // UpdatePath updates the path of the given OSD
-func (o OSDQueryImpl) UpdatePath(s *state.State, osd int64, path string) error {
-	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+func (o OSDQueryImpl) UpdatePath(ctx context.Context, s state.State, osd int64, path string) error {
+	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		sqlStmt, err := cluster.Stmt(tx, updatePath)
 		if err != nil {
 			return fmt.Errorf("failed to get \"updatePath\" prepared statement: %w", err)
