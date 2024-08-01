@@ -26,7 +26,7 @@ package database
 
 type ClientConfigItem struct {
 	ID    int
-	Host  string `db:"primary=yes&join=internal_cluster_members.name&joinon=client_config.member_id"`
+	Host  string `db:"primary=yes&join=core_cluster_members.name&joinon=client_config.member_id"`
 	Key   string `db:"primary=yes"`
 	Value string
 }

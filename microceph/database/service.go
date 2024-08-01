@@ -25,7 +25,7 @@ package database
 // Service is used to track the Ceph services running on a particular server.
 type Service struct {
 	ID      int
-	Member  string `db:"primary=yes&join=internal_cluster_members.name&joinon=services.member_id"`
+	Member  string `db:"primary=yes&join=core_cluster_members.name&joinon=services.member_id"`
 	Service string `db:"primary=yes"`
 }
 
