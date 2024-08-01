@@ -8,7 +8,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )

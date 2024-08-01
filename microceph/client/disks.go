@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
-	microCli "github.com/canonical/microcluster/client"
+	microCli "github.com/canonical/microcluster/v2/client"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )

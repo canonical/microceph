@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	"github.com/canonical/lxd/shared/logger"
-	microCli "github.com/canonical/microcluster/client"
-	"github.com/canonical/microcluster/microcluster"
-	"github.com/canonical/microcluster/state"
+	microCli "github.com/canonical/microcluster/v2/client"
+	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/client"
 )

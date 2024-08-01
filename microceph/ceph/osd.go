@@ -27,7 +27,7 @@ import (
 
 	"github.com/canonical/lxd/lxd/resources"
 	"github.com/canonical/lxd/shared"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/state"
 	"github.com/pborman/uuid"
 
 	"github.com/canonical/microceph/microceph/api/types"

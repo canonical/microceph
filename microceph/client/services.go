@@ -8,8 +8,8 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microcluster/client"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/client"
+	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )
