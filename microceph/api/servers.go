@@ -6,8 +6,8 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
-var Servers = []rest.Server{
-	{
+var Servers = map[string]rest.Server{
+	"microceph": {
 		CoreAPI:   true,
 		ServeUnix: true,
 		Resources: []rest.Resources{
