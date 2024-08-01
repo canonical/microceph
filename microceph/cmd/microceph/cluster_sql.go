@@ -37,7 +37,7 @@ func (c *cmdClusterSQL) Run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
 	}

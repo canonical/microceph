@@ -43,7 +43,7 @@ func (c *cmdClusterConfigSet) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("configuring key %s is not allowed. \nPermitted Keys: %v", args[0], allowList.Keys())
 	}
 
-	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return fmt.Errorf("unable to configure MicroCeph: %w", err)
 	}
