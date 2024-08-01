@@ -230,8 +230,8 @@ func switchFailureDomain(old string, new string) error {
 // updateFailureDomain checks if we need to update the crush rules failure domain.
 // Once we have at least 3 nodes with at least 1 OSD each, we set the failure domain to host.
 // Currently this function only handles scale-up scenarios, i.e. adding a new node.
-func updateFailureDomain(s *state.State) error {
-	numNodes, err := database.MemberCounter.Count(s)
+func updateFailureDomain(ctx context.Context, s state.State) error {
+	numNodes, err := database.MemberCounter.Count(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to count members: %w", err)
 	}
@@ -363,7 +363,7 @@ func createBackingFile(dir string, size uint64) (string, error) {
 }
 
 // AddLoopBackOSDs adds OSDs to the cluster backed by loopback files
-func AddLoopBackOSDs(s *state.State, spec string) error {
+func AddLoopBackOSDs(ctx context.Context, s state.State, spec string) error {
 	size, num, err := parseBackingSpec(spec)
 	if err != nil {
 		return err
@@ -378,7 +378,7 @@ func AddLoopBackOSDs(s *state.State, spec string) error {
 	}
 	// create backing files in a loop and add them to the cluster
 	for i := 0; i < num; i++ {
-		err = AddOSD(s, types.DiskParameter{LoopSize: size}, nil, nil)
+		err = AddOSD(ctx, s, types.DiskParameter{LoopSize: size}, nil, nil)
 		if err != nil {
 			return fmt.Errorf("failed to add loop OSD: %w", err)
 		}
@@ -465,12 +465,12 @@ func prepareValidationFailureResp(disks []types.DiskParameter, err error) types.
 }
 
 // AddBulkDisks adds multiple disks as OSDs and generates the API response for request.
-func AddBulkDisks(s *state.State, disks []types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddResponse {
+func AddBulkDisks(ctx context.Context, s state.State, disks []types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddResponse {
 	ret := types.DiskAddResponse{}
 
 	if len(disks) == 1 {
 		// Add single disk with requested WAL/DB devices.
-		resp := AddSingleDisk(s, disks[0], wal, db)
+		resp := AddSingleDisk(ctx, s, disks[0], wal, db)
 		ret.Reports = append(ret.Reports, resp)
 		ret.ValidationError = "" // Validation is done for batch requests.
 		return ret
@@ -487,7 +487,7 @@ func AddBulkDisks(s *state.State, disks []types.DiskParameter, wal *types.DiskPa
 
 	// Add all requested disks.
 	for _, disk := range disks {
-		resp := AddSingleDisk(s, disk, nil, nil)
+		resp := AddSingleDisk(ctx, s, disk, nil, nil)
 		ret.Reports = append(ret.Reports, resp)
 	}
 
@@ -495,17 +495,17 @@ func AddBulkDisks(s *state.State, disks []types.DiskParameter, wal *types.DiskPa
 }
 
 // AddSingleDisk is a wrapper around AddOSD which logs disk addition failures and returns a formatted response.
-func AddSingleDisk(s *state.State, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
+func AddSingleDisk(ctx context.Context, s state.State, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
 	if strings.Contains(disk.Path, constants.LoopSpecId) {
 		// Add file based OSDs.
-		err := AddLoopBackOSDs(s, disk.Path)
+		err := AddLoopBackOSDs(ctx, s, disk.Path)
 		if err != nil {
 			logger.Errorf("failed to add disk: spec %s, err %v", disk.Path, err)
 			return types.DiskAddReport{Path: disk.Path, Report: "Failure", Error: err.Error()}
 		}
 	} else {
 		// Add physical disk based OSD.
-		err := AddOSD(s, disk, wal, db)
+		err := AddOSD(ctx, s, disk, wal, db)
 		if err != nil {
 			logger.Errorf("failed to add disk: path %s, err %v", disk.Path, err)
 			// return failure as response.
@@ -519,7 +519,7 @@ func AddSingleDisk(s *state.State, disk types.DiskParameter, wal *types.DiskPara
 
 // AddOSD adds an OSD to the cluster, given the data, WAL and DB devices and their respective
 // flags for wiping and encrypting.
-func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
+func AddOSD(ctx context.Context, s state.State, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
 	logger.Debugf("Adding OSD %s", data.Path)
 
 	var err error
@@ -548,7 +548,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 
 	// Record the disk.
 	var nr int64
-	err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		nr, err = database.CreateDisk(ctx, tx, database.Disk{Member: s.Name(), Path: data.Path})
 		if err != nil {
 			return fmt.Errorf("failed to record disk: %w", err)
@@ -566,7 +566,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	// if we fail later, make sure we free up the record
 	revert.Add(func() {
 		os.RemoveAll(osdDataPath)
-		s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+		s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 			database.DeleteDisk(ctx, tx, s.Name(), data.Path)
 			return nil
 		})
@@ -586,8 +586,8 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 		}
 		data.Path = backing
 		// update db, it didn't have a path before
-		err = s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
-			err = database.OSDQuery.UpdatePath(s, nr, backing)
+		err = s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			err = database.OSDQuery.UpdatePath(ctx, s, nr, backing)
 			if err != nil {
 				return fmt.Errorf("failed to update disk record: %w", err)
 			}
@@ -630,7 +630,7 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 	}
 
 	// Maybe update the failure domain
-	err = updateFailureDomain(s)
+	err = updateFailureDomain(ctx, s)
 	if err != nil {
 		return err
 	}
@@ -641,12 +641,12 @@ func AddOSD(s *state.State, data types.DiskParameter, wal *types.DiskParameter, 
 }
 
 // ListOSD lists current OSD disks
-func ListOSD(s *state.State) (types.Disks, error) {
-	return database.OSDQuery.List(s)
+func ListOSD(ctx context.Context, s state.State) (types.Disks, error) {
+	return database.OSDQuery.List(ctx, s)
 }
 
 // RemoveOSD removes an OSD disk
-func RemoveOSD(s interfaces.StateInterface, osd int64, bypassSafety bool, timeout int64) error {
+func RemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, bypassSafety bool, timeout int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(timeout))
 	defer cancel()
 	err := doRemoveOSD(ctx, s, osd, bypassSafety)
@@ -662,14 +662,14 @@ func RemoveOSD(s interfaces.StateInterface, osd int64, bypassSafety bool, timeou
 }
 
 // sanityCheck checks if input is valid
-func sanityCheck(s interfaces.StateInterface, osd int64) error {
+func sanityCheck(ctx context.Context, s interfaces.StateInterface, osd int64) error {
 	// check osd is positive
 	if osd < 0 {
 		return fmt.Errorf("OSD must be a positive integer")
 	}
 
 	// check if the OSD exists in the database
-	exists, err := database.OSDQuery.HaveOSD(s.ClusterState(), osd)
+	exists, err := database.OSDQuery.HaveOSD(ctx, s.ClusterState(), osd)
 	if err != nil {
 		return err
 	}
@@ -681,7 +681,7 @@ func sanityCheck(s interfaces.StateInterface, osd int64) error {
 
 // IsDowngradeNeeded checks if we need to downgrade the failure domain from 'host' to 'osd' level
 // if we remove the given OSD
-func IsDowngradeNeeded(s interfaces.StateInterface, osd int64) (bool, error) {
+func IsDowngradeNeeded(ctx context.Context, s interfaces.StateInterface, osd int64) (bool, error) {
 	currentRule, err := getDefaultCrushRule()
 	if err != nil {
 		return false, err
@@ -696,7 +696,7 @@ func IsDowngradeNeeded(s interfaces.StateInterface, osd int64) (bool, error) {
 		logger.Infof("No need to downgrade auto failure domain, current rule is %v", currentRule)
 		return false, nil
 	}
-	numNodes, err := database.MemberCounter.CountExclude(s.ClusterState(), osd)
+	numNodes, err := database.MemberCounter.CountExclude(ctx, s.ClusterState(), osd)
 	logger.Infof("Number of nodes excluding osd.%v: %v", osd, numNodes)
 	if err != nil {
 		return false, err
@@ -708,8 +708,8 @@ func IsDowngradeNeeded(s interfaces.StateInterface, osd int64) (bool, error) {
 }
 
 // scaleDownFailureDomain scales down the failure domain from 'host' to 'osd' level
-func scaleDownFailureDomain(s interfaces.StateInterface, osd int64) error {
-	needDowngrade, err := IsDowngradeNeeded(s, osd)
+func scaleDownFailureDomain(ctx context.Context, s interfaces.StateInterface, osd int64) error {
+	needDowngrade, err := IsDowngradeNeeded(ctx, s, osd)
 	logger.Debugf("Downgrade needed: %v", needDowngrade)
 	if err != nil {
 		return err
@@ -785,7 +785,7 @@ func purgeOSD(osd int64) error {
 	return nil
 }
 
-func wipeDevice(s interfaces.StateInterface, path string) {
+func wipeDevice(ctx context.Context, s interfaces.StateInterface, path string) {
 	var err error
 	// wipe the device, retry with exponential backoff
 	retries := 8
@@ -826,20 +826,20 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	var err error
 
 	// general sanity
-	err = sanityCheck(s, osd)
+	err = sanityCheck(ctx, s, osd)
 	if err != nil {
 		return err
 	}
 
 	if !bypassSafety {
 		// check: at least 3 OSDs
-		err = checkMinOSDs(s, osd)
+		err = checkMinOSDs(ctx, s, osd)
 		if err != nil {
 			return err
 		}
 	}
 
-	err = scaleDownFailureDomain(s, osd)
+	err = scaleDownFailureDomain(ctx, s, osd)
 	if err != nil {
 		return err
 	}
@@ -886,7 +886,7 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 		}
 	}
 
-	err = clearStorage(s, osd)
+	err = clearStorage(ctx, s, osd)
 	if err != nil {
 		// log error but don't fail, we still want to remove the OSD from the cluster
 		logger.Errorf("Failed to clear storage for osd.%d: %v", osd, err)
@@ -898,7 +898,7 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 		return err
 	}
 	// Remove db entry
-	err = database.OSDQuery.Delete(s.ClusterState(), osd)
+	err = database.OSDQuery.Delete(ctx, s.ClusterState(), osd)
 	if err != nil {
 		logger.Errorf("Failed to remove osd.%d from database: %v", osd, err)
 		return fmt.Errorf("failed to remove osd.%d from database: %w", osd, err)
@@ -906,8 +906,8 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	return nil
 }
 
-func clearStorage(s interfaces.StateInterface, osd int64) error {
-	path, err := database.OSDQuery.Path(s.ClusterState(), osd)
+func clearStorage(ctx context.Context, s interfaces.StateInterface, osd int64) error {
+	path, err := database.OSDQuery.Path(ctx, s.ClusterState(), osd)
 	if err != nil {
 		return err
 	}
@@ -924,15 +924,15 @@ func clearStorage(s interfaces.StateInterface, osd int64) error {
 	}
 	if fileInfo.Mode()&os.ModeDevice != 0 {
 		// wipe the device
-		wipeDevice(s, path)
+		wipeDevice(ctx, s, path)
 	}
 	// backing files etc. are being removed later along with config
 	return nil
 }
 
-func checkMinOSDs(s interfaces.StateInterface, osd int64) error {
+func checkMinOSDs(ctx context.Context, s interfaces.StateInterface, osd int64) error {
 	// check if we have at least 3 OSDs post-removal
-	disks, err := database.OSDQuery.List(s.ClusterState())
+	disks, err := database.OSDQuery.List(ctx, s.ClusterState())
 	if err != nil {
 		return err
 	}

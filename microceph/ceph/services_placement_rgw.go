@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -28,9 +29,9 @@ func (rgw *RgwServicePlacement) HospitalityCheck(s interfaces.StateInterface) er
 	return genericHospitalityCheck("rgw")
 }
 
-func (rgw *RgwServicePlacement) ServiceInit(s interfaces.StateInterface) error {
+func (rgw *RgwServicePlacement) ServiceInit(ctx context.Context, s interfaces.StateInterface) error {
 	// fetch configs from db
-	config, err := getConfigDb(s)
+	config, err := getConfigDb(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to get config db: %w", err)
 	}
@@ -42,6 +43,6 @@ func (rgw *RgwServicePlacement) PostPlacementCheck(s interfaces.StateInterface) 
 	return genericPostPlacementCheck("rgw")
 }
 
-func (rgw *RgwServicePlacement) DbUpdate(s interfaces.StateInterface) error {
-	return genericDbUpdate(s, "rgw")
+func (rgw *RgwServicePlacement) DbUpdate(ctx context.Context, s interfaces.StateInterface) error {
+	return genericDbUpdate(ctx, s, "rgw")
 }

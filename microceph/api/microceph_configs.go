@@ -28,7 +28,7 @@ var logLevelCmd = rest.Endpoint{
 	Get:  rest.EndpointAction{Handler: logLevelGet, ProxyTarget: true},
 }
 
-func logLevelPut(s *state.State, r *http.Request) response.Response {
+func logLevelPut(s state.State, r *http.Request) response.Response {
 	var req types.LogLevelPut
 
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -46,6 +46,6 @@ func logLevelPut(s *state.State, r *http.Request) response.Response {
 	return response.EmptySyncResponse
 }
 
-func logLevelGet(s *state.State, r *http.Request) response.Response {
+func logLevelGet(s state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, ceph.GetLogLevel())
 }

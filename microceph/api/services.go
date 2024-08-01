@@ -24,8 +24,8 @@ var servicesCmd = rest.Endpoint{
 	Get: rest.EndpointAction{Handler: cmdServicesGet, ProxyTarget: true},
 }
 
-func cmdServicesGet(s *state.State, r *http.Request) response.Response {
-	services, err := ceph.ListServices(s)
+func cmdServicesGet(s state.State, r *http.Request) response.Response {
+	services, err := ceph.ListServices(r.Context(), s)
 	if err != nil {
 		return response.InternalError(err)
 	}
@@ -55,7 +55,7 @@ var rgwServiceCmd = rest.Endpoint{
 	Delete: rest.EndpointAction{Handler: cmdRGWServiceDelete, ProxyTarget: true},
 }
 
-func cmdEnableServicePut(s *state.State, r *http.Request) response.Response {
+func cmdEnableServicePut(s state.State, r *http.Request) response.Response {
 	var payload types.EnableService
 
 	err := json.NewDecoder(r.Body).Decode(&payload)
@@ -64,7 +64,7 @@ func cmdEnableServicePut(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	err = ceph.ServicePlacementHandler(interfaces.CephState{State: s}, payload)
+	err = ceph.ServicePlacementHandler(r.Context(), interfaces.CephState{State: s}, payload)
 	if err != nil {
 		return response.SyncResponse(false, err)
 	}
@@ -78,7 +78,7 @@ var restartServiceCmd = rest.Endpoint{
 	Post: rest.EndpointAction{Handler: cmdRestartServicePost, ProxyTarget: true},
 }
 
-func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
+func cmdRestartServicePost(s state.State, r *http.Request) response.Response {
 	var services types.Services
 
 	err := json.NewDecoder(r.Body).Decode(&services)
@@ -97,7 +97,7 @@ func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
 		}
 	}
 
-	clusterServices, err := ceph.ListServices(s)
+	clusterServices, err := ceph.ListServices(r.Context(), s)
 	if err != nil {
 		logger.Errorf("failed fetching services from db: %v", err)
 		return response.SyncResponse(false, err)
@@ -116,7 +116,7 @@ func cmdRestartServicePost(s *state.State, r *http.Request) response.Response {
 }
 
 // cmdDeleteService handles service deletion.
-func cmdDeleteService(s *state.State, r *http.Request) response.Response {
+func cmdDeleteService(s state.State, r *http.Request) response.Response {
 	which := path.Base(r.URL.Path)
 	_, ok := ceph.GetConfigTableServiceSet()[which]
 	if !ok {
@@ -125,7 +125,7 @@ func cmdDeleteService(s *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	err := ceph.DeleteService(interfaces.CephState{State: s}, which)
+	err := ceph.DeleteService(r.Context(), interfaces.CephState{State: s}, which)
 	if err != nil {
 		return response.SyncResponse(false, err)
 	}
@@ -133,8 +133,8 @@ func cmdDeleteService(s *state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, nil)
 }
 
-func cmdRGWServiceDelete(s *state.State, r *http.Request) response.Response {
-	err := ceph.DisableRGW(interfaces.CephState{State: s})
+func cmdRGWServiceDelete(s state.State, r *http.Request) response.Response {
+	err := ceph.DisableRGW(r.Context(), interfaces.CephState{State: s})
 	if err != nil {
 		logger.Errorf("Failed disabling RGW: %v", err)
 		return response.SmartError(err)

@@ -20,7 +20,7 @@ var poolsCmd = rest.Endpoint{
 	Put:  rest.EndpointAction{Handler: cmdPoolsPut, ProxyTarget: true},
 }
 
-func cmdPoolsPut(s *state.State, r *http.Request) response.Response {
+func cmdPoolsPut(s state.State, r *http.Request) response.Response {
 	var req types.PoolPut
 
 	err := json.NewDecoder(r.Body).Decode(&req)

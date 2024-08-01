@@ -5,11 +5,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/pborman/uuid"
 
@@ -19,7 +20,7 @@ import (
 )
 
 // Bootstrap will initialize a new Ceph deployment.
-func Bootstrap(s interfaces.StateInterface, data common.BootstrapConfig) error {
+func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.BootstrapConfig) error {
 	pathConsts := constants.GetPathConst()
 	pathFileMode := constants.GetPathFileMode()
 
@@ -98,7 +99,7 @@ func Bootstrap(s interfaces.StateInterface, data common.BootstrapConfig) error {
 	}
 
 	// Update the database.
-	err = populateDatabase(s, fsid, adminKey, data)
+	err = populateDatabase(ctx, s, fsid, adminKey, data)
 	if err != nil {
 		return err
 	}
@@ -121,7 +122,7 @@ func Bootstrap(s interfaces.StateInterface, data common.BootstrapConfig) error {
 	}
 
 	// Re-generate the configuration from the database.
-	err = UpdateConfig(s)
+	err = UpdateConfig(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to re-generate the configuration: %w", err)
 	}
@@ -265,11 +266,11 @@ func initMgr(s interfaces.StateInterface, dataPath string) error {
 }
 
 // populateDatabase injects the bootstrap entries to the internal database.
-func populateDatabase(s interfaces.StateInterface, fsid string, adminKey string, data common.BootstrapConfig) error {
+func populateDatabase(ctx context.Context, s interfaces.StateInterface, fsid string, adminKey string, data common.BootstrapConfig) error {
 	if s.ClusterState().Database == nil {
 		return fmt.Errorf("no database")
 	}
-	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the roles.
 		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mon"})
 		if err != nil {

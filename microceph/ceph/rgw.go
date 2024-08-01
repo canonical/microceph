@@ -75,7 +75,7 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 }
 
 // DisableRGW disables the RGW service on the cluster.
-func DisableRGW(s interfaces.StateInterface) error {
+func DisableRGW(ctx context.Context, s interfaces.StateInterface) error {
 	pathConsts := constants.GetPathConst()
 
 	err := stopRGW()
@@ -83,7 +83,7 @@ func DisableRGW(s interfaces.StateInterface) error {
 		return fmt.Errorf("Failed to stop RGW service: %w", err)
 	}
 
-	err = removeServiceDatabase(s, "rgw")
+	err = removeServiceDatabase(ctx, s, "rgw")
 	if err != nil {
 		return err
 	}
@@ -120,12 +120,12 @@ func DisableRGW(s interfaces.StateInterface) error {
 }
 
 // rgwCreateServiceDatabase creates a rgw service record in the database.
-func rgwCreateServiceDatabase(s interfaces.StateInterface) error {
+func rgwCreateServiceDatabase(ctx context.Context, s interfaces.StateInterface) error {
 	if s.ClusterState().Database == nil {
 		return fmt.Errorf("no database")
 	}
 
-	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		// Create the service.
 		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "rgw"})
 		if err != nil {
