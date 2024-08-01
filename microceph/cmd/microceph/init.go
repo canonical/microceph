@@ -128,7 +128,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 				}
 
 				// Issue the token.
-				token, err := m.NewJoinToken(context.Background(), tokenName)
+				token, err := m.NewJoinToken(context.Background(), tokenName, 3*time.Hour)
 				if err != nil {
 					return err
 				}
