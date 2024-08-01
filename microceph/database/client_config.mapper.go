@@ -18,45 +18,45 @@ import (
 var _ = api.ServerEnvironment{}
 
 var clientConfigItemObjects = cluster.RegisterStmt(`
-SELECT client_config.id, internal_cluster_members.name AS host, client_config.key, client_config.value
+SELECT client_config.id, core_cluster_members.name AS host, client_config.key, client_config.value
   FROM client_config
-  JOIN internal_cluster_members ON client_config.member_id = internal_cluster_members.id
-  ORDER BY internal_cluster_members.id, client_config.key
+  JOIN core_cluster_members ON client_config.member_id = core_cluster_members.id
+  ORDER BY core_cluster_members.id, client_config.key
 `)
 
 var clientConfigItemObjectsByKey = cluster.RegisterStmt(`
-SELECT client_config.id, internal_cluster_members.name AS host, client_config.key, client_config.value
+SELECT client_config.id, core_cluster_members.name AS host, client_config.key, client_config.value
   FROM client_config
-  JOIN internal_cluster_members ON client_config.member_id = internal_cluster_members.id
+  JOIN core_cluster_members ON client_config.member_id = core_cluster_members.id
   WHERE ( client_config.key = ? )
-  ORDER BY internal_cluster_members.id, client_config.key
+  ORDER BY core_cluster_members.id, client_config.key
 `)
 
 var clientConfigItemObjectsByHost = cluster.RegisterStmt(`
-SELECT client_config.id, internal_cluster_members.name AS host, client_config.key, client_config.value
+SELECT client_config.id, core_cluster_members.name AS host, client_config.key, client_config.value
   FROM client_config
-  JOIN internal_cluster_members ON client_config.member_id = internal_cluster_members.id
+  JOIN core_cluster_members ON client_config.member_id = core_cluster_members.id
   WHERE ( host = ? )
-  ORDER BY internal_cluster_members.id, client_config.key
+  ORDER BY core_cluster_members.id, client_config.key
 `)
 
 var clientConfigItemObjectsByKeyAndHost = cluster.RegisterStmt(`
-SELECT client_config.id, internal_cluster_members.name AS host, client_config.key, client_config.value
+SELECT client_config.id, core_cluster_members.name AS host, client_config.key, client_config.value
   FROM client_config
-  JOIN internal_cluster_members ON client_config.member_id = internal_cluster_members.id
+  JOIN core_cluster_members ON client_config.member_id = core_cluster_members.id
   WHERE ( client_config.key = ? AND host = ? )
-  ORDER BY internal_cluster_members.id, client_config.key
+  ORDER BY core_cluster_members.id, client_config.key
 `)
 
 var clientConfigItemID = cluster.RegisterStmt(`
 SELECT client_config.id FROM client_config
-  JOIN internal_cluster_members ON client_config.member_id = internal_cluster_members.id
-  WHERE internal_cluster_members.name = ? AND client_config.key = ?
+  JOIN core_cluster_members ON client_config.member_id = core_cluster_members.id
+  WHERE core_cluster_members.name = ? AND client_config.key = ?
 `)
 
 var clientConfigItemCreate = cluster.RegisterStmt(`
 INSERT INTO client_config (member_id, key, value)
-  VALUES ((SELECT internal_cluster_members.id FROM internal_cluster_members WHERE internal_cluster_members.name = ?), ?, ?)
+  VALUES ((SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), ?, ?)
 `)
 
 var clientConfigItemDeleteByKey = cluster.RegisterStmt(`
@@ -64,23 +64,23 @@ DELETE FROM client_config WHERE key = ?
 `)
 
 var clientConfigItemDeleteByHost = cluster.RegisterStmt(`
-DELETE FROM client_config WHERE member_id = (SELECT internal_cluster_members.id FROM internal_cluster_members WHERE internal_cluster_members.name = ?)
+DELETE FROM client_config WHERE member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?)
 `)
 
 var clientConfigItemDeleteByKeyAndHost = cluster.RegisterStmt(`
-DELETE FROM client_config WHERE key = ? AND member_id = (SELECT internal_cluster_members.id FROM internal_cluster_members WHERE internal_cluster_members.name = ?)
+DELETE FROM client_config WHERE key = ? AND member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?)
 `)
 
 var clientConfigItemUpdate = cluster.RegisterStmt(`
 UPDATE client_config
-  SET member_id = (SELECT internal_cluster_members.id FROM internal_cluster_members WHERE internal_cluster_members.name = ?), key = ?, value = ?
+  SET member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), key = ?, value = ?
  WHERE id = ?
 `)
 
 // clientConfigItemColumns returns a string of column names to be used with a SELECT statement for the entity.
 // Use this function when building statements to retrieve database entries matching the ClientConfigItem entity.
 func clientConfigItemColumns() string {
-	return "client_config.id, internal_cluster_members.name AS host, client_config.key, client_config.value"
+	return "client_config.id, core_cluster_members.name AS host, client_config.key, client_config.value"
 }
 
 // getClientConfigItems can be used to run handwritten sql.Stmts to return a slice of objects.

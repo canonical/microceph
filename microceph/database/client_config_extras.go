@@ -35,7 +35,7 @@ INSERT OR REPLACE INTO client_config (member_id, key, value)
 
 var clientConfigItemCreateOrUpdate = cluster.RegisterStmt(`
 INSERT OR REPLACE INTO client_config (member_id, key, value)
-  VALUES ((SELECT internal_cluster_members.id FROM internal_cluster_members WHERE internal_cluster_members.name = ?), ?, ?)
+  VALUES ((SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), ?, ?)
 `)
 
 // Slice of ClientConfigItem(s)
