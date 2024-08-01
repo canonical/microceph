@@ -10,7 +10,6 @@ import (
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/tests"
-	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
@@ -32,14 +31,9 @@ func (s *servicesSuite) SetupTest() {
 
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
 	u := api.NewURL()
-	state := &state.State{
-		Address: func() *api.URL {
-			return u
-		},
-		Name: func() string {
-			return "foohost"
-		},
-		Database: nil,
+	state := mocks.MockState{
+		URL:         u,
+		ClusterName: "foohost",
 	}
 	s.TestStateInterface.On("ClusterState").Return(state).Maybe()
 }

@@ -12,15 +12,15 @@ type StateInterface struct {
 }
 
 // ClusterState provides a mock function with given fields:
-func (_m *StateInterface) ClusterState() *state.State {
+func (_m *StateInterface) ClusterState() state.State {
 	ret := _m.Called()
 
-	var r0 *state.State
-	if rf, ok := ret.Get(0).(func() *state.State); ok {
+	var r0 state.State
+	if rf, ok := ret.Get(0).(func() state.State); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*state.State)
+			r0 = ret.Get(0).(state.State)
 		}
 	}
 

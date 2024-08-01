@@ -1,13 +1,13 @@
 package ceph
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/tests"
-	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
@@ -40,14 +40,9 @@ func addRGWEnableExpectations(r *mocks.Runner) {
 func addStopRGWExpectations(s *rgwSuite, r *mocks.Runner) {
 	u := api.NewURL()
 
-	state := &state.State{
-		Address: func() *api.URL {
-			return u
-		},
-		Name: func() string {
-			return "foohost"
-		},
-		Database: nil,
+	state := &mocks.MockState{
+		URL:         u,
+		ClusterName: "foohost",
 	}
 
 	s.TestStateInterface.On("ClusterState").Return(state)
@@ -172,10 +167,10 @@ func (s *rgwSuite) TestDisableRGW() {
 
 	processExec = r
 
-	err := DisableRGW(s.TestStateInterface)
+	err := DisableRGW(context.Background(), s.TestStateInterface)
 
 	// we expect a missing database error
-	assert.EqualError(s.T(), err, "no database")
+	assert.EqualError(s.T(), err, "no server certificate")
 
 	// check that the radosgw.conf file is absent
 	_, err = os.Stat(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf"))
