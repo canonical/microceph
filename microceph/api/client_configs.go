@@ -175,8 +175,8 @@ func clientConfigUpdate(s *state.State, wait bool) error {
 		}
 	} else { // Execute update asynchronously
 		go func() {
-			client.SendUpdateClientConfRequestToClusterMembers(interfaces.CephState{State: s})
-			ceph.UpdateConfig(interfaces.CephState{State: s}) // Restart on current host.
+			client.SendUpdateClientConfRequestToClusterMembers(context.Background(), interfaces.CephState{State: s})
+			ceph.UpdateConfig(context.Background(), interfaces.CephState{State: s}) // Restart on current host.
 		}()
 	}
 

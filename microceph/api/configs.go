@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -109,8 +110,8 @@ func configChangeRefresh(s *state.State, services []string, wait bool) error {
 		}
 	} else { // Execute restart asynchronously
 		go func() {
-			client.SendRestartRequestToClusterMembers(s, services)
-			ceph.RestartCephServices(interfaces.CephState{State: s}, services) // Restart on current host.
+			client.SendRestartRequestToClusterMembers(context.Background(), s, services)
+			ceph.RestartCephServices(context.Background(), interfaces.CephState{State: s}, services) // Restart on current host.
 		}()
 	}
 
