@@ -121,8 +121,8 @@ func DisableRGW(ctx context.Context, s interfaces.StateInterface) error {
 
 // rgwCreateServiceDatabase creates a rgw service record in the database.
 func rgwCreateServiceDatabase(ctx context.Context, s interfaces.StateInterface) error {
-	if s.ClusterState().Database == nil {
-		return fmt.Errorf("no database")
+	if s.ClusterState().ServerCert() == nil {
+		return fmt.Errorf("no server certificate")
 	}
 
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
