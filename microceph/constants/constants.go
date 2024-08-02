@@ -60,3 +60,6 @@ func GetPathFileMode() PathFileMode {
 		pathConsts.LogPath:  0700,
 	}
 }
+
+// Regexes
+const ClusterNameRegex = "^[a-z0-9]+$"
