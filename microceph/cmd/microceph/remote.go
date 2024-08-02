@@ -85,7 +85,7 @@ func (c *cmdRemoteImport) Run(cmd *cobra.Command, args []string) error {
 
 	// Prepare payload for API request.
 	payload := types.Remote{}
-	payload.Init(c.localName, args[0]) // initialise with local and remote name.
+	payload.Init(c.localName, args[0], false) // initialise with local and remote name.
 	for key, value := range data {
 		payload.Config[key] = fmt.Sprintf("%s", value)
 	}
