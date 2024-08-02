@@ -13,6 +13,7 @@ import (
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
+	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -41,51 +42,27 @@ var CmdRemotePut = func(state *state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	configs := req.Config
-	monHosts := []string{}
-	for k, v := range configs {
-		if strings.Contains(k, "mon.host.") {
-			monHosts = append(monHosts, v)
-		}
-	}
-
-	confFileName := req.Name + ".conf"
-	keyringFileName := req.Name + ".keyring"
-
-	// Populate Template
-	err = ceph.NewCephConfig(confFileName).WriteConfig(
-		map[string]any{
-			"fsid":     configs["fsid"],
-			"monitors": strings.Join(monHosts, ","),
-			"pubNet":   configs["public_network"],
-			"ipv4":     strings.Contains(configs["public_network"], "."),
-			"ipv6":     strings.Contains(configs["public_network"], ":"),
-		},
-		0644,
-	)
+	err = RenderConfAndKeyringFiles(req.Name, req.LocalName, req.Config)
 	if err != nil {
-		return response.InternalError(fmt.Errorf("couldn't render %s: %w", confFileName, err))
+		return response.InternalError(fmt.Errorf("couldn't render files: %w", err))
 	}
 
-	err = ceph.NewCephKeyring(constants.GetPathConst().ConfPath, keyringFileName).WriteConfig(
-		map[string]any{
-			// Local cluster is the client saving remote cluster keyring.
-			"name": fmt.Sprintf("client.%s", req.LocalName),
-			"key":  configs[fmt.Sprintf(constants.AdminKeyringTemplate, req.LocalName)],
-		},
-		0640,
-	)
-	if err != nil {
-		return response.InternalError(fmt.Errorf("couldn't render %s: %w", keyringFileName, err))
-	}
+	if !req.RenderOnly {
+		// Asynchronously persist this on db and send request to other cluster members.
+		go func() {
+			err := PersisteRemoteAndConfigs(interfaces.CephState{State: state}, req)
+			if err != nil {
+				logger.Errorf("failed to persiste remote: %s", err.Error())
+			}
 
-	// Asynchronously persist this on db.
-	go func() {
-		err := PersisteRemoteAndConfigs(interfaces.CephState{State: state}, req)
-		if err != nil {
-			logger.Errorf("failed to persiste remote: %s", err.Error())
-		}
-	}()
+			// Send render only request to remaining cluster members.
+			req.RenderOnly = true
+			err = client.SendRemoteImportToClusterMembers(state, req)
+			if err != nil {
+				logger.Errorf("failed to forward request to cluster: %s", err.Error())
+			}
+		}()
+	}
 
 	return response.EmptySyncResponse
 }
@@ -114,6 +91,8 @@ var CmdRemoteDelete = func(state *state.State, r *http.Request) response.Respons
 		return response.BadRequest(err)
 	}
 
+	// Note(utkarshbhatthere): TODO for when remote replication is implemented.
+	// [ ] add check for remote replication before deleting remotes.
 	err = database.DeleteRemoteDb(*state, remoteName)
 	if err != nil {
 		return response.SmartError(err)
@@ -123,7 +102,7 @@ var CmdRemoteDelete = func(state *state.State, r *http.Request) response.Respons
 }
 
 /*****************HELPER FUNCTIONS**************************/
-// PersisteRemoteAndConfigs adds the remote record  to dqlite.
+// PersisteRemoteAndConfigs adds the remote record to dqlite.
 var PersisteRemoteAndConfigs = func(s interfaces.StateInterface, remote types.Remote) error {
 	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the remote.
@@ -134,6 +113,48 @@ var PersisteRemoteAndConfigs = func(s interfaces.StateInterface, remote types.Re
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// RenderConfAndKeyringFiles generates the $cluster.conf and $cluster.keyring files on the host.
+var RenderConfAndKeyringFiles = func(remoteName string, localName string, configs map[string]string) error {
+	monHosts := []string{}
+	for k, v := range configs {
+		if strings.Contains(k, "mon.host.") {
+			monHosts = append(monHosts, v)
+		}
+	}
+
+	confFileName := remoteName + ".conf"
+	keyringFileName := remoteName + ".keyring"
+
+	// Populate Template
+	err := ceph.NewCephConfig(confFileName).WriteConfig(
+		map[string]any{
+			"fsid":     configs["fsid"],
+			"monitors": strings.Join(monHosts, ","),
+			"pubNet":   configs["public_network"],
+			"ipv4":     strings.Contains(configs["public_network"], "."),
+			"ipv6":     strings.Contains(configs["public_network"], ":"),
+		},
+		0644,
+	)
+	if err != nil {
+		return err
+	}
+
+	err = ceph.NewCephKeyring(constants.GetPathConst().ConfPath, keyringFileName).WriteConfig(
+		map[string]any{
+			// Local cluster is the client saving remote cluster keyring.
+			"name": fmt.Sprintf("client.%s", localName),
+			"key":  configs[fmt.Sprintf(constants.AdminKeyringTemplate, localName)],
+		},
+		0640,
+	)
 	if err != nil {
 		return err
 	}
