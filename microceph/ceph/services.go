@@ -206,8 +206,8 @@ func cleanService(hostname, service string) error {
 
 // removeServiceDatabase removes a service record from the database.
 func removeServiceDatabase(ctx context.Context, s interfaces.StateInterface, service string) error {
-	if s.ClusterState().Database == nil {
-		return fmt.Errorf("no database")
+	if s.ClusterState().ServerCert() == nil {
+		return fmt.Errorf("no server certificate")
 	}
 
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {

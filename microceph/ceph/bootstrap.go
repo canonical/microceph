@@ -267,9 +267,10 @@ func initMgr(s interfaces.StateInterface, dataPath string) error {
 
 // populateDatabase injects the bootstrap entries to the internal database.
 func populateDatabase(ctx context.Context, s interfaces.StateInterface, fsid string, adminKey string, data common.BootstrapConfig) error {
-	if s.ClusterState().Database == nil {
-		return fmt.Errorf("no database")
+	if s.ClusterState().ServerCert() == nil {
+		return fmt.Errorf("no server certificate")
 	}
+
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the roles.
 		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "mon"})
