@@ -151,13 +151,17 @@ function remote_perform_remote_ops_check() {
     # perform ceph ops on sitea (both nodes)
     lxc exec node-wrk0 -- sh -c "microceph.ceph -s" # local ceph status
     lxc exec node-wrk0 -- sh -c "microceph.ceph -s --cluster siteb --id sitea" # remote ceph status
+    lxc exec node-wrk0 -- sh -c "microceph remote list --json | grep '\"Name\":\"siteb\"'"
     lxc exec node-wrk1 -- sh -c "microceph.ceph -s" # local ceph status
     lxc exec node-wrk1 -- sh -c "microceph.ceph -s --cluster siteb --id sitea" # remote ceph status
+    lxc exec node-wrk1 -- sh -c "microceph remote list --json | grep '\"LocalName\":\"sitea\"'"
     # perform ceph ops on siteb (both nodes)
     lxc exec node-wrk2 -- sh -c "microceph.ceph -s" # local ceph status
     lxc exec node-wrk2 -- sh -c "microceph.ceph -s --cluster sitea --id siteb" # remote ceph status
+    lxc exec node-wrk2 -- sh -c "microceph remote list --json | grep '\"Name\":\"sitea\"'"
     lxc exec node-wrk3 -- sh -c "microceph.ceph -s" # local ceph status
     lxc exec node-wrk3 -- sh -c "microceph.ceph -s --cluster sitea --id siteb" # remote ceph status
+    lxc exec node-wrk3 -- sh -c "microceph remote list --json | grep '\"LocalName\":\"siteb\"'"
 }
 
 function install_multinode() {
