@@ -19,11 +19,13 @@ func (c *cmdEnable) Command() *cobra.Command {
 	enableMonCmd := cmdEnableMON{common: c.common}
 	enableMgrCmd := cmdEnableMGR{common: c.common}
 	enableMdsCmd := cmdEnableMDS{common: c.common}
+	enableRbdMirrorCmd := cmdEnableRBDMirror{common: c.common}
 
 	cmd.AddCommand(enableRGWCmd.Command())
 	cmd.AddCommand(enableMonCmd.Command())
 	cmd.AddCommand(enableMgrCmd.Command())
 	cmd.AddCommand(enableMdsCmd.Command())
+	cmd.AddCommand(enableRbdMirrorCmd.Command())
 
 	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
 	cmd.Args = cobra.NoArgs

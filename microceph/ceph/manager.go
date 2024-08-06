@@ -23,7 +23,3 @@ func bootstrapMgr(hostname string, path string) error {
 
 	return nil
 }
-
-func joinMgr(hostname string, path string) error {
-	return bootstrapMgr(hostname, path)
-}
