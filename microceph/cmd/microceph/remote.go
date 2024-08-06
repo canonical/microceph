@@ -17,6 +17,9 @@ func (c *cmdRemote) Command() *cobra.Command {
 	// Import subcommand
 	remoteImportCmd := cmdRemoteImport{common: c.common, remote: c}
 	cmd.AddCommand(remoteImportCmd.Command())
+	// List subcommand
+	remoteListCmd := cmdRemoteList{common: c.common, remote: c}
+	cmd.AddCommand(remoteListCmd.Command())
 
 	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
 	cmd.Args = cobra.NoArgs

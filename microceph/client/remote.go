@@ -45,3 +45,18 @@ func SendRemoteImportToClusterMembers(s *state.State, data types.Remote) error {
 
 	return nil
 }
+
+// Fetch all remotes
+func FetchAllRemotes(ctx context.Context, c *microCli.Client) ([]types.RemoteRecord, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	retval := []types.RemoteRecord{}
+
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("client", "remotes"), nil, &retval)
+	if err != nil {
+		return nil, fmt.Errorf("failed to import MicroCeph remote: %w", err)
+	}
+
+	return retval, nil
+}
