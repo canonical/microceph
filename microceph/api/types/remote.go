@@ -18,3 +18,12 @@ func (r *Remote) Init(localName string, remoteName string, renderOnly bool) *Rem
 type ClusterStateRequest struct {
 	RemoteName string `json:"remote_name" yaml:"remote_name"`
 }
+
+// NOTE (utkarshbhatthere): The member names for this data structure
+// should match the database record structure. This has been taken out
+// since the client package should not import from database package.
+type RemoteRecord struct {
+	ID        int
+	Name      string // remote cluster name
+	LocalName string // local cluster name
+}
