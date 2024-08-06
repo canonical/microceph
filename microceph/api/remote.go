@@ -68,9 +68,12 @@ var CmdRemotePut = func(state *state.State, r *http.Request) response.Response {
 }
 
 var CmdRemoteGet = func(state *state.State, r *http.Request) response.Response {
+	// PathUnescape will NOT fail if no name is provided in API request.
+	// Additionally, remoteName in that case is initialised to "".
 	remoteName, err := url.PathUnescape(mux.Vars(r)["name"])
-	if err == nil {
-		remoteName = ""
+	if err != nil {
+		logger.Error(err.Error())
+		return response.InternalError(err)
 	}
 
 	remotes, err := database.GetRemoteDb(*state, remoteName)
