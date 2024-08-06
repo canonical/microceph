@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/lxd/util"
-	"github.com/canonical/microcluster/microcluster"
+	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/common"
@@ -43,7 +43,7 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return fmt.Errorf("unable to configure MicroCeph: %w", err)
 	}

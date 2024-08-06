@@ -1,19 +1,20 @@
 package ceph
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/canonical/lxd/shared/logger"
-	microCli "github.com/canonical/microcluster/client"
-	"github.com/canonical/microcluster/microcluster"
-	"github.com/canonical/microcluster/state"
+	microCli "github.com/canonical/microcluster/v2/client"
+	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/client"
 )
 
 // PreRemove cleans up the underlying ceph services before the node is removed from the dqlite cluster.
-func PreRemove(m *microcluster.MicroCluster) func(s *state.State, force bool) error {
-	return func(s *state.State, force bool) error {
+func PreRemove(m *microcluster.MicroCluster) func(ctx context.Context, s state.State, force bool) error {
+	return func(ctx context.Context, s state.State, force bool) error {
 		cli, err := m.LocalClient()
 		if err != nil {
 			return err

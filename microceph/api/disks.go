@@ -17,8 +17,8 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/microcluster/rest"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/rest"
+	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
@@ -41,8 +41,8 @@ var disksDelCmd = rest.Endpoint{
 
 var mu sync.Mutex
 
-func cmdDisksGet(s *state.State, r *http.Request) response.Response {
-	disks, err := ceph.ListOSD(s)
+func cmdDisksGet(s state.State, r *http.Request) response.Response {
+	disks, err := ceph.ListOSD(r.Context(), s)
 	if err != nil {
 		return response.InternalError(err)
 	}
@@ -50,7 +50,7 @@ func cmdDisksGet(s *state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, disks)
 }
 
-func cmdDisksPost(s *state.State, r *http.Request) response.Response {
+func cmdDisksPost(s state.State, r *http.Request) response.Response {
 	var req types.DisksPost
 	var wal *types.DiskParameter
 	var db *types.DiskParameter
@@ -88,7 +88,7 @@ func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 		db = &types.DiskParameter{Path: *req.DBDev, Encrypt: req.DBEncrypt, Wipe: req.DBWipe, LoopSize: 0}
 	}
 
-	resp := ceph.AddBulkDisks(s, disks, wal, db)
+	resp := ceph.AddBulkDisks(r.Context(), s, disks, wal, db)
 	if len(resp.ValidationError) == 0 {
 		response.SyncResponse(false, resp)
 	}
@@ -97,7 +97,7 @@ func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 }
 
 // cmdDisksDelete is the handler for DELETE /1.0/disks/{osdid}.
-func cmdDisksDelete(s *state.State, r *http.Request) response.Response {
+func cmdDisksDelete(s state.State, r *http.Request) response.Response {
 	var osd string
 	osd, err := url.PathUnescape(mux.Vars(r)["osdid"])
 	if err != nil {
@@ -122,7 +122,7 @@ func cmdDisksDelete(s *state.State, r *http.Request) response.Response {
 
 	// if check for crush rule scaledown only if crush change is not prohibited.
 	if !req.ProhibitCrushScaledown {
-		needDowngrade, err := ceph.IsDowngradeNeeded(cs, osdid)
+		needDowngrade, err := ceph.IsDowngradeNeeded(r.Context(), cs, osdid)
 		if err != nil {
 			return response.InternalError(err)
 		}
@@ -137,7 +137,7 @@ func cmdDisksDelete(s *state.State, r *http.Request) response.Response {
 		}
 	}
 
-	err = ceph.RemoveOSD(cs, osdid, req.BypassSafety, req.Timeout)
+	err = ceph.RemoveOSD(r.Context(), cs, osdid, req.BypassSafety, req.Timeout)
 	if err != nil {
 		return response.SmartError(err)
 	}

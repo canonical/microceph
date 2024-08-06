@@ -1,13 +1,14 @@
 package ceph
 
 import (
-	"github.com/canonical/microceph/microceph/tests"
+	"context"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/microceph/microceph/tests"
+
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
-	"github.com/canonical/microcluster/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -132,14 +133,9 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 // TestUpdateFailureDomain tests the updateFailureDomain function
 func (s *osdSuite) TestUpdateFailureDomain() {
 	u := api.NewURL()
-	state := &state.State{
-		Address: func() *api.URL {
-			return u
-		},
-		Name: func() string {
-			return "foohost"
-		},
-		Database: nil,
+	state := &mocks.MockState{
+		URL:         u,
+		ClusterName: "foohost",
 	}
 
 	r := mocks.NewRunner(s.T())
@@ -163,7 +159,9 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 	c.On("Count", mock.Anything).Return(3, nil).Once()
 	database.MemberCounter = c
 
-	err := updateFailureDomain(state)
+	s.TestStateInterface = mocks.NewStateInterface(s.T())
+	s.TestStateInterface.On("ClusterState").Return(state).Maybe()
+	err := updateFailureDomain(context.Background(), s.TestStateInterface.ClusterState())
 	assert.NoError(s.T(), err)
 
 }

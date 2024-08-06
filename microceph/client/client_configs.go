@@ -7,7 +7,7 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microcluster/client"
+	"github.com/canonical/microcluster/v2/client"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -79,7 +79,7 @@ func UpdateClientConf(ctx context.Context, c *client.Client) error {
 }
 
 // Sends the update conf request to every other member of the cluster.
-func SendUpdateClientConfRequestToClusterMembers(s interfaces.StateInterface) error {
+func SendUpdateClientConfRequestToClusterMembers(ctx context.Context, s interfaces.StateInterface) error {
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
 	cluster, err := s.ClusterState().Cluster(false)
 	if err != nil {
@@ -89,7 +89,7 @@ func SendUpdateClientConfRequestToClusterMembers(s interfaces.StateInterface) er
 
 	for _, remoteClient := range cluster {
 		// In order send restart to each cluster member and wait.
-		err = UpdateClientConf(s.ClusterState().Context, &remoteClient)
+		err = UpdateClientConf(ctx, &remoteClient)
 		if err != nil {
 			logger.Errorf("update conf error: %v", err)
 			return err

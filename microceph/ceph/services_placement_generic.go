@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/database"
@@ -38,7 +39,7 @@ func (gsp *GenericServicePlacement) HospitalityCheck(s interfaces.StateInterface
 	return genericHospitalityCheck(gsp.Name)
 }
 
-func (gsp *GenericServicePlacement) ServiceInit(s interfaces.StateInterface) error {
+func (gsp *GenericServicePlacement) ServiceInit(ctx context.Context, s interfaces.StateInterface) error {
 	return genericServiceInit(s, gsp.Name)
 }
 
@@ -46,8 +47,8 @@ func (gsp *GenericServicePlacement) PostPlacementCheck(s interfaces.StateInterfa
 	return genericPostPlacementCheck(gsp.Name)
 }
 
-func (gsp *GenericServicePlacement) DbUpdate(s interfaces.StateInterface) error {
-	return genericDbUpdate(s, gsp.Name)
+func (gsp *GenericServicePlacement) DbUpdate(ctx context.Context, s interfaces.StateInterface) error {
+	return genericDbUpdate(ctx, s, gsp.Name)
 }
 
 // Generic Method Implementations
@@ -120,9 +121,9 @@ func genericPostPlacementCheck(service string) error {
 	return nil
 }
 
-func genericDbUpdate(s interfaces.StateInterface, service string) error {
+func genericDbUpdate(ctx context.Context, s interfaces.StateInterface, service string) error {
 	// Update the database.
-	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the roles.
 		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: service})
 		if err != nil {

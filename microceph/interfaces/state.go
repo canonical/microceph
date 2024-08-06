@@ -2,20 +2,20 @@
 package interfaces
 
 import (
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/state"
 )
 
 // StateInterface for retrieving cluster state
 type StateInterface interface {
-	ClusterState() *state.State
+	ClusterState() state.State
 }
 
 // CephState holds cluster state
 type CephState struct {
-	State *state.State
+	State state.State
 }
 
 // ClusterState gets the cluster state
-func (c CephState) ClusterState() *state.State {
+func (c CephState) ClusterState() state.State {
 	return c.State
 }

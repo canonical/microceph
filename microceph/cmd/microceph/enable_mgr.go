@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/canonical/microcluster/microcluster"
+	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -29,7 +29,7 @@ func (c *cmdEnableMGR) Command() *cobra.Command {
 
 // Run handles the enable mgr command.
 func (c *cmdEnableMGR) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
 	}

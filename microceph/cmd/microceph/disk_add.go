@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	lxdCmd "github.com/canonical/lxd/shared/cmd"
-	"github.com/canonical/microcluster/microcluster"
+	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -75,7 +75,7 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("arg validation failed: %w", err)
 	}
 
-	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
 	}

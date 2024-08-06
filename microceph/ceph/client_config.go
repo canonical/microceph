@@ -1,9 +1,11 @@
 package ceph
 
 import (
+	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"reflect"
+
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
@@ -22,11 +24,11 @@ type ClientConfigT struct {
 }
 
 // GetClientConfigForHost fetches all the applicable client configurations for the provided host.
-func GetClientConfigForHost(s interfaces.StateInterface, hostname string) (ClientConfigT, error) {
+func GetClientConfigForHost(ctx context.Context, s interfaces.StateInterface, hostname string) (ClientConfigT, error) {
 	retval := ClientConfigT{}
 
 	// Get all client configs for the current host.
-	configs, err := database.ClientConfigQuery.GetAllForHost(s.ClusterState(), hostname)
+	configs, err := database.ClientConfigQuery.GetAllForHost(ctx, s.ClusterState(), hostname)
 	if err != nil {
 		return ClientConfigT{}, fmt.Errorf("could not query database for client configs: %v", err)
 	}
