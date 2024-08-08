@@ -46,7 +46,7 @@ func SendRemoteImportToClusterMembers(s *state.State, data types.Remote) error {
 	return nil
 }
 
-// Fetch all remotes
+// FetchAllRemotes queries the remote API and returns a slice of configured remote.
 func FetchAllRemotes(ctx context.Context, c *microCli.Client) ([]types.RemoteRecord, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
