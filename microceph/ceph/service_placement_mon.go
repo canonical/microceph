@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
 	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/microceph/microceph/database"
@@ -25,7 +26,7 @@ func (msp *MonServicePlacement) HospitalityCheck(s interfaces.StateInterface) er
 
 // Initialise the new service.
 func (msp *MonServicePlacement) ServiceInit(s interfaces.StateInterface) error {
-	return genericServiceInit(s, msp.Name)
+	return genericServiceInit(s, msp.Name, false)
 }
 
 // Perform Post Placement checks for the service
