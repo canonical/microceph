@@ -164,6 +164,18 @@ function remote_perform_remote_ops_check() {
     lxc exec node-wrk3 -- sh -c "microceph remote list --json | grep '\"LocalName\":\"siteb\"'"
 }
 
+function remote_remove_and_verify() {
+    # Remove the configured remote from MicroCeph
+    lxc exec node-wrk0 -- sh -c "microceph remote remove siteb"
+    # Verify list output
+    match=$((lxc exec node-wrk0 -- sh -c "microceph remote list --json | grep '\"Name\":\"siteb\"'") || true )
+    if [[ $match -ne 0 ]] ; then
+        echo "Remote record still present."
+        lxc exec node-wrk0 -- sh -c "microceph remote list --json"
+        exit -1
+    fi
+}
+
 function install_multinode() {
     # Install and setup microceph snap
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
