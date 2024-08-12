@@ -98,7 +98,7 @@ func genericServiceInit(s interfaces.StateInterface, name string, isClientServic
 
 	if isClientService {
 		// create a symlink to conf folder.
-		err = CreateSymlinkToKeyring(
+		err = createSymlinkToKeyring(
 			filepath.Join(serviceDataPath, "keyring"),
 			filepath.Join(pathConsts.ConfPath, fmt.Sprintf("ceph.client.%s.%s.keyring", name, hostname)),
 		)
@@ -152,7 +152,7 @@ func genericDbUpdate(ctx context.Context, s interfaces.StateInterface, service s
 
 // ================================== HELPERS ==================================
 
-func CreateSymlinkToKeyring(keyringPath string, confPath string) error {
+func createSymlinkToKeyring(keyringPath string, confPath string) error {
 	err := os.Symlink(keyringPath, confPath)
 
 	if err != nil {
