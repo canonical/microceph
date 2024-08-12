@@ -12,7 +12,7 @@ import (
 	"github.com/canonical/microcluster/state"
 )
 
-// Sends the desired list of services to be restarted on every other member of the cluster.
+// SendRemoteImportRequest sends the remote cluster config key-values for persistence.
 func SendRemoteImportRequest(ctx context.Context, c *microCli.Client, data types.Remote) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
@@ -25,7 +25,7 @@ func SendRemoteImportRequest(ctx context.Context, c *microCli.Client, data types
 	return nil
 }
 
-// Sends the remote import request to every other member of the cluster.
+// SendRemoteImportToClusterMembers Sends the remote import request to every other member of the cluster.
 func SendRemoteImportToClusterMembers(s *state.State, data types.Remote) error {
 	// Get a collection of clients to every other cluster member.
 	cluster, err := s.Cluster(false)
@@ -46,7 +46,7 @@ func SendRemoteImportToClusterMembers(s *state.State, data types.Remote) error {
 	return nil
 }
 
-// Fetch all remotes
+// FetchAllRemotes pulls all remote records from MicroCeph.
 func FetchAllRemotes(ctx context.Context, c *microCli.Client) ([]types.RemoteRecord, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()

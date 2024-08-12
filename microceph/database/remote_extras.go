@@ -7,9 +7,29 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microcluster/state"
 )
+
+// PersistRemoteDb adds the remote record to dqlite.
+var PersistRemoteDb = func(s interfaces.StateInterface, remote types.Remote) error {
+	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+		// Record the remote.
+		_, err := CreateRemote(ctx, tx, Remote{LocalName: remote.LocalName, Name: remote.Name})
+		if err != nil {
+			return fmt.Errorf("failed to record remote %s: %w", remote.Name, err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 // GetRemoteDb fetches a single or all remotes (when name == "") from DB.
 var GetRemoteDb = func(s state.State, name string) ([]Remote, error) {

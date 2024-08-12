@@ -1,8 +1,6 @@
 package api
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -50,7 +48,7 @@ var CmdRemotePut = func(state *state.State, r *http.Request) response.Response {
 	if !req.RenderOnly {
 		// Asynchronously persist this on db and send request to other cluster members.
 		go func() {
-			err := PersisteRemoteAndConfigs(interfaces.CephState{State: state}, req)
+			err := database.PersistRemoteDb(interfaces.CephState{State: state}, req)
 			if err != nil {
 				logger.Errorf("failed to persiste remote: %s", err.Error())
 			}
@@ -105,23 +103,6 @@ var CmdRemoteDelete = func(state *state.State, r *http.Request) response.Respons
 }
 
 /*****************HELPER FUNCTIONS**************************/
-// PersisteRemoteAndConfigs adds the remote record to dqlite.
-var PersisteRemoteAndConfigs = func(s interfaces.StateInterface, remote types.Remote) error {
-	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
-		// Record the remote.
-		_, err := database.CreateRemote(ctx, tx, database.Remote{LocalName: remote.LocalName, Name: remote.Name})
-		if err != nil {
-			return fmt.Errorf("failed to record remote %s: %w", remote.Name, err)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
 
 // RenderConfAndKeyringFiles generates the $cluster.conf and $cluster.keyring files on the host.
 var RenderConfAndKeyringFiles = func(remoteName string, localName string, configs map[string]string) error {
