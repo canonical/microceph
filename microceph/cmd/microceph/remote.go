@@ -15,11 +15,14 @@ func (c *cmdRemote) Command() *cobra.Command {
 	}
 
 	// Import subcommand
-	remoteImportCmd := cmdRemoteImport{common: c.common, remote: c}
+	remoteImportCmd := cmdRemoteImport{common: c.common}
 	cmd.AddCommand(remoteImportCmd.Command())
 	// List subcommand
-	remoteListCmd := cmdRemoteList{common: c.common, remote: c}
+	remoteListCmd := cmdRemoteList{common: c.common}
 	cmd.AddCommand(remoteListCmd.Command())
+	// Remove subcommand
+	remoteRemoveCmd := cmdRemoteRemove{common: c.common}
+	cmd.AddCommand(remoteRemoveCmd.Command())
 
 	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
 	cmd.Args = cobra.NoArgs
