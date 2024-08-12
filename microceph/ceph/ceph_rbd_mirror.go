@@ -3,6 +3,8 @@ package ceph
 import (
 	"fmt"
 	"path/filepath"
+
+	"github.com/canonical/lxd/shared/logger"
 )
 
 func bootstrapRbdMirror(hostname string, path string) error {
@@ -17,6 +19,7 @@ func bootstrapRbdMirror(hostname string, path string) error {
 
 	_, err := cephRun(args...)
 	if err != nil {
+		logger.Errorf("failed to bootstrap rbd-mirror daemon: %s", err.Error())
 		return err
 	}
 
