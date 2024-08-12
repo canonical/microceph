@@ -14,7 +14,6 @@ import (
 
 type cmdRemoteImport struct {
 	common    *CmdControl
-	remote    *cmdRemote
 	localName string
 }
 

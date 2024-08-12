@@ -25,6 +25,19 @@ func SendRemoteImportRequest(ctx context.Context, c *microCli.Client, data types
 	return nil
 }
 
+// SendRemoteRemoveRequest sends the remote remove op to MicroCeph.
+func SendRemoteRemoveRequest(ctx context.Context, c *microCli.Client, remote string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("client", "remotes", remote), nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to import MicroCeph remote: %w", err)
+	}
+
+	return nil
+}
+
 // SendRemoteImportToClusterMembers Sends the remote import request to every other member of the cluster.
 func SendRemoteImportToClusterMembers(ctx context.Context, s state.State, data types.Remote) error {
 	// Get a collection of clients to every other cluster member.

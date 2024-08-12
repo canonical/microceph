@@ -15,7 +15,6 @@ import (
 
 type cmdRemoteList struct {
 	common *CmdControl
-	remote *cmdRemote
 	json   bool
 }
 

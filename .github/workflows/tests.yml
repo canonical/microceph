@@ -696,3 +696,6 @@ jobs:
 
     - name: Verify Remote authentication
       run: ~/actionutils.sh remote_perform_remote_ops_check
+
+    - name: Verify Remote removal
+      run: ~/actionutils.sh remote_remove_and_verify
