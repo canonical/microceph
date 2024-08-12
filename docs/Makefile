@@ -53,7 +53,7 @@ woke-install:
 .PHONY:  woke-install
 
 
-install: $(VENVDIR) woke-install
+install: $(VENVDIR)
 
 .PHONY:  install
 
