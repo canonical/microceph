@@ -101,9 +101,13 @@ func DisableRGW(s interfaces.StateInterface) error {
 	}
 
 	// Remove the SSL files.
-	err = os.Remove(pathConsts.SSLFilesPath)
-	if err != nil {
-		return fmt.Errorf("failed to remove RGW SSL files: %w", err)
+	err = os.Remove(filepath.Join(pathConsts.SSLFilesPath, "server.crt"))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove RGW SSL Certificate file: %w", err)
+	}
+	err = os.Remove(filepath.Join(pathConsts.SSLFilesPath, "server.key"))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove RGW SSL Private Key file: %w", err)
 	}
 
 	// Remove the configuration.
