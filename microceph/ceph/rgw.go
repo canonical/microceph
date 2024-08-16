@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -21,12 +22,20 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 	sslPrivateKeyPath := ""
 	if sslCertificate != "" && sslPrivateKey != "" {
 		sslCertificatePath = filepath.Join(pathConsts.SSLFilesPath, "server.crt")
-		err := writeFile(sslCertificatePath, sslCertificate, 0755)
+		decodedSSLCertificate, err := base64.StdEncoding.DecodeString(sslCertificate)
+		if err != nil {
+			return err
+		}
+		err = writeFile(sslCertificatePath, string(decodedSSLCertificate), 0755)
 		if err != nil {
 			return err
 		}
 		sslPrivateKeyPath = filepath.Join(pathConsts.SSLFilesPath, "server.key")
-		err = writeFile(sslPrivateKeyPath, sslPrivateKey, 0755)
+		decodedSSLPrivateKey, err := base64.StdEncoding.DecodeString(sslPrivateKey)
+		if err != nil {
+			return err
+		}
+		err = writeFile(sslPrivateKeyPath, string(decodedSSLPrivateKey), 0755)
 		if err != nil {
 			return err
 		}
