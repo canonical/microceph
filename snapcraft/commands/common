@@ -1,7 +1,6 @@
 wait_for_config() {
-
   local confpath="${SNAP_DATA}/conf/ceph.conf"
-  local search_str="^run dir = ${SNAP_DATA}/run"
+  local search_str="^run dir = "
   local max_attempts=300
   local attempt=0
 
@@ -15,6 +14,6 @@ wait_for_config() {
     sleep 2
   done
 
-  echo "No updated conf found in ${confpath}"
+  echo "No conf found in ${confpath}"
   return 1
 }

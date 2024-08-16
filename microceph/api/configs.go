@@ -62,8 +62,10 @@ func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
 		return response.SmartError(err)
 	}
 
-	services := configTable[req.Key].Daemons
-	configChangeRefresh(s, services, req.Wait)
+	if !req.SkipRestart {
+		services := configTable[req.Key].Daemons
+		configChangeRefresh(s, services, req.Wait)
+	}
 
 	return response.EmptySyncResponse
 }
@@ -83,8 +85,10 @@ func cmdConfigsDelete(s *state.State, r *http.Request) response.Response {
 		return response.SmartError(err)
 	}
 
-	services := configTable[req.Key].Daemons
-	configChangeRefresh(s, services, req.Wait)
+	if !req.SkipRestart {
+		services := configTable[req.Key].Daemons
+		configChangeRefresh(s, services, req.Wait)
+	}
 
 	return response.EmptySyncResponse
 }

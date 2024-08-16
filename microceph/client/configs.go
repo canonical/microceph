@@ -14,7 +14,7 @@ func SetConfig(ctx context.Context, c *microCli.Client, data *types.Config) erro
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("configs"), data, nil)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("configs"), data, nil)
 	if err != nil {
 		return fmt.Errorf("failed setting cluster config: %w, Key: %s, Value: %s", err, data.Key, data.Value)
 	}
@@ -26,7 +26,7 @@ func ClearConfig(ctx context.Context, c *microCli.Client, data *types.Config) er
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
-	err := c.Query(queryCtx, "DELETE", api.NewURL().Path("configs"), data, nil)
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, api.NewURL().Path("configs"), data, nil)
 	if err != nil {
 		return fmt.Errorf("failed clearing cluster config: %w, Key: %s", err, data.Key)
 	}
@@ -40,7 +40,7 @@ func GetConfig(ctx context.Context, c *microCli.Client, data *types.Config) (typ
 
 	configs := types.Configs{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("configs"), data, &configs)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("configs"), data, &configs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch cluster config: %w, Key: %s", err, data.Key)
 	}

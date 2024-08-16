@@ -265,6 +265,11 @@ jobs:
         done
         lxc exec node-wrk0 -- sh -c "microceph.ceph -s"
 
+    - name: Exercise microceph status
+      run: |
+        set -uex
+        lxc exec node-wrk0 -- sh -c "sudo microceph status"
+
     - name: Test failure domain scale up
       run: |
         set -uex
@@ -549,10 +554,63 @@ jobs:
       run: ~/actionutils.sh headexec testrgw
 
     - name: Install local build
-      run: ~/actionutils.sh install_multinode
+      run: ~/actionutils.sh upgrade_multinode
 
     - name: Wait until 3 OSDs are up
       run:  ~/actionutils.sh headexec wait_for_osds 3
 
     - name: Exercise RGW again
       run: ~/actionutils.sh headexec testrgw
+
+    - name: Exercise microceph status
+      run: |
+        set -uex
+        lxc exec node-wrk0 -- sh -c "sudo microceph status"
+
+
+  cluster-tests:
+    name: Test MicroCeph Cluster features.
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install and setup
+      run: ~/actionutils.sh install_microceph
+
+    - name: Add loopback file OSDs
+      run: |
+        set -uex
+        sudo microceph disk add loop,1G,3
+        ~/actionutils.sh wait_for_osds 3
+        sudo microceph.ceph -s
+
+    - name: Enable RGW
+      run: ~/actionutils.sh enable_rgw
+
+    - name: Exercise RGW
+      run: ~/actionutils.sh testrgw
+
+    - name: Bombard MicroCeph with cluster configs
+      run: ~/actionutils.sh bombard_rgw_configs
+
+    - name: Exercise RGW again
+      run: ~/actionutils.sh testrgw "newFile"
