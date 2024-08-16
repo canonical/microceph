@@ -99,7 +99,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph enable rgw [--port <port>] [--ssl-port <port>] [--ssl-certificate <certificate path>] [--ssl-private-key <private key path>] [--target <server>] [--wait <bool>] [flags]
+   microceph enable rgw [--port <port>] [--ssl-port <port>] [--ssl-certificate <certificate material>] [--ssl-private-key <private key material>] [--target <server>] [--wait <bool>] [flags]
    
 
 Flags:
@@ -108,7 +108,7 @@ Flags:
 
    --port int                Service non-SSL port (default: 80) (default 80)
    --ssl-port int            Service SSL port (default: 443) (default 443)
-   --ssl-certificate string  Path to SSL certificate
-   --ssl-private-key string  Path to SSL private key
+   --ssl-certificate string  base64 encoded SSL certificate
+   --ssl-private-key string  base64 encoded SSL private key
    --target string           Server hostname (default: this server)
    --wait                    Wait for rgw service to be up. (default true)

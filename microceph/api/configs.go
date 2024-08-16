@@ -11,6 +11,7 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microceph/microceph/interfaces"
 )
 
 // /1.0/configs endpoint.
@@ -61,8 +62,10 @@ func cmdConfigsPut(s *state.State, r *http.Request) response.Response {
 		return response.SmartError(err)
 	}
 
-	services := configTable[req.Key].Daemons
-	configChangeRefresh(s, services, req.Wait)
+	if !req.SkipRestart {
+		services := configTable[req.Key].Daemons
+		configChangeRefresh(s, services, req.Wait)
+	}
 
 	return response.EmptySyncResponse
 }
@@ -82,8 +85,10 @@ func cmdConfigsDelete(s *state.State, r *http.Request) response.Response {
 		return response.SmartError(err)
 	}
 
-	services := configTable[req.Key].Daemons
-	configChangeRefresh(s, services, req.Wait)
+	if !req.SkipRestart {
+		services := configTable[req.Key].Daemons
+		configChangeRefresh(s, services, req.Wait)
+	}
 
 	return response.EmptySyncResponse
 }
@@ -98,14 +103,14 @@ func configChangeRefresh(s *state.State, services []string, wait bool) error {
 		}
 
 		// Restart on current host.
-		err = ceph.RestartCephServices(services)
+		err = ceph.RestartCephServices(interfaces.CephState{State: s}, services)
 		if err != nil {
 			return err
 		}
 	} else { // Execute restart asynchronously
 		go func() {
 			client.SendRestartRequestToClusterMembers(s, services)
-			ceph.RestartCephServices(services) // Restart on current host.
+			ceph.RestartCephServices(interfaces.CephState{State: s}, services) // Restart on current host.
 		}()
 	}
 

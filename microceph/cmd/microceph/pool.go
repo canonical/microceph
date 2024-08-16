@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 
-	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microcluster/microcluster"
 )
 
 type cmdPool struct {
@@ -17,7 +17,7 @@ type cmdPool struct {
 type cmdPoolSetRF struct {
 	common   *CmdControl
 	poolRF   *cmdPool
-    poolSize int64
+	poolSize int64
 }
 
 func (c *cmdPoolSetRF) Command() *cobra.Command {
@@ -32,18 +32,18 @@ func (c *cmdPoolSetRF) Command() *cobra.Command {
 		RunE: c.Run,
 	}
 
-    cmd.Flags().Int64Var(&c.poolSize, "size", 3, "Pool size")
-    cmd.MarkFlagRequired("size")
+	cmd.Flags().Int64Var(&c.poolSize, "size", 3, "Pool size")
+	cmd.MarkFlagRequired("size")
 
 	return cmd
 }
 
 func (c *cmdPoolSetRF) Run(cmd *cobra.Command, args []string) error {
-    if len(args) < 1 {
+	if len(args) < 1 {
 		return cmd.Help()
 	}
 
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return err
 	}

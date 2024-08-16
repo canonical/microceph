@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
@@ -45,8 +46,32 @@ func (c ConfigTable) Keys() (keys []string) {
 // so that each request for the map guarantees consistent definition.
 func GetConstConfigTable() ConfigTable {
 	return ConfigTable{
+		// Cluster config keys
 		"cluster_network":             {"global", []string{"osd"}},
 		"osd_pool_default_crush_rule": {"global", []string{}},
+		// RGW config keys
+		"rgw_s3_auth_use_keystone":                    {"global", []string{"rgw"}},
+		"rgw_keystone_url":                            {"global", []string{"rgw"}},
+		"rgw_keystone_admin_token":                    {"global", []string{"rgw"}},
+		"rgw_keystone_admin_token_path":               {"global", []string{"rgw"}},
+		"rgw_keystone_admin_user":                     {"global", []string{"rgw"}},
+		"rgw_keystone_admin_password":                 {"global", []string{"rgw"}},
+		"rgw_keystone_admin_password_path":            {"global", []string{"rgw"}},
+		"rgw_keystone_admin_project":                  {"global", []string{"rgw"}},
+		"rgw_keystone_admin_domain":                   {"global", []string{"rgw"}},
+		"rgw_keystone_service_token_enabled":          {"global", []string{"rgw"}},
+		"rgw_keystone_service_token_accepted_roles":   {"global", []string{"rgw"}},
+		"rgw_keystone_expired_token_cache_expiration": {"global", []string{"rgw"}},
+		"rgw_keystone_api_version":                    {"global", []string{"rgw"}},
+		"rgw_keystone_accepted_roles":                 {"global", []string{"rgw"}},
+		"rgw_keystone_accepted_admin_roles":           {"global", []string{"rgw"}},
+		"rgw_keystone_token_cache_size":               {"global", []string{"rgw"}},
+		"rgw_keystone_verify_ssl":                     {"global", []string{"rgw"}},
+		"rgw_keystone_implicit_tenants":               {"global", []string{"rgw"}},
+		"rgw_swift_account_in_url":                    {"global", []string{"rgw"}},
+		"rgw_swift_versioning_enabled":                {"global", []string{"rgw"}},
+		"rgw_swift_enforce_content_length":            {"global", []string{"rgw"}},
+		"rgw_swift_custom_header":                     {"global", []string{"rgw"}},
 	}
 }
 
@@ -229,7 +254,7 @@ func backwardCompatMonitors(s interfaces.StateInterface) ([]string, error) {
 // UpdateConfig updates the ceph.conf file with the current configuration.
 func UpdateConfig(s interfaces.StateInterface) error {
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
-	runPath := filepath.Join(os.Getenv("SNAP_DATA"), "run")
+	runPath := filepath.Join(filepath.Dir(os.Getenv("SNAP_DATA")), "current", "run")
 
 	err := backwardCompatPubnet(s)
 	if err != nil {

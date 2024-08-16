@@ -3,20 +3,21 @@ package client
 import (
 	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microcluster/client"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/interfaces"
 )
 
 func SetClientConfig(ctx context.Context, c *client.Client, data *types.ClientConfig) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("client", "configs", data.Key), data, nil)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("client", "configs", data.Key), data, nil)
 	if err != nil {
 		return fmt.Errorf("failed setting client config: %w, Key: %s, Value: %s", err, data.Key, data.Value)
 	}
@@ -28,7 +29,7 @@ func ResetClientConfig(ctx context.Context, c *client.Client, data *types.Client
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
-	err := c.Query(queryCtx, "DELETE", api.NewURL().Path("client", "configs", data.Key), data, nil)
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, api.NewURL().Path("client", "configs", data.Key), data, nil)
 	if err != nil {
 		return fmt.Errorf("failed clearing client config: %w, Key: %s", err, data.Key)
 	}
@@ -42,7 +43,7 @@ func GetClientConfig(ctx context.Context, c *client.Client, data *types.ClientCo
 
 	configs := types.ClientConfigs{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("client", "configs", data.Key), data, &configs)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("client", "configs", data.Key), data, &configs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch client config: %w, Key: %s", err, data.Key)
 	}
@@ -56,7 +57,7 @@ func ListClientConfig(ctx context.Context, c *client.Client, data *types.ClientC
 
 	configs := types.ClientConfigs{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("client", "configs"), data, &configs)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("client", "configs"), data, &configs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch client config: %w, Key: %s", err, data.Key)
 	}
@@ -69,7 +70,7 @@ func UpdateClientConf(ctx context.Context, c *client.Client) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*20)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("client", "configs"), nil, nil)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("client", "configs"), nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to update the configuration file: %w", err)
 	}
@@ -80,7 +81,7 @@ func UpdateClientConf(ctx context.Context, c *client.Client) error {
 // Sends the update conf request to every other member of the cluster.
 func SendUpdateClientConfRequestToClusterMembers(s interfaces.StateInterface) error {
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
-	cluster, err := s.ClusterState().Cluster(nil)
+	cluster, err := s.ClusterState().Cluster(false)
 	if err != nil {
 		logger.Errorf("failed to get a client for every cluster member: %v", err)
 		return err

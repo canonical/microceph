@@ -3,32 +3,57 @@ package ceph
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/canonical/microceph/microceph/database"
 )
 
 // EnableRGW enables the RGW service on the cluster and adds initial configuration given a service port number.
-func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificate string, sslPrivateKey string) error {
+func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificate string, sslPrivateKey string, monitors []string) error {
 	pathConsts := constants.GetPathConst()
 
+	sslCertificatePath := ""
+	sslPrivateKeyPath := ""
+	if sslCertificate != "" && sslPrivateKey != "" {
+		sslCertificatePath = filepath.Join(pathConsts.SSLFilesPath, "server.crt")
+		decodedSSLCertificate, err := base64.StdEncoding.DecodeString(sslCertificate)
+		if err != nil {
+			return err
+		}
+		err = writeFile(sslCertificatePath, string(decodedSSLCertificate), 0755)
+		if err != nil {
+			return err
+		}
+		sslPrivateKeyPath = filepath.Join(pathConsts.SSLFilesPath, "server.key")
+		decodedSSLPrivateKey, err := base64.StdEncoding.DecodeString(sslPrivateKey)
+		if err != nil {
+			return err
+		}
+		err = writeFile(sslPrivateKeyPath, string(decodedSSLPrivateKey), 0755)
+		if err != nil {
+			return err
+		}
+	} else if sslCertificate == "" || sslPrivateKey == "" {
+		port = 80
+	}
+	configs := map[string]any{
+		"runDir":             pathConsts.RunPath,
+		"monitors":           strings.Join(monitors, ","),
+		"rgwPort":            port,
+		"sslPort":            sslPort,
+		"sslCertificatePath": sslCertificatePath,
+		"sslPrivateKeyPath":  sslPrivateKeyPath,
+	}
+
 	// Create RGW configuration.
-	conf := newRadosGWConfig(pathConsts.ConfPath)
-	err := conf.WriteConfig(
-		map[string]any{
-			"runDir":         pathConsts.RunPath,
-			"monitors":       s.ClusterState().Address().Hostname(),
-			"rgwPort":        port,
-			"sslPort":        sslPort,
-			"sslCertificate": sslCertificate,
-			"sslPrivateKey":  sslPrivateKey,
-		},
-		0644,
-	)
+	rgwConf := newRadosGWConfig(pathConsts.ConfPath)
+	err := rgwConf.WriteConfig(configs, 0644)
 	if err != nil {
 		return err
 	}
@@ -39,10 +64,6 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 	}
 	// Symlink the keyring to the conf directory for usage with the radosgw-admin command.
 	if err = symlinkRGWKeyring(path, pathConsts.ConfPath); err != nil {
-		return err
-	}
-	// Record the changes to the database.
-	if err = rgwCreateServiceDatabase(s); err != nil {
 		return err
 	}
 
@@ -77,6 +98,12 @@ func DisableRGW(s interfaces.StateInterface) error {
 	err = os.Remove(filepath.Join(pathConsts.DataPath, "radosgw", "ceph-radosgw.gateway", "keyring"))
 	if err != nil {
 		return fmt.Errorf("failed to remove RGW keyring: %w", err)
+	}
+
+	// Remove the SSL files.
+	err = os.Remove(pathConsts.SSLFilesPath)
+	if err != nil {
+		return fmt.Errorf("failed to remove RGW SSL files: %w", err)
 	}
 
 	// Remove the configuration.
@@ -157,5 +184,19 @@ func symlinkRGWKeyring(keyPath, ConfPath string) error {
 		return fmt.Errorf("Failed to create symlink to RGW keyring: %w", err)
 	}
 
+	return nil
+}
+
+func writeFile(path, data string, mode int) error {
+	fd, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, os.FileMode(mode))
+	if err != nil {
+		return fmt.Errorf("Couldn't open %s: %w", path, err)
+	}
+	defer fd.Close()
+
+	_, err = fd.Write([]byte(data))
+	if err != nil {
+		return fmt.Errorf("Couldn't write to %s: %w", path, err)
+	}
 	return nil
 }

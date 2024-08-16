@@ -8,6 +8,6 @@ require any deep understanding of Ceph.
 
 .. toctree::
    :maxdepth: 1
+   :glob:
 
-   single-node
-   multi-node
+   *

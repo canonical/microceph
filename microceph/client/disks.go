@@ -20,7 +20,7 @@ func AddDisk(ctx context.Context, c *microCli.Client, data *types.DisksPost) (ty
 	defer cancel()
 
 	errors := types.DiskAddResponse{}
-	err := c.Query(queryCtx, "POST", api.NewURL().Path("disks"), data, &errors)
+	err := c.Query(queryCtx, "POST", types.ExtendedPathPrefix, api.NewURL().Path("disks"), data, &errors)
 	if err != nil {
 		return errors, fmt.Errorf("failed to request disk addition %w", err)
 	}
@@ -35,7 +35,7 @@ func GetDisks(ctx context.Context, c *microCli.Client) (types.Disks, error) {
 
 	disks := types.Disks{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("disks"), nil, &disks)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("disks"), nil, &disks)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing disks: %w", err)
 	}
@@ -50,7 +50,7 @@ func GetResources(ctx context.Context, c *microCli.Client) (*api.ResourcesStorag
 
 	storage := api.ResourcesStorage{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("resources"), nil, &storage)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("resources"), nil, &storage)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing storage devices: %w", err)
 	}
@@ -81,7 +81,7 @@ func RemoveDisk(ctx context.Context, c *microCli.Client, data *types.DisksDelete
 	}
 	c = c.UseTarget(location)
 
-	err = c.Query(queryCtx, "DELETE", api.NewURL().Path("disks", strconv.FormatInt(data.OSD, 10)), data, nil)
+	err = c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, api.NewURL().Path("disks", strconv.FormatInt(data.OSD, 10)), data, nil)
 	if err != nil {
 		// Checking if the error is a context deadline exceeded error
 		if errors.Is(err, context.DeadlineExceeded) {

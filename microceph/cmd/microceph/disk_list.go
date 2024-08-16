@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/constants"
 	"os"
 	"sort"
 
+	"github.com/canonical/lxd/shared/api"
 	lxdCmd "github.com/canonical/lxd/shared/cmd"
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/lxd/shared/units"
@@ -19,22 +18,25 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 )
 
 type cmdDiskList struct {
-	common *CmdControl
-	disk   *cmdDisk
-	json   bool
+	common   *CmdControl
+	disk     *cmdDisk
+	json     bool
+	hostOnly bool
 }
 
 func (c *cmdDiskList) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List servers in the cluster",
+		Short: "List disks configured in MicroCeph and available unpartitioned disks on this system.",
 		RunE:  c.Run,
 	}
 
 	cmd.PersistentFlags().BoolVar(&c.json, "json", false, "Provide output as Json encoded string.")
+	cmd.PersistentFlags().BoolVar(&c.hostOnly, "host-only", false, "Output only the disks configured on current host.")
 	return cmd
 }
 
@@ -52,7 +54,7 @@ type DiskListOutput struct {
 }
 
 func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return err
 	}
@@ -72,6 +74,25 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	availableDisks, err := getUnpartitionedDisks(cli)
 	if err != nil {
 		return fmt.Errorf("internal error: unable to fetch unpartitoned disks: %w", err)
+	}
+
+	if c.hostOnly {
+		fcg := types.Disks{}
+
+		// Get system hostname.
+		hostname, err := os.Hostname()
+		if err != nil {
+			return fmt.Errorf("failed to retrieve system hostname: %w", err)
+		}
+
+		for _, disk := range configuredDisks {
+			if disk.Location == hostname {
+				fcg = append(fcg, disk)
+			}
+		}
+
+		// Overwrite configured disks with the filtered disks.
+		configuredDisks = fcg
 	}
 
 	if c.json {

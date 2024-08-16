@@ -24,14 +24,15 @@ type cmdEnableRGW struct {
 
 func (c *cmdEnableRGW) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "rgw [--port <port>] [--ssl-port <port>] [--ssl-certificate <certificate path>] [--ssl-private-key <private key path>] [--target <server>] [--wait <bool>]",
+		Use:   "rgw [--port <port>] [--ssl-port <port>] [--ssl-certificate <certificate material>] [--ssl-private-key <private key material>] [--target <server>] [--wait <bool>]",
 		Short: "Enable the RGW service on the --target server (default: this server)",
 		RunE:  c.Run,
 	}
-	cmd.PersistentFlags().IntVar(&c.flagPort, "port", 80, "Service non-SSL port (default: 80)")
+	// The flagPort has a default value of 0 for the case where both the SSL certificate and private key are provided.
+	cmd.PersistentFlags().IntVar(&c.flagPort, "port", 0, "Service non-SSL port (default: 80 if no SSL certificate and/or private key are provided)")
 	cmd.PersistentFlags().IntVar(&c.flagSSLPort, "ssl-port", 443, "Service SSL port (default: 443)")
-	cmd.PersistentFlags().StringVar(&c.flagSSLCertificate, "ssl-certificate", "", "Path to SSL certificate")
-	cmd.PersistentFlags().StringVar(&c.flagSSLPrivateKey, "ssl-private-key", "", "Path to SSL private key")
+	cmd.PersistentFlags().StringVar(&c.flagSSLCertificate, "ssl-certificate", "", "base64 encoded SSL certificate")
+	cmd.PersistentFlags().StringVar(&c.flagSSLPrivateKey, "ssl-private-key", "", "base64 encoded SSL private key")
 	cmd.PersistentFlags().StringVar(&c.flagTarget, "target", "", "Server hostname (default: this server)")
 	cmd.Flags().BoolVar(&c.wait, "wait", true, "Wait for rgw service to be up.")
 	return cmd
@@ -39,7 +40,7 @@ func (c *cmdEnableRGW) Command() *cobra.Command {
 
 // Run handles the enable rgw command.
 func (c *cmdEnableRGW) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
 	if err != nil {
 		return err
 	}

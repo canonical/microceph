@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"math/rand"
 	"os"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/version"
 )
 
@@ -63,7 +63,7 @@ func (c *cmdDaemon) Command() *cobra.Command {
 }
 
 func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.flagStateDir, Verbose: c.global.flagLogVerbose, Debug: c.global.flagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.flagStateDir, Verbose: c.global.flagLogVerbose, Debug: c.global.flagLogDebug})
 	if err != nil {
 		return err
 	}
@@ -86,7 +86,10 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 		return ceph.Start(interf)
 	}
 
-	return m.Start(api.Endpoints, database.SchemaExtensions, h)
+	h.PreRemove = ceph.PreRemove(m)
+
+	m.AddServers(api.Servers)
+	return m.Start(context.Background(), database.SchemaExtensions, nil, h)
 }
 
 func init() {
@@ -101,7 +104,7 @@ func main() {
 
 	app.PersistentFlags().BoolVarP(&daemonCmd.global.flagHelp, "help", "h", false, "Print help")
 	app.PersistentFlags().BoolVar(&daemonCmd.global.flagVersion, "version", false, "Print version number")
-	app.PersistentFlags().BoolVarP(&daemonCmd.global.flagLogDebug, "debug", "d", true, "Show all debug messages")
+	app.PersistentFlags().BoolVarP(&daemonCmd.global.flagLogDebug, "debug", "d", false, "Show all debug messages")
 	app.PersistentFlags().BoolVarP(&daemonCmd.global.flagLogVerbose, "verbose", "v", false, "Show all information messages")
 
 	app.PersistentFlags().StringVar(&daemonCmd.flagStateDir, "state-dir", "", "Path to store state information"+"``")

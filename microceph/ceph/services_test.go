@@ -3,10 +3,14 @@ package ceph
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/tests"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/tests"
+	"github.com/canonical/microcluster/state"
 
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
@@ -15,7 +19,7 @@ import (
 
 type servicesSuite struct {
 	tests.BaseSuite
-	// TestStateInterface *mocks.StateInterface
+	TestStateInterface *mocks.StateInterface
 }
 
 func TestServices(t *testing.T) {
@@ -25,6 +29,19 @@ func TestServices(t *testing.T) {
 // Set up test suite
 func (s *servicesSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
+
+	s.TestStateInterface = mocks.NewStateInterface(s.T())
+	u := api.NewURL()
+	state := &state.State{
+		Address: func() *api.URL {
+			return u
+		},
+		Name: func() string {
+			return "foohost"
+		},
+		Database: nil,
+	}
+	s.TestStateInterface.On("ClusterState").Return(state).Maybe()
 }
 
 func addOsdDumpExpectations(r *mocks.Runner) {
@@ -56,8 +73,9 @@ func addServiceRestartExpectations(r *mocks.Runner, services []string) {
 }
 
 func (s *servicesSuite) TestRestartInvalidService() {
-	err := RestartCephService("InvalidService")
-	assert.ErrorContains(s.T(), err, "No handler defined")
+	services := types.Services{}
+	err := RestartCephService(services, "InvalidService", "foohost")
+	assert.ErrorContains(s.T(), err, "no handler defined")
 }
 
 func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
@@ -69,9 +87,17 @@ func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 	addServiceRestartExpectations(r, ts)
 	processExec = r
 
+	services := types.Services{
+		types.Service{Service: "mon", Location: "foohost"},
+		types.Service{Service: "osd", Location: "foohost"},
+	}
+
 	// Handler is defined for both mon and osd services.
-	err := RestartCephServices(ts)
-	assert.Equal(s.T(), err, nil)
+	err := RestartCephService(services, "mon", "foohost")
+	assert.NoError(s.T(), err)
+
+	err = RestartCephService(services, "osd", "foohost")
+	assert.NoError(s.T(), err)
 }
 
 // TestCleanService tests the cleanService function.

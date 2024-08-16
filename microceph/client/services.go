@@ -8,9 +8,10 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microcluster/client"
 	"github.com/canonical/microcluster/state"
+
+	"github.com/canonical/microceph/microceph/api/types"
 )
 
 // GetServices returns the list of configured ceph services.
@@ -20,7 +21,7 @@ func GetServices(ctx context.Context, c *client.Client) (types.Services, error) 
 
 	services := types.Services{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("services"), nil, &services)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("services"), nil, &services)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing services: %w", err)
 	}
@@ -36,7 +37,7 @@ func DeleteService(ctx context.Context, c *client.Client, target string, service
 	// Send this request to target.
 	c = c.UseTarget(target)
 
-	err := c.Query(queryCtx, "DELETE", api.NewURL().Path("services", service), nil, nil)
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, api.NewURL().Path("services", service), nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed disabling service %s: %w", service, err)
 	}
@@ -52,7 +53,7 @@ func SendServicePlacementReq(ctx context.Context, c *client.Client, data *types.
 	// Send this request to target.
 	c = c.UseTarget(target)
 
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("services", data.Name), data, nil)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("services", data.Name), data, nil)
 	if err != nil {
 		return fmt.Errorf("failed placing service %s: %w", data.Name, err)
 	}
@@ -66,7 +67,7 @@ func RestartService(ctx context.Context, c *client.Client, data *types.Services)
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
-	err := c.Query(queryCtx, "POST", api.NewURL().Path("services", "restart"), data, nil)
+	err := c.Query(queryCtx, "POST", types.ExtendedPathPrefix, api.NewURL().Path("services", "restart"), data, nil)
 	if err != nil {
 		url := c.URL()
 		return fmt.Errorf("failed Forwarding To: %s: %w", url.String(), err)
@@ -84,7 +85,7 @@ func SendRestartRequestToClusterMembers(s *state.State, services []string) error
 	}
 
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
-	cluster, err := s.Cluster(nil)
+	cluster, err := s.Cluster(false)
 	if err != nil {
 		logger.Errorf("failed to get a client for every cluster member: %v", err)
 		return err
