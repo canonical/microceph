@@ -99,7 +99,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph enable rgw [--port <port>] [--ssl-port <port>] [--ssl-certificate <certificate>] [--ssl-private-key <private key>] [--target <server>] [--wait <bool>] [flags]
+   microceph enable rgw [--port <port>] [--ssl-port <port>] [--ssl-certificate <certificate material>] [--ssl-private-key <private key material>] [--target <server>] [--wait <bool>] [flags]
    
 
 Flags:
