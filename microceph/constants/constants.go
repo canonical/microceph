@@ -65,3 +65,15 @@ func GetPathFileMode() PathFileMode {
 
 // Regexes
 const ClusterNameRegex = "^[a-z0-9]+$"
+
+// RBD Mirroring
+// States
+const DisabledRBDReplication = "rbd_mirroring_disabled"
+const EnabledRBDReplication = "rbd_mirroring_enabled"
+
+// Events
+const EnableReplication = "enable_replication"
+const DisableReplication = "disable_replication"
+const ListReplication = "list_replication"
+const StatusReplication = "status_replication"
+const ConfigureReplication = "configure_replication"
