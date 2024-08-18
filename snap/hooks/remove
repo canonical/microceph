@@ -1,0 +1,3 @@
+#!/bin/sh
+set -uex
+# remove the symlink to etc/ceph
