@@ -7,6 +7,7 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/constants"
 	microCli "github.com/canonical/microcluster/client"
 )
 
@@ -16,21 +17,23 @@ func SendRemoteReplicationRequest(ctx context.Context, c *microCli.Client, data 
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
-	if data.GetRequestType() == types.ListReplicationRequest {
+	if data.GetWorkloadRequestType() == constants.ListReplication {
+		// list request uses replication/$workload endpoint
 		err = c.Query(
-			queryCtx, "GET", types.ExtendedPathPrefix,
-			api.NewURL().Path("ops", "replication", string(data.GetCephWorkloadType())),
+			queryCtx, data.GetAPIRequestType(), types.ExtendedPathPrefix,
+			api.NewURL().Path("ops", "replication", string(data.GetWorkloadType())),
 			data, nil,
 		)
 	} else {
+		// Other requests use replication/$workload/$resource endpoint
 		err = c.Query(
-			queryCtx, string(data.GetRequestType()), types.ExtendedPathPrefix,
-			api.NewURL().Path("ops", "replication", string(data.GetCephWorkloadType()), data.GetAPIObjectId()),
+			queryCtx, data.GetAPIRequestType(), types.ExtendedPathPrefix,
+			api.NewURL().Path("ops", "replication", string(data.GetWorkloadType()), data.GetAPIObjectId()),
 			data, nil,
 		)
 	}
 	if err != nil {
-		return fmt.Errorf("failed to process %s request for %s: %w", data.GetRequestType(), data.GetCephWorkloadType(), err)
+		return fmt.Errorf("failed to process %s request for %s: %w", data.GetWorkloadRequestType(), data.GetWorkloadType(), err)
 	}
 
 	return nil

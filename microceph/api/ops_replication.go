@@ -1,11 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microcluster/rest"
@@ -37,10 +37,7 @@ func cmdOpsReplicationRbdGet(s *state.State, r *http.Request) response.Response 
 		return response.InternalError(err)
 	}
 
-	logger.Errorf("BAZINGA %v", req) // TODO: Remove
-
-	// TODO: Implement
-	return response.EmptySyncResponse
+	return handleRbdRepRequest(r.Context(), req)
 }
 
 // cmdOpsReplicationRbdPut configures a new RBD replication pair.
@@ -51,14 +48,7 @@ func cmdOpsReplicationRbdPut(s *state.State, r *http.Request) response.Response 
 		return response.InternalError(err)
 	}
 
-	logger.Errorf("BAZINGA %v", req) // TODO: Remove
-
-	err = ceph.EnableRbdReplication(req)
-	if err != nil {
-		return response.SmartError(err)
-	}
-
-	return response.EmptySyncResponse
+	return handleRbdRepRequest(r.Context(), req)
 }
 
 // cmdOpsReplicationRbdDelete deletes a configured replication pair.
@@ -69,8 +59,20 @@ func cmdOpsReplicationRbdDelete(s *state.State, r *http.Request) response.Respon
 		return response.InternalError(err)
 	}
 
-	logger.Errorf("BAZINGA %v", req) // TODO: Remove
+	return handleRbdRepRequest(r.Context(), req)
+}
 
-	// TODO: Implement
+func handleRbdRepRequest(ctx context.Context, req types.RbdReplicationRequest) response.Response {
+	repFsm := ceph.CreateReplicationFSM(ceph.GetRbdMirroringState(req.GetAPIObjectId()), req)
+	err := repFsm.Event(ctx, req.GetWorkloadRequestType())
+	if err != nil {
+		return response.SmartError(err)
+	}
+
+	resp, ok := repFsm.Metadata("response")
+	if ok {
+		return response.SyncResponse(true, resp)
+	}
+
 	return response.EmptySyncResponse
 }

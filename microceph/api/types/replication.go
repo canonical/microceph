@@ -3,6 +3,9 @@ package types
 import (
 	"fmt"
 	"net/url"
+	"strings"
+
+	"github.com/canonical/microceph/microceph/constants"
 )
 
 // ################################## Generic Replication Request ##################################
@@ -10,10 +13,11 @@ type ReplicationRequestType string
 
 // This value is split till '-' to get the API request value.
 const (
-	CreateReplicationRequest ReplicationRequestType = "PUT"
-	DeleteReplicationRequest ReplicationRequestType = "DELETE"
-	StatusReplicationRequest ReplicationRequestType = "GET"
-	ListReplicationRequest   ReplicationRequestType = "GET-ALL"
+	EnableReplicationRequest    ReplicationRequestType = "PUT-" + constants.EnableReplication
+	ConfigureReplicationRequest ReplicationRequestType = "PUT-" + constants.ConfigureReplication
+	DisableReplicationRequest   ReplicationRequestType = "DELETE-" + constants.DisableReplication
+	StatusReplicationRequest    ReplicationRequestType = "GET-" + constants.StatusReplication
+	ListReplicationRequest      ReplicationRequestType = "GET-" + constants.ListReplication
 )
 
 type CephWorkloadType string
@@ -25,9 +29,10 @@ const (
 )
 
 type ReplicationRequest interface {
-	GetCephWorkloadType() CephWorkloadType
+	GetWorkloadType() CephWorkloadType
 	GetAPIObjectId() string
-	GetRequestType() ReplicationRequestType
+	GetAPIRequestType() string
+	GetWorkloadRequestType() string
 }
 
 // ################################## RBD Replication Request ##################################
@@ -55,7 +60,7 @@ type RbdReplicationRequest struct {
 	RequestType     ReplicationRequestType `json:"request_type" yaml:"request_type"`
 }
 
-func (req RbdReplicationRequest) GetCephWorkloadType() CephWorkloadType {
+func (req RbdReplicationRequest) GetWorkloadType() CephWorkloadType {
 	return RbdWorkload
 }
 
@@ -68,6 +73,20 @@ func (req RbdReplicationRequest) GetAPIObjectId() string {
 	return req.SourcePool
 }
 
-func (req RbdReplicationRequest) GetRequestType() ReplicationRequestType {
-	return req.RequestType
+func (req RbdReplicationRequest) GetAPIRequestType() string {
+	frags := strings.Split(string(req.RequestType), "-")
+	if len(frags) == 0 {
+		return ""
+	}
+
+	return frags[0]
+}
+
+func (req RbdReplicationRequest) GetWorkloadRequestType() string {
+	frags := strings.Split(string(req.RequestType), "-")
+	if len(frags) < 2 {
+		return ""
+	}
+
+	return frags[1]
 }

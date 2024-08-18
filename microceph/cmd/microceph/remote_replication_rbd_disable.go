@@ -42,7 +42,7 @@ func (c *cmdRemoteReplicationDisableRbd) Run(cmd *cobra.Command, args []string) 
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.DeleteReplicationRequest)
+	payload, err := c.prepareRbdPayload(types.DisableReplicationRequest)
 	if err != nil {
 		return err
 	}
