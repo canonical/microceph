@@ -26,7 +26,7 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 		if err != nil {
 			return err
 		}
-		err = writeFile(sslCertificatePath, string(decodedSSLCertificate), 0755)
+		err = writeFile(sslCertificatePath, string(decodedSSLCertificate), 0600)
 		if err != nil {
 			return err
 		}
@@ -35,7 +35,7 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 		if err != nil {
 			return err
 		}
-		err = writeFile(sslPrivateKeyPath, string(decodedSSLPrivateKey), 0755)
+		err = writeFile(sslPrivateKeyPath, string(decodedSSLPrivateKey), 0600)
 		if err != nil {
 			return err
 		}
