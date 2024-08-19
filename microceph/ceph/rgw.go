@@ -26,7 +26,7 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 		if err != nil {
 			return err
 		}
-		err = writeFile(sslCertificatePath, string(decodedSSLCertificate), 0600)
+		err = os.WriteFile(sslCertificatePath, decodedSSLCertificate, 0600)
 		if err != nil {
 			return err
 		}
@@ -35,7 +35,7 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 		if err != nil {
 			return err
 		}
-		err = writeFile(sslPrivateKeyPath, string(decodedSSLPrivateKey), 0600)
+		err = os.WriteFile(sslPrivateKeyPath, decodedSSLPrivateKey, 0600)
 		if err != nil {
 			return err
 		}
@@ -188,19 +188,5 @@ func symlinkRGWKeyring(keyPath, ConfPath string) error {
 		return fmt.Errorf("Failed to create symlink to RGW keyring: %w", err)
 	}
 
-	return nil
-}
-
-func writeFile(path, data string, mode int) error {
-	fd, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, os.FileMode(mode))
-	if err != nil {
-		return fmt.Errorf("Couldn't open %s: %w", path, err)
-	}
-	defer fd.Close()
-
-	_, err = fd.Write([]byte(data))
-	if err != nil {
-		return fmt.Errorf("Couldn't write to %s: %w", path, err)
-	}
 	return nil
 }
