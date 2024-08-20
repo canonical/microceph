@@ -14,11 +14,11 @@ type ReplicationRequestType string
 
 // This value is split till '-' to get the API request value.
 const (
-	EnableReplicationRequest    ReplicationRequestType = "PUT-" + constants.EnableReplication
-	ConfigureReplicationRequest ReplicationRequestType = "PUT-" + constants.ConfigureReplication
-	DisableReplicationRequest   ReplicationRequestType = "DELETE-" + constants.DisableReplication
-	StatusReplicationRequest    ReplicationRequestType = "GET-" + constants.StatusReplication
-	ListReplicationRequest      ReplicationRequestType = "GET-" + constants.ListReplication
+	EnableReplicationRequest    ReplicationRequestType = "PUT-" + constants.EventEnableReplication
+	ConfigureReplicationRequest ReplicationRequestType = "PUT-" + constants.EventConfigureReplication
+	DisableReplicationRequest   ReplicationRequestType = "DELETE-" + constants.EventDisableReplication
+	StatusReplicationRequest    ReplicationRequestType = "GET-" + constants.EventStatusReplication
+	ListReplicationRequest      ReplicationRequestType = "GET-" + constants.EventListReplication
 )
 
 type CephWorkloadType string

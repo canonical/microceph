@@ -56,6 +56,8 @@ github.com/canonical/go-dqlite v1.22.0 h1:DuJmfcREl4gkQJyvZzjl2GHFZROhbPyfdjDRQX
 github.com/canonical/go-dqlite v1.22.0/go.mod h1:Uvy943N8R4CFUAs59A1NVaziWY9nJ686lScY7ywurfg=
 github.com/canonical/lxd v0.0.0-20241003082254-62a97d6f29b4 h1:TWxyjBqshUDUGFu7fuwOkRqAA3FTJXYOVSslcf7vAwo=
 github.com/canonical/lxd v0.0.0-20241003082254-62a97d6f29b4/go.mod h1:IQwxzZURyS/k5vJbOBKDExfuboimSUw90DPT19Gfbyk=
+github.com/canonical/microcluster v0.0.0-20240731145923-49573627997a h1:kBkyywp2qysXp9frJj4LfMbslP09F+LU6OlyqwvQXBk=
+github.com/canonical/microcluster v0.0.0-20240731145923-49573627997a/go.mod h1:bQ37+3g+vNAQZazB9plIWE9Nc2pfiVXdWK//AIEL7ys=
 github.com/canonical/microcluster/v2 v2.0.2 h1:T0Bc3EQTdR17nAhKlAmGORL4y7FPcgAR09fWj/WlQck=
 github.com/canonical/microcluster/v2 v2.0.2/go.mod h1:09N/J8tuijpAJdOER+e8IVWpn9cjzw9KzZvIunii/pA=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
@@ -237,8 +239,6 @@ github.com/kr/pty v1.1.1/go.mod h1:pFQYn66WHrOpPYNljwOMqo10TkYh1fy3cYio2l3bCsQ=
 github.com/kr/text v0.1.0/go.mod h1:4Jbv+DJW3UT/LiOwJeYQe1efqtUx/iVham/4vfdArNI=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
-github.com/looplab/fsm v1.0.2 h1:f0kdMzr4CRpXtaKKRUxwLYJ7PirTdwrtNumeLN+mDx8=
-github.com/looplab/fsm v1.0.2/go.mod h1:PmD3fFvQEIsjMEfvZdrCDZ6y8VwKTwWNjlpEr6IKPO4=
 github.com/magiconair/properties v1.8.5/go.mod h1:y3VJvCyxH9uVvJTWEGAELF3aiYNyPKd5NZ3oSwXrF60=
 github.com/mattn/go-colorable v0.0.9/go.mod h1:9vuHe8Xs5qXnSaW/c/ABM9alt+Vo+STaOChaDxuIBZU=
 github.com/mattn/go-isatty v0.0.3/go.mod h1:M+lRXTBqGeGNdLjl/ufCoiOlB5xdOkqRJdNxMWT7Zi4=
@@ -289,6 +289,8 @@ github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRI
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/posener/complete v1.1.1/go.mod h1:em0nMJCgc9GFtwrmVmEMR/ZL6WyhyjMBndrE9hABlRI=
 github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4/go.mod h1:xMI15A0UPsDsEKsMN9yxemIoYk6Tm2C1GtYGdfGttqA=
+github.com/qmuntal/stateless v1.7.1 h1:dI+BtLHq/nD6u46POkOINTDjY9uE33/4auEzfX3TWp0=
+github.com/qmuntal/stateless v1.7.1/go.mod h1:n1HjRBM/cq4uCr3rfUjaMkgeGcd+ykAZwkjLje6jGBM=
 github.com/rivo/uniseg v0.2.0/go.mod h1:J6wj4VEh+S6ZtnVlnTBMWIodfgj8LQOQFoIToxlJtxc=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=

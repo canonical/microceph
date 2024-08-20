@@ -65,14 +65,24 @@ func cmdOpsReplicationRbdDelete(s state.State, r *http.Request) response.Respons
 
 func handleRbdRepRequest(ctx context.Context, req types.RbdReplicationRequest) response.Response {
 	repFsm := ceph.CreateReplicationFSM(ceph.GetRbdMirroringState(req.GetAPIObjectId()), req)
-	logger.Infof("Bazinga: Check available transitions: %v", repFsm.AvailableTransitions())
-	err := repFsm.Event(ctx, req.GetWorkloadRequestType())
+
+	at, err := repFsm.PermittedTriggers()
+	if err != nil {
+		return response.InternalError(err)
+	}
+
+	logger.Infof("Bazinga: Check available transitions: %v", at)
+
+	var resp string
+	err = repFsm.FireCtx(ctx, req.GetWorkloadRequestType(), req, &resp)
 	if err != nil {
 		return response.SmartError(err)
 	}
 
-	resp, ok := repFsm.Metadata("response")
-	if ok {
+	logger.Infof("Bazinga: Check FSM response: %s", resp)
+
+	// If non-empty response
+	if len(resp) > 0 {
 		return response.SyncResponse(true, resp)
 	}
 

@@ -2,80 +2,94 @@ package ceph
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/constants"
-	"github.com/looplab/fsm"
+	"github.com/qmuntal/stateless"
 )
 
-func CreateReplicationFSM(initialState string, metadata types.RbdReplicationRequest) *fsm.FSM {
-	newFsm := fsm.NewFSM(
-		initialState,
-		fsm.Events{
-			fsm.EventDesc{
-				// Enable event can be handled at both enabled and disabled state.
-				Name: constants.EnableReplication,
-				Src:  []string{constants.DisabledRBDReplication, constants.EnabledRBDReplication},
-				Dst:  constants.EnabledRBDReplication},
-			fsm.EventDesc{
-				// Disable event can be handled at both enabled and disabled state.
-				Name: constants.DisableReplication,
-				Src:  []string{constants.DisabledRBDReplication, constants.EnabledRBDReplication},
-				Dst:  constants.DisabledRBDReplication},
-			fsm.EventDesc{
-				// Configure event can only be handled from enabled state.
-				Name: constants.ConfigureReplication,
-				Src:  []string{constants.EnabledRBDReplication},
-				Dst:  constants.EnabledRBDReplication},
-			fsm.EventDesc{
-				// List event can only be handled from enabled state.
-				Name: constants.ListReplication,
-				Src:  []string{constants.EnabledRBDReplication},
-				Dst:  constants.EnabledRBDReplication},
-			fsm.EventDesc{
-				// Status event can only be handled from enabled state.
-				Name: constants.StatusReplication,
-				Src:  []string{constants.EnabledRBDReplication},
-				Dst:  constants.EnabledRBDReplication},
-		},
-		fsm.Callbacks{
-			// callback for all transitions
-			"enter_state": genericLoggerHandler,
-			// enable event handler
-			constants.EnableReplication: enableHandler,
-			// disable event handler
-			constants.DisableReplication: disableHandler,
-			// configure event handler
-			constants.ConfigureReplication: configureHandler,
-			// list event handler
-			constants.ListReplication: listHandler,
-			// status event handler
-			constants.StatusReplication: statusHandler,
-		},
-	)
+func CreateReplicationFSM(initialState string, metadata types.RbdReplicationRequest) *stateless.StateMachine {
+	newFsm := stateless.NewStateMachine(initialState)
+	// Configure transitions from disabled state.
+	newFsm.Configure(constants.StateDisabledReplication).
+		Permit(constants.EventEnableReplication, constants.StateEnabledReplication).
+		OnEntryFrom(constants.EventEnableReplication, enableHandler).
+		InternalTransition(constants.EventDisableReplication, disableHandler)
 
-	// prepare metadata and state.
-	newFsm.SetMetadata("metadata", metadata)
-	newFsm.SetState(initialState)
+	// Configure transitions from enabled state.
+	newFsm.Configure(constants.StateEnabledReplication).
+		Permit(constants.EventDisableReplication, constants.StateDisabledReplication).
+		OnEntryFrom(constants.EventDisableReplication, disableHandler).
+		InternalTransition(constants.EventEnableReplication, enableHandler).
+		InternalTransition(constants.EventConfigureReplication, configureHandler).
+		InternalTransition(constants.EventListReplication, listHandler).
+		InternalTransition(constants.EventStatusReplication, statusHandler)
+
+	// Check Event params type.
+	var output *string
+	inputType := reflect.TypeOf(metadata)
+	outputType := reflect.TypeOf(output)
+	newFsm.SetTriggerParameters(constants.EventEnableReplication, inputType, outputType)
+	newFsm.SetTriggerParameters(constants.EventDisableReplication, inputType, outputType)
+	newFsm.SetTriggerParameters(constants.EventConfigureReplication, inputType, outputType)
+	newFsm.SetTriggerParameters(constants.EventListReplication, inputType, outputType)
+	newFsm.SetTriggerParameters(constants.EventStatusReplication, inputType, outputType)
+
+	// Add logger callback for all transitions
+	newFsm.OnTransitioning(logTransitionHandler)
+
+	// Add handler for unhandled transitions.
+	newFsm.OnUnhandledTrigger(unhandledTransitionHandler)
+
+	logger.Infof("BAZINGA: Created new FSM from state: %s", initialState)
 
 	return newFsm
 }
 
-func genericLoggerHandler(_ context.Context, e *fsm.Event) {
-	metadata, ok := e.FSM.Metadata("metadata")
-	if !ok {
-		logger.Errorf("Unable to fetch RBD request metadata. state(%s) event(%s)", e.Src, e.Event)
-	}
-	logger.Infof("Replication: RBD Event(%s), SrcState(%s), Metadata(%v)", e.Event, e.Src, &metadata)
+func logTransitionHandler(_ context.Context, t stateless.Transition) {
+	logger.Infof("Replication: RBD Event(%s), SrcState(%s), DstState(%s)", t.Trigger, t.Source, t.Destination)
 }
 
-func enableHandler(_ context.Context, e *fsm.Event)    { placeHolder("enable") }
-func disableHandler(_ context.Context, e *fsm.Event)   { placeHolder("disable") }
-func configureHandler(_ context.Context, e *fsm.Event) { placeHolder("configure") }
-func listHandler(_ context.Context, e *fsm.Event)      { placeHolder("list") }
-func statusHandler(_ context.Context, e *fsm.Event)    { placeHolder("status") }
+func unhandledTransitionHandler(_ context.Context, state stateless.State, trigger stateless.Trigger, _ []string) error {
+	return fmt.Errorf("operation: %s is not permitted at %s state", trigger, state)
+}
 
-func placeHolder(msg string) {
+func enableHandler(ctx context.Context, args ...any) error {
+	// TODO: Implement
+	logger.Infof("BAZINGA: %v", args)
+	ph := "BAZINGA RESPONSE"
+	*args[1].(*string) = ph
+	return placeHolder("enable")
+}
+func disableHandler(ctx context.Context, args ...any) error {
+	// TODO: Implement
+	ph := "BAZINGA RESPONSE"
+	*args[1].(*string) = ph
+	return placeHolder("disable")
+}
+func configureHandler(ctx context.Context, args ...any) error {
+	// TODO: Implement
+	ph := "BAZINGA RESPONSE"
+	*args[1].(*string) = ph
+	return placeHolder("configure")
+}
+func listHandler(ctx context.Context, args ...any) error {
+	// TODO: Implement
+	ph := "BAZINGA RESPONSE"
+	*args[1].(*string) = ph
+	return placeHolder("list")
+}
+func statusHandler(ctx context.Context, args ...any) error {
+	// TODO: Implement
+	ph := "BAZINGA RESPONSE"
+	*args[1].(*string) = ph
+	return placeHolder("status")
+}
+
+func placeHolder(msg string) error {
 	logger.Infof("BAZINGA: %s handler", msg)
+	return nil
 }

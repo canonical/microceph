@@ -10,27 +10,29 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type cmdRemoteReplicationStatusRbd struct {
+type cmdRemoteReplicationConfigureRbd struct {
 	common    *CmdControl
 	poolName  string
 	imageName string
-	json      bool
+	repType   string
+	schedule  string
 }
 
-func (c *cmdRemoteReplicationStatusRbd) Command() *cobra.Command {
+func (c *cmdRemoteReplicationConfigureRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show RBD Pool or Image replication status",
+		Use:   "configure",
+		Short: "Configure remote replication for RBD Pool or Image",
 		RunE:  c.Run,
 	}
 
 	cmd.Flags().StringVar(&c.poolName, "pool", "", "RBD pool name")
+	cmd.MarkFlagRequired("pool")
 	cmd.Flags().StringVar(&c.imageName, "image", "", "RBD image name")
-	cmd.Flags().BoolVar(&c.json, "json", false, "output as json string")
+	cmd.Flags().StringVar(&c.schedule, "snapshot-schedule", "", "snapshot schedule in days, hours, or minutes using d, h, m suffix respectively")
 	return cmd
 }
 
-func (c *cmdRemoteReplicationStatusRbd) Run(cmd *cobra.Command, args []string) error {
+func (c *cmdRemoteReplicationConfigureRbd) Run(cmd *cobra.Command, args []string) error {
 	if len(args) != 0 {
 		return cmd.Help()
 	}
@@ -45,11 +47,12 @@ func (c *cmdRemoteReplicationStatusRbd) Run(cmd *cobra.Command, args []string) e
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.StatusReplicationRequest)
+	payload, err := c.prepareRbdPayload(types.ConfigureReplicationRequest)
 	if err != nil {
 		return err
 	}
 
+	// TODO: configure request does not expect any response.
 	resp, err := client.SendRemoteReplicationRequest(context.Background(), cli, payload)
 	if err == nil {
 		fmt.Println(resp)
@@ -58,11 +61,13 @@ func (c *cmdRemoteReplicationStatusRbd) Run(cmd *cobra.Command, args []string) e
 	return err
 }
 
-func (c *cmdRemoteReplicationStatusRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
+func (c *cmdRemoteReplicationConfigureRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
 	retReq := types.RbdReplicationRequest{
-		SourcePool:  c.poolName,
-		SourceImage: c.imageName,
-		RequestType: requestType,
+		SourcePool:      c.poolName,
+		SourceImage:     c.imageName,
+		Schedule:        c.schedule,
+		ReplicationType: types.RbdReplicationType(c.repType),
+		RequestType:     requestType,
 	}
 
 	if len(c.poolName) != 0 && len(c.imageName) != 0 {

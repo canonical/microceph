@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
@@ -52,7 +53,13 @@ func (c *cmdRemoteReplicationEnableRbd) Run(cmd *cobra.Command, args []string) e
 		return err
 	}
 
-	return client.SendRemoteReplicationRequest(context.Background(), cli, payload)
+	// TODO: Enable request does not expect any response.
+	resp, err := client.SendRemoteReplicationRequest(context.Background(), cli, payload)
+	if err == nil {
+		fmt.Println(resp)
+	}
+
+	return err
 }
 
 func (c *cmdRemoteReplicationEnableRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
