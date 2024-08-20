@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/canonical/lxd/lxd/response"
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microcluster/rest"
@@ -64,6 +65,7 @@ func cmdOpsReplicationRbdDelete(s *state.State, r *http.Request) response.Respon
 
 func handleRbdRepRequest(ctx context.Context, req types.RbdReplicationRequest) response.Response {
 	repFsm := ceph.CreateReplicationFSM(ceph.GetRbdMirroringState(req.GetAPIObjectId()), req)
+	logger.Infof("Bazinga: Check available transitions: %v", repFsm.AvailableTransitions())
 	err := repFsm.Event(ctx, req.GetWorkloadRequestType())
 	if err != nil {
 		return response.SmartError(err)
