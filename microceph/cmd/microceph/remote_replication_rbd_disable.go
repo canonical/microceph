@@ -47,7 +47,8 @@ func (c *cmdRemoteReplicationDisableRbd) Run(cmd *cobra.Command, args []string) 
 		return err
 	}
 
-	return client.SendRemoteReplicationRequest(context.Background(), cli, payload)
+	_, err = client.SendRemoteReplicationRequest(context.Background(), cli, payload)
+	return err
 }
 
 func (c *cmdRemoteReplicationDisableRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {

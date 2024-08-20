@@ -30,5 +30,9 @@ func (c *cmdRemoteReplicationRbd) Command() *cobra.Command {
 	remoteReplicationRbdStatusCmd := cmdRemoteReplicationStatusRbd{common: c.common}
 	cmd.AddCommand(remoteReplicationRbdStatusCmd.Command())
 
+	// Replication configure command
+	remoteReplicationRbdConfigureCmd := cmdRemoteReplicationConfigureRbd{common: c.common}
+	cmd.AddCommand(remoteReplicationRbdConfigureCmd.Command())
+
 	return cmd
 }

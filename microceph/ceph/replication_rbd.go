@@ -12,4 +12,4 @@ func isRbdImageMirroringEnabled(_ string) bool {
 }
 
 // GetRbdMirroringState checks if resource (expressed as  $pool/$image) has mirroring enabled
-func GetRbdMirroringState(resource string) string { return constants.EnabledRBDReplication }
+func GetRbdMirroringState(resource string) string { return constants.StateEnabledReplication }

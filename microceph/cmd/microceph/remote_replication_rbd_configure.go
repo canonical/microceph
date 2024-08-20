@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type cmdRemoteReplicationEnableRbd struct {
+type cmdRemoteReplicationConfigureRbd struct {
 	common    *CmdControl
 	poolName  string
 	imageName string
@@ -18,22 +18,21 @@ type cmdRemoteReplicationEnableRbd struct {
 	schedule  string
 }
 
-func (c *cmdRemoteReplicationEnableRbd) Command() *cobra.Command {
+func (c *cmdRemoteReplicationConfigureRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "enable",
-		Short: "Enable remote replication for RBD Pool or Image",
+		Use:   "configure",
+		Short: "Configure remote replication for RBD Pool or Image",
 		RunE:  c.Run,
 	}
 
 	cmd.Flags().StringVar(&c.poolName, "pool", "", "RBD pool name")
 	cmd.MarkFlagRequired("pool")
 	cmd.Flags().StringVar(&c.imageName, "image", "", "RBD image name")
-	cmd.Flags().StringVar(&c.repType, "type", "journal", "'journal' or 'snapshot', defaults to journal")
-	cmd.Flags().StringVar(&c.schedule, "schedule", "", "snapshot schedule in days, hours, or minutes using d, h, m suffix respectively")
+	cmd.Flags().StringVar(&c.schedule, "snapshot-schedule", "", "snapshot schedule in days, hours, or minutes using d, h, m suffix respectively")
 	return cmd
 }
 
-func (c *cmdRemoteReplicationEnableRbd) Run(cmd *cobra.Command, args []string) error {
+func (c *cmdRemoteReplicationConfigureRbd) Run(cmd *cobra.Command, args []string) error {
 	if len(args) != 0 {
 		return cmd.Help()
 	}
@@ -48,12 +47,12 @@ func (c *cmdRemoteReplicationEnableRbd) Run(cmd *cobra.Command, args []string) e
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.EnableReplicationRequest)
+	payload, err := c.prepareRbdPayload(types.ConfigureReplicationRequest)
 	if err != nil {
 		return err
 	}
 
-	// TODO: Enable request does not expect any response.
+	// TODO: configure request does not expect any response.
 	resp, err := client.SendRemoteReplicationRequest(context.Background(), cli, payload)
 	if err == nil {
 		fmt.Println(resp)
@@ -62,7 +61,7 @@ func (c *cmdRemoteReplicationEnableRbd) Run(cmd *cobra.Command, args []string) e
 	return err
 }
 
-func (c *cmdRemoteReplicationEnableRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
+func (c *cmdRemoteReplicationConfigureRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
 	retReq := types.RbdReplicationRequest{
 		SourcePool:      c.poolName,
 		SourceImage:     c.imageName,
