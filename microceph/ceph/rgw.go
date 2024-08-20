@@ -3,25 +3,52 @@ package ceph
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/microceph/microceph/database"
 )
 
 // EnableRGW enables the RGW service on the cluster and adds initial configuration given a service port number.
-func EnableRGW(s interfaces.StateInterface, port int, monitors []string) error {
+func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificate string, sslPrivateKey string, monitors []string) error {
 	pathConsts := constants.GetPathConst()
 
+	sslCertificatePath := ""
+	sslPrivateKeyPath := ""
+	if sslCertificate != "" && sslPrivateKey != "" {
+		sslCertificatePath = filepath.Join(pathConsts.SSLFilesPath, "server.crt")
+		decodedSSLCertificate, err := base64.StdEncoding.DecodeString(sslCertificate)
+		if err != nil {
+			return err
+		}
+		err = os.WriteFile(sslCertificatePath, decodedSSLCertificate, 0600)
+		if err != nil {
+			return err
+		}
+		sslPrivateKeyPath = filepath.Join(pathConsts.SSLFilesPath, "server.key")
+		decodedSSLPrivateKey, err := base64.StdEncoding.DecodeString(sslPrivateKey)
+		if err != nil {
+			return err
+		}
+		err = os.WriteFile(sslPrivateKeyPath, decodedSSLPrivateKey, 0600)
+		if err != nil {
+			return err
+		}
+	} else if sslCertificate == "" || sslPrivateKey == "" {
+		port = 80
+	}
 	configs := map[string]any{
-		"runDir":   pathConsts.RunPath,
-		"monitors": strings.Join(monitors, ","),
-		"rgwPort":  port,
+		"runDir":             pathConsts.RunPath,
+		"monitors":           strings.Join(monitors, ","),
+		"rgwPort":            port,
+		"sslPort":            sslPort,
+		"sslCertificatePath": sslCertificatePath,
+		"sslPrivateKeyPath":  sslPrivateKeyPath,
 	}
 
 	// Create RGW configuration.
@@ -71,6 +98,16 @@ func DisableRGW(s interfaces.StateInterface) error {
 	err = os.Remove(filepath.Join(pathConsts.DataPath, "radosgw", "ceph-radosgw.gateway", "keyring"))
 	if err != nil {
 		return fmt.Errorf("failed to remove RGW keyring: %w", err)
+	}
+
+	// Remove the SSL files.
+	err = os.Remove(filepath.Join(pathConsts.SSLFilesPath, "server.crt"))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove RGW SSL Certificate file: %w", err)
+	}
+	err = os.Remove(filepath.Join(pathConsts.SSLFilesPath, "server.key"))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove RGW SSL Private Key file: %w", err)
 	}
 
 	// Remove the configuration.

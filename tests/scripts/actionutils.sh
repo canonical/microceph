@@ -63,10 +63,30 @@ function add_encrypted_osds() {
     fi
 }
 
+function disable_rgw() {
+    set -x
+    # Disable rgw
+    sudo microceph disable rgw
+}
+
 function enable_rgw() {
     set -x
     # Enable rgw and wait for it to settle
     sudo microceph enable rgw
+    wait_for_rgw 1
+}
+
+function enable_rgw_ssl() {
+    set -x
+    # Generate the SSL material
+    sudo openssl genrsa -out /tmp/ca.key 2048
+    sudo openssl req -x509 -new -nodes -key /tmp/ca.key -days 1024 -out /tmp/ca.crt -outform PEM -subj "/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com"
+    sudo openssl genrsa -out /tmp/server.key 2048
+    sudo openssl req -new -key /tmp/server.key -out /tmp/server.csr -subj "/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com"
+    echo "subjectAltName = DNS:localhost" > /tmp/extfile.cnf
+    sudo openssl x509 -req -in /tmp/server.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -out /tmp/server.crt -days 365 -extfile /tmp/extfile.cnf
+    # Enable rgw and wait for it to settle
+    sudo microceph enable rgw --ssl-certificate="$(sudo base64 -w0 /tmp/server.crt)" --ssl-private-key="$(sudo base64 -w0 /tmp/server.key)"
     wait_for_rgw 1
 }
 
@@ -383,6 +403,25 @@ function testrgw() {
     s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl mb s3://testbucket
     s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/$filename.txt s3://testbucket
     ( curl -s http://localhost/testbucket/$filename.txt | grep -F hello-radosgw ) || return -1
+}
+
+
+function testrgw_ssl() {
+    set -eu
+    local default="test"
+    local filename=${1:-default}
+    sudo microceph.ceph status
+    sudo systemctl status snap.microceph.rgw --no-pager
+    if ! $(sudo microceph.radosgw-admin user list | grep -q test) ; then
+        echo "Create S3 user: test"
+        sudo microceph.radosgw-admin user create --uid=test --display-name=test
+        sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey
+    fi
+    sudo apt-get update -qq
+    echo hello-radosgw-ssl > ~/$filename.txt
+    s3cmd --ca-certs=/tmp/ca.crt --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey mb s3://testbucketssl
+    s3cmd --ca-certs=/tmp/ca.crt --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey put -P ~/$filename.txt s3://testbucketssl
+    ( CURL_CA_BUNDLE=/tmp/ca.crt curl -s https://localhost/testbucketssl/$filename.txt | grep -F hello-radosgw-ssl ) || return -1
 }
 
 function enable_services() {

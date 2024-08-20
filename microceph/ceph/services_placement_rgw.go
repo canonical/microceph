@@ -8,7 +8,10 @@ import (
 )
 
 type RgwServicePlacement struct {
-	Port int
+	Port           int
+	SSLPort        int
+	SSLCertificate string
+	SSLPrivateKey  string
 }
 
 func (rgw *RgwServicePlacement) PopulateParams(s interfaces.StateInterface, payload string) error {
@@ -32,7 +35,7 @@ func (rgw *RgwServicePlacement) ServiceInit(s interfaces.StateInterface) error {
 		return fmt.Errorf("failed to get config db: %w", err)
 	}
 
-	return EnableRGW(s, rgw.Port, getMonitorAddresses(config))
+	return EnableRGW(s, rgw.Port, rgw.SSLPort, rgw.SSLCertificate, rgw.SSLPrivateKey, getMonitorAddresses(config))
 }
 
 func (rgw *RgwServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {

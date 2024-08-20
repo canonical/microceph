@@ -167,6 +167,15 @@ jobs:
     - name: Exercise RGW
       run: ~/actionutils.sh testrgw
 
+    - name: Disable RGW
+      run: ~/actionutils.sh disable_rgw
+
+    - name: Enable RGW with SSL enabled
+      run: ~/actionutils.sh enable_rgw_ssl
+
+    - name: Exercise RGW with SSL enabled
+      run: ~/actionutils.sh testrgw_ssl
+
     - name: Test Cluster Config
       run: |
         set -eux
