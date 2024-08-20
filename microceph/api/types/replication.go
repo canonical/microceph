@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/constants"
 )
 
@@ -67,7 +68,9 @@ func (req RbdReplicationRequest) GetWorkloadType() CephWorkloadType {
 func (req RbdReplicationRequest) GetAPIObjectId() string {
 	// If both Pool and Image values are present encode for query.
 	if len(req.SourceImage) != 0 && len(req.SourcePool) != 0 {
-		return url.QueryEscape(fmt.Sprintf("%s/%s", req.SourcePool, req.SourceImage))
+		resource := url.QueryEscape(fmt.Sprintf("%s/%s", req.SourcePool, req.SourceImage))
+		logger.Infof("BAZINGA: Check the Resource: %s", resource)
+		return resource
 	}
 
 	return req.SourcePool
@@ -75,6 +78,7 @@ func (req RbdReplicationRequest) GetAPIObjectId() string {
 
 func (req RbdReplicationRequest) GetAPIRequestType() string {
 	frags := strings.Split(string(req.RequestType), "-")
+	logger.Infof("BAZINGA: Check the API frags: %v", frags)
 	if len(frags) == 0 {
 		return ""
 	}
@@ -84,6 +88,7 @@ func (req RbdReplicationRequest) GetAPIRequestType() string {
 
 func (req RbdReplicationRequest) GetWorkloadRequestType() string {
 	frags := strings.Split(string(req.RequestType), "-")
+	logger.Infof("BAZINGA: Check the workload frags: %v", frags)
 	if len(frags) < 2 {
 		return ""
 	}
