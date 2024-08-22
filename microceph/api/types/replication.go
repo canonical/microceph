@@ -38,10 +38,17 @@ type ReplicationRequest interface {
 
 // ################################## RBD Replication Request ##################################
 type RbdResourceType string
+type RbdReplicationDirection string
 
 const (
-	RbdResourcePool  RbdResourceType = "pool"
-	RbdResourceImage RbdResourceType = "image"
+	RbdReplicationDirectionRXOnly RbdReplicationDirection = "rx-only"
+	RbdReplicationDirectionRXTX   RbdReplicationDirection = "rx-tx"
+)
+
+const (
+	RbdResourceDisabled RbdResourceType = "disabled"
+	RbdResourcePool     RbdResourceType = "pool"
+	RbdResourceImage    RbdResourceType = "image"
 )
 
 type RbdReplicationType string
@@ -54,6 +61,7 @@ const (
 type RbdReplicationRequest struct {
 	SourcePool  string `json:"source_pool" yaml:"source_pool"`
 	SourceImage string `json:"source_image" yaml:"source_image"`
+	RemoteName  string `json:"remote" yaml:"remote"`
 	// snapshot in d,h,m format
 	Schedule        string                 `json:"schedule" yaml:"schedule"`
 	ReplicationType RbdReplicationType     `json:"replication_type" yaml:"replication_type"`

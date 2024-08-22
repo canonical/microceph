@@ -11,17 +11,49 @@ import (
 	"github.com/qmuntal/stateless"
 )
 
-func CreateReplicationFSM(initialState string, metadata types.RbdReplicationRequest) *stateless.StateMachine {
+type ReplicationState string
+
+const (
+	StateDisabledReplication ReplicationState = "replication_disabled"
+	StateEnabledReplication  ReplicationState = "replication_enabled"
+)
+
+type ReplicationHandlerInterface interface {
+	PreFill(ctx context.Context, request types.ReplicationRequest) error
+	GetResourceState() ReplicationState
+	EnableHandler(ctx context.Context, args ...any) error
+	DisableHandler(ctx context.Context, args ...any) error
+	ConfigureHandler(ctx context.Context, args ...any) error
+	ListHandler(ctx context.Context, args ...any) error
+	StatusHandler(ctx context.Context, args ...any) error
+}
+
+func GetReplicationHandler(name string) ReplicationHandlerInterface {
+	// Add RGW and CephFs Replication handlers here.
+	// TODO: Check
+	table := map[string]ReplicationHandlerInterface{
+		"rbd": &RbdReplicationHandler{},
+	}
+
+	rh, ok := table[name]
+	if !ok {
+		return nil
+	}
+
+	return rh
+}
+
+func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateMachine {
 	newFsm := stateless.NewStateMachine(initialState)
 	// Configure transitions from disabled state.
-	newFsm.Configure(constants.StateDisabledReplication).
-		Permit(constants.EventEnableReplication, constants.StateEnabledReplication).
+	newFsm.Configure(StateDisabledReplication).
+		Permit(constants.EventEnableReplication, StateEnabledReplication).
 		OnEntryFrom(constants.EventEnableReplication, enableHandler).
 		InternalTransition(constants.EventDisableReplication, disableHandler)
 
 	// Configure transitions from enabled state.
-	newFsm.Configure(constants.StateEnabledReplication).
-		Permit(constants.EventDisableReplication, constants.StateDisabledReplication).
+	newFsm.Configure(StateEnabledReplication).
+		Permit(constants.EventDisableReplication, StateDisabledReplication).
 		OnEntryFrom(constants.EventDisableReplication, disableHandler).
 		InternalTransition(constants.EventEnableReplication, enableHandler).
 		InternalTransition(constants.EventConfigureReplication, configureHandler).
@@ -30,7 +62,8 @@ func CreateReplicationFSM(initialState string, metadata types.RbdReplicationRequ
 
 	// Check Event params type.
 	var output *string
-	inputType := reflect.TypeOf(metadata)
+	var eventHandler ReplicationHandlerInterface
+	inputType := reflect.TypeOf(&eventHandler).Elem()
 	outputType := reflect.TypeOf(output)
 	newFsm.SetTriggerParameters(constants.EventEnableReplication, inputType, outputType)
 	newFsm.SetTriggerParameters(constants.EventDisableReplication, inputType, outputType)
@@ -58,38 +91,22 @@ func unhandledTransitionHandler(_ context.Context, state stateless.State, trigge
 }
 
 func enableHandler(ctx context.Context, args ...any) error {
-	// TODO: Implement
-	logger.Infof("BAZINGA: %v", args)
-	ph := "BAZINGA RESPONSE"
-	*args[1].(*string) = ph
-	return placeHolder("enable")
+	rh := args[0].(ReplicationHandlerInterface)
+	return rh.EnableHandler(ctx, args...)
 }
 func disableHandler(ctx context.Context, args ...any) error {
-	// TODO: Implement
-	ph := "BAZINGA RESPONSE"
-	*args[1].(*string) = ph
-	return placeHolder("disable")
+	rh := args[0].(ReplicationHandlerInterface)
+	return rh.DisableHandler(ctx, args...)
 }
 func configureHandler(ctx context.Context, args ...any) error {
-	// TODO: Implement
-	ph := "BAZINGA RESPONSE"
-	*args[1].(*string) = ph
-	return placeHolder("configure")
+	rh := args[0].(ReplicationHandlerInterface)
+	return rh.ConfigureHandler(ctx, args...)
 }
 func listHandler(ctx context.Context, args ...any) error {
-	// TODO: Implement
-	ph := "BAZINGA RESPONSE"
-	*args[1].(*string) = ph
-	return placeHolder("list")
+	rh := args[0].(ReplicationHandlerInterface)
+	return rh.ListHandler(ctx, args...)
 }
 func statusHandler(ctx context.Context, args ...any) error {
-	// TODO: Implement
-	ph := "BAZINGA RESPONSE"
-	*args[1].(*string) = ph
-	return placeHolder("status")
-}
-
-func placeHolder(msg string) error {
-	logger.Infof("BAZINGA: %s handler", msg)
-	return nil
+	rh := args[0].(ReplicationHandlerInterface)
+	return rh.StatusHandler(ctx, args...)
 }
