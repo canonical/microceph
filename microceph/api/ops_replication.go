@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/canonical/lxd/lxd/response"
@@ -38,7 +39,7 @@ func cmdOpsReplicationRbdGet(s state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	return handleRbdRepRequest(r.Context(), req)
+	return handleReplicationRequest(r.Context(), req)
 }
 
 // cmdOpsReplicationRbdPut configures a new RBD replication pair.
@@ -49,7 +50,7 @@ func cmdOpsReplicationRbdPut(s state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	return handleRbdRepRequest(r.Context(), req)
+	return handleReplicationRequest(r.Context(), req)
 }
 
 // cmdOpsReplicationRbdDelete deletes a configured replication pair.
@@ -60,21 +61,29 @@ func cmdOpsReplicationRbdDelete(s state.State, r *http.Request) response.Respons
 		return response.InternalError(err)
 	}
 
-	return handleRbdRepRequest(r.Context(), req)
+	return handleReplicationRequest(r.Context(), req)
 }
 
-func handleRbdRepRequest(ctx context.Context, req types.RbdReplicationRequest) response.Response {
-	repFsm := ceph.CreateReplicationFSM(ceph.GetRbdMirroringState(req.GetAPIObjectId()), req)
-
-	at, err := repFsm.PermittedTriggers()
-	if err != nil {
-		return response.InternalError(err)
+func handleReplicationRequest(ctx context.Context, req types.RbdReplicationRequest) response.Response {
+	// Fetch replication handler
+	wl := string(req.GetWorkloadType())
+	rh := ceph.GetReplicationHandler(wl)
+	if rh == nil {
+		return response.SmartError(fmt.Errorf("no replication handler for %s workload", wl))
 	}
 
-	logger.Infof("Bazinga: Check available transitions: %v", at)
+	// Populate resource info
+	err := rh.PreFill(ctx, req)
+	if err != nil {
+		return response.SmartError(err)
+	}
+
+	// Get FSM
+	repFsm := ceph.GetReplicationStateMachine(rh.GetResourceState())
 
 	var resp string
-	err = repFsm.FireCtx(ctx, req.GetWorkloadRequestType(), req, &resp)
+	event := req.GetWorkloadRequestType()
+	err = repFsm.FireCtx(ctx, event, rh, &resp)
 	if err != nil {
 		return response.SmartError(err)
 	}
@@ -86,5 +95,5 @@ func handleRbdRepRequest(ctx context.Context, req types.RbdReplicationRequest) r
 		return response.SyncResponse(true, resp)
 	}
 
-	return response.EmptySyncResponse
+	return response.SyncResponse(true, "")
 }

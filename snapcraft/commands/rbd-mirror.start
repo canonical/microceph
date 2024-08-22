@@ -1,3 +1,2 @@
 #!/bin/sh
-# TODO: change it to an rbd-mirror user key
 exec rbd-mirror -f --cluster ceph --id "rbd-mirror.$(hostname)"

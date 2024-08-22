@@ -20,7 +20,7 @@ type cmdRemoteReplicationEnableRbd struct {
 
 func (c *cmdRemoteReplicationEnableRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "enable",
+		Use:   "enable <remote>",
 		Short: "Enable remote replication for RBD Pool or Image",
 		RunE:  c.Run,
 	}
@@ -34,7 +34,7 @@ func (c *cmdRemoteReplicationEnableRbd) Command() *cobra.Command {
 }
 
 func (c *cmdRemoteReplicationEnableRbd) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
+	if len(args) != 1 {
 		return cmd.Help()
 	}
 
@@ -48,7 +48,7 @@ func (c *cmdRemoteReplicationEnableRbd) Run(cmd *cobra.Command, args []string) e
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.EnableReplicationRequest)
+	payload, err := c.prepareRbdPayload(types.EnableReplicationRequest, args)
 	if err != nil {
 		return err
 	}
@@ -62,8 +62,9 @@ func (c *cmdRemoteReplicationEnableRbd) Run(cmd *cobra.Command, args []string) e
 	return err
 }
 
-func (c *cmdRemoteReplicationEnableRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
+func (c *cmdRemoteReplicationEnableRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
 	retReq := types.RbdReplicationRequest{
+		RemoteName:      args[0],
 		SourcePool:      c.poolName,
 		SourceImage:     c.imageName,
 		Schedule:        c.schedule,

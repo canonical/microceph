@@ -66,12 +66,7 @@ func GetPathFileMode() PathFileMode {
 // Regexes
 const ClusterNameRegex = "^[a-z0-9]+$"
 
-// Replication
-// States
-const StateDisabledReplication = "replication_disabled"
-const StateEnabledReplication = "replication_enabled"
-
-// Events
+// Replication Events
 const EventEnableReplication = "enable_replication"
 const EventDisableReplication = "disable_replication"
 const EventListReplication = "list_replication"
