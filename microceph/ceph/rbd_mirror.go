@@ -35,18 +35,24 @@ func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplic
 		return RbdReplicationPoolInfo{Mode: types.RbdResourceDisabled}, nil
 	}
 
-	return RbdReplicationPoolInfo{
-		Mode:          mode,
-		LocalSiteName: respObj["Site Name"].(string),
-		Peers: []RbdReplicationPeer{
+	// generate poolInfo without peers
+	poolInfo := RbdReplicationPoolInfo{Mode: mode, LocalSiteName: respObj["Site Name"].(string)}
+
+	// populate peers if available
+	if strings.Contains(respObj["Site Name"].(string), "none") {
+		poolInfo.Peers = []RbdReplicationPeer{}
+	} else {
+		poolInfo.Peers = []RbdReplicationPeer{
 			{
 				LocalId:    respObj["UUID"].(string),
 				RemoteId:   respObj["Mirror UUID"].(string),
 				RemoteName: respObj["Name"].(string),
 				Direction:  types.RbdReplicationDirection(respObj["Direction"].(string)),
 			},
-		},
-	}, nil
+		}
+	}
+
+	return poolInfo, nil
 }
 
 // TODO: Add docs

@@ -45,16 +45,17 @@ func GetReplicationHandler(name string) ReplicationHandlerInterface {
 
 func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateMachine {
 	newFsm := stateless.NewStateMachine(initialState)
-	// Configure transitions from disabled state.
+	// Configure transitions for disabled state.
 	newFsm.Configure(StateDisabledReplication).
 		Permit(constants.EventEnableReplication, StateEnabledReplication).
 		OnEntryFrom(constants.EventEnableReplication, enableHandler).
 		InternalTransition(constants.EventDisableReplication, disableHandler)
 
-	// Configure transitions from enabled state.
+	// Configure transitions for enabled state.
 	newFsm.Configure(StateEnabledReplication).
 		Permit(constants.EventDisableReplication, StateDisabledReplication).
 		OnEntryFrom(constants.EventDisableReplication, disableHandler).
+		OnEntryFrom(constants.EventEnableReplication, enableHandler).
 		InternalTransition(constants.EventEnableReplication, enableHandler).
 		InternalTransition(constants.EventConfigureReplication, configureHandler).
 		InternalTransition(constants.EventListReplication, listHandler).
@@ -83,7 +84,7 @@ func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateM
 }
 
 func logTransitionHandler(_ context.Context, t stateless.Transition) {
-	logger.Infof("Replication: RBD Event(%s), SrcState(%s), DstState(%s)", t.Trigger, t.Source, t.Destination)
+	logger.Infof("Replication: Event(%s), SrcState(%s), DstState(%s)", t.Trigger, t.Source, t.Destination)
 }
 
 func unhandledTransitionHandler(_ context.Context, state stateless.State, trigger stateless.Trigger, _ []string) error {
@@ -92,21 +93,26 @@ func unhandledTransitionHandler(_ context.Context, state stateless.State, trigge
 
 func enableHandler(ctx context.Context, args ...any) error {
 	rh := args[0].(ReplicationHandlerInterface)
+	logger.Infof("BAZINGA: Entered Enable Handler")
 	return rh.EnableHandler(ctx, args...)
 }
 func disableHandler(ctx context.Context, args ...any) error {
 	rh := args[0].(ReplicationHandlerInterface)
+	logger.Infof("BAZINGA: Entered Disable Handler")
 	return rh.DisableHandler(ctx, args...)
 }
 func configureHandler(ctx context.Context, args ...any) error {
 	rh := args[0].(ReplicationHandlerInterface)
+	logger.Infof("BAZINGA: Entered Configure Handler")
 	return rh.ConfigureHandler(ctx, args...)
 }
 func listHandler(ctx context.Context, args ...any) error {
 	rh := args[0].(ReplicationHandlerInterface)
+	logger.Infof("BAZINGA: Entered List Handler")
 	return rh.ListHandler(ctx, args...)
 }
 func statusHandler(ctx context.Context, args ...any) error {
 	rh := args[0].(ReplicationHandlerInterface)
+	logger.Infof("BAZINGA: Entered Status Handler")
 	return rh.StatusHandler(ctx, args...)
 }
