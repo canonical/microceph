@@ -109,7 +109,7 @@ func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any)
 	logger.Infof("BAZINGA: Entered RBD Enable Handler R%s L%s", remoteName, localName)
 	if rh.Request.ResourceType == types.RbdResourcePool {
 		if rh.PoolStatus.State == StateDisabledReplication {
-			return EnablePoolMirroring(rh.Request.SourcePool, localName, remoteName)
+			return EnablePoolMirroring(rh.Request.SourcePool, types.RbdResourcePool, localName, remoteName)
 		} else {
 			return fmt.Errorf("pool already enabled in %s mirroring mode", rh.PoolInfo.Mode)
 		}
