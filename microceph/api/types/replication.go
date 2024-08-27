@@ -46,7 +46,7 @@ const (
 )
 
 const (
-	RbdResourceDisabled RbdResourceType = "disabled"
+	RbdResourceDisabled RbdResourceType = "disable"
 	RbdResourcePool     RbdResourceType = "pool"
 	RbdResourceImage    RbdResourceType = "image"
 )
@@ -54,6 +54,7 @@ const (
 type RbdReplicationType string
 
 const (
+	RbdReplicationDisabled   RbdReplicationType = "disable"
 	RbdReplicationJournaling RbdReplicationType = "journal"
 	RbdReplicationSnapshot   RbdReplicationType = "snapshot"
 )

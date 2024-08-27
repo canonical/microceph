@@ -2,11 +2,14 @@ package ceph
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/constants"
 	"gopkg.in/yaml.v2"
 )
 
@@ -20,7 +23,7 @@ const (
 
 // Ceph Commands
 
-// TODO: Add docs
+// GetRbdMirrorPoolInfo fetches the mirroring info for the requested pool
 func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplicationPoolInfo, error) {
 	respObj := executeMirrorCommand(pool, types.RbdResourcePool, RbdMirrorInfoCommand, cluster, client)
 	if respObj == nil {
@@ -55,7 +58,7 @@ func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplic
 	return poolInfo, nil
 }
 
-// TODO: Add docs
+// GetRbdMirrorPoolStatus fetches mirroring status for requested pool
 func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdReplicationPoolStatus, error) {
 	respObj := executeMirrorCommand(pool, types.RbdResourcePool, RbdMirrorStatusCommand, cluster, client)
 	if respObj == nil {
@@ -78,7 +81,7 @@ func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdRepl
 	}, nil
 }
 
-// TODO: Add docs
+// GetRbdMirrorImageStatus fetches mirroring status for reqeusted image
 func GetRbdMirrorImageStatus(pool string, image string, cluster string, client string) (RbdReplicationImageStatus, error) {
 	resourceName := fmt.Sprintf("%s/%s", pool, image)
 	respObj := executeMirrorCommand(resourceName, types.RbdResourceImage, RbdMirrorStatusCommand, cluster, client)
@@ -117,15 +120,8 @@ func executeMirrorCommand(resourceName string, resourceType types.RbdResourceTyp
 	respObj := make(map[string]interface{})
 	args := []string{"mirror", string(resourceType), string(command), resourceName}
 
-	if len(cluster) != 0 {
-		args = append(args, "--cluster")
-		args = append(args, cluster)
-	}
-
-	if len(client) != 0 {
-		args = append(args, "--id")
-		args = append(args, client)
-	}
+	// add --cluster and --id args
+	args = appendRemoteClusterArgs(args, cluster, client)
 
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
@@ -142,77 +138,179 @@ func executeMirrorCommand(resourceName string, resourceType types.RbdResourceTyp
 	return respObj
 }
 
-func EnablePoolMirroring(pool string, localName string, remoteName string) error {
-	// Execute Enable command for pool
-	err := enablePoolMirroring(pool, "", "")
+func EnablePoolMirroring(pool string, mode types.RbdResourceType, localName string, remoteName string) error {
+	// Enable pool on the local cluster.
+	err := configurePoolMirroring(pool, mode, "", "")
 	if err != nil {
 		return err
 	}
 
-	err = enablePoolMirroring(pool, remoteName, localName)
+	// Enable pool mirroring on the remote cluster.
+	err = configurePoolMirroring(pool, mode, remoteName, localName)
 	if err != nil {
 		return err
 	}
 
+	// Bootstrap peer token for mirroring.
 	return BootstrapPeer(pool, localName, remoteName)
 }
 func EnableImageMirroring(pool string, image string, mode types.RbdReplicationType, localName string, remoteName string) error {
-	return enableImageMirroring(pool, image)
+	return configureImageMirroring(pool, image, types.RbdReplicationSnapshot)
 }
 
 func BootstrapPeer(pool string, localName string, remoteName string) error {
-	var tokenPath string
-	argsLocal := []string{
-		"mirror", "pool", "peer", "bootstrap", "create", "--site-name", localName, pool, ">", tokenPath,
-	}
-	argsRemote := []string{
-		"mirror", "pool", "peer", "bootstrap", "import", "--site-name", remoteName, "--direction",
-		"rx-tx", pool, tokenPath, "--cluster", remoteName, "--id", localName,
+	tokenPath := filepath.Join(
+		constants.GetPathConst().ConfPath,
+		"rbd_mirror",
+		fmt.Sprintf("%s_peer_keyring", remoteName),
+	)
+
+	// create bootstrap token on remote site.
+	token, err := peerBootstrapCreate(pool, remoteName, localName)
+	if err != nil {
+		logger.Error(err.Error())
+		return err
 	}
 
-	_, err := processExec.RunCommand("rbd", argsLocal...)
+	// persist the peer token
+	err = writeTokenToPath(token, tokenPath)
 	if err != nil {
-		return fmt.Errorf("failed to execute bootstrap create: %v", err)
+		logger.Error(err.Error())
+		return err
 	}
 
-	_, err = processExec.RunCommand("rbd", argsRemote...)
+	// import peer token on local site
+	return peerBootstrapImport(pool, tokenPath, remoteName, localName)
+}
+
+// ############################# Ceph Commands #############################
+func configurePoolMirroring(pool string, mode types.RbdResourceType, localName string, remoteName string) error {
+	var args []string
+	if mode == types.RbdResourceDisabled {
+		args = []string{"mirror", "pool", "disable", pool}
+	} else {
+		args = []string{"mirror", "pool", "enable", pool, string(mode)}
+	}
+
+	// add --cluster and --id args
+	args = appendRemoteClusterArgs(args, remoteName, localName)
+
+	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
-		return fmt.Errorf("failed to execute bootstrap import: %v", err)
+		return fmt.Errorf("failed to execute rbd command: %v", err)
 	}
 
 	return nil
 }
 
-// TODO: support image mode
-func enablePoolMirroring(pool string, localName string, remoteName string) error {
-	// TODO: remove hardcoding
-	args := []string{"mirror", "pool", "enable", pool, "pool"}
+// configureImageMirroring disables or enabled image mirroring in requested mode.
+func configureImageMirroring(pool string, image string, mode types.RbdReplicationType) error {
+	var args []string
 
-	if len(remoteName) != 0 {
+	if mode == types.RbdReplicationDisabled {
+		args = []string{"mirror", "image", "disable", fmt.Sprintf("%s/%s", pool, image)}
+	} else {
+		args = []string{"mirror", "image", "enable", fmt.Sprintf("%s/%s", pool, image), string(mode)}
+	}
+
+	_, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return fmt.Errorf("failed to configure rbd image feature: %v", err)
+	}
+
+	return nil
+}
+
+// enableImageFeatures disables or enables requested feature on rbd image.
+func enableImageFeatures(pool string, image string, op string, feature string) error {
+	// op is enable or disable
+	args := []string{"feature", op, fmt.Sprintf("%s/%s", pool, image), feature}
+
+	_, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return fmt.Errorf("failed to configure rbd image feature: %v", err)
+	}
+
+	return nil
+}
+
+// peerBootstrapCreate generates peer bootstrap token on remote ceph cluster.
+func peerBootstrapCreate(pool string, remoteName string, localName string) (string, error) {
+	args := []string{
+		"mirror", "pool", "peer", "bootstrap", "create", "--site-name", localName, pool,
+	}
+
+	// add --cluster and --id args
+	args = appendRemoteClusterArgs(args, remoteName, localName)
+
+	output, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return "", fmt.Errorf("failed to bootstrap peer token: %v", err)
+	}
+
+	return output, nil
+}
+
+// peerBootstrapImport imports the bootstrap peer on the local cluster using a tokenfile.
+func peerBootstrapImport(pool string, tokenPath string, remoteName string, localName string) error {
+	args := []string{
+		"mirror", "pool", "peer", "bootstrap", "import", "--site-name", localName, "--direction", "rx-tx", pool, tokenPath,
+	}
+
+	// add --cluster and --id args
+	args = appendRemoteClusterArgs(args, remoteName, localName)
+
+	_, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return fmt.Errorf("failed to import peer bootstrap token: %v", err)
+	}
+
+	return nil
+}
+
+// ########################### HELPERS ###########################
+
+// appendRemoteClusterArgs appends the cluster and client arguments to ceph commands
+func appendRemoteClusterArgs(args []string, cluster string, client string) []string {
+	logger.Debugf("RBD Replication: old args are %v", args)
+	// check if appendage is needed
+	if len(cluster) == 0 && len(client) == 0 {
+		// return as is
+		return args
+	}
+
+	if len(cluster) > 0 {
 		args = append(args, "--cluster")
-		args = append(args, remoteName)
+		args = append(args, cluster)
 	}
 
-	if len(localName) != 0 {
+	if len(client) > 0 {
 		args = append(args, "--id")
-		args = append(args, localName)
+		args = append(args, client)
 	}
 
-	_, err := processExec.RunCommand("rbd", args...)
-	if err != nil {
-		return fmt.Errorf("failed to execute rbd command: %v", err)
-	}
+	logger.Debugf("RBD Replication: new args are %v", args)
 
-	return nil
+	// return modified args
+	return args
 }
 
-// TODO: remove journaling hardcode
-func enableImageMirroring(pool string, image string) error {
-	args := []string{"feature", "enable", fmt.Sprintf("%s/%s", pool, image), "journaling"}
-
-	_, err := processExec.RunCommand("rbd", args...)
+// writeTokenToPath writes the provided string to a newly created token file.
+func writeTokenToPath(token string, path string) error {
+	// create file
+	file, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("failed to execute rbd command: %v", err)
+		ne := fmt.Errorf("failed to create the token file(%s): %w", path, err)
+		logger.Error(ne.Error())
+		return ne
+	}
+
+	// write to file
+	_, err = file.WriteString(token)
+	if err != nil {
+		ne := fmt.Errorf("failed to write the token file(%s): %w", path, err)
+		logger.Error(ne.Error())
+		return ne
 	}
 
 	return nil
