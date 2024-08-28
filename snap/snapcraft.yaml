@@ -1,5 +1,5 @@
 name: microceph
-base: core22
+base: core24
 adopt-info: ceph
 grade: stable
 source-code: https://github.com/canonical/microceph.git
@@ -9,11 +9,6 @@ description: |-
  MicroCeph is snap-deployed Ceph with built-in clustering.
 
 confinement: strict
-
-package-repositories:
-  - type: apt
-    cloud: bobcat
-    priority: always
 
 slots:
   ceph-conf:
@@ -144,12 +139,13 @@ parts:
       pkg_version=$(
         dpkg-deb -f \
         $CRAFT_PART_SRC/../stage_packages/ceph-common*.deb \
-        Version | sed -rne 's/([0-9.]+)[-+].*$$/\1/p')
+        Version | sed -rne 's/([0-9.]+)[-+].*$$/\1/p' | cut -c1-10)
       git_version=$(
         git -C $CRAFT_PROJECT_DIR describe \
           --always \
           --dirty \
           --abbrev=10)
+        # changed as the original string was longer than 32chars.
         craftctl set version=${pkg_version}+snap${git_version}
     stage-packages:
       - ceph-common
@@ -161,6 +157,7 @@ parts:
       - radosgw
       - coreutils
       - uuid-runtime
+      - python3-setuptools
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -189,7 +186,7 @@ parts:
       - lib/*/libboost_filesystem.so*
       - lib/*/libboost_iostreams.so*
       - lib/*/libboost_program_options.so*
-      - lib/*/libboost_python310.so*
+      - lib/*/libboost_python312.so*
       - lib/*/libboost_thread.so*
       - lib/*/libcephfs.so*
       - lib/*/libcephsqlite.so*
@@ -199,8 +196,10 @@ parts:
       - lib/*/libibverbs.so*
       - lib/*/libicudata.so*
       - lib/*/libicuuc.so*
-      - lib/*/liblber-2.5.so*
-      - lib/*/libldap-2.5.so*
+      - lib/*/liblber.so*
+      - lib/*/libldap.so*
+      - lib/*/libssh.so*
+      - lib/*/libncurses.so*
       - lib/*/liblua5.4.so*
       - lib/*/libndctl.so*
       - lib/*/libnghttp2.so*
@@ -209,7 +208,7 @@ parts:
       - lib/*/libpmem.so*
       - lib/*/libpmemobj.so*
       - lib/*/libpsl.so*
-      - lib/*/libpython3.10.so*
+      - lib/*/libpython3.12.so*
       - lib/*/librabbitmq.so*
       - lib/*/librados.so*
       - lib/*/libradosgw.so*
@@ -225,6 +224,7 @@ parts:
       - lib/*/rados-classes
       - lib/*/libtcmalloc.so*
       - lib/*/libunwind.so*
+      - lib/*/liblmdb.so*
       - share/ceph
 
   dqlite:
