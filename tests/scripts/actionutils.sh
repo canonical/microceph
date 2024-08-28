@@ -22,6 +22,9 @@ function install_microceph() {
     sudo snap connect microceph:hardware-observe
     sudo snap connect microceph:mount-observe
     # defer dm-crypt enablement for later.
+    sudo snap connect microceph:load-rbd
+    sudo snap connect microceph:microceph-support
+    sudo snap connect microceph:network-bind
 
     sudo microceph cluster bootstrap
     sudo microceph.ceph version
@@ -45,20 +48,47 @@ function create_loop_devices() {
     done
 }
 
+function create_lvm_vol() {
+    local lv_name="${1?missing}"
+    [[ -e /dev/vgtst/$lv_name ]] && exit
+    loop_file="$(sudo mktemp -p /mnt XXXX.img)"
+    sudo truncate -s 4G "${loop_file}"
+    loop_dev="$(sudo losetup --show -f "${loop_file}")"
+    minor="${loop_dev##/dev/loop}"
+
+    # Set up a lvm vol on loop file
+    sudo pvcreate $loop_dev
+    sudo vgcreate vgtst $loop_dev
+    sudo lvcreate -l100%FREE --name $lv_name vgtst
+}
+
 function add_encrypted_osds() {
     # Enable dm-crypt connection and restart microceph daemon
     sudo snap connect microceph:dm-crypt
     sudo snap restart microceph.daemon
     create_loop_devices
-    sudo microceph disk add /dev/sdia /dev/sdib /dev/sdic --wipe --encrypt
+    sudo microceph disk add /dev/sdia /dev/sdib --wipe --encrypt
 
     # Wait for OSDs to become up
     sleep 30
 
     # verify disks using json output.
-    res=$(sudo microceph disk list --json | jq -r '.ConfiguredDisks[].path' | grep -e "/dev/sdia" -e "/dev/sdib" -e "/dev/sdic" -c)
-    if ($res -ne "3") ; then
-        echo "${res} is not equal to expected disk count (3)"
+    res=$(sudo microceph disk list --json | jq -r '.ConfiguredDisks[].path' | grep -e "/dev/sdia" -e "/dev/sdib" -c)
+    if [ $res -ne 2 ] ; then
+        echo "${res} is not equal to expected disk count (2)"
+        exit 1
+    fi
+}
+
+function add_lvm_vol() {
+    set -x
+    create_lvm_vol lvtest
+    sudo microceph disk add /dev/vgtst/lvtest --wipe
+    sleep 20
+    sudo microceph.ceph -s
+    res=$(sudo microceph disk list --json | jq -r '.ConfiguredDisks[].path' | grep "/dev/vgtst/lvtest" -c)
+    if [ $res -ne 1 ] ; then
+        echo "Didnt find lvm vol"
         exit 1
     fi
 }

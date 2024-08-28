@@ -10,6 +10,13 @@ description: |-
 
 confinement: strict
 
+plugs:
+  load-rbd:
+    interface: kernel-module-load
+    modules:
+      - name: rbd
+        load: on-boot
+
 slots:
   ceph-conf:
     interface: content
@@ -47,6 +54,7 @@ apps:
       - mount-observe
       - network
       - network-bind
+      - microceph-support
     slots:
       - microceph
   mds:
@@ -84,6 +92,7 @@ apps:
       - hardware-observe
       - network
       - network-bind
+      - microceph-support
 
   rgw:
     command: commands/rgw.start
@@ -115,6 +124,9 @@ apps:
     command: commands/rbd
     plugs:
       - network
+      - network-bind
+      - microceph-support
+      - dm-crypt
   rados:
     command: commands/rados
     plugs:
