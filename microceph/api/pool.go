@@ -15,9 +15,27 @@ import (
 )
 
 // /1.0/pools-op endpoint.
-var poolsCmd = rest.Endpoint{
+var poolsOpCmd = rest.Endpoint{
 	Path: "pools-op",
 	Put:  rest.EndpointAction{Handler: cmdPoolsPut, ProxyTarget: true},
+}
+
+// /1.0/pools endpoint.
+var poolsCmd = rest.Endpoint{
+	Path: "pools",
+	Get:  rest.EndpointAction{Handler: cmdPoolsGet, ProxyTarget: true},
+}
+
+func cmdPoolsGet(s state.State, r *http.Request) response.Response {
+	logger.Debug("cmdPoolGet")
+	pools, err := ceph.GetOSDPools()
+	if err != nil {
+		return response.SmartError(err)
+	}
+
+	logger.Debug("cmdPoolGet done")
+
+	return response.SyncResponse(true, pools)
 }
 
 func cmdPoolsPut(s state.State, r *http.Request) response.Response {
