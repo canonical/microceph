@@ -1117,3 +1117,35 @@ func SetReplicationFactor(pools []string, size int64) error {
 
 	return nil
 }
+
+// GetOSDPools returns a list of OSD Pools and their configurations.
+func GetOSDPools() ([]types.Pool, error) {
+	out, err := processExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pools: %w", err)
+	}
+
+	var poolNames []string
+	err = json.Unmarshal([]byte(out), &poolNames)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to parse OSD pool names: %w", err)
+	}
+
+	pools := make([]types.Pool, 0, len(poolNames))
+	for _, name := range poolNames {
+		out, err := processExec.RunCommand("ceph", "osd", "pool", "get", name, "all", "--format", "json")
+		if err != nil {
+			return nil, fmt.Errorf("Failed to fetch configuration for OSD pool %q: %w", name, err)
+		}
+
+		var pool types.Pool
+		err = json.Unmarshal([]byte(out), &pool)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to parse %q OSD pool configuration: %w", name, err)
+		}
+
+		pools = append(pools, pool)
+	}
+
+	return pools, nil
+}
