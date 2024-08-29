@@ -122,7 +122,9 @@ jobs:
         if [[ $rc -eq 0 ]] ; then echo "Batch disk addition should fail with db device: $rc"; exit 1; fi
 
     - name: Add OSDs
-      run: ~/actionutils.sh add_encrypted_osds
+      run: |
+        ~/actionutils.sh add_encrypted_osds
+        ~/actionutils.sh add_lvm_vol
 
     - name: Enable RGW
       run: ~/actionutils.sh enable_rgw
