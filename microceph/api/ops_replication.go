@@ -39,7 +39,7 @@ func cmdOpsReplicationRbdGet(s state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	return handleReplicationRequest(r.Context(), req)
+	return handleReplicationRequest(s, r.Context(), req)
 }
 
 // cmdOpsReplicationRbdPut configures a new RBD replication pair.
@@ -50,7 +50,7 @@ func cmdOpsReplicationRbdPut(s state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	return handleReplicationRequest(r.Context(), req)
+	return handleReplicationRequest(s, r.Context(), req)
 }
 
 // cmdOpsReplicationRbdDelete deletes a configured replication pair.
@@ -61,10 +61,10 @@ func cmdOpsReplicationRbdDelete(s state.State, r *http.Request) response.Respons
 		return response.InternalError(err)
 	}
 
-	return handleReplicationRequest(r.Context(), req)
+	return handleReplicationRequest(s, r.Context(), req)
 }
 
-func handleReplicationRequest(ctx context.Context, req types.RbdReplicationRequest) response.Response {
+func handleReplicationRequest(s *state.State, ctx context.Context, req types.RbdReplicationRequest) response.Response {
 	// Fetch replication handler
 	wl := string(req.GetWorkloadType())
 	rh := ceph.GetReplicationHandler(wl)
@@ -83,7 +83,8 @@ func handleReplicationRequest(ctx context.Context, req types.RbdReplicationReque
 
 	var resp string
 	event := req.GetWorkloadRequestType()
-	err = repFsm.FireCtx(ctx, event, rh, &resp)
+	// Each event is provided with, replication handler, response object and state.
+	err = repFsm.FireCtx(ctx, event, rh, &resp, s)
 	if err != nil {
 		return response.SmartError(err)
 	}
