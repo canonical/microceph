@@ -10,6 +10,7 @@ import (
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microcluster/rest"
 	"github.com/canonical/microcluster/state"
 )
@@ -84,7 +85,7 @@ func handleReplicationRequest(s *state.State, ctx context.Context, req types.Rbd
 	var resp string
 	event := req.GetWorkloadRequestType()
 	// Each event is provided with, replication handler, response object and state.
-	err = repFsm.FireCtx(ctx, event, rh, &resp, s)
+	err = repFsm.FireCtx(ctx, event, rh, &resp, interfaces.CephState{State: s})
 	if err != nil {
 		return response.SmartError(err)
 	}

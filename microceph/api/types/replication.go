@@ -60,7 +60,7 @@ const (
 )
 
 const (
-	RbdResourceDisabled RbdResourceType = "disable"
+	RbdResourceDisabled RbdResourceType = "disabled"
 	RbdResourcePool     RbdResourceType = "pool"
 	RbdResourceImage    RbdResourceType = "image"
 )
