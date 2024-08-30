@@ -8,6 +8,7 @@ import (
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/qmuntal/stateless"
 )
 
@@ -69,14 +70,16 @@ func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateM
 
 	// Check Event params type.
 	var output *string
+	var dummyState interfaces.CephState
 	var eventHandler ReplicationHandlerInterface
 	inputType := reflect.TypeOf(&eventHandler).Elem()
 	outputType := reflect.TypeOf(output)
-	newFsm.SetTriggerParameters(constants.EventEnableReplication, inputType, outputType)
-	newFsm.SetTriggerParameters(constants.EventDisableReplication, inputType, outputType)
-	newFsm.SetTriggerParameters(constants.EventConfigureReplication, inputType, outputType)
-	newFsm.SetTriggerParameters(constants.EventListReplication, inputType, outputType)
-	newFsm.SetTriggerParameters(constants.EventStatusReplication, inputType, outputType)
+	stateType := reflect.TypeOf(dummyState)
+	newFsm.SetTriggerParameters(constants.EventEnableReplication, inputType, outputType, stateType)
+	newFsm.SetTriggerParameters(constants.EventDisableReplication, inputType, outputType, stateType)
+	newFsm.SetTriggerParameters(constants.EventConfigureReplication, inputType, outputType, stateType)
+	newFsm.SetTriggerParameters(constants.EventListReplication, inputType, outputType, stateType)
+	newFsm.SetTriggerParameters(constants.EventStatusReplication, inputType, outputType, stateType)
 
 	// Add logger callback for all transitions
 	newFsm.OnTransitioning(logTransitionHandler)

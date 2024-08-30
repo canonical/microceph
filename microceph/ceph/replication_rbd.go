@@ -8,7 +8,7 @@ import (
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microceph/microceph/interfaces"
 )
 
 type RbdReplicationPeer struct {
@@ -98,7 +98,8 @@ func (rh *RbdReplicationHandler) GetResourceState() ReplicationState {
 // EnableHandler enables mirroring for requested rbd pool/image.
 func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any) error {
 	// TODO: check if Queries work.
-	dbRec, err := database.GetRemoteDb(args[repArgState].(state.State), rh.Request.RemoteName)
+	st := args[repArgState].(interfaces.CephState).ClusterState()
+	dbRec, err := database.GetRemoteDb(ctx, st, rh.Request.RemoteName)
 	if err != nil {
 		errNew := fmt.Errorf("remote (%s) does not exist: %w", rh.Request.RemoteName, err)
 		return errNew
@@ -117,7 +118,8 @@ func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any)
 // DisableHandler disables mirroring configured for requested rbd pool/image.
 func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any) error {
 	// TODO: check if Queries work.
-	dbRec, err := database.GetRemoteDb(args[repArgState].(state.State), rh.Request.RemoteName)
+	st := args[repArgState].(interfaces.CephState).ClusterState()
+	dbRec, err := database.GetRemoteDb(ctx, st, rh.Request.RemoteName)
 	if err != nil {
 		errNew := fmt.Errorf("remote (%s) does not exist: %w", rh.Request.RemoteName, err)
 		return errNew

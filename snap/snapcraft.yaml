@@ -241,7 +241,7 @@ parts:
       - lib/*/librdmacm.so*
       - lib/*/libroken.so*
       - lib/*/librtmp.so*
-      - lib/*/sasl2/*.so*
+      - lib/*/libsasl2.so*
       - lib/*/libsnappy.so*
       - lib/*/libwind.so*
       - lib/python3

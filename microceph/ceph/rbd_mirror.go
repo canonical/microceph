@@ -181,12 +181,14 @@ func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string
 	return nil
 }
 
+// TODO: Use verbose pool status output
 func ListEnabledImages(pool string) types.MirrorImages {
 	return types.MirrorImages{}
 }
 
 // RemovePeer removes the rbd-mirror peer permissions for requested pool.
 func RemovePeer(pool string, localPeer string, remotePeer string, localName string, remoteName string) error {
+	// TODO: Check if need to switch the peerIDs for clean removal
 	err := peerRemove(pool, localPeer, "", "")
 	if err != nil {
 		logger.Error(err.Error())
