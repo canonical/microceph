@@ -36,6 +36,20 @@ type ReplicationRequest interface {
 	GetWorkloadRequestType() string
 }
 
+// Slices
+type MirrorPool struct {
+	Name string
+	Mode RbdResourceType
+}
+
+type MirrorImage struct {
+	Name string
+	Mode RbdReplicationType
+}
+
+type MirrorPools []MirrorPool
+type MirrorImages []MirrorImage
+
 // ################################## RBD Replication Request ##################################
 type RbdResourceType string
 type RbdReplicationDirection string

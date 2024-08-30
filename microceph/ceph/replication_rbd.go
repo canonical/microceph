@@ -7,6 +7,8 @@ import (
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microcluster/state"
 )
 
 type RbdReplicationPeer struct {
@@ -40,7 +42,7 @@ type RbdReplicationPoolStatus struct {
 
 type RbdReplicationImageStatus struct {
 	ID         string
-	State      ReplicationState
+	State      ReplicationState // whether replication is enabled or disabled
 	Status     string
 	isPrimary  bool
 	LastUpdate string
@@ -95,42 +97,40 @@ func (rh *RbdReplicationHandler) GetResourceState() ReplicationState {
 
 // EnableHandler enables mirroring for requested rbd pool/image.
 func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any) error {
-	// TODO: remove
-	var localName string
-	var remoteName string
-	if rh.Request.RemoteName == "magical" {
-		localName = "simple"
-		remoteName = "magical"
-	} else {
-		localName = "magical"
-		remoteName = "simple"
+	// TODO: check if Queries work.
+	dbRec, err := database.GetRemoteDb(args[repArgState].(state.State), rh.Request.RemoteName)
+	if err != nil {
+		errNew := fmt.Errorf("remote (%s) does not exist: %w", rh.Request.RemoteName, err)
+		return errNew
 	}
 
-	logger.Infof("BAZINGA: Entered RBD Enable Handler R%s L%s", remoteName, localName)
+	logger.Infof("BAZINGA: Entered RBD Enable Handler Local(%s) Remote(%s)", dbRec[0].LocalName, dbRec[0].Name)
 	if rh.Request.ResourceType == types.RbdResourcePool {
-		if rh.PoolStatus.State == StateDisabledReplication {
-			return EnablePoolMirroring(rh.Request.SourcePool, types.RbdResourcePool, localName, remoteName)
-		} else {
-			return fmt.Errorf("pool already enabled in %s mirroring mode", rh.PoolInfo.Mode)
-		}
+		return handlePoolEnablement(rh, dbRec[0].LocalName, dbRec[0].Name)
 	} else if rh.Request.ResourceType == types.RbdResourceImage {
-		if rh.ImageStatus.State == StateDisabledReplication {
-			if rh.PoolStatus.State == StateDisabledReplication {
-				return fmt.Errorf("parent pool(%s) is disabled", rh.Request.SourcePool)
-			}
-			// TODO: remove hardcoding for journaling
-			return EnableImageMirroring(rh.Request.SourcePool, rh.Request.SourceImage, types.RbdReplicationJournaling, localName, remoteName)
-		} else {
-			return fmt.Errorf("image already enabled for mirroring")
-		}
+		return handleImageEnablement(rh, dbRec[0].LocalName, dbRec[0].Name)
 	}
 
-	return fmt.Errorf("unknown request for rbd mirroring %s", rh.Request.ResourceType)
+	return fmt.Errorf("unknown enable request for rbd mirroring %s", rh.Request.ResourceType)
 }
 
 // DisableHandler disables mirroring configured for requested rbd pool/image.
 func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any) error {
-	return nil
+	// TODO: check if Queries work.
+	dbRec, err := database.GetRemoteDb(args[repArgState].(state.State), rh.Request.RemoteName)
+	if err != nil {
+		errNew := fmt.Errorf("remote (%s) does not exist: %w", rh.Request.RemoteName, err)
+		return errNew
+	}
+
+	logger.Infof("BAZINGA: Entered RBD Disable Handler R(%s) L(%s)", dbRec[0].LocalName, dbRec[0].Name)
+	if rh.Request.ResourceType == types.RbdResourcePool {
+		return handlePoolDisablement(rh, dbRec[0].LocalName, dbRec[0].Name)
+	} else if rh.Request.ResourceType == types.RbdResourceImage {
+		return handleImageDisablement(rh)
+	}
+
+	return fmt.Errorf("unknown disable request for rbd mirroring %s", rh.Request.ResourceType)
 }
 
 // ConfigureHandler configures replication properties for requested rbd pool/image.
@@ -151,4 +151,82 @@ func (rh *RbdReplicationHandler) StatusHandler(ctx context.Context, args ...any)
 	// pass resoponse back to API
 	*args[1].(*string) = string(data)
 	return nil
+}
+
+// ################### Helper Functions ###################
+// Enable handler for pool resource.
+func handlePoolEnablement(rh *RbdReplicationHandler, localSite string, remoteSite string) error {
+	if rh.PoolInfo.Mode == types.RbdResourcePool {
+		return nil // already in pool mode
+	} else
+
+	// Fail if in Image mode with Mirroring Images > 0
+	if rh.PoolInfo.Mode == types.RbdResourceImage {
+		enabledImageCount := rh.PoolStatus.ImageCount
+		if enabledImageCount != 0 {
+			return fmt.Errorf("pool (%s) in Image mode, Disable %d mirroring Images", rh.Request.SourcePool, enabledImageCount)
+		}
+	}
+
+	return EnablePoolMirroring(rh.Request.SourcePool, types.RbdResourcePool, localSite, remoteSite)
+}
+
+// Enable handler for image resource.
+func handleImageEnablement(rh *RbdReplicationHandler, localSite string, remoteSite string) error {
+	if rh.PoolInfo.Mode == types.RbdResourceDisabled {
+		// Enable pool mirroring in Image mode
+		err := EnablePoolMirroring(rh.Request.SourcePool, types.RbdResourceImage, localSite, remoteSite)
+		if err != nil {
+			logger.Error(err.Error())
+			return err
+		}
+		// continue for Image enablement
+	} else if rh.PoolInfo.Mode == types.RbdResourcePool {
+		if rh.Request.ReplicationType == types.RbdReplicationJournaling {
+			// TODO: Test if exclusive-lock is also required for syncing
+			return configureImageFeatures(rh.Request.SourcePool, rh.Request.SourceImage, "enable", "journaling")
+		} else {
+			return fmt.Errorf("parent pool (%s) enabled in pool mode, Image(%s) requested in Snapshot mode", rh.Request.SourcePool, rh.Request.SourceImage)
+		}
+	}
+
+	// pool in Image mode, Enable Image in requested mode.
+	return configureImageMirroring(rh.Request.SourcePool, rh.Request.SourceImage, rh.Request.ReplicationType)
+}
+
+// Disable handler for pool resource.
+func handlePoolDisablement(rh *RbdReplicationHandler, localSite string, remoteSite string) error {
+	// Handle Pool already disabled
+	if rh.PoolInfo.Mode == types.RbdResourceDisabled {
+		return nil
+	} else
+
+	// Fail if in Image mode with Mirroring Images > 0
+	if rh.PoolInfo.Mode == types.RbdResourceImage {
+		enabledImageCount := rh.PoolStatus.ImageCount
+		if enabledImageCount != 0 {
+			return fmt.Errorf("pool (%s) in Image mode, has %d images mirroring", rh.Request.SourcePool, enabledImageCount)
+		}
+	}
+
+	return DisablePoolMirroring(rh.Request.SourcePool, rh.PoolInfo.Peers[0], localSite, remoteSite)
+}
+
+// Disable handler for image resource.
+func handleImageDisablement(rh *RbdReplicationHandler) error {
+	// Pool already disabled
+	if rh.PoolInfo.Mode == types.RbdResourceDisabled {
+		return nil
+	}
+
+	// Image already disabled
+	if rh.ImageStatus.State == StateDisabledReplication {
+		return nil
+	}
+
+	if rh.PoolInfo.Mode == types.RbdResourcePool {
+		return configureImageFeatures(rh.Request.SourcePool, rh.Request.SourceImage, "disable", "journaling")
+	}
+
+	return configureImageMirroring(rh.Request.SourcePool, rh.Request.SourceImage, types.RbdReplicationDisabled)
 }

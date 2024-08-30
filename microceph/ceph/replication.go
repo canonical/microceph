@@ -11,11 +11,18 @@ import (
 	"github.com/qmuntal/stateless"
 )
 
+type repArgIndex int
 type ReplicationState string
 
 const (
 	StateDisabledReplication ReplicationState = "replication_disabled"
 	StateEnabledReplication  ReplicationState = "replication_enabled"
+)
+
+const (
+	repArgHandler  repArgIndex = 0
+	repArgResponse repArgIndex = 1
+	repArgState    repArgIndex = 2
 )
 
 type ReplicationHandlerInterface interface {
@@ -30,7 +37,6 @@ type ReplicationHandlerInterface interface {
 
 func GetReplicationHandler(name string) ReplicationHandlerInterface {
 	// Add RGW and CephFs Replication handlers here.
-	// TODO: Check
 	table := map[string]ReplicationHandlerInterface{
 		"rbd": &RbdReplicationHandler{},
 	}
@@ -92,27 +98,27 @@ func unhandledTransitionHandler(_ context.Context, state stateless.State, trigge
 }
 
 func enableHandler(ctx context.Context, args ...any) error {
-	rh := args[0].(ReplicationHandlerInterface)
+	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	logger.Infof("BAZINGA: Entered Enable Handler")
 	return rh.EnableHandler(ctx, args...)
 }
 func disableHandler(ctx context.Context, args ...any) error {
-	rh := args[0].(ReplicationHandlerInterface)
+	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	logger.Infof("BAZINGA: Entered Disable Handler")
 	return rh.DisableHandler(ctx, args...)
 }
 func configureHandler(ctx context.Context, args ...any) error {
-	rh := args[0].(ReplicationHandlerInterface)
+	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	logger.Infof("BAZINGA: Entered Configure Handler")
 	return rh.ConfigureHandler(ctx, args...)
 }
 func listHandler(ctx context.Context, args ...any) error {
-	rh := args[0].(ReplicationHandlerInterface)
+	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	logger.Infof("BAZINGA: Entered List Handler")
 	return rh.ListHandler(ctx, args...)
 }
 func statusHandler(ctx context.Context, args ...any) error {
-	rh := args[0].(ReplicationHandlerInterface)
+	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	logger.Infof("BAZINGA: Entered Status Handler")
 	return rh.StatusHandler(ctx, args...)
 }

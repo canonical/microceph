@@ -67,6 +67,7 @@ func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdRepl
 
 	logger.Infof("BAZINGA %v", respObj)
 
+	// "images: 0 total", split value for "images".
 	imageCount, err := strconv.Atoi(strings.Split(respObj["images"].(string), " ")[0])
 	if err != nil {
 		return RbdReplicationPoolStatus{}, fmt.Errorf("failed to convert %s to int: %w", respObj["images"], err)
@@ -139,7 +140,7 @@ func executeMirrorCommand(resourceName string, resourceType types.RbdResourceTyp
 }
 
 func EnablePoolMirroring(pool string, mode types.RbdResourceType, localName string, remoteName string) error {
-	// Enable pool on the local cluster.
+	// Enable pool mirroring on the local cluster.
 	err := configurePoolMirroring(pool, mode, "", "")
 	if err != nil {
 		return err
@@ -151,13 +152,58 @@ func EnablePoolMirroring(pool string, mode types.RbdResourceType, localName stri
 		return err
 	}
 
-	// Bootstrap peer token for mirroring.
+	// bootstrap peer
 	return BootstrapPeer(pool, localName, remoteName)
 }
-func EnableImageMirroring(pool string, image string, mode types.RbdReplicationType, localName string, remoteName string) error {
-	return configureImageMirroring(pool, image, types.RbdReplicationSnapshot)
+
+func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string, remoteName string) error {
+	// remove peer permissions
+	err := RemovePeer(pool, peer.LocalId, peer.RemoteId, localName, remoteName)
+	if err != nil {
+		logger.Error(err.Error())
+		return err
+	}
+
+	// Disable pool mirroring on the local cluster.
+	err = configurePoolMirroring(pool, types.RbdResourceDisabled, "", "")
+	if err != nil {
+		logger.Error(err.Error())
+		return err
+	}
+
+	// Enable pool mirroring on the remote cluster.
+	err = configurePoolMirroring(pool, types.RbdResourceDisabled, remoteName, localName)
+	if err != nil {
+		logger.Error(err.Error())
+		return err
+	}
+
+	return nil
 }
 
+func ListEnabledImages(pool string) types.MirrorImages {
+	return types.MirrorImages{}
+}
+
+// RemovePeer removes the rbd-mirror peer permissions for requested pool.
+func RemovePeer(pool string, localPeer string, remotePeer string, localName string, remoteName string) error {
+	err := peerRemove(pool, localPeer, "", "")
+	if err != nil {
+		logger.Error(err.Error())
+		return err
+	}
+
+	// Remove Peer from remote pool
+	err = peerRemove(pool, remotePeer, localName, remoteName)
+	if err != nil {
+		logger.Error(err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// BootstrapPeer bootstraps the rbd-mirror peer permissions for requested pool.
 func BootstrapPeer(pool string, localName string, remoteName string) error {
 	tokenPath := filepath.Join(
 		constants.GetPathConst().ConfPath,
@@ -166,7 +212,7 @@ func BootstrapPeer(pool string, localName string, remoteName string) error {
 	)
 
 	// create bootstrap token on remote site.
-	token, err := peerBootstrapCreate(pool, remoteName, localName)
+	token, err := peerBootstrapCreate(pool, localName, remoteName)
 	if err != nil {
 		logger.Error(err.Error())
 		return err
@@ -180,7 +226,7 @@ func BootstrapPeer(pool string, localName string, remoteName string) error {
 	}
 
 	// import peer token on local site
-	return peerBootstrapImport(pool, tokenPath, remoteName, localName)
+	return peerBootstrapImport(pool, tokenPath, localName, remoteName)
 }
 
 // ############################# Ceph Commands #############################
@@ -203,7 +249,7 @@ func configurePoolMirroring(pool string, mode types.RbdResourceType, localName s
 	return nil
 }
 
-// configureImageMirroring disables or enabled image mirroring in requested mode.
+// configureImageMirroring disables or enables image mirroring in requested mode.
 func configureImageMirroring(pool string, image string, mode types.RbdReplicationType) error {
 	var args []string
 
@@ -221,8 +267,8 @@ func configureImageMirroring(pool string, image string, mode types.RbdReplicatio
 	return nil
 }
 
-// enableImageFeatures disables or enables requested feature on rbd image.
-func enableImageFeatures(pool string, image string, op string, feature string) error {
+// configureImageFeatures disables or enables requested feature on rbd image.
+func configureImageFeatures(pool string, image string, op string, feature string) error {
 	// op is enable or disable
 	args := []string{"feature", op, fmt.Sprintf("%s/%s", pool, image), feature}
 
@@ -235,7 +281,7 @@ func enableImageFeatures(pool string, image string, op string, feature string) e
 }
 
 // peerBootstrapCreate generates peer bootstrap token on remote ceph cluster.
-func peerBootstrapCreate(pool string, remoteName string, localName string) (string, error) {
+func peerBootstrapCreate(pool string, localName string, remoteName string) (string, error) {
 	args := []string{
 		"mirror", "pool", "peer", "bootstrap", "create", "--site-name", localName, pool,
 	}
@@ -252,7 +298,7 @@ func peerBootstrapCreate(pool string, remoteName string, localName string) (stri
 }
 
 // peerBootstrapImport imports the bootstrap peer on the local cluster using a tokenfile.
-func peerBootstrapImport(pool string, tokenPath string, remoteName string, localName string) error {
+func peerBootstrapImport(pool string, tokenPath string, localName string, remoteName string) error {
 	args := []string{
 		"mirror", "pool", "peer", "bootstrap", "import", "--site-name", localName, "--direction", "rx-tx", pool, tokenPath,
 	}
@@ -263,6 +309,23 @@ func peerBootstrapImport(pool string, tokenPath string, remoteName string, local
 	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
 		return fmt.Errorf("failed to import peer bootstrap token: %v", err)
+	}
+
+	return nil
+}
+
+// peerRemove imports the bootstrap peer on the local cluster using a tokenfile.
+func peerRemove(pool string, peerId string, localName string, remoteName string) error {
+	args := []string{
+		"mirror", "pool", "peer", "remove", pool, peerId,
+	}
+
+	// add --cluster and --id args
+	args = appendRemoteClusterArgs(args, remoteName, localName)
+
+	_, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return fmt.Errorf("failed to remove peer(%s) for pool(%s): %v", peerId, pool, err)
 	}
 
 	return nil
