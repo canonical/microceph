@@ -27,10 +27,10 @@ type PlacementIntf interface {
 func GetServicePlacementTable() map[string](PlacementIntf) {
 	return map[string](PlacementIntf){
 		"mon":        &MonServicePlacement{"mon"},
-		"mgr":        &GenericServicePlacement{"mgr", false},
-		"mds":        &GenericServicePlacement{"mds", false},
+		"mgr":        &GenericServicePlacement{"mgr"},
+		"mds":        &GenericServicePlacement{"mds"},
 		"rgw":        &RgwServicePlacement{},
-		"rbd-mirror": &GenericServicePlacement{"rbd-mirror", true},
+		"rbd-mirror": &ClientServicePlacement{"rbd-mirror"},
 	}
 }
 

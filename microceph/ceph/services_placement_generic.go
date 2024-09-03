@@ -28,8 +28,7 @@ func GetServiceKeyringTable() map[string](func(string, string) error) {
 
 // Used by services: mon, mgr, mds
 type GenericServicePlacement struct {
-	Name            string
-	isClientService bool // Used to deduce whether client keyrings are to generated.
+	Name string
 }
 
 func (gsp *GenericServicePlacement) PopulateParams(s interfaces.StateInterface, payload string) error {
@@ -42,7 +41,7 @@ func (gsp *GenericServicePlacement) HospitalityCheck(s interfaces.StateInterface
 }
 
 func (gsp *GenericServicePlacement) ServiceInit(ctx context.Context, s interfaces.StateInterface) error {
-	return genericServiceInit(s, gsp.Name, gsp.isClientService)
+	return genericServiceInit(s, gsp.Name)
 }
 
 func (gsp *GenericServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {
@@ -66,7 +65,7 @@ func genericHospitalityCheck(service string) error {
 	return nil
 }
 
-func genericServiceInit(s interfaces.StateInterface, name string, isClientService bool) error {
+func genericServiceInit(s interfaces.StateInterface, name string) error {
 	var ok bool
 	var bootstrapServiceKeyring func(string, string) error
 	hostname := s.ClusterState().Name()
@@ -94,17 +93,6 @@ func genericServiceInit(s interfaces.StateInterface, name string, isClientServic
 	if err != nil {
 		logger.Error(err.Error())
 		return fmt.Errorf("failed to add service %s: %w", name, err)
-	}
-
-	if isClientService {
-		// create a symlink to conf folder.
-		err = createSymlinkToKeyring(
-			filepath.Join(serviceDataPath, "keyring"),
-			filepath.Join(pathConsts.ConfPath, fmt.Sprintf("ceph.client.%s.%s.keyring", name, hostname)),
-		)
-		if err != nil {
-			return err
-		}
 	}
 
 	err = snapStart(name, true)
@@ -146,17 +134,6 @@ func genericDbUpdate(ctx context.Context, s interfaces.StateInterface, service s
 	})
 	if err != nil {
 		return err
-	}
-	return nil
-}
-
-// ================================== HELPERS ==================================
-
-func createSymlinkToKeyring(keyringPath string, confPath string) error {
-	err := os.Symlink(keyringPath, confPath)
-
-	if err != nil {
-		return fmt.Errorf("failed to create symlink to RGW keyring: %w", err)
 	}
 	return nil
 }
