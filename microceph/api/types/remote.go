@@ -15,7 +15,7 @@ func (r *Remote) Init(localName string, remoteName string, renderOnly bool) *Rem
 	return r
 }
 
-type ClusterStateRequest struct {
+type ClusterExportRequest struct {
 	RemoteName string `json:"remote_name" yaml:"remote_name"`
 }
 

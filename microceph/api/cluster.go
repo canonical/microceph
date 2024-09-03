@@ -24,7 +24,7 @@ var clusterCmd = rest.Endpoint{
 // cmdClusterGet returns a json dump of microceph configs with a new key patched in for the remote.
 func cmdClusterGet(s state.State, r *http.Request) response.Response {
 	// Fetch request params.
-	var req types.ClusterStateRequest
+	var req types.ClusterExportRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		return response.InternalError(err)

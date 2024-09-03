@@ -23,7 +23,7 @@ func (c *cmdEnableRBDMirror) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 	cmd.PersistentFlags().StringVar(&c.flagTarget, "target", "", "Server hostname (default: this server)")
-	cmd.Flags().BoolVar(&c.wait, "wait", true, "Wait for mon service to be up.")
+	cmd.Flags().BoolVar(&c.wait, "wait", true, "Wait for rbd-mirror service to be up.")
 	return cmd
 }
 

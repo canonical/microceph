@@ -18,7 +18,7 @@ type cmdClusterExport struct {
 
 func (c *cmdClusterExport) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "export <RemoteName>",
+		Use:   "export <remote-name>",
 		Short: "Generates cluster token for given Remote cluster",
 		RunE:  c.Run,
 	}
@@ -42,7 +42,7 @@ func (c *cmdClusterExport) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	state, err := client.GetClusterState(cmd.Context(), cli, types.ClusterStateRequest{
+	state, err := client.GetClusterToken(cmd.Context(), cli, types.ClusterExportRequest{
 		RemoteName: args[0],
 	})
 	if err != nil {

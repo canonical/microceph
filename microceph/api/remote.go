@@ -23,17 +23,17 @@ import (
 
 var remoteCmd = rest.Endpoint{
 	Path: "client/remotes",
-	Get:  rest.EndpointAction{Handler: CmdRemoteGet, ProxyTarget: false},
+	Get:  rest.EndpointAction{Handler: cmdRemoteGet, ProxyTarget: false},
 }
 
 var remoteNameCmd = rest.Endpoint{
 	Path:   "client/remotes/{name}",
-	Put:    rest.EndpointAction{Handler: CmdRemotePut, ProxyTarget: false},
-	Get:    rest.EndpointAction{Handler: CmdRemoteGet, ProxyTarget: false},
-	Delete: rest.EndpointAction{Handler: CmdRemoteDelete, ProxyTarget: false},
+	Put:    rest.EndpointAction{Handler: cmdRemotePut, ProxyTarget: false},
+	Get:    rest.EndpointAction{Handler: cmdRemoteGet, ProxyTarget: false},
+	Delete: rest.EndpointAction{Handler: cmdRemoteDelete, ProxyTarget: false},
 }
 
-var CmdRemotePut = func(state state.State, r *http.Request) response.Response {
+func cmdRemotePut(state state.State, r *http.Request) response.Response {
 	var req types.Remote
 
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -41,7 +41,7 @@ var CmdRemotePut = func(state state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	err = RenderConfAndKeyringFiles(req.Name, req.LocalName, req.Config)
+	err = renderConfAndKeyringFiles(req.Name, req.LocalName, req.Config)
 	if err != nil {
 		return response.InternalError(fmt.Errorf("couldn't render files: %w", err))
 	}
@@ -66,7 +66,7 @@ var CmdRemotePut = func(state state.State, r *http.Request) response.Response {
 	return response.EmptySyncResponse
 }
 
-var CmdRemoteGet = func(state state.State, r *http.Request) response.Response {
+func cmdRemoteGet(state state.State, r *http.Request) response.Response {
 	// PathUnescape will NOT fail if no name is provided in API request.
 	// Additionally, remoteName in that case is initialised to "".
 	remoteName, err := url.PathUnescape(mux.Vars(r)["name"])
@@ -87,7 +87,7 @@ var CmdRemoteGet = func(state state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, remotes)
 }
 
-var CmdRemoteDelete = func(state state.State, r *http.Request) response.Response {
+func cmdRemoteDelete(state state.State, r *http.Request) response.Response {
 	remoteName, err := url.PathUnescape(mux.Vars(r)["name"])
 	if err != nil {
 		return response.BadRequest(err)
@@ -105,8 +105,8 @@ var CmdRemoteDelete = func(state state.State, r *http.Request) response.Response
 
 /*****************HELPER FUNCTIONS**************************/
 
-// RenderConfAndKeyringFiles generates the $cluster.conf and $cluster.keyring files on the host.
-var RenderConfAndKeyringFiles = func(remoteName string, localName string, configs map[string]string) error {
+// renderConfAndKeyringFiles generates the $cluster.conf and $cluster.keyring files on the host.
+func renderConfAndKeyringFiles(remoteName string, localName string, configs map[string]string) error {
 	monHosts := []string{}
 	for k, v := range configs {
 		if strings.Contains(k, "mon.host.") {

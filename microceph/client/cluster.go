@@ -10,7 +10,7 @@ import (
 	microCli "github.com/canonical/microcluster/v2/client"
 )
 
-func GetClusterState(ctx context.Context, c *microCli.Client, req types.ClusterStateRequest) (string, error) {
+func GetClusterToken(ctx context.Context, c *microCli.Client, req types.ClusterExportRequest) (string, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 

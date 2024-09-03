@@ -108,7 +108,7 @@ func parseKeyring(path string) (string, error) {
 }
 
 // CreateKey creates a client key and returns the said key hash without saving it as a file.
-var CreateKey = func(clientName string, caps ...[]string) (string, error) {
+func CreateKey(clientName string, caps ...[]string) (string, error) {
 	args := []string{
 		"auth",
 		"get-or-create",

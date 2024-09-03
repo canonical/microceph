@@ -21,7 +21,7 @@ type dict map[string]interface{}
 
 func (c *cmdRemoteImport) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "import <Name> <Token>",
+		Use:   "import <name> <token>",
 		Short: "Import external MicroCeph cluster as a remote",
 		RunE:  c.Run,
 	}
