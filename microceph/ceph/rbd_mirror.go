@@ -207,28 +207,22 @@ func RemovePeer(pool string, localPeer string, remotePeer string, localName stri
 
 // BootstrapPeer bootstraps the rbd-mirror peer permissions for requested pool.
 func BootstrapPeer(pool string, localName string, remoteName string) error {
-	tokenPath := filepath.Join(
-		constants.GetPathConst().ConfPath,
-		"rbd_mirror",
-		fmt.Sprintf("%s_peer_keyring", remoteName),
-	)
-
 	// create bootstrap token on remote site.
-	token, err := peerBootstrapCreate(pool, localName, remoteName)
+	token, err := peerBootstrapCreate(pool, "", localName)
 	if err != nil {
 		logger.Error(err.Error())
 		return err
 	}
 
 	// persist the peer token
-	err = writeTokenToPath(token, tokenPath)
+	err = writeRemotePeerToken(token, remoteName)
 	if err != nil {
 		logger.Error(err.Error())
 		return err
 	}
 
 	// import peer token on local site
-	return peerBootstrapImport(pool, tokenPath, localName, remoteName)
+	return peerBootstrapImport(pool, localName, remoteName)
 }
 
 // ############################# Ceph Commands #############################
@@ -283,13 +277,15 @@ func configureImageFeatures(pool string, image string, op string, feature string
 }
 
 // peerBootstrapCreate generates peer bootstrap token on remote ceph cluster.
-func peerBootstrapCreate(pool string, localName string, remoteName string) (string, error) {
+func peerBootstrapCreate(pool string, client string, cluster string) (string, error) {
 	args := []string{
-		"mirror", "pool", "peer", "bootstrap", "create", "--site-name", localName, pool,
+		"mirror", "pool", "peer", "bootstrap", "create", "--site-name", cluster, pool,
 	}
 
-	// add --cluster and --id args
-	args = appendRemoteClusterArgs(args, remoteName, localName)
+	// add --cluster and --id args if remote op.
+	if len(client) != 0 {
+		args = appendRemoteClusterArgs(args, cluster, client)
+	}
 
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
@@ -300,13 +296,21 @@ func peerBootstrapCreate(pool string, localName string, remoteName string) (stri
 }
 
 // peerBootstrapImport imports the bootstrap peer on the local cluster using a tokenfile.
-func peerBootstrapImport(pool string, tokenPath string, localName string, remoteName string) error {
+func peerBootstrapImport(pool string, client string, cluster string) error {
+	tokenPath := filepath.Join(
+		constants.GetPathConst().ConfPath,
+		"rbd_mirror",
+		fmt.Sprintf("%s_peer_keyring", cluster),
+	)
+
 	args := []string{
-		"mirror", "pool", "peer", "bootstrap", "import", "--site-name", localName, "--direction", "rx-tx", pool, tokenPath,
+		"mirror", "pool", "peer", "bootstrap", "import", "--site-name", cluster, "--direction", "rx-tx", pool, tokenPath,
 	}
 
-	// add --cluster and --id args
-	args = appendRemoteClusterArgs(args, remoteName, localName)
+	// add --cluster and --id args if remote op.
+	if len(client) != 0 {
+		args = appendRemoteClusterArgs(args, cluster, client)
+	}
 
 	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
@@ -360,12 +364,27 @@ func appendRemoteClusterArgs(args []string, cluster string, client string) []str
 	return args
 }
 
-// writeTokenToPath writes the provided string to a newly created token file.
-func writeTokenToPath(token string, path string) error {
-	// create file
-	file, err := os.Create(path)
+// writeRemotePeerToken writes the provided string to a newly created token file.
+func writeRemotePeerToken(token string, remoteName string) error {
+	// create token Dir
+	tokenDirPath := filepath.Join(
+		constants.GetPathConst().ConfPath,
+		"rbd_mirror",
+	)
+
+	err := os.MkdirAll(tokenDirPath, constants.PermissionWorldNoAccess)
 	if err != nil {
-		ne := fmt.Errorf("failed to create the token file(%s): %w", path, err)
+		return fmt.Errorf("unable to create %q: %w", tokenDirPath, err)
+	}
+
+	// create token file
+	tokenFilePath := filepath.Join(
+		tokenDirPath,
+		fmt.Sprintf("%s_peer_keyring", remoteName),
+	)
+	file, err := os.Create(tokenFilePath)
+	if err != nil {
+		ne := fmt.Errorf("failed to create the token file(%s): %w", tokenFilePath, err)
 		logger.Error(ne.Error())
 		return ne
 	}
@@ -373,7 +392,7 @@ func writeTokenToPath(token string, path string) error {
 	// write to file
 	_, err = file.WriteString(token)
 	if err != nil {
-		ne := fmt.Errorf("failed to write the token file(%s): %w", path, err)
+		ne := fmt.Errorf("failed to write the token file(%s): %w", tokenFilePath, err)
 		logger.Error(ne.Error())
 		return ne
 	}
