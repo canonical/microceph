@@ -147,7 +147,7 @@ func EnablePoolMirroring(pool string, mode types.RbdResourceType, localName stri
 	}
 
 	// Enable pool mirroring on the remote cluster.
-	err = configurePoolMirroring(pool, mode, remoteName, localName)
+	err = configurePoolMirroring(pool, mode, localName, remoteName)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string
 	}
 
 	// Enable pool mirroring on the remote cluster.
-	err = configurePoolMirroring(pool, types.RbdResourceDisabled, remoteName, localName)
+	err = configurePoolMirroring(pool, types.RbdResourceDisabled, localName, remoteName)
 	if err != nil {
 		logger.Error(err.Error())
 		return err
