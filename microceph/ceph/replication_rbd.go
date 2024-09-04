@@ -12,16 +12,16 @@ import (
 )
 
 type RbdReplicationPeer struct {
-	LocalId    string
-	RemoteId   string
-	RemoteName string
-	Direction  types.RbdReplicationDirection
+	Id         string                        `json:"uuid"`
+	MirrorId   string                        `json:"mirror_uuid"`
+	RemoteName string                        `json:"site_name"`
+	Direction  types.RbdReplicationDirection `json:"direction"`
 }
 
 type RbdReplicationPoolInfo struct {
-	Mode          types.RbdResourceType
-	LocalSiteName string
-	Peers         []RbdReplicationPeer
+	Mode          types.RbdResourceType `json:"mode"`
+	LocalSiteName string                `json:"site_name"`
+	Peers         []RbdReplicationPeer  `json:"peers"`
 }
 
 type RbdReplicationHealth string
@@ -32,28 +32,34 @@ const (
 	RbdReplicationHealthErr  RbdReplicationHealth = "Error"
 )
 
+// RbdReplicationPoolStatus does not have tags defined for jason because it needs custom logic.
 type RbdReplicationPoolStatus struct {
 	State        ReplicationState
-	Health       RbdReplicationHealth
-	DaemonHealth RbdReplicationHealth
-	ImageHealth  RbdReplicationHealth
+	Health       RbdReplicationHealth `json:"health" yaml:"health"`
+	DaemonHealth RbdReplicationHealth `json:"daemon_health" yaml:"daemon_health"`
+	ImageHealth  RbdReplicationHealth `json:"image_health" yaml:"image_health"`
 	ImageCount   int
 }
 
+type RbdReplicationVerbosePoolStatus struct {
+	Summary RbdReplicationPoolStatus  `json:"summary"`
+	Images  RbdReplicationImageStatus `json:"images"`
+}
+
 type RbdReplicationImageStatus struct {
-	ID         string
 	State      ReplicationState // whether replication is enabled or disabled
-	Status     string
 	isPrimary  bool
-	LastUpdate string
-	Peers      []string
+	ID         string   `json:"global_id"`
+	Status     string   `json:"state"`
+	LastUpdate string   `json:"last_update"`
+	Peers      []string `json:"peer_sites"`
 }
 
 type RbdReplicationHandler struct {
 	// Resource Info
-	PoolInfo    RbdReplicationPoolInfo
-	PoolStatus  RbdReplicationPoolStatus
-	ImageStatus RbdReplicationImageStatus
+	PoolInfo    RbdReplicationPoolInfo    `json:"pool_info"`
+	PoolStatus  RbdReplicationPoolStatus  `json:"pool_status"`
+	ImageStatus RbdReplicationImageStatus `json:"image_status"`
 	// Request Info
 	Request types.RbdReplicationRequest
 }

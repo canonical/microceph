@@ -47,8 +47,8 @@ func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplic
 	} else {
 		poolInfo.Peers = []RbdReplicationPeer{
 			{
-				LocalId:    respObj["UUID"].(string),
-				RemoteId:   respObj["Mirror UUID"].(string),
+				Id:         respObj["UUID"].(string),
+				MirrorId:   respObj["Mirror UUID"].(string),
 				RemoteName: respObj["Name"].(string),
 				Direction:  types.RbdReplicationDirection(respObj["Direction"].(string)),
 			},
@@ -158,7 +158,7 @@ func EnablePoolMirroring(pool string, mode types.RbdResourceType, localName stri
 
 func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string, remoteName string) error {
 	// remove peer permissions
-	err := RemovePeer(pool, peer.LocalId, peer.RemoteId, localName, remoteName)
+	err := RemovePeer(pool, localName, remoteName)
 	if err != nil {
 		logger.Error(err.Error())
 		return err
@@ -181,21 +181,37 @@ func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string
 	return nil
 }
 
-// TODO: Use verbose pool status output
-func ListEnabledImages(pool string) types.MirrorImages {
-	return types.MirrorImages{}
+// getPeerUUID returns the peer ID for the requested peer name.
+func getPeerUUID(pool string, peerName string, client string, cluster string) string {
+	poolInfo, err := GetRbdMirrorPoolInfo(pool, cluster, client)
+	if err != nil {
+		logger.Error(err.Error())
+		return ""
+	}
+
+	for _, peer := range poolInfo.Peers {
+		if peer.RemoteName == peerName {
+			return peer.Id
+		}
+	}
+
+	return ""
 }
 
 // RemovePeer removes the rbd-mirror peer permissions for requested pool.
-func RemovePeer(pool string, localPeer string, remotePeer string, localName string, remoteName string) error {
-	// TODO: Check if need to switch the peerIDs for clean removal
+func RemovePeer(pool string, localName string, remoteName string) error {
+	// find local site's peer with name $remoteName
+	localPeer := getPeerUUID(pool, remoteName, "", "")
+	remotePeer := getPeerUUID(pool, localName, localName, remoteName)
+
+	// Remove local cluster's peer
 	err := peerRemove(pool, localPeer, "", "")
 	if err != nil {
 		logger.Error(err.Error())
 		return err
 	}
 
-	// Remove Peer from remote pool
+	// Remove remote's peer
 	err = peerRemove(pool, remotePeer, localName, remoteName)
 	if err != nil {
 		logger.Error(err.Error())
@@ -207,7 +223,7 @@ func RemovePeer(pool string, localPeer string, remotePeer string, localName stri
 
 // BootstrapPeer bootstraps the rbd-mirror peer permissions for requested pool.
 func BootstrapPeer(pool string, localName string, remoteName string) error {
-	// create bootstrap token on remote site.
+	// create bootstrap token on local site.
 	token, err := peerBootstrapCreate(pool, "", localName)
 	if err != nil {
 		logger.Error(err.Error())
@@ -221,7 +237,7 @@ func BootstrapPeer(pool string, localName string, remoteName string) error {
 		return err
 	}
 
-	// import peer token on local site
+	// import peer token on remote site
 	return peerBootstrapImport(pool, localName, remoteName)
 }
 
