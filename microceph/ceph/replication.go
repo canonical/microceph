@@ -87,13 +87,13 @@ func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateM
 	// Add handler for unhandled transitions.
 	newFsm.OnUnhandledTrigger(unhandledTransitionHandler)
 
-	logger.Infof("BAZINGA: Created new FSM from state: %s", initialState)
+	logger.Infof("REPFSM: Created from state: %s", initialState)
 
 	return newFsm
 }
 
 func logTransitionHandler(_ context.Context, t stateless.Transition) {
-	logger.Infof("Replication: Event(%s), SrcState(%s), DstState(%s)", t.Trigger, t.Source, t.Destination)
+	logger.Infof("REPFSM: Event(%s), SrcState(%s), DstState(%s)", t.Trigger, t.Source, t.Destination)
 }
 
 func unhandledTransitionHandler(_ context.Context, state stateless.State, trigger stateless.Trigger, _ []string) error {
@@ -102,26 +102,26 @@ func unhandledTransitionHandler(_ context.Context, state stateless.State, trigge
 
 func enableHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("BAZINGA: Entered Enable Handler")
+	logger.Infof("REPFSM: Entered Enable Handler")
 	return rh.EnableHandler(ctx, args...)
 }
 func disableHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("BAZINGA: Entered Disable Handler")
+	logger.Infof("REPFSM: Entered Disable Handler")
 	return rh.DisableHandler(ctx, args...)
 }
 func configureHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("BAZINGA: Entered Configure Handler")
+	logger.Infof("REPFSM: Entered Configure Handler")
 	return rh.ConfigureHandler(ctx, args...)
 }
 func listHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("BAZINGA: Entered List Handler")
+	logger.Infof("REPFSM: Entered List Handler")
 	return rh.ListHandler(ctx, args...)
 }
 func statusHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("BAZINGA: Entered Status Handler")
+	logger.Infof("REPFSM: Entered Status Handler")
 	return rh.StatusHandler(ctx, args...)
 }

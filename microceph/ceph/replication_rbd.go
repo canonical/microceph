@@ -35,10 +35,11 @@ const (
 // RbdReplicationPoolStatus does not have tags defined for jason because it needs custom logic.
 type RbdReplicationPoolStatus struct {
 	State        ReplicationState
+	ImageCount   int
 	Health       RbdReplicationHealth `json:"health" yaml:"health"`
 	DaemonHealth RbdReplicationHealth `json:"daemon_health" yaml:"daemon_health"`
 	ImageHealth  RbdReplicationHealth `json:"image_health" yaml:"image_health"`
-	ImageCount   int
+	Description  string               `yaml:"images"` // only un/marshal if from yaml format.
 }
 
 type RbdReplicationVerbosePoolStatus struct {
@@ -46,13 +47,22 @@ type RbdReplicationVerbosePoolStatus struct {
 	Images  RbdReplicationImageStatus `json:"images"`
 }
 
+type RbdReplicationImagePeer struct {
+	MirrorId   string `json:"mirror_uuids"`
+	RemoteName string `json:"site_name"`
+	State      string `json:"state"`
+	Status     string `json:"description"`
+	LastUpdate string `json:"last_update"`
+}
+
 type RbdReplicationImageStatus struct {
-	State      ReplicationState // whether replication is enabled or disabled
-	isPrimary  bool
-	ID         string   `json:"global_id"`
-	Status     string   `json:"state"`
-	LastUpdate string   `json:"last_update"`
-	Peers      []string `json:"peer_sites"`
+	State       ReplicationState // whether replication is enabled or disabled
+	isPrimary   bool
+	ID          string                    `json:"global_id"`
+	Status      string                    `json:"state"`
+	LastUpdate  string                    `json:"last_update"`
+	Peers       []RbdReplicationImagePeer `json:"peer_sites"`
+	Description string                    `json:"description"`
 }
 
 type RbdReplicationHandler struct {
@@ -103,7 +113,6 @@ func (rh *RbdReplicationHandler) GetResourceState() ReplicationState {
 
 // EnableHandler enables mirroring for requested rbd pool/image.
 func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any) error {
-	// TODO: check if Queries work.
 	st := args[repArgState].(interfaces.CephState).ClusterState()
 	dbRec, err := database.GetRemoteDb(*st, rh.Request.RemoteName)
 	if err != nil {
@@ -111,7 +120,7 @@ func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any)
 		return errNew
 	}
 
-	logger.Infof("BAZINGA: Entered RBD Enable Handler Local(%s) Remote(%s)", dbRec[0].LocalName, dbRec[0].Name)
+	logger.Infof("REPRBD: Local(%s) Remote(%s)", dbRec[0].LocalName, dbRec[0].Name)
 	if rh.Request.ResourceType == types.RbdResourcePool {
 		return handlePoolEnablement(rh, dbRec[0].LocalName, dbRec[0].Name)
 	} else if rh.Request.ResourceType == types.RbdResourceImage {
@@ -123,7 +132,6 @@ func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any)
 
 // DisableHandler disables mirroring configured for requested rbd pool/image.
 func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any) error {
-	// TODO: check if Queries work.
 	st := args[repArgState].(interfaces.CephState).ClusterState()
 	dbRec, err := database.GetRemoteDb(*st, rh.Request.RemoteName)
 	if err != nil {
@@ -131,7 +139,7 @@ func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any
 		return errNew
 	}
 
-	logger.Infof("BAZINGA: Entered RBD Disable Handler R(%s) L(%s)", dbRec[0].LocalName, dbRec[0].Name)
+	logger.Infof("REPRBD: Entered RBD Disable Handler Local(%s) Remote(%s)", dbRec[0].LocalName, dbRec[0].Name)
 	if rh.Request.ResourceType == types.RbdResourcePool {
 		return handlePoolDisablement(rh, dbRec[0].LocalName, dbRec[0].Name)
 	} else if rh.Request.ResourceType == types.RbdResourceImage {
@@ -194,7 +202,7 @@ func handleImageEnablement(rh *RbdReplicationHandler, localSite string, remoteSi
 			// TODO: Test if exclusive-lock is also required for syncing
 			return configureImageFeatures(rh.Request.SourcePool, rh.Request.SourceImage, "enable", "journaling")
 		} else {
-			return fmt.Errorf("parent pool (%s) enabled in pool mode, Image(%s) requested in Snapshot mode", rh.Request.SourcePool, rh.Request.SourceImage)
+			return fmt.Errorf("parent pool (%s) enabled in Journaling mode, Image(%s) requested in Snapshot mode", rh.Request.SourcePool, rh.Request.SourceImage)
 		}
 	}
 
