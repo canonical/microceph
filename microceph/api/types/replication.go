@@ -92,7 +92,8 @@ func (req RbdReplicationRequest) GetAPIObjectId() string {
 	// If both Pool and Image values are present encode for query.
 	if len(req.SourceImage) != 0 && len(req.SourcePool) != 0 {
 		resource := url.QueryEscape(fmt.Sprintf("%s/%s", req.SourcePool, req.SourceImage))
-		logger.Infof("BAZINGA: Check the Resource: %s", resource)
+		// TODO: Make this a debug print.
+		logger.Infof("REP: Resource: %s", resource)
 		return resource
 	}
 
@@ -101,7 +102,8 @@ func (req RbdReplicationRequest) GetAPIObjectId() string {
 
 func (req RbdReplicationRequest) GetAPIRequestType() string {
 	frags := strings.Split(string(req.RequestType), "-")
-	logger.Infof("BAZINGA: Check the API frags: %v", frags)
+	// TODO: Make this a debug print.
+	logger.Infof("REP: API frags: %v", frags)
 	if len(frags) == 0 {
 		return ""
 	}
@@ -111,7 +113,8 @@ func (req RbdReplicationRequest) GetAPIRequestType() string {
 
 func (req RbdReplicationRequest) GetWorkloadRequestType() string {
 	frags := strings.Split(string(req.RequestType), "-")
-	logger.Infof("BAZINGA: Check the workload frags: %v", frags)
+	// TODO: Make this a debug print.
+	logger.Infof("REP: Workload frags: %v", frags)
 	if len(frags) < 2 {
 		return ""
 	}

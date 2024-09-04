@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,118 +26,90 @@ const (
 
 // GetRbdMirrorPoolInfo fetches the mirroring info for the requested pool
 func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplicationPoolInfo, error) {
-	respObj := executeMirrorCommand(pool, types.RbdResourcePool, RbdMirrorInfoCommand, cluster, client)
-	if respObj == nil {
-		return RbdReplicationPoolInfo{Mode: types.RbdResourceDisabled}, nil
-	}
-
-	logger.Infof("BAZINGA %v", respObj)
-
-	mode := types.RbdResourceType(respObj["Mode"].(string))
-	if mode == types.RbdResourceDisabled {
-		logger.Debugf("RBD Replication: Pool(%s) state disabled.", pool)
-		return RbdReplicationPoolInfo{Mode: types.RbdResourceDisabled}, nil
-	}
-
-	// generate poolInfo without peers
-	poolInfo := RbdReplicationPoolInfo{Mode: mode, LocalSiteName: respObj["Site Name"].(string)}
-
-	// populate peers if available
-	if strings.Contains(respObj["Site Name"].(string), "none") {
-		poolInfo.Peers = []RbdReplicationPeer{}
-	} else {
-		poolInfo.Peers = []RbdReplicationPeer{
-			{
-				Id:         respObj["UUID"].(string),
-				MirrorId:   respObj["Mirror UUID"].(string),
-				RemoteName: respObj["Name"].(string),
-				Direction:  types.RbdReplicationDirection(respObj["Direction"].(string)),
-			},
-		}
-	}
-
-	return poolInfo, nil
-}
-
-// GetRbdMirrorPoolStatus fetches mirroring status for requested pool
-func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdReplicationPoolStatus, error) {
-	respObj := executeMirrorCommand(pool, types.RbdResourcePool, RbdMirrorStatusCommand, cluster, client)
-	if respObj == nil {
-		return RbdReplicationPoolStatus{State: StateDisabledReplication}, nil
-	}
-
-	logger.Infof("BAZINGA %v", respObj)
-
-	// "images: 0 total", split value for "images".
-	imageCount, err := strconv.Atoi(strings.Split(respObj["images"].(string), " ")[0])
-	if err != nil {
-		return RbdReplicationPoolStatus{}, fmt.Errorf("failed to convert %s to int: %w", respObj["images"], err)
-	}
-
-	return RbdReplicationPoolStatus{
-		State:        StateEnabledReplication,
-		Health:       RbdReplicationHealth(respObj["health"].(string)),
-		DaemonHealth: RbdReplicationHealth(respObj["daemon health"].(string)),
-		ImageHealth:  RbdReplicationHealth(respObj["image health"].(string)),
-		ImageCount:   imageCount,
-	}, nil
-}
-
-// GetRbdMirrorImageStatus fetches mirroring status for reqeusted image
-func GetRbdMirrorImageStatus(pool string, image string, cluster string, client string) (RbdReplicationImageStatus, error) {
-	resourceName := fmt.Sprintf("%s/%s", pool, image)
-	respObj := executeMirrorCommand(resourceName, types.RbdResourceImage, RbdMirrorStatusCommand, cluster, client)
-	if respObj == nil {
-		return RbdReplicationImageStatus{State: StateDisabledReplication}, nil
-	}
-
-	logger.Infof("BAZINGA %v", respObj)
-
-	var imageStatus map[string]interface{}
-	var peers map[string]interface{}
-
-	err := yaml.Unmarshal([]byte(respObj[image].(string)), imageStatus)
-	if err != nil {
-		return RbdReplicationImageStatus{}, fmt.Errorf("cannot unmarshal image(%s) status: %v", image, err)
-	}
-
-	err = yaml.Unmarshal([]byte(imageStatus["peer_sites"].(string)), peers)
-	if err != nil {
-		return RbdReplicationImageStatus{}, fmt.Errorf("cannot unmarshal image(%s) peers: %v", image, err)
-	}
-
-	return RbdReplicationImageStatus{
-		ID:         imageStatus["global_id"].(string),
-		State:      StateEnabledReplication,
-		Status:     imageStatus["state"].(string),
-		LastUpdate: imageStatus["last_update"].(string),
-		isPrimary:  strings.Contains(imageStatus["description"].(string), "local image is primary"),
-		Peers: []string{
-			peers["name"].(string),
-		},
-	}, nil
-}
-
-func executeMirrorCommand(resourceName string, resourceType types.RbdResourceType, command RbdMirrorCommand, cluster string, client string) map[string]interface{} {
-	respObj := make(map[string]interface{})
-	args := []string{"mirror", string(resourceType), string(command), resourceName}
+	response := RbdReplicationPoolInfo{}
+	args := []string{"mirror", "pool", "info", pool, "--format", "json"}
 
 	// add --cluster and --id args
 	args = appendRemoteClusterArgs(args, cluster, client)
 
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
-		logger.Warnf("failed %s operation on res(%s): %v", string(command), resourceName, err)
-		return nil
+		logger.Warnf("failed info operation on res(%s): %v", pool, err)
+		return RbdReplicationPoolInfo{Mode: types.RbdResourceDisabled}, nil
 	}
 
-	err = yaml.Unmarshal([]byte(output), respObj)
+	err = json.Unmarshal([]byte(output), &response)
 	if err != nil {
-		logger.Errorf("cannot unmarshal rbd response: %v", err)
-		return nil
+		ne := fmt.Errorf("cannot unmarshal rbd response: %v", err)
+		logger.Errorf(ne.Error())
+		return RbdReplicationPoolInfo{Mode: types.RbdResourceDisabled}, ne
 	}
 
-	return respObj
+	// TODO: Make this print debug.
+	logger.Infof("REP: RBD Pool Info: %v", response)
+
+	return response, nil
+}
+
+// GetRbdMirrorPoolStatus fetches mirroring status for requested pool
+func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdReplicationPoolStatus, error) {
+	response := RbdReplicationPoolStatus{}
+	args := []string{"mirror", "pool", "status", pool}
+
+	output, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		logger.Warnf("failed info operation on res(%s): %v", pool, err)
+		return RbdReplicationPoolStatus{State: StateDisabledReplication}, nil
+	}
+
+	err = yaml.Unmarshal([]byte(output), &response)
+	if err != nil {
+		ne := fmt.Errorf("cannot unmarshal rbd response: %v", err)
+		logger.Errorf(ne.Error())
+		return RbdReplicationPoolStatus{State: StateDisabledReplication}, ne
+	}
+
+	// TODO: Make this print debug.
+	logger.Infof("REP: RBD Pool Status: %v", response)
+
+	// Patch required values
+	response.State = StateEnabledReplication
+	// "images: 0 total", split value for "images".
+	response.ImageCount, err = strconv.Atoi(strings.Split(response.Description, " ")[0])
+	if err != nil {
+		return RbdReplicationPoolStatus{}, fmt.Errorf("failed to convert %s to int: %w", response.Description, err)
+	}
+
+	return response, nil
+}
+
+// GetRbdMirrorImageStatus fetches mirroring status for reqeusted image
+func GetRbdMirrorImageStatus(pool string, image string, cluster string, client string) (RbdReplicationImageStatus, error) {
+	resource := fmt.Sprintf("%s/%s", pool, image)
+	response := RbdReplicationImageStatus{}
+	args := []string{"mirror", "image", "status", resource, "--format", "json"}
+
+	output, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		logger.Warnf("failed info operation on res(%s): %v", resource, err)
+		return RbdReplicationImageStatus{State: StateDisabledReplication}, nil
+	}
+
+	err = json.Unmarshal([]byte(output), &response)
+	if err != nil {
+		ne := fmt.Errorf("cannot unmarshal rbd response: %v", err)
+		logger.Errorf(ne.Error())
+		return RbdReplicationImageStatus{State: StateDisabledReplication}, ne
+	}
+
+	// TODO: Make this print debug.
+	logger.Infof("REP: RBD Image Status: %v", response)
+
+	// Patch required values
+	response.State = StateEnabledReplication
+	response.isPrimary = strings.Contains(response.Description, "local image is primary")
+
+	return response, nil
 }
 
 func EnablePoolMirroring(pool string, mode types.RbdResourceType, localName string, remoteName string) error {
