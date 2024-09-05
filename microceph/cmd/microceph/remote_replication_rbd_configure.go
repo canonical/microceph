@@ -27,7 +27,7 @@ func (c *cmdRemoteReplicationConfigureRbd) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.poolName, "pool", "", "RBD pool name")
 	cmd.MarkFlagRequired("pool")
 	cmd.Flags().StringVar(&c.imageName, "image", "", "RBD image name")
-	cmd.Flags().StringVar(&c.schedule, "snapshot-schedule", "", "snapshot schedule in days, hours, or minutes using d, h, m suffix respectively")
+	cmd.Flags().StringVar(&c.schedule, "schedule", "", "snapshot schedule in days, hours, or minutes using d, h, m suffix respectively")
 	return cmd
 }
 
