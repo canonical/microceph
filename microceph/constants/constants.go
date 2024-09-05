@@ -70,6 +70,9 @@ func GetPathFileMode() PathFileMode {
 // Regexes
 const ClusterNameRegex = "^[a-z0-9]+$"
 
+// Snapshot schedule special constants
+const DisableSnapshotSchedule = "\\0"
+
 // Replication Events
 const EventEnableReplication = "enable_replication"
 const EventDisableReplication = "disable_replication"

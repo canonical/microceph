@@ -22,6 +22,11 @@ const (
 	RbdMirrorEnableCommand RbdMirrorCommand = "enable"
 )
 
+type imageSnapshotSchedule struct {
+	Schedule  string `json:"interval" yaml:"interval"`
+	StartTime string `json:"start_time" yaml:"start_time"`
+}
+
 // Ceph Commands
 
 // GetRbdMirrorPoolInfo fetches the mirroring info for the requested pool
@@ -93,6 +98,9 @@ func GetRbdMirrorVerbosePoolStatus(pool string, cluster string, client string) (
 		logger.Warnf("failed info operation on res(%s): %v", pool, err)
 		return RbdReplicationVerbosePoolStatus{Summary: RbdReplicationPoolStatus{State: StateDisabledReplication}}, nil
 	}
+
+	// TODO: Make this print debug.
+	logger.Infof("REPRBD: Raw Pool Verbose Status: %s", output)
 
 	err = yaml.Unmarshal([]byte(output), &response)
 	if err != nil {
@@ -259,7 +267,11 @@ func configurePoolMirroring(pool string, mode types.RbdResourceType, localName s
 }
 
 // configureImageMirroring disables or enables image mirroring in requested mode.
-func configureImageMirroring(pool string, image string, mode types.RbdReplicationType) error {
+func configureImageMirroring(req types.RbdReplicationRequest) error {
+	pool := req.SourcePool
+	image := req.SourceImage
+	mode := req.ReplicationType
+	schedule := req.Schedule
 	var args []string
 
 	if mode == types.RbdReplicationDisabled {
@@ -271,6 +283,100 @@ func configureImageMirroring(pool string, image string, mode types.RbdReplicatio
 	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
 		return fmt.Errorf("failed to configure rbd image feature: %v", err)
+	}
+
+	if mode == types.RbdReplicationSnapshot {
+		err = createSnapshot(pool, image)
+		if err != nil {
+			return fmt.Errorf("failed to create image(%s/%s) snapshot : %v", pool, image, err)
+		}
+
+		err = configureSnapshotSchedule(pool, image, schedule, "")
+		if err != nil {
+			return fmt.Errorf("failed to create image(%s/%s) snapshot schedule(%s) : %v", pool, image, schedule, err)
+		}
+	}
+
+	return nil
+}
+
+func getSnapshotSchedule(pool string, image string) (imageSnapshotSchedule, error) {
+	if len(pool) == 0 || len(image) == 0 {
+		return imageSnapshotSchedule{}, fmt.Errorf("ImageName(%s/%s) not complete", pool, image)
+	}
+
+	output, err := listSnapshotSchedule(pool, image)
+	if err != nil {
+		return imageSnapshotSchedule{}, err
+	}
+
+	ret := []imageSnapshotSchedule{}
+	err = json.Unmarshal(output, &ret)
+	if err != nil {
+		return imageSnapshotSchedule{}, nil
+	}
+
+	return ret[0], nil
+}
+
+func listSnapshotSchedule(pool string, image string) ([]byte, error) {
+	args := []string{"mirror", "snapshot", "schedule", "list"}
+
+	if len(pool) != 0 {
+		args = append(args, "--pool")
+		args = append(args, pool)
+	}
+
+	if len(image) != 0 {
+		args = append(args, "--image")
+		args = append(args, image)
+	}
+
+	output, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return []byte(""), err
+	}
+
+	return []byte(output), nil
+}
+
+func configureSnapshotSchedule(pool string, image string, schedule string, startTime string) error {
+	var args []string
+	if len(schedule) == 0 {
+		args = []string{"mirror", "snapshot", "schedule", "rm", "--pool", pool}
+	} else {
+		args = []string{"mirror", "snapshot", "schedule", "add", "--pool", pool}
+	}
+
+	if len(image) != 0 {
+		args = append(args, "--image")
+		args = append(args, image)
+	}
+
+	if len(schedule) != 0 {
+		args = append(args, schedule)
+
+		// Also add start-time param if provided.
+		if len(startTime) != 0 {
+			args = append(args, startTime)
+		}
+	}
+
+	_, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// createSnapshot creates a snapshot of the requested image
+func createSnapshot(pool string, image string) error {
+	args := []string{"mirror", "image", "snapshot", fmt.Sprintf("%s/%s", pool, image)}
+
+	_, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return err
 	}
 
 	return nil

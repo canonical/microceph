@@ -8,6 +8,7 @@ import (
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
@@ -152,7 +153,20 @@ func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any
 
 // ConfigureHandler configures replication properties for requested rbd pool/image.
 func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...any) error {
-	// TODO: Implement Configure Handler
+	if rh.Request.Schedule == constants.DisableSnapshotSchedule {
+		return configureSnapshotSchedule(rh.Request.SourcePool, rh.Request.SourceImage, "", "")
+	}
+
+	schedule, err := getSnapshotSchedule(rh.Request.SourcePool, rh.Request.SourceImage)
+	if err != nil {
+		return err
+	}
+
+	if rh.Request.Schedule != schedule.Schedule {
+		return configureSnapshotSchedule(rh.Request.SourcePool, rh.Request.SourceImage, rh.Request.Schedule, "")
+	}
+
+	// no change
 	return nil
 }
 
@@ -160,6 +174,9 @@ func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...a
 func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) error {
 	// fetch all ceph pools
 	pools := ListPools()
+
+	// TODO: make this print debug
+	logger.Infof("REPRBD: Scan active pools %v", pools)
 
 	// fetch verbose pool status for each pool
 	statusList := []RbdReplicationVerbosePoolStatus{}
@@ -179,6 +196,9 @@ func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) e
 
 		statusList = append(statusList, poolStatus)
 	}
+
+	// TODO: Make this print debug.
+	logger.Infof("REPRBD: List Verbose Pool status: %v", statusList)
 
 	resp, err := json.Marshal(statusList)
 	if err != nil {
@@ -241,7 +261,7 @@ func handleImageEnablement(rh *RbdReplicationHandler, localSite string, remoteSi
 	}
 
 	// pool in Image mode, Enable Image in requested mode.
-	return configureImageMirroring(rh.Request.SourcePool, rh.Request.SourceImage, rh.Request.ReplicationType)
+	return configureImageMirroring(rh.Request)
 }
 
 // Disable handler for pool resource.
@@ -283,5 +303,7 @@ func handleImageDisablement(rh *RbdReplicationHandler) error {
 		return configureImageFeatures(rh.Request.SourcePool, rh.Request.SourceImage, "disable", "journaling")
 	}
 
-	return configureImageMirroring(rh.Request.SourcePool, rh.Request.SourceImage, types.RbdReplicationDisabled)
+	// patch replication type
+	rh.Request.ReplicationType = types.RbdReplicationDisabled
+	return configureImageMirroring(rh.Request)
 }
