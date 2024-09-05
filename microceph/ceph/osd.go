@@ -1118,19 +1118,44 @@ func SetReplicationFactor(pools []string, size int64) error {
 	return nil
 }
 
-func ListPools() []string {
-	args := []string{"osd", "lspools"}
+// CephPool abstracts the paramters of a ceph pool as provided by `osd pool ls detail`
+type CephPool struct {
+	Id          int                    `json:"pool_id" yaml:"pool_id"`
+	Name        string                 `json:"pool_name" yaml:"pool_name"`
+	Application map[string]interface{} `json:"application_metadata" yaml:"application_metadata"`
+}
+
+// ListPools lists the current pools on the ceph cluster,
+// Additionally filtered for requested application name.
+func ListPools(application string) []CephPool {
+	args := []string{"osd", "pool", "ls", "detail", "--format", "json"}
 
 	output, err := processExec.RunCommand("ceph", args...)
 	if err != nil {
-		return []string{}
+		return []CephPool{}
 	}
 
-	ret := []string{}
+	ret := []CephPool{}
 	err = json.Unmarshal([]byte(output), &ret)
 	if err != nil {
-		return []string{}
+		logger.Warnf("Failed to Unmarshal pool details: %v", err)
+		return []CephPool{}
 	}
 
-	return ret
+	// if no application filter provided.
+	if len(application) == 0 {
+		return ret
+	}
+
+	// filtered return slice of maximum needed size.
+	filterdRet := make([]CephPool, len(ret))
+	for _, cephPool := range ret {
+		_, ok := cephPool.Application[application]
+		if ok {
+			// append to the filter slice.
+			filterdRet = append(filterdRet, cephPool)
+		}
+	}
+
+	return filterdRet
 }

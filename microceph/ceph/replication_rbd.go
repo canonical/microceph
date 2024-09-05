@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
@@ -172,8 +171,8 @@ func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...a
 
 // ListHandler fetches a list of rbd pools/images configured for mirroring.
 func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) error {
-	// fetch all ceph pools
-	pools := ListPools()
+	// fetch all ceph pools initialised with rbd application.
+	pools := ListPools("rbd")
 
 	// TODO: make this print debug
 	logger.Infof("REPRBD: Scan active pools %v", pools)
@@ -181,16 +180,9 @@ func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) e
 	// fetch verbose pool status for each pool
 	statusList := []RbdReplicationVerbosePoolStatus{}
 	for _, pool := range pools {
-		// Filter default pools and rgw pools.
-		if strings.Contains(pool, ".rgw.") || strings.HasPrefix(pool, ".") {
-			// Make this print a debug print.
-			logger.Infof("REPRBD: skipping pool status for pool(%s)", pool)
-			continue
-		}
-
-		poolStatus, err := GetRbdMirrorVerbosePoolStatus(pool, "", "")
+		poolStatus, err := GetRbdMirrorVerbosePoolStatus(pool.Name, "", "")
 		if err != nil {
-			logger.Warnf("failed to fetch status for %s pool: %v", pool, err)
+			logger.Warnf("failed to fetch status for %s pool: %v", pool.Name, err)
 			continue
 		}
 
