@@ -225,6 +225,11 @@ func handlePoolDisablement(rh *RbdReplicationHandler, localSite string, remoteSi
 		}
 	}
 
+	// Fail if both sites not healthy
+	if rh.PoolStatus.Health != RbdReplicationHealthOK {
+		return fmt.Errorf("pool replication status not OK(%s), Can't proceed", rh.PoolStatus.Health)
+	}
+
 	return DisablePoolMirroring(rh.Request.SourcePool, rh.PoolInfo.Peers[0], localSite, remoteSite)
 }
 
