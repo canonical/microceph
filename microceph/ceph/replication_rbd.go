@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
@@ -150,10 +151,44 @@ func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any
 }
 
 // ConfigureHandler configures replication properties for requested rbd pool/image.
-func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...any) error { return nil }
+func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...any) error {
+	// TODO: Implement Configure Handler
+	return nil
+}
 
 // ListHandler fetches a list of rbd pools/images configured for mirroring.
-func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) error { return nil }
+func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) error {
+	// fetch all ceph pools
+	pools := ListPools()
+
+	// fetch verbose pool status for each pool
+	statusList := []RbdReplicationVerbosePoolStatus{}
+	for _, pool := range pools {
+		// Filter default pools and rgw pools.
+		if strings.Contains(pool, ".rgw.") || strings.HasPrefix(pool, ".") {
+			// Make this print a debug print.
+			logger.Infof("REPRBD: skipping pool status for pool(%s)", pool)
+			continue
+		}
+
+		poolStatus, err := GetRbdMirrorVerbosePoolStatus(pool, "", "")
+		if err != nil {
+			logger.Warnf("failed to fetch status for %s pool: %v", pool, err)
+			continue
+		}
+
+		statusList = append(statusList, poolStatus)
+	}
+
+	resp, err := json.Marshal(statusList)
+	if err != nil {
+		return fmt.Errorf("failed to marshal response(%v): %v", statusList, err)
+	}
+
+	// pass response for API
+	*args[repArgResponse].(*string) = string(resp)
+	return nil
+}
 
 // StatusHandler fetches the status of requested rbd pool/image resource.
 func (rh *RbdReplicationHandler) StatusHandler(ctx context.Context, args ...any) error {
@@ -164,8 +199,8 @@ func (rh *RbdReplicationHandler) StatusHandler(ctx context.Context, args ...any)
 		return err
 	}
 
-	// pass resoponse back to API
-	*args[1].(*string) = string(data)
+	// populate response for API
+	*args[repArgResponse].(*string) = string(data)
 	return nil
 }
 
@@ -199,7 +234,6 @@ func handleImageEnablement(rh *RbdReplicationHandler, localSite string, remoteSi
 		// continue for Image enablement
 	} else if rh.PoolInfo.Mode == types.RbdResourcePool {
 		if rh.Request.ReplicationType == types.RbdReplicationJournaling {
-			// TODO: Test if exclusive-lock is also required for syncing
 			return configureImageFeatures(rh.Request.SourcePool, rh.Request.SourceImage, "enable", "journaling")
 		} else {
 			return fmt.Errorf("parent pool (%s) enabled in Journaling mode, Image(%s) requested in Snapshot mode", rh.Request.SourcePool, rh.Request.SourceImage)

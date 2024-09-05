@@ -56,6 +56,7 @@ func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateM
 	newFsm.Configure(StateDisabledReplication).
 		Permit(constants.EventEnableReplication, StateEnabledReplication).
 		OnEntryFrom(constants.EventDisableReplication, disableHandler).
+		InternalTransition(constants.EventListReplication, listHandler).
 		InternalTransition(constants.EventDisableReplication, disableHandler)
 
 	// Configure transitions for enabled state.

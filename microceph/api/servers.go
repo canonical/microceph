@@ -37,8 +37,10 @@ var Servers = map[string]rest.Server{
 					remoteCmd,
 					remoteNameCmd,
 					opsCmd,
+					// Remote Replication APIs
 					opsReplicationCmd,
-					opsReplicationRbdCmd,
+					opsReplicationWorkloadCmd,
+					opsReplicationResourceCmd,
 				},
 			},
 		},
