@@ -14,14 +14,6 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-type RbdMirrorCommand string
-
-const (
-	RbdMirrorStatusCommand RbdMirrorCommand = "status"
-	RbdMirrorInfoCommand   RbdMirrorCommand = "info"
-	RbdMirrorEnableCommand RbdMirrorCommand = "enable"
-)
-
 type imageSnapshotSchedule struct {
 	Schedule  string `json:"interval" yaml:"interval"`
 	StartTime string `json:"start_time" yaml:"start_time"`
