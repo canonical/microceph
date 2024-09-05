@@ -46,7 +46,7 @@ func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplic
 	}
 
 	// TODO: Make this print debug.
-	logger.Infof("REP: RBD Pool Info: %v", response)
+	logger.Infof("REPRBD: Pool Info: %v", response)
 
 	return response, nil
 }
@@ -70,7 +70,7 @@ func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdRepl
 	}
 
 	// TODO: Make this print debug.
-	logger.Infof("REP: RBD Pool Status: %v", response)
+	logger.Infof("REPRBD: Pool Status: %v", response)
 
 	// Patch required values
 	response.State = StateEnabledReplication
@@ -79,6 +79,30 @@ func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdRepl
 	if err != nil {
 		return RbdReplicationPoolStatus{}, fmt.Errorf("failed to convert %s to int: %w", response.Description, err)
 	}
+
+	return response, nil
+}
+
+// GetRbdMirrorVerbosePoolStatus fetches mirroring status for requested pool
+func GetRbdMirrorVerbosePoolStatus(pool string, cluster string, client string) (RbdReplicationVerbosePoolStatus, error) {
+	response := RbdReplicationVerbosePoolStatus{}
+	args := []string{"mirror", "pool", "status", pool, "--verbose", "--format", "json"}
+
+	output, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		logger.Warnf("failed info operation on res(%s): %v", pool, err)
+		return RbdReplicationVerbosePoolStatus{Summary: RbdReplicationPoolStatus{State: StateDisabledReplication}}, nil
+	}
+
+	err = yaml.Unmarshal([]byte(output), &response)
+	if err != nil {
+		ne := fmt.Errorf("cannot unmarshal rbd response: %v", err)
+		logger.Errorf(ne.Error())
+		return RbdReplicationVerbosePoolStatus{Summary: RbdReplicationPoolStatus{State: StateDisabledReplication}}, ne
+	}
+
+	// TODO: Make this print debug.
+	logger.Infof("REPRBD: Pool Verbose Status: %v", response)
 
 	return response, nil
 }
@@ -103,7 +127,7 @@ func GetRbdMirrorImageStatus(pool string, image string, cluster string, client s
 	}
 
 	// TODO: Make this print debug.
-	logger.Infof("REP: RBD Image Status: %v", response)
+	logger.Infof("REPRBD: Image Status: %v", response)
 
 	// Patch required values
 	response.State = StateEnabledReplication

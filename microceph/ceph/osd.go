@@ -1117,3 +1117,20 @@ func SetReplicationFactor(pools []string, size int64) error {
 
 	return nil
 }
+
+func ListPools() []string {
+	args := []string{"osd", "lspools"}
+
+	output, err := processExec.RunCommand("ceph", args...)
+	if err != nil {
+		return []string{}
+	}
+
+	ret := []string{}
+	err = json.Unmarshal([]byte(output), &ret)
+	if err != nil {
+		return []string{}
+	}
+
+	return ret
+}
