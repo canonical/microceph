@@ -93,7 +93,7 @@ func (req RbdReplicationRequest) GetAPIObjectId() string {
 	if len(req.SourceImage) != 0 && len(req.SourcePool) != 0 {
 		resource := url.QueryEscape(fmt.Sprintf("%s/%s", req.SourcePool, req.SourceImage))
 		// TODO: Make this a debug print.
-		logger.Infof("REP: Resource: %s", resource)
+		logger.Infof("REPAPI: Resource: %s", resource)
 		return resource
 	}
 
@@ -103,7 +103,7 @@ func (req RbdReplicationRequest) GetAPIObjectId() string {
 func (req RbdReplicationRequest) GetAPIRequestType() string {
 	frags := strings.Split(string(req.RequestType), "-")
 	// TODO: Make this a debug print.
-	logger.Infof("REP: API frags: %v", frags)
+	logger.Infof("REPAPI: API frags: %v", frags)
 	if len(frags) == 0 {
 		return ""
 	}
@@ -114,7 +114,7 @@ func (req RbdReplicationRequest) GetAPIRequestType() string {
 func (req RbdReplicationRequest) GetWorkloadRequestType() string {
 	frags := strings.Split(string(req.RequestType), "-")
 	// TODO: Make this a debug print.
-	logger.Infof("REP: Workload frags: %v", frags)
+	logger.Infof("REPAPI: Workload frags: %v", frags)
 	if len(frags) < 2 {
 		return ""
 	}
