@@ -1,5 +1,5 @@
 =======================================
-Enabling Prometheus Alertmanager alerts
+Enabling Prometheus Alertmanager Alerts
 =======================================
 
 Pre-Requisite

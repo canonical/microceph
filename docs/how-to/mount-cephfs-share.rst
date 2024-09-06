@@ -1,9 +1,9 @@
 ====================================
-Mount MicroCeph backed CephFs shares
+Mounting MicroCeph-backed CephFs Shares
 ====================================
 
 CephFs (Ceph Filesystem) are filesystem shares backed by the Ceph storage cluster. 
-This tutorial will guide you with mounting CephFs shares using MicroCeph.
+This guide will walk you through mounting CephFs shares using MicroCeph.
 
 The above will be achieved by creating an fs on the MicroCeph deployed
 Ceph cluster, and then mounting it using the kernel driver.

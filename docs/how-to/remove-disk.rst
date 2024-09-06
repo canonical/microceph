@@ -1,5 +1,5 @@
 ===============
-Removing a disk
+Removing a Disk
 ===============
 
 Overview

@@ -1,4 +1,4 @@
-Configure RBD client cache in MicroCeph
+Configure RBD client Cache in MicroCeph
 ========================================
 
 MicroCeph supports setting, resetting, and listing client configurations which are exported to ceph.conf and are used by tools like qemu directly for configuring rbd cache. Below are the supported client configurations.

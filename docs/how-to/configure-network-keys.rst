@@ -1,5 +1,5 @@
 ============================
-Configuring Cluster network
+Configuring Cluster Network
 ============================
 
 If you configure a cluster network, OSDs will route heartbeat, object replication and recovery traffic over the cluster network. This may improve performance compared to using a single network. 

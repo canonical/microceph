@@ -6,7 +6,7 @@ Upgrade to Reef
 Overview
 --------
 
-This guide provides step-by-step instructions on how to upgrade your MicroCeph cluster from the Quincy release to the Reef release. Follow these steps carefully to prevent to ensure a smooth transition.
+This guide provides step-by-step instructions on how to upgrade your MicroCeph cluster from the Quincy release to the Reef release. Follow these steps carefully to ensure a smooth transition.
 
 
 Procedure
