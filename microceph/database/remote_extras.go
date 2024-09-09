@@ -32,7 +32,7 @@ var PersistRemoteDb = func(ctx context.Context, s interfaces.StateInterface, rem
 }
 
 // GetRemoteDb fetches a single or all remotes (when name == "") from DB.
-var GetRemoteDb = func(ctx context.Context, s state.State, name string) ([]Remote, error) {
+var GetRemoteDb = func(ctx context.Context, s state.State, name string) (types.RemoteRecords, error) {
 	var remotes []Remote
 	var err error
 
@@ -58,7 +58,14 @@ var GetRemoteDb = func(ctx context.Context, s state.State, name string) ([]Remot
 		return nil, err
 	}
 
-	return remotes, nil
+	var response types.RemoteRecords
+	for _, remote := range remotes {
+		response = append(response, types.RemoteRecord{
+			ID: remote.ID, Name: remote.Name, LocalName: remote.LocalName,
+		})
+	}
+
+	return response, nil
 }
 
 var DeleteRemoteDb = func(ctx context.Context, s state.State, remoteName string) error {

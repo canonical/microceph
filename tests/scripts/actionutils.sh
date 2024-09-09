@@ -201,24 +201,24 @@ function remote_perform_remote_ops_check() {
     # perform ceph ops on sitea (both nodes)
     lxc exec node-wrk0 -- sh -c "microceph.ceph -s" # local ceph status
     lxc exec node-wrk0 -- sh -c "microceph.ceph -s --cluster siteb --id sitea" # remote ceph status
-    lxc exec node-wrk0 -- sh -c "microceph remote list --json | grep '\"Name\":\"siteb\"'"
+    lxc exec node-wrk0 -- sh -c "microceph remote list --json | grep '\"name\":\"siteb\"'"
     lxc exec node-wrk1 -- sh -c "microceph.ceph -s" # local ceph status
     lxc exec node-wrk1 -- sh -c "microceph.ceph -s --cluster siteb --id sitea" # remote ceph status
-    lxc exec node-wrk1 -- sh -c "microceph remote list --json | grep '\"LocalName\":\"sitea\"'"
+    lxc exec node-wrk1 -- sh -c "microceph remote list --json | grep '\"local_name\":\"sitea\"'"
     # perform ceph ops on siteb (both nodes)
     lxc exec node-wrk2 -- sh -c "microceph.ceph -s" # local ceph status
     lxc exec node-wrk2 -- sh -c "microceph.ceph -s --cluster sitea --id siteb" # remote ceph status
-    lxc exec node-wrk2 -- sh -c "microceph remote list --json | grep '\"Name\":\"sitea\"'"
+    lxc exec node-wrk2 -- sh -c "microceph remote list --json | grep '\"name\":\"sitea\"'"
     lxc exec node-wrk3 -- sh -c "microceph.ceph -s" # local ceph status
     lxc exec node-wrk3 -- sh -c "microceph.ceph -s --cluster sitea --id siteb" # remote ceph status
-    lxc exec node-wrk3 -- sh -c "microceph remote list --json | grep '\"LocalName\":\"siteb\"'"
+    lxc exec node-wrk3 -- sh -c "microceph remote list --json | grep '\"local_name\":\"siteb\"'"
 }
 
 function remote_remove_and_verify() {
     # Remove the configured remote from MicroCeph
     lxc exec node-wrk0 -- sh -c "microceph remote remove siteb"
     # Verify list output
-    match=$((lxc exec node-wrk0 -- sh -c "microceph remote list --json | grep '\"Name\":\"siteb\"'") || true )
+    match=$((lxc exec node-wrk0 -- sh -c "microceph remote list --json | grep '\"name\":\"siteb\"'") || true )
     if [[ $match -ne 0 ]] ; then
         echo "Remote record still present."
         lxc exec node-wrk0 -- sh -c "microceph remote list --json"

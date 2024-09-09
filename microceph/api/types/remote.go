@@ -32,3 +32,5 @@ type RemoteRecord struct {
 	// local cluster name
 	LocalName string `json:"local_name" yaml:"local_name"`
 }
+
+type RemoteRecords []RemoteRecord
