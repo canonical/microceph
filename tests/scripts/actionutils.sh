@@ -177,7 +177,7 @@ function remote_simple_bootstrap_two_sites() {
     tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk1" )
     lxc exec node-wrk1 -- sh -c "microceph cluster join $tok"
     sleep 10
-    # Bootstrap sitea
+    # Bootstrap siteb 
     lxc exec node-wrk2 -- sh -c "microceph cluster bootstrap"
     lxc exec node-wrk2 -- sh -c "microceph disk add loop,2G,3"
     tok=$(lxc exec node-wrk2 -- sh -c "microceph cluster add node-wrk3" )

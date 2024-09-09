@@ -21,7 +21,8 @@ var clusterCmd = rest.Endpoint{
 	Get:  rest.EndpointAction{Handler: cmdClusterGet, ProxyTarget: false},
 }
 
-// cmdClusterGet returns a json dump of microceph configs with a new key patched in for the remote.
+// cmdClusterGet returns a json dump of microceph configs suitable for connecting from a remote cluster
+// This also creates a new key based on the remote name with admin privs.
 func cmdClusterGet(s state.State, r *http.Request) response.Response {
 	// Fetch request params.
 	var req types.ClusterExportRequest

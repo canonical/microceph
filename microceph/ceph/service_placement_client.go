@@ -12,7 +12,7 @@ import (
 	"github.com/canonical/lxd/shared/logger"
 )
 
-// Used by client-like services: rbd-mirror
+// ClientServicePlacement is used by client-like services such as rbd-mirror
 type ClientServicePlacement struct {
 	Name string
 }

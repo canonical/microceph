@@ -13,7 +13,7 @@ import (
 )
 
 // SendRemoteImportRequest sends the remote cluster config key-values for persistence.
-func SendRemoteImportRequest(ctx context.Context, c *microCli.Client, data types.Remote) error {
+func SendRemoteImportRequest(ctx context.Context, c *microCli.Client, data types.RemoteImportRequest) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
@@ -30,7 +30,7 @@ func SendRemoteRemoveRequest(ctx context.Context, c *microCli.Client, remote str
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("client", "remotes", remote), nil, nil)
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, api.NewURL().Path("client", "remotes", remote), nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to import MicroCeph remote: %w", err)
 	}
@@ -39,7 +39,7 @@ func SendRemoteRemoveRequest(ctx context.Context, c *microCli.Client, remote str
 }
 
 // SendRemoteImportToClusterMembers Sends the remote import request to every other member of the cluster.
-func SendRemoteImportToClusterMembers(ctx context.Context, s state.State, data types.Remote) error {
+func SendRemoteImportToClusterMembers(ctx context.Context, s state.State, data types.RemoteImportRequest) error {
 	// Get a collection of clients to every other cluster member.
 	cluster, err := s.Cluster(false)
 	if err != nil {

@@ -21,11 +21,13 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// remoteCmd is the top level remote endpoint.
 var remoteCmd = rest.Endpoint{
 	Path: "client/remotes",
 	Get:  rest.EndpointAction{Handler: cmdRemoteGet, ProxyTarget: false},
 }
 
+// remoteNameCmd endpoint is for operations on specific remotes.
 var remoteNameCmd = rest.Endpoint{
 	Path:   "client/remotes/{name}",
 	Put:    rest.EndpointAction{Handler: cmdRemotePut, ProxyTarget: false},
@@ -33,8 +35,10 @@ var remoteNameCmd = rest.Endpoint{
 	Delete: rest.EndpointAction{Handler: cmdRemoteDelete, ProxyTarget: false},
 }
 
+// cmdRemotePut is handler for adding remote records to MicroCeph.
+// This also triggers the $cluster file generation for all MicroCeph hosts.
 func cmdRemotePut(state state.State, r *http.Request) response.Response {
-	var req types.Remote
+	var req types.RemoteImportRequest
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
@@ -66,6 +70,7 @@ func cmdRemotePut(state state.State, r *http.Request) response.Response {
 	return response.EmptySyncResponse
 }
 
+// cmdRemoteGet is handler for fetching Remote records from MicroCeph internal db.
 func cmdRemoteGet(state state.State, r *http.Request) response.Response {
 	// PathUnescape will NOT fail if no name is provided in API request.
 	// Additionally, remoteName in that case is initialised to "".
@@ -87,6 +92,7 @@ func cmdRemoteGet(state state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, remotes)
 }
 
+// cmdRemoteDelete is handler for removing Remote records from MicroCeph internal db.
 func cmdRemoteDelete(state state.State, r *http.Request) response.Response {
 	remoteName, err := url.PathUnescape(mux.Vars(r)["name"])
 	if err != nil {

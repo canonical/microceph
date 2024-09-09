@@ -14,7 +14,7 @@ import (
 )
 
 // PersistRemoteDb adds the remote record to dqlite.
-var PersistRemoteDb = func(ctx context.Context, s interfaces.StateInterface, remote types.Remote) error {
+var PersistRemoteDb = func(ctx context.Context, s interfaces.StateInterface, remote types.RemoteImportRequest) error {
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the remote.
 		_, err := CreateRemote(ctx, tx, Remote{LocalName: remote.LocalName, Name: remote.Name})

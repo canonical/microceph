@@ -14,7 +14,7 @@ type cmdRemoteRemove struct {
 
 func (c *cmdRemoteRemove) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "remove <Name>",
+		Use:   "remove <name>",
 		Short: "Remove configured remote",
 		RunE:  c.Run,
 	}
