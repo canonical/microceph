@@ -53,7 +53,7 @@ func (c *cmdDaemon) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "microcephd",
 		Short:   "Daemon for MicroCeph",
-		Version: version.Version,
+		Version: version.Version(),
 	}
 
 	cmd.RunE = c.Run
@@ -88,13 +88,7 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	h.PreRemove = ceph.PreRemove(m)
 
 	daemonArgs := microcluster.DaemonArgs{
-		// Microcluster requires an explicit version to be supplied to the daemon.
-		// This will be readable alongside other server information over the `GET /core/1.0` endpoint.
-		// MicroCeph should define a project version here that can be used by consumers of the MicroCeph API
-		// to ensure that MicroCeph is installed within a supported series of revisions.
-		// In particular, a semantic version would be very useful here to distinguish between breaking changes
-		// and non-breaking bugfixes to a supported series.
-		Version: "UNKNOWN", // FIXME: Add an explicit version to MicroCeph.
+		Version: version.Version(),
 
 		Verbose:          c.global.flagLogVerbose,
 		Debug:            c.global.flagLogDebug,

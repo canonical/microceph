@@ -1,11 +1,16 @@
+pkg_version=$(shell apt-cache policy ceph-common | awk '/Candidate:/{ print $$2 }' )
+git_version=$(shell git describe --always --dirty --abbrev=10)
+MC_VERSION=ceph-version: $(pkg_version); microceph-git: $(git_version)
+LDFLAGS="-X 'github.com/canonical/microceph/microceph/version.version=$(MC_VERSION)'"
+
 .PHONY: default
 default: build
 
 # Build targets.
 .PHONY: build
 build:
-	go install -v ./cmd/microceph
-	go install -v ./cmd/microcephd
+	go install -v -ldflags $(LDFLAGS) ./cmd/microceph
+	go install -v -ldflags $(LDFLAGS) ./cmd/microcephd
 
 # Testing targets.
 .PHONY: check
