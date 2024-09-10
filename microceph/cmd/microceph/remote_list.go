@@ -21,7 +21,7 @@ type cmdRemoteList struct {
 func (c *cmdRemoteList) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List all configured remotes for the site.",
+		Short: "List all configured remotes for the site",
 		RunE:  c.Run,
 	}
 

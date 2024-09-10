@@ -26,7 +26,7 @@ func (c *cmdRemoteImport) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
-	cmd.PersistentFlags().StringVar(&c.localName, "local-name", "", "friendly local name for cluster.")
+	cmd.PersistentFlags().StringVar(&c.localName, "local-name", "", "friendly local name for cluster")
 	return cmd
 }
 
