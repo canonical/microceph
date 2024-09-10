@@ -170,6 +170,7 @@ parts:
       - coreutils
       - uuid-runtime
       - python3-setuptools
+      - python3-onelogin-saml2
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
