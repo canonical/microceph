@@ -1,5 +1,5 @@
 ===================
-``microceph`` charm
+The Microceph charm
 ===================
 
 The ``microceph`` charm is used to incorporate MicroCeph into Juju-managed
