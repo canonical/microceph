@@ -1,8 +1,7 @@
-===================
-``microceph`` charm
+The MicroCeph charm
 ===================
 
-The ``microceph`` charm is used to incorporate MicroCeph into Juju-managed
+The MicroCeph charm is used to incorporate MicroCeph into Juju-managed
 deployments. It offers an alternative method for deploying and managing
 MicroCeph. In effect, the charm installs the ``microceph`` snap. As expected,
 it provides MicroCeph management via standard Juju commands (e.g. ``juju
