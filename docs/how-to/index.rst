@@ -3,9 +3,8 @@ How-to guides
 
 Our *how-to* guides give directions on how perform key operations and processes in MicroCeph.
 
-*********************************************
 Installing and initialising MicroCeph cluster
-*********************************************
+---------------------------------------------
 
 The guides in this section are helpful in the installation and initialisation
 of both single-node and multi-node clusters.
@@ -15,9 +14,8 @@ of both single-node and multi-node clusters.
    
    single-node
 
-************************************************
 Configuring your cluster
-************************************************
+------------------------
 
 See these guides for client and network configurations, authentication service integration, and
 configuration of metrics, alerts and other service instances.
@@ -32,9 +30,8 @@ configuration of metrics, alerts and other service instances.
    enable-alerts
    enable-service-instances
 
-*********************
 Managing your cluster
-*********************
+---------------------
 
 Manage your cluster by adding block devices and CephFS shares, removing disks,
 migrating services and more.
@@ -46,9 +43,8 @@ migrating services and more.
    migrate-auto-services
    remove-disk
 
-**********************
 Upgrading your cluster
-**********************
+----------------------
 
 Follow these steps carefully to ensure a smooth transition from v.17.2.x (Quincy)
 to v.18.2.x (Reef)
