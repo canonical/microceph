@@ -23,3 +23,17 @@ func PoolSetReplicationFactor(ctx context.Context, c *microCli.Client, data *typ
 
 	return nil
 }
+
+func GetPools(ctx context.Context, c *microCli.Client) ([]types.Pool, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	var pools []types.Pool
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("pools"), nil, &pools)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to fetch OSD pools: %w", err)
+	}
+
+	return pools, nil
+
+}
