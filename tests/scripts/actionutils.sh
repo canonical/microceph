@@ -215,12 +215,21 @@ function remote_perform_remote_ops_check() {
 }
 
 function remote_remove_and_verify() {
+    # Check remote exists
+    match=$((lxc exec node-wrk0 -- sh -c "microceph remote list --json | grep -c '\"Name\":\"siteb\"'"))
+    if [[ $match -ne 1 ]] ; then
+        echo "Expected remote record for siteb absent."
+        lxc exec node-wrk0 -- sh -c "microceph remote list --json"
+        exit -1
+    fi
+
     # Remove the configured remote from MicroCeph
     lxc exec node-wrk0 -- sh -c "microceph remote remove siteb"
-    # Verify list output
-    match=$((lxc exec node-wrk0 -- sh -c "microceph remote list --json | grep '\"name\":\"siteb\"'") || true )
-    if [[ $match -ne 0 ]] ; then
-        echo "Remote record still present."
+
+    # Verify remote does not exist
+    match=$((lxc exec node-wrk0 -- sh -c "microceph remote list --json | grep -c 'no remotes configured'"))
+    if [[ $match -ne 1 ]] ; then
+        echo "Removed remote record still present."
         lxc exec node-wrk0 -- sh -c "microceph remote list --json"
         exit -1
     fi
