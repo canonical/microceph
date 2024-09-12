@@ -53,5 +53,4 @@ The MicroCeph charm helps you deploy and manage your MicroCeph deployment with `
 
 If you have a specific goal, but are already familiar with MicroCeph, our :doc:`how-to guides <../how-to/index>` have more in-depth detail and instructions.
 
-Take a look at our :doc:`reference <../reference/index>` section when you need to know which MicroCeph commands to use or if you need information
-about the MicroCeph charm.
+Take a look at our :doc:`reference <../reference/index>` section when you need to know which MicroCeph commands to use.
