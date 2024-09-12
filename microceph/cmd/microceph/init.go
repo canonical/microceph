@@ -9,8 +9,8 @@ import (
 
 	"github.com/canonical/lxd/lxd/util"
 	"github.com/canonical/lxd/shared/api"
-	microCli "github.com/canonical/microcluster/client"
-	"github.com/canonical/microcluster/microcluster"
+	microCli "github.com/canonical/microcluster/v2/client"
+	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -33,7 +33,7 @@ func (c *cmdInit) Command() *cobra.Command {
 
 func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	// Connect to the daemon.
-	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 				}
 
 				// Issue the token.
-				token, err := m.NewJoinToken(context.Background(), tokenName)
+				token, err := m.NewJoinToken(context.Background(), tokenName, 3*time.Hour)
 				if err != nil {
 					return err
 				}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/canonical/microcluster/microcluster"
+	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -40,7 +40,7 @@ func (c *cmdEnableRGW) Command() *cobra.Command {
 
 // Run handles the enable rgw command.
 func (c *cmdEnableRGW) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
 	}

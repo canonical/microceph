@@ -3,7 +3,7 @@ package mocks
 
 import (
 	types "github.com/canonical/microceph/microceph/api/types"
-	state "github.com/canonical/microcluster/state" // mockery gets confused about import paths here
+	state "github.com/canonical/microcluster/v2/state" // mockery gets confused about import paths here
 	mock "github.com/stretchr/testify/mock"
 )
 

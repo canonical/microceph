@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
 	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/microceph/microceph/database"
@@ -34,9 +35,9 @@ func (msp *MonServicePlacement) PostPlacementCheck(s interfaces.StateInterface) 
 }
 
 // Perform DB updates to persist the service enablement changes.
-func (msp *MonServicePlacement) DbUpdate(s interfaces.StateInterface) error {
+func (msp *MonServicePlacement) DbUpdate(ctx context.Context, s interfaces.StateInterface) error {
 	// Update the database.
-	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		// Record the role.
 		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: msp.Name})
 		if err != nil {

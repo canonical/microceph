@@ -8,8 +8,8 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microcluster/client"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/client"
+	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )
@@ -77,7 +77,7 @@ func RestartService(ctx context.Context, c *client.Client, data *types.Services)
 }
 
 // Sends the desired list of services to be restarted on every other member of the cluster.
-func SendRestartRequestToClusterMembers(s *state.State, services []string) error {
+func SendRestartRequestToClusterMembers(ctx context.Context, s state.State, services []string) error {
 	// Populate the restart request data.
 	var data types.Services
 	for _, service := range services {
@@ -93,7 +93,7 @@ func SendRestartRequestToClusterMembers(s *state.State, services []string) error
 
 	for _, remoteClient := range cluster {
 		// In order send restart to each cluster member and wait.
-		err = RestartService(s.Context, &remoteClient, &data)
+		err = RestartService(ctx, &remoteClient, &data)
 		if err != nil {
 			logger.Errorf("restart error: %v", err)
 			return err

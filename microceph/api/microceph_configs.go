@@ -8,8 +8,8 @@ import (
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
-	"github.com/canonical/microcluster/rest"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/rest"
+	"github.com/canonical/microcluster/v2/state"
 )
 
 // top level microceph API
@@ -28,7 +28,7 @@ var logLevelCmd = rest.Endpoint{
 	Get:  rest.EndpointAction{Handler: logLevelGet, ProxyTarget: true},
 }
 
-func logLevelPut(s *state.State, r *http.Request) response.Response {
+func logLevelPut(s state.State, r *http.Request) response.Response {
 	var req types.LogLevelPut
 
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -46,6 +46,6 @@ func logLevelPut(s *state.State, r *http.Request) response.Response {
 	return response.EmptySyncResponse
 }
 
-func logLevelGet(s *state.State, r *http.Request) response.Response {
+func logLevelGet(s state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, ceph.GetLogLevel())
 }

@@ -23,8 +23,6 @@ type CmdControl struct {
 	FlagStateDir   string
 }
 
-var Version string // set by build process
-
 func main() {
 	// common flags.
 	commonCmd := CmdControl{Asker: cli.NewAsker(bufio.NewReader(os.Stdin))}
@@ -32,7 +30,7 @@ func main() {
 	app := &cobra.Command{
 		Use:               "microceph",
 		Short:             "Command for managing the MicroCeph deployment",
-		Version:           version.Version,
+		Version:           version.Version(),
 		SilenceUsage:      true,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
@@ -44,7 +42,7 @@ func main() {
 	app.PersistentFlags().BoolVarP(&commonCmd.FlagLogVerbose, "verbose", "v", false, "Show all information messages")
 
 	app.SetVersionTemplate("{{.Version}}\n")
-	app.Version = Version
+	app.Version = version.Version()
 
 	// Top-level.
 	var cmdEnable = cmdEnable{common: &commonCmd}
