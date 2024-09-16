@@ -1,5 +1,5 @@
 ============================================
-Migrating automatically-provisioned services
+Migrating Automatically-provisioned Services
 ============================================
 
 MicroCeph deploys automatically-provisioned Ceph services when needed. These

@@ -1,5 +1,5 @@
 ===========================================
-Enabling metrics collection with Prometheus
+Enabling Metrics Collection with Prometheus
 ===========================================
 
 Introduction

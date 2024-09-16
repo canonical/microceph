@@ -1,8 +1,8 @@
 ===================
-Single-node install
+Single-node Install
 ===================
 
-This tutorial will show how to install MicroCeph on a single machine, thereby
+This guide will show how to install MicroCeph on a single machine, thereby
 creating a single-node "cluster".
 
 The above will be achieved through the use of loop files placed on the root

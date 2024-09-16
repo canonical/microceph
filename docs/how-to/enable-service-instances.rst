@@ -1,5 +1,5 @@
 =====================================
-Enabling additional service instances
+Enabling Additional Service Instances
 =====================================
 
 To ensure a base level of resiliency, MicroCeph will always try to enable a

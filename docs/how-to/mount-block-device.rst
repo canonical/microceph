@@ -1,9 +1,9 @@
-====================================
-Mount MicroCeph backed Block Devices
-====================================
+=======================================
+Mounting MicroCeph-backed Block Devices
+=======================================
 
 Ceph RBD (RADOS Block Device) are virtual block devices backed by the Ceph storage cluster. 
-This tutorial will guide you with mounting Block devices using MicroCeph.
+This guide will walk you through mounting Block devices using MicroCeph.
 
 The above will be achieved by creating an rbd image on the MicroCeph deployed
 Ceph cluster, mapping it on the client machine, and then mounting it.

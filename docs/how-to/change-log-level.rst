@@ -1,5 +1,5 @@
 ======================
-Changing the log level
+Changing the Log Level
 ======================
 
 By default, the MicroCeph daemon runs with the log level set to DEBUG. While that is the desirable
