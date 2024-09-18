@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/lxd/shared/logger"
@@ -51,18 +52,23 @@ func cmdRemotePut(state state.State, r *http.Request) response.Response {
 	}
 
 	if !req.RenderOnly {
+		logger.Infof("REM: Sending remote(%s) info to cluster members.", req.Name)
+
 		// Asynchronously persist this on db and send request to other cluster members.
 		go func() {
-			err := database.PersistRemoteDb(context.Background(), interfaces.CephState{State: state}, req)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
+			defer cancel()
+
+			err := database.PersistRemoteDb(ctx, interfaces.CephState{State: state}, req)
 			if err != nil {
-				logger.Errorf("failed to persiste remote: %s", err.Error())
+				logger.Errorf("REM: failed to persiste remote: %s", err.Error())
 			}
 
 			// Send render only request to remaining cluster members.
 			req.RenderOnly = true
-			err = client.SendRemoteImportToClusterMembers(r.Context(), state, req)
+			err = client.SendRemoteImportToClusterMembers(ctx, state, req)
 			if err != nil {
-				logger.Errorf("failed to forward request to cluster: %s", err.Error())
+				logger.Errorf("REM: failed to forward request to cluster: %s", err.Error())
 			}
 		}()
 	}
@@ -76,7 +82,7 @@ func cmdRemoteGet(state state.State, r *http.Request) response.Response {
 	// Additionally, remoteName in that case is initialised to "".
 	remoteName, err := url.PathUnescape(mux.Vars(r)["name"])
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Errorf("REM: %v", err.Error())
 		return response.InternalError(err)
 	}
 

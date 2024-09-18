@@ -43,15 +43,17 @@ func SendRemoteImportToClusterMembers(ctx context.Context, s state.State, data t
 	// Get a collection of clients to every other cluster member.
 	cluster, err := s.Cluster(false)
 	if err != nil {
-		logger.Errorf("failed to get a client for every cluster member: %v", err)
+		logger.Errorf("REM: failed to get a client for every cluster member: %v", err)
 		return err
 	}
+
+	logger.Infof("REM: Sending remote info to %d members", len(cluster))
 
 	for _, remoteClient := range cluster {
 		// In order send restart to each cluster member and wait.
 		err = SendRemoteImportRequest(ctx, &remoteClient, data)
 		if err != nil {
-			logger.Errorf("restart error: %v", err)
+			logger.Errorf("REM: %v", err)
 			return err
 		}
 	}
