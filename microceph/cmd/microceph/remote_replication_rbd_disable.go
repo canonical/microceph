@@ -13,6 +13,7 @@ type cmdRemoteReplicationDisableRbd struct {
 	common    *CmdControl
 	poolName  string
 	imageName string
+	isForce   bool
 }
 
 func (c *cmdRemoteReplicationDisableRbd) Command() *cobra.Command {
@@ -24,6 +25,7 @@ func (c *cmdRemoteReplicationDisableRbd) Command() *cobra.Command {
 
 	cmd.Flags().StringVar(&c.poolName, "pool", "", "RBD pool name")
 	cmd.Flags().StringVar(&c.imageName, "image", "", "RBD image name")
+	cmd.Flags().BoolVar(&c.isForce, "force", false, "RBD image name")
 	return cmd
 }
 
@@ -56,6 +58,7 @@ func (c *cmdRemoteReplicationDisableRbd) prepareRbdPayload(requestType types.Rep
 		SourcePool:  c.poolName,
 		SourceImage: c.imageName,
 		RequestType: requestType,
+		IsForceOp:   c.isForce,
 	}
 
 	if len(c.poolName) != 0 && len(c.imageName) != 0 {

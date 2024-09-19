@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
@@ -33,19 +34,24 @@ const (
 	RbdReplicationHealthErr  RbdReplicationHealth = "Error"
 )
 
+type RbdReplicationPoolStatusCmdOutput struct {
+	Summary RbdReplicationPoolStatus `json:"summary"`
+}
+
 // RbdReplicationPoolStatus does not have tags defined for jason because it needs custom logic.
 type RbdReplicationPoolStatus struct {
 	State        ReplicationState
 	ImageCount   int
 	Health       RbdReplicationHealth `json:"health" yaml:"health"`
-	DaemonHealth RbdReplicationHealth `json:"daemon_health" yaml:"daemon_health"`
-	ImageHealth  RbdReplicationHealth `json:"image_health" yaml:"image_health"`
-	Description  string               `yaml:"images"` // only un/marshal if from yaml format.
+	DaemonHealth RbdReplicationHealth `json:"daemon_health" yaml:"daemon health"`
+	ImageHealth  RbdReplicationHealth `json:"image_health" yaml:"image health"`
+	Description  map[string]int       `json:"states"  yaml:"images"`
 }
 
 type RbdReplicationVerbosePoolStatus struct {
-	Summary RbdReplicationPoolStatus  `json:"summary"`
-	Images  RbdReplicationImageStatus `json:"images"`
+	Name    string                      `json:"name"`
+	Summary RbdReplicationPoolStatus    `json:"summary"`
+	Images  []RbdReplicationImageStatus `json:"images"`
 }
 
 type RbdReplicationImagePeer struct {
@@ -57,8 +63,9 @@ type RbdReplicationImagePeer struct {
 }
 
 type RbdReplicationImageStatus struct {
-	State       ReplicationState // whether replication is enabled or disabled
-	isPrimary   bool
+	Name        string                    `json:"name"`
+	State       ReplicationState          // whether replication is enabled or disabled
+	IsPrimary   bool                      // not fetched from json field hence no tag for json.
 	ID          string                    `json:"global_id"`
 	Status      string                    `json:"state"`
 	LastUpdate  string                    `json:"last_update"`
@@ -178,7 +185,7 @@ func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) e
 	logger.Infof("REPRBD: Scan active pools %v", pools)
 
 	// fetch verbose pool status for each pool
-	statusList := []RbdReplicationVerbosePoolStatus{}
+	statusList := types.RbdPoolList{}
 	for _, pool := range pools {
 		poolStatus, err := GetRbdMirrorVerbosePoolStatus(pool.Name, "", "")
 		if err != nil {
@@ -186,7 +193,26 @@ func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) e
 			continue
 		}
 
-		statusList = append(statusList, poolStatus)
+		images := make([]types.RbdPoolListImageBrief, len(poolStatus.Images))
+		for id, image := range poolStatus.Images {
+			var rep_type string
+			if strings.Contains(image.Status, "snapshot") {
+				rep_type = "snapshot"
+			} else {
+				rep_type = "journaling"
+			}
+			images[id] = types.RbdPoolListImageBrief{
+				Name:            image.Name,
+				Type:            rep_type,
+				IsPrimary:       image.IsPrimary,
+				LastLocalUpdate: image.LastUpdate,
+			}
+		}
+
+		statusList = append(statusList, types.RbdPoolBrief{
+			Name:   pool.Name,
+			Images: images,
+		})
 	}
 
 	// TODO: Make this print debug.
@@ -204,14 +230,71 @@ func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) e
 
 // StatusHandler fetches the status of requested rbd pool/image resource.
 func (rh *RbdReplicationHandler) StatusHandler(ctx context.Context, args ...any) error {
-	data, err := json.Marshal(rh)
+	var resp any
+
+	// Populate Status resp.
+	if rh.Request.ResourceType == types.RbdResourcePool {
+		// handle pool status
+		remotes := make([]types.RbdPoolStatusRemoteBrief, len(rh.PoolInfo.Peers))
+		for id, remote := range rh.PoolInfo.Peers {
+			remotes[id] = types.RbdPoolStatusRemoteBrief{
+				Name:      remote.RemoteName,
+				Direction: string(remote.Direction),
+				UUID:      remote.Id,
+			}
+		}
+
+		// Also add image info
+
+		resp = types.RbdPoolStatus{
+			Name:              rh.Request.SourcePool,
+			Type:              string(rh.PoolInfo.Mode),
+			HealthReplication: string(rh.PoolStatus.Health),
+			HealthImages:      string(rh.PoolStatus.ImageHealth),
+			HealthDaemon:      string(rh.PoolStatus.DaemonHealth),
+			ImageCount:        rh.PoolStatus.ImageCount,
+			Remotes:           remotes,
+		}
+	} else if rh.Request.ResourceType == types.RbdResourceImage {
+		// handle image status
+		remotes := make([]types.RbdImageStatusRemoteBrief, len(rh.ImageStatus.Peers))
+		for id, remote := range rh.ImageStatus.Peers {
+			remotes[id] = types.RbdImageStatusRemoteBrief{
+				Name:             remote.RemoteName,
+				Status:           remote.Status,
+				LastRemoteUpdate: remote.LastUpdate,
+			}
+		}
+
+		var rep_type string
+		if strings.Contains(rh.ImageStatus.Status, "snapshot") {
+			rep_type = "snapshot"
+		} else {
+			rep_type = "journaling"
+		}
+
+		resp = types.RbdImageStatus{
+			Name:            fmt.Sprintf("%s/%s", rh.Request.SourcePool, rh.Request.SourceImage),
+			ID:              rh.ImageStatus.ID,
+			Type:            rep_type,
+			Status:          rh.ImageStatus.Status,
+			LastLocalUpdate: rh.ImageStatus.LastUpdate,
+			IsPrimary:       rh.ImageStatus.IsPrimary,
+			Remotes:         remotes,
+		}
+	} else {
+		return fmt.Errorf("REPRBD: Unable resource type(%s), cannot find status", rh.Request.ResourceType)
+	}
+
+	// Marshal to json string
+	data, err := json.Marshal(resp)
 	if err != nil {
 		err := fmt.Errorf("failed to marshal resource status: %w", err)
 		logger.Error(err.Error())
 		return err
 	}
 
-	// populate response for API
+	// pass response for API
 	*args[repArgResponse].(*string) = string(data)
 	return nil
 }

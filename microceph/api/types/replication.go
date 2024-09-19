@@ -82,6 +82,7 @@ type RbdReplicationRequest struct {
 	ReplicationType RbdReplicationType     `json:"replication_type" yaml:"replication_type"`
 	ResourceType    RbdResourceType        `json:"resource_type" yaml:"resource_type"`
 	RequestType     ReplicationRequestType `json:"request_type" yaml:"request_type"`
+	IsForceOp       bool                   `json:"force" yaml:"force"`
 }
 
 func (req RbdReplicationRequest) GetWorkloadType() CephWorkloadType {
