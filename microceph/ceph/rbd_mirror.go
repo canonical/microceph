@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/canonical/lxd/shared/logger"
@@ -48,10 +47,20 @@ func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplic
 	return response, nil
 }
 
+func populatePoolStatus(status string) (RbdReplicationPoolStatus, error) {
+	summary := RbdReplicationPoolStatusCmdOutput{}
+
+	err := json.Unmarshal([]byte(status), &summary)
+	if err != nil {
+		return RbdReplicationPoolStatus{}, err
+	}
+
+	return summary.Summary, nil
+}
+
 // GetRbdMirrorPoolStatus fetches mirroring status for requested pool
 func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdReplicationPoolStatus, error) {
-	response := RbdReplicationPoolStatus{}
-	args := []string{"mirror", "pool", "status", pool}
+	args := []string{"mirror", "pool", "status", pool, "--format", "json"}
 
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
@@ -59,7 +68,9 @@ func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdRepl
 		return RbdReplicationPoolStatus{State: StateDisabledReplication}, nil
 	}
 
-	err = yaml.Unmarshal([]byte(output), &response)
+	logger.Infof("REPRBD: Raw Pool Status Output: %s", output)
+
+	response, err := populatePoolStatus(output)
 	if err != nil {
 		ne := fmt.Errorf("cannot unmarshal rbd response: %v", err)
 		logger.Errorf(ne.Error())
@@ -69,13 +80,15 @@ func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdRepl
 	// TODO: Make this print debug.
 	logger.Infof("REPRBD: Pool Status: %v", response)
 
+	// Count Images
+	count := 0
+	for _, v := range response.Description {
+		count += v
+	}
+
 	// Patch required values
 	response.State = StateEnabledReplication
-	// "images: 0 total", split value for "images".
-	response.ImageCount, err = strconv.Atoi(strings.Split(response.Description, " ")[0])
-	if err != nil {
-		return RbdReplicationPoolStatus{}, fmt.Errorf("failed to convert %s to int: %w", response.Description, err)
-	}
+	response.ImageCount = count
 
 	return response, nil
 }
@@ -104,6 +117,11 @@ func GetRbdMirrorVerbosePoolStatus(pool string, cluster string, client string) (
 	// TODO: Make this print debug.
 	logger.Infof("REPRBD: Pool Verbose Status: %v", response)
 
+	// Patch required values
+	response.Name = pool
+	response.Summary.State = StateEnabledReplication
+	response.Summary.ImageCount = len(response.Images)
+
 	return response, nil
 }
 
@@ -131,7 +149,7 @@ func GetRbdMirrorImageStatus(pool string, image string, cluster string, client s
 
 	// Patch required values
 	response.State = StateEnabledReplication
-	response.isPrimary = strings.Contains(response.Description, "local image is primary")
+	response.IsPrimary = strings.Contains(response.Description, "local image is primary")
 
 	return response, nil
 }

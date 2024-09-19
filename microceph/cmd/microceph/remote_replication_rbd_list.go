@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 type cmdRemoteReplicationListRbd struct {
@@ -56,12 +61,12 @@ func (c *cmdRemoteReplicationListRbd) Run(cmd *cobra.Command, args []string) err
 	}
 
 	// TODO: remove this always true check.
-	if c.json || true {
+	if c.json {
 		fmt.Println(resp)
 		return nil
 	}
 
-	return nil
+	return printRemoteReplicationList(resp)
 }
 
 func (c *cmdRemoteReplicationListRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
@@ -80,14 +85,28 @@ func (c *cmdRemoteReplicationListRbd) prepareRbdPayload(requestType types.Replic
 	return retReq, nil
 }
 
-// func printRemoteReplicationList(remotes []types.RemoteRecord) error {
-// 	t := table.NewWriter()
-// 	t.SetOutputMirror(os.Stdout)
-// 	t.AppendHeader(table.Row{"ID", "Remote Name", "Local Name"})
-// 	for _, remote := range remotes {
-// 		t.AppendRow(table.Row{remote.ID, remote.Name, remote.LocalName})
-// 	}
-// 	t.SetStyle(table.StyleColoredBright)
-// 	t.Render()
-// 	return nil
-// }
+func printRemoteReplicationList(response string) error {
+	var resp types.RbdPoolList
+	err := json.Unmarshal([]byte(response), &resp)
+	if err != nil {
+		return nil
+	}
+
+	// start table object
+	rowConfigAutoMerge := table.RowConfig{AutoMerge: true, AutoMergeAlign: text.AlignCenter}
+
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.AppendHeader(table.Row{"Pool Name", "Image Name", "Is Primary", "Last Local Update"}, rowConfigAutoMerge)
+	for _, pool := range resp {
+		for _, image := range pool.Images {
+			t.AppendRow(table.Row{pool.Name, image.Name, image.IsPrimary, image.LastLocalUpdate}, rowConfigAutoMerge)
+		}
+	}
+	if terminal.IsTerminal(0) && terminal.IsTerminal(1) {
+		// Set style if interactive shell.
+		t.SetStyle(table.StyleColoredBright)
+	}
+	t.Render()
+	return nil
+}

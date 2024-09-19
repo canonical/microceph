@@ -1169,6 +1169,8 @@ func ListPools(application string) []CephPool {
 		return []CephPool{}
 	}
 
+	logger.Infof("OSD: Pool list %s", output)
+
 	ret := []CephPool{}
 	err = json.Unmarshal([]byte(output), &ret)
 	if err != nil {
@@ -1183,13 +1185,17 @@ func ListPools(application string) []CephPool {
 
 	// filtered return slice of maximum needed size.
 	filterdRet := make([]CephPool, len(ret))
+	counter := 0
 	for _, cephPool := range ret {
 		_, ok := cephPool.Application[application]
 		if ok {
 			// append to the filter slice.
-			filterdRet = append(filterdRet, cephPool)
+			logger.Infof("OSD: Found match(%s) for application(%s)", cephPool.Name, application)
+			filterdRet[counter] = cephPool
+			counter++
 		}
 	}
 
+	logger.Infof("OSD: Filtered Pool list %v", filterdRet)
 	return filterdRet
 }
