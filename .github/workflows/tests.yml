@@ -655,7 +655,7 @@ jobs:
       run: ~/actionutils.sh testrgw "newFile"
 
   replication-tests:
-    name: Test MicroCeph Cluster features.
+    name: Test MicroCeph Remote Replication features.
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
