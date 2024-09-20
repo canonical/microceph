@@ -1,8 +1,8 @@
-========
-Commands
-========
+======================
+MicroCeph CLI Commands
+======================
 
-List of MicroCeph commands.
+Use these commands to initialise, deploy and manage your MicroCeph cluster.
 
 .. toctree::
    :maxdepth: 1
