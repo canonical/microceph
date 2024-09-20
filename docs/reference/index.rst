@@ -8,4 +8,3 @@ MicroCeph reference material is divided into several categories.
    :maxdepth: 1
 
    commands/index
-   microceph-charm
