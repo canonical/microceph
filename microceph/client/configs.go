@@ -7,7 +7,7 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/api/types"
-	microCli "github.com/canonical/microcluster/client"
+	microCli "github.com/canonical/microcluster/v2/client"
 )
 
 func SetConfig(ctx context.Context, c *microCli.Client, data *types.Config) error {

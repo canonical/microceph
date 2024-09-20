@@ -5,6 +5,7 @@ APIs
 Auth
 auth
 balancer
+CephFS
 Charmhub
 CLI
 DB

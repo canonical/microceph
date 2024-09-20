@@ -15,7 +15,7 @@ import (
 	"github.com/Rican7/retry/backoff"
 	"github.com/Rican7/retry/strategy"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
@@ -31,8 +31,8 @@ var serviceWorkerTable = map[string](func() (common.Set, error)){
 }
 
 // Restarts (in order) all Ceph Services provided in the input slice on the host.
-func RestartCephServices(s interfaces.StateInterface, services []string) error {
-	clusterServices, err := ListServices(s.ClusterState())
+func RestartCephServices(ctx context.Context, s interfaces.StateInterface, services []string) error {
+	clusterServices, err := ListServices(ctx, s.ClusterState())
 	if err != nil {
 		logger.Errorf("failed fetching services from db: %v", err)
 		return err
@@ -166,11 +166,11 @@ func isServicePlacementOnHost(services types.Services, serviceName string, hostn
 }
 
 // ListServices retrieves a list of services from the database
-func ListServices(s *state.State) (types.Services, error) {
+func ListServices(ctx context.Context, s state.State) (types.Services, error) {
 	services := types.Services{}
 
 	// Get the services from the database.
-	err := s.Database.Transaction(s.Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		records, err := database.GetServices(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("Failed to fetch service: %w", err)
@@ -205,12 +205,12 @@ func cleanService(hostname, service string) error {
 }
 
 // removeServiceDatabase removes a service record from the database.
-func removeServiceDatabase(s interfaces.StateInterface, service string) error {
-	if s.ClusterState().Database == nil {
-		return fmt.Errorf("no database")
+func removeServiceDatabase(ctx context.Context, s interfaces.StateInterface, service string) error {
+	if s.ClusterState().ServerCert() == nil {
+		return fmt.Errorf("no server certificate")
 	}
 
-	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		err := database.DeleteService(ctx, tx, s.ClusterState().Name(), service)
 		if err != nil {
 			logger.Errorf("failed to remove service from db %q: %v", service, err)
@@ -223,7 +223,7 @@ func removeServiceDatabase(s interfaces.StateInterface, service string) error {
 }
 
 // DeleteService deletes a service from the node.
-func DeleteService(s interfaces.StateInterface, service string) error {
+func DeleteService(ctx context.Context, s interfaces.StateInterface, service string) error {
 	err := snapStop(service, true)
 	if err != nil {
 		logger.Errorf("failed to stop daemon %q: %v", service, err)
@@ -241,7 +241,7 @@ func DeleteService(s interfaces.StateInterface, service string) error {
 	if err != nil {
 		return fmt.Errorf("failed to clean service %q: %w", service, err)
 	}
-	err = removeServiceDatabase(s, service)
+	err = removeServiceDatabase(ctx, s, service)
 	if err != nil {
 		return fmt.Errorf("failed to remove service %q from database: %w", service, err)
 	}

@@ -8,9 +8,8 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microcluster/config"
-	"github.com/canonical/microcluster/microcluster"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v2/state"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api"
@@ -54,7 +53,7 @@ func (c *cmdDaemon) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "microcephd",
 		Short:   "Daemon for MicroCeph",
-		Version: version.Version,
+		Version: version.Version(),
 	}
 
 	cmd.RunE = c.Run
@@ -63,33 +62,43 @@ func (c *cmdDaemon) Command() *cobra.Command {
 }
 
 func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(microcluster.Args{StateDir: c.flagStateDir, Verbose: c.global.flagLogVerbose, Debug: c.global.flagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.flagStateDir})
 	if err != nil {
 		return err
 	}
 
-	h := &config.Hooks{}
-	h.PostBootstrap = func(s *state.State, initConfig map[string]string) error {
+	h := &state.Hooks{}
+	h.PostBootstrap = func(ctx context.Context, s state.State, initConfig map[string]string) error {
 		data := common.BootstrapConfig{}
 		interf := interfaces.CephState{State: s}
 		common.DecodeBootstrapConfig(initConfig, &data)
-		return ceph.Bootstrap(interf, data)
+		return ceph.Bootstrap(ctx, interf, data)
 	}
 
-	h.PostJoin = func(s *state.State, initConfig map[string]string) error {
+	h.PostJoin = func(ctx context.Context, s state.State, initConfig map[string]string) error {
 		interf := interfaces.CephState{State: s}
-		return ceph.Join(interf)
+		return ceph.Join(ctx, interf)
 	}
 
-	h.OnStart = func(s *state.State) error {
+	h.OnStart = func(ctx context.Context, s state.State) error {
 		interf := interfaces.CephState{State: s}
-		return ceph.Start(interf)
+		return ceph.Start(ctx, interf)
 	}
 
 	h.PreRemove = ceph.PreRemove(m)
 
-	m.AddServers(api.Servers)
-	return m.Start(context.Background(), database.SchemaExtensions, nil, h)
+	daemonArgs := microcluster.DaemonArgs{
+		Version: version.Version(),
+
+		Verbose:          c.global.flagLogVerbose,
+		Debug:            c.global.flagLogDebug,
+		ExtensionsSchema: database.SchemaExtensions,
+		APIExtensions:    nil,
+		Hooks:            h,
+		ExtensionServers: api.Servers,
+	}
+
+	return m.Start(context.Background(), daemonArgs)
 }
 
 func init() {

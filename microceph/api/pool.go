@@ -7,20 +7,38 @@ import (
 	"github.com/canonical/lxd/shared/logger"
 
 	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/microcluster/rest"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/microcluster/v2/rest"
+	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 )
 
 // /1.0/pools-op endpoint.
-var poolsCmd = rest.Endpoint{
+var poolsOpCmd = rest.Endpoint{
 	Path: "pools-op",
 	Put:  rest.EndpointAction{Handler: cmdPoolsPut, ProxyTarget: true},
 }
 
-func cmdPoolsPut(s *state.State, r *http.Request) response.Response {
+// /1.0/pools endpoint.
+var poolsCmd = rest.Endpoint{
+	Path: "pools",
+	Get:  rest.EndpointAction{Handler: cmdPoolsGet, ProxyTarget: true},
+}
+
+func cmdPoolsGet(s state.State, r *http.Request) response.Response {
+	logger.Debug("cmdPoolGet")
+	pools, err := ceph.GetOSDPools()
+	if err != nil {
+		return response.SmartError(err)
+	}
+
+	logger.Debug("cmdPoolGet done")
+
+	return response.SyncResponse(true, pools)
+}
+
+func cmdPoolsPut(s state.State, r *http.Request) response.Response {
 	var req types.PoolPut
 
 	err := json.NewDecoder(r.Body).Decode(&req)
