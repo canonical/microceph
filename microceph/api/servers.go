@@ -1,13 +1,13 @@
 package api
 
 import (
-	"github.com/canonical/microcluster/rest"
+	"github.com/canonical/microcluster/v2/rest"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
-var Servers = []rest.Server{
-	{
+var Servers = map[string]rest.Server{
+	"microceph": {
 		CoreAPI:   true,
 		ServeUnix: true,
 		Resources: []rest.Resources{
@@ -24,6 +24,7 @@ var Servers = []rest.Server{
 					mdsServiceCmd,
 					mgrServiceCmd,
 					monServiceCmd,
+					poolsOpCmd,
 					poolsCmd,
 					clientCmd,
 					clientConfigsCmd,

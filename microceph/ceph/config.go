@@ -191,8 +191,8 @@ func ListConfigs() (types.Configs, error) {
 // backwardCompatPubnet ensures that the public_network is set in the database
 // this is a backward-compat shim to accomodate older versions of microceph
 // which will ensure that the public_network is set in the database
-func backwardCompatPubnet(s interfaces.StateInterface) error {
-	config, err := getConfigDb(s)
+func backwardCompatPubnet(ctx context.Context, s interfaces.StateInterface) error {
+	config, err := getConfigDb(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to get config from db: %w", err)
 	}
@@ -209,7 +209,7 @@ func backwardCompatPubnet(s interfaces.StateInterface) error {
 			return fmt.Errorf("failed to locate public network: %w", err)
 		}
 		// update the database
-		err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+		err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 			_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "public_network", Value: pubNet})
 			if err != nil {
 				return fmt.Errorf("failed to record public_network: %w", err)
@@ -223,12 +223,12 @@ func backwardCompatPubnet(s interfaces.StateInterface) error {
 
 // backwardCompatMonitors retrieves monitor addresses from the node list and returns that
 // this a backward-compat shim to accomodate older versions of microceph
-func backwardCompatMonitors(s interfaces.StateInterface) ([]string, error) {
+func backwardCompatMonitors(ctx context.Context, s interfaces.StateInterface) ([]string, error) {
 	var err error
 	var monitors []database.Service
 	serviceName := "mon"
 
-	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		monitors, err = database.GetServices(ctx, tx, database.ServiceFilter{Service: &serviceName})
 		if err != nil {
 			return err
@@ -252,16 +252,16 @@ func backwardCompatMonitors(s interfaces.StateInterface) ([]string, error) {
 }
 
 // UpdateConfig updates the ceph.conf file with the current configuration.
-func UpdateConfig(s interfaces.StateInterface) error {
+func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
 	runPath := filepath.Join(filepath.Dir(os.Getenv("SNAP_DATA")), "current", "run")
 
-	err := backwardCompatPubnet(s)
+	err := backwardCompatPubnet(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to ensure backward compat: %w", err)
 	}
 
-	config, err := getConfigDb(s)
+	config, err := getConfigDb(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to get config db: %w", err)
 	}
@@ -274,7 +274,7 @@ func UpdateConfig(s interfaces.StateInterface) error {
 	// backward compat: if no mon hosts found, get them from the node addresses but don't
 	// insert into db, as the join logic will take care of that.
 	if len(monitorAddresses) == 0 {
-		monitorAddresses, err = backwardCompatMonitors(s)
+		monitorAddresses, err = backwardCompatMonitors(ctx, s)
 		if err != nil {
 			return fmt.Errorf("failed to get monitor addresses: %w", err)
 		}
@@ -288,7 +288,7 @@ func UpdateConfig(s interfaces.StateInterface) error {
 		return fmt.Errorf("failed to locate IP on public network %s: %w", config["public_network"], err)
 	}
 
-	clientConfig, err := GetClientConfigForHost(s, s.ClusterState().Name())
+	clientConfig, err := GetClientConfigForHost(ctx, s, s.ClusterState().Name())
 	if err != nil {
 		logger.Errorf("Failed to pull Client Configurations: %v", err)
 		return err
@@ -333,11 +333,11 @@ func UpdateConfig(s interfaces.StateInterface) error {
 }
 
 // getConfigDb retrieves the configuration from the database.
-func getConfigDb(s interfaces.StateInterface) (map[string]string, error) {
+func getConfigDb(ctx context.Context, s interfaces.StateInterface) (map[string]string, error) {
 	var err error
 	var configItems []database.ConfigItem
 
-	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		configItems, err = database.GetConfigItems(ctx, tx)
 		if err != nil {
 			return err

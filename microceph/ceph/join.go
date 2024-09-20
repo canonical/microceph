@@ -15,7 +15,7 @@ import (
 )
 
 // Join will join an existing Ceph deployment.
-func Join(s interfaces.StateInterface) error {
+func Join(ctx context.Context, s interfaces.StateInterface) error {
 	pathFileMode := constants.GetPathFileMode()
 	var spt = GetServicePlacementTable()
 
@@ -28,13 +28,13 @@ func Join(s interfaces.StateInterface) error {
 	}
 
 	// Generate the configuration files from the database.
-	err := UpdateConfig(s)
+	err := UpdateConfig(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to generate the configuration: %w", err)
 	}
 
 	// check and create service records if needed to be spawned.
-	err = s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		autoServices := []string{"mon", "mds", "mgr"}
 		for _, service := range autoServices {
 			err := checkAndCreateServiceRecord(s, ctx, tx, service)
@@ -50,14 +50,14 @@ func Join(s interfaces.StateInterface) error {
 	}
 
 	// Get services recorded for this host.
-	plannedServices, err := getServicesForHost(s, s.ClusterState().Name())
+	plannedServices, err := getServicesForHost(ctx, s, s.ClusterState().Name())
 	if err != nil {
 		return err
 	}
 
 	// spawn planned auto services.
 	for _, service := range plannedServices {
-		err := spt[service.Service].ServiceInit(s)
+		err := spt[service.Service].ServiceInit(ctx, s)
 		if err != nil {
 			logger.Errorf("%v", err)
 			return err
@@ -74,10 +74,10 @@ func Join(s interfaces.StateInterface) error {
 }
 
 // getServicesForHost get services needed to be spawned on this machine.
-func getServicesForHost(s interfaces.StateInterface, hostname string) ([]database.Service, error) {
+func getServicesForHost(ctx context.Context, s interfaces.StateInterface, hostname string) ([]database.Service, error) {
 	hostname = s.ClusterState().Name()
 	var services []database.Service
-	err := s.ClusterState().Database.Transaction(s.ClusterState().Context, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		services, err = database.GetServices(ctx, tx, database.ServiceFilter{Member: &hostname})
 		if err != nil {
