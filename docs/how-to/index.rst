@@ -25,7 +25,7 @@ configuration of metrics, alerts and other service instances.
 
    rbd-client-cfg
    integrate-keystone
-   Configure-network-keys
+   configure-network-keys
    enable-metrics
    enable-alerts
    enable-service-instances
