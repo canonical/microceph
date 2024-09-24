@@ -49,7 +49,7 @@ Create a pool for RBD images:
     1 .mgr
     2 block_pool
 
-    $ rbd pool init block_pool
+    $ sudo rbd pool init block_pool
 
 Create RBD image:
 
@@ -95,6 +95,26 @@ For the sake of simplicity, we are using admin keys in this example.
 
 The files are located at the paths shown above on any MicroCeph node.
 Moving forward, we will assume that these files are located at mentioned path.
+
+After 'ceph-common' package installation, 'ceph' command will start looking at the '/etc/ceph/' directory for keyring and conf files, which is not the correct place. 
+This could cause CLI errors similar to this: 
+
+.. code-block:: none
+
+   Error initializing cluster client: ObjectNotFound('RADOS object not found (error calling conf_read_file)')
+ 
+To fix this, 'microceph.ceph' command can be used instead of 'ceph'. To continue using 'ceph' commands as usual, keyring and conf files must be linked to the '/etc/ceph/' directory as follows:
+
+.. code-block:: none
+
+   $ sudo ln -s /var/snap/microceph/current/conf/ceph.conf /etc/ceph/
+   $ sudo ln -s /var/snap/microceph/current/conf/ceph.keyring /etc/ceph/
+   
+   $ ls -lrth /etc/ceph/
+   total 4.0K
+   -rw-r--r-- 1 root root 185 Aug 27 10:38 rbdmap
+   lrwxrwxrwx 1 root root  42 Aug 29 07:17 ceph.conf -> /var/snap/microceph/current/conf/ceph.conf
+   lrwxrwxrwx 1 root root  45 Aug 29 07:17 ceph.keyring -> /var/snap/microceph/current/conf/ceph.keyring
 
 Map the RBD image on client:
 
