@@ -18,7 +18,7 @@ can be exported for external backup or kept in Ceph for rollback to older versio
 Pre-requisites
 ++++++++++++++
 
-Refer to :doc:`How to mount MicroCeph Block Devices <../tutorial/mount-block-device>`
+Refer to :doc:`How to mount MicroCeph Block Devices <../how-to/mount-block-device>`
 for getting started with RBD.
 
 Once you have a the block device mounted and in use, you can jump to
