@@ -33,7 +33,7 @@ of the corresponding filesystem.
 Pre-requisites
 ++++++++++++++
 
-Refer to :doc:`How to mount MicroCeph CephFs shares <../tutorial/mount-cephfs-share>`
+Refer to :doc:`How to mount MicroCeph CephFs shares <../how-to/mount-cephfs-share>`
 for getting started with CephFs.
 
 Once you have a the filesystem mounted and in use, you can jump to
