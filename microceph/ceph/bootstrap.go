@@ -116,7 +116,7 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 	}
 
 	// Configure defaults cluster configs for network.
-	err = setDefaultNetwork(data.ClusterNet)
+	err = setDefaultNetwork(data.ClusterNet, data.PublicNet)
 	if err != nil {
 		return err
 	}
@@ -131,11 +131,20 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 }
 
 // setDefaultNetwork configures the cluster network on mon KV store.
-func setDefaultNetwork(cn string) error {
+func setDefaultNetwork(cn string, pn string) error {
 	// Cluster Network
 	err := SetConfigItem(apiTypes.Config{
 		Key:   "cluster_network",
 		Value: cn,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Public Network
+	err = SetConfigItemUnsafe(apiTypes.Config{
+		Key:   "public_network",
+		Value: pn,
 	})
 	if err != nil {
 		return err

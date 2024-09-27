@@ -2,8 +2,9 @@ package ceph
 
 import (
 	"encoding/json"
-	"github.com/canonical/microceph/microceph/tests"
 	"testing"
+
+	"github.com/canonical/microceph/microceph/tests"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -56,6 +57,31 @@ func (s *configSuite) TestSetConfig() {
 	assert.NoError(s.T(), err)
 }
 
+func (s *configSuite) TestSetROConfig() {
+	t := types.Config{Key: "public_network", Value: "0.0.0.0/16"}
+
+	err := SetConfigItem(t)
+	assert.ErrorContains(s.T(), err, "does not support write operation")
+}
+
+func (s *configSuite) TestSetROConfigBypassChecks() {
+	t := types.Config{Key: "public_network", Value: "0.0.0.0/16"}
+
+	r := mocks.NewRunner(s.T())
+	addConfigSetExpectations(r, t.Key, t.Value)
+	processExec = r
+
+	err := SetConfigItemUnsafe(t)
+	assert.NoError(s.T(), err)
+}
+
+func (s *configSuite) TestSetUnknowConfig() {
+	t := types.Config{Key: "unknown_config", Value: "0.0.0.0/16"}
+
+	err := SetConfigItem(t)
+	assert.ErrorContains(s.T(), err, "is not a MicroCeph supported cluster config")
+}
+
 func (s *configSuite) TestGetConfig() {
 	t := types.Config{Key: "cluster_network", Value: "0.0.0.0/16"}
 
@@ -65,6 +91,13 @@ func (s *configSuite) TestGetConfig() {
 
 	_, err := GetConfigItem(t)
 	assert.NoError(s.T(), err)
+}
+
+func (s *configSuite) TestGetUnknownConfig() {
+	t := types.Config{Key: "unknown_config", Value: "0.0.0.0/16"}
+
+	_, err := GetConfigItem(t)
+	assert.ErrorContains(s.T(), err, "is not a MicroCeph supported cluster config")
 }
 
 func (s *configSuite) TestResetConfig() {

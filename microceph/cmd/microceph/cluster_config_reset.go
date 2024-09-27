@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
 )
 
@@ -34,13 +33,8 @@ func (c *cmdClusterConfigReset) Command() *cobra.Command {
 }
 
 func (c *cmdClusterConfigReset) Run(cmd *cobra.Command, args []string) error {
-	allowList := ceph.GetConstConfigTable()
 	if len(args) != 1 {
 		return cmd.Help()
-	}
-
-	if _, ok := allowList[args[0]]; !ok {
-		return fmt.Errorf("resetting key %s is not allowed", args[0])
 	}
 
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})

@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
 )
 
@@ -30,20 +29,14 @@ func (c *cmdClusterConfigGet) Command() *cobra.Command {
 }
 
 func (c *cmdClusterConfigGet) Run(cmd *cobra.Command, args []string) error {
-	allowList := ceph.GetConstConfigTable()
-
 	// Get can be called with a single key.
 	if len(args) != 1 {
 		return cmd.Help()
 	}
 
-	if _, ok := allowList[args[0]]; !ok {
-		return fmt.Errorf("Key %s is invalid. \nPermitted Keys: %v", args[0], allowList.Keys())
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
-		return fmt.Errorf("Unable to configure MicroCeph: %w", err)
+		return fmt.Errorf("unable to configure MicroCeph: %w", err)
 	}
 
 	cli, err := m.LocalClient()

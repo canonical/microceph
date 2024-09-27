@@ -3,8 +3,9 @@ package ceph
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/api/types"
 	"strings"
+
+	"github.com/canonical/microceph/microceph/api/types"
 
 	"github.com/tidwall/gjson"
 )
