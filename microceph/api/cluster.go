@@ -36,7 +36,7 @@ func cmdClusterGet(s state.State, r *http.Request) response.Response {
 	if err != nil || !isOk {
 		err := fmt.Errorf("cluster names can only have [a-z] or [0-9] characters: %w", err)
 		logger.Error(err.Error())
-		return response.InternalError(err)
+		return response.BadRequest(err)
 	}
 
 	// fetch the cluster configurations from dqlite
