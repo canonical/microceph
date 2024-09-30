@@ -101,14 +101,14 @@ func parseKeyring(path string) (string, error) {
 	}
 
 	if cephSecret == "" {
-		return "", fmt.Errorf("Couldn't find a keyring entry")
+		return "", fmt.Errorf("couldn't find a keyring entry")
 	}
 
 	return cephSecret, nil
 }
 
-// CreateKey creates a client key and returns the said key hash without saving it as a file.
-func CreateKey(clientName string, caps ...[]string) (string, error) {
+// CreateClientKey creates a client key and returns the said key hash without saving it as a file.
+func CreateClientKey(clientName string, caps ...[]string) (string, error) {
 	args := []string{
 		"auth",
 		"get-or-create",
@@ -141,4 +141,19 @@ func CreateKey(clientName string, caps ...[]string) (string, error) {
 	}
 
 	return output, nil
+}
+
+func DeleteClientKey(clientName string) error {
+	args := []string{
+		"auth",
+		"del",
+		fmt.Sprintf("client.%s", clientName),
+	}
+
+	_, err := cephRun(args...)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

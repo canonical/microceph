@@ -59,17 +59,18 @@ func cmdRemotePut(state state.State, r *http.Request) response.Response {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
 			defer cancel()
 
-			err := database.PersistRemoteDb(ctx, interfaces.CephState{State: state}, req)
-			if err != nil {
-				logger.Errorf("REM: failed to persiste remote: %s", err.Error())
-			}
-
 			// Send render only request to remaining cluster members.
 			req.RenderOnly = true
 			err = client.SendRemoteImportToClusterMembers(ctx, state, req)
 			if err != nil {
 				logger.Errorf("REM: failed to forward request to cluster: %s", err.Error())
 			}
+
+			err := database.PersistRemoteDb(ctx, interfaces.CephState{State: state}, req)
+			if err != nil {
+				logger.Errorf("REM: failed to persiste remote: %s", err.Error())
+			}
+
 		}()
 	}
 
@@ -106,8 +107,16 @@ func cmdRemoteDelete(state state.State, r *http.Request) response.Response {
 	}
 
 	// Note(utkarshbhatthere): TODO for when remote replication is implemented.
-	// [ ] add check for remote replication before deleting remotes.
+	// [ ] add check for remote replication pairs before deleting remotes.
+
+	// Remove remote record.
 	err = database.DeleteRemoteDb(r.Context(), state, remoteName)
+	if err != nil {
+		return response.SmartError(err)
+	}
+
+	// Distrust the remote ceph user, and remove key.
+	err = ceph.DeleteClientKey(remoteName)
 	if err != nil {
 		return response.SmartError(err)
 	}
