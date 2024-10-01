@@ -17,6 +17,7 @@ var SchemaExtensions = []schema.Update{
 	schemaUpdate2,
 	schemaUpdate3,
 	schemaUpdate4,
+	schemaUpdate5,
 }
 
 // getClusterTableName returns the name of the table that holds the record of cluster members from sqlite_master.
@@ -30,7 +31,7 @@ func getClusterTableName(ctx context.Context, tx *sql.Tx) (string, error) {
 	}
 
 	if len(tables) != 1 || tables[0] == "" {
-		return "", fmt.Errorf("No cluster members table found")
+		return "", fmt.Errorf("no cluster members table found")
 	}
 
 	return tables[0], nil
@@ -165,6 +166,21 @@ CREATE TABLE services_new (
 INSERT INTO services_new (id,member_id,service) SELECT id,member_id,service FROM services;
 DROP TABLE services;
 ALTER TABLE services_new RENAME TO services;
+  `
+	_, err := tx.ExecContext(ctx, stmt)
+
+	return err
+}
+
+// schemaUpdate5 adds remote tables
+func schemaUpdate5(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE remote (
+  id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
+  name                          TEXT     NOT  NULL,
+  local_name                    TEXT     NOT  NULL,
+  UNIQUE(name)
+);
   `
 	_, err := tx.ExecContext(ctx, stmt)
 

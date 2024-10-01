@@ -16,11 +16,12 @@ import (
 )
 
 // Maps the addService function to respective services.
-func GetAddServiceTable() map[string](func(string, string) error) {
+func GetServiceKeyringTable() map[string](func(string, string) error) {
 	return map[string](func(string, string) error){
-		"mon": joinMon,
-		"mgr": joinMgr,
-		"mds": joinMds,
+		"mon":        joinMon,
+		"mgr":        bootstrapMgr,
+		"mds":        bootstrapMds,
+		"rbd-mirror": bootstrapRbdMirror,
 		// Add more services here, for using the generic Interface implementation.
 	}
 }
@@ -66,15 +67,15 @@ func genericHospitalityCheck(service string) error {
 
 func genericServiceInit(s interfaces.StateInterface, name string) error {
 	var ok bool
-	var addService func(string, string) error
+	var bootstrapServiceKeyring func(string, string) error
 	hostname := s.ClusterState().Name()
 	pathConsts := constants.GetPathConst()
 	pathFileMode := constants.GetPathFileMode()
 	serviceDataPath := filepath.Join(pathConsts.DataPath, name, fmt.Sprintf("ceph-%s", hostname))
-	addServiceTable := GetAddServiceTable()
 
 	// Fetch addService handler for name service
-	addService, ok = addServiceTable[name]
+	bootstrapServiceKeyring, ok = GetServiceKeyringTable()[name]
+
 	if !ok {
 		err := fmt.Errorf("%s is not registered in the generic implementation", name)
 		logger.Error(err.Error())
@@ -88,7 +89,7 @@ func genericServiceInit(s interfaces.StateInterface, name string) error {
 		return fmt.Errorf("failed to add datapath %s for service %s: %w", serviceDataPath, name, err)
 	}
 
-	err = addService(hostname, serviceDataPath)
+	err = bootstrapServiceKeyring(hostname, serviceDataPath)
 	if err != nil {
 		logger.Error(err.Error())
 		return fmt.Errorf("failed to add service %s: %w", name, err)

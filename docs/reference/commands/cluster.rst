@@ -18,6 +18,7 @@ Available commands:
    add         Generates a token for a new server
    bootstrap   Sets up a new cluster
    config      Manage Ceph Cluster configs
+   export      Generates cluster token for given Remote cluster
    join        Joins an existing cluster
    list        List servers in the cluster
    migrate     Migrate automatic services from one node to another
@@ -151,6 +152,23 @@ Flags:
    --wait           Wait for required ceph services to restart post config set.
    --skip-restart   Don't perform the daemon restart for current config.
 
+
+``export``
+----------
+
+Generates cluster token for Remote cluster with given name.
+
+Usage:
+
+.. code-block:: none
+
+   microceph cluster export <remote-name> [flags]
+
+Flags:
+
+.. code-block:: none
+
+   --json   output as json string
 
 ``join``
 --------

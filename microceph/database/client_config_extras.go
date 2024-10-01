@@ -244,7 +244,7 @@ func (ccq ClientConfigQueryImpl) RemoveOneForKeyAndHost(ctx context.Context, s s
 
 /******************** HELPER FUNCTIONS ********************/
 // createOrUpdateClientConfigItem adds a new ClientConfigItem to the database or updates the existing one if it exists.
-func createOrUpdateClientConfigItem(ctx context.Context, tx *sql.Tx, object ClientConfigItem) error {
+func createOrUpdateClientConfigItem(_ context.Context, tx *sql.Tx, object ClientConfigItem) error {
 	var stmtIndex int
 	var args []any
 

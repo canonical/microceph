@@ -167,6 +167,82 @@ function create_containers() {
 
 }
 
+# functions with remote_ prefix have following assumptions:
+# sitea: node-wrk0, node-wrk1
+# siteb: node-wrk2, node-wrk3
+function remote_simple_bootstrap_two_sites() {
+    # Bootstrap sitea
+    lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap"
+    lxc exec node-wrk0 -- sh -c "microceph disk add loop,2G,3"
+    tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk1" )
+    lxc exec node-wrk1 -- sh -c "microceph cluster join $tok"
+    sleep 10
+    # Bootstrap siteb 
+    lxc exec node-wrk2 -- sh -c "microceph cluster bootstrap"
+    lxc exec node-wrk2 -- sh -c "microceph disk add loop,2G,3"
+    tok=$(lxc exec node-wrk2 -- sh -c "microceph cluster add node-wrk3" )
+    lxc exec node-wrk3 -- sh -c "microceph cluster join $tok"
+    sleep 10
+}
+
+function remote_exchange_site_tokens() {
+    set -eux
+    sitea_token=$(lxc exec node-wrk0 -- sh -c "microceph cluster export siteb")
+    siteb_token=$(lxc exec node-wrk2 -- sh -c "microceph cluster export sitea")
+
+    # perform imports on both sites
+    lxc exec node-wrk0 -- sh -c "microceph remote import siteb $siteb_token --local-name=sitea"
+    lxc exec node-wrk2 -- sh -c "microceph remote import sitea $sitea_token --local-name=siteb"
+}
+
+function remote_perform_remote_ops_check() {
+    # assumes the remote export/import operations are already performed on both sites.
+    set -eux
+    # perform ceph ops on sitea (both nodes)
+    lxc exec node-wrk0 -- sh -c "microceph.ceph -s" # local ceph status
+    lxc exec node-wrk0 -- sh -c "microceph.ceph -s --cluster siteb --id sitea" # remote ceph status
+    lxc exec node-wrk0 -- sh -c "microceph remote list --json | grep '\"name\":\"siteb\"'"
+    lxc exec node-wrk1 -- sh -c "microceph.ceph -s" # local ceph status
+    lxc exec node-wrk1 -- sh -c "microceph.ceph -s --cluster siteb --id sitea" # remote ceph status
+    lxc exec node-wrk1 -- sh -c "microceph remote list --json | grep '\"local_name\":\"sitea\"'"
+    # perform ceph ops on siteb (both nodes)
+    lxc exec node-wrk2 -- sh -c "microceph.ceph -s" # local ceph status
+    lxc exec node-wrk2 -- sh -c "microceph.ceph -s --cluster sitea --id siteb" # remote ceph status
+    lxc exec node-wrk2 -- sh -c "microceph remote list --json | grep '\"name\":\"sitea\"'"
+    lxc exec node-wrk3 -- sh -c "microceph.ceph -s" # local ceph status
+    lxc exec node-wrk3 -- sh -c "microceph.ceph -s --cluster sitea --id siteb" # remote ceph status
+    lxc exec node-wrk3 -- sh -c "microceph remote list --json | grep '\"local_name\":\"siteb\"'"
+}
+
+function remote_remove_and_verify() {
+    set -eux
+
+    # Check remote exists
+    remotes=$(lxc exec node-wrk0 -- sh -c "microceph remote list --json")
+    echo $remotes
+
+    match=$(echo $remotes | grep -c '\"name\":\"siteb\"')
+    if [[ $match -ne 1 ]] ; then
+        echo "Expected remote record for siteb absent."
+        lxc exec node-wrk0 -- sh -c "microceph remote list --json"
+        exit -1
+    fi
+
+    # Remove the configured remote from MicroCeph
+    lxc exec node-wrk0 -- sh -c "microceph remote remove siteb"
+
+    # Verify remote does not exist
+    remotes=$(lxc exec node-wrk0 -- sh -c "microceph remote list --json 2>&1 || true")
+    echo $remotes
+
+    match=$(echo $remotes | grep -c 'no remotes configured')
+    if [[ $match -ne 1 ]] ; then
+        echo "Removed remote record still present."
+        lxc exec node-wrk0 -- sh -c "microceph remote list --json"
+        exit -1
+    fi
+}
+
 function install_multinode() {
     # Install and setup microceph snap
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
@@ -528,6 +604,15 @@ if ! grep -q public_net /var/snap/microceph/current/conf/ceph.conf ; then
 fi
 EOF
     done
+}
+
+# nodeexec <node name> <run>
+function node_exec() {
+    local node="${1?missing}"
+    local run="${2?missing}"
+    shift
+    set -x
+    lxc exec node-wrk0 -- sh -c "/mnt/actionutils.sh $run $@"
 }
 
 function headexec() {

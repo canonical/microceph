@@ -653,3 +653,49 @@ jobs:
 
     - name: Exercise RGW again
       run: ~/actionutils.sh testrgw "newFile"
+
+  replication-tests:
+    name: Test MicroCeph Remote Replication features.
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install dependencies
+      run: ~/actionutils.sh setup_lxd
+
+    - name: Create containers with loopback devices
+      run: ~/actionutils.sh create_containers public
+
+    - name: Install local microceph snap
+      run: ~/actionutils.sh install_multinode
+
+    - name: Bootstrap
+      run: ~/actionutils.sh remote_simple_bootstrap_two_sites
+
+    - name: Exchange Cluster tokens
+      run: ~/actionutils.sh remote_exchange_site_tokens
+
+    - name: Verify Remote authentication
+      run: ~/actionutils.sh remote_perform_remote_ops_check
+
+    - name: Verify Remote removal
+      run: ~/actionutils.sh remote_remove_and_verify

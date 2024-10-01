@@ -21,6 +21,14 @@ const DevicePathPrefix = "/dev/disk/by-id/"
 const RgwSockPattern = "client.radosgw.gateway"
 const CliForcePrompt = "If you understand the *RISK* and you're *ABSOLUTELY CERTAIN* that is what you want, pass --yes-i-really-mean-it."
 
+// Path and filename constants
+
+const CephConfFileName = "ceph.conf"
+
+// Misc
+const AdminKeyringFieldName = "keyring.client.admin"
+const AdminKeyringTemplate = "keyring.client.%s"
+
 type PathConst struct {
 	ConfPath     string
 	RunPath      string
@@ -33,7 +41,7 @@ type PathConst struct {
 
 type PathFileMode map[string]os.FileMode
 
-func GetPathConst() PathConst {
+var GetPathConst = func() PathConst {
 	return PathConst{
 		ConfPath:     filepath.Join(os.Getenv("SNAP_DATA"), "conf"),
 		RunPath:      filepath.Join(os.Getenv("SNAP_DATA"), "run"),
@@ -54,3 +62,6 @@ func GetPathFileMode() PathFileMode {
 		pathConsts.LogPath:  0700,
 	}
 }
+
+// Regexes
+const ClusterNameRegex = "^[a-z0-9]+$"

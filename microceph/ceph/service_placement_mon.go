@@ -25,7 +25,7 @@ func (msp *MonServicePlacement) HospitalityCheck(s interfaces.StateInterface) er
 }
 
 // Initialise the new service.
-func (msp *MonServicePlacement) ServiceInit(s interfaces.StateInterface) error {
+func (msp *MonServicePlacement) ServiceInit(ctx context.Context, s interfaces.StateInterface) error {
 	return genericServiceInit(s, msp.Name)
 }
 

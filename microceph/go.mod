@@ -9,6 +9,7 @@ require (
 	github.com/djherbis/times v1.6.0
 	github.com/google/go-cmp v0.6.0
 	github.com/gorilla/mux v1.8.1
+	github.com/jedib0t/go-pretty/v6 v6.5.9
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pborman/uuid v1.2.1
 	github.com/sirupsen/logrus v1.9.3

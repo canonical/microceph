@@ -24,7 +24,3 @@ func bootstrapMds(hostname string, path string) error {
 
 	return nil
 }
-
-func joinMds(hostname string, path string) error {
-	return bootstrapMds(hostname, path)
-}
