@@ -17,24 +17,3 @@ using physical block devices for storage.
    :maxdepth: 1
    
    multi-node
-
-Mount block devices
--------------------
-
-This tutorial will guide you through mounting a block device using MicroCeph.
-
-.. toctree::
-   :maxdepth: 1
-
-   mount-block-device
-
-Mount CephFS shares
--------------------
-
-Follow this tutorial to learn how to mount a CephFs share using MicroCeph.
-
-.. toctree::
-   :maxdepth: 1
-
-   mount-cephfs-share
-
