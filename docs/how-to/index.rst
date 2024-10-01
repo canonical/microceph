@@ -42,6 +42,8 @@ migrating services and more.
    change-log-level
    migrate-auto-services
    remove-disk
+   import-remote-cluster
+
 
 Upgrading your cluster
 ----------------------
@@ -55,4 +57,14 @@ to v.18.2.x (Reef)
    reef-upgrade
 
    
+Consuming cluster storage
+-------------------------
+
+Follow these guides to learn how to make use of the storage provided by your cluster.
+
+.. toctree::
+   :maxdepth: 1
+
+   mount-block-device
+   mount-cephfs-share
 
