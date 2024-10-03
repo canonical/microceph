@@ -31,8 +31,8 @@ configuration of metrics, alerts and other service instances.
    enable-alerts
    enable-service-instances
 
-Interacting your cluster
----------------------
+Interacting with your cluster
+-----------------------------
 
 Manage your cluster: find steps on how to configure the log level,remove disks,
 migrate services and more.
