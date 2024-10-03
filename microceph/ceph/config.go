@@ -19,12 +19,22 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 )
 
+type ClusterConfigPermission string
+
+const (
+	ClusterConfigRO ClusterConfigPermission = "read_only"
+	ClusterConfigRW ClusterConfigPermission = "read_write"
+)
+
+type ClusterConfigDefinition struct {
+	Who        string                  // Ceph Config internal <who> against each key
+	Permission ClusterConfigPermission // read only or read write
+	Daemons    []string                // List of Daemons that need to be restarted across the cluster for the config change to take effect.
+}
+
 // Config Table is the source of additional information for each supported config key
 // Refer to GetConfigTable()
-type ConfigTable map[string]struct {
-	Who     string   // Ceph Config internal <who> against each key
-	Daemons []string // List of Daemons that need to be restarted across the cluster for the config change to take effect.
-}
+type ConfigTable map[string]ClusterConfigDefinition
 
 // Check if certain key is present in the map.
 func (c ConfigTable) isKeyPresent(key string) bool {
@@ -48,31 +58,32 @@ func (c ConfigTable) Keys() (keys []string) {
 func GetConstConfigTable() ConfigTable {
 	return ConfigTable{
 		// Cluster config keys
-		"cluster_network":             {"global", []string{"osd"}},
-		"osd_pool_default_crush_rule": {"global", []string{}},
+		"public_network":              {"global", ClusterConfigRO, []string{"osd"}},
+		"cluster_network":             {"global", ClusterConfigRW, []string{"osd"}},
+		"osd_pool_default_crush_rule": {"global", ClusterConfigRW, []string{}},
 		// RGW config keys
-		"rgw_s3_auth_use_keystone":                    {"global", []string{"rgw"}},
-		"rgw_keystone_url":                            {"global", []string{"rgw"}},
-		"rgw_keystone_admin_token":                    {"global", []string{"rgw"}},
-		"rgw_keystone_admin_token_path":               {"global", []string{"rgw"}},
-		"rgw_keystone_admin_user":                     {"global", []string{"rgw"}},
-		"rgw_keystone_admin_password":                 {"global", []string{"rgw"}},
-		"rgw_keystone_admin_password_path":            {"global", []string{"rgw"}},
-		"rgw_keystone_admin_project":                  {"global", []string{"rgw"}},
-		"rgw_keystone_admin_domain":                   {"global", []string{"rgw"}},
-		"rgw_keystone_service_token_enabled":          {"global", []string{"rgw"}},
-		"rgw_keystone_service_token_accepted_roles":   {"global", []string{"rgw"}},
-		"rgw_keystone_expired_token_cache_expiration": {"global", []string{"rgw"}},
-		"rgw_keystone_api_version":                    {"global", []string{"rgw"}},
-		"rgw_keystone_accepted_roles":                 {"global", []string{"rgw"}},
-		"rgw_keystone_accepted_admin_roles":           {"global", []string{"rgw"}},
-		"rgw_keystone_token_cache_size":               {"global", []string{"rgw"}},
-		"rgw_keystone_verify_ssl":                     {"global", []string{"rgw"}},
-		"rgw_keystone_implicit_tenants":               {"global", []string{"rgw"}},
-		"rgw_swift_account_in_url":                    {"global", []string{"rgw"}},
-		"rgw_swift_versioning_enabled":                {"global", []string{"rgw"}},
-		"rgw_swift_enforce_content_length":            {"global", []string{"rgw"}},
-		"rgw_swift_custom_header":                     {"global", []string{"rgw"}},
+		"rgw_s3_auth_use_keystone":                    {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_url":                            {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_admin_token":                    {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_admin_token_path":               {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_admin_user":                     {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_admin_password":                 {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_admin_password_path":            {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_admin_project":                  {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_admin_domain":                   {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_service_token_enabled":          {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_service_token_accepted_roles":   {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_expired_token_cache_expiration": {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_api_version":                    {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_accepted_roles":                 {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_accepted_admin_roles":           {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_token_cache_size":               {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_verify_ssl":                     {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_keystone_implicit_tenants":               {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_swift_account_in_url":                    {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_swift_versioning_enabled":                {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_swift_enforce_content_length":            {"global", ClusterConfigRW, []string{"rgw"}},
+		"rgw_swift_custom_header":                     {"global", ClusterConfigRW, []string{"rgw"}},
 	}
 }
 
@@ -95,33 +106,33 @@ type ConfigDumpItem struct {
 type ConfigDump []ConfigDumpItem
 
 func SetConfigItem(c types.Config) error {
-	configTable := GetConstConfigTable()
-
-	args := []string{
-		"config",
-		"set",
-		configTable[c.Key].Who,
-		c.Key,
-		c.Value,
-		"-f",
-		"json-pretty",
+	// safety checks
+	canSet, err := canSetConfig(c.Key)
+	if !canSet {
+		return fmt.Errorf("config set(%s) failed: %v", c.Key, err)
 	}
 
-	_, err := processExec.RunCommand("ceph", args...)
-	if err != nil {
-		return err
-	}
+	return setConfigItem(c)
+}
 
-	return nil
+func SetConfigItemUnsafe(c types.Config) error {
+	return setConfigItem(c)
 }
 
 func GetConfigItem(c types.Config) (types.Configs, error) {
 	var err error
-	configTable := GetConstConfigTable()
 	ret := make(types.Configs, 1)
+	configTable := GetConstConfigTable()
 	who := "mon"
 
+	// safety checks
+	canRead, err := canReadConfig(c.Key)
+	if !canRead {
+		return nil, err
+	}
+
 	// workaround to query global configs from mon entity
+	// otherwise use the provided entity.
 	if configTable[c.Key].Who != "global" {
 		who = configTable[c.Key].Who
 	}
@@ -143,15 +154,20 @@ func GetConfigItem(c types.Config) (types.Configs, error) {
 }
 
 func RemoveConfigItem(c types.Config) error {
-	configTable := GetConstConfigTable()
+	// safety checks
+	canSet, err := canSetConfig(c.Key)
+	if !canSet {
+		return err
+	}
+
 	args := []string{
 		"config",
 		"rm",
-		configTable[c.Key].Who,
+		GetConstConfigTable()[c.Key].Who,
 		c.Key,
 	}
 
-	_, err := processExec.RunCommand("ceph", args...)
+	_, err = processExec.RunCommand("ceph", args...)
 	if err != nil {
 		return err
 	}
@@ -187,6 +203,65 @@ func ListConfigs() (types.Configs, error) {
 	}
 
 	return configs, nil
+}
+
+// ****** Helper Functions ******//
+func setConfigItem(c types.Config) error {
+	args := []string{
+		"config",
+		"set",
+		GetConstConfigTable()[c.Key].Who,
+		c.Key,
+		c.Value,
+		"-f",
+		"json-pretty",
+	}
+
+	_, err := processExec.RunCommand("ceph", args...)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// canSetConfig checks if the config option is configurable.
+func canSetConfig(key string) (bool, error) {
+	config, err := getClusterConfigDefinition(key)
+	if err != nil {
+		logger.Warnf(err.Error())
+		return false, err
+	}
+
+	if config.Permission != ClusterConfigRW {
+		err := fmt.Errorf("requested key %s does not support write operation", key)
+		logger.Warnf(err.Error())
+		return false, err
+	}
+
+	return true, nil
+}
+
+func canReadConfig(key string) (bool, error) {
+	_, err := getClusterConfigDefinition(key)
+	if err != nil {
+		logger.Warnf(err.Error())
+		return false, err
+	}
+
+	return true, nil
+}
+
+func getClusterConfigDefinition(key string) (ClusterConfigDefinition, error) {
+	configTable := GetConstConfigTable()
+	config, ok := configTable[key]
+	if !ok {
+		err := fmt.Errorf("requested key %s is not a MicroCeph supported cluster config", key)
+		logger.Warnf(err.Error())
+		return config, err
+	}
+
+	return config, nil
 }
 
 // backwardCompatPubnet ensures that the public_network is set in the database
