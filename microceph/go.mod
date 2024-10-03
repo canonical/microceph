@@ -4,7 +4,7 @@ go 1.22.7
 
 require (
 	github.com/Rican7/retry v0.3.1
-	github.com/canonical/lxd v0.0.0-20241003082254-62a97d6f29b4
+	github.com/canonical/lxd v0.0.0-20240730172021-8e39e5d4f55f
 	github.com/canonical/microcluster/v2 v2.0.2
 	github.com/djherbis/times v1.6.0
 	github.com/google/go-cmp v0.6.0

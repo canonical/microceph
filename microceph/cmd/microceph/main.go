@@ -6,7 +6,6 @@ import (
 	"os"
 
 	cli "github.com/canonical/lxd/shared/cmd"
-	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/version"
 	"github.com/spf13/cobra"
 )
@@ -26,7 +25,7 @@ type CmdControl struct {
 
 func main() {
 	// common flags.
-	commonCmd := CmdControl{Asker: cli.NewAsker(bufio.NewReader(os.Stdin), logger.Log)}
+	commonCmd := CmdControl{Asker: cli.NewAsker(bufio.NewReader(os.Stdin))}
 
 	app := &cobra.Command{
 		Use:               "microceph",
