@@ -15,5 +15,6 @@ using physical block devices for storage.
 
 .. toctree::
    :maxdepth: 1
-   
-   multi-node
+   :glob:
+
+   *
