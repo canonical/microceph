@@ -292,17 +292,78 @@ function remote_verify_rbd_mirroring() {
     lxc exec node-wrk3 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_two.*image_two"
 }
 
+function remote_failover_to_siteb() {
+    set -eux
+
+    # check images are secondary on siteb
+    img_count=$(lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd list --json" | grep -c "\"is_primary\":false")
+    if [[ $img_count -lt 1 ]]; then
+        echo "Site B has $img_count secondary images"
+        exit -1
+    fi
+
+    # promote site b to primary
+    lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd promote --remote sitea --yes-i-really-mean-it"
+
+    # wait for the site images to show as primary
+    is_primary_count=0
+    for index in {1..100}; do
+        echo "Check run #$index"
+        list_output=$(lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd list --json")
+        echo $list_output
+        images=$(echo $list_output | jq .[].Images)
+        echo $images
+        is_primary_count=$(echo $images | grep -c "\"is_primary\": true" || true)
+        echo $is_primary_count
+        if [[ $is_primary_count -gt 0 ]] ; then
+            break
+        fi
+
+        echo "#################"
+        sleep 30
+    done
+    if [[ $is_primary_count -eq 0 ]] ; then
+        echo "No images promoted after 100 rounds."
+        exit 1
+    fi
+
+    # resolve the split brain situation by demoting the old primary.
+    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd demote --remote siteb --yes-i-really-mean-it"
+
+    # wait for the site images to show as non-primary
+    is_primary_count=0
+    for index in {1..100}; do
+        echo "Check run #$index"
+        list_output=$(lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd list --json")
+        echo $list_output
+        images=$(echo $list_output | jq .[].Images)
+        echo $images
+        is_primary_count=$(echo $images | grep -c "\"is_primary\": false" || true)
+        echo $is_primary_count
+        if [[ $is_primary_count -gt 0 ]] ; then
+            break
+        fi
+
+        echo "#################"
+        sleep 30
+    done
+    if [[ $is_primary_count -eq 0 ]] ; then
+        echo "No images demoted after 100 rounds."
+        exit 1
+    fi
+}
+
 function remote_disable_rbd_mirroring() {
     set -eux
     # check disables fail for image mirroring pools with images currently being mirrored
-    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd disable pool_two 2>&1 || true"  | grep "in Image mirroring mode"
+    lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd disable pool_two 2>&1 || true"  | grep "in Image mirroring mode"
     # disable both images in pool_two and then disable pool_two
-    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd disable pool_two/image_one"
-    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd disable pool_two/image_two"
-    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd disable pool_two"
+    lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd disable pool_two/image_one"
+    lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd disable pool_two/image_two"
+    lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd disable pool_two"
 
     # disable pool one
-    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd disable pool_one"
+    lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd disable pool_one"
 }
 
 function remote_remove_and_verify() {

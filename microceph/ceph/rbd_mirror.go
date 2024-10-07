@@ -214,8 +214,8 @@ func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string
 	return nil
 }
 
-// DisableMirroringAllImagesInPool disables mirroring for all images for a pool enabled in pool mirroring mode.
-func DisableMirroringAllImagesInPool(poolName string) error {
+// DisableAllMirroringImagesInPool disables mirroring for all images for a pool enabled in pool mirroring mode.
+func DisableAllMirroringImagesInPool(poolName string) error {
 	poolStatus, err := GetRbdMirrorVerbosePoolStatus(poolName, "", "")
 	if err != nil {
 		err := fmt.Errorf("failed to fetch status for %s pool: %v", poolName, err)
@@ -233,6 +233,28 @@ func DisableMirroringAllImagesInPool(poolName string) error {
 	}
 
 	logger.Infof("REPRBD: Disabled %v images in %s pool.", disabledImages, poolName)
+	return nil
+}
+
+// ResyncAllMirroringImagesInPool triggers a resync for all mirroring images inside a mirroring pool.
+func ResyncAllMirroringImagesInPool(poolName string) error {
+	poolStatus, err := GetRbdMirrorVerbosePoolStatus(poolName, "", "")
+	if err != nil {
+		err := fmt.Errorf("failed to fetch status for %s pool: %v", poolName, err)
+		logger.Error(err.Error())
+		return err
+	}
+
+	flaggedImages := []string{}
+	for _, image := range poolStatus.Images {
+		err := flagImageForResync(poolName, image.Name)
+		if err != nil {
+			return fmt.Errorf("failed to resync %s/%s", poolName, image.Name)
+		}
+		flaggedImages = append(flaggedImages, image.Name)
+	}
+
+	logger.Debugf("REPRBD: Resynced %v images in %s pool.", flaggedImages, poolName)
 	return nil
 }
 
@@ -304,6 +326,7 @@ func BootstrapPeer(pool string, localName string, remoteName string) error {
 }
 
 // ############################# Ceph Commands #############################
+// configurePoolMirroring enables/disables mirroring for a pool.
 func configurePoolMirroring(pool string, mode types.RbdResourceType, localName string, remoteName string) error {
 	var args []string
 	if mode == types.RbdResourceDisabled {
@@ -361,6 +384,7 @@ func configureImageMirroring(req types.RbdReplicationRequest) error {
 	return nil
 }
 
+// getSnapshotSchedule fetches the schedule of the snapshots.
 func getSnapshotSchedule(pool string, image string) (imageSnapshotSchedule, error) {
 	if len(pool) == 0 || len(image) == 0 {
 		return imageSnapshotSchedule{}, fmt.Errorf("ImageName(%s/%s) not complete", pool, image)
@@ -484,6 +508,42 @@ func configureImageFeatures(pool string, image string, op string, feature string
 	return nil
 }
 
+// enableImageFeatures enables the list of rbd features on the requested resource.
+func enableRbdImageFeatures(poolName string, imageName string, features []string) error {
+	for _, feature := range features {
+		err := configureImageFeatures(poolName, imageName, "enable", feature)
+		if err != nil && !strings.Contains(err.Error(), "one or more requested features are already enabled") {
+			return err
+		}
+	}
+	return nil
+}
+
+// disableRbdImageFeatures disables the list of rbd features on the requested resource.
+func disableRbdImageFeatures(poolName string, imageName string, features []string) error {
+	for _, feature := range features {
+		err := configureImageFeatures(poolName, imageName, "disable", feature)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// flagImageForResync flags requested mirroring image in the given pool for resync.
+func flagImageForResync(poolName string, imageName string) error {
+	args := []string{
+		"mirror", "image", "resync", fmt.Sprintf("%s/%s", poolName, imageName),
+	}
+
+	_, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // peerBootstrapCreate generates peer bootstrap token on remote ceph cluster.
 func peerBootstrapCreate(pool string, client string, cluster string) (string, error) {
 	args := []string{
@@ -545,6 +605,44 @@ func peerRemove(pool string, peerId string, localName string, remoteName string)
 		return fmt.Errorf("failed to remove peer(%s) for pool(%s): %v", peerId, pool, err)
 	}
 
+	return nil
+}
+
+func promotePool(poolName string, isForce bool, remoteName string, localName string) error {
+	args := []string{
+		"mirror", "pool", "promote", poolName,
+	}
+
+	if isForce {
+		args = append(args, "--force")
+	}
+
+	// add --cluster and --id args
+	args = appendRemoteClusterArgs(args, remoteName, localName)
+
+	output, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return fmt.Errorf("failed to promote pool(%s): %v", poolName, err)
+	}
+
+	logger.Debugf("REPRBD: Promotion Output: %s", output)
+	return nil
+}
+
+func demotePool(poolName string, remoteName string, localName string) error {
+	args := []string{
+		"mirror", "pool", "demote", poolName,
+	}
+
+	// add --cluster and --id args
+	args = appendRemoteClusterArgs(args, remoteName, localName)
+
+	output, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return fmt.Errorf("failed to promote pool(%s): %v", poolName, err)
+	}
+
+	logger.Debugf("REPRBD: Demotion Output: %s", output)
 	return nil
 }
 

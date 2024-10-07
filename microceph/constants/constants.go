@@ -29,6 +29,9 @@ const CephConfFileName = "ceph.conf"
 const AdminKeyringFieldName = "keyring.client.admin"
 const AdminKeyringTemplate = "keyring.client.%s"
 
+// Ceph Error Substrings
+const RbdMirrorNonPrimaryPromoteErr = "image is primary within a remote cluster or demotion is not propagated yet"
+
 type PathConst struct {
 	ConfPath     string
 	RunPath      string
@@ -79,3 +82,6 @@ const EventConfigureReplication = "configure_replication"
 
 // Rbd features
 var RbdJournalingEnableFeatureSet = [...]string{"exclusive-lock", "journaling"}
+
+const EventPromoteReplication = "promote_replication"
+const EventDemoteReplication = "demote_replication"
