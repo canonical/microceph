@@ -17,27 +17,23 @@ import (
 )
 
 type cmdRemoteReplicationStatusRbd struct {
-	common    *CmdControl
-	poolName  string
-	imageName string
-	json      bool
+	common *CmdControl
+	json   bool
 }
 
 func (c *cmdRemoteReplicationStatusRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show RBD Pool or Image replication status",
+		Use:   "status <resource>",
+		Short: "Show RBD resource (Pool or Image) replication status",
 		RunE:  c.Run,
 	}
 
-	cmd.Flags().StringVar(&c.poolName, "pool", "", "RBD pool name")
-	cmd.Flags().StringVar(&c.imageName, "image", "", "RBD image name")
 	cmd.Flags().BoolVar(&c.json, "json", false, "output as json string")
 	return cmd
 }
 
 func (c *cmdRemoteReplicationStatusRbd) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
+	if len(args) != 1 {
 		return cmd.Help()
 	}
 
@@ -51,7 +47,7 @@ func (c *cmdRemoteReplicationStatusRbd) Run(cmd *cobra.Command, args []string) e
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.StatusReplicationRequest)
+	payload, err := c.prepareRbdPayload(types.StatusReplicationRequest, args)
 	if err != nil {
 		return err
 	}
@@ -69,17 +65,17 @@ func (c *cmdRemoteReplicationStatusRbd) Run(cmd *cobra.Command, args []string) e
 	return printRemoteReplicationStatusTable(payload.ResourceType, resp)
 }
 
-func (c *cmdRemoteReplicationStatusRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
-	retReq := types.RbdReplicationRequest{
-		SourcePool:  c.poolName,
-		SourceImage: c.imageName,
-		RequestType: requestType,
+func (c *cmdRemoteReplicationStatusRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
+	pool, image, err := getPoolAndImageFromResource(args[0])
+	if err != nil {
+		return types.RbdReplicationRequest{}, err
 	}
 
-	if len(c.poolName) != 0 && len(c.imageName) != 0 {
-		retReq.ResourceType = types.RbdResourceImage
-	} else {
-		retReq.ResourceType = types.RbdResourcePool
+	retReq := types.RbdReplicationRequest{
+		SourcePool:   pool,
+		SourceImage:  image,
+		RequestType:  requestType,
+		ResourceType: getRbdResourceType(pool, image),
 	}
 
 	return retReq, nil

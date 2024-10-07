@@ -697,5 +697,14 @@ jobs:
     - name: Verify Remote authentication
       run: ~/actionutils.sh remote_perform_remote_ops_check
 
+    - name: Configure RBD mirror
+      run : ~/actionutils.sh remote_configure_rbd_mirroring
+
+    - name: Verify RBD mirror
+      run : ~/actionutils.sh remote_verify_rbd_mirroring
+
+    - name: Disable RBD mirror
+      run : ~/actionutils.sh remote_disable_rbd_mirroring
+
     - name: Verify Remote removal
       run: ~/actionutils.sh remote_remove_and_verify

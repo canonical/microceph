@@ -16,10 +16,9 @@ import (
 )
 
 type cmdRemoteReplicationListRbd struct {
-	common    *CmdControl
-	poolName  string
-	imageName string
-	json      bool
+	common   *CmdControl
+	poolName string
+	json     bool
 }
 
 func (c *cmdRemoteReplicationListRbd) Command() *cobra.Command {
@@ -30,7 +29,6 @@ func (c *cmdRemoteReplicationListRbd) Command() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&c.poolName, "pool", "", "RBD pool name")
-	cmd.Flags().StringVar(&c.imageName, "image", "", "RBD image name")
 	cmd.Flags().BoolVar(&c.json, "json", false, "output as json string")
 	return cmd
 }
@@ -60,7 +58,6 @@ func (c *cmdRemoteReplicationListRbd) Run(cmd *cobra.Command, args []string) err
 		return err
 	}
 
-	// TODO: remove this always true check.
 	if c.json {
 		fmt.Println(resp)
 		return nil
@@ -70,16 +67,11 @@ func (c *cmdRemoteReplicationListRbd) Run(cmd *cobra.Command, args []string) err
 }
 
 func (c *cmdRemoteReplicationListRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
+	// list fetches ALL POOLS if pool name is empty.
 	retReq := types.RbdReplicationRequest{
-		SourcePool:  c.poolName,
-		SourceImage: c.imageName,
-		RequestType: requestType,
-	}
-
-	if len(c.poolName) != 0 && len(c.imageName) != 0 {
-		retReq.ResourceType = types.RbdResourceImage
-	} else {
-		retReq.ResourceType = types.RbdResourcePool
+		SourcePool:   c.poolName,
+		RequestType:  requestType,
+		ResourceType: types.RbdResourcePool,
 	}
 
 	return retReq, nil

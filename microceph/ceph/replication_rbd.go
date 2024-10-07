@@ -159,10 +159,6 @@ func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any
 
 // ConfigureHandler configures replication properties for requested rbd pool/image.
 func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...any) error {
-	if rh.Request.Schedule == constants.DisableSnapshotSchedule {
-		return configureSnapshotSchedule(rh.Request.SourcePool, rh.Request.SourceImage, "", "")
-	}
-
 	schedule, err := getSnapshotSchedule(rh.Request.SourcePool, rh.Request.SourceImage)
 	if err != nil {
 		return err
@@ -172,7 +168,6 @@ func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...a
 		return configureSnapshotSchedule(rh.Request.SourcePool, rh.Request.SourceImage, rh.Request.Schedule, "")
 	}
 
-	// no change
 	return nil
 }
 
@@ -303,24 +298,40 @@ func (rh *RbdReplicationHandler) StatusHandler(ctx context.Context, args ...any)
 // Enable handler for pool resource.
 func handlePoolEnablement(rh *RbdReplicationHandler, localSite string, remoteSite string) error {
 	if rh.PoolInfo.Mode == types.RbdResourcePool {
-		return nil // already in pool mode
+		return nil // already in pool mirroring mode
 	} else
 
-	// Fail if in Image mode with Mirroring Images > 0
+	// Fail if in Image mirroring mode with Mirroring Images > 0
 	if rh.PoolInfo.Mode == types.RbdResourceImage {
 		enabledImageCount := rh.PoolStatus.ImageCount
 		if enabledImageCount != 0 {
-			return fmt.Errorf("pool (%s) in Image mode, Disable %d mirroring Images", rh.Request.SourcePool, enabledImageCount)
+			return fmt.Errorf("pool (%s) in Image mirroring mode, Disable %d mirroring Images", rh.Request.SourcePool, enabledImageCount)
 		}
 	}
 
-	return EnablePoolMirroring(rh.Request.SourcePool, types.RbdResourcePool, localSite, remoteSite)
+	err := EnablePoolMirroring(rh.Request.SourcePool, types.RbdResourcePool, localSite, remoteSite)
+	if err != nil {
+		return err
+	}
+
+	if !rh.Request.SkipAutoEnable {
+		// Enable mirroring for all images in pool.
+		images := listAllImagesInPool(rh.Request.SourcePool, "", "")
+		for _, image := range images {
+			err := enableRbdImageFeatures(rh.Request.SourcePool, image, constants.RbdJournalingEnableFeatureSet[:])
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // Enable handler for image resource.
 func handleImageEnablement(rh *RbdReplicationHandler, localSite string, remoteSite string) error {
 	if rh.PoolInfo.Mode == types.RbdResourceDisabled {
-		// Enable pool mirroring in Image mode
+		// Enable pool mirroring in Image mirroring mode
 		err := EnablePoolMirroring(rh.Request.SourcePool, types.RbdResourceImage, localSite, remoteSite)
 		if err != nil {
 			logger.Error(err.Error())
@@ -329,13 +340,13 @@ func handleImageEnablement(rh *RbdReplicationHandler, localSite string, remoteSi
 		// continue for Image enablement
 	} else if rh.PoolInfo.Mode == types.RbdResourcePool {
 		if rh.Request.ReplicationType == types.RbdReplicationJournaling {
-			return configureImageFeatures(rh.Request.SourcePool, rh.Request.SourceImage, "enable", "journaling")
+			return enableRbdImageFeatures(rh.Request.SourcePool, rh.Request.SourceImage, constants.RbdJournalingEnableFeatureSet[:])
 		} else {
 			return fmt.Errorf("parent pool (%s) enabled in Journaling mode, Image(%s) requested in Snapshot mode", rh.Request.SourcePool, rh.Request.SourceImage)
 		}
 	}
 
-	// pool in Image mode, Enable Image in requested mode.
+	// pool in Image mirroring mode, Enable Image in requested mode.
 	return configureImageMirroring(rh.Request)
 }
 
@@ -344,19 +355,27 @@ func handlePoolDisablement(rh *RbdReplicationHandler, localSite string, remoteSi
 	// Handle Pool already disabled
 	if rh.PoolInfo.Mode == types.RbdResourceDisabled {
 		return nil
-	} else
+	}
 
-	// Fail if in Image mode with Mirroring Images > 0
+	// Fail if both sites not healthy and not a forced operation.
+	if rh.PoolStatus.Health != RbdReplicationHealthOK && !rh.Request.IsForceOp {
+		return fmt.Errorf("pool replication status not OK(%s), Can't proceed", rh.PoolStatus.Health)
+	}
+
+	// Fail if in Image mirroring mode with Mirroring Images > 0
 	if rh.PoolInfo.Mode == types.RbdResourceImage {
 		enabledImageCount := rh.PoolStatus.ImageCount
 		if enabledImageCount != 0 {
-			return fmt.Errorf("pool (%s) in Image mode, has %d images mirroring", rh.Request.SourcePool, enabledImageCount)
+			return fmt.Errorf("pool (%s) in Image mirroring mode, has %d images mirroring", rh.Request.SourcePool, enabledImageCount)
 		}
-	}
+	} else
 
-	// Fail if both sites not healthy
-	if rh.PoolStatus.Health != RbdReplicationHealthOK {
-		return fmt.Errorf("pool replication status not OK(%s), Can't proceed", rh.PoolStatus.Health)
+	// If pool in pool mirroring mode, disable all images.
+	if rh.PoolInfo.Mode == types.RbdResourcePool {
+		err := DisableMirroringAllImagesInPool(rh.Request.SourcePool)
+		if err != nil {
+			return err
+		}
 	}
 
 	return DisablePoolMirroring(rh.Request.SourcePool, rh.PoolInfo.Peers[0], localSite, remoteSite)
@@ -375,10 +394,32 @@ func handleImageDisablement(rh *RbdReplicationHandler) error {
 	}
 
 	if rh.PoolInfo.Mode == types.RbdResourcePool {
-		return configureImageFeatures(rh.Request.SourcePool, rh.Request.SourceImage, "disable", "journaling")
+		return disableRbdImageFeatures(rh.Request.SourcePool, rh.Request.SourceImage, []string{"journaling"})
 	}
 
 	// patch replication type
 	rh.Request.ReplicationType = types.RbdReplicationDisabled
 	return configureImageMirroring(rh.Request)
+}
+
+// enableImageFeatures enables the list of rbd features on the requested resource.
+func enableRbdImageFeatures(poolName string, imageName string, features []string) error {
+	for _, feature := range features {
+		err := configureImageFeatures(poolName, imageName, "enable", feature)
+		if err != nil && !strings.Contains(err.Error(), "one or more requested features are already enabled") {
+			return err
+		}
+	}
+	return nil
+}
+
+// disableRbdImageFeatures disables the list of rbd features on the requested resource.
+func disableRbdImageFeatures(poolName string, imageName string, features []string) error {
+	for _, feature := range features {
+		err := configureImageFeatures(poolName, imageName, "disable", feature)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

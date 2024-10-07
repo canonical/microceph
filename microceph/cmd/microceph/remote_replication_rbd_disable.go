@@ -10,27 +10,23 @@ import (
 )
 
 type cmdRemoteReplicationDisableRbd struct {
-	common    *CmdControl
-	poolName  string
-	imageName string
-	isForce   bool
+	common  *CmdControl
+	isForce bool
 }
 
 func (c *cmdRemoteReplicationDisableRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "disable",
-		Short: "Disable remote replication for RBD Pool or Image",
+		Use:   "disable <resource>",
+		Short: "Disable remote replication for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}
 
-	cmd.Flags().StringVar(&c.poolName, "pool", "", "RBD pool name")
-	cmd.Flags().StringVar(&c.imageName, "image", "", "RBD image name")
-	cmd.Flags().BoolVar(&c.isForce, "force", false, "RBD image name")
+	cmd.Flags().BoolVar(&c.isForce, "force", false, "forcefully disable replication for rbd resource")
 	return cmd
 }
 
 func (c *cmdRemoteReplicationDisableRbd) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
+	if len(args) != 1 {
 		return cmd.Help()
 	}
 
@@ -44,7 +40,7 @@ func (c *cmdRemoteReplicationDisableRbd) Run(cmd *cobra.Command, args []string) 
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.DisableReplicationRequest)
+	payload, err := c.prepareRbdPayload(types.DisableReplicationRequest, args)
 	if err != nil {
 		return err
 	}
@@ -53,18 +49,18 @@ func (c *cmdRemoteReplicationDisableRbd) Run(cmd *cobra.Command, args []string) 
 	return err
 }
 
-func (c *cmdRemoteReplicationDisableRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
-	retReq := types.RbdReplicationRequest{
-		SourcePool:  c.poolName,
-		SourceImage: c.imageName,
-		RequestType: requestType,
-		IsForceOp:   c.isForce,
+func (c *cmdRemoteReplicationDisableRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
+	pool, image, err := getPoolAndImageFromResource(args[0])
+	if err != nil {
+		return types.RbdReplicationRequest{}, err
 	}
 
-	if len(c.poolName) != 0 && len(c.imageName) != 0 {
-		retReq.ResourceType = types.RbdResourceImage
-	} else {
-		retReq.ResourceType = types.RbdResourcePool
+	retReq := types.RbdReplicationRequest{
+		SourcePool:   pool,
+		SourceImage:  image,
+		RequestType:  requestType,
+		IsForceOp:    c.isForce,
+		ResourceType: getRbdResourceType(pool, image),
 	}
 
 	return retReq, nil

@@ -47,6 +47,7 @@ func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplic
 	return response, nil
 }
 
+// populatePoolStatus unmarshals the pool info json response into a structure.
 func populatePoolStatus(status string) (RbdReplicationPoolStatus, error) {
 	summary := RbdReplicationPoolStatusCmdOutput{}
 
@@ -154,6 +155,7 @@ func GetRbdMirrorImageStatus(pool string, image string, cluster string, client s
 	return response, nil
 }
 
+// EnablePoolMirroring enables mirroring for an rbd pool in pool mirroring or image mirroring mode.
 func EnablePoolMirroring(pool string, mode types.RbdResourceType, localName string, remoteName string) error {
 	// Enable pool mirroring on the local cluster.
 	err := configurePoolMirroring(pool, mode, "", "")
@@ -171,6 +173,7 @@ func EnablePoolMirroring(pool string, mode types.RbdResourceType, localName stri
 	return BootstrapPeer(pool, localName, remoteName)
 }
 
+// DisablePoolMirroring disables mirroring for an rbd pool.
 func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string, remoteName string) error {
 	// remove peer permissions
 	err := RemovePeer(pool, localName, remoteName)
@@ -186,13 +189,35 @@ func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string
 		return err
 	}
 
-	// Enable pool mirroring on the remote cluster.
+	// Disable pool mirroring on the remote cluster.
 	err = configurePoolMirroring(pool, types.RbdResourceDisabled, localName, remoteName)
 	if err != nil {
 		logger.Error(err.Error())
 		return err
 	}
 
+	return nil
+}
+
+// DisableMirroringAllImagesInPool disables mirroring for all images for a pool enabled in pool mirroring mode.
+func DisableMirroringAllImagesInPool(poolName string) error {
+	poolStatus, err := GetRbdMirrorVerbosePoolStatus(poolName, "", "")
+	if err != nil {
+		err := fmt.Errorf("failed to fetch status for %s pool: %v", poolName, err)
+		logger.Error(err.Error())
+		return err
+	}
+
+	disabledImages := []string{}
+	for _, image := range poolStatus.Images {
+		err := disableRbdImageFeatures(poolName, image.Name, []string{"journaling"})
+		if err != nil {
+			return fmt.Errorf("failed to disable journaling on %s/%s", poolName, image.Name)
+		}
+		disabledImages = append(disabledImages, image.Name)
+	}
+
+	logger.Infof("REPRBD: Disabled %v images in %s pool.", disabledImages, poolName)
 	return nil
 }
 
@@ -350,13 +375,35 @@ func listSnapshotSchedule(pool string, image string) ([]byte, error) {
 	return []byte(output), nil
 }
 
+func listAllImagesInPool(pool string, localName string, remoteName string) []string {
+	args := []string{"ls", pool, "--format", "json"}
+
+	// add --cluster and --id args
+	args = appendRemoteClusterArgs(args, remoteName, localName)
+
+	output, err := processExec.RunCommand("rbd", args...)
+	if err != nil {
+		return []string{}
+	}
+
+	var ret []string
+	err = json.Unmarshal([]byte(output), &ret)
+	if err != nil {
+		logger.Errorf("unexpected error encountered while parsing json output %s", output)
+		return []string{}
+	}
+
+	return ret
+}
+
 func configureSnapshotSchedule(pool string, image string, schedule string, startTime string) error {
 	var args []string
 	if len(schedule) == 0 {
-		args = []string{"mirror", "snapshot", "schedule", "rm", "--pool", pool}
-	} else {
-		args = []string{"mirror", "snapshot", "schedule", "add", "--pool", pool}
+		logger.Debugf("Empty schedule, no-op for (%s/%s)", pool, image)
+		return nil
 	}
+
+	args = []string{"mirror", "snapshot", "schedule", "add", "--pool", pool}
 
 	if len(image) != 0 {
 		args = append(args, "--image")

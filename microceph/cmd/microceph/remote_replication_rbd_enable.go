@@ -10,23 +10,23 @@ import (
 )
 
 type cmdRemoteReplicationEnableRbd struct {
-	common    *CmdControl
-	poolName  string
-	imageName string
-	repType   string
-	schedule  string
+	common         *CmdControl
+	remoteName     string
+	repType        string
+	schedule       string
+	skipAutoEnable bool
 }
 
 func (c *cmdRemoteReplicationEnableRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "enable <remote>",
-		Short: "Enable remote replication for RBD Pool or Image",
+		Use:   "enable <resource>",
+		Short: "Enable remote replication for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}
 
-	cmd.Flags().StringVar(&c.poolName, "pool", "", "RBD pool name")
-	cmd.MarkFlagRequired("pool")
-	cmd.Flags().StringVar(&c.imageName, "image", "", "RBD image name")
+	cmd.Flags().StringVar(&c.remoteName, "remote", "", "remote MicroCeph cluster name")
+	cmd.MarkFlagRequired("remote")
+	cmd.Flags().BoolVar(&c.skipAutoEnable, "skip-auto-enable", false, "do not auto enable rbd mirroring for all images in the pool.")
 	cmd.Flags().StringVar(&c.repType, "type", "journal", "'journal' or 'snapshot', defaults to journal")
 	cmd.Flags().StringVar(&c.schedule, "schedule", "", "snapshot schedule in days, hours, or minutes using d, h, m suffix respectively")
 	return cmd
@@ -61,19 +61,20 @@ func (c *cmdRemoteReplicationEnableRbd) Run(cmd *cobra.Command, args []string) e
 }
 
 func (c *cmdRemoteReplicationEnableRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
+	pool, image, err := getPoolAndImageFromResource(args[0])
+	if err != nil {
+		return types.RbdReplicationRequest{}, err
+	}
+
 	retReq := types.RbdReplicationRequest{
-		RemoteName:      args[0],
-		SourcePool:      c.poolName,
-		SourceImage:     c.imageName,
+		RemoteName:      c.remoteName,
+		SourcePool:      pool,
+		SourceImage:     image,
 		Schedule:        c.schedule,
 		ReplicationType: types.RbdReplicationType(c.repType),
 		RequestType:     requestType,
-	}
-
-	if len(c.poolName) != 0 && len(c.imageName) != 0 {
-		retReq.ResourceType = types.RbdResourceImage
-	} else {
-		retReq.ResourceType = types.RbdResourcePool
+		ResourceType:    getRbdResourceType(pool, image),
+		SkipAutoEnable:  c.skipAutoEnable,
 	}
 
 	return retReq, nil

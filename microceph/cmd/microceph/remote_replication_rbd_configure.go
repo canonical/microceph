@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
@@ -10,29 +12,23 @@ import (
 )
 
 type cmdRemoteReplicationConfigureRbd struct {
-	common    *CmdControl
-	poolName  string
-	imageName string
-	repType   string
-	schedule  string
+	common   *CmdControl
+	schedule string
 }
 
 func (c *cmdRemoteReplicationConfigureRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "configure",
-		Short: "Configure remote replication for RBD Pool or Image",
+		Use:   "configure <resource>",
+		Short: "Configure remote replication parameters for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}
 
-	cmd.Flags().StringVar(&c.poolName, "pool", "", "RBD pool name")
-	cmd.MarkFlagRequired("pool")
-	cmd.Flags().StringVar(&c.imageName, "image", "", "RBD image name")
 	cmd.Flags().StringVar(&c.schedule, "schedule", "", "snapshot schedule in days, hours, or minutes using d, h, m suffix respectively")
 	return cmd
 }
 
 func (c *cmdRemoteReplicationConfigureRbd) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
+	if len(args) != 1 {
 		return cmd.Help()
 	}
 
@@ -46,7 +42,7 @@ func (c *cmdRemoteReplicationConfigureRbd) Run(cmd *cobra.Command, args []string
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.ConfigureReplicationRequest)
+	payload, err := c.prepareRbdPayload(types.ConfigureReplicationRequest, args)
 	if err != nil {
 		return err
 	}
@@ -59,20 +55,50 @@ func (c *cmdRemoteReplicationConfigureRbd) Run(cmd *cobra.Command, args []string
 	return nil
 }
 
-func (c *cmdRemoteReplicationConfigureRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
-	retReq := types.RbdReplicationRequest{
-		SourcePool:      c.poolName,
-		SourceImage:     c.imageName,
-		Schedule:        c.schedule,
-		ReplicationType: types.RbdReplicationType(c.repType),
-		RequestType:     requestType,
+func (c *cmdRemoteReplicationConfigureRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
+	pool, image, err := getPoolAndImageFromResource(args[0])
+	if err != nil {
+		return types.RbdReplicationRequest{}, err
 	}
 
-	if len(c.poolName) != 0 && len(c.imageName) != 0 {
-		retReq.ResourceType = types.RbdResourceImage
-	} else {
-		retReq.ResourceType = types.RbdResourcePool
+	retReq := types.RbdReplicationRequest{
+		SourcePool:   pool,
+		SourceImage:  image,
+		Schedule:     c.schedule,
+		RequestType:  requestType,
+		ResourceType: getRbdResourceType(pool, image),
 	}
 
 	return retReq, nil
+}
+
+// getRbdResourceType gets the resource type of the said request
+func getRbdResourceType(poolName string, imageName string) types.RbdResourceType {
+	if len(poolName) != 0 && len(imageName) != 0 {
+		return types.RbdResourceImage
+	} else {
+		return types.RbdResourcePool
+	}
+}
+
+func getPoolAndImageFromResource(resource string) (string, string, error) {
+	var pool string
+	var image string
+	resourceFrags := strings.Split(resource, "/")
+	if len(resourceFrags) < 1 || len(resourceFrags) > 2 {
+		return "", "", fmt.Errorf("check resource name %s, should be in $pool/$image format", resource)
+	}
+
+	// If only pool name is provided.
+	if len(resourceFrags) == 1 {
+		pool = resourceFrags[0]
+		image = ""
+	} else
+	// if both pool and image names are provided.
+	if len(resourceFrags) == 2 {
+		pool = resourceFrags[0]
+		image = resourceFrags[1]
+	}
+
+	return pool, image, nil
 }
