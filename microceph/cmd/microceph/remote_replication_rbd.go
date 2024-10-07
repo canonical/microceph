@@ -34,5 +34,13 @@ func (c *cmdRemoteReplicationRbd) Command() *cobra.Command {
 	remoteReplicationRbdConfigureCmd := cmdRemoteReplicationConfigureRbd{common: c.common}
 	cmd.AddCommand(remoteReplicationRbdConfigureCmd.Command())
 
+	// Replication promote command
+	remoteReplicationRbdPromoteCmd := cmdRemoteReplicationPromoteRbd{common: c.common}
+	cmd.AddCommand(remoteReplicationRbdPromoteCmd.Command())
+
+	// Replication demote command
+	remoteReplicationRbdDemoteCmd := cmdRemoteReplicationDemoteRbd{common: c.common}
+	cmd.AddCommand(remoteReplicationRbdDemoteCmd.Command())
+
 	return cmd
 }

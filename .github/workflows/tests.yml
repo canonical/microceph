@@ -718,6 +718,12 @@ jobs:
     - name: Verify RBD mirror
       run : ~/actionutils.sh remote_verify_rbd_mirroring
 
+    - name: Failover site A to Site B
+      run : ~/actionutils.sh remote_failover_to_siteb
+
+    - name: Failback to Site A
+      run : ~/actionutils.sh remote_failback_to_sitea
+
     - name: Disable RBD mirror
       run : ~/actionutils.sh remote_disable_rbd_mirroring
 

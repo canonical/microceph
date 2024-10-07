@@ -32,8 +32,11 @@ type ReplicationHandlerInterface interface {
 	EnableHandler(ctx context.Context, args ...any) error
 	DisableHandler(ctx context.Context, args ...any) error
 	ConfigureHandler(ctx context.Context, args ...any) error
-	ListHandler(ctx context.Context, args ...any) error
 	StatusHandler(ctx context.Context, args ...any) error
+	// Cluster wide Operations (don't require any pool/image info.)
+	ListHandler(ctx context.Context, args ...any) error
+	PromoteHandler(ctx context.Context, args ...any) error
+	DemoteHandler(ctx context.Context, args ...any) error
 }
 
 func GetReplicationHandler(name string) ReplicationHandlerInterface {
@@ -57,6 +60,8 @@ func getAllEvents() []stateless.Trigger {
 		constants.EventConfigureReplication,
 		constants.EventListReplication,
 		constants.EventStatusReplication,
+		constants.EventPromoteReplication,
+		constants.EventDemoteReplication,
 	}
 }
 
@@ -67,7 +72,9 @@ func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateM
 		Permit(constants.EventEnableReplication, StateEnabledReplication).
 		OnEntryFrom(constants.EventDisableReplication, disableHandler).
 		InternalTransition(constants.EventListReplication, listHandler).
-		InternalTransition(constants.EventDisableReplication, disableHandler)
+		InternalTransition(constants.EventDisableReplication, disableHandler).
+		InternalTransition(constants.EventPromoteReplication, promoteHandler).
+		InternalTransition(constants.EventDemoteReplication, demoteHandler)
 
 	// Configure transitions for enabled state.
 	newFsm.Configure(StateEnabledReplication).
@@ -75,7 +82,9 @@ func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateM
 		OnEntryFrom(constants.EventEnableReplication, enableHandler).
 		InternalTransition(constants.EventConfigureReplication, configureHandler).
 		InternalTransition(constants.EventListReplication, listHandler).
-		InternalTransition(constants.EventStatusReplication, statusHandler)
+		InternalTransition(constants.EventStatusReplication, statusHandler).
+		InternalTransition(constants.EventPromoteReplication, promoteHandler).
+		InternalTransition(constants.EventDemoteReplication, demoteHandler)
 
 	// Check Event params type.
 	var outputType *string
@@ -122,4 +131,14 @@ func listHandler(ctx context.Context, args ...any) error {
 func statusHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	return rh.StatusHandler(ctx, args...)
+}
+func promoteHandler(ctx context.Context, args ...any) error {
+	rh := args[repArgHandler].(ReplicationHandlerInterface)
+	logger.Infof("REPFSM: Entered Status Handler")
+	return rh.PromoteHandler(ctx, args...)
+}
+func demoteHandler(ctx context.Context, args ...any) error {
+	rh := args[repArgHandler].(ReplicationHandlerInterface)
+	logger.Infof("REPFSM: Entered Status Handler")
+	return rh.DemoteHandler(ctx, args...)
 }
