@@ -246,6 +246,7 @@ function remote_configure_rbd_mirroring() {
 
 function remote_verify_rbd_mirroring() {
     set -eux
+    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd list"
     lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_one.*image_one"
     lxc exec node-wrk1 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_one.*image_two"
     lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_two.*image_one"

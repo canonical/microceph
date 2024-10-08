@@ -42,8 +42,18 @@ migrating services and more.
    change-log-level
    migrate-auto-services
    remove-disk
-   import-remote-cluster
 
+Managing a remote cluster
+-------------------------
+
+Make MicroCeph aware of a remote cluster and configure remote replication for
+RBD pools and images.
+
+.. toctree::
+   :maxdepth: 1
+
+   import-remote-cluster
+   configure-rbd-mirroring
 
 Upgrading your cluster
 ----------------------
