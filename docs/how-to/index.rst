@@ -13,6 +13,7 @@ of both single-node and multi-node clusters.
    :maxdepth: 1
    
    single-node
+   multi-node
 
 Configuring your cluster
 ------------------------
@@ -30,11 +31,11 @@ configuration of metrics, alerts and other service instances.
    enable-alerts
    enable-service-instances
 
-Managing your cluster
----------------------
+Interacting with your cluster
+-----------------------------
 
-Manage your cluster by adding block devices and CephFS shares, removing disks,
-migrating services and more.
+Manage your cluster: find steps on how to configure the log level,remove disks,
+migrate services and more.
 
 .. toctree::
    :maxdepth: 1

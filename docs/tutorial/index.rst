@@ -14,6 +14,3 @@ Learn how to install MicroCeph on three machines, thus creating a multi-node clu
 using physical block devices for storage.
 
 .. toctree::
-   :maxdepth: 1
-   
-   multi-node
