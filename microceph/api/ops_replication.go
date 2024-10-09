@@ -78,7 +78,7 @@ func handleReplicationRequest(s state.State, ctx context.Context, req types.RbdR
 		return response.SmartError(err)
 	}
 
-	logger.Infof("Bazinga: Check FSM response: %s", resp)
+	logger.Debugf("REPFSM: Check FSM response: %s", resp)
 
 	// If non-empty response
 	if len(resp) > 0 {

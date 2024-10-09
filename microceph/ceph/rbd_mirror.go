@@ -41,8 +41,7 @@ func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplic
 		return RbdReplicationPoolInfo{Mode: types.RbdResourceDisabled}, ne
 	}
 
-	// TODO: Make this print debug.
-	logger.Infof("REPRBD: Pool Info: %v", response)
+	logger.Debugf("REPRBD: Pool Info: %v", response)
 
 	return response, nil
 }
@@ -78,8 +77,7 @@ func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdRepl
 		return RbdReplicationPoolStatus{State: StateDisabledReplication}, ne
 	}
 
-	// TODO: Make this print debug.
-	logger.Infof("REPRBD: Pool Status: %v", response)
+	logger.Debugf("REPRBD: Pool Status: %v", response)
 
 	// Count Images
 	count := 0
@@ -106,8 +104,7 @@ func GetRbdMirrorVerbosePoolStatus(pool string, cluster string, client string) (
 		return RbdReplicationVerbosePoolStatus{Summary: RbdReplicationPoolStatus{State: StateDisabledReplication}}, nil
 	}
 
-	// TODO: Make this print debug.
-	logger.Infof("REPRBD: Raw Pool Verbose Status: %s", string(output))
+	logger.Debugf("REPRBD: Raw Pool Verbose Status: %s", string(output))
 
 	// Unmarshal Summary into the structure.
 	summary := gjson.Get(string(output), "summary")
@@ -133,8 +130,7 @@ func GetRbdMirrorVerbosePoolStatus(pool string, cluster string, client string) (
 		response.Images[index].IsPrimary = strings.Contains(response.Images[index].Description, "local image is primary")
 	}
 
-	// TODO: Make this print debug.
-	logger.Infof("REPRBD: Pool Verbose Status: %v", response)
+	logger.Debugf("REPRBD: Pool Verbose Status: %v", response)
 
 	// Patch required values
 	response.Summary.State = StateEnabledReplication
@@ -162,8 +158,7 @@ func GetRbdMirrorImageStatus(pool string, image string, cluster string, client s
 		return RbdReplicationImageStatus{State: StateDisabledReplication}, ne
 	}
 
-	// TODO: Make this print debug.
-	logger.Infof("REPRBD: Image Status: %v", response)
+	logger.Debugf("REPRBD: Image Status: %v", response)
 
 	// Patch required values
 	response.State = StateEnabledReplication
@@ -531,6 +526,24 @@ func peerRemove(pool string, peerId string, localName string, remoteName string)
 }
 
 // ########################### HELPERS ###########################
+
+func IsRemoteConfiguredForRbdMirror(remoteName string) bool {
+	pools := ListPools("rbd")
+	for _, pool := range pools {
+		poolInfo, err := GetRbdMirrorPoolInfo(pool.Name, "", "")
+		if err != nil {
+			return false
+		}
+
+		for _, peer := range poolInfo.Peers {
+			if peer.RemoteName == remoteName {
+				return true
+			}
+		}
+	}
+
+	return false
+}
 
 // appendRemoteClusterArgs appends the cluster and client arguments to ceph commands
 func appendRemoteClusterArgs(args []string, cluster string, client string) []string {

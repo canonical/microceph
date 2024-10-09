@@ -1,0 +1,13 @@
+{
+	"mode": "pool",
+	"site_name": "magical",
+	"peers": [
+		{
+			"uuid": "f3ee5939-66a6-494f-849a-a4402ddb4d18",
+			"direction": "rx-tx",
+			"site_name": "simple",
+			"mirror_uuid": "84f58bda-4eea-45b1-9a5a-296cf1b82a65",
+			"client_name": "client.rbd-mirror-peer"
+		}
+	]
+}

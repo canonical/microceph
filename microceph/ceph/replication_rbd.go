@@ -176,8 +176,7 @@ func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) e
 	// fetch all ceph pools initialised with rbd application.
 	pools := ListPools("rbd")
 
-	// TODO: make this print debug
-	logger.Infof("REPRBD: Scan active pools %v", pools)
+	logger.Debugf("REPRBD: Scan active pools %v", pools)
 
 	// fetch verbose pool status for each pool
 	statusList := types.RbdPoolList{}
@@ -210,8 +209,7 @@ func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) e
 		})
 	}
 
-	// TODO: Make this print debug.
-	logger.Infof("REPRBD: List Verbose Pool status: %v", statusList)
+	logger.Debugf("REPRBD: List Verbose Pool status: %v", statusList)
 
 	resp, err := json.Marshal(statusList)
 	if err != nil {

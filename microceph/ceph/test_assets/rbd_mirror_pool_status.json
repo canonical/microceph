@@ -1,0 +1,10 @@
+{
+	"summary": {
+		"health": "OK",
+		"daemon_health": "OK",
+		"image_health": "OK",
+		"states": {
+			"replaying": 2
+		}
+	}
+}

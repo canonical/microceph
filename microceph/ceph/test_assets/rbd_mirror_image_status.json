@@ -1,0 +1,22 @@
+{
+	"name": "image_one",
+	"global_id": "c6e4ea14-be4a-41f4-ba76-dbb64595e600",
+	"state": "up+stopped",
+	"description": "local image is primary",
+	"daemon_service": {
+		"service_id": "14177",
+		"instance_id": "14221",
+		"daemon_id": "magical-reindeer",
+		"hostname": "magical-reindeer"
+	},
+	"last_update": "2024-10-09 07:56:24",
+	"peer_sites": [
+		{
+			"site_name": "simple",
+			"mirror_uuids": "84f58bda-4eea-45b1-9a5a-296cf1b82a65",
+			"state": "up+replaying",
+			"description": "replaying, {\"bytes_per_second\":0.0,\"entries_behind_primary\":0,\"entries_per_second\":0.0,\"non_primary_position\":{\"entry_tid\":3,\"object_number\":3,\"tag_tid\":1},\"primary_position\":{\"entry_tid\":3,\"object_number\":3,\"tag_tid\":1}}",
+			"last_update": "2024-10-09 07:56:28"
+		}
+	]
+}

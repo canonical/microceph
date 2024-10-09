@@ -36,22 +36,8 @@ type ReplicationRequest interface {
 	GetWorkloadRequestType() string
 }
 
-// Slices
-type MirrorPool struct {
-	Name string
-	Mode RbdResourceType
-}
-
-type MirrorImage struct {
-	Name string
-	Mode RbdReplicationType
-}
-
-type MirrorPools []MirrorPool
-type MirrorImages []MirrorImage
-
 // ################################## RBD Replication Request ##################################
-type RbdResourceType string
+// RbdReplicationDirection defines Rbd mirror direction
 type RbdReplicationDirection string
 
 const (
@@ -59,12 +45,16 @@ const (
 	RbdReplicationDirectionRXTX   RbdReplicationDirection = "rx-tx"
 )
 
+// RbdResourceType defines request resource type
+type RbdResourceType string
+
 const (
 	RbdResourceDisabled RbdResourceType = "disabled"
 	RbdResourcePool     RbdResourceType = "pool"
 	RbdResourceImage    RbdResourceType = "image"
 )
 
+// RbdReplicationType defines mode of rbd mirroring
 type RbdReplicationType string
 
 const (
@@ -73,6 +63,7 @@ const (
 	RbdReplicationSnapshot   RbdReplicationType = "snapshot"
 )
 
+// RbdReplicationRequest implements ReplicationRequest for RBD replication.
 type RbdReplicationRequest struct {
 	SourcePool  string `json:"source_pool" yaml:"source_pool"`
 	SourceImage string `json:"source_image" yaml:"source_image"`
@@ -86,26 +77,27 @@ type RbdReplicationRequest struct {
 	SkipAutoEnable  bool                   `json:"skipAutoEnable" yaml:"skipAutoEnable"`
 }
 
+// GetWorkloadType provides the workload name for replication request
 func (req RbdReplicationRequest) GetWorkloadType() CephWorkloadType {
 	return RbdWorkload
 }
 
+// GetAPIObjectId provides the API object id i.e. /replication/rbd/<object-id>
 func (req RbdReplicationRequest) GetAPIObjectId() string {
 	// If both Pool and Image values are present encode for query.
 	if len(req.SourceImage) != 0 && len(req.SourcePool) != 0 {
 		resource := url.QueryEscape(fmt.Sprintf("%s/%s", req.SourcePool, req.SourceImage))
-		// TODO: Make this a debug print.
-		logger.Infof("REPAPI: Resource: %s", resource)
+		logger.Debugf("REPAPI: Resource: %s", resource)
 		return resource
 	}
 
 	return req.SourcePool
 }
 
+// GetAPIRequestType provides the REST method for the request
 func (req RbdReplicationRequest) GetAPIRequestType() string {
 	frags := strings.Split(string(req.RequestType), "-")
-	// TODO: Make this a debug print.
-	logger.Infof("REPAPI: API frags: %v", frags)
+	logger.Debugf("REPAPI: API frags: %v", frags)
 	if len(frags) == 0 {
 		return ""
 	}
@@ -113,10 +105,10 @@ func (req RbdReplicationRequest) GetAPIRequestType() string {
 	return frags[0]
 }
 
+// GetWorkloadRequestType provides the event used as the FSM trigger.
 func (req RbdReplicationRequest) GetWorkloadRequestType() string {
 	frags := strings.Split(string(req.RequestType), "-")
-	// TODO: Make this a debug print.
-	logger.Infof("REPAPI: Workload frags: %v", frags)
+	logger.Debugf("REPAPI: Workload frags: %v", frags)
 	if len(frags) < 2 {
 		return ""
 	}
