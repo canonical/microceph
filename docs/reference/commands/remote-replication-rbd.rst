@@ -49,7 +49,7 @@ Flags:
    --type string        'journal' or 'snapshot', defaults to journal (default "journal")
 
 ``status``
----------
+----------
 
 Show RBD resource (Pool or Image) replication status
 

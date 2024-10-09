@@ -244,9 +244,38 @@ function remote_configure_rbd_mirroring() {
     lxc exec node-wrk0 -- sh -c "microceph remote replication rbd enable pool_two/image_two --type snapshot --remote siteb"
 }
 
+function remote_wait_for_secondary_to_sync() {
+    set -eux
+
+    # wait till images are synchronised
+    count=0
+    for index in {1..10}; do
+        echo "Check run #$index"
+        list_output=$(lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd list")
+        echo $list_output
+        img_one_count=$(echo $list_output | jq .[].Images | grep -c "image_one")
+        if [$img_one_count -gt 0] ; then
+            break
+        fi
+
+        count=$index
+        echo "#################"
+    done
+
+    if [count -eq 10] ; then
+        echo "Remote replication sync check timed out"
+        exit -1
+    fi
+}
+
 function remote_verify_rbd_mirroring() {
     set -eux
+
+    # sleep for some time for replication to happen.
+    sleep 100
+
     lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd list"
+    lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd list"
     lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_one.*image_one"
     lxc exec node-wrk1 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_one.*image_two"
     lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_two.*image_one"

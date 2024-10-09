@@ -10,7 +10,7 @@ import (
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/constants"
-	"gopkg.in/yaml.v2"
+	"github.com/tidwall/gjson"
 )
 
 type imageSnapshotSchedule struct {
@@ -96,9 +96,10 @@ func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdRepl
 
 // GetRbdMirrorVerbosePoolStatus fetches mirroring status for requested pool
 func GetRbdMirrorVerbosePoolStatus(pool string, cluster string, client string) (RbdReplicationVerbosePoolStatus, error) {
-	response := RbdReplicationVerbosePoolStatus{}
+	response := RbdReplicationVerbosePoolStatus{Name: pool}
 	args := []string{"mirror", "pool", "status", pool, "--verbose", "--format", "json"}
 
+	// Get verbose pool status
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Warnf("failed info operation on res(%s): %v", pool, err)
@@ -106,20 +107,36 @@ func GetRbdMirrorVerbosePoolStatus(pool string, cluster string, client string) (
 	}
 
 	// TODO: Make this print debug.
-	logger.Infof("REPRBD: Raw Pool Verbose Status: %s", output)
+	logger.Infof("REPRBD: Raw Pool Verbose Status: %s", string(output))
 
-	err = yaml.Unmarshal([]byte(output), &response)
+	// Unmarshal Summary into the structure.
+	summary := gjson.Get(string(output), "summary")
+	err = json.Unmarshal([]byte(summary.String()), &response.Summary)
 	if err != nil {
 		ne := fmt.Errorf("cannot unmarshal rbd response: %v", err)
 		logger.Errorf(ne.Error())
 		return RbdReplicationVerbosePoolStatus{Summary: RbdReplicationPoolStatus{State: StateDisabledReplication}}, ne
 	}
 
+	images := gjson.Get(string(output), "images")
+	response.Images = make([]RbdReplicationImageStatus, len(images.Array()))
+
+	// populate images
+	for index, image := range images.Array() {
+		err := json.Unmarshal([]byte(image.String()), &response.Images[index])
+		if err != nil {
+			name := gjson.Get(image.String(), "name")
+			logger.Warnf("failed to parse the image data for (%s/%s)", pool, name)
+		}
+
+		response.Images[index].State = StateEnabledReplication
+		response.Images[index].IsPrimary = strings.Contains(response.Images[index].Description, "local image is primary")
+	}
+
 	// TODO: Make this print debug.
 	logger.Infof("REPRBD: Pool Verbose Status: %v", response)
 
 	// Patch required values
-	response.Name = pool
 	response.Summary.State = StateEnabledReplication
 	response.Summary.ImageCount = len(response.Images)
 

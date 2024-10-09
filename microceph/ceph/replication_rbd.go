@@ -191,7 +191,7 @@ func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) e
 		images := make([]types.RbdPoolListImageBrief, len(poolStatus.Images))
 		for id, image := range poolStatus.Images {
 			var rep_type string
-			if strings.Contains(image.Status, "snapshot") {
+			if strings.Contains(image.Description, "snapshot") {
 				rep_type = "snapshot"
 			} else {
 				rep_type = "journaling"
