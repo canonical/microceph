@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,12 +41,18 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 		return err
 	}
 
+	// Ensure mon-ip is enclosed in square brackets if IPv6.
+	monIp := data.MonIp
+	if net.ParseIP(monIp) != nil && strings.Contains(monIp, ":") {
+		monIp = fmt.Sprintf("[%s]", monIp)
+	}
+
 	err = conf.WriteConfig(
 		map[string]any{
 			"fsid":   fsid,
 			"runDir": pathConsts.RunPath,
 			// First monitor bootstrap IP as passed to microcluster.
-			"monitors": data.MonIp,
+			"monitors": monIp,
 			"pubNet":   data.PublicNet,
 			"ipv4":     strings.Contains(data.PublicNet, "."),
 			"ipv6":     strings.Contains(data.PublicNet, ":"),

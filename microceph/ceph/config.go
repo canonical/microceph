@@ -356,6 +356,9 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 		}
 	}
 
+	// Ensure that IPv6 addresses have square brackets around them (if IPv6 is used).
+	monitorAddresses = formatIPv6(monitorAddresses)
+
 	conf := NewCephConfig(constants.CephConfFileName)
 
 	// Check if host has IP address on the configured public network.
@@ -441,4 +444,19 @@ func getMonitorAddresses(configs map[string]string) []string {
 		}
 	}
 	return monHosts
+}
+
+// formatIPv6 returns a slice in which all IPv6 addresses are formatted with square brackets.
+func formatIPv6(addrs []string) []string {
+	formatted := []string{}
+	for _, addr := range addrs {
+		ip := net.ParseIP(addr)
+		if ip != nil && strings.Contains(addr, ":") {
+			addr = fmt.Sprintf("[%s]", addr)
+		}
+
+		formatted = append(formatted, addr)
+	}
+
+	return formatted
 }
