@@ -234,6 +234,15 @@ jobs:
       run: |
         sudo snap logs microceph -n 1000
 
+    - name: Test square brackets around IPv6
+      run: |
+        sudo snap remove microceph
+        export MON_IP="fd42:7273:f336:a22::1"
+        sudo ip -6 addr add dev eth0 "${MON_IP}"
+        ~/actionutils.sh install_microceph "${MON_IP}"
+        cat /var/snap/microceph/current/conf/ceph.conf
+        fgrep -q "[${MON_IP}]" /var/snap/microceph/current/conf/ceph.conf
+
   multi-node-tests:
     name: Multi node testing
     runs-on: ubuntu-22.04
