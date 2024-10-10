@@ -16,6 +16,7 @@ function setup_lxd() {
 }
 
 function install_microceph() {
+    local mon_ip="${1}"
     # Install locally built microceph snap and connect interfaces
     sudo snap install --dangerous ~/microceph_*.snap
     sudo snap connect microceph:block-devices
@@ -26,7 +27,11 @@ function install_microceph() {
     sudo snap connect microceph:microceph-support
     sudo snap connect microceph:network-bind
 
-    sudo microceph cluster bootstrap
+    if [ -n "${mon_ip}" ]; then
+        sudo microceph cluster bootstrap --mon-ip "${mon_ip}"
+    else
+        sudo microceph cluster bootstrap
+    fi
     sudo microceph.ceph version
     sudo microceph.ceph status
 
@@ -34,7 +39,6 @@ function install_microceph() {
     sleep 30
     sudo microceph.ceph status
     sudo microceph.ceph health
-
 }
 
 function create_loop_devices() {
