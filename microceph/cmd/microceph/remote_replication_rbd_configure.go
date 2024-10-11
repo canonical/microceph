@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
@@ -56,7 +54,7 @@ func (c *cmdRemoteReplicationConfigureRbd) Run(cmd *cobra.Command, args []string
 }
 
 func (c *cmdRemoteReplicationConfigureRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
-	pool, image, err := getPoolAndImageFromResource(args[0])
+	pool, image, err := types.GetPoolAndImageFromResource(args[0])
 	if err != nil {
 		return types.RbdReplicationRequest{}, err
 	}
@@ -66,39 +64,8 @@ func (c *cmdRemoteReplicationConfigureRbd) prepareRbdPayload(requestType types.R
 		SourceImage:  image,
 		Schedule:     c.schedule,
 		RequestType:  requestType,
-		ResourceType: getRbdResourceType(pool, image),
+		ResourceType: types.GetRbdResourceType(pool, image),
 	}
 
 	return retReq, nil
-}
-
-// getRbdResourceType gets the resource type of the said request
-func getRbdResourceType(poolName string, imageName string) types.RbdResourceType {
-	if len(poolName) != 0 && len(imageName) != 0 {
-		return types.RbdResourceImage
-	} else {
-		return types.RbdResourcePool
-	}
-}
-
-func getPoolAndImageFromResource(resource string) (string, string, error) {
-	var pool string
-	var image string
-	resourceFrags := strings.Split(resource, "/")
-	if len(resourceFrags) < 1 || len(resourceFrags) > 2 {
-		return "", "", fmt.Errorf("check resource name %s, should be in $pool/$image format", resource)
-	}
-
-	// If only pool name is provided.
-	if len(resourceFrags) == 1 {
-		pool = resourceFrags[0]
-		image = ""
-	} else
-	// if both pool and image names are provided.
-	if len(resourceFrags) == 2 {
-		pool = resourceFrags[0]
-		image = resourceFrags[1]
-	}
-
-	return pool, image, nil
 }

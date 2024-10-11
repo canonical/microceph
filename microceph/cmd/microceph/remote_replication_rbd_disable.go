@@ -50,7 +50,7 @@ func (c *cmdRemoteReplicationDisableRbd) Run(cmd *cobra.Command, args []string) 
 }
 
 func (c *cmdRemoteReplicationDisableRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
-	pool, image, err := getPoolAndImageFromResource(args[0])
+	pool, image, err := types.GetPoolAndImageFromResource(args[0])
 	if err != nil {
 		return types.RbdReplicationRequest{}, err
 	}
@@ -60,7 +60,7 @@ func (c *cmdRemoteReplicationDisableRbd) prepareRbdPayload(requestType types.Rep
 		SourceImage:  image,
 		RequestType:  requestType,
 		IsForceOp:    c.isForce,
-		ResourceType: getRbdResourceType(pool, image),
+		ResourceType: types.GetRbdResourceType(pool, image),
 	}
 
 	return retReq, nil

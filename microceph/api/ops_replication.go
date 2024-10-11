@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/lxd/shared/logger"
@@ -13,6 +14,7 @@ import (
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microcluster/v2/rest"
 	"github.com/canonical/microcluster/v2/state"
+	"github.com/gorilla/mux"
 )
 
 // Top level ops API
@@ -28,32 +30,85 @@ var opsReplicationCmd = rest.Endpoint{
 // List Replications
 var opsReplicationWorkloadCmd = rest.Endpoint{
 	Path: "ops/replication/{wl}",
-	Get:  rest.EndpointAction{Handler: cmdOpsReplication, ProxyTarget: false},
+	Get:  rest.EndpointAction{Handler: getOpsReplicationWorkload, ProxyTarget: false},
 }
 
 // CRUD Replication
 var opsReplicationResourceCmd = rest.Endpoint{
 	Path:   "ops/replication/{wl}/{name}",
-	Get:    rest.EndpointAction{Handler: cmdOpsReplication, ProxyTarget: false},
-	Put:    rest.EndpointAction{Handler: cmdOpsReplication, ProxyTarget: false},
-	Delete: rest.EndpointAction{Handler: cmdOpsReplication, ProxyTarget: false},
+	Get:    rest.EndpointAction{Handler: getOpsReplicationResource, ProxyTarget: false},
+	Post:   rest.EndpointAction{Handler: postOpsReplicationResource, ProxyTarget: false},
+	Put:    rest.EndpointAction{Handler: putOpsReplicationResource, ProxyTarget: false},
+	Delete: rest.EndpointAction{Handler: deleteOpsReplicationResource, ProxyTarget: false},
+}
+
+// getOpsReplicationWorkload handles list operation
+func getOpsReplicationWorkload(s state.State, r *http.Request) response.Response {
+	return cmdOpsReplication(s, r, types.ListReplicationRequest)
+}
+
+// getOpsReplicationResource handles status operation for a certain resource.
+func getOpsReplicationResource(s state.State, r *http.Request) response.Response {
+	return cmdOpsReplication(s, r, types.StatusReplicationRequest)
+}
+
+// postOpsReplicationResource handles rep enablement for the requested resource
+func postOpsReplicationResource(s state.State, r *http.Request) response.Response {
+	return cmdOpsReplication(s, r, types.EnableReplicationRequest)
+}
+
+// putOpsReplicationResource handles configuration of the requested resource
+func putOpsReplicationResource(s state.State, r *http.Request) response.Response {
+	return cmdOpsReplication(s, r, types.ConfigureReplicationRequest)
+}
+
+// deleteOpsReplicationResource handles rep disablement for the requested resource
+func deleteOpsReplicationResource(s state.State, r *http.Request) response.Response {
+	return cmdOpsReplication(s, r, types.DisableReplicationRequest)
 }
 
 // cmdOpsReplication is the common handler for all requests on replication endpoint.
-func cmdOpsReplication(s state.State, r *http.Request) response.Response {
+func cmdOpsReplication(s state.State, r *http.Request, patchRequest types.ReplicationRequestType) response.Response {
 	// NOTE (utkarshbhatthere): unescaping API $wl and $name is not required
 	// as that information is present in payload.
-	var req types.RbdReplicationRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
+	wl, err := url.PathUnescape(mux.Vars(r)["wl"])
 	if err != nil {
+		logger.Errorf("REP: %v", err.Error())
 		return response.InternalError(err)
+	}
+
+	resource, err := url.PathUnescape(mux.Vars(r)["name"])
+	if err != nil {
+		logger.Errorf("REP: %v", err.Error())
+		return response.InternalError(err)
+	}
+
+	var req types.ReplicationRequest
+	if wl == string(types.RbdWorkload) {
+		var data types.RbdReplicationRequest
+		err := json.NewDecoder(r.Body).Decode(&data)
+		if err != nil {
+			logger.Errorf("REP: failed to decode request data: %v", err.Error())
+			return response.InternalError(err)
+		}
+
+		// carry RbdReplicationRequest in interface object.
+		data.SetAPIObjectId(resource)
+		// Patch request type.
+		if len(patchRequest) != 0 {
+			data.RequestType = patchRequest
+		}
+
+		req = data
+	} else {
+		return response.SmartError(fmt.Errorf(""))
 	}
 
 	return handleReplicationRequest(s, r.Context(), req)
 }
 
 // handleReplicationRequest parses the replication request and feeds it to the corresponding state machine.
-func handleReplicationRequest(s state.State, ctx context.Context, req types.RbdReplicationRequest) response.Response {
+func handleReplicationRequest(s state.State, ctx context.Context, req types.ReplicationRequest) response.Response {
 	// Fetch replication handler
 	wl := string(req.GetWorkloadType())
 	rh := ceph.GetReplicationHandler(wl)
