@@ -11,7 +11,7 @@ and file-level storage.
 
 Ceph cluster management is streamlined by simplifying key distribution, service
 placement, and disk administration for quick, effortless deployment and
-operations. This applies to clusters that span private clouds, edge clouds, as
+operations. This applies to clusters that span private clouds, edge clouds, as
 well as home labs and single workstations.
 
 MicroCeph is focused on providing a modern deployment and management experience
@@ -22,18 +22,11 @@ to Ceph administrators and storage software developers.
 In this documentation
 ---------------------
 
-..  grid:: 1 1 2 2
-
-   ..  grid-item:: :doc:`Tutorial <tutorial/index>`
-
-       **Start here**: a hands-on introduction to MicroCeph for new users
+..  grid:: 1 1 1 1
 
    ..  grid-item:: :doc:`How-to guides <how-to/index>`
 
       **Step-by-step guides** covering key operations and common tasks
-
-.. grid:: 1 1 2 2
-   :reverse:
 
    .. grid-item:: :doc:`Reference <reference/index>`
 
@@ -48,7 +41,7 @@ In this documentation
 Project and community
 ---------------------
 
-MicroCeph is a member of the Ubuntu family. It's an open source project that
+MicroCeph is a member of the Ubuntu family. It's an open-source project that
 warmly welcomes community projects, contributions, suggestions, fixes and
 constructive feedback.
 
@@ -66,7 +59,6 @@ constructive feedback.
    :hidden:
    :maxdepth: 2
 
-   tutorial/index
    how-to/index
    reference/index
    explanation/index
