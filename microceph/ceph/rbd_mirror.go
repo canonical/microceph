@@ -30,14 +30,14 @@ func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplic
 
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
-		logger.Warnf("failed info operation on res(%s): %v", pool, err)
+		logger.Warnf("REPRBD: failed pool info operation on res(%s): %v", pool, err)
 		return RbdReplicationPoolInfo{Mode: types.RbdResourceDisabled}, nil
 	}
 
 	err = json.Unmarshal([]byte(output), &response)
 	if err != nil {
 		ne := fmt.Errorf("cannot unmarshal rbd response: %v", err)
-		logger.Errorf(ne.Error())
+		logger.Errorf("REPRBD: %s", ne.Error())
 		return RbdReplicationPoolInfo{Mode: types.RbdResourceDisabled}, ne
 	}
 
@@ -52,6 +52,7 @@ func populatePoolStatus(status string) (RbdReplicationPoolStatus, error) {
 
 	err := json.Unmarshal([]byte(status), &summary)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return RbdReplicationPoolStatus{}, err
 	}
 
@@ -64,7 +65,7 @@ func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdRepl
 
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
-		logger.Warnf("failed info operation on res(%s): %v", pool, err)
+		logger.Warnf("failed pool status operation on res(%s): %v", pool, err)
 		return RbdReplicationPoolStatus{State: StateDisabledReplication}, nil
 	}
 
@@ -100,7 +101,7 @@ func GetRbdMirrorVerbosePoolStatus(pool string, cluster string, client string) (
 	// Get verbose pool status
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
-		logger.Warnf("failed info operation on res(%s): %v", pool, err)
+		logger.Warnf("REPRBD: failed verbose pool status operation on res(%s): %v", pool, err)
 		return RbdReplicationVerbosePoolStatus{Summary: RbdReplicationPoolStatus{State: StateDisabledReplication}}, nil
 	}
 
@@ -147,7 +148,7 @@ func GetRbdMirrorImageStatus(pool string, image string, cluster string, client s
 
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
-		logger.Warnf("failed info operation on res(%s): %v", resource, err)
+		logger.Warnf("failed image status operation on res(%s): %v", resource, err)
 		return RbdReplicationImageStatus{State: StateDisabledReplication}, nil
 	}
 
@@ -172,12 +173,14 @@ func EnablePoolMirroring(pool string, mode types.RbdResourceType, localName stri
 	// Enable pool mirroring on the local cluster.
 	err := configurePoolMirroring(pool, mode, "", "")
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
 	// Enable pool mirroring on the remote cluster.
 	err = configurePoolMirroring(pool, mode, localName, remoteName)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
@@ -190,21 +193,21 @@ func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string
 	// remove peer permissions
 	err := RemovePeer(pool, localName, remoteName)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
 	// Disable pool mirroring on the local cluster.
 	err = configurePoolMirroring(pool, types.RbdResourceDisabled, "", "")
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
 	// Disable pool mirroring on the remote cluster.
 	err = configurePoolMirroring(pool, types.RbdResourceDisabled, localName, remoteName)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
@@ -216,7 +219,7 @@ func DisableMirroringAllImagesInPool(poolName string) error {
 	poolStatus, err := GetRbdMirrorVerbosePoolStatus(poolName, "", "")
 	if err != nil {
 		err := fmt.Errorf("failed to fetch status for %s pool: %v", poolName, err)
-		logger.Error(err.Error())
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
@@ -234,39 +237,46 @@ func DisableMirroringAllImagesInPool(poolName string) error {
 }
 
 // getPeerUUID returns the peer ID for the requested peer name.
-func getPeerUUID(pool string, peerName string, client string, cluster string) string {
+func getPeerUUID(pool string, peerName string, client string, cluster string) (string, error) {
 	poolInfo, err := GetRbdMirrorPoolInfo(pool, cluster, client)
 	if err != nil {
 		logger.Error(err.Error())
-		return ""
+		return "", err
 	}
 
 	for _, peer := range poolInfo.Peers {
 		if peer.RemoteName == peerName {
-			return peer.Id
+			return peer.Id, nil
 		}
 	}
 
-	return ""
+	return "", fmt.Errorf("no peer found")
 }
 
 // RemovePeer removes the rbd-mirror peer permissions for requested pool.
 func RemovePeer(pool string, localName string, remoteName string) error {
 	// find local site's peer with name $remoteName
-	localPeer := getPeerUUID(pool, remoteName, "", "")
-	remotePeer := getPeerUUID(pool, localName, localName, remoteName)
+	localPeer, err := getPeerUUID(pool, remoteName, "", "")
+	if err != nil {
+		return err
+	}
+
+	remotePeer, err := getPeerUUID(pool, localName, localName, remoteName)
+	if err != nil {
+		return err
+	}
 
 	// Remove local cluster's peer
-	err := peerRemove(pool, localPeer, "", "")
+	err = peerRemove(pool, localPeer, "", "")
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
 	// Remove remote's peer
 	err = peerRemove(pool, remotePeer, localName, remoteName)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
@@ -278,14 +288,14 @@ func BootstrapPeer(pool string, localName string, remoteName string) error {
 	// create bootstrap token on local site.
 	token, err := peerBootstrapCreate(pool, "", localName)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
 	// persist the peer token
 	err = writeRemotePeerToken(token, remoteName)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
@@ -307,6 +317,7 @@ func configurePoolMirroring(pool string, mode types.RbdResourceType, localName s
 
 	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("failed to execute rbd command: %v", err)
 	}
 
@@ -329,17 +340,20 @@ func configureImageMirroring(req types.RbdReplicationRequest) error {
 
 	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("failed to configure rbd image feature: %v", err)
 	}
 
 	if mode == types.RbdReplicationSnapshot {
 		err = createSnapshot(pool, image)
 		if err != nil {
+			logger.Errorf("REPRBD: %s", err.Error())
 			return fmt.Errorf("failed to create image(%s/%s) snapshot : %v", pool, image, err)
 		}
 
 		err = configureSnapshotSchedule(pool, image, schedule, "")
 		if err != nil {
+			logger.Errorf("REPRBD: %s", err.Error())
 			return fmt.Errorf("failed to create image(%s/%s) snapshot schedule(%s) : %v", pool, image, schedule, err)
 		}
 	}
@@ -354,12 +368,14 @@ func getSnapshotSchedule(pool string, image string) (imageSnapshotSchedule, erro
 
 	output, err := listSnapshotSchedule(pool, image)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return imageSnapshotSchedule{}, err
 	}
 
 	ret := []imageSnapshotSchedule{}
 	err = json.Unmarshal(output, &ret)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return imageSnapshotSchedule{}, nil
 	}
 
@@ -381,6 +397,7 @@ func listSnapshotSchedule(pool string, image string) ([]byte, error) {
 
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return []byte(""), err
 	}
 
@@ -401,7 +418,7 @@ func listAllImagesInPool(pool string, localName string, remoteName string) []str
 	var ret []string
 	err = json.Unmarshal([]byte(output), &ret)
 	if err != nil {
-		logger.Errorf("unexpected error encountered while parsing json output %s", output)
+		logger.Errorf("REPRBD: unexpected error encountered while parsing json output %s", output)
 		return []string{}
 	}
 
@@ -433,6 +450,7 @@ func configureSnapshotSchedule(pool string, image string, schedule string, start
 
 	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
@@ -445,6 +463,7 @@ func createSnapshot(pool string, image string) error {
 
 	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return err
 	}
 
@@ -458,6 +477,7 @@ func configureImageFeatures(pool string, image string, op string, feature string
 
 	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("failed to configure rbd image feature: %v", err)
 	}
 
@@ -477,6 +497,7 @@ func peerBootstrapCreate(pool string, client string, cluster string) (string, er
 
 	output, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return "", fmt.Errorf("failed to bootstrap peer token: %v", err)
 	}
 
@@ -502,6 +523,7 @@ func peerBootstrapImport(pool string, client string, cluster string) error {
 
 	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("failed to import peer bootstrap token: %v", err)
 	}
 
@@ -519,6 +541,7 @@ func peerRemove(pool string, peerId string, localName string, remoteName string)
 
 	_, err := processExec.RunCommand("rbd", args...)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("failed to remove peer(%s) for pool(%s): %v", peerId, pool, err)
 	}
 
@@ -580,6 +603,7 @@ func writeRemotePeerToken(token string, remoteName string) error {
 
 	err := os.MkdirAll(tokenDirPath, constants.PermissionWorldNoAccess)
 	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("unable to create %q: %w", tokenDirPath, err)
 	}
 
@@ -591,7 +615,7 @@ func writeRemotePeerToken(token string, remoteName string) error {
 	file, err := os.Create(tokenFilePath)
 	if err != nil {
 		ne := fmt.Errorf("failed to create the token file(%s): %w", tokenFilePath, err)
-		logger.Error(ne.Error())
+		logger.Errorf("REPRBD: %s", ne.Error())
 		return ne
 	}
 
@@ -599,7 +623,7 @@ func writeRemotePeerToken(token string, remoteName string) error {
 	_, err = file.WriteString(token)
 	if err != nil {
 		ne := fmt.Errorf("failed to write the token file(%s): %w", tokenFilePath, err)
-		logger.Error(ne.Error())
+		logger.Errorf("REPRBD: %s", ne.Error())
 		return ne
 	}
 

@@ -50,6 +50,16 @@ func GetReplicationHandler(name string) ReplicationHandlerInterface {
 	return rh
 }
 
+func getAllEvents() []stateless.Trigger {
+	return []stateless.Trigger{
+		constants.EventEnableReplication,
+		constants.EventDisableReplication,
+		constants.EventConfigureReplication,
+		constants.EventListReplication,
+		constants.EventStatusReplication,
+	}
+}
+
 func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateMachine {
 	newFsm := stateless.NewStateMachine(initialState)
 	// Configure transitions for disabled state.
@@ -63,23 +73,17 @@ func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateM
 	newFsm.Configure(StateEnabledReplication).
 		Permit(constants.EventDisableReplication, StateDisabledReplication).
 		OnEntryFrom(constants.EventEnableReplication, enableHandler).
-		InternalTransition(constants.EventEnableReplication, enableHandler).
 		InternalTransition(constants.EventConfigureReplication, configureHandler).
 		InternalTransition(constants.EventListReplication, listHandler).
 		InternalTransition(constants.EventStatusReplication, statusHandler)
 
 	// Check Event params type.
-	var output *string
-	var dummyState interfaces.CephState
-	var eventHandler ReplicationHandlerInterface
-	inputType := reflect.TypeOf(&eventHandler).Elem()
-	outputType := reflect.TypeOf(output)
-	stateType := reflect.TypeOf(dummyState)
-	newFsm.SetTriggerParameters(constants.EventEnableReplication, inputType, outputType, stateType)
-	newFsm.SetTriggerParameters(constants.EventDisableReplication, inputType, outputType, stateType)
-	newFsm.SetTriggerParameters(constants.EventConfigureReplication, inputType, outputType, stateType)
-	newFsm.SetTriggerParameters(constants.EventListReplication, inputType, outputType, stateType)
-	newFsm.SetTriggerParameters(constants.EventStatusReplication, inputType, outputType, stateType)
+	var outputType *string
+	var stateType interfaces.CephState
+	var inputType ReplicationHandlerInterface
+	for _, event := range getAllEvents() {
+		newFsm.SetTriggerParameters(event, reflect.TypeOf(&inputType).Elem(), reflect.TypeOf(outputType), reflect.TypeOf(stateType))
+	}
 
 	// Add logger callback for all transitions
 	newFsm.OnTransitioning(logTransitionHandler)
@@ -87,8 +91,7 @@ func GetReplicationStateMachine(initialState ReplicationState) *stateless.StateM
 	// Add handler for unhandled transitions.
 	newFsm.OnUnhandledTrigger(unhandledTransitionHandler)
 
-	logger.Infof("REPFSM: Created from state: %s", initialState)
-
+	logger.Debugf("REPFSM: Created from state: %s", initialState)
 	return newFsm
 }
 
@@ -97,31 +100,26 @@ func logTransitionHandler(_ context.Context, t stateless.Transition) {
 }
 
 func unhandledTransitionHandler(_ context.Context, state stateless.State, trigger stateless.Trigger, _ []string) error {
-	return fmt.Errorf("operation: %s is not permitted at %s state", trigger, state)
+	return fmt.Errorf("REPFSM: operation: %s is not permitted at %s state", trigger, state)
 }
 
 func enableHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("REPFSM: Entered Enable Handler")
 	return rh.EnableHandler(ctx, args...)
 }
 func disableHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("REPFSM: Entered Disable Handler")
 	return rh.DisableHandler(ctx, args...)
 }
 func configureHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("REPFSM: Entered Configure Handler")
 	return rh.ConfigureHandler(ctx, args...)
 }
 func listHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("REPFSM: Entered List Handler")
 	return rh.ListHandler(ctx, args...)
 }
 func statusHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("REPFSM: Entered Status Handler")
 	return rh.StatusHandler(ctx, args...)
 }

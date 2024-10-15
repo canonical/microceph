@@ -69,20 +69,21 @@ func deleteOpsReplicationResource(s state.State, r *http.Request) response.Respo
 
 // cmdOpsReplication is the common handler for all requests on replication endpoint.
 func cmdOpsReplication(s state.State, r *http.Request, patchRequest types.ReplicationRequestType) response.Response {
-	// NOTE (utkarshbhatthere): unescaping API $wl and $name is not required
-	// as that information is present in payload.
+	// Get workload name from API
 	wl, err := url.PathUnescape(mux.Vars(r)["wl"])
 	if err != nil {
 		logger.Errorf("REP: %v", err.Error())
 		return response.InternalError(err)
 	}
 
+	// Get resource name from API
 	resource, err := url.PathUnescape(mux.Vars(r)["name"])
 	if err != nil {
 		logger.Errorf("REP: %v", err.Error())
 		return response.InternalError(err)
 	}
 
+	// Populate the replication request with necessary information for RESTfullnes
 	var req types.ReplicationRequest
 	if wl == string(types.RbdWorkload) {
 		var data types.RbdReplicationRequest
@@ -101,7 +102,7 @@ func cmdOpsReplication(s state.State, r *http.Request, patchRequest types.Replic
 
 		req = data
 	} else {
-		return response.SmartError(fmt.Errorf(""))
+		return response.SmartError(fmt.Errorf("unknown workload %s, resource %s", wl, resource))
 	}
 
 	return handleReplicationRequest(s, r.Context(), req)

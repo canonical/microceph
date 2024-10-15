@@ -121,6 +121,8 @@ func (rh *RbdReplicationHandler) GetResourceState() ReplicationState {
 
 // EnableHandler enables mirroring for requested rbd pool/image.
 func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any) error {
+	logger.Debugf("REPFSM: Enable handler, Req %v", rh.Request)
+
 	st := args[repArgState].(interfaces.CephState).ClusterState()
 	dbRec, err := database.GetRemoteDb(ctx, st, rh.Request.RemoteName)
 	if err != nil {
@@ -140,6 +142,8 @@ func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any)
 
 // DisableHandler disables mirroring configured for requested rbd pool/image.
 func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any) error {
+	logger.Debugf("REPFSM: Disable handler, Req %v", rh.Request)
+
 	st := args[repArgState].(interfaces.CephState).ClusterState()
 	dbRec, err := database.GetRemoteDb(ctx, st, rh.Request.RemoteName)
 	if err != nil {
@@ -159,6 +163,8 @@ func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any
 
 // ConfigureHandler configures replication properties for requested rbd pool/image.
 func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...any) error {
+	logger.Debugf("REPFSM: Configure handler, Req %v", rh.Request)
+
 	schedule, err := getSnapshotSchedule(rh.Request.SourcePool, rh.Request.SourceImage)
 	if err != nil {
 		return err
@@ -173,6 +179,8 @@ func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...a
 
 // ListHandler fetches a list of rbd pools/images configured for mirroring.
 func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) error {
+	logger.Debugf("REPFSM: List handler, Req %v", rh.Request)
+
 	// fetch all ceph pools initialised with rbd application.
 	pools := ListPools("rbd")
 
@@ -223,6 +231,8 @@ func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) e
 
 // StatusHandler fetches the status of requested rbd pool/image resource.
 func (rh *RbdReplicationHandler) StatusHandler(ctx context.Context, args ...any) error {
+	logger.Debugf("REPFSM: Status handler, Req %v", rh.Request)
+
 	var resp any
 
 	// Populate Status resp.
