@@ -10,6 +10,14 @@ description: |-
 
 confinement: strict
 
+package-repositories:
+  - type: apt
+    url: http://archive.ubuntu.com/ubuntu/
+    suites: [noble-proposed]
+    components: [main, universe, restricted, multiverse]
+    key-id: F6ECB3762474EDA9D21B7022871920D1991BC93C
+    priority: always
+
 plugs:
   load-rbd:
     interface: kernel-module-load
@@ -212,6 +220,7 @@ parts:
       - lib/*/libboost_program_options.so*
       - lib/*/libboost_python312.so*
       - lib/*/libboost_thread.so*
+      - lib/*/libboost_url.so*
       - lib/*/libcephfs.so*
       - lib/*/libcephsqlite.so*
       - lib/*/libcurl-gnutls.so*
