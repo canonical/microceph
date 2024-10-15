@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
@@ -56,6 +57,10 @@ func (c *cmdClusterConfigSet) Run(cmd *cobra.Command, args []string) error {
 
 	err = client.SetConfig(context.Background(), cli, req)
 	if err != nil {
+		if strings.Contains(err.Error(), "performed on experimental config") {
+			fmt.Println(err.Error())
+			return nil
+		}
 		return err
 	}
 
