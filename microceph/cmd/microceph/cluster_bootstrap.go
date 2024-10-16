@@ -77,6 +77,11 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
 	defer cancel()
 
+	err = m.Ready(ctx)
+	if err != nil {
+		return fmt.Errorf("fault while waiting for App readiness: %w", err)
+	}
+
 	err = m.NewCluster(ctx, hostname, address, common.EncodeBootstrapConfig(data))
 	if err != nil {
 		return err
