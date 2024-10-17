@@ -74,4 +74,10 @@ sda
 ESM
 Livepatch
 
+vms
+resync
+failover
+Failover
+Failback
+
 MiB
