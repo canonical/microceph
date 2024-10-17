@@ -1,0 +1,67 @@
+{
+	"summary": {
+		"health": "OK",
+		"daemon_health": "OK",
+		"image_health": "OK",
+		"states": {
+			"replaying": 2
+		}
+	},
+	"daemons": [
+		{
+			"service_id": "14173",
+			"instance_id": "14198",
+			"client_id": "magical-reindeer",
+			"hostname": "magical-reindeer",
+			"ceph_version": "19.2.0~git20240301.4c76c50",
+			"leader": true,
+			"health": "OK"
+		}
+	],
+	"images": [
+		{
+			"name": "image_one",
+			"global_id": "ebbea3fc-78c5-41e7-a796-d2fc59c691c6",
+			"state": "up+stopped",
+			"description": "local image is primary",
+			"daemon_service": {
+				"service_id": "14173",
+				"instance_id": "14198",
+				"daemon_id": "magical-reindeer",
+				"hostname": "magical-reindeer"
+			},
+			"last_update": "2024-10-09 05:55:27",
+			"peer_sites": [
+				{
+					"site_name": "simple",
+					"mirror_uuids": "ced68f5f-f982-4ca2-b823-c68be7b86c93",
+					"state": "up+replaying",
+					"description": "replaying, {\"bytes_per_second\":0.0,\"entries_behind_primary\":0,\"entries_per_second\":0.0,\"non_primary_position\":{\"entry_tid\":3,\"object_number\":3,\"tag_tid\":1},\"primary_position\":{\"entry_tid\":3,\"object_number\":3,\"tag_tid\":1}}",
+					"last_update": "2024-10-09 05:55:27"
+				}
+			]
+		},
+		{
+			"name": "image_two",
+			"global_id": "0f35d44b-60fd-4294-adc9-eb7a65815db9",
+			"state": "up+stopped",
+			"description": "local image is primary",
+			"daemon_service": {
+				"service_id": "14173",
+				"instance_id": "14198",
+				"daemon_id": "magical-reindeer",
+				"hostname": "magical-reindeer"
+			},
+			"last_update": "2024-10-09 05:55:27",
+			"peer_sites": [
+				{
+					"site_name": "simple",
+					"mirror_uuids": "ced68f5f-f982-4ca2-b823-c68be7b86c93",
+					"state": "up+replaying",
+					"description": "replaying, {\"bytes_per_second\":0.0,\"entries_behind_primary\":0,\"entries_per_second\":0.0,\"non_primary_position\":{\"entry_tid\":3,\"object_number\":3,\"tag_tid\":1},\"primary_position\":{\"entry_tid\":3,\"object_number\":3,\"tag_tid\":1}}",
+					"last_update": "2024-10-09 05:55:27"
+				}
+			]
+		}
+	]
+}

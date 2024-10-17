@@ -218,6 +218,93 @@ function remote_perform_remote_ops_check() {
     lxc exec node-wrk3 -- sh -c "microceph remote list --json | grep '\"local_name\":\"siteb\"'"
 }
 
+function remote_configure_rbd_mirroring() {
+    set -eux
+    # create two new rbd pools on sitea
+    lxc exec node-wrk0 -- sh -c "microceph.ceph osd pool create pool_one"
+    lxc exec node-wrk1 -- sh -c "microceph.ceph osd pool create pool_two"
+    # and siteb
+    lxc exec node-wrk2 -- sh -c "microceph.ceph osd pool create pool_one"
+    lxc exec node-wrk3 -- sh -c "microceph.ceph osd pool create pool_two"
+
+    # enable both pools for rbd on site a
+    lxc exec node-wrk0 -- sh -c "microceph.rbd pool init pool_one"
+    lxc exec node-wrk1 -- sh -c "microceph.rbd pool init pool_two"
+    # and siteb
+    lxc exec node-wrk2 -- sh -c "microceph.rbd pool init pool_one"
+    lxc exec node-wrk3 -- sh -c "microceph.rbd pool init pool_two"
+
+    # create 2 images on both pools on primary site.
+    lxc exec node-wrk0 -- sh -c "microceph.rbd create --size 512 pool_one/image_one"
+    lxc exec node-wrk0 -- sh -c "microceph.rbd create --size 512 pool_one/image_two"
+    lxc exec node-wrk1 -- sh -c "microceph.rbd create --size 512 pool_two/image_one"
+    lxc exec node-wrk1 -- sh -c "microceph.rbd create --size 512 pool_two/image_two"
+
+    # enable mirroring on pool_one
+    lxc exec node-wrk0 -- sh -c "microceph remote replication rbd enable pool_one --remote siteb"
+
+    # enable mirroring on pool_two images
+    lxc exec node-wrk0 -- sh -c "microceph remote replication rbd enable pool_two/image_one --type journal --remote siteb"
+    lxc exec node-wrk0 -- sh -c "microceph remote replication rbd enable pool_two/image_two --type snapshot --remote siteb"
+}
+
+function remote_enable_rbd_mirror_daemon() {
+    lxc exec node-wrk0 -- sh -c "microceph enable rbd-mirror"
+    lxc exec node-wrk2 -- sh -c "microceph enable rbd-mirror"
+}
+
+function remote_wait_for_secondary_to_sync() {
+    set -eux
+
+    # wait till images are synchronised
+    count=0
+    for index in {1..100}; do
+        echo "Check run #$index"
+        list_output=$(lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd list --json")
+        echo $list_output
+        images=$(echo $list_output | jq .[].Images)
+        echo $images
+        img_one_count=$(echo $images | grep -c "image_one" || true)
+        echo $img_one_count
+        if [[ $img_one_count -gt 0 ]] ; then
+            break
+        fi
+
+        count=$index
+        echo "#################"
+        sleep 30
+    done
+
+    if [count -eq 10] ; then
+        echo "Remote replication sync check timed out"
+        exit -1
+    fi
+}
+
+function remote_verify_rbd_mirroring() {
+    set -eux
+
+    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd list"
+    lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd list"
+    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_one.*image_one"
+    lxc exec node-wrk1 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_one.*image_two"
+    lxc exec node-wrk2 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_two.*image_one"
+    lxc exec node-wrk3 -- sh -c "sudo microceph remote replication rbd list" | grep "pool_two.*image_two"
+}
+
+function remote_disable_rbd_mirroring() {
+    set -eux
+    # check disables fail for image mirroring pools with images currently being mirrored
+    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd disable pool_two 2>&1 || true"  | grep "in Image mirroring mode"
+    # disable both images in pool_two and then disable pool_two
+    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd disable pool_two/image_one"
+    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd disable pool_two/image_two"
+    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd disable pool_two"
+
+    # disable pool one
+    lxc exec node-wrk0 -- sh -c "sudo microceph remote replication rbd disable pool_one"
+}
+
 function remote_remove_and_verify() {
     set -eux
 

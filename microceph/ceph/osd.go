@@ -1151,3 +1151,51 @@ func GetOSDPools() ([]types.Pool, error) {
 
 	return pools, nil
 }
+
+// CephPool abstracts the paramters of a ceph pool as provided by `osd pool ls detail`
+type CephPool struct {
+	Id          int                    `json:"pool_id" yaml:"pool_id"`
+	Name        string                 `json:"pool_name" yaml:"pool_name"`
+	Application map[string]interface{} `json:"application_metadata" yaml:"application_metadata"`
+}
+
+// ListPools lists the current pools on the ceph cluster,
+// Additionally filtered for requested application name.
+func ListPools(application string) []CephPool {
+	args := []string{"osd", "pool", "ls", "detail", "--format", "json"}
+
+	output, err := processExec.RunCommand("ceph", args...)
+	if err != nil {
+		return []CephPool{}
+	}
+
+	logger.Infof("OSD: Pool list %s", output)
+
+	ret := []CephPool{}
+	err = json.Unmarshal([]byte(output), &ret)
+	if err != nil {
+		logger.Warnf("Failed to Unmarshal pool details: %v", err)
+		return []CephPool{}
+	}
+
+	// if no application filter provided.
+	if len(application) == 0 {
+		return ret
+	}
+
+	// filtered return slice of maximum needed size.
+	filterdRet := make([]CephPool, len(ret))
+	counter := 0
+	for _, cephPool := range ret {
+		_, ok := cephPool.Application[application]
+		if ok {
+			// append to the filter slice.
+			logger.Infof("OSD: Found match(%s) for application(%s)", cephPool.Name, application)
+			filterdRet[counter] = cephPool
+			counter++
+		}
+	}
+
+	logger.Infof("OSD: Filtered Pool list %v", filterdRet)
+	return filterdRet
+}

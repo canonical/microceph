@@ -106,8 +106,9 @@ func cmdRemoteDelete(state state.State, r *http.Request) response.Response {
 		return response.BadRequest(err)
 	}
 
-	// Note(utkarshbhatthere): TODO for when remote replication is implemented.
-	// [ ] add check for remote replication pairs before deleting remotes.
+	if isRemoteConfigured(remoteName) {
+		return response.SmartError(fmt.Errorf("cannot remote remote(%s), disable RBD mirroring", remoteName))
+	}
 
 	// Remove remote record.
 	err = database.DeleteRemoteDb(r.Context(), state, remoteName)
@@ -125,6 +126,11 @@ func cmdRemoteDelete(state state.State, r *http.Request) response.Response {
 }
 
 /*****************HELPER FUNCTIONS**************************/
+
+func isRemoteConfigured(remoteName string) bool {
+	// check remote configured for RBD mirroring
+	return ceph.IsRemoteConfiguredForRbdMirror(remoteName)
+}
 
 // renderConfAndKeyringFiles generates the $cluster.conf and $cluster.keyring files on the host.
 func renderConfAndKeyringFiles(remoteName string, localName string, configs map[string]string) error {

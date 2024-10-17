@@ -53,15 +53,29 @@ var GetPathConst = func() PathConst {
 	}
 }
 
+// File Modes
+const PermissionWorldNoAccess = 0750
+const PermissionOnlyUserAccess = 0700
+
 func GetPathFileMode() PathFileMode {
 	pathConsts := GetPathConst()
 	return PathFileMode{
-		pathConsts.ConfPath: 0750,
-		pathConsts.RunPath:  0700,
-		pathConsts.DataPath: 0700,
-		pathConsts.LogPath:  0700,
+		pathConsts.ConfPath: PermissionWorldNoAccess,
+		pathConsts.RunPath:  PermissionOnlyUserAccess,
+		pathConsts.DataPath: PermissionOnlyUserAccess,
+		pathConsts.LogPath:  PermissionOnlyUserAccess,
 	}
 }
 
 // Regexes
 const ClusterNameRegex = "^[a-z0-9]+$"
+
+// Replication Events
+const EventEnableReplication = "enable_replication"
+const EventDisableReplication = "disable_replication"
+const EventListReplication = "list_replication"
+const EventStatusReplication = "status_replication"
+const EventConfigureReplication = "configure_replication"
+
+// Rbd features
+var RbdJournalingEnableFeatureSet = [...]string{"exclusive-lock", "journaling"}
