@@ -11,7 +11,7 @@ Prerequisites
 --------------
 1. A primary and a secondary MicroCeph cluster, for example named "primary_cluster" and "secondary_cluster"
 2. primary_cluster has imported configurations from secondary_cluster and vice versa. refer to :doc:`import remote <./import-remote-cluster>`
-3. RBD remote replication is configured for atleast 1 rbd image. refer to :doc:`configure rbd replication <./configure-rbd-mirroring>`
+3. RBD remote replication is configured for at least 1 rbd image. refer to :doc:`configure rbd replication <./configure-rbd-mirroring>`
 
 Failover to a non-primary remote cluster
 -----------------------------------------
@@ -33,7 +33,7 @@ An operator can perform cluster wide promotion as follows:
 
    sudo microceph remote replication rbd promote --remote primary_cluster --yes-i-really-mean-it 
 
-Here, <remote> paramter helps microceph filter the resources to promote.
+Here, <remote> parameter helps microceph filter the resources to promote.
 Since promotion of secondary_cluster may cause a split-brain condition in future,
 it is necessary to pass --yes-i-really-mean-it flag.
 
