@@ -20,6 +20,7 @@ const LoopSpecId = "loop,"
 const DevicePathPrefix = "/dev/disk/by-id/"
 const RgwSockPattern = "client.radosgw.gateway"
 const CliForcePrompt = "If you understand the *RISK* and you're *ABSOLUTELY CERTAIN* that is what you want, pass --yes-i-really-mean-it."
+const ExperimentalConfigErrTemplate = "WARNING: An operation (%s) was performed on experimental config (%s)"
 
 // Path and filename constants
 
