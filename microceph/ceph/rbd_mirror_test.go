@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -92,4 +93,43 @@ func (ks *RbdMirrorSuite) TestPoolInfo() {
 	assert.Equal(ks.T(), resp.Mode, types.RbdResourcePool)
 	assert.Equal(ks.T(), resp.LocalSiteName, "magical")
 	assert.Equal(ks.T(), resp.Peers[0].RemoteName, "simple")
+}
+func (ks *RbdMirrorSuite) TestPromotePoolOnSecondary() {
+	r := mocks.NewRunner(ks.T())
+	output, _ := os.ReadFile("./test_assets/rbd_mirror_promote_secondary_failure.txt")
+
+	// mocks and expectations
+	r.On("RunCommand", []interface{}{
+		"rbd", "mirror", "pool", "promote", "pool"}...).Return("", fmt.Errorf("%s", string(output))).Once()
+	r.On("RunCommand", []interface{}{
+		"rbd", "mirror", "pool", "promote", "pool", "--force"}...).Return("ok", nil).Once()
+	processExec = r
+
+	// Test stardard promotion.
+	err := handlePoolPromotion("pool", false)
+	assert.ErrorContains(ks.T(), err, "If you understand the *RISK* and you're *ABSOLUTELY CERTAIN*")
+
+	err = handlePoolPromotion("pool", true)
+	assert.NoError(ks.T(), err)
+}
+
+func (ks *RbdMirrorSuite) TestDemotePoolOnSecondary() {
+	r := mocks.NewRunner(ks.T())
+
+	output, _ := os.ReadFile("./test_assets/rbd_mirror_verbose_pool_status.json")
+
+	// mocks and expectations
+	r.On("RunCommand", []interface{}{
+		"rbd", "mirror", "pool", "demote", "pool"}...).Return("ok", nil).Once()
+	r.On("RunCommand", []interface{}{
+		"rbd", "mirror", "pool", "status", "pool", "--verbose", "--format", "json"}...).Return(string(output), nil).Once()
+	r.On("RunCommand", []interface{}{
+		"rbd", "mirror", "image", "resync", "pool/image_one"}...).Return("ok", nil).Once()
+	r.On("RunCommand", []interface{}{
+		"rbd", "mirror", "image", "resync", "pool/image_two"}...).Return("ok", nil).Once()
+	processExec = r
+
+	// Test stardard promotion.
+	err := handlePoolDemotion("pool")
+	assert.NoError(ks.T(), err)
 }

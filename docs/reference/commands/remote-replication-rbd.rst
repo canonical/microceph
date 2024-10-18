@@ -96,3 +96,32 @@ Usage:
 
    --force   forcefully disable replication for rbd resource
 
+``promote``
+------------
+
+Promote local cluster to primary
+
+.. code-block:: none
+
+   microceph remote replication rbd promote [flags]
+
+.. code-block:: none
+
+   --remote         remote MicroCeph cluster name
+   --force          forcefully promote site to primary
+
+``demote``
+------------
+
+Demote local cluster to secondary
+
+Usage:
+
+.. code-block:: none
+
+   microceph remote replication rbd demote [flags]
+
+.. code-block:: none
+
+   --remote         remote MicroCeph cluster name
+

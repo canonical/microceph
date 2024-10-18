@@ -7,7 +7,6 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/constants"
 	microCli "github.com/canonical/microcluster/v2/client"
 )
 
@@ -18,8 +17,9 @@ func SendRemoteReplicationRequest(ctx context.Context, c *microCli.Client, data 
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
-	if data.GetWorkloadRequestType() == constants.EventListReplication {
-		// list request uses replication/$workload endpoint
+	// If no API object provided, create API request to the root endpoint.
+	if len(data.GetAPIObjectId()) == 0 {
+		// uses replication/$workload endpoint
 		err = c.Query(
 			queryCtx, data.GetAPIRequestType(), types.ExtendedPathPrefix,
 			api.NewURL().Path("ops", "replication", string(data.GetWorkloadType())),

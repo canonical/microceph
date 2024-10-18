@@ -1,0 +1,10 @@
+rbd: failed to 2024-10-09T11:00:10.804+0000 7f65a4bce6c0 -1 librbd::mirror::PromoteRequest: 0x7f6588018e20 handle_get_info: image is primary within a remote cluster or demotion is not propagated yet
+promote image image_one: (16) Device or resource busy
+2024-10-09T11:00:10.804+0000 7f65a4bce6c0 -1 librbd::io::AioCompletion: 0x7f65980061c0 fail: (16) Device or resource busy
+2024-10-09T11:00:10.808+0000 7f65a4bce6c0 -1 librbd::mirror::PromoteRequest: 0x7f658c008c50 handle_get_info: image is primary within a remote cluster or demotion is not propagated yet
+2024-10-09T11:00:10.808+0000 7f65a4bce6c0 -1 librbd::io::AioCompletion: 0x7f65980061c0 fail: (16) Device or resource busy
+rbd: failed to promote image image_two: (16) Device or resource busy
+2024-10-09T11:00:10.812+0000 7f65a53cf6c0 -1 librbd::mirror::PromoteRequest: 0x7f6588018e20 handle_get_info: image is primary within a remote cluster or demotion is not propagated yet
+2024-10-09T11:00:10.812+0000 7f65a53cf6c0 -1 librbd::io::AioCompletion: 0x7f658c0069e0 fail: (16) Device or resource busy
+rbd: failed to promote image image_three: (16) Device or resource busy
+Promoted 0 mirrored images
