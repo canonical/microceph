@@ -24,8 +24,8 @@ type CmdControl struct {
 }
 
 func main() {
-	// common flags.
-	commonCmd := CmdControl{Asker: cli.NewAsker(bufio.NewReader(os.Stdin))}
+	// common flags. Not using a logger at this time.
+	commonCmd := CmdControl{Asker: cli.NewAsker(bufio.NewReader(os.Stdin), nil)}
 
 	app := &cobra.Command{
 		Use:               "microceph",
