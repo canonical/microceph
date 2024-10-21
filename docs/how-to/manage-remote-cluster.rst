@@ -1,6 +1,6 @@
-==================================
-Import a remote MicroCeph cluster
-==================================
+=================================
+Manage a remote MicroCeph cluster
+=================================
 
 MicroCeph supports adding secondary MicroCeph clusters as remote clusters.
 This creates ``$remote.conf/$remote.keyring`` files in the snap's config directory
