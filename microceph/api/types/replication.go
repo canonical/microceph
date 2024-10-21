@@ -12,9 +12,15 @@ type ReplicationRequestType string
 const (
 	EnableReplicationRequest    ReplicationRequestType = "POST-" + constants.EventEnableReplication
 	ConfigureReplicationRequest ReplicationRequestType = "PUT-" + constants.EventConfigureReplication
-	DisableReplicationRequest   ReplicationRequestType = "DELETE-" + constants.EventDisableReplication
-	StatusReplicationRequest    ReplicationRequestType = "GET-" + constants.EventStatusReplication
-	ListReplicationRequest      ReplicationRequestType = "GET-" + constants.EventListReplication
+	PromoteReplicationRequest   ReplicationRequestType = "PUT-" + constants.EventPromoteReplication
+	DemoteReplicationRequest    ReplicationRequestType = "PUT-" + constants.EventDemoteReplication
+	// Delete Requests
+	DisableReplicationRequest ReplicationRequestType = "DELETE-" + constants.EventDisableReplication
+	// Get Requests
+	StatusReplicationRequest ReplicationRequestType = "GET-" + constants.EventStatusReplication
+	ListReplicationRequest   ReplicationRequestType = "GET-" + constants.EventListReplication
+	// Workload request (has no REST object)
+	WorkloadReplicationRequest ReplicationRequestType = ""
 )
 
 type CephWorkloadType string

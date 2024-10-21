@@ -248,7 +248,6 @@ func (rh *RbdReplicationHandler) StatusHandler(ctx context.Context, args ...any)
 		}
 
 		// Also add image info
-
 		resp = types.RbdPoolStatus{
 			Name:              rh.Request.SourcePool,
 			Type:              string(rh.PoolInfo.Mode),
@@ -300,6 +299,19 @@ func (rh *RbdReplicationHandler) StatusHandler(ctx context.Context, args ...any)
 	// pass response for API
 	*args[repArgResponse].(*string) = string(data)
 	return nil
+}
+
+// PromoteHandler promotes sequentially promote all secondary cluster pools to primary.
+func (rh *RbdReplicationHandler) PromoteHandler(ctx context.Context, args ...any) error {
+	return handleSiteOp(rh)
+}
+
+func (rh *RbdReplicationHandler) DemoteHandler(ctx context.Context, args ...any) error {
+	if !rh.Request.IsForceOp {
+		return fmt.Errorf("demotion may cause data loss on this cluster. %s", constants.CliForcePrompt)
+	}
+
+	return handleSiteOp(rh)
 }
 
 // ################### Helper Functions ###################
@@ -380,7 +392,7 @@ func handlePoolDisablement(rh *RbdReplicationHandler, localSite string, remoteSi
 
 	// If pool in pool mirroring mode, disable all images.
 	if rh.PoolInfo.Mode == types.RbdResourcePool {
-		err := DisableMirroringAllImagesInPool(rh.Request.SourcePool)
+		err := DisableAllMirroringImagesInPool(rh.Request.SourcePool)
 		if err != nil {
 			return err
 		}
@@ -410,24 +422,107 @@ func handleImageDisablement(rh *RbdReplicationHandler) error {
 	return configureImageMirroring(rh.Request)
 }
 
-// enableImageFeatures enables the list of rbd features on the requested resource.
-func enableRbdImageFeatures(poolName string, imageName string, features []string) error {
-	for _, feature := range features {
-		err := configureImageFeatures(poolName, imageName, "enable", feature)
-		if err != nil && !strings.Contains(err.Error(), "one or more requested features are already enabled") {
-			return err
+func isPeerRegisteredForMirroring(peers []RbdReplicationPeer, peerName string) bool {
+	for _, peer := range peers {
+		if peer.RemoteName == peerName {
+			return true
 		}
+	}
+	return false
+}
+
+// getMirrorPoolMetadata fetches pool status and info if mirroring is enabled on pool.
+func getMirrorPoolMetadata(poolName string) (RbdReplicationPoolStatus, RbdReplicationPoolInfo, error) {
+	poolStatus, err := GetRbdMirrorPoolStatus(poolName, "", "")
+	if err != nil {
+		logger.Warnf("REPRBD: failed to fetch status for %s pool: %v", poolName, err)
+		return RbdReplicationPoolStatus{}, RbdReplicationPoolInfo{}, err
+	}
+
+	poolInfo, err := GetRbdMirrorPoolInfo(poolName, "", "")
+	if err != nil {
+		logger.Warnf("REPRBD: failed to fetch status for %s pool: %v", poolName, err)
+		return RbdReplicationPoolStatus{}, RbdReplicationPoolInfo{}, err
+	}
+
+	return poolStatus, poolInfo, nil
+}
+
+// Promote local pool to primary.
+func handlePoolPromotion(poolName string, isforce bool) error {
+	err := promotePool(poolName, isforce, "", "")
+	if err != nil {
+		logger.Errorf("failed to promote pool (%s): %v", poolName, err)
+
+		if strings.Contains(err.Error(), constants.RbdMirrorNonPrimaryPromoteErr) {
+			return fmt.Errorf(constants.CliForcePrompt)
+		}
+
+		return err
 	}
 	return nil
 }
 
-// disableRbdImageFeatures disables the list of rbd features on the requested resource.
-func disableRbdImageFeatures(poolName string, imageName string, features []string) error {
-	for _, feature := range features {
-		err := configureImageFeatures(poolName, imageName, "disable", feature)
+// Demote local pool to secondary.
+func handlePoolDemotion(poolName string) error {
+	err := demotePool(poolName, "", "")
+	if err != nil {
+		logger.Errorf("failed to demote pool (%s): %v", poolName, err)
+		return err
+	}
+
+	err = ResyncAllMirroringImagesInPool(poolName)
+	if err != nil {
+		logger.Warnf("failed to trigger resync for pool %s: %v", poolName, err)
+		return err
+	}
+	return nil
+}
+
+func handleSiteOp(rh *RbdReplicationHandler) error {
+	// fetch all rbd pools.
+	pools := ListPools("rbd")
+
+	logger.Debugf("REPRBD: Scan active pools %v", pools)
+
+	// perform requested op per pool
+	for _, pool := range pools {
+		poolStatus, poolInfo, err := getMirrorPoolMetadata(pool.Name)
 		if err != nil {
-			return err
+			ne := fmt.Errorf("failed to fetch pool (%s) metadata: %v", pool.Name, err)
+			logger.Errorf(ne.Error())
+			return ne
+		}
+
+		if poolStatus.State != StateEnabledReplication {
+			// mirroring not enabled on rbd pool.
+			logger.Infof("REPRBD: pool(%s) is not an rbd mirror pool.", pool.Name)
+			continue
+		}
+
+		if !isPeerRegisteredForMirroring(poolInfo.Peers, rh.Request.RemoteName) {
+			logger.Infof("REPRBD: pool(%s) has no peer(%s), skipping", pool.Name, rh.Request.RemoteName)
+			continue
+		}
+
+		if rh.Request.RequestType == types.PromoteReplicationRequest {
+			err := handlePoolPromotion(pool.Name, rh.Request.IsForceOp)
+			if err != nil {
+				return err
+			}
+			// continue to next pool
+			continue
+		}
+
+		if rh.Request.RequestType == types.DemoteReplicationRequest {
+			err := handlePoolDemotion(pool.Name)
+			if err != nil {
+				return nil
+			}
+			// continue to next pool
+			continue
 		}
 	}
+
 	return nil
 }

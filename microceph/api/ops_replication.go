@@ -31,6 +31,7 @@ var opsReplicationCmd = rest.Endpoint{
 var opsReplicationWorkloadCmd = rest.Endpoint{
 	Path: "ops/replication/{wl}",
 	Get:  rest.EndpointAction{Handler: getOpsReplicationWorkload, ProxyTarget: false},
+	Put:  rest.EndpointAction{Handler: putOpsReplicationWorkload, ProxyTarget: false},
 }
 
 // CRUD Replication
@@ -45,6 +46,12 @@ var opsReplicationResourceCmd = rest.Endpoint{
 // getOpsReplicationWorkload handles list operation
 func getOpsReplicationWorkload(s state.State, r *http.Request) response.Response {
 	return cmdOpsReplication(s, r, types.ListReplicationRequest)
+}
+
+// putOpsReplicationWorkload handles site level (promote/demote) operation
+func putOpsReplicationWorkload(s state.State, r *http.Request) response.Response {
+	// either promote or demote (already encoded in request)
+	return cmdOpsReplication(s, r, types.WorkloadReplicationRequest)
 }
 
 // getOpsReplicationResource handles status operation for a certain resource.
@@ -104,6 +111,8 @@ func cmdOpsReplication(s state.State, r *http.Request, patchRequest types.Replic
 	} else {
 		return response.SmartError(fmt.Errorf("unknown workload %s, resource %s", wl, resource))
 	}
+
+	logger.Debugf("REPOPS: %s received for %s: %s", req.GetWorkloadRequestType(), wl, resource)
 
 	return handleReplicationRequest(s, r.Context(), req)
 }
