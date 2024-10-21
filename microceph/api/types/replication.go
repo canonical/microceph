@@ -19,6 +19,8 @@ const (
 	// Get Requests
 	StatusReplicationRequest ReplicationRequestType = "GET-" + constants.EventStatusReplication
 	ListReplicationRequest   ReplicationRequestType = "GET-" + constants.EventListReplication
+	// Workload request (has no REST object)
+	WorkloadReplicationRequest ReplicationRequestType = ""
 )
 
 type CephWorkloadType string

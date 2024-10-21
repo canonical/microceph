@@ -48,10 +48,10 @@ func getOpsReplicationWorkload(s state.State, r *http.Request) response.Response
 	return cmdOpsReplication(s, r, types.ListReplicationRequest)
 }
 
-// putOpsReplicationWorkload handles site level (promote/demoteR) operation
+// putOpsReplicationWorkload handles site level (promote/demote) operation
 func putOpsReplicationWorkload(s state.State, r *http.Request) response.Response {
 	// either promote or demote (already encoded in request)
-	return cmdOpsReplication(s, r, "")
+	return cmdOpsReplication(s, r, types.WorkloadReplicationRequest)
 }
 
 // getOpsReplicationResource handles status operation for a certain resource.
