@@ -1,3 +1,5 @@
 #!/bin/sh
 set -uex
-# remove the symlink to etc/ceph
+conf="${SNAP_DATA}/conf"
+# TODO: remove the symlink to etc/ceph
+rm $conf
