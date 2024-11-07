@@ -9,6 +9,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type cmdReplicationEnable struct {
+	common *CmdControl
+}
+
+func (c *cmdReplicationEnable) Command() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "enable",
+		Short: "Enable replication",
+	}
+
+	enableRbdCmd := cmdReplicationEnableRbd{common: c.common}
+	cmd.AddCommand(enableRbdCmd.Command())
+	return cmd
+}
+
 type cmdReplicationEnableRbd struct {
 	common         *CmdControl
 	remoteName     string
@@ -19,7 +34,7 @@ type cmdReplicationEnableRbd struct {
 
 func (c *cmdReplicationEnableRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "enable <resource>",
+		Use:   "rbd <resource>",
 		Short: "Enable replication for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}

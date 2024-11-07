@@ -9,6 +9,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type cmdReplicationConfigure struct {
+  common *CmdControl
+}
+
+func (c *cmdReplicationConfigure) Command() *cobra.Command {
+  cmd := &cobra.Command{
+    Use: "configure",
+    Short: "configure replication parameters",
+  }
+
+  configureRbdCmd := cmdReplicationConfigureRbd{common: c.common}
+  cmd.AddCommand(configureRbdCmd.Command())
+  
+  return cmd
+}
+
 type cmdReplicationConfigureRbd struct {
 	common   *CmdControl
 	schedule string
@@ -16,7 +32,7 @@ type cmdReplicationConfigureRbd struct {
 
 func (c *cmdReplicationConfigureRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "configure <resource>",
+		Use:   "rbd <resource>",
 		Short: "Configure replication parameters for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}

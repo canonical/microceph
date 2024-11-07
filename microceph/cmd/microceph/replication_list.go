@@ -15,6 +15,24 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+type cmdReplicationList struct {
+	common   *CmdControl
+	poolName string
+	json     bool
+}
+
+func (c *cmdReplicationList) Command() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List all resources configured for replication.",
+	}
+
+	listRbdCmd := cmdReplicationListRbd{common: c.common}
+	cmd.AddCommand(listRbdCmd.Command())
+
+	return cmd
+}
+
 type cmdReplicationListRbd struct {
 	common   *CmdControl
 	poolName string
@@ -23,8 +41,8 @@ type cmdReplicationListRbd struct {
 
 func (c *cmdReplicationListRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List all configured remotes replication pairs.",
+		Use:   "rbd",
+		Short: "List all rbd resources configured for replication.",
 		RunE:  c.Run,
 	}
 

@@ -9,13 +9,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type cmdReplicationPromoteRbd struct {
+type cmdReplicationPromote struct {
 	common     *CmdControl
 	remoteName string
 	isForce    bool
 }
 
-func (c *cmdReplicationPromoteRbd) Command() *cobra.Command {
+func (c *cmdReplicationPromote) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "promote",
 		Short: "Promote a non-primary cluster to primary status",
@@ -28,7 +28,7 @@ func (c *cmdReplicationPromoteRbd) Command() *cobra.Command {
 	return cmd
 }
 
-func (c *cmdReplicationPromoteRbd) Run(cmd *cobra.Command, args []string) error {
+func (c *cmdReplicationPromote) Run(cmd *cobra.Command, args []string) error {
 	if len(args) != 0 {
 		return cmd.Help()
 	}
@@ -43,7 +43,7 @@ func (c *cmdReplicationPromoteRbd) Run(cmd *cobra.Command, args []string) error 
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.PromoteReplicationRequest)
+	payload, err := c.preparePayload(types.PromoteReplicationRequest)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func (c *cmdReplicationPromoteRbd) Run(cmd *cobra.Command, args []string) error 
 	return nil
 }
 
-func (c *cmdReplicationPromoteRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
+func (c *cmdReplicationPromote) preparePayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
 	retReq := types.RbdReplicationRequest{
 		RemoteName:   c.remoteName,
 		RequestType:  requestType,

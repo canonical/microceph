@@ -16,6 +16,23 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+type cmdReplicationStatus struct {
+	common *CmdControl
+	json   bool
+}
+
+func (c *cmdReplicationStatus) Command() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show resource replication status",
+	}
+
+	statusRbdCmd := cmdReplicationStatusRbd{common: c.common}
+	cmd.AddCommand(statusRbdCmd.Command())
+
+	return cmd
+}
+
 type cmdReplicationStatusRbd struct {
 	common *CmdControl
 	json   bool

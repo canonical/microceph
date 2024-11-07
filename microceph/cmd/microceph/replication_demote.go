@@ -9,13 +9,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type cmdReplicationDemoteRbd struct {
+type cmdReplicationDemote struct {
 	common     *CmdControl
 	remoteName string
 	isForce    bool
 }
 
-func (c *cmdReplicationDemoteRbd) Command() *cobra.Command {
+func (c *cmdReplicationDemote) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "demote",
 		Short: "Demote a primary cluster to non-primary status",
@@ -28,7 +28,7 @@ func (c *cmdReplicationDemoteRbd) Command() *cobra.Command {
 	return cmd
 }
 
-func (c *cmdReplicationDemoteRbd) Run(cmd *cobra.Command, args []string) error {
+func (c *cmdReplicationDemote) Run(cmd *cobra.Command, args []string) error {
 	if len(args) != 0 {
 		return cmd.Help()
 	}
@@ -43,7 +43,7 @@ func (c *cmdReplicationDemoteRbd) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.DemoteReplicationRequest)
+	payload, err := c.preparePayload(types.DemoteReplicationRequest)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func (c *cmdReplicationDemoteRbd) Run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func (c *cmdReplicationDemoteRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
+func (c *cmdReplicationDemote) preparePayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
 	retReq := types.RbdReplicationRequest{
 		RemoteName:   c.remoteName,
 		RequestType:  requestType,

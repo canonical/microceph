@@ -9,6 +9,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type cmdReplicationDisable struct {
+	common *CmdControl
+}
+
+func (c *cmdReplicationDisable) Command() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "disable",
+		Short: "Disable replication",
+	}
+
+	disableRbdCmd := cmdReplicationDisableRbd{common: c.common}
+	cmd.AddCommand(disableRbdCmd.Command())
+
+	return cmd
+}
+
 type cmdReplicationDisableRbd struct {
 	common  *CmdControl
 	isForce bool
@@ -16,7 +32,7 @@ type cmdReplicationDisableRbd struct {
 
 func (c *cmdReplicationDisableRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "disable <resource>",
+		Use:   "rbd <resource>",
 		Short: "Disable replication for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}
