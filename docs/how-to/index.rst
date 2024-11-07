@@ -47,7 +47,7 @@ migrate services and more.
 Managing a remote cluster
 -------------------------
 
-Make MicroCeph aware of a remote cluster and configure remote replication for
+Make MicroCeph aware of a remote cluster and configure replication for
 RBD pools and images.
 
 .. toctree::

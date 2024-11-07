@@ -20,7 +20,7 @@ type cmdReplicationEnableRbd struct {
 func (c *cmdReplicationEnableRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "enable <resource>",
-		Short: "Enable remote replication for RBD resource (Pool or Image)",
+		Short: "Enable replication for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}
 

@@ -713,7 +713,7 @@ jobs:
       run : ~/actionutils.sh remote_configure_rbd_mirroring
 
     - name: Wait for RBD mirror to sync images
-      run : ~/actionutils.sh remote_wait_for_secondary_to_sync
+      run : ~/actionutils.sh remote_wait_for_secondary_to_sync 4
 
     - name: Verify RBD mirror
       run : ~/actionutils.sh remote_verify_rbd_mirroring

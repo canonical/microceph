@@ -11,7 +11,7 @@ type cmdReplicationRbd struct {
 func (c *cmdReplicationRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rbd",
-		Short: "manage RBD remote replication",
+		Short: "manage RBD replication to remote clusters",
 	}
 
 	// Replication enable command

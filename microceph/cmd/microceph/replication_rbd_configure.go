@@ -17,7 +17,7 @@ type cmdReplicationConfigureRbd struct {
 func (c *cmdReplicationConfigureRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "configure <resource>",
-		Short: "Configure remote replication parameters for RBD resource (Pool or Image)",
+		Short: "Configure replication parameters for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}
 

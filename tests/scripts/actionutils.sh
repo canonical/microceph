@@ -256,7 +256,8 @@ function remote_enable_rbd_mirror_daemon() {
 function remote_wait_for_secondary_to_sync() {
     set -eux
 
-    # wait till images are synchronised
+    # wait till $1 images are synchronised
+    local threshold="${1?missing}"
     count=0
     for index in {1..100}; do
         echo "Check run #$index"
@@ -264,9 +265,9 @@ function remote_wait_for_secondary_to_sync() {
         echo $list_output
         images=$(echo $list_output | jq .[].Images)
         echo $images
-        img_one_count=$(echo $images | grep -c "image_one" || true)
+        img_one_count=$(echo $images | grep -c "image_" || true)
         echo $img_one_count
-        if [[ $img_one_count -gt 0 ]] ; then
+        if [[ $img_one_count -eq $threshold ]] ; then
             break
         fi
 
@@ -275,7 +276,7 @@ function remote_wait_for_secondary_to_sync() {
         sleep 30
     done
 
-    if [count -eq 10] ; then
+    if [count -eq 100] ; then
         echo "replication sync check timed out"
         exit -1
     fi

@@ -6,7 +6,7 @@ MicroCeph supports adding secondary MicroCeph clusters as remote clusters.
 This creates ``$remote.conf/$remote.keyring`` files in the snap's config directory
 allowing users (and microceph) to perform ceph operations on the remote clusters.
 
-This also enables capabilities like remote replication by exposing required
+This also enables capabilities like replication to remote clusters by exposing required
 remote cluster details to MicroCeph and Ceph.
 
 Working with remote MicroCeph clusters
