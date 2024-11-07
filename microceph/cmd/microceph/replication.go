@@ -4,18 +4,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type cmdRemoteReplication struct {
+type cmdReplication struct {
 	common *CmdControl
 }
 
-func (c *cmdRemoteReplication) Command() *cobra.Command {
+func (c *cmdReplication) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "replication",
 		Short: "manage remote replication",
 	}
 
 	// Replication RBD commands
-	replicationRbdCmd := cmdRemoteReplicationRbd{common: c.common}
+	replicationRbdCmd := cmdReplicationRbd{common: c.common}
 	cmd.AddCommand(replicationRbdCmd.Command())
 
 	return cmd

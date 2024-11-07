@@ -9,23 +9,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type cmdRemoteReplicationDisableRbd struct {
-	common  *CmdControl
-	isForce bool
+type cmdReplicationConfigureRbd struct {
+	common   *CmdControl
+	schedule string
 }
 
-func (c *cmdRemoteReplicationDisableRbd) Command() *cobra.Command {
+func (c *cmdReplicationConfigureRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "disable <resource>",
-		Short: "Disable remote replication for RBD resource (Pool or Image)",
+		Use:   "configure <resource>",
+		Short: "Configure remote replication parameters for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}
 
-	cmd.Flags().BoolVar(&c.isForce, "force", false, "forcefully disable replication for rbd resource")
+	cmd.Flags().StringVar(&c.schedule, "schedule", "", "snapshot schedule in days, hours, or minutes using d, h, m suffix respectively")
 	return cmd
 }
 
-func (c *cmdRemoteReplicationDisableRbd) Run(cmd *cobra.Command, args []string) error {
+func (c *cmdReplicationConfigureRbd) Run(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return cmd.Help()
 	}
@@ -40,16 +40,20 @@ func (c *cmdRemoteReplicationDisableRbd) Run(cmd *cobra.Command, args []string) 
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.DisableReplicationRequest, args)
+	payload, err := c.prepareRbdPayload(types.ConfigureReplicationRequest, args)
 	if err != nil {
 		return err
 	}
 
-	_, err = client.SendRemoteReplicationRequest(context.Background(), cli, payload)
-	return err
+	_, err = client.SendReplicationRequest(context.Background(), cli, payload)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (c *cmdRemoteReplicationDisableRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
+func (c *cmdReplicationConfigureRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
 	pool, image, err := types.GetPoolAndImageFromResource(args[0])
 	if err != nil {
 		return types.RbdReplicationRequest{}, err
@@ -58,8 +62,8 @@ func (c *cmdRemoteReplicationDisableRbd) prepareRbdPayload(requestType types.Rep
 	retReq := types.RbdReplicationRequest{
 		SourcePool:   pool,
 		SourceImage:  image,
+		Schedule:     c.schedule,
 		RequestType:  requestType,
-		IsForceOp:    c.isForce,
 		ResourceType: types.GetRbdResourceType(pool, image),
 	}
 

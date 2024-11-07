@@ -15,13 +15,13 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-type cmdRemoteReplicationListRbd struct {
+type cmdReplicationListRbd struct {
 	common   *CmdControl
 	poolName string
 	json     bool
 }
 
-func (c *cmdRemoteReplicationListRbd) Command() *cobra.Command {
+func (c *cmdReplicationListRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all configured remotes replication pairs.",
@@ -33,7 +33,7 @@ func (c *cmdRemoteReplicationListRbd) Command() *cobra.Command {
 	return cmd
 }
 
-func (c *cmdRemoteReplicationListRbd) Run(cmd *cobra.Command, args []string) error {
+func (c *cmdReplicationListRbd) Run(cmd *cobra.Command, args []string) error {
 	if len(args) != 0 {
 		return cmd.Help()
 	}
@@ -53,7 +53,7 @@ func (c *cmdRemoteReplicationListRbd) Run(cmd *cobra.Command, args []string) err
 		return err
 	}
 
-	resp, err := client.SendRemoteReplicationRequest(context.Background(), cli, payload)
+	resp, err := client.SendReplicationRequest(context.Background(), cli, payload)
 	if err != nil {
 		return err
 	}
@@ -63,10 +63,10 @@ func (c *cmdRemoteReplicationListRbd) Run(cmd *cobra.Command, args []string) err
 		return nil
 	}
 
-	return printRemoteReplicationList(resp)
+	return printReplicationList(resp)
 }
 
-func (c *cmdRemoteReplicationListRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
+func (c *cmdReplicationListRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
 	// list fetches ALL POOLS if pool name is empty.
 	retReq := types.RbdReplicationRequest{
 		SourcePool:   c.poolName,
@@ -77,7 +77,7 @@ func (c *cmdRemoteReplicationListRbd) prepareRbdPayload(requestType types.Replic
 	return retReq, nil
 }
 
-func printRemoteReplicationList(response string) error {
+func printReplicationList(response string) error {
 	var resp types.RbdPoolList
 	err := json.Unmarshal([]byte(response), &resp)
 	if err != nil {
