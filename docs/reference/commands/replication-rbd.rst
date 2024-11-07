@@ -1,12 +1,12 @@
 =============================
-``replication rbd``
+``replication``
 =============================
 
 Usage:
 
 .. code-block:: none
 
-   microceph replication rbd [command]
+   microceph replication [command]
 
 Available commands:
 
@@ -37,7 +37,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph replication rbd enable <resource> [flags]
+   microceph replication enable rbd <resource> [flags]
 
 Flags:
 
@@ -57,7 +57,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph replication rbd status <resource> [flags]
+   microceph replication status rbd <resource> [flags]
 
 Flags:
 
@@ -74,7 +74,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph replication rbd list [flags]
+   microceph replication list rbd [flags]
 
 .. code-block:: none
 
@@ -90,7 +90,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph replication rbd disable <resource> [flags]
+   microceph replication disable rbd <resource> [flags]
 
 .. code-block:: none
 
@@ -103,7 +103,7 @@ Promote local cluster to primary
 
 .. code-block:: none
 
-   microceph replication rbd promote [flags]
+   microceph replication promote [flags]
 
 .. code-block:: none
 
@@ -119,7 +119,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph replication rbd demote [flags]
+   microceph replication demote [flags]
 
 .. code-block:: none
 

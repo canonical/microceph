@@ -24,7 +24,7 @@ func (c *cmdRemote) Command() *cobra.Command {
 	remoteRemoveCmd := cmdRemoteRemove{common: c.common}
 	cmd.AddCommand(remoteRemoveCmd.Command())
 
-  // Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
+	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
 	cmd.Args = cobra.NoArgs
 	cmd.Run = func(cmd *cobra.Command, args []string) { _ = cmd.Usage() }
 

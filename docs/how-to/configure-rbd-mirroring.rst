@@ -20,7 +20,7 @@ An operator can enable replication for a given rbd pool which is present at both
 
 .. code-block:: none
 
-   sudo microceph replication rbd enable pool_one --remote secondary_cluster 
+   sudo microceph replication enable rbd pool_one --remote secondary_cluster 
 
 Here, pool_one is the name of the rbd pool and it is expected to be present at both the clusters.
 
@@ -31,7 +31,7 @@ The above command will enable replication for ALL the images inside pool_one, it
 
 .. code-block:: none
 
-   sudo microceph replication rbd status pool_one
+   sudo microceph replication status rbd pool_one
    +------------------------+----------------------+
    |         SUMMARY        |        HEALTH        |
    +-------------+----------+-------------+--------+
@@ -55,7 +55,7 @@ An operator can list all the images that have replication (mirroring) enabled as
 
 .. code-block:: none
 
-   sudo microceph replication rbd list
+   sudo microceph replication list rbd
    +-----------+------------+------------+---------------------+
    | POOL NAME | IMAGE NAME | IS PRIMARY |  LAST LOCAL UPDATE  |
    +-----------+------------+------------+---------------------+
@@ -74,8 +74,8 @@ a whole pool ($pool) can be disabled in a single command as follows:
 Disable Pool replication:
 .. code-block:: none
 
-   sudo microceph replication rbd disable pool_one
-   sudo microceph replication rbd list
+   sudo microceph replication disable rbd pool_one
+   sudo microceph replication list rbd
    +-----------+------------+------------+---------------------+
    | POOL NAME | IMAGE NAME | IS PRIMARY |  LAST LOCAL UPDATE  |
    +-----------+------------+------------+---------------------+
@@ -86,8 +86,8 @@ Disable Pool replication:
 Disable Image replication:
 .. code-block:: none
 
-   sudo microceph replication rbd disable pool_two/image_two
-   sudo microceph replication rbd list
+   sudo microceph replication disable rbd pool_two/image_two
+   sudo microceph replication list rbd
    +-----------+------------+------------+---------------------+
    | POOL NAME | IMAGE NAME | IS PRIMARY |  LAST LOCAL UPDATE  |
    +-----------+------------+------------+---------------------+

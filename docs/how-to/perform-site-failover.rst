@@ -19,7 +19,7 @@ List all the resources on 'secondary_cluster' to check primary status.
 
 .. code-block:: none
 
-   sudo microceph replication rbd list
+   sudo microceph replication list rbd
    +-----------+------------+------------+---------------------+
    | POOL NAME | IMAGE NAME | IS PRIMARY | LAST LOCAL UPDATE   |
    +-----------+------------+------------+---------------------+
@@ -31,7 +31,7 @@ An operator can perform cluster wide promotion as follows:
 
 .. code-block:: none
 
-   sudo microceph replication rbd promote --remote primary_cluster --yes-i-really-mean-it 
+   sudo microceph replication promote --remote primary_cluster --yes-i-really-mean-it 
 
 Here, <remote> parameter helps microceph filter the resources to promote.
 Since promotion of secondary_cluster may cause a split-brain condition in future,
@@ -44,7 +44,7 @@ List all the resources on 'secondary_cluster' again to check primary status.
 
 .. code-block:: none
 
-   sudo microceph replication rbd status pool_one
+   sudo microceph replication status rbd pool_one
    +-----------+------------+------------+---------------------+
    | POOL NAME | IMAGE NAME | IS PRIMARY | LAST LOCAL UPDATE   |
    +-----------+------------+------------+---------------------+
@@ -68,14 +68,14 @@ Note: Demotion can cause data loss and hence can only be performed with the 'yes
 At primary_cluster (was primary before disaster), perform demotion.
 .. code-block:: none
 
-   sudo microceph replication rbd demote --remote secondary_cluster
+   sudo microceph replication demote --remote secondary_cluster
    failed to process demote_replication request for rbd: demotion may cause data loss on this cluster. If you
    understand the *RISK* and you're *ABSOLUTELY CERTAIN* that is what you want, pass --yes-i-really-mean-it.
 
 Now, again at the 'primary_cluster', perform demotion with --yes-i-really-mean-it flag.
 .. code-block:: none
 
-   sudo microceph replication rbd demote --remote secondary_cluster --yes-i-really-mean-it
+   sudo microceph replication demote --remote secondary_cluster --yes-i-really-mean-it
 
 Note: MicroCeph with demote the primary pools and will issue a resync for all the mirroring images, hence it may
 cause data loss at the old primary cluster.

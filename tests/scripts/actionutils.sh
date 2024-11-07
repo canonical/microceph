@@ -241,11 +241,11 @@ function remote_configure_rbd_mirroring() {
     lxc exec node-wrk1 -- sh -c "microceph.rbd create --size 512 pool_two/image_two"
 
     # enable mirroring on pool_one
-    lxc exec node-wrk0 -- sh -c "microceph replication rbd enable pool_one --remote siteb"
+    lxc exec node-wrk0 -- sh -c "microceph replication enable rbd pool_one --remote siteb"
 
     # enable mirroring on pool_two images
-    lxc exec node-wrk0 -- sh -c "microceph replication rbd enable pool_two/image_one --type journal --remote siteb"
-    lxc exec node-wrk0 -- sh -c "microceph replication rbd enable pool_two/image_two --type snapshot --remote siteb"
+    lxc exec node-wrk0 -- sh -c "microceph replication enable rbd pool_two/image_one --type journal --remote siteb"
+    lxc exec node-wrk0 -- sh -c "microceph replication enable rbd pool_two/image_two --type snapshot --remote siteb"
 }
 
 function remote_enable_rbd_mirror_daemon() {
@@ -261,13 +261,12 @@ function remote_wait_for_secondary_to_sync() {
     count=0
     for index in {1..100}; do
         echo "Check run #$index"
-        list_output=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd list --json")
+        list_output=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd --json")
         echo $list_output
-        images=$(echo $list_output | jq .[].Images)
-        echo $images
-        img_one_count=$(echo $images | grep -c "image_" || true)
-        echo $img_one_count
-        if [[ $img_one_count -eq $threshold ]] ; then
+        echo $list_output | jq .[].Images > images.json
+        jq length ./images.json > lengths
+        images=$(awk '{s+=$1} END {print s}' ./lengths)
+        if [[ $images -eq $threshold ]] ; then
             break
         fi
 
@@ -276,7 +275,7 @@ function remote_wait_for_secondary_to_sync() {
         sleep 30
     done
 
-    if [count -eq 100] ; then
+    if [$count -eq 100] ; then
         echo "replication sync check timed out"
         exit -1
     fi
@@ -285,32 +284,32 @@ function remote_wait_for_secondary_to_sync() {
 function remote_verify_rbd_mirroring() {
     set -eux
 
-    lxc exec node-wrk0 -- sh -c "sudo microceph replication rbd list"
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd list"
-    lxc exec node-wrk0 -- sh -c "sudo microceph replication rbd list" | grep "pool_one.*image_one"
-    lxc exec node-wrk1 -- sh -c "sudo microceph replication rbd list" | grep "pool_one.*image_two"
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd list" | grep "pool_two.*image_one"
-    lxc exec node-wrk3 -- sh -c "sudo microceph replication rbd list" | grep "pool_two.*image_two"
+    lxc exec node-wrk0 -- sh -c "sudo microceph replication list rbd"
+    lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd"
+    lxc exec node-wrk0 -- sh -c "sudo microceph replication list rbd" | grep "pool_one.*image_one"
+    lxc exec node-wrk1 -- sh -c "sudo microceph replication list rbd" | grep "pool_one.*image_two"
+    lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_one"
+    lxc exec node-wrk3 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_two"
 }
 
 function remote_failover_to_siteb() {
     set -eux
 
     # check images are secondary on siteb
-    img_count=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd list --json" | grep -c "\"is_primary\":false")
+    img_count=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd --json" | grep -c "\"is_primary\":false")
     if [[ $img_count -lt 1 ]]; then
         echo "Site B has $img_count secondary images"
         exit -1
     fi
 
     # promote site b to primary
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd promote --remote sitea --yes-i-really-mean-it"
+    lxc exec node-wrk2 -- sh -c "sudo microceph replication promote --remote sitea --yes-i-really-mean-it"
 
     # wait for the site images to show as primary
     is_primary_count=0
     for index in {1..100}; do
         echo "Check run #$index"
-        list_output=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd list --json")
+        list_output=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd --json")
         echo $list_output
         images=$(echo $list_output | jq .[].Images)
         echo $images
@@ -329,13 +328,13 @@ function remote_failover_to_siteb() {
     fi
 
     # resolve the split brain situation by demoting the old primary.
-    lxc exec node-wrk0 -- sh -c "sudo microceph replication rbd demote --remote siteb --yes-i-really-mean-it"
+    lxc exec node-wrk0 -- sh -c "sudo microceph replication demote --remote siteb --yes-i-really-mean-it"
 
     # wait for the site images to show as non-primary
     is_primary_count=0
     for index in {1..100}; do
         echo "Check run #$index"
-        list_output=$(lxc exec node-wrk0 -- sh -c "sudo microceph replication rbd list --json")
+        list_output=$(lxc exec node-wrk0 -- sh -c "sudo microceph replication list rbd --json")
         echo $list_output
         images=$(echo $list_output | jq .[].Images)
         echo $images
@@ -357,14 +356,14 @@ function remote_failover_to_siteb() {
 function remote_disable_rbd_mirroring() {
     set -eux
     # check disables fail for image mirroring pools with images currently being mirrored
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd disable pool_two 2>&1 || true"  | grep "in Image mirroring mode"
+    lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_two 2>&1 || true"  | grep "in Image mirroring mode"
     # disable both images in pool_two and then disable pool_two
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd disable pool_two/image_one"
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd disable pool_two/image_two"
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd disable pool_two"
+    lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_two/image_one"
+    lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_two/image_two"
+    lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_two"
 
     # disable pool one
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication rbd disable pool_one"
+    lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_one"
 }
 
 function remote_remove_and_verify() {
