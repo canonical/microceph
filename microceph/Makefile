@@ -43,6 +43,10 @@ endif
 .PHONY: update-gomod
 update-gomod:
 	go get -u ./...
+
+	# Static pins
+	go get github.com/canonical/lxd@stable-5.21 # Stay on v2 dqlite and LXD LTS client
+
 	go mod tidy
 	go get toolchain@none
 
