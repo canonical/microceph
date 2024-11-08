@@ -1,1 +1,25 @@
-install
+#!/bin/sh
+set -uex
+conf="${SNAP_DATA}/conf"
+mkdir -p -m 0755 "${conf}"
+cp "${SNAP}/share/metadata.yaml" "${conf}"
+
+# Check if we need to set the osd-release option.
+set +e
+trap 'exit 0' ERR
+
+versions=`microceph.ceph versions`
+ov_len=echo $versions | jq '.["overall"] | length'
+if [ $ov_len > 1 ]; then
+  echo "Not all nodes are running the same version"
+  exit 0
+fi
+
+osd_len=echo $versions | jq '.["osd"] | length'
+if [ $osd_len < 1 ]; then
+  echo "No osd versions found"
+  exit 0
+fi
+
+new_version=`microceph.ceph -v` | awk '{print $5}'
+microceph.ceph osd require-osd-release $new_version --yes-i-really-mean-it
