@@ -421,14 +421,14 @@ function upgrade_multinode() {
         lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
         sleep 5
         expect=3
-        for i in $(seq 1 8); do
+        for i in $(seq 1 20); do
             res=$( ( lxc exec $container -- sh -c "microceph.ceph osd status" | fgrep -c "exists,up" ) )
             if [[ $res -eq $expect ]] ; then
                 echo "Found ${expect} osd up"
                 break
             else
                 echo -n '.'
-                sleep 5
+                sleep 10
             fi
         done
         res=$( ( lxc exec $container -- sh -c "microceph.ceph osd status" | fgrep -c "exists,up" ) )
