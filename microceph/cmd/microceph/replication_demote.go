@@ -9,26 +9,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type cmdRemoteReplicationPromoteRbd struct {
+type cmdReplicationDemote struct {
 	common     *CmdControl
 	remoteName string
 	isForce    bool
 }
 
-func (c *cmdRemoteReplicationPromoteRbd) Command() *cobra.Command {
+func (c *cmdReplicationDemote) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "promote",
-		Short: "Promote a non-primary cluster to primary status",
+		Use:   "demote",
+		Short: "Demote a primary cluster to non-primary status",
 		RunE:  c.Run,
 	}
 
 	cmd.Flags().StringVar(&c.remoteName, "remote", "", "remote MicroCeph cluster name")
-	cmd.Flags().BoolVar(&c.isForce, "yes-i-really-mean-it", false, "forcefully promote site to primary")
+	cmd.Flags().BoolVar(&c.isForce, "yes-i-really-mean-it", false, "demote cluster irrespective of data loss")
 	cmd.MarkFlagRequired("remote")
 	return cmd
 }
 
-func (c *cmdRemoteReplicationPromoteRbd) Run(cmd *cobra.Command, args []string) error {
+func (c *cmdReplicationDemote) Run(cmd *cobra.Command, args []string) error {
 	if len(args) != 0 {
 		return cmd.Help()
 	}
@@ -43,12 +43,12 @@ func (c *cmdRemoteReplicationPromoteRbd) Run(cmd *cobra.Command, args []string) 
 		return err
 	}
 
-	payload, err := c.prepareRbdPayload(types.PromoteReplicationRequest)
+	payload, err := c.preparePayload(types.DemoteReplicationRequest)
 	if err != nil {
 		return err
 	}
 
-	_, err = client.SendRemoteReplicationRequest(context.Background(), cli, payload)
+	_, err = client.SendReplicationRequest(context.Background(), cli, payload)
 	if err != nil {
 		return err
 	}
@@ -56,13 +56,13 @@ func (c *cmdRemoteReplicationPromoteRbd) Run(cmd *cobra.Command, args []string) 
 	return nil
 }
 
-func (c *cmdRemoteReplicationPromoteRbd) prepareRbdPayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
+func (c *cmdReplicationDemote) preparePayload(requestType types.ReplicationRequestType) (types.RbdReplicationRequest, error) {
 	retReq := types.RbdReplicationRequest{
 		RemoteName:   c.remoteName,
 		RequestType:  requestType,
-		IsForceOp:    c.isForce,
 		ResourceType: types.RbdResourcePool,
 		SourcePool:   "",
+		IsForceOp:    c.isForce,
 	}
 
 	return retReq, nil

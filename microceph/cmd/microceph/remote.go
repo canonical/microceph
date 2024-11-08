@@ -23,9 +23,6 @@ func (c *cmdRemote) Command() *cobra.Command {
 	// Remove subcommand
 	remoteRemoveCmd := cmdRemoteRemove{common: c.common}
 	cmd.AddCommand(remoteRemoveCmd.Command())
-	// Replication subcommand
-	remoteReplicationCmd := cmdRemoteReplication{common: c.common}
-	cmd.AddCommand(remoteReplicationCmd.Command())
 
 	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
 	cmd.Args = cobra.NoArgs

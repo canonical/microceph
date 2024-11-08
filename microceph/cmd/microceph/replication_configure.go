@@ -9,15 +9,31 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type cmdRemoteReplicationConfigureRbd struct {
+type cmdReplicationConfigure struct {
+  common *CmdControl
+}
+
+func (c *cmdReplicationConfigure) Command() *cobra.Command {
+  cmd := &cobra.Command{
+    Use: "configure",
+    Short: "configure replication parameters",
+  }
+
+  configureRbdCmd := cmdReplicationConfigureRbd{common: c.common}
+  cmd.AddCommand(configureRbdCmd.Command())
+  
+  return cmd
+}
+
+type cmdReplicationConfigureRbd struct {
 	common   *CmdControl
 	schedule string
 }
 
-func (c *cmdRemoteReplicationConfigureRbd) Command() *cobra.Command {
+func (c *cmdReplicationConfigureRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "configure <resource>",
-		Short: "Configure remote replication parameters for RBD resource (Pool or Image)",
+		Use:   "rbd <resource>",
+		Short: "Configure replication parameters for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}
 
@@ -25,7 +41,7 @@ func (c *cmdRemoteReplicationConfigureRbd) Command() *cobra.Command {
 	return cmd
 }
 
-func (c *cmdRemoteReplicationConfigureRbd) Run(cmd *cobra.Command, args []string) error {
+func (c *cmdReplicationConfigureRbd) Run(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return cmd.Help()
 	}
@@ -45,7 +61,7 @@ func (c *cmdRemoteReplicationConfigureRbd) Run(cmd *cobra.Command, args []string
 		return err
 	}
 
-	_, err = client.SendRemoteReplicationRequest(context.Background(), cli, payload)
+	_, err = client.SendReplicationRequest(context.Background(), cli, payload)
 	if err != nil {
 		return err
 	}
@@ -53,7 +69,7 @@ func (c *cmdRemoteReplicationConfigureRbd) Run(cmd *cobra.Command, args []string
 	return nil
 }
 
-func (c *cmdRemoteReplicationConfigureRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
+func (c *cmdReplicationConfigureRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
 	pool, image, err := types.GetPoolAndImageFromResource(args[0])
 	if err != nil {
 		return types.RbdReplicationRequest{}, err

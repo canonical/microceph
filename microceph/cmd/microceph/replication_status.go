@@ -16,12 +16,29 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-type cmdRemoteReplicationStatusRbd struct {
+type cmdReplicationStatus struct {
 	common *CmdControl
 	json   bool
 }
 
-func (c *cmdRemoteReplicationStatusRbd) Command() *cobra.Command {
+func (c *cmdReplicationStatus) Command() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show resource replication status",
+	}
+
+	statusRbdCmd := cmdReplicationStatusRbd{common: c.common}
+	cmd.AddCommand(statusRbdCmd.Command())
+
+	return cmd
+}
+
+type cmdReplicationStatusRbd struct {
+	common *CmdControl
+	json   bool
+}
+
+func (c *cmdReplicationStatusRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status <resource>",
 		Short: "Show RBD resource (Pool or Image) replication status",
@@ -32,7 +49,7 @@ func (c *cmdRemoteReplicationStatusRbd) Command() *cobra.Command {
 	return cmd
 }
 
-func (c *cmdRemoteReplicationStatusRbd) Run(cmd *cobra.Command, args []string) error {
+func (c *cmdReplicationStatusRbd) Run(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return cmd.Help()
 	}
@@ -52,7 +69,7 @@ func (c *cmdRemoteReplicationStatusRbd) Run(cmd *cobra.Command, args []string) e
 		return err
 	}
 
-	resp, err := client.SendRemoteReplicationRequest(context.Background(), cli, payload)
+	resp, err := client.SendReplicationRequest(context.Background(), cli, payload)
 	if err != nil {
 		return err
 	}
@@ -62,10 +79,10 @@ func (c *cmdRemoteReplicationStatusRbd) Run(cmd *cobra.Command, args []string) e
 		return nil
 	}
 
-	return printRemoteReplicationStatusTable(payload.ResourceType, resp)
+	return printReplicationStatusTable(payload.ResourceType, resp)
 }
 
-func (c *cmdRemoteReplicationStatusRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
+func (c *cmdReplicationStatusRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
 	pool, image, err := types.GetPoolAndImageFromResource(args[0])
 	if err != nil {
 		return types.RbdReplicationRequest{}, err
@@ -81,7 +98,7 @@ func (c *cmdRemoteReplicationStatusRbd) prepareRbdPayload(requestType types.Repl
 	return retReq, nil
 }
 
-func printRemoteReplicationStatusTable(ResourceType types.RbdResourceType, response string) error {
+func printReplicationStatusTable(ResourceType types.RbdResourceType, response string) error {
 	var err error
 
 	// start table object

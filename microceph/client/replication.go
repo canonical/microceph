@@ -11,7 +11,7 @@ import (
 )
 
 // Sends replication request for creating, deleting, getting, and listing remote replication.
-func SendRemoteReplicationRequest(ctx context.Context, c *microCli.Client, data types.ReplicationRequest) (string, error) {
+func SendReplicationRequest(ctx context.Context, c *microCli.Client, data types.ReplicationRequest) (string, error) {
 	var err error
 	var resp string
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)

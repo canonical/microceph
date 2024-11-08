@@ -1,21 +1,21 @@
 =============================
-``remote replication rbd``
+``replication``
 =============================
 
 Usage:
 
 .. code-block:: none
 
-   microceph remote replication rbd [command]
+   microceph replication [command]
 
 Available commands:
 
 .. code-block:: none
 
-   configure   Configure remote replication parameters for RBD resource (Pool or Image)
-   disable     Disable remote replication for RBD resource (Pool or Image)
-   enable      Enable remote replication for RBD resource (Pool or Image)
-   list        List all configured remotes replication pairs.
+   configure   Configure replication parameters for RBD resource (Pool or Image)
+   disable     Disable replication for RBD resource (Pool or Image)
+   enable      Enable replication for RBD resource (Pool or Image)
+   list        List all configured replications.
    status      Show RBD resource (Pool or Image) replication status
 
 Global options:
@@ -31,13 +31,13 @@ Global options:
 ``enable``
 ----------
 
-Enable remote replication for RBD resource (Pool or Image)
+Enable replication for RBD resource (Pool or Image)
 
 Usage:
 
 .. code-block:: none
 
-   microceph remote replication rbd enable <resource> [flags]
+   microceph replication enable rbd <resource> [flags]
 
 Flags:
 
@@ -57,7 +57,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph remote replication rbd status <resource> [flags]
+   microceph replication status rbd <resource> [flags]
 
 Flags:
 
@@ -74,7 +74,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph remote replication rbd list [flags]
+   microceph replication list rbd [flags]
 
 .. code-block:: none
 
@@ -84,13 +84,13 @@ Usage:
 ``disable``
 ------------
 
-Disable remote replication for RBD resource (Pool or Image)
+Disable replication for RBD resource (Pool or Image)
 
 Usage:
 
 .. code-block:: none
 
-   microceph remote replication rbd disable <resource> [flags]
+   microceph replication disable rbd <resource> [flags]
 
 .. code-block:: none
 
@@ -103,7 +103,7 @@ Promote local cluster to primary
 
 .. code-block:: none
 
-   microceph remote replication rbd promote [flags]
+   microceph replication promote [flags]
 
 .. code-block:: none
 
@@ -119,7 +119,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph remote replication rbd demote [flags]
+   microceph replication demote [flags]
 
 .. code-block:: none
 

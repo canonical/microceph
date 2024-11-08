@@ -64,6 +64,10 @@ func main() {
 	var cmdRemote = cmdRemote{common: &commonCmd}
 	app.AddCommand(cmdRemote.Command())
 
+	// Replication command
+	var cmdReplication = cmdReplication{common: &commonCmd}
+	app.AddCommand(cmdReplication.Command())
+
 	var cmdDisk = cmdDisk{common: &commonCmd}
 	app.AddCommand(cmdDisk.Command())
 

@@ -1,5 +1,5 @@
 ==================================
-Configure RBD remote replication
+Configure RBD replication
 ==================================
 
 MicroCeph supports asynchronously replicating (mirroring) RBD images to a remote cluster.
@@ -13,25 +13,25 @@ Prerequisites
 3. Both clusters have 2 rbd pools: pool_one and pool_two.
 4. Both pools at cluster "primary_cluster" have 2 images each (image_one and image_two) while the pools at cluster "secondary_cluster" are empty.
 
-Enable RBD remote replication
+Enable RBD replication
 -------------------------------
 
 An operator can enable replication for a given rbd pool which is present at both clusters as
 
 .. code-block:: none
 
-   sudo microceph remote replication rbd enable pool_one --remote secondary_cluster 
+   sudo microceph replication enable rbd pool_one --remote secondary_cluster 
 
 Here, pool_one is the name of the rbd pool and it is expected to be present at both the clusters.
 
-Check RBD remote replication status
+Check RBD replication status
 ------------------------------------
 
 The above command will enable replication for ALL the images inside pool_one, it can be checked as:
 
 .. code-block:: none
 
-   sudo microceph remote replication rbd status pool_one
+   sudo microceph replication status rbd pool_one
    +------------------------+----------------------+
    |         SUMMARY        |        HEALTH        |
    +-------------+----------+-------------+--------+
@@ -48,14 +48,14 @@ The above command will enable replication for ALL the images inside pool_one, it
 
 The status shows that there are 2 images in the pool which are enabled for mirroring.
 
-Listing all RBD remote replication images
+Listing all RBD replication images
 ------------------------------------------
 
 An operator can list all the images that have replication (mirroring) enabled as follows:
 
 .. code-block:: none
 
-   sudo microceph remote replication rbd list
+   sudo microceph replication list rbd
    +-----------+------------+------------+---------------------+
    | POOL NAME | IMAGE NAME | IS PRIMARY |  LAST LOCAL UPDATE  |
    +-----------+------------+------------+---------------------+
@@ -65,7 +65,7 @@ An operator can list all the images that have replication (mirroring) enabled as
    | pool_two  | image_two  |    true    | 2024-10-08 13:55:07 |
    +-----------+------------+------------+---------------------+
 
-Disabling RBD remote replication
+Disabling RBD replication
 ---------------------------------
 
 In some cases, it may be desired to disable replication. A single image ($pool/$image) or 
@@ -74,8 +74,8 @@ a whole pool ($pool) can be disabled in a single command as follows:
 Disable Pool replication:
 .. code-block:: none
 
-   sudo microceph remote replication disable pool_one
-   sudo microceph remote replication list
+   sudo microceph replication disable rbd pool_one
+   sudo microceph replication list rbd
    +-----------+------------+------------+---------------------+
    | POOL NAME | IMAGE NAME | IS PRIMARY |  LAST LOCAL UPDATE  |
    +-----------+------------+------------+---------------------+
@@ -86,8 +86,8 @@ Disable Pool replication:
 Disable Image replication:
 .. code-block:: none
 
-   sudo microceph remote replication disable pool_two/image_two
-   sudo microceph remote replication list
+   sudo microceph replication disable rbd pool_two/image_two
+   sudo microceph replication list rbd
    +-----------+------------+------------+---------------------+
    | POOL NAME | IMAGE NAME | IS PRIMARY |  LAST LOCAL UPDATE  |
    +-----------+------------+------------+---------------------+

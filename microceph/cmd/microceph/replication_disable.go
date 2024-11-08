@@ -9,15 +9,31 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type cmdRemoteReplicationDisableRbd struct {
+type cmdReplicationDisable struct {
+	common *CmdControl
+}
+
+func (c *cmdReplicationDisable) Command() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "disable",
+		Short: "Disable replication",
+	}
+
+	disableRbdCmd := cmdReplicationDisableRbd{common: c.common}
+	cmd.AddCommand(disableRbdCmd.Command())
+
+	return cmd
+}
+
+type cmdReplicationDisableRbd struct {
 	common  *CmdControl
 	isForce bool
 }
 
-func (c *cmdRemoteReplicationDisableRbd) Command() *cobra.Command {
+func (c *cmdReplicationDisableRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "disable <resource>",
-		Short: "Disable remote replication for RBD resource (Pool or Image)",
+		Use:   "rbd <resource>",
+		Short: "Disable replication for RBD resource (Pool or Image)",
 		RunE:  c.Run,
 	}
 
@@ -25,7 +41,7 @@ func (c *cmdRemoteReplicationDisableRbd) Command() *cobra.Command {
 	return cmd
 }
 
-func (c *cmdRemoteReplicationDisableRbd) Run(cmd *cobra.Command, args []string) error {
+func (c *cmdReplicationDisableRbd) Run(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return cmd.Help()
 	}
@@ -45,11 +61,11 @@ func (c *cmdRemoteReplicationDisableRbd) Run(cmd *cobra.Command, args []string) 
 		return err
 	}
 
-	_, err = client.SendRemoteReplicationRequest(context.Background(), cli, payload)
+	_, err = client.SendReplicationRequest(context.Background(), cli, payload)
 	return err
 }
 
-func (c *cmdRemoteReplicationDisableRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
+func (c *cmdReplicationDisableRbd) prepareRbdPayload(requestType types.ReplicationRequestType, args []string) (types.RbdReplicationRequest, error) {
 	pool, image, err := types.GetPoolAndImageFromResource(args[0])
 	if err != nil {
 		return types.RbdReplicationRequest{}, err
