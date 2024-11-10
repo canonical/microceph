@@ -15,7 +15,7 @@
 
 * [💡 Philosophy](#-philosophy)
 * [🎯 Features](#-features)
-* [⚡️Quickstart](#%EF%B8%8Fquickstart)
+* [⚡️ Quickstart](#%EF%B8%8Fquickstart)
 * [📖 Documentation](#-documentation)
 * [💫 Project & community](#-project--community)
 * [📰 License](#-license)
@@ -35,23 +35,24 @@ easy as a [Snap][snap-microceph]!
 * Isolated from the host and upgrade-friendly
 * Built-in clustering so you don't have to worry about it!
 
-## ⚡️Quickstart
+## ⚡️ Quickstart
 
 The below commands will set you up with a testing environment on a single
 machine using file-backed OSDs - you'll need about 15 GiB of available space on
 your root drive:
 
-    sudo snap install microceph --channel quincy/edge
+    sudo snap install microceph 
     sudo snap refresh --hold microceph
     sudo microceph cluster bootstrap
     sudo microceph disk add loop,4G,3
-    sudo ceph status
 
-You're done!
+You're done! Check Ceph status:
+
+    sudo ceph status
 
 You can remove everything cleanly with:
 
-    sudo snap remove microceph
+    sudo snap remove microceph --purge
 
 ## 📖 Documentation
 
