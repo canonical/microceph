@@ -60,5 +60,8 @@ jobs:
     - name: Verify config
       run: ~/actionutils.sh test_ceph_conf
 
+    - name: Verify health
+      run:  ~/actionutils.sh headexec verify_health
+
     - name: Exercise RGW again
       run: ~/actionutils.sh headexec testrgw
