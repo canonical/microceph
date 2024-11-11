@@ -65,3 +65,7 @@ jobs:
 
     - name: Exercise RGW again
       run: ~/actionutils.sh headexec testrgw
+
+    - name: Setup upterm session
+      if: ${{ failure() && runner.debug }}
+      uses: lhotari/action-upterm@v1
