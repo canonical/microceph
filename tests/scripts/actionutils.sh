@@ -510,6 +510,19 @@ function verify_bootstrap_configs() {
     fi
 }
 
+function verify_health() {
+    for i in {0..9}; do
+        if [ "$( sudo microceph.ceph health )" = "HEALTH_OK" ] ; then
+            echo "HEALTH_OK found"
+            return
+        fi
+        sleep 3
+    done
+    echo "Cluster did not reach HEALTH_OK"
+    sudo microceph.ceph -s
+    exit 1
+}
+
 function bootstrap_head() {
     set -ex
 
