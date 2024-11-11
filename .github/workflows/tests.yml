@@ -607,6 +607,9 @@ jobs:
     - name: Wait until 3 OSDs are up
       run:  ~/actionutils.sh headexec wait_for_osds 3
 
+    - name: Verify health
+      run:  ~/actionutils.sh headexec verify_health
+
     - name: Exercise RGW again
       run: ~/actionutils.sh headexec testrgw
 
@@ -615,6 +618,76 @@ jobs:
         set -uex
         lxc exec node-wrk0 -- sh -c "sudo microceph status"
 
+
+  upgrade-reef-tests:
+    name: Test reef upgrades
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install dependencies
+      run: ~/actionutils.sh setup_lxd
+
+    - name: Create containers with loopback devices
+      run: ~/actionutils.sh create_containers public
+
+    - name: Install reef stable from store
+      run: ~/actionutils.sh install_store reef/stable
+
+    - name: Bootstrap
+      run: ~/actionutils.sh bootstrap_head
+
+    - name: Setup cluster
+      run: ~/actionutils.sh cluster_nodes
+
+    - name: Add 3 OSDs
+      run: |
+        for c in node-wrk0 node-wrk1 node-wrk2 ; do
+          ~/actionutils.sh add_osd_to_node $c
+        done
+        ~/actionutils.sh headexec wait_for_osds 3
+
+    - name: Enable RGW
+      run: ~/actionutils.sh headexec enable_rgw
+
+    - name: Exercise RGW
+      run: ~/actionutils.sh headexec testrgw
+
+    - name: Install local build
+      run: ~/actionutils.sh upgrade_multinode
+
+    - name: Wait until 3 OSDs are up
+      run:  ~/actionutils.sh headexec wait_for_osds 3
+
+    - name: Verify health
+      run:  ~/actionutils.sh headexec verify_health
+
+    - name: Exercise RGW again
+      run: ~/actionutils.sh headexec testrgw
+
+    - name: Exercise microceph status
+      run: |
+        set -uex
+        lxc exec node-wrk0 -- sh -c "sudo microceph status"
 
   cluster-tests:
     name: Test MicroCeph Cluster features.
