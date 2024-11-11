@@ -181,6 +181,7 @@ parts:
       - coreutils
       - uuid-runtime
       - python3-setuptools
+      - python3-packaging
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
