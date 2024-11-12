@@ -6,7 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/Rican7/retry"
+	"github.com/Rican7/retry/backoff"
+	"github.com/Rican7/retry/strategy"
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/constants"
@@ -200,14 +204,21 @@ func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string
 	// Disable pool mirroring on the local cluster.
 	err = configurePoolMirroring(pool, types.RbdResourceDisabled, "", "")
 	if err != nil {
-		logger.Errorf("REPRBD: %s", err.Error())
+		logger.Errorf("REPRBD: failed to disable the primary pool mirroring %s", err.Error())
 		return err
 	}
 
-	// Disable pool mirroring on the remote cluster.
-	err = configurePoolMirroring(pool, types.RbdResourceDisabled, localName, remoteName)
+	err = retry.Retry(func(i uint) error {
+		// Disable pool mirroring on the remote cluster.
+		err = configurePoolMirroring(pool, types.RbdResourceDisabled, localName, remoteName)
+		if err != nil {
+			logger.Errorf("REPRBD: attempt %d: %s", i, err.Error())
+			return err
+		}
+		return nil
+	}, strategy.Delay(5), strategy.Limit(10), strategy.Backoff(backoff.Linear(5*time.Second)))
 	if err != nil {
-		logger.Errorf("REPRBD: %s", err.Error())
+		logger.Errorf("REPRBD: failed to disable the secondary pool mirroring: %s", err.Error())
 		return err
 	}
 
