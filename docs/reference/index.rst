@@ -13,6 +13,11 @@ MicroCeph has a command line interface that can be used to manage a client and t
 Each command is documented separately, or use the help argument from the command line to learn more about the commands while working with MicroCeph,
 with ``microceph help``.
 
+.. toctree::
+   :maxdepth: 1
+
+   commands/index
+
 
 Release Notes
 -------------
@@ -22,5 +27,4 @@ The release notes section provides details on major MicroCeph releases.
 .. toctree::
    :maxdepth: 1
 
-   commands/index
    release-notes
