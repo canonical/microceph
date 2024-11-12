@@ -12,10 +12,7 @@ confinement: strict
 
 package-repositories:
   - type: apt
-    url: http://archive.ubuntu.com/ubuntu/
-    suites: [noble-proposed]
-    components: [main, universe, restricted, multiverse]
-    key-id: F6ECB3762474EDA9D21B7022871920D1991BC93C
+    ppa: lmlogiudice/ceph-1920-qatsys
     priority: always
 
 plugs:
