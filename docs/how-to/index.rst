@@ -60,13 +60,12 @@ RBD pools and images.
 Upgrading your cluster
 ----------------------
 
-Follow these steps carefully to ensure a smooth transition from v.17.2.x (Quincy)
-to v.18.2.x (Reef)
+Follow these steps carefully to perform a major upgrade.
 
 .. toctree::
    :maxdepth: 1
 
-   reef-upgrade
+   major-upgrade
 
    
 Consuming cluster storage
