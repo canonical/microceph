@@ -511,7 +511,7 @@ function verify_bootstrap_configs() {
 }
 
 function verify_health() {
-    for i in {0..9}; do
+    for i in {0..100}; do
         if [ "$( sudo microceph.ceph health )" = "HEALTH_OK" ] ; then
             echo "HEALTH_OK found"
             return
