@@ -85,7 +85,7 @@ func (s *startSuite) TestMultipleVersionsPresent() {
 }`
 
 	r.On("RunCommand", "ceph", "-v").Return(version, nil).Once()
-	r.On("RunCommand", "ceph", "versions").Return(versionsJson, nil).Times(3)
+	r.On("RunCommand", "ceph", "versions").Return(versionsJson, nil).Times(10)
 	processExec = r
 
 	err := PostRefresh()

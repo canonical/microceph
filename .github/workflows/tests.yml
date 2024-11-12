@@ -689,6 +689,10 @@ jobs:
         set -uex
         lxc exec node-wrk0 -- sh -c "sudo microceph status"
 
+    - name: Setup upterm session
+      if: ${{ failure() && runner.debug }}
+      uses: lhotari/action-upterm@v1
+
   cluster-tests:
     name: Test MicroCeph Cluster features.
     runs-on: ubuntu-22.04
