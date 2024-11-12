@@ -1,16 +1,39 @@
 ===============
-Upgrade to Reef
+Major Upgrades
 ===============
 
 
 Overview
 --------
 
-This guide provides step-by-step instructions on how to upgrade your MicroCeph cluster from the Quincy release to the Reef release. Follow these steps carefully to prevent to ensure a smooth transition.
+This guide provides step-by-step instructions on how to upgrade your MicroCeph cluster to a new major release. 
+
+Follow these steps carefully to prevent to ensure a smooth transition.
+
+In the code examples below an upgrade to the Squid stable
+release is shown. The procedure should apply to any major release
+upgrade in a similar way however.
+
 
 
 Procedure
 ---------
+
+
+Prerequisites
+~~~~~~~~~~~~~
+
+Firstly, before initiating the upgrade, ensure that the cluster is healthy. Use the below command to check the cluster health:
+
+.. code-block:: none
+
+    sudo ceph -s
+
+**Note**: Do not start the upgrade if the cluster is unhealthy.
+
+
+Secondly, review the :doc:`release notes </reference/release-notes>` to check for any version-specific information.
+
 
 
 Optional but Recommended: Preparation Steps
@@ -26,16 +49,6 @@ Carry out these precautionary steps before initiating the upgrade:
 
    sudo ceph osd set noout
 
-Checking Ceph Health
-~~~~~~~~~~~~~~~~~~~~
-
-Before initiating the upgrade, ensure that the cluster is healthy. Use the below command to check the cluster health:
-
-.. code-block:: none
-
-    sudo ceph -s
-
-**Note**: Do not start the upgrade if the cluster is unhealthy.
 
 Upgrading Each Cluster Node
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -44,7 +57,7 @@ If your cluster is healthy, proceed with the upgrade by refreshing the snap on e
 
 .. code-block:: none
    
-   sudo snap refresh microceph --channel reef/stable
+   sudo snap refresh microceph --channel squid/stable
 
 Be sure to perform the refresh on every node in the cluster.
 
@@ -68,5 +81,6 @@ If you had previously set noout, unset it with this command:
    sudo ceph osd unset noout
 
 
-You have now successfully upgraded to the Reef Release.
+You have now successfully upgraded your Ceph cluster.
+
 
