@@ -40,12 +40,12 @@ func getCurrentVersion() (string, error) {
 }
 
 // checkVersions checks if all Ceph services are running the same version
-// retry up to 3 times if multiple versions are detected to allow for upgrades to complete as they are performed
+// retry up to 10 times if multiple versions are detected to allow for upgrades to complete as they are performed
 // concurrently
 func checkVersions() (bool, error) {
 	const (
-		maxRetries = 3
-		retryDelay = 5 * time.Second
+		maxRetries = 10
+		retryDelay = 10 * time.Second
 	)
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -202,6 +202,7 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 	}()
 
 	go func() {
+		time.Sleep(10 * time.Second) // wait for the mons to converge
 		err := PostRefresh()
 		if err != nil {
 			logger.Errorf("PostRefresh failed: %v", err)
