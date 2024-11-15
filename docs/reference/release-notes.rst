@@ -24,6 +24,18 @@ Highlights
 -  Updated dependencies, based off of Ubuntu 24.04
 -  Various fixes and documentation improvements
 
+
+Important Changes
+-----------------
+
+For added security, MicroCeph now checks hostnames upon cluster
+joining. This means that the name used when running `microceph cluster
+add <name>` must match the hostname of the node where `microceph
+cluster join` is being run. If the hostname does not match joining the
+node will fail, and log a message `Joining server certificate SAN does
+not contain join token name` to syslog.
+
+
 Known Issues
 ------------
 
