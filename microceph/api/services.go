@@ -36,6 +36,7 @@ func cmdServicesGet(s state.State, r *http.Request) response.Response {
 // Service endpoints.
 var monServiceCmd = rest.Endpoint{
 	Path:   "services/mon",
+	Get:    rest.EndpointAction{Handler: cmdMonGet, ProxyTarget: true},
 	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
 	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
 }
@@ -58,6 +59,21 @@ var rbdMirroServiceCmd = rest.Endpoint{
 	Path:   "services/rbd-mirror",
 	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
 	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
+}
+
+// cmdMonGet returns the mon service status.
+func cmdMonGet(s state.State, r *http.Request) response.Response {
+
+	// fetch monitor addresses
+	monitors, err := ceph.GetMonitorAddresses(r.Context(), interfaces.CephState{State: s})
+	if err != nil {
+		return response.InternalError(err)
+	}
+
+	monStatus := types.MonitorStatus{Addresses: monitors}
+
+	return response.SyncResponse(true, monStatus)
+
 }
 
 func cmdEnableServicePut(s state.State, r *http.Request) response.Response {

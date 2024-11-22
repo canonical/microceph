@@ -414,6 +414,18 @@ function install_store() {
     done
 }
 
+function install_hurl() {
+    VERSION=5.0.1
+    downloadurl="https://github.com/Orange-OpenSource/hurl/releases/download/$VERSION/hurl_${VERSION}_amd64.deb"
+    curl --location --remote-name $downloadurl
+    sudo dpkg -i ./hurl_${VERSION}_amd64.deb
+}
+
+function hurl() {
+    echo "Running hurl $@"
+    sudo hurl --unix-socket /var/snap/microceph/common/state/control.socket --test /var/snap/microceph/common/state/control.socket "$@"
+}
+
 function upgrade_multinode() {
     # Refresh to local version, checking health
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do

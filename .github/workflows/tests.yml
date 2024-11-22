@@ -243,6 +243,11 @@ jobs:
         cat /var/snap/microceph/current/conf/ceph.conf
         fgrep -q "[${MON_IP}]" /var/snap/microceph/current/conf/ceph.conf
 
+    - name: API Testing
+      run: |
+        ~/actionutils.sh install_hurl
+        ~/actionutils.sh hurl tests/hurl/services-mon.hurl
+
   multi-node-tests:
     name: Multi node testing
     runs-on: ubuntu-22.04

@@ -26,3 +26,9 @@ type RGWService struct {
 	Port    int  `json:"port" yaml:"port"`
 	Enabled bool `json:"enabled" yaml:"enabled"`
 }
+
+// MonitorStatus holds the status of all monitors
+// for now, this is just the addresses of the monitors
+type MonitorStatus struct {
+	Addresses []string `json:"addresses" yaml:"addresses"`
+}
