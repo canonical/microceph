@@ -423,7 +423,7 @@ function install_hurl() {
 
 function hurl() {
     echo "Running hurl $@"
-    sudo hurl --unix-socket --test /var/snap/microceph/common/state/control.socket "$@"
+    sudo hurl --unix-socket /var/snap/microceph/common/state/control.socket --test /var/snap/microceph/common/state/control.socket "$@"
 }
 
 function upgrade_multinode() {
