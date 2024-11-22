@@ -36,7 +36,7 @@ func (rgw *RgwServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 		return fmt.Errorf("failed to get config db: %w", err)
 	}
 
-	return EnableRGW(s, rgw.Port, rgw.SSLPort, rgw.SSLCertificate, rgw.SSLPrivateKey, getMonitorAddresses(config))
+	return EnableRGW(s, rgw.Port, rgw.SSLPort, rgw.SSLCertificate, rgw.SSLPrivateKey, getMonitorsFromConfig(config))
 }
 
 func (rgw *RgwServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {

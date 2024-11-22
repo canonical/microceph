@@ -345,7 +345,7 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	// REF: https://docs.ceph.com/en/quincy/rados/configuration/network-config-ref/#ceph-daemons
 	// The mon host configuration option only needs to be sufficiently up to date such that a
 	// client can reach one monitor that is currently online.
-	monitorAddresses := getMonitorAddresses(config)
+	monitorAddresses := getMonitorsFromConfig(config)
 
 	// backward compat: if no mon hosts found, get them from the node addresses but don't
 	// insert into db, as the join logic will take care of that.
@@ -435,8 +435,29 @@ func GetConfigDb(ctx context.Context, s interfaces.StateInterface) (map[string]s
 	return config, nil
 }
 
-// getMonitorAddresses scans a provided config key/value map and returns a list of mon hosts found.
-func getMonitorAddresses(configs map[string]string) []string {
+// GetMonitorAddresses retrieves the monitor addresses from the database.
+func GetMonitorAddresses(ctx context.Context, s interfaces.StateInterface) ([]string, error) {
+	config, err := GetConfigDb(ctx, s)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get config db: %w", err)
+	}
+
+	monitorAddresses := getMonitorsFromConfig(config)
+
+	if len(monitorAddresses) == 0 {
+		monitorAddresses, err = backwardCompatMonitors(ctx, s)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get monitor addresses: %w", err)
+		}
+	}
+
+	// Ensure that IPv6 addresses have square brackets around them (if IPv6 is used).
+	monitorAddresses = formatIPv6(monitorAddresses)
+	return monitorAddresses, nil
+}
+
+// getMonitorsFromConfig scans a provided config key/value map and returns a list of mon hosts found.
+func getMonitorsFromConfig(configs map[string]string) []string {
 	monHosts := []string{}
 	for k, v := range configs {
 		if strings.Contains(k, "mon.host.") {
