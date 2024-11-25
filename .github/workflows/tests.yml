@@ -250,7 +250,7 @@ jobs:
 
   multi-node-tests:
     name: Multi node testing
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: build-microceph
     steps:
     - name: Download snap
@@ -379,7 +379,7 @@ jobs:
 
   multi-node-tests-with-custom-microceph-ip:
     name: Multi node testing with custom microceph IP
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: build-microceph
     steps:
     - name: Download snap
@@ -436,7 +436,7 @@ jobs:
 
   loop-file-tests:
     name: Test with loopback file OSDs
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: build-microceph
     steps:
     - name: Download snap
@@ -489,7 +489,7 @@ jobs:
 
   wal-db-tests:
     name: Test WAL/DB device usage
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: build-microceph
     steps:
     - name: Download snap
@@ -555,7 +555,7 @@ jobs:
 
   upgrade-quincy-tests:
     name: Test quincy upgrades
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: build-microceph
     steps:
     - name: Download snap
@@ -700,7 +700,7 @@ jobs:
 
   cluster-tests:
     name: Test MicroCeph Cluster features.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: build-microceph
     steps:
     - name: Download snap
