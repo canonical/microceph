@@ -22,7 +22,7 @@ Before getting started, make sure that you have these minimum requirements ready
 
 .. LINKS
 .. _MicroCeph snap: https://snapcraft.io/microceph 
-.. _here: https://ubuntu.com/about/release-cycle#ubuntu
+.. _here: https://ubuntu.com/about/release-cycle
 
 - 2 CPU cores
 - 4G memory
@@ -72,7 +72,7 @@ Initialise your cluster
      Services: mds, mgr, mon
         Disks: 0
 
-Your cluster deployment summary will include your node's hostname and IP adress, along with information about the
+Your cluster deployment summary will include your node's hostname and IP address, along with information about the
 services running and storage available. Notice that we have a healthy cluster with one node and three services running, but no storage allocated yet.
 
 Add storage

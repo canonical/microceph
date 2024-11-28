@@ -8,7 +8,7 @@ config
 IPv
 cfg
 CFG
-
+LTS
 MicroCeph
 microceph
 OSDs
@@ -23,6 +23,7 @@ mees
 loopback
 lsblk
 hostnames
+localhost
 OSD
 keyring
 keyrings
