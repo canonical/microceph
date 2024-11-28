@@ -24,7 +24,7 @@ In this documentation
 
 ..  grid:: 1 2 1 2
 
-   ..  grid-item:: :doc:`Tutorial <tutorial/get-started>`
+   ..  grid-item:: :doc:`Tutorial <tutorial/index>`
 
       **A hands-on introduction** to MicroCeph for new users
 
