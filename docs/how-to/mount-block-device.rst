@@ -100,13 +100,14 @@ Map the RBD image on client:
 
 .. code-block:: none
 
-    $ sudo rbd map bd_foo \
+    $ sudo rbd map \
+        --image bd_foo \
         --name client.admin \
         -m 192.168.29.152 \
         -k /var/snap/microceph/current/conf/ceph.keyring \
         -c /var/snap/microceph/current/conf/ceph.conf \
-        -p block_pool
-    /dev/rbd0
+        -p block_pool \
+        /dev/rbd0
 
     $ sudo mkfs.ext4 -m0 /dev/rbd0
     mke2fs 1.46.5 (30-Dec-2021)
