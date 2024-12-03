@@ -23,7 +23,6 @@ mees
 loopback
 lsblk
 hostnames
-localhost
 OSD
 keyring
 keyrings
