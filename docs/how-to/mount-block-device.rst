@@ -49,7 +49,7 @@ Create a pool for RBD images:
     1 .mgr
     2 block_pool
 
-    $ rbd pool init block_pool
+    $ sudo rbd pool init block_pool
 
 Create RBD image:
 
