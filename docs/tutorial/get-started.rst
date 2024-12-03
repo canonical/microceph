@@ -68,11 +68,11 @@ This process takes 3 to 5 seconds.
 .. terminal::
 
     MicroCeph deployment summary:
-    - skoech (192.168.100.62)
+    - ubuntu (10.246.114.49)
      Services: mds, mgr, mon
         Disks: 0
 
-Your cluster deployment summary will include your node's hostname and IP address, along with information about the
+Your cluster deployment summary will include your node's hostname, i.e. ``ubuntu`` and IP address, along with information about the
 services running and storage available. Notice that we have a healthy cluster with one node and three services running, but no storage allocated yet.
 
 Add storage
@@ -105,7 +105,7 @@ Success! You have added three OSDs with 4GiB storage to your node.
 
 .. terminal::
     MicroCeph deployment summary:
-    - skoech (192.168.100.62)
+    - ubuntu (10.246.114.49)
     Services: mds, mgr, mon, osd
     Disks: 3
 
@@ -141,7 +141,7 @@ Another status check will show the ``rgw`` service reflected in the status outpu
 .. terminal::
 
     MicroCeph deployment summary:
-    - skoech (192.168.100.62)
+    - ubuntu (10.246.114.49)
     Services: mds, mgr, mon, rgw, osd
     Disks: 3
 
@@ -280,7 +280,7 @@ Before attempting to consume the object storage in the cluster, validate that yo
 .. terminal::
 
     MicroCeph deployment summary:
-    - skoech (192.168.100.62)
+    - ubuntu (10.246.114.49)
     Services: mds, mgr, mon, rgw, osd
     Disks: 3
 
@@ -288,7 +288,7 @@ Before attempting to consume the object storage in the cluster, validate that yo
 
 .. code-block:: none
     
-    curl http://192.168.100.62
+    curl http://10.246.114.49
 
 .. terminal::
 
@@ -322,7 +322,7 @@ Our bucket is successfully created.
 
     upload: 'image.jpg' -> 's3://mybucket/image.jpg'  [1 of 1]
     66565 of 66565   100% in    0s     4.52 MB/s  done
-    Public URL of the object is: http://skoech/mybucket/image.jpg
+    Public URL of the object is: http://ubuntu/mybucket/image.jpg
 
 Great work! You have stored your image in a publicly visible S3 bucket. You may now click on the public object URL given in the output 
 to view it in your browser.
