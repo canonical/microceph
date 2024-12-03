@@ -1,46 +1,42 @@
 First steps with MicroCeph
 ==========================
 
-This tutorial will guide you through your first steps with MicroCeph. You will deploy a Ceph cluster on a single node using MicroCeph and use it to store
-an object, i.e. an image, in a simple storage service (S3) bucket.
+This tutorial will guide you through your first steps with MicroCeph. You will use MicroCeph to deploy a Ceph cluster on a single node and to store
+a JPEG  image, in a simple storage service (S3) bucket.
 
-To do this, you will use the S3-compatible Ceph Object Gateway, or RADOS Gateway (RGW), to help you interact with your cluster, and ``s3cmd``, 
-a command line tool for managing S3-compatible storage services, like Ceph.
+To do this, you will use the S3-compatible Ceph Object Gateway, or RADOS Gateway (RGW), to help you interact with your cluster, and ``s3cmd``, a command line tool
+for interacting with MicroCeph RGW, allowing users to access Ceph object storage capabilities using familiar AWS S3 commands.
 
-Along the way, you will also interact with your cluster in other ways such as, checking the health status of your cluster, adding disks to it and,
+Along the way, you will also interact with your cluster in other ways, such as checking the health status of your cluster, adding disks to it and,
 of course, enabling RGW on the cluster.
 
-By the end of this tutorial, you will have a basic idea of how MicroCeph works, having successfully used it to store your object, 
+By the end of this tutorial, after having successfully used MicroCeph to store a graphical image, you will have a basic idea of how MicroCeph works,
 and you will be ready to start exploring more advanced use cases.
 
-Preparation
------------
+Requirements
+------------
 
-Before getting started, make sure that you have these minimum requirements ready:
+You will need the following:
 
-- An Ubuntu environment to run the commands. Long term support (LTS) versions are most ideal, but other supported versions would work too as the `MicroCeph snap`_ comes with an LTS package. Find information about Ubuntu supported and LTS versions `here`_.
+- The latest Ubuntu LTS version. Find Ubuntu release information `here`_.
+- 2 CPU cores
+- 4 GiB RAM
+- 12GiB disk space
+- An internet connection
 
 .. LINKS
-.. _MicroCeph snap: https://snapcraft.io/microceph 
 .. _here: https://ubuntu.com/about/release-cycle
-
-- 2 CPU cores
-- 4G memory
-- 12G disk space
-- An internet connection
 
 Install MicroCeph
 -----------------
 
-1. *First, install MicroCeph as a snap package from the Snap Store:*
+- *First, install MicroCeph as a snap package from the Snap Store:*
 
 .. code-block:: none
     
     sudo snap install microceph
 
-2. By default, snaps are automatically upgraded.
-
-*Disable this feature to prevent MicroCeph from being auto-updated:*
+- *Disable this feature to prevent MicroCeph from being auto-updated:*
 
 .. code-block:: none
     
@@ -50,16 +46,20 @@ Install MicroCeph
     
     Failing to set this option may lead undesired upgrades which can be fatal to your deployed cluster.
 
+    All subsequent MicroCeph upgrades must, then, be done manually.
+
 Initialise your cluster
 -----------------------
 
-3. *Next, bootstrap your new Ceph storage cluster:*
+- *Next, bootstrap your new Ceph storage cluster:*
 
 .. code-block:: none
     
     sudo microceph cluster bootstrap
 
-4. *And, check the status of the cluster:*
+This process takes 3 to 5 seconds.
+
+- *Check the status of the cluster:*
 
 .. code-block:: none
     
@@ -78,7 +78,7 @@ services running and storage available. Notice that we have a healthy cluster wi
 Add storage
 -----------
 
-5. *So, let's add storage disk devices to the node.*
+- *Let's add storage disk devices to the node.*
 
 We will use loop files, which are file-backed object storage daemons (OSDs) convenient for
 setting up small test and development clusters. Three OSDs are required to form a minimal Ceph cluster.
@@ -97,7 +97,7 @@ setting up small test and development clusters. Three OSDs are required to form 
 
 Success! You have added three OSDs with 4GiB storage to your node.
 
-6. *Recheck the status of the cluster:*
+- *Recheck the status of the cluster:*
 
 .. code-block:: none
     
@@ -109,7 +109,8 @@ Success! You have added three OSDs with 4GiB storage to your node.
     Services: mds, mgr, mon, osd
     Disks: 3
 
-Congratulations! You have successfully deployed a Ceph cluster on a single node. Remember that we had three services running upon bootstrapping the cluster. Note that we now have four services running, including a new ``osd`` service.
+You have successfully deployed a Ceph cluster on a single node. Remember that we had three services running upon bootstrapping the cluster.
+Note that we now have four services running, including a new ``osd`` service.
 
 Enable RGW
 ----------
@@ -117,7 +118,7 @@ Enable RGW
 As mentioned before, we will use the Ceph Object Gateway as a way to interact with the object storage cluster
 we just deployed.
 
-7. *Enable the RGW daemon on your node:*
+- *Enable the RGW daemon on your node:*
 
 .. code-block:: none
 
@@ -129,7 +130,7 @@ we just deployed.
     you can set an alternative port number, say 8080, by adding the :file:`--port <port-number>` parameter.
 
 
-8. *Recheck status*
+- *Recheck status*
 
 Another status check will show the ``rgw`` service reflected in the status output.
 
@@ -147,7 +148,7 @@ Another status check will show the ``rgw`` service reflected in the status outpu
 MicroCeph is packaged with the standard ``radosgw-admin`` tool that manages the ``rgw`` service and users. We
 will now use this tool to create a RGW user and set secrets on it.
 
-9. *Create RGW user:*
+- *Create a RGW user:*
 
 .. code-block:: none
 
@@ -202,7 +203,7 @@ The output should look something like this:
     "tags": [],
     "group_ids": []
 
-9. *Set user secrets:*
+- *Set user secrets:*
 
 .. code-block:: none
 
@@ -265,18 +266,12 @@ The output should look something like this:
 Consuming the storage
 ---------------------
 
-10. *Access RGW*
+Access RGW
+~~~~~~~~~~
 
 Before attempting to consume the object storage in the cluster, validate that you can access RGW by running :command:`curl` on your node.
-If you are on localhost, run:
 
-.. code-block:: none
-
-    curl 127.0.0.1
-
-Otherwise, you can run the :command:`curl` command from anywhere within the network where the Ceph cluster is installed.
-
-11. *Find the IP address of the node running the  ``rgw`` service:*
+- *Find the IP address of the node running the  ``rgw`` service:*
 
 .. code-block:: none
     
@@ -289,7 +284,7 @@ Otherwise, you can run the :command:`curl` command from anywhere within the netw
     Services: mds, mgr, mon, rgw, osd
     Disks: 3
 
-12. *Run :command:`curl` from this node:*
+- *Run* :command:`curl` *from this node:*
 
 .. code-block:: none
     
@@ -299,7 +294,7 @@ Otherwise, you can run the :command:`curl` command from anywhere within the netw
 
     <?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>anonymous</ID></Owner><Buckets></Bucket
 
-13. *Create an S3 bucket:*
+- *Create an S3 bucket:*
 
 You have verified that your cluster is accessible via RGW. Now, let's create a bucket using the ``s3cmd`` tool:
 
@@ -317,7 +312,7 @@ You have verified that your cluster is accessible via RGW. Now, let's create a b
 
 Our bucket is successfully created.
 
-14. *Let's upload an image into it:*
+- *Let's upload an image into it:*
 
 .. code-block:: none
 
@@ -343,6 +338,12 @@ In case, for any reason, you want to get rid of MicroCeph, you can purge the sna
 
 This command stops all the services running, and removes the MicroCeph snap along with your cluster and all the resources contained in it.
 
+.. note::
+
+    The ``--purge`` option removes all the files associated with the MicroCeph package, and will also skip generating a snapshot of the package's
+    running state. Skipping the :command:`purge` option is useful if you intend to re-install MicroCeph, or move your configuration to a different system.
+
+
 .. terminal::
 
     2024-11-28T19:44:29+03:00 INFO Waiting for "snap.microceph.rgw.service" to stop.
@@ -353,9 +354,9 @@ Next steps
 ----------
 
 You have deployed a healthy Ceph cluster on a single-node and enabled RGW on it. Even better, you have consumed the storage in that cluster by creating
-a bucket and storing and storing an object inside it. Curious to see what else you can do with MicroCeph?
+a bucket and storing an object in it. Curious to see what else you can do with MicroCeph?
 
 See our :doc:`how-to guides <../how-to/index>`, packed with instructions to help you achieve specific goals with MicroCeph.
 
 Or, explore our :doc:`Explanation <../explanation/index>` and
-:doc:`Reference <../reference/index>` sections for additional information and quick references, respectively.
+:doc:`Reference <../reference/index>` sections for additional information and quick references.
