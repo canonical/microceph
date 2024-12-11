@@ -22,7 +22,11 @@ to Ceph administrators and storage software developers.
 In this documentation
 ---------------------
 
-..  grid:: 1 1 1 1
+..  grid:: 1 2 1 2
+
+   ..  grid-item:: :doc:`Tutorial <tutorial/index>`
+
+      **A hands-on introduction** to MicroCeph for new users
 
    ..  grid-item:: :doc:`How-to guides <how-to/index>`
 
@@ -59,6 +63,7 @@ constructive feedback.
    :hidden:
    :maxdepth: 2
 
+   tutorial/index
    how-to/index
    reference/index
    explanation/index
