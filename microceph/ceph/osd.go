@@ -853,7 +853,7 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	}
 	// perform safety check for stopping
 	if isPresent && !bypassSafety {
-		err = safetyCheckStop(osd)
+		err = safetyCheckStop([]int64{osd})
 		if err != nil {
 			return err
 		}
@@ -954,27 +954,55 @@ func outDownOSD(osd int64) error {
 	return nil
 }
 
-func safetyCheckStop(osd int64) error {
+func setOsdNooutFlag(set bool) error {
+	var command string
+
+	switch set {
+	case true:
+		command = "set"
+	case false:
+		command = "unset"
+	}
+
+	_, err := processExec.RunCommand("ceph", "osd", command, "noout")
+	if err != nil {
+		logger.Errorf("failed to %s noout flag: %v", command, err)
+		return fmt.Errorf("failed to %s noout flag: %w", command, err)
+	}
+	return nil
+}
+
+func isOsdNooutSet() (bool, error) {
+	output, err := processExec.RunCommand("ceph", "osd", "dump")
+	if err != nil {
+		logger.Errorf("failed to dump osd info: %v", err)
+		return false, fmt.Errorf("failed to dump osd info: %w", err)
+	}
+	logger.Infof("osd dump: %s", output)
+	return strings.Contains(output, "noout"), nil
+}
+
+func safetyCheckStop(osds []int64) error {
 	var safeStop bool
 
 	retries := 16
 	var backoff time.Duration
 
 	for i := 0; i < retries; i++ {
-		safeStop = testSafeStop(osd)
+		safeStop = testSafeStop(osds)
 		if safeStop {
 			// Success: break the retry loop
 			break
 		}
 		backoff = time.Duration(math.Pow(2, float64(i))) * time.Millisecond * 100
-		logger.Infof("osd.%d not ok to stop, retrying in %v", osd, backoff)
+		logger.Infof("osd.%v not ok to stop, retrying in %v", osds, backoff)
 		time.Sleep(backoff)
 	}
 	if !safeStop {
-		logger.Errorf("osd.%d failed to reach ok-to-stop", osd)
-		return fmt.Errorf("osd.%d failed to reach ok-to-stop", osd)
+		logger.Errorf("osd.%v failed to reach ok-to-stop", osds)
+		return fmt.Errorf("osd.%d failed to reach ok-to-stop", osds)
 	}
-	logger.Infof("osd.%d ok to stop", osd)
+	logger.Infof("osd.%d ok to stop", osds)
 	return nil
 }
 
@@ -1008,9 +1036,13 @@ func testSafeDestroy(osd int64) bool {
 	return err == nil
 }
 
-func testSafeStop(osd int64) bool {
+func testSafeStop(osds []int64) bool {
 	// run ceph osd ok-to-stop
-	_, err := processExec.RunCommand("ceph", "osd", "ok-to-stop", fmt.Sprintf("osd.%d", osd))
+	args := []string{"osd", "ok-to-stop"}
+	for _, osd := range osds {
+		args = append(args, fmt.Sprintf("osd.%d", osd))
+	}
+	_, err := processExec.RunCommand("ceph", args...)
 	return err == nil
 }
 
@@ -1198,4 +1230,21 @@ func ListPools(application string) []CephPool {
 
 	logger.Infof("OSD: Filtered Pool list %v", filterdRet)
 	return filterdRet
+}
+
+// SetOsdState start or stop OSD service
+func SetOsdState(up bool) error {
+	var err error
+
+	switch up {
+	case true:
+		err = snapStart("osd", true)
+	case false:
+		err = snapStop("osd", true)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to change the state of osd service: %w", err)
+	}
+	return nil
 }

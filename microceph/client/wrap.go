@@ -15,6 +15,7 @@ type ClientInterface interface {
 	GetServices(*microCli.Client) (types.Services, error)
 	DeleteService(*microCli.Client, string, string) error
 	DeleteClusterMember(*microCli.Client, string, bool) error
+	PutOsds(*microCli.Client, bool, string) error
 }
 
 type ClientImpl struct{}
@@ -53,6 +54,11 @@ func (c ClientImpl) DeleteService(cli *microCli.Client, target string, service s
 // DeleteClusterMember wraps the DeleteClusterMember function
 func (c ClientImpl) DeleteClusterMember(cli *microCli.Client, name string, force bool) error {
 	return cli.DeleteClusterMember(context.Background(), name, force)
+}
+
+// PutOsds wraps the PutOsds function
+func (c ClientImpl) PutOsds(cli *microCli.Client, up bool, target string) error {
+	return PutOsds(context.Background(), cli, up, target)
 }
 
 // mocking point for unit tests
