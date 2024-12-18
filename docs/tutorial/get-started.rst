@@ -1,4 +1,4 @@
-Get Started with MicroCeph
+First steps with MicroCeph
 ==========================
 
 This tutorial will guide you through your first steps with MicroCeph. You will use MicroCeph to deploy a Ceph cluster on a single node and to store
@@ -360,9 +360,3 @@ See our :doc:`how-to guides <../how-to/index>`, packed with instructions to help
 
 Or, explore our :doc:`Explanation <../explanation/index>` and
 :doc:`Reference <../reference/index>` sections for additional information and quick references.
-=======
-.. toctree::
-    :maxdepth: 1
-
-    get-started
-    
