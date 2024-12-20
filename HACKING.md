@@ -65,15 +65,15 @@ Building MicroCeph is as easy as a snap!
 # v for verbose output of the build process.
 snapcraft -v
 ...
-Creating snap package 
-...                                                                                                                                                                     
+Creating snap package
+...
 Created snap package microceph_0+git.ac1da26_amd64.snap
-``` 
+```
 
 The newly created .snap artifact can then be installed as
 ```bash
 # Dangerous flag for locally built snap
-sudo snap install --dangerous microceph_*.snap 
+sudo snap install --dangerous microceph_*.snap
 ```
 
 ```bash
@@ -85,9 +85,26 @@ sudo snap restart microceph.daemon
 ```
 
 ## 👍 Unit-Testing
-The MicroCeph [makefile](/microceph/Makefile) has targets for running unit tests and lint checks. They can be run as follows.
+The MicroCeph [Makefile](/microceph/Makefile) has targets for running unit tests and lint checks. However, you will need the following packages or tool to run them locally.
+
 ```bash
-# Note: commands executed from microceph subdir which contains the Makefile.
+# Add general requirements
+sudo apt install gcc make shellcheck
+
+# Add libdqlite-dev, required for building microceph
+sudo add-apt-repository ppa:dqlite/dev -y
+sudo apt install -y libdqlite-dev
+
+# Install go and export the binary to PATH
+sudo snap install go --classic
+export PATH=$PATH:$HOME/go/bin
+```
+
+Once you install the prerequisite, you can run unit tests and lint checks as follows:
+
+```bash
+cd microceph
+
 # Run unit tests
 make check-unit
 
