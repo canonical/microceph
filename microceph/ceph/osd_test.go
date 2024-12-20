@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
@@ -100,6 +101,46 @@ func addOsdTreeExpectations(r *mocks.Runner) {
 
 }
 
+func addSetOsdStateUpExpectations(r *mocks.Runner) {
+	r.On("RunCommand", "snapctl", "start", "microceph.osd", "--enable").Return("ok", nil).Once()
+}
+
+func addSetOsdStateDownExpectations(r *mocks.Runner) {
+	r.On("RunCommand", "snapctl", "stop", "microceph.osd", "--disable").Return("ok", nil).Once()
+}
+
+func addSetOsdStateUpFailedExpectations(r *mocks.Runner) {
+	r.On("RunCommand", "snapctl", "start", "microceph.osd", "--enable").Return("fail", fmt.Errorf("some errors")).Once()
+}
+
+func addSetOsdStateDownFailedExpectations(r *mocks.Runner) {
+	r.On("RunCommand", "snapctl", "stop", "microceph.osd", "--disable").Return("fail", fmt.Errorf("some errors")).Once()
+}
+
+func addOsdtNooutFlagTrueExpectations(r *mocks.Runner) {
+	r.On("RunCommand", "ceph", "osd", "set", "noout").Return("ok", nil).Once()
+}
+
+func addOsdtNooutFlagFalseExpectations(r *mocks.Runner) {
+	r.On("RunCommand", "ceph", "osd", "unset", "noout").Return("ok", nil).Once()
+}
+
+func addOsdtNooutFlagFailedExpectations(r *mocks.Runner) {
+	r.On("RunCommand", "ceph", "osd", "set", "noout").Return("fail", fmt.Errorf("some errors")).Once()
+}
+
+func addIsOsdNooutSetTrueExpections(r *mocks.Runner) {
+	r.On("RunCommand", "ceph", "osd", "dump").Return("flags sortbitwise,noout", nil).Once()
+}
+
+func addIsOsdNooutSetFalseExpections(r *mocks.Runner) {
+	r.On("RunCommand", "ceph", "osd", "dump").Return("flags sortbitwise", nil).Once()
+}
+
+func addIsOsdNooutSetFailedExpections(r *mocks.Runner) {
+	r.On("RunCommand", "ceph", "osd", "dump").Return("fail", fmt.Errorf("some errors")).Once()
+}
+
 func (s *osdSuite) SetupTest() {
 
 	s.BaseSuite.SetupTest()
@@ -183,4 +224,98 @@ func (s *osdSuite) TestHaveOSDInCeph() {
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), res, false)
 
+}
+
+// TestSetOsdStateOkay tests the SetOsdState function when no error occurs
+func (s *osdSuite) TestSetOsdStateOkay() {
+	r := mocks.NewRunner(s.T())
+	addSetOsdStateUpExpectations(r)
+	addSetOsdStateDownExpectations(r)
+
+	// patch processExec
+	processExec = r
+
+	err := SetOsdState(true)
+	assert.NoError(s.T(), err)
+
+	err = SetOsdState(false)
+	assert.NoError(s.T(), err)
+}
+
+// TestSetOsdStateFail tests the SetOsdState function when error occurs
+func (s *osdSuite) TestSetOsdStateFail() {
+	r := mocks.NewRunner(s.T())
+	addSetOsdStateUpFailedExpectations(r)
+	addSetOsdStateDownFailedExpectations(r)
+
+	// patch processExec
+	processExec = r
+
+	err := SetOsdState(true)
+	assert.Error(s.T(), err)
+
+	err = SetOsdState(false)
+	assert.Error(s.T(), err)
+}
+
+// TestSetOsdNooutFlagOkay tests the setOsdNooutFlag function when no error occurs
+func (s *osdSuite) TestSetOsdNooutFlagOkay() {
+	r := mocks.NewRunner(s.T())
+	addOsdtNooutFlagTrueExpectations(r)
+	addOsdtNooutFlagFalseExpectations(r)
+
+	// patch processExec
+	processExec = r
+
+	err := setOsdNooutFlag(true)
+	assert.NoError(s.T(), err)
+
+	err = setOsdNooutFlag(false)
+	assert.NoError(s.T(), err)
+}
+
+// TestSetOsdNooutFlagFail tests the setOsdNooutFlag function when error occurs
+func (s *osdSuite) TestSetOsdNooutFlagFail() {
+	r := mocks.NewRunner(s.T())
+	addOsdtNooutFlagFailedExpectations(r)
+
+	// patch processExec
+	processExec = r
+
+	err := setOsdNooutFlag(true)
+	assert.Error(s.T(), err)
+}
+
+// TestIsOsdNooutSetOkay tests the isOsdNooutSet function when no error occurs
+func (s *osdSuite) TestIsOsdNooutSetOkay() {
+	r := mocks.NewRunner(s.T())
+	addIsOsdNooutSetTrueExpections(r)
+	addIsOsdNooutSetFalseExpections(r)
+
+	// patch processExec
+	processExec = r
+
+	// noout is set
+	set, err := isOsdNooutSet()
+	assert.True(s.T(), set)
+	assert.NoError(s.T(), err)
+
+	// noout is not set
+	set, err = isOsdNooutSet()
+	assert.False(s.T(), set)
+	assert.NoError(s.T(), err)
+}
+
+// TestIsOsdNooutSetFail tests the isOsdNooutSet function when error occurs
+func (s *osdSuite) TestIsOsdNooutSetFail() {
+	r := mocks.NewRunner(s.T())
+	addIsOsdNooutSetFailedExpections(r)
+
+	// patch processExec
+	processExec = r
+
+	// error running ceph osd dump
+	set, err := isOsdNooutSet()
+	assert.False(s.T(), set)
+	assert.Error(s.T(), err)
 }
