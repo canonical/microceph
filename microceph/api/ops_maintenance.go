@@ -74,14 +74,14 @@ var opsMaintenanceNodeCmd = rest.Endpoint{
 // cmdPutMaintenance bring a node in or out of maintenance
 func cmdPutMaintenance(s state.State, r *http.Request) response.Response {
 	var results []ceph.Result
-	var maintenancePut types.MaintenancePut
+	var maintenanceRequest types.MaintenanceRequest
 
 	node, err := url.PathUnescape(mux.Vars(r)["node"])
 	if err != nil {
 		return response.BadRequest(err)
 	}
 
-	err = json.NewDecoder(r.Body).Decode(&maintenancePut)
+	err = json.NewDecoder(r.Body).Decode(&maintenanceRequest)
 	if err != nil {
 		logger.Errorf("failed decoding body: %v", err)
 		return response.InternalError(err)
@@ -95,12 +95,12 @@ func cmdPutMaintenance(s state.State, r *http.Request) response.Response {
 		},
 	}
 
-	status := maintenancePut.Status
+	status := maintenanceRequest.Status
 	switch status {
 	case "maintenance":
-		results, err = maintenance.Enter(maintenancePut.Force, maintenancePut.DryRun, maintenancePut.SetNoout, maintenancePut.StopOsds, maintenancePut.CheckOnly, maintenancePut.IgnoreCheck)
+		results, err = maintenance.Enter(maintenanceRequest.Force, maintenanceRequest.DryRun, maintenanceRequest.SetNoout, maintenanceRequest.StopOsds, maintenanceRequest.CheckOnly, maintenanceRequest.IgnoreCheck)
 	case "non-maintenance":
-		results, err = maintenance.Exit(maintenancePut.DryRun, maintenancePut.CheckOnly, maintenancePut.IgnoreCheck)
+		results, err = maintenance.Exit(maintenanceRequest.DryRun, maintenanceRequest.CheckOnly, maintenanceRequest.IgnoreCheck)
 	default:
 		err = fmt.Errorf("unknown status encounter: '%s', can only be 'maintenance' or 'non-maintenance'", status)
 	}
@@ -110,7 +110,7 @@ func cmdPutMaintenance(s state.State, r *http.Request) response.Response {
 	}
 
 	for _, result := range results {
-		if result.Error != "" && !maintenancePut.Force {
+		if result.Error != "" && !maintenanceRequest.Force {
 			return &maintenanceResponse{success: false, content: results}
 		}
 	}

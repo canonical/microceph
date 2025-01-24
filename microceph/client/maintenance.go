@@ -20,9 +20,9 @@ func ExitMaintenance(ctx context.Context, c *client.Client, node string, dryRun,
 	defer cancel()
 
 	var results types.MaintenanceResults
-	data := types.MaintenancePut{
-		Status:           "non-maintenance",
-		MaintenanceFlags: types.MaintenanceFlags{DryRun: dryRun, CheckOnly: checkOnly, IgnoreCheck: ignoreCheck},
+	data := types.MaintenanceRequest{
+		Status:                 "non-maintenance",
+		CommonMaintenanceFlags: types.CommonMaintenanceFlags{DryRun: dryRun, CheckOnly: checkOnly, IgnoreCheck: ignoreCheck},
 	}
 
 	// still need to useTarget because some ops need to run on target node
@@ -42,10 +42,10 @@ func EnterMaintenance(ctx context.Context, c *client.Client, node string, force,
 	defer cancel()
 
 	var results types.MaintenanceResults
-	data := types.MaintenancePut{
-		Status:                "maintenance",
-		MaintenanceFlags:      types.MaintenanceFlags{DryRun: dryRun, CheckOnly: checkOnly, IgnoreCheck: ignoreCheck},
-		MaintenanceEnterFlags: types.MaintenanceEnterFlags{Force: force, SetNoout: setNoout, StopOsds: stopOsds},
+	data := types.MaintenanceRequest{
+		Status:                 "maintenance",
+		CommonMaintenanceFlags: types.CommonMaintenanceFlags{DryRun: dryRun, CheckOnly: checkOnly, IgnoreCheck: ignoreCheck},
+		EnterMaintenanceFlags:  types.EnterMaintenanceFlags{Force: force, SetNoout: setNoout, StopOsds: stopOsds},
 	}
 
 	// still need to useTarget because some ops need to run on target node
