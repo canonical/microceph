@@ -2,6 +2,8 @@ package ceph
 
 import (
 	"fmt"
+
+	"github.com/canonical/microceph/microceph/api/types"
 )
 
 type Maintenance struct {
@@ -10,9 +12,9 @@ type Maintenance struct {
 }
 
 // Exit brings the node out of maintenance mode.
-func (m *Maintenance) Exit(dryRun, checkOnly, ignoreCheck bool) ([]Result, error) {
+func (m *Maintenance) Exit(req types.MaintenanceRequest) ([]Result, error) {
 	// General sanity checks
-	if checkOnly && ignoreCheck {
+	if req.CheckOnly && req.IgnoreCheck {
 		err := fmt.Errorf("'check-only' and 'ignore-check' are mutually exclusive.")
 		return []Result{}, err
 	}
@@ -29,15 +31,15 @@ func (m *Maintenance) Exit(dryRun, checkOnly, ignoreCheck bool) ([]Result, error
 
 	// Execute the maintenance operations
 	results := []Result{}
-	if checkOnly {
+	if req.CheckOnly {
 		// Only run preflight checks
-		results = append(results, RunOperations(m.Node, preflightChecks, dryRun, false)...)
-	} else if ignoreCheck {
+		results = append(results, RunOperations(m.Node, preflightChecks, req.DryRun, false)...)
+	} else if req.IgnoreCheck {
 		// Only run main operations (ignore preflight checks)
-		results = append(results, RunOperations(m.Node, operations, dryRun, false)...)
+		results = append(results, RunOperations(m.Node, operations, req.DryRun, false)...)
 	} else {
 		// Run both preflight checks and main operations
-		results = append(results, RunOperations(m.Node, preflightChecks, dryRun, false)...)
+		results = append(results, RunOperations(m.Node, preflightChecks, req.DryRun, false)...)
 		// Return the result now if there's error in preflight checks
 		for _, result := range results {
 			if result.Error != "" {
@@ -45,16 +47,16 @@ func (m *Maintenance) Exit(dryRun, checkOnly, ignoreCheck bool) ([]Result, error
 			}
 		}
 		// Otherwise, continue with the main operations
-		results = append(results, RunOperations(m.Node, operations, dryRun, false)...)
+		results = append(results, RunOperations(m.Node, operations, req.DryRun, false)...)
 	}
 
 	return results, nil
 }
 
 // Enter brings the node into maintenance mode.
-func (m *Maintenance) Enter(force, dryRun, setNoout, stopOsds, checkOnly, ignoreCheck bool) ([]Result, error) {
+func (m *Maintenance) Enter(req types.MaintenanceRequest) ([]Result, error) {
 	// General sanity checks
-	if checkOnly && ignoreCheck {
+	if req.CheckOnly && req.IgnoreCheck {
 		err := fmt.Errorf("'check-only' and 'ignore-check' are mutually exclusive.")
 		return []Result{}, err
 	}
@@ -68,14 +70,14 @@ func (m *Maintenance) Enter(force, dryRun, setNoout, stopOsds, checkOnly, ignore
 	// Main operations
 	operations := []Operation{}
 	// Optionally add "set noout op" to main operations
-	if setNoout {
+	if req.SetNoout {
 		operations = append(operations, []Operation{
 			&SetNooutOps{ClusterOps: m.ClusterOps},
 			&AssertNooutFlagSetOps{ClusterOps: m.ClusterOps},
 		}...)
 	}
 	// Optionally add "stop osd service op" to main operations
-	if stopOsds {
+	if req.StopOsds {
 		operations = append(operations, []Operation{
 			&StopOsdOps{ClusterOps: m.ClusterOps},
 		}...)
@@ -83,23 +85,23 @@ func (m *Maintenance) Enter(force, dryRun, setNoout, stopOsds, checkOnly, ignore
 
 	// Execute the maintenance operations
 	results := []Result{}
-	if checkOnly {
+	if req.CheckOnly {
 		// Only run preflight checks
-		results = append(results, RunOperations(m.Node, preflightChecks, dryRun, false)...)
-	} else if ignoreCheck {
+		results = append(results, RunOperations(m.Node, preflightChecks, req.DryRun, false)...)
+	} else if req.IgnoreCheck {
 		// Only run main operations (ignore preflight checks)
-		results = append(results, RunOperations(m.Node, operations, dryRun, false)...)
+		results = append(results, RunOperations(m.Node, operations, req.DryRun, false)...)
 	} else {
 		// Run both preflight checks and main operations
-		results = append(results, RunOperations(m.Node, preflightChecks, dryRun, false)...)
+		results = append(results, RunOperations(m.Node, preflightChecks, req.DryRun, false)...)
 		// Return the result now if there's error in preflight checks
 		for _, result := range results {
-			if result.Error != "" && !force {
+			if result.Error != "" && !req.Force {
 				return results, nil // the error is not for operation error
 			}
 		}
 		// Otherwise, continue with the main operations
-		results = append(results, RunOperations(m.Node, operations, dryRun, false)...)
+		results = append(results, RunOperations(m.Node, operations, req.DryRun, false)...)
 	}
 
 	return results, nil

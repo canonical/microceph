@@ -98,9 +98,9 @@ func cmdPutMaintenance(s state.State, r *http.Request) response.Response {
 	status := maintenanceRequest.Status
 	switch status {
 	case "maintenance":
-		results, err = maintenance.Enter(maintenanceRequest.Force, maintenanceRequest.DryRun, maintenanceRequest.SetNoout, maintenanceRequest.StopOsds, maintenanceRequest.CheckOnly, maintenanceRequest.IgnoreCheck)
+		results, err = maintenance.Enter(maintenanceRequest)
 	case "non-maintenance":
-		results, err = maintenance.Exit(maintenanceRequest.DryRun, maintenanceRequest.CheckOnly, maintenanceRequest.IgnoreCheck)
+		results, err = maintenance.Exit(maintenanceRequest)
 	default:
 		err = fmt.Errorf("unknown status encounter: '%s', can only be 'maintenance' or 'non-maintenance'", status)
 	}
