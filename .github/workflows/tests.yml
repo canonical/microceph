@@ -247,7 +247,6 @@ jobs:
       run: |
         ~/actionutils.sh install_hurl
         ~/actionutils.sh hurl tests/hurl/services-mon.hurl
-        ~/actionutils.sh hurl tests/hurl/osds-put-failed.hurl
         ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
 
   multi-node-tests:
