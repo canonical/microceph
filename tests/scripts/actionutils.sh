@@ -380,7 +380,7 @@ function remote_remove_and_verify() {
 
     match=$(echo $remotes | grep -c '\"name\":\"siteb\"')
     if [[ $match -ne 1 ]] ; then
-        echo "Expect remote record for siteb absent."
+        echo "Expected remote record for siteb absent."
         lxc exec node-wrk0 -- sh -c "microceph remote list --json"
         exit -1
     fi
@@ -450,7 +450,7 @@ function upgrade_multinode() {
         done
         res=$( ( lxc exec $container -- sh -c "microceph.ceph osd status" | fgrep -c "exists,up" ) )
         if [[ $res -ne $expect ]] ; then
-            echo "Expect $expect OSD up, got $res"
+            echo "Expected $expect OSD up, got $res"
             lxc exec $container -- sh -c "microceph.ceph -s"
             exit -1
         fi
