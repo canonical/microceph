@@ -4,6 +4,7 @@ wait_for_config() {
   local max_attempts=300
   local attempt=0
 
+  sleep 1  # give microcephd startup a headstart
   while [ $attempt -lt $max_attempts ]; do
     if [ -f "${confpath}" ]; then
       if grep -q "${search_str}" "${confpath}"; then

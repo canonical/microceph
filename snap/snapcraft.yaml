@@ -61,6 +61,8 @@ apps:
     command: commands/mds.start
     daemon: simple
     install-mode: disable
+    after:
+      - daemon
     plugs:
       - network
       - network-bind
@@ -68,6 +70,8 @@ apps:
     command: commands/mon.start
     daemon: simple
     install-mode: disable
+    after:
+      - daemon
     plugs:
       - hardware-observe
       - network
@@ -76,6 +80,8 @@ apps:
     command: commands/mgr.start
     daemon: simple
     install-mode: disable
+    after:
+      - daemon
     plugs:
       - network
       - network-bind
@@ -86,6 +92,8 @@ apps:
     install-mode: disable
     stop-mode: sigterm-all
     stop-timeout: 5m
+    after:
+      - daemon
     plugs:
       - block-devices
       - dm-crypt
@@ -98,6 +106,8 @@ apps:
     command: commands/rgw.start
     daemon: simple
     install-mode: disable
+    after:
+      - daemon
     plugs:
       - hardware-observe
       - network
@@ -107,6 +117,8 @@ apps:
     command: commands/rbd-mirror.start
     daemon: simple
     install-mode: disable
+    after:
+      - daemon
     plugs:
       - network
       - network-bind

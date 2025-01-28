@@ -148,6 +148,8 @@ func PostRefresh() error {
 
 // Start is run on daemon startup.
 func Start(ctx context.Context, s interfaces.StateInterface) error {
+	// flag: are we on the first run?
+	first := true
 	// Start background loop to refresh the config every minute if needed.
 	go func() {
 		oldMonitors := []string{}
@@ -182,8 +184,8 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 				continue
 			}
 
-			// Compare to the previous list.
-			if reflect.DeepEqual(oldMonitors, monitors) {
+			// Check if we need to update
+			if !first || reflect.DeepEqual(oldMonitors, monitors) {
 				logger.Debugf("start: monitors unchanged, sleeping: %v", monitors)
 				time.Sleep(time.Minute)
 				continue
@@ -196,6 +198,7 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 				continue
 			}
 			logger.Debug("start: updated config, sleeping")
+			first = false // for subsequent runs
 			oldMonitors = monitors
 			time.Sleep(time.Minute)
 		}
