@@ -80,7 +80,7 @@ epub: install
 
 
 serve: html
-	cd "$(BUILDDIR)"; python3 -m http.server 8000
+	cd "$(BUILDDIR)"; python3 -m http.server 18000
 
 .PHONY: serve
 
