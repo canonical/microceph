@@ -15,7 +15,7 @@ Check Ceph cluster's status:
 
 .. code-block:: none
 
-    $ sudo ceph -s
+    $ sudo microceph.ceph -s
     cluster:
         id:     90457806-a798-47f2-aca1-a8a93739941a
         health: HEALTH_OK
@@ -35,16 +35,16 @@ Create data/metadata pools for CephFs:
 
 .. code-block:: none
 
-    $ sudo ceph osd pool create cephfs_meta 
-    $ sudo ceph osd pool create cephfs_data 
+    $ sudo microceph.ceph osd pool create cephfs_meta 
+    $ sudo microceph.ceph osd pool create cephfs_data 
 
 Create CephFs share:
 
 .. code-block:: none
 
-    $ sudo ceph fs new newFs cephfs_meta cephfs_data
+    $ sudo microceph.ceph fs new newFs cephfs_meta cephfs_data
     new fs with metadata pool 4 and data pool 3
-    $ sudo ceph fs ls
+    $ sudo microceph.ceph fs ls
     name: newFs, metadata pool: cephfs_meta, data pools: [cephfs_data ]
 
 Client Operations:
@@ -88,7 +88,7 @@ Mount the filesystem:
 .. code-block:: none
 
     $ sudo mkdir /mnt/mycephfs
-    $ sudo mount -t ceph :/ /mnt/mycephfs/ -o name=admin,fs=newFs
+    $ sudo mount -t microceph.ceph :/ /mnt/mycephfs/ -o name=admin,fs=newFs
 
 Here, we provide the CephX user (admin in our example) and the fs created earlier (newFs).
 
@@ -114,7 +114,7 @@ Ceph cluster state post IO:
 
 .. code-block:: none
 
-    $ sudo ceph -s
+    $ sudo microceph.ceph -s
     cluster:
         id:     90457806-a798-47f2-aca1-a8a93739941a
         health: HEALTH_OK

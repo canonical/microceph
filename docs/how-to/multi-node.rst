@@ -182,7 +182,7 @@ commands are not yet available for a desired task:
 
 .. code-block:: none
 
-   ceph status
+   microceph.ceph status
 
 This gives:
 
