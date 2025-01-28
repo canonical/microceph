@@ -182,6 +182,7 @@ parts:
       - uuid-runtime
       - python3-setuptools
       - python3-packaging
+      - libatomic1
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -207,6 +208,7 @@ parts:
       - lib/*/ceph
       - lib/*/libaio.so*
       - lib/*/libasn1.so*
+      - lib/*/libatomic.so*
       - lib/*/libboost_context.so*
       - lib/*/libboost_filesystem.so*
       - lib/*/libboost_iostreams.so*
