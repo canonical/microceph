@@ -60,7 +60,7 @@ install: $(VENVDIR)
 
 run: install
 	. $(VENV); sphinx-autobuild -b dirhtml "$(SOURCEDIR)" "$(BUILDDIR)" \
-	$(SPHINXOPTS)
+	$(SPHINXOPTS) --port 18000
 
 .PHONY: run
 
@@ -108,7 +108,7 @@ spelling: html
 
 linkcheck: install
 	. $(VENV) ; $(SPHINXBUILD) -b linkcheck "$(SOURCEDIR)" "$(BUILDDIR)" \
-	$(SPHINXOPTS) --port 18000
+	$(SPHINXOPTS)
 
 .PHONY: linkcheck
 
