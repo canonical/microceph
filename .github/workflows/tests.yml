@@ -11,7 +11,7 @@ jobs:
       SNAPCRAFT_BUILD_ENVIRONMENT: "lxd"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -33,7 +33,7 @@ jobs:
 
       - name: Upload snap artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: snaps
           path: "*.snap"
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -70,13 +70,13 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
 
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
@@ -254,13 +254,13 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
 
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
@@ -383,13 +383,13 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
 
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
@@ -440,13 +440,13 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
 
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
@@ -493,13 +493,13 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
 
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
@@ -559,13 +559,13 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
 
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
@@ -630,13 +630,13 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
 
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
@@ -704,13 +704,13 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
 
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
@@ -751,13 +751,13 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
 
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
