@@ -108,7 +108,7 @@ spelling: html
 
 linkcheck: install
 	. $(VENV) ; $(SPHINXBUILD) -b linkcheck "$(SOURCEDIR)" "$(BUILDDIR)" \
-	$(SPHINXOPTS)
+	$(SPHINXOPTS) --port 18000
 
 .PHONY: linkcheck
 
