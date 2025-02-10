@@ -40,7 +40,12 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 			return err
 		}
 	} else if sslCertificate == "" || sslPrivateKey == "" {
-		port = 80
+		// The default value is in the command line is 0 for the case where
+		// both SSL certificates and Private Key are provided, so we handle the
+		// default case here.
+		if port == 0 {
+			port = 80
+		}
 	}
 	configs := map[string]any{
 		"runDir":             pathConsts.RunPath,

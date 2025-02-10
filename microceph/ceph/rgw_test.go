@@ -65,13 +65,13 @@ func (s *rgwSuite) TestEnableRGW() {
 
 	processExec = r
 
-	err := EnableRGW(s.TestStateInterface, 80, 443, "", "", []string{"10.1.1.1", "10.2.2.2"})
+	err := EnableRGW(s.TestStateInterface, 8081, 443, "", "", []string{"10.1.1.1", "10.2.2.2"})
 
 	assert.NoError(s.T(), err)
 
 	// check that the radosgw.conf file contains expected values
 	conf := s.ReadCephConfig("radosgw.conf")
-	assert.Contains(s.T(), conf, "rgw frontends = beast port=80\n")
+	assert.Contains(s.T(), conf, "rgw frontends = beast port=8081\n")
 	assert.Contains(s.T(), conf, "mon host = 10.1.1.1,10.2.2.2")
 }
 
@@ -149,7 +149,7 @@ func (s *rgwSuite) TestEnableRGWWithSSL() {
 
 	processExec = r
 
-	err := EnableRGW(s.TestStateInterface, 80, 443, validSSLCertificate, validSSLPrivateKey, []string{"10.1.1.1", "10.2.2.2"})
+	err := EnableRGW(s.TestStateInterface, 8081, 443, validSSLCertificate, validSSLPrivateKey, []string{"10.1.1.1", "10.2.2.2"})
 
 	assert.NoError(s.T(), err)
 
@@ -157,7 +157,7 @@ func (s *rgwSuite) TestEnableRGWWithSSL() {
 	conf := s.ReadCephConfig("radosgw.conf")
 	sslCertificatePath := filepath.Join(s.Tmp, "SNAP_COMMON", "server.crt")
 	sslPrivateKeyPath := filepath.Join(s.Tmp, "SNAP_COMMON", "server.key")
-	assert.Contains(s.T(), conf, "rgw frontends = beast port=80 ssl_port=443 ssl_certificate="+sslCertificatePath+" ssl_private_key="+sslPrivateKeyPath+"\n")
+	assert.Contains(s.T(), conf, "rgw frontends = beast port=8081 ssl_port=443 ssl_certificate="+sslCertificatePath+" ssl_private_key="+sslPrivateKeyPath+"\n")
 }
 
 func (s *rgwSuite) TestDisableRGW() {
