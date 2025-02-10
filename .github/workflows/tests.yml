@@ -227,7 +227,7 @@ jobs:
         set +e
         sudo microceph log set-level warning
         output=$(sudo microceph log get-level)
-        if [[ "$output" != "3" ]] ; then echo "incorrect log level: $output"; exit 1; fi 
+        if [[ "$output" != "3" ]] ; then echo "incorrect log level: $output"; exit 1; fi
 
     - name: Print logs for failure
       if: failure()
@@ -247,6 +247,7 @@ jobs:
       run: |
         ~/actionutils.sh install_hurl
         ~/actionutils.sh hurl tests/hurl/services-mon.hurl
+        ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
 
   multi-node-tests:
     name: Multi node testing
@@ -433,6 +434,92 @@ jobs:
       if: failure()
       run: |
         sudo snap logs microceph -n 1000
+
+  test-maintenance-modes:
+    name: Test maintenance mode
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install dependencies
+      run: ~/actionutils.sh setup_lxd
+
+    - name: Create 4 containers with loopback devices
+      run: ~/actionutils.sh create_containers internal
+
+    - name: Install local microceph snap
+      run: ~/actionutils.sh install_multinode
+
+    - name: Bootstrap
+      run: ~/actionutils.sh bootstrap_head internal
+
+    - name: Setup cluster
+      run: ~/actionutils.sh cluster_nodes internal
+
+    - name: Enable one extra ceph mon for redundancy
+      run: ~/actionutils.sh nodeexec node-wrk3 enable_mon
+
+    - name: Add and wait for OSDs
+      run: |
+        set -uex
+        for i in 0 1 2 3 ; do
+          ~/actionutils.sh add_osd_to_node "node-wrk$i"
+        done
+        ~/actionutils.sh headexec wait_for_osds 4
+
+    - name: Wait for ceph cluster to settle
+      run: |
+        sleep 30
+        ~/actionutils.sh headexec verify_health
+
+    - name: Test dry run maintenance enter
+      run: ~/actionutils.sh test_dry_run_maintenance_enter node-wrk1
+
+    - name: Test dry run maintenance exit
+      run: ~/actionutils.sh test_dry_run_maintenance_exit node-wrk1
+
+    - name: Test enter and exit maintainenace mode without set noout and stop osd
+      run: ~/actionutils.sh test_maintenance_enter_and_exit node-wrk1
+
+    - name: Test enter and exit maintainenace mode with set noout and stop osd
+      run: ~/actionutils.sh test_maintenance_enter_set_noout_stop_osds_and_exit node-wrk1
+
+    - name: Scale down the cluster to 3 nodes
+      run: |
+        set -uex
+        ~/actionutils.sh headexec remove_disk osd.4
+        ~/actionutils.sh headexec remove_node node-wrk3
+
+        if ~/actionutils.sh headexec "microceph cluster maintenance enter node-wrk1"; then
+          echo "Unexpected to succeed entering maintenance mode with less than 4 nodes"
+          exit 1
+        fi
+        echo "It's expected to fail entering maintenance mode with less than 4 nodes"
+
+    - name: Test force enter and exit maintainenace mode without set noout and stop osd
+      run: ~/actionutils.sh test_maintenance_enter_and_exit_force node-wrk1
+
+    - name: Test force enter and exit maintainenace mode with set noout and stop osd
+      run: ~/actionutils.sh test_maintenance_enter_set_noout_stop_osds_and_exit_force node-wrk1
 
   loop-file-tests:
     name: Test with loopback file OSDs
