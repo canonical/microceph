@@ -1,11 +1,11 @@
-name: Upgrade a r/stable cluster to squid/edge
+name: Upgrade a r/stable cluster to squid/candidate
 on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch: null
 
 jobs:
   r2s-upgrade-test:
-    name: Test reef/stable to squid/edge upgrades
+    name: Test reef/stable to squid/candidate upgrades
     runs-on: ubuntu-22.04
     steps:
 
@@ -51,8 +51,8 @@ jobs:
     - name: Exercise RGW
       run: ~/actionutils.sh headexec testrgw
 
-    - name: Upgrade to edge
-      run: ~/actionutils.sh refresh_snap squid/edge
+    - name: Upgrade to candidate
+      run: ~/actionutils.sh refresh_snap squid/candidate
 
     - name: Wait until 3 OSDs are up
       run:  ~/actionutils.sh headexec wait_for_osds 3
