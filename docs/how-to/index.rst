@@ -11,7 +11,7 @@ of both single-node and multi-node clusters.
 
 .. toctree::
    :maxdepth: 1
-   
+
    single-node
    multi-node
 
@@ -43,6 +43,7 @@ migrate services and more.
    change-log-level
    migrate-auto-services
    remove-disk
+   perform-cluster-maintenance
 
 Managing a remote cluster
 -------------------------
@@ -67,7 +68,7 @@ Follow these steps carefully to perform a major upgrade.
 
    major-upgrade
 
-   
+
 Consuming cluster storage
 -------------------------
 
