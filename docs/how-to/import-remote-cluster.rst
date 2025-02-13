@@ -34,7 +34,7 @@ Check remote ceph cluster status
 
 .. code-block:: none
 
-   sudo ceph -s --cluster simple --id magical
+   sudo microceph.ceph -s --cluster simple --id magical
    cluster:
     id:     7abfc0bb-6204-43af-8844-2874868cba74
     health: HEALTH_OK

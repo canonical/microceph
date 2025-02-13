@@ -25,7 +25,7 @@ Ceph-Mgr Prometheus module is responsible for serving the metrics endpoint which
 
 .. code-block:: none
 
-   ceph mgr module enable prometheus
+   microceph.ceph mgr module enable prometheus
 
 Configuring metrics endpoint
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -34,8 +34,8 @@ By default, it will accept HTTP requests on port 9283 on all IPv4 and IPv6 addre
 
 .. code-block:: none
 
-   ceph config set mgr mgr/prometheus/server_addr <addr>
-   ceph config set mgr mgr/prometheus/port <port>
+   microceph.ceph config set mgr mgr/prometheus/server_addr <addr>
+   microceph.ceph config set mgr mgr/prometheus/port <port>
 
 For details on how metrics endpoint can be further configured visit `Ceph Prometheus module <https://docs.ceph.com/en/quincy/mgr/prometheus/>`_
 

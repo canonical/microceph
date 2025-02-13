@@ -27,7 +27,7 @@ Firstly, before initiating the upgrade, ensure that the cluster is healthy. Use 
 
 .. code-block:: none
 
-    sudo ceph -s
+    sudo microceph.ceph -s
 
 **Note**: Do not start the upgrade if the cluster is unhealthy.
 
@@ -47,7 +47,7 @@ Carry out these precautionary steps before initiating the upgrade:
 
 .. code-block:: none
 
-   sudo ceph osd set noout
+   sudo microceph.ceph osd set noout
 
 
 Upgrading Each Cluster Node
@@ -68,7 +68,7 @@ Once the upgrade process is done, verify that all components have been upgraded 
 
 .. code-block:: none
    
-   sudo ceph versions
+   sudo microceph.ceph versions
 
 
 Unsetting Noout
@@ -78,7 +78,7 @@ If you had previously set noout, unset it with this command:
 
 .. code-block:: none
    
-   sudo ceph osd unset noout
+   sudo microceph.ceph osd unset noout
 
 
 You have now successfully upgraded your Ceph cluster.

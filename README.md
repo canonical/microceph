@@ -48,7 +48,7 @@ your root drive:
 
 You're done! Check Ceph status:
 
-    sudo ceph status
+    sudo microceph.ceph status
 
 You can remove everything cleanly with:
 

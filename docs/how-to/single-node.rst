@@ -115,7 +115,7 @@ commands are not yet available for a desired task:
 
 .. code-block:: none
 
-   sudo ceph status
+   sudo microceph.ceph status
 
 The cluster built during this tutorial gives the following output:
 

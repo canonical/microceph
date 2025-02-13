@@ -22,7 +22,7 @@ Check Ceph cluster's status:
 
 .. code-block:: none
 
-    $ sudo ceph -s
+    $ sudo microceph.ceph -s
     cluster:
         id:     90457806-a798-47f2-aca1-a8a93739941a
         health: HEALTH_OK
@@ -42,10 +42,10 @@ Create a pool for RBD images:
 
 .. code-block:: none
 
-    $ sudo ceph osd pool create block_pool
+    $ sudo microceph.ceph osd pool create block_pool
     pool 'block_pool' created
 
-    $ sudo ceph osd lspools
+    $ sudo microceph.ceph osd lspools
     1 .mgr
     2 block_pool
 
@@ -152,7 +152,7 @@ Ceph cluster state post IO:
 
 .. code-block:: none
 
-    $ sudo ceph -s
+    $ sudo microceph.ceph -s
     cluster:
         id:     90457806-a798-47f2-aca1-a8a93739941a
         health: HEALTH_OK

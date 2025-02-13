@@ -27,7 +27,7 @@ First get an overview of the cluster and its OSDs:
 
 .. code-block:: none
 
-   ceph status
+   microcepth.ceph status
 
 Example output:
 
@@ -54,7 +54,7 @@ Ceph) :command:`ceph osd tree` command:
 
 .. code-block:: none
 
-   ceph osd tree
+   microceph.ceph osd tree
 
 Sample output:
 
@@ -85,7 +85,7 @@ Verify that the OSD has been removed:
 
 .. code-block:: none
 
-   ceph osd tree
+   microceph.ceph osd tree
 
 Output:
 
@@ -106,7 +106,7 @@ Finally, confirm cluster status and health:
 
 .. code-block:: none
 
-   ceph status
+   microceph.ceph status
 
 Output:
 
