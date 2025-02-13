@@ -13,9 +13,10 @@ Understand the steps to take to successfully deploy and manage your Ceph cluster
    :maxdepth: 1
 
    cluster-configurations
+   cluster-maintenance
    cluster-scaling
    taking-snapshots
-   
+
 Full-disk encryption
 ---------------------
 
