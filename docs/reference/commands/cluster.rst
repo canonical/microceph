@@ -21,6 +21,7 @@ Available commands:
    export      Generates cluster token for given Remote cluster
    join        Joins an existing cluster
    list        List servers in the cluster
+   maintenance Enter or exit the maintenance mode.
    migrate     Migrate automatic services from one node to another
    remove      Removes a server from the cluster
    sql         Runs a SQL query against the cluster database
@@ -198,6 +199,69 @@ Usage:
 .. code-block:: none
 
    microceph cluster list [flags]
+
+
+``maintenance``
+---------------
+
+Enter or exit the maintenance mode.
+
+Usage:
+
+.. code-block:: none
+
+   microceph cluster maintenance [flags]
+   microceph cluster maintenance [command]
+
+Available Commands:
+
+.. code-block:: none
+
+   enter       Enter maintenance mode.
+   exit        Exit maintenance mode.
+
+
+``maintenance enter``
+---------------------
+
+Enter maintenance mode.
+
+Usage:
+
+.. code-block:: none
+
+   microceph cluster maintenance enter <NODE_NAME> [flags]
+
+Flags:
+
+.. code-block:: none
+
+   --check-only     Only run the preflight checks (mutually exclusive with --ignore-check).
+   --dry-run        Dry run the command.
+   --force          Force to enter maintenance mode.
+   --ignore-check   Ignore the the preflight checks (mutually exclusive with --check-only).
+   --set-noout      Stop CRUSH from rebalancing the cluster. (default true)
+   --stop-osds      Stop the OSDS when entering maintenance mode.
+
+
+``maintenance exit``
+--------------------
+
+Exit maintenance mode.
+
+Usage:
+
+.. code-block:: none
+
+   microceph cluster maintenance exit <NODE_NAME> [flags]
+
+Flags:
+
+.. code-block:: none
+
+   --check-only     Only run the preflight checks (mutually exclusive with --ignore-check).
+   --dry-run        Dry run the command.
+   --ignore-check   Ignore the the preflight checks (mutually exclusive with --check-only).
 
 
 ``migrate``
