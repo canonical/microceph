@@ -4,6 +4,7 @@ API
 APIs
 Auth
 auth
+auto-generated
 balancer
 CephFS
 Charmhub
