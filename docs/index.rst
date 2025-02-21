@@ -24,7 +24,7 @@ In this documentation
 
 ..  grid:: 1 2 1 2
 
-   ..  grid-item:: :doc:`Tutorial <tutorial/index>`
+   ..  grid-item:: :doc:`Tutorial <tutorial/get-started>`
 
       **A hands-on introduction** to MicroCeph for new users
 
@@ -61,9 +61,14 @@ constructive feedback.
 
 .. toctree::
    :hidden:
+   :maxdepth: 1
+
+   tutorial/get-started
+
+.. toctree::
+   :hidden:
    :maxdepth: 2
 
-   tutorial/index
    how-to/index
    reference/index
    explanation/index
