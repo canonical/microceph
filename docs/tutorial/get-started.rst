@@ -4,7 +4,7 @@ Get started
 This tutorial will guide you through your first steps with MicroCeph, a lightweight way of deploying and managing a Ceph cluster. We’ll walk through deploying a Ceph cluster on a single node using MicroCeph and storing a JPEG image in a Simple Storage Service (S3) bucket.
 
 What you'll learn
-------------
+-----------------
 
 We'll use the S3-compatible Ceph Object Gateway, or RADOS Gateway (RGW), to communicate with the cluster, and ``s3cmd``, a command line tool for uploading, retrieving, and managing data in AWS S3-compatible storage systems. 
 
@@ -14,7 +14,7 @@ By the end of this tutorial, after successfully using MicroCeph to store an imag
 and be ready to explore more advanced use cases.
 
 What you'll need
-------------
+----------------
 
 - The latest Ubuntu LTS version. Find Ubuntu release information `here`_.
 - 2 CPU cores
