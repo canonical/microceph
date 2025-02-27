@@ -5,82 +5,81 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/canonical/microceph/microceph)](https://goreportcard.com/report/github.com/canonical/microceph/microceph)
 [![Documentation Status](https://readthedocs.com/projects/canonical-microceph/badge/?version=latest)](https://canonical-microceph.readthedocs-hosted.com/en/latest/?badge=latest)
 
-<p align="center">
-<a href="https://snapcraft.io/microceph">MicroCeph</a> is snap-deployed Ceph with built-in clustering.
-</p>
-
 [![Get it from the Snap Store][snap-button]][snap-microceph]
 
-## Table of contents
 
-* [💡 Philosophy](#-philosophy)
-* [🎯 Features](#-features)
-* [⚡️ Quickstart](#%EF%B8%8Fquickstart)
-* [📖 Documentation](#-documentation)
-* [💫 Project & community](#-project--community)
-* [📰 License](#-license)
+MicroCeph is a lightweight way of deploying and managing a Ceph cluster; the easiest way to get up and running with Ceph.
 
-## 💡 Philosophy
+Deploying and operating a Ceph cluster is complex because Ceph is designed to be a general-purpose storage solution.
+This is a significant overhead for small Ceph clusters. MicroCeph solves this by being _opinionated_ and _focused_ on the small scale.
+With MicroCeph, you can deploy and operate a Ceph cluster in a [snap][snap-microceph] of a finger!
 
-Deploying and operating a Ceph cluster is complex because Ceph is designed to
-be a general-purpose storage solution. This is a significant overhead for small
-Ceph clusters. MicroCeph solves this by being _opinionated_ and _focused_ on
-the small scale. With MicroCeph, deploying and operating a Ceph cluster is as
-easy as a [Snap][snap-microceph]!
+## Installing and using MicroCeph
 
-## 🎯 Features
+Deploy a Ceph cluster on a single machine in only 4 steps! You will need about 15 GiB of available space on
+your root drive.
 
-* Quick and consistent deployment with minimal overhead
-* Single-command operations (for bootstrapping, adding OSDs, service enablement, etc)
-* Isolated from the host and upgrade-friendly
-* Built-in clustering so you don't have to worry about it!
+### Install the MicroCeph snap
 
-## ⚡️ Quickstart
+``sudo snap install microceph``
 
-The below commands will set you up with a testing environment on a single
-machine using file-backed OSDs - you'll need about 15 GiB of available space on
-your root drive:
+### Disable automatic snap upgrades
 
-    sudo snap install microceph 
-    sudo snap refresh --hold microceph
-    sudo microceph cluster bootstrap
-    sudo microceph disk add loop,4G,3
+``sudo snap refresh --hold microceph``
 
-You're done! Check Ceph status:
+### Bootstrap Ceph cluster
+
+``sudo microceph cluster bootstrap``
+
+### Add storage
+
+```sudo microceph disk add loop,4G,3``
+
+That's it, you're done! 
+
+To check your Ceph cluster status:
 
     sudo ceph status
 
-You can remove everything cleanly with:
+And, to purge the MicroCeph snap from your machine along with your cluster and all the resources contained in it: 
 
     sudo snap remove microceph --purge
 
-## 📖 Documentation
+## Documentation
 
-The documentation is found in the [`docs`][docs-dir-microceph] directory. It is
-written in RST format, built with Sphinx, and published on Read The Docs:
+The MicroCeph documentation lives in the [`docs`][docs-dir-microceph] directory. It is written in reStructuredTest format (reST), built with Sphinx,
+and published on Read The Docs. To learn more about what you can do with MicroCeph, visit [our official documentation][rtd-microceph].
 
-[MicroCeph documentation][rtd-microceph]
+## Project and Community
 
-## 💫 Project & community
+MicroCeph is a member of the Ubuntu family. It is an open-source project that warmly welcomes community projects, contributions, suggestions,
+fixes and constructive feedback. If you find any errors or have suggestions for improvements, please [open an issue][bug-microceph] or pull request against this repository,
+or use the "Give feedback" link from the documentation.
 
-* [Join our online forum][matrix-microceph] - **Ubuntu Ceph** on Matrix
-* [Contributing guidelines][contrib-microceph]
-* [Code of conduct][ubuntu-coc]
-* [File a bug][bug-microceph]
+* [Join our Matrix forum][matrix-microceph] to engage with our community and get support.
+* We abide by the [Ubuntu Code of Conduct][ubuntu-coc].
 
 Excited about MicroCeph? Become one of our [Stargazers][stargazers-microceph]!
 
-## 📰 License
+## Contribute to MicroCeph
 
-MicroCeph is free software, distributed under the AGPLv3 license (GNU Affero
-General Public License version 3.0). Refer to the [COPYING][license-microceph]
-file (the actual license) for more information.
+MicroCeph is growing as a project, and we would love your help.
+
+If you are interested in contributing to our code or documentation, our[contribution guide][contrib-microceph] is the best place
+to start.
+
+We are also a proud member of the [Canonical Open Documentation Academy][coda], an initiative aimed at lowering the barrier to open-source software contributions
+through documentation. Find a wide range of MicroCeph documentation tasks there!
+
+## License and copyright
+
+MicroCeph is a free software, distributed under the [AGPLv3.0 license][license-microceph].
 
 <!-- LINKS -->
 
 [snap-button]: https://snapcraft.io/static/images/badges/en/snap-store-black.svg
 [snap-microceph]: https://snapcraft.io/microceph
-[rtd-microceph]: https://canonical-microceph.readthedocs-hosted.com/
+[rtd-microceph]: https://canonical-microceph.readthedocs-hosted.com/en/latest/
 [docs-dir-microceph]: https://github.com/canonical/microceph/tree/main/docs
 [contrib-microceph]: ./CONTRIBUTING.md
 [license-microceph]: ./COPYING
@@ -88,3 +87,4 @@ file (the actual license) for more information.
 [bug-microceph]: https://github.com/canonical/microceph/issues/new
 [stargazers-microceph]: https://github.com/canonical/microceph/stargazers
 [matrix-microceph]: https://matrix.to/#/#ubuntu-ceph:matrix.org
+[coda]: https://canonical.com/documentation/open-documentation-academy
