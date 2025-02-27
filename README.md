@@ -33,7 +33,7 @@ your root drive.
 
 ### Add storage
 
-```sudo microceph disk add loop,4G,3``
+``sudo microceph disk add loop,4G,3``
 
 That's it, you're done! 
 
@@ -65,7 +65,7 @@ Excited about MicroCeph? Become one of our [Stargazers][stargazers-microceph]!
 
 MicroCeph is growing as a project, and we would love your help.
 
-If you are interested in contributing to our code or documentation, our[contribution guide][contrib-microceph] is the best place
+If you are interested in contributing to our code or documentation, our [contribution guide][contrib-microceph] is the best place
 to start.
 
 We are also a proud member of the [Canonical Open Documentation Academy][coda], an initiative aimed at lowering the barrier to open-source software contributions
