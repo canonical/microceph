@@ -1,22 +1,20 @@
 Get started
 ===========
 
-This tutorial will guide you through your first steps with MicroCeph. You will use MicroCeph to deploy a Ceph cluster on a single node and to store
-a JPEG  image, in a simple storage service (S3) bucket.
+This tutorial will guide you through your first steps with MicroCeph, a lightweight way of deploying and managing a Ceph cluster. We’ll walk through deploying a Ceph cluster on a single node using MicroCeph and storing a JPEG image in a Simple Storage Service (S3) bucket.
 
-To do this, you will use the S3-compatible Ceph Object Gateway, or RADOS Gateway (RGW), to help you interact with your cluster, and ``s3cmd``, a command line tool
-and client for uploading, retrieving and managing data in AWS S3 compatible storage systems. 
+What you'll learn
+-----------------
 
-Along the way, you will also interact with your cluster in other ways, such as checking the health status of your cluster, adding disks to it and,
-of course, enabling RGW on the cluster.
+We'll use the S3-compatible Ceph Object Gateway, or RADOS Gateway (RGW), to communicate with the cluster, and ``s3cmd``, a command line tool for uploading, retrieving, and managing data in AWS S3-compatible storage systems. 
 
-By the end of this tutorial, after having successfully used MicroCeph to store a graphical image, you will have a basic idea of how MicroCeph works,
-and you will be ready to start exploring more advanced use cases.
+As we progress, you'll learn how to interact with your cluster by checking its health, adding disks, and enabling RGW.
 
-Requirements
-------------
+By the end of this tutorial, after successfully using MicroCeph to store an image, you'll have a foundational understanding of how MicroCeph works,
+and be ready to explore more advanced use cases.
 
-You will need the following:
+What you'll need
+----------------
 
 - The latest Ubuntu LTS version. Find Ubuntu release information `here`_.
 - 2 CPU cores
@@ -36,7 +34,7 @@ First, install MicroCeph as a snap package from the Snap Store:
     
     sudo snap install microceph
 
-Disable the default automatic Snap upgrades to prevent MicroCeph from being auto-updated:
+Disable the default automatic Snap upgrades to prevent MicroCeph from being updated automatically:
 
 .. code-block:: none
     
@@ -44,9 +42,7 @@ Disable the default automatic Snap upgrades to prevent MicroCeph from being auto
 
 .. caution::
     
-    Failing to set this option may lead undesired upgrades which can be fatal to your deployed cluster.
-
-    All subsequent MicroCeph upgrades must, then, be done manually.
+    Failing to set this option may result in unintended upgrades, which could critically impact your deployed cluster. To prevent this, all subsequent MicroCeph upgrades must be performed manually.
 
 Initialise your cluster
 -----------------------
@@ -59,11 +55,13 @@ Next, bootstrap your new Ceph storage cluster:
 
 This process takes 3 to 5 seconds.
 
-Check the status of the cluster:
+Check the cluster status:
 
 .. code-block:: none
     
     sudo microceph status
+
+The response should look somewhat as shown below:
 
 .. terminal::
 
@@ -72,16 +70,20 @@ Check the status of the cluster:
      Services: mds, mgr, mon
         Disks: 0
 
-Your cluster deployment summary will include your node's hostname, i.e. ``ubuntu`` and IP address, i.e. ``10.246.114.49``, along with information about the
-services running and storage available. Notice that we have a healthy cluster with one node and three services running, but no storage allocated yet.
+Your cluster deployment summary contains your node's hostname (IP address), such as ``ubuntu`` (``10.246.114.49``), along with information about the
+services running and available storage. You'll notice that the cluster is healthy with one node and three services running, but no storage has been allocated yet. 
+
+Now that the cluster is initialised, we'll add some storage to the node.
 
 Add storage
 -----------
 
 Let's add storage disk devices to the node.
 
-We will use loop files, which are file-backed object storage daemons (OSDs) convenient for
+We will use loop files, which are file-backed Object Storage Daemons (OSDs) convenient for
 setting up small test and development clusters. Three OSDs are required to form a minimal Ceph cluster.
+
+Execute the following command:
 
 .. code-block:: none
     
@@ -97,7 +99,7 @@ setting up small test and development clusters. Three OSDs are required to form 
 
 Success! You have added three OSDs with 4GiB storage to your node.
 
-Recheck the status of the cluster:
+Recheck the cluster status:
 
 .. code-block:: none
     
@@ -109,13 +111,14 @@ Recheck the status of the cluster:
     Services: mds, mgr, mon, osd
     Disks: 3
 
-You have successfully deployed a Ceph cluster on a single node. Remember that we had three services running upon bootstrapping the cluster.
-Note that we now have four services running, including a new ``osd`` service.
+Congratulations! You have successfully deployed a Ceph cluster on a single node. 
+
+Remember that we had three services running when the cluster was bootstrapped. Note that we now have four services running, including the newly added ``osd`` service.
 
 Enable RGW
 ----------
 
-As mentioned before, we will use the Ceph Object Gateway as a way to interact with the object storage cluster
+As mentioned before, we will use the Ceph Object Gateway to interact with the object storage cluster
 we just deployed.
 
 Enable the RGW daemon on your node
@@ -127,10 +130,10 @@ Enable the RGW daemon on your node
 
 .. note:: 
     
-    By default, the ``rgw`` service uses port 80, which is not always available. If you don’t have port 80 free,
-    you can set an alternative port number, say 8080, by adding the :file:`--port <port-number>` parameter.
+    By default, the ``rgw`` service uses port 80, which may not always be available. If port 80 is occupied,
+    you can specify an alternative port, such as 8080, by adding the :file:`--port <port-number>` parameter.
 
-Another status check will show the ``rgw`` service reflected in the status output.
+Run the status check again to confirm that the ``rgw`` service is reflected in the status output.
 
 .. code-block:: none
 
