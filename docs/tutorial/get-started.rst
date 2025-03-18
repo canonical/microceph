@@ -1,17 +1,16 @@
 Get started
 ===========
 
-This tutorial will guide you through your first steps with MicroCeph, a lightweight way of deploying and managing a Ceph cluster. We’ll walk through deploying a Ceph cluster on a single node using MicroCeph and storing a JPEG image in a Simple Storage Service (S3) bucket.
+This tutorial will guide you through your first steps with MicroCeph. We will walk through deploying a Ceph cluster on a single node using MicroCeph, and storing a JPEG image in a Simple Storage Service (S3) bucket managed by MicroCeph.
 
 What you'll learn
 -----------------
 
-We'll use the S3-compatible Ceph Object Gateway, or RADOS Gateway (RGW), to communicate with the cluster, and ``s3cmd``, a command line tool for uploading, retrieving, and managing data in AWS S3-compatible storage systems. 
+We will use the S3-compatible Ceph Object Gateway, or RADOS Gateway (RGW), to communicate with the cluster, and ``s3cmd``, a command line tool for uploading, retrieving, and managing data in AWS S3-compatible storage systems. 
 
-As we progress, you'll learn how to interact with your cluster by checking its health, adding disks, and enabling RGW.
+As we progress, you will interact with your cluster by checking its health, adding disks, and enabling RGW.
 
-By the end of this tutorial, after successfully using MicroCeph to store an image, you'll have a foundational understanding of how MicroCeph works,
-and be ready to explore more advanced use cases.
+By the end of this tutorial, after successfully using MicroCeph to store an image, you will have a foundational understanding of how MicroCeph works, and be ready to explore more advanced use cases.
 
 What you'll need
 ----------------
@@ -61,7 +60,7 @@ Check the cluster status:
     
     sudo microceph status
 
-The response should look somewhat as shown below:
+The output should look somewhat as shown below:
 
 .. terminal::
 
@@ -70,8 +69,7 @@ The response should look somewhat as shown below:
      Services: mds, mgr, mon
         Disks: 0
 
-Your cluster deployment summary contains your node's hostname (IP address), such as ``ubuntu`` (``10.246.114.49``), along with information about the
-services running and available storage. You'll notice that the cluster is healthy with one node and three services running, but no storage has been allocated yet. 
+Your cluster deployment summary contains your node's hostname (IP address), such as ``ubuntu`` (``10.246.114.49``), along with information about the services running and available storage. You'll notice that the cluster is healthy with one node and three services running, but no storage has been allocated yet. 
 
 Now that the cluster is initialised, we'll add some storage to the node.
 
@@ -80,8 +78,7 @@ Add storage
 
 Let's add storage disk devices to the node.
 
-We will use loop files, which are file-backed Object Storage Daemons (OSDs) convenient for
-setting up small test and development clusters. Three OSDs are required to form a minimal Ceph cluster.
+We will use loop files, which are file-backed Object Storage Daemons (OSDs) convenient for setting up small test and development clusters. Three OSDs are required to form a minimal Ceph cluster.
 
 Execute the following command:
 
@@ -111,7 +108,7 @@ Recheck the cluster status:
     Services: mds, mgr, mon, osd
     Disks: 3
 
-Congratulations! You have successfully deployed a Ceph cluster on a single node. 
+You have successfully deployed a Ceph cluster on a single node. 
 
 Remember that we had three services running when the cluster was bootstrapped. Note that we now have four services running, including the newly added ``osd`` service.
 
@@ -180,7 +177,7 @@ The output should include user details as shown below, with auto-generated acces
 
 Set user secrets
 ~~~~~~~~~~~~~~~~
-Let's set some secrets the user created, giving ``access_key`` the value ``foo``, and ``--secret-key`` the value ``bar``.
+Let's define secrets for this user, setting ``access_key`` to ``foo``, and ``--secret-key`` to ``bar``.
 
 .. code-block:: none
 
@@ -270,27 +267,25 @@ Upload an image into the  bucket
     66565 of 66565   100% in    0s     4.52 MB/s  done
     Public URL of the object is: http://ubuntu/mybucket/image.jpg
 
-You have stored your image in a publicly visible S3 bucket. You may now click on the public object URL given in the output 
-to view it in your browser.
+The output shows that your image is stored in a publicly accessible S3 bucket. You can now click on the public object URL in the output to view the image in your browser.
 
 Cleaning up resources
 ---------------------
 
-In case, for any reason, you want to get rid of MicroCeph, you can purge the snap from your machine this way:
+If you want to remove MicroCeph, you can purge the snap from your machine using:
 
 .. code-block:: none
 
     sudo snap remove microceph --purge
 
-This command stops all the services running, and removes the MicroCeph snap along with your cluster and all the resources contained in it.
+This command stops all running services and removes the MicroCeph snap, along with your cluster and all its contained resources.
 
 .. note::
 
-    Note: the ``--purge`` flag will remove all MicroCeph persistent state, .
+    Note: the ``--purge`` flag will remove all persistent state associated with MicroCeph.
     
 
-    The ``--purge`` flag will remove all the files associated with the MicroCeph package, i.e. it will remove the MicroCeph snap without saving a snapshot
-    of its data. Running the command without this flag will not remove MicroCeph completely - the persistent state will still be there.
+    The ``--purge`` flag deletes all files associated with the MicroCeph package, meaning it will remove the MicroCeph snap without saving any data snapshots. Running the command without this flag will not fully remove MicroCeph; the persistent state will remain intact.
 
 .. tip::
     Skipping the :command:`purge` option is useful if you intend to re-install MicroCeph, or move your configuration to a different system.
@@ -305,8 +300,7 @@ This command stops all the services running, and removes the MicroCeph snap alon
 Next steps
 ----------
 
-You have deployed a healthy Ceph cluster on a single-node and enabled RGW on it. Even better, you have consumed the storage in that cluster by creating
-a bucket and storing an object in it. Curious to see what else you can do with MicroCeph?
+You have deployed a healthy Ceph cluster on a single-node and enabled RGW on it. Even better, you have utilized the storage in that cluster by creating a bucket and storing an image object in it. Curious to see what else you can do with MicroCeph?
 
 See our :doc:`how-to guides <../how-to/index>`, packed with instructions to help you achieve specific goals with MicroCeph.
 
