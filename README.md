@@ -8,72 +8,97 @@
 [![Get it from the Snap Store][snap-button]][snap-microceph]
 
 
-MicroCeph is a lightweight way of deploying and managing a Ceph cluster; the easiest way to get up and running with Ceph.
+MicroCeph is an opinionated command-line tool for deploying and managing Ceph clusters at all scales.
+It reduces deployment and management overhead by simplifying key distribution, service placement,
+and disk administration through a single interface.
 
-Deploying and operating a Ceph cluster is complex because Ceph is designed to be a general-purpose storage solution.
-This is a significant overhead for small Ceph clusters. MicroCeph solves this by being _opinionated_ and _focused_ on the small scale.
-With MicroCeph, you can deploy and operate a Ceph cluster in a [snap][snap-microceph] of a finger!
+Available as a snap, MicroCeph is the easiest tool for admins, developers, and hobbyists to manage clusters.
 
-## Installing and using MicroCeph
+## Installation
 
-Deploy a Ceph cluster on a single machine in only 4 steps! You will need about 15 GiB of available space on
-your root drive.
+MicroCeph has first-class support as a snap. On snap-ready systems, you can install it on the command line with:
 
-### Install the MicroCeph snap
+```
+sudo snap install microceph
+```
 
-``sudo snap install microceph``
+Disable automatic snap upgrades, so that no unexpected updates change your set-up:
 
-### Disable automatic snap upgrades
+```
+sudo snap refresh --hold microceph
+```
 
-``sudo snap refresh --hold microceph``
+## Basic usage
 
-### Bootstrap Ceph cluster
+MicroCeph can deploy a Ceph cluster on a single machine with minimal commands.
 
-``sudo microceph cluster bootstrap``
+First, set up a Ceph cluster on your machine with:
 
-### Add storage
+```
+sudo microceph cluster bootstrap
+```
 
-``sudo microceph disk add loop,4G,3``
+> [!NOTE]  
+> `cluster` is a microceph subcommand for managing clusters.
 
-That's it, you're done! 
+After setup, add storage to your cluster with:
 
-To check your Ceph cluster status:
+```
+sudo microceph disk add loop,4G,3
+```
 
-    sudo ceph status
+Here, you’ll add three virtual disks (“loop file” disks) of 4 GiB each: 
 
-And, to purge the MicroCeph snap from your machine along with your cluster and all the resources contained in it: 
+Once your cluster is set up and running, you can monitor its status with:
 
-    sudo snap remove microceph --purge
+```
+sudo microceph status
+```
+
+Note that there are no spaces between the `disk add` arguments.
+
+If you need a comprehensive status report of your cluster, including its health and disk usage, run:
+
+```
+sudo microceph.ceph status
+```
 
 ## Documentation
 
-The MicroCeph documentation lives in the [`docs`][docs-dir-microceph] directory. It is written in reStructuredTest format (reST), built with Sphinx,
-and published on Read The Docs. To learn more about what you can do with MicroCeph, visit [our official documentation][rtd-microceph].
+The [MicroCeph documentation][rtd-microceph] contains guides and learning material about
+what you can do with MicroCeph and how it works.
+
+Documentation is maintained in the [`docs`][docs-dir-microceph] directory of this repository.
+It is written in reStructuredTest (reST) format, built with Sphinx, and published on Read The Docs. 
 
 ## Project and Community
 
-MicroCeph is a member of the Ubuntu family. It is an open-source project that warmly welcomes community projects, contributions, suggestions,
-fixes and constructive feedback. If you find any errors or have suggestions for improvements, please [open an issue][bug-microceph] or pull request against this repository,
-or use the "Give feedback" link from the documentation.
+MicroCeph is a member of the Ubuntu family. It's an open-source project that warmly welcomes community contributions,
+suggestions, fixes, and constructive feedback.
 
-* [Join our Matrix forum][matrix-microceph] to engage with our community and get support.
-* We abide by the [Ubuntu Code of Conduct][ubuntu-coc].
+If you find any errors or have suggestions for improvements, please [open an issue on GitHub][bug-microceph]
 
-Excited about MicroCeph? Become one of our [Stargazers][stargazers-microceph]!
+[Join our Matrix forum][matrix-microceph] to engage with our community and get support.
+
+We abide by the [Ubuntu Code of Conduct][ubuntu-coc].
+
+Excited about MicroCeph? If you star the project on GitHub, you'll become a [Stargazer][stargazers-microceph]!
 
 ## Contribute to MicroCeph
 
 MicroCeph is growing as a project, and we would love your help.
 
-If you are interested in contributing to our code or documentation, our [contribution guide][contrib-microceph] is the best place
-to start.
+If you are interested in contributing to our code or documentation, our [contribution guide][contrib-microceph]
+is the best place to start.
 
-We are also a proud member of the [Canonical Open Documentation Academy][coda], an initiative aimed at lowering the barrier to open-source software contributions
-through documentation. Find a wide range of MicroCeph documentation tasks there!
+We are also a proud member of the [Canonical Open Documentation Academy][coda], an initiative aimed at lowering the
+barrier to open-source software contributions through documentation. Find a wide range of MicroCeph documentation tasks there.
 
 ## License and copyright
 
-MicroCeph is a free software, distributed under the [AGPLv3.0 license][license-microceph].
+MicroCeph is a free and open source software distributed under the [AGPLv3.0 license][lisense-microceph].
+
+© 2025 Canonical Ltd.
 
 <!-- LINKS -->
 
@@ -87,4 +112,4 @@ MicroCeph is a free software, distributed under the [AGPLv3.0 license][license-m
 [bug-microceph]: https://github.com/canonical/microceph/issues/new
 [stargazers-microceph]: https://github.com/canonical/microceph/stargazers
 [matrix-microceph]: https://matrix.to/#/#ubuntu-ceph:matrix.org
-[coda]: https://canonical.com/documentation/open-documentation-academy
+[coda]: https://canonical-open-documentation-academy.readthedocs.io/en/latest/
