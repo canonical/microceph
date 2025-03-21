@@ -47,7 +47,8 @@ After setup, add storage to your cluster with:
 sudo microceph disk add loop,4G,3
 ```
 
-Here, you’ll add three virtual disks (“loop file” disks) of 4 GiB each: 
+Here, you’ll add three virtual disks (“loop file” disks) of 4 GiB each.
+
 
 Once your cluster is set up and running, you can monitor its status with:
 
@@ -56,6 +57,7 @@ sudo microceph status
 ```
 
 Note that there are no spaces between the `disk add` arguments.
+
 
 If you need a comprehensive status report of your cluster, including its health and disk usage, run:
 
