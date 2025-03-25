@@ -1120,10 +1120,6 @@ func SetReplicationFactor(pools []string, size int64) error {
 		return fmt.Errorf("failed to set size one pool config option: %w", err)
 	}
 
-	// This only silences a warning and should thus not return an
-	// error on failure
-	_, _ = processExec.RunCommand("ceph", "health", "mute", "POOL_NO_REDUNDANCY")
-
 	if len(pools) == 1 && pools[0] == "*" {
 		// Apply setting to all existing pools.
 		out, err := processExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
