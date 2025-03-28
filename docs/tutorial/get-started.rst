@@ -1,14 +1,14 @@
 Get started
 ===========
 
-This tutorial will guide you through your first steps with MicroCeph. We will walk through deploying a Ceph cluster on a single node using MicroCeph, and storing a JPEG image in a Simple Storage Service (S3) bucket managed by MicroCeph.
+This tutorial will guide you through your first steps with MicroCeph. We will deploy a Ceph cluster on a single node using MicroCeph and store a JPEG image in an S3 bucket managed by MicroCeph.
 
-What you'll learn
+How you'll Do It
 -----------------
 
-We will use the S3-compatible Ceph Object Gateway, or RADOS Gateway (RGW), to communicate with the cluster, and ``s3cmd``, a command line tool for uploading, retrieving, and managing data in AWS S3-compatible storage systems. 
+You will install MicroCeph, initialise the cluster, and add storage. Then, you will enable the S3-compatible Ceph Object Gateway (RGW) on your node and create an S3 bucket. Finally, you will upload an image to the bucket, consuming the storage via RGW.
 
-As we progress, you will interact with your cluster by checking its health, adding disks, and enabling RGW.
+As we progress, you will also interact with your cluster by checking its health, adding disks, and enabling RGW.
 
 By the end of this tutorial, after successfully using MicroCeph to store an image, you will have a foundational understanding of how MicroCeph works, and be ready to explore more advanced use cases.
 
@@ -69,7 +69,7 @@ The output should look somewhat as shown below:
      Services: mds, mgr, mon
         Disks: 0
 
-Your cluster deployment summary contains your node's hostname (IP address), such as ``ubuntu`` (``10.246.114.49``), along with information about the services running and available storage. You'll notice that the cluster is healthy with one node and three services running, but no storage has been allocated yet. 
+Your cluster deployment summary contains your node's hostname (IP address). In our case, it's ``ubuntu`` (``10.246.114.49``), along with information about the services running and available storage. You'll notice that the cluster is healthy with one node and three services running, but no storage has been allocated yet. 
 
 Now that the cluster is initialised, we'll add some storage to the node.
 
@@ -300,7 +300,7 @@ This command stops all running services and removes the MicroCeph snap, along wi
 Next steps
 ----------
 
-You have deployed a healthy Ceph cluster on a single-node and enabled RGW on it. Even better, you have utilized the storage in that cluster by creating a bucket and storing an image object in it. Curious to see what else you can do with MicroCeph?
+You have deployed a healthy Ceph cluster on a single-node and enabled RGW on it. Even better, you have consumed the storage in that cluster by creating a bucket and storing an image object in it. Curious to see what else you can do with MicroCeph?
 
 See our :doc:`how-to guides <../how-to/index>`, packed with instructions to help you achieve specific goals with MicroCeph.
 
