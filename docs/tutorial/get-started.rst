@@ -238,6 +238,13 @@ Then, run :command:`curl` from this node.
 Create an S3 bucket
 ~~~~~~~~~~~~~~~~~~~
 
+.. note::
+
+    In order to interact with S3 you need to make sure ``s3cmd`` utility is installed. If not, just simply run ``sudo apt install s3cmd``.
+    After that, ``s3cmd`` needs to be configured by running: ``s3cmd --configure``, answer the questions and you are done.
+    Keep in mind that this command crates a file called ``.s3cfg`` in your home directory with all the settings.
+
+
 You have verified that your cluster is accessible via RGW. Now, let's create a bucket using the ``s3cmd`` tool:
 
 .. code-block:: none
