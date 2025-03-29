@@ -8,11 +8,11 @@
 [![Get it from the Snap Store][snap-button]][snap-microceph]
 
 
-MicroCeph is an opinionated command-line tool for deploying and managing Ceph clusters at all scales.
-It reduces deployment and management overhead by simplifying key distribution, service placement,
-and disk administration through a single interface.
+MicroCeph is an opinionated orchestration tool for Ceph clusters at all scales.
+It reduces the complexity of deploying and managing clusters by simplifying various operations like, service placement,
+disk administration and remote replication via RESTful APIs and CLI commands.
 
-Available as a snap, MicroCeph is the easiest tool for admins, developers, and hobbyists to manage clusters.
+Available as a snap, MicroCeph is the easiest tool for administrators, developers, and hobbyists to manage clusters.
 
 ## Installation
 
@@ -39,7 +39,7 @@ sudo microceph cluster bootstrap
 ```
 
 > [!NOTE]  
-> `cluster` is a microceph subcommand for managing clusters.
+> `cluster` is a MicroCeph subcommand for managing associated Ceph clusters.
 
 After setup, add storage to your cluster with:
 
@@ -62,8 +62,10 @@ Note that there are no spaces between the `disk add` arguments.
 If you need a comprehensive status report of your cluster, including its health and disk usage, run:
 
 ```
-sudo microceph.ceph status
+sudo ceph status
 ```
+> [!NOTE]
+> MicroCeph supports the usage of Ceph native tooling where snap-level commands are not yet available.
 
 ## Documentation
 
@@ -88,7 +90,7 @@ Excited about MicroCeph? If you star the project on GitHub, you'll become a [Sta
 
 ## Contribute to MicroCeph
 
-MicroCeph is growing as a project, and we would love your help.
+MicroCeph is growing rapidly, and we would love your help.
 
 If you are interested in contributing to our code or documentation, our [contribution guide][contrib-microceph]
 is the best place to start.
