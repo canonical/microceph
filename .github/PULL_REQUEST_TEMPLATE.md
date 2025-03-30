@@ -24,6 +24,7 @@ Please describe the addition/modification of tests done to verify this change. P
 
 Please check that you have:
 
+- [ ] considered and tested upgrade scenarios from a previous stable version.
 - [ ] self-reviewed the code in this PR.
 - [ ] added code comments, particularly in hard-to-understand areas.
 - [ ] updated the user documentation with corresponding changes.
