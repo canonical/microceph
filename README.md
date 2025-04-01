@@ -9,14 +9,14 @@
 
 
 MicroCeph is an opinionated orchestration tool for Ceph clusters at all scales.
-It reduces the complexity of deploying and managing clusters by simplifying various operations like, service placement,
+It reduces the complexity of deploying and managing Ceph clusters by simplifying various operations like, service placement,
 disk administration and remote replication via RESTful APIs and CLI commands.
 
 Available as a snap, MicroCeph is the easiest tool for administrators, developers, and hobbyists to manage clusters.
 
 ## Installation
 
-MicroCeph has first-class support as a snap. On snap-ready systems, you can install it on the command line with:
+MicroCeph has first-class support as a snap. On [snap-ready systems][snap-ready], you can install it on the command line with:
 
 ```
 sudo snap install microceph
@@ -32,7 +32,7 @@ sudo snap refresh --hold microceph
 
 MicroCeph can deploy a Ceph cluster on a single machine with minimal commands.
 
-First, set up a Ceph cluster on your machine with:
+First, initialise a Ceph cluster on your machine with:
 
 ```
 sudo microceph cluster bootstrap
@@ -41,13 +41,16 @@ sudo microceph cluster bootstrap
 > [!NOTE]  
 > `cluster` is a MicroCeph subcommand for managing associated Ceph clusters.
 
-After setup, add storage to your cluster with:
+After bootstrap, add storage to your cluster with:
 
 ```
 sudo microceph disk add loop,4G,3
 ```
 
-Here, you’ll add three virtual disks (“loop file” disks) of 4 GiB each.
+Here, you’ll add three virtual disks (“loop file” disks) of 4 GiB each. Make sure that
+your root disk has 12 GiB of free storage space.
+
+Note that there are no spaces between the `disk add` arguments.
 
 
 Once your cluster is set up and running, you can monitor its status with:
@@ -55,9 +58,6 @@ Once your cluster is set up and running, you can monitor its status with:
 ```
 sudo microceph status
 ```
-
-Note that there are no spaces between the `disk add` arguments.
-
 
 If you need a comprehensive status report of your cluster, including its health and disk usage, run:
 
@@ -73,7 +73,7 @@ The [MicroCeph documentation][rtd-microceph] contains guides and learning materi
 what you can do with MicroCeph and how it works.
 
 Documentation is maintained in the [`docs`][docs-dir-microceph] directory of this repository.
-It is written in reStructuredTest (reST) format, built with Sphinx, and published on Read The Docs. 
+It is written in reStructuredTest (reST) format, built with Sphinx, and published on [Read the Docs][rtd]. 
 
 ## Project and Community
 
@@ -117,3 +117,5 @@ MicroCeph is a free and open source software distributed under the [AGPLv3.0 lic
 [stargazers-microceph]: https://github.com/canonical/microceph/stargazers
 [matrix-microceph]: https://matrix.to/#/#ubuntu-ceph:matrix.org
 [coda]: https://canonical-open-documentation-academy.readthedocs.io/en/latest/
+[snap-ready]: https://snapcraft.io/docs/installing-snapd
+[rtd]: https://about.readthedocs.com/
