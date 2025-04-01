@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 
@@ -137,6 +139,23 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 	return nil
 }
 
+// waitForMonitor polls 'ceph mon stat' until it succeeds or the timeout is reached.
+func waitForMonitor(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		_, err := cephRun("mon", "stat")
+		if err == nil {
+			logger.Debug("Monitor quorum is active.")
+			return nil // Success
+		}
+		lastErr = err
+		logger.Debugf("Waiting for monitor to respond, retrying...")
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timed out waiting for monitor after %v: %w", timeout, lastErr)
+}
+
 // setDefaultNetwork configures the cluster network on mon KV store.
 func setDefaultNetwork(cn string, pn string) error {
 	// Cluster Network
@@ -257,6 +276,15 @@ func initMon(s interfaces.StateInterface, dataPath string, path string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to start monitor: %w", err)
 	}
+
+	logger.Debug("Waiting for monitor to become responsive after starting service...")
+	err = waitForMonitor(3 * time.Minute)
+	if err != nil {
+		// Fail bootstrap if the monitor doesn't become responsive.
+		return fmt.Errorf("monitor did not become responsive within timeout: %w", err)
+	}
+	logger.Debug("Monitor is responsive.")
+
 	return nil
 }
 

@@ -37,21 +37,23 @@ func addCreateMonMapExpectations(r *mocks.Runner) {
 	r.On("RunCommand", tests.CmdAny("monmaptool", 17)...).Return("ok", nil).Once()
 }
 
-// Expect: run ceph-mon and snap start
+// Expect: run ceph-mon, snap start, and ceph mon stat
 func addInitMonExpectations(r *mocks.Runner) {
 	r.On("RunCommand", tests.CmdAny("ceph-mon", 9)...).Return("ok", nil).Once()
 	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
+	// Expect the call from waitForMonitor
+	r.On("RunCommand", tests.CmdAny("ceph", 3)...).Return(`{"quorum":[]}`, nil).Once() // ceph mon stat
 }
 
 // Expect: run ceph and snap start
 func addInitMgrExpectations(r *mocks.Runner) {
-	r.On("RunCommand", tests.CmdAny("ceph", 11)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 12)...).Return("ok", nil).Once()
 	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
 }
 
 // Expect: run ceph and snap start
 func addInitMdsExpectations(r *mocks.Runner) {
-	r.On("RunCommand", tests.CmdAny("ceph", 13)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 14)...).Return("ok", nil).Once()
 	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
 }
 
