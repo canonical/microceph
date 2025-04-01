@@ -16,7 +16,7 @@ Available as a snap, MicroCeph is the easiest tool for administrators, developer
 
 ## Installation
 
-MicroCeph has first-class support as a snap. On [snap-ready systems][snap-ready], you can install it on the command line with:
+MicroCeph is delivered as a snap. On [snap-ready systems][snap-ready], you can install it on the command line with:
 
 ```
 sudo snap install microceph
@@ -86,7 +86,7 @@ If you find any errors or have suggestions for improvements, please [open an iss
 
 We abide by the [Ubuntu Code of Conduct][ubuntu-coc].
 
-Excited about MicroCeph? If you star the project on GitHub, you'll become a [Stargazer][stargazers-microceph]!
+Excited about MicroCeph? See [our list of fans][stargazers-microceph].
 
 ## Contribute to MicroCeph
 
