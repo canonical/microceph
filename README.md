@@ -9,10 +9,10 @@
 
 
 MicroCeph is an opinionated orchestration tool for Ceph clusters at all scales.
-It reduces the complexity of deploying and managing Ceph clusters by simplifying various operations like, service placement,
+It reduces the complexity of deploying and managing clusters by simplifying various operations like, service placement,
 disk administration and remote replication via RESTful APIs and CLI commands.
 
-Available as a snap, MicroCeph is the easiest tool for administrators, developers, and hobbyists to manage clusters.
+Available as a snap, MicroCeph is the easiest tool for administrators, developers, and hobbyists to manage Ceph clusters.
 
 ## Installation
 
