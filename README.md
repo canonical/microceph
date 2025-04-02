@@ -98,7 +98,7 @@ barrier to open-source software contributions through documentation. Find a wide
 
 ## License and copyright
 
-MicroCeph is a free and open source software distributed under the [AGPLv3.0 license][lisense-microceph].
+MicroCeph is a free and open source software distributed under the [AGPLv3.0 license][license-microceph].
 
 © 2025 Canonical Ltd.
 
