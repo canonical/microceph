@@ -78,13 +78,13 @@ It is written in reStructuredTest (reST) format, built with Sphinx, and publishe
 MicroCeph is a member of the Ubuntu family. It's an open-source project that warmly welcomes community contributions,
 suggestions, fixes, and constructive feedback.
 
-If you find any errors or have suggestions for improvements, please [open an issue on GitHub][bug-microceph]
+If you find any errors or have suggestions for improvements, please [open an issue on GitHub][bug-microceph].
 
 [Join our Matrix forum][matrix-microceph] to engage with our community and get support.
 
 We abide by the [Ubuntu Code of Conduct][ubuntu-coc].
 
-Excited about MicroCeph? See [our list of fans][stargazers-microceph].
+Excited about MicroCeph? See [who else is a fan][stargazers-microceph].
 
 ## Contribute to MicroCeph
 
@@ -115,4 +115,5 @@ MicroCeph is a free and open source software distributed under the [AGPLv3.0 lic
 [stargazers-microceph]: https://github.com/canonical/microceph/stargazers
 [matrix-microceph]: https://matrix.to/#/#ubuntu-ceph:matrix.org
 [coda]: https://documentationacademy.org/
+[snap-ready]: https://snapcraft.io/docs/installing-snapd/
 [rtd]: https://about.readthedocs.com/
