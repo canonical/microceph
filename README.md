@@ -47,11 +47,9 @@ After bootstrap, add storage to your cluster with:
 sudo microceph disk add loop,4G,3
 ```
 
-Here, you’ll add three virtual disks (“loop file” disks) of 4 GiB each. Make sure that
-your root disk has 12 GiB of free storage space.
+Here, you’ll add three virtual disks (“loop file” disks) of 4 GiB each. Make sure that your root disk has 12 GiB of free storage space.
 
 Note that there are no spaces between the `disk add` arguments.
-
 
 Once your cluster is set up and running, you can monitor its status with:
 
@@ -116,6 +114,5 @@ MicroCeph is a free and open source software distributed under the [AGPLv3.0 lic
 [bug-microceph]: https://github.com/canonical/microceph/issues/new
 [stargazers-microceph]: https://github.com/canonical/microceph/stargazers
 [matrix-microceph]: https://matrix.to/#/#ubuntu-ceph:matrix.org
-[coda]: https://canonical-open-documentation-academy.readthedocs.io/en/latest/
-[snap-ready]: https://snapcraft.io/docs/installing-snapd
+[coda]: https://documentationacademy.org/
 [rtd]: https://about.readthedocs.com/
