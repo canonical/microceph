@@ -18,3 +18,9 @@ wait_for_config() {
   echo "No conf found in ${confpath}"
   return 1
 }
+
+limits() {
+  # Set NOFILE, NPROC
+  ulimit -n 1048576
+  ulimit -u 1048576
+}

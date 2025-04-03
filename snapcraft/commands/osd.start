@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -eu
 
 # shellcheck disable=SC2155
@@ -7,6 +7,8 @@ echo $$ > "${SNAP_CURRENT}/run/ceph-osd.pid"
 cd "${SNAP}"
 
 . "${SNAP}/commands/common"
+
+limits
 
 maybe_unlock() {
     dev="${1:?missing}"

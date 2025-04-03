@@ -1,6 +1,8 @@
-#!/bin/sh
+#!/bin/bash
 
 . "${SNAP}/commands/common"
+
+limits
 
 wait_for_config
 
