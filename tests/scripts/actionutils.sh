@@ -26,6 +26,7 @@ function install_microceph() {
     sudo snap connect microceph:load-rbd
     sudo snap connect microceph:microceph-support
     sudo snap connect microceph:network-bind
+    sudo snap connect microceph:process-control    
 
     if [ -n "${mon_ip}" ]; then
         sudo microceph cluster bootstrap --mon-ip "${mon_ip}"
