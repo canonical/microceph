@@ -8,6 +8,7 @@ auto-generated
 automations
 backticks
 balancer
+capitalize
 capitalized
 catalog
 CephFS
