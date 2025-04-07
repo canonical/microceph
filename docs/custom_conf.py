@@ -107,7 +107,8 @@ redirects = {}
 # Links to ignore when checking links
 
 linkcheck_ignore = [
-    'http://127.0.0.1:8000'
+    'http://127.0.0.1:8000',
+    'https://app.element.io/#/room/#ceph-general:ubuntu.com'
     ]
 
 # Pages on which to ignore anchors

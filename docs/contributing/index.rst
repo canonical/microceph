@@ -17,7 +17,7 @@ hesitate to leave a comment in the Matrix room.
 MicroCeph documentation overview
 --------------------------------
 
-The MicroCeph documentation is hosted in `GitHub <https://github.com/canonical/microceph>`_ and published on `Read the Docs <https://about.readthedocs.com/>`_.
+The MicroCeph documentation is hosted in a `GitHub repository <https://github.com/canonical/microceph>`_ and published on `Read the Docs <https://about.readthedocs.com/>`_.
 You need to create a GitHub account to participate, but you do not need a Read the Docs account.
 
 Contributing on GitHub
@@ -83,8 +83,8 @@ Take a look, bookmark it, and see our `Getting started <https://discourse.ubuntu
 Stay in touch either through the task list, or through one of the following locations:
 
 
-* Our `discussion forum <https://discourse.ubuntu.com/c/open-documentation-academy>`_ on the Ubuntu Community Hub.  
-* In the `Matrix <https://matrix.to/#/#documentation:ubuntu.com>`_ room for interactive chat.  
+* Our `discussion forum <https://canonical.com/documentation/open-documentation-academy>`_ on the Ubuntu Community Hub.  
+* In the `Matrix room <https://matrix.to/#/#documentation:ubuntu.com>`_ for interactive chat.  
 * `Follow us on Fosstodon <https://fosstodon.org/@CanonicalDocumentation>`_ for the latest updates and events.
 
 If you’d like to ask us questions outside of our public forums, feel free to email us at docsacademy@canonical.com.
