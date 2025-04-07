@@ -195,5 +195,5 @@ It’s also good practice not to assume that your reader will have the same know
 Thank you
 ^^^^^^^^^
 
-We would like to thank you for spending your time to help make theMicroCeph documentation better. Every contribution,
+We would like to thank you for spending your time to help make the MicroCeph documentation better. Every contribution,
 big or small, is important to us, and hopefully a step in the right direction.
