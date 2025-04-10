@@ -72,6 +72,7 @@ apps:
     plugs:
       - network
       - network-bind
+      - process-control
   mon:
     command: commands/mon.start
     daemon: simple
@@ -82,6 +83,7 @@ apps:
       - hardware-observe
       - network
       - network-bind
+      - process-control
   mgr:
     command: commands/mgr.start
     daemon: simple
@@ -91,6 +93,7 @@ apps:
     plugs:
       - network
       - network-bind
+      - process-control
   osd:
     command: commands/osd.start
     reload-command: commands/osd.reload
@@ -107,7 +110,7 @@ apps:
       - network
       - network-bind
       - microceph-support
-
+      - process-control
   rgw:
     command: commands/rgw.start
     daemon: simple
@@ -118,7 +121,7 @@ apps:
       - hardware-observe
       - network
       - network-bind
-
+      - process-control
   "rbd-mirror":
     command: commands/rbd-mirror.start
     daemon: simple
@@ -128,7 +131,7 @@ apps:
     plugs:
       - network
       - network-bind
-
+      - process-control
   # Commands
   ceph:
     command: commands/ceph
