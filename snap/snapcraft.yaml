@@ -18,6 +18,12 @@ plugs:
         load: on-boot
 
 slots:
+  ceph-logs:
+    interface: content
+    source:
+      read:
+        - "$SNAP_COMMON/logs"
+
   ceph-conf:
     interface: content
     source:
