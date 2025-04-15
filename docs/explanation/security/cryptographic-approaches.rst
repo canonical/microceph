@@ -2,8 +2,8 @@ Cryptographic approaches in MicroCeph
 =======================================
 
 MicroCeph is a Ceph cluster in a single snap package. The snap is built on top of Ubuntu Ceph packages,
-and, therefore, shares some of their security features. This section makes references to `Cryptography in Ubuntu Ceph
-<https://ubuntu.com/ceph/docs/cryptographic-technologies-in-charmed-ceph#p-151613-cryptography-in-ubuntu-ceph>`_.
+and, therefore, shares some of their security features. This section makes references to `Cryptography in Ubuntu Ceph packages
+<https://ubuntu.com/ceph/docs/cryptographic-technologies-in-charmed-ceph`_.
 
 Snap security features
 ----------------------
