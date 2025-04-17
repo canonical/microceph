@@ -2,10 +2,6 @@
 Full disk encryption
 ====================
 
-
-Overview
---------
-
 MicroCeph supports automatic full disk encryption (FDE) on OSDs.
 
 Full disk encryption is a security measure that protects the data on a storage device by encrypting all the information on the disk. FDE helps maintain data confidentiality in case the disk is lost or stolen by rendering the data inaccessible without the correct decryption key or password.
@@ -38,10 +34,9 @@ To use FDE, the following prerequisites must be met:
 Limitations
 -----------
 
-**Warning:**
-
-- It is important to note that MicroCeph FDE *only* encompasses OSDs. Other data, such as state information for monitors, logs, configuration etc., will *not* be encrypted by this mechanism.
-- Also note that the encryption key will be stored on the Ceph monitors as part of the Ceph key/value store
+.. warning::
+  - It is important to note that MicroCeph FDE *only* encompasses OSDs. Other data, such as state information for monitors, logs, configuration etc., will *not* be encrypted by this mechanism.
+  - Also note that the encryption key will be stored on the Ceph monitors as part of the Ceph key/value store
 
 
 Usage

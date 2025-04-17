@@ -71,7 +71,7 @@ constructive feedback.
    how-to/index
    reference/index
    explanation/index
-   contributing/index
+   Contribute to our docs <contributing/index>
 
 .. LINKS
 .. _Code of conduct: https://ubuntu.com/community/ethos/code-of-conduct
