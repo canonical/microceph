@@ -73,7 +73,7 @@ Ceph authentication and authorization
 
 Internally, MicroCeph deploys a Ceph cluster which uses the ``cephx`` protocol for authentication and
 authorization. See `Cryptography in Ubuntu Ceph
-<https://ubuntu.com/ceph/docs/cryptographic-technologies-in-charmed-ceph#p-151613-cryptography-in-ubuntu-ceph>`_ for more details.
+<https://ubuntu.com/ceph/docs/cryptographic-technologies-in-charmed-ceph>`_ for more details.
 
 Data at rest
 ------------
@@ -92,8 +92,8 @@ Linux Unified Key Setup (LUKS) via ``cryptsetup``, using ``cipher AES-XTS-plain6
 Storage types
 -------------
 
-Like Ceph, MicroCeph provides three types of storage, i.e. object, block and file storage, to clients. It does so
-via specific components that support specific security features.
+Like Ceph, MicroCeph provides three types of storage to clients, i.e. object, block and file storage, to clients.
+Each type of storage supports specific security features.
 
 RGW object storage
 ~~~~~~~~~~~~~~~~~~
@@ -107,16 +107,9 @@ Server-side encryption
 ^^^^^^^^^^^^^^^^^^^^^^
 
 The RGW service supports server-side encryption (SSE) according to the Amazon SSE specifications.
-MicroCeph does not offer key managemenMicroCeph provides the same three types of storage to clients as Ceph. Each type of storage supports t for RGW; therefore, only the customer key mechanism is supported.
+MicroCeph does not offer key management for RGW; therefore, only the customer key mechanism is supported.
 This is done via the Amazon ``SSE-C`` specification, which uses ``AES256`` symmetric encryption. RGW implements this as
 ``AES256-CBC``. Moreover, as per the SSE-C specification, keys may be provided as ``128-bit MD5 digest``.
-
-CephFS file storage
-~~~~~~~~~~~~~~~~~~~
-
-CephFS provides filesystem storage to clients in MicroCeph, similarly to how Ubuntu Ceph provides filesystem storage.
-Client access is regulated using the Ceph-native ``cephx`` protocol, which performs authentication and authorization for
-clients. Ceph supports access control to specific filesystem and filesystem subtrees.
 
 RBD block storage
 ~~~~~~~~~~~~~~~~~
@@ -130,8 +123,15 @@ RBD encryption
 Users can instruct Ceph to encrypt block device images utilizing the ``rbd`` encryption format commands.
 RBD supports the ``AES128`` and ``AES256`` algorithms, with ``AES256 XTS-plain64`` being the default.
 
+CephFS file storage
+~~~~~~~~~~~~~~~~~~~
+
+CephFS provides filesystem storage to clients in MicroCeph, similarly to how Ubuntu Ceph provides filesystem storage.
+Client access is regulated using the Ceph-native ``cephx`` protocol, which performs authentication and authorization for
+clients. Ceph supports access control to specific filesystem and filesystem subtrees.
+
 Dashboard
-~~~~~~~~~
+---------
 
 The MicroCeph dashboard provides basic administrative capabilities. Access to the dashboard can be secured via SSL/TLS.
 The dashboard module also exposes an API, the Ceph RESTful API. Like regular dashboard access, this can be secured
