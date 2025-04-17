@@ -3,7 +3,7 @@ Cryptographic approaches in MicroCeph
 
 MicroCeph is a Ceph cluster in a single snap package. The snap is built on top of Ubuntu Ceph packages,
 and, therefore, shares some of their security features. This section makes references to `Cryptography in Ubuntu Ceph packages
-<https://ubuntu.com/ceph/docs/cryptographic-technologies-in-charmed-ceph`_.
+<https://ubuntu.com/ceph/docs/cryptographic-technologies-in-charmed-ceph>`_.
 
 Snap security features
 ----------------------
@@ -40,7 +40,8 @@ Interfaces
 MicroCeph snaps can use the following snap interfaces:
 
 * ``kernel-module-load``: to enable loading of Ceph-specific kernel modules, such as the ``rbd`` module.  
-* ``content``: to expose Ceph configuration to cooperating snaps.
+* ``ceph-conf``: to expose Ceph configuration to cooperating snaps.
+* ``ceph-logs``: to allow access to log files.
 
 Plugs
 ^^^^^
@@ -49,12 +50,13 @@ MicroCeph snaps can use the following snap plugs:
 
 * ``block-devices``: for storage  
 * ``dm-crypt``: for disk encryption  
-* ``hardware-observe``: block device detection  
-* ``home``: access to user-supplied configuration and certificates  
+* ``hardware-observe``: for block device detection  
+* ``home``: provides access to user-supplied configuration and certificates  
 * ``microceph-support``: for additional storage  
-* ``mount-observe``: storage management  
+* ``mount-observe``: for storage management  
 * ``network``: networking client  
 * ``network-bind``: network servers
+* ``process-control``:to support resource limits configuration
 
 Microcluster security
 ---------------------
@@ -90,7 +92,8 @@ Linux Unified Key Setup (LUKS) via ``cryptsetup``, using ``cipher AES-XTS-plain6
 Storage types
 -------------
 
-Like Ceph, MicroCeph provides three types of storage to clients via specific components, such as:
+Like Ceph, MicroCeph provides three types of storage, i.e. object, block and file storage, to clients. It does so
+via specific components that support specific security features.
 
 RGW object storage
 ~~~~~~~~~~~~~~~~~~
@@ -101,10 +104,10 @@ material for SSL/TLS.
 In MicroCeph, SSL/TLS certificates can be provided when enabling the RGW service.
 
 Server-side encryption
-~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^
 
 The RGW service supports server-side encryption (SSE) according to the Amazon SSE specifications.
-MicroCeph does not offer key management for RGW; therefore, only the customer key mechanism is supported.
+MicroCeph does not offer key managemenMicroCeph provides the same three types of storage to clients as Ceph. Each type of storage supports t for RGW; therefore, only the customer key mechanism is supported.
 This is done via the Amazon ``SSE-C`` specification, which uses ``AES256`` symmetric encryption. RGW implements this as
 ``AES256-CBC``. Moreover, as per the SSE-C specification, keys may be provided as ``128-bit MD5 digest``.
 
