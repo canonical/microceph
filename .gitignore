@@ -3,3 +3,5 @@ _build
 *.swp
 .idea
 .vscode
+microceph/coverage.out
+microceph/coverage.html

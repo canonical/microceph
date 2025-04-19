@@ -18,7 +18,8 @@ check: check-static check-unit check-system
 
 .PHONY: check-unit
 check-unit:
-	go test ./...
+	go test -cover -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
 
 .PHONY: check-system
 check-system:
