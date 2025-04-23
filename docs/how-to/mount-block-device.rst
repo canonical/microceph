@@ -98,12 +98,15 @@ Moving forward, we will assume that these files are located at mentioned path.
 
 Map the RBD image on client:
 
+> Note
+> The monitor address is required to be provided for the rbd map command. Replace `192.168.X.Y` with relevant value from your cluster.
+
 .. code-block:: none
 
     $ sudo rbd map \
         --image bd_foo \
         --name client.admin \
-        -m 192.168.29.152 \
+        -m 192.168.X.Y \
         -k /var/snap/microceph/current/conf/ceph.keyring \
         -c /var/snap/microceph/current/conf/ceph.conf \
         -p block_pool \
