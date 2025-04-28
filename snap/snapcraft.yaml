@@ -10,6 +10,11 @@ description: |-
 
 confinement: strict
 
+package-repositories:
+  - type: apt
+    ppa: lmlogiudice/ceph-1921-noble
+    priority: always
+
 plugs:
   load-rbd:
     interface: kernel-module-load
@@ -198,6 +203,7 @@ parts:
       - ceph-osd
       - radosgw
       - rbd-mirror
+      - ceph-exporter
       # Utilities
       - coreutils
       - uuid-runtime
