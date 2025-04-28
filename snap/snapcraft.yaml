@@ -277,6 +277,7 @@ parts:
       - radosgw
       - rbd-mirror
       - cephfs-mirror
+      - ceph-exporter
       # Utilities
       - coreutils
       - util-linux
