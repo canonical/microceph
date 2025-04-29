@@ -296,6 +296,8 @@ function remote_verify_rbd_mirroring() {
     lxc exec node-wrk1 -- sh -c "sudo microceph replication list rbd" | grep "pool_one.*image_two"
     lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_one"
     lxc exec node-wrk3 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_two"
+
+    lxc exec node-wrk0 -- sh -c "sudo microceph replication status rbd --json"
 }
 
 function remote_failover_to_siteb() {
