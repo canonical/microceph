@@ -18,10 +18,11 @@ import (
 // Maps the addService function to respective services.
 func GetServiceKeyringTable() map[string](func(string, string) error) {
 	return map[string](func(string, string) error){
-		"mon":        joinMon,
-		"mgr":        bootstrapMgr,
-		"mds":        bootstrapMds,
-		"rbd-mirror": bootstrapRbdMirror,
+		"mon":           joinMon,
+		"mgr":           bootstrapMgr,
+		"mds":           bootstrapMds,
+		"rbd-mirror":    bootstrapRbdMirror,
+		"ceph-exporter": bootstrapCephExporter,
 		// Add more services here, for using the generic Interface implementation.
 	}
 }

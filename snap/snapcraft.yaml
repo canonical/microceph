@@ -137,6 +137,16 @@ apps:
       - network
       - network-bind
       - process-control
+  "ceph-exporter":
+    command: commands/ceph-exporter.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+    plugs:
+      - network
+      - network-bind
+      - process-control
   # Commands
   ceph:
     command: commands/ceph
