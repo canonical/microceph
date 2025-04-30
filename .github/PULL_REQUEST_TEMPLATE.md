@@ -26,5 +26,6 @@ Please check that you have:
 
 - [ ] self-reviewed the code in this PR.
 - [ ] added code comments, particularly in hard-to-understand areas.
-- [ ] updated the user documentation with corresponding changes.
-- [ ] added tests to verify effectiveness of this change.
+- [ ] checked and added or updated relevant documentation
+- [ ] checked and added or updated relevant release notes
+- [ ] added tests to verify effectiveness of this change
