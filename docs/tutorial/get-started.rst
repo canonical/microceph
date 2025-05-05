@@ -238,12 +238,92 @@ Then, run :command:`curl` from this node.
 Create an S3 bucket
 ~~~~~~~~~~~~~~~~~~~
 
-.. note::
+You have verified that your cluster is accessible via RGW. To interact with S3, we need to make sure that the
+``s3cmd`` utility is installed and configured.
 
-    In order to interact with S3 you need to make sure ``s3cmd`` utility is installed. If not, just simply run ``sudo apt install s3cmd``.
-    After that, ``s3cmd`` needs to be configured by running: ``s3cmd --configure``, answer the questions and you are done.
-    Keep in mind that this command crates a file called ``.s3cfg`` in your home directory with all the settings.
+Install and configure ``s3cmd``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+To install ``s3cmd``, run the following command:
+
+.. code-block:: none
+
+    sudo apt-get install s3cmd
+
+Configure the ``s3cmd`` tool:
+
+.. code-block:: none
+
+    s3cmd --configure
+
+This will invoke an interactive configuration session, and later create a file named ``.s3cfg``
+in your home directory with all the settings chosen in the interactive session.
+
+Remember that we had set secrets for our user earlier; we will use those when prompted to provide
+a secret key and access key. We'll set our host name (``ubuntu``) as the S3 endpoint, and use the default
+[US] region.
+
+.. terminal::
+
+    Enter new values or accept defaults in brackets with Enter.
+    Refer to user manual for detailed description of all options.
+
+    Access key and Secret key are your identifiers for Amazon S3. Leave them empty for using the env variables.
+    Access Key: foo
+    Secret Key: bar
+    Default Region [US]: 
+
+    Use "s3.amazonaws.com" for S3 Endpoint and not modify it to the target Amazon S3.
+    S3 Endpoint [s3.amazonaws.com]: ubuntu
+
+    Use "%(bucket)s.s3.amazonaws.com" to the target Amazon S3. "%(bucket)s" and "%(location)s" vars can be used
+    if the target S3 system supports dns based buckets.
+    DNS-style bucket+hostname:port template for accessing a bucket [%(bucket)s.s3.amazonaws.com]: 
+
+    Encryption password is used to protect your files from reading
+    by unauthorized persons while in transfer to S3
+    Encryption password: Ubuntu-pass
+    Path to GPG program [/usr/bin/gpg]: 
+
+    When using secure HTTPS protocol all communication with Amazon S3
+    servers is protected from 3rd party eavesdropping. This method is
+    slower than plain HTTP, and can only be proxied with Python 2.7 or newer
+    Use HTTPS protocol [Yes]: No
+
+    On some networks all internet access must go through a HTTP proxy.
+    Try setting it here if you can't connect to S3 directly
+    HTTP Proxy server name: 
+
+    New settings:
+    Access Key: foo
+    Secret Key: bar
+    Default Region: US
+    S3 Endpoint: ubuntu
+    DNS-style bucket+hostname:port template for accessing a bucket: %(bucket)s.s3.amazonaws.com
+    Encryption password: Ubuntu-pass
+    Path to GPG program: /usr/bin/gpg
+    Use HTTPS protocol: False
+    HTTP Proxy server name: 
+    HTTP Proxy server port: 0
+
+    Test access with supplied credentials? [Y/n] y
+    Please wait, attempting to list all buckets...
+    Success. Your access key and secret key worked fine :-)
+
+    Now verifying that encryption works...
+    Success. Encryption and decryption worked fine :-)
+
+    Save settings? [y/N] y
+    Configuration saved to '/home/ubuntu/.s3cfg'
+
+We have successfully configured ``s3cmd``.  To see the full configuration, inspect the config file. 
+
+.. code-block:: none
+
+    cat ~/.s3cfg
+
+Create a bucket
+^^^^^^^^^^^^^^^
 
 You have verified that your cluster is accessible via RGW. Now, let's create a bucket using the ``s3cmd`` tool:
 
