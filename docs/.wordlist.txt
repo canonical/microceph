@@ -12,6 +12,7 @@ balancer
 capitalize
 capitalized
 catalog
+centralized
 Centralized
 CephFS
 Cephx
