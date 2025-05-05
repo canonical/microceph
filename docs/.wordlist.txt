@@ -49,9 +49,11 @@ iptables
 ise
 ize
 Jira
+journald
 JSON
 Juju
 JWTs
+kern
 keysize
 Kubeflow
 Kubernetes
@@ -61,6 +63,7 @@ mentorship
 MicroCeph
 microceph
 microcephd
+microcephd's
 Microcluster
 monospaced
 mortem
@@ -75,12 +78,15 @@ OLM
 OpenSSL
 Permalink
 PKI
+POSIX
 pre
+prometheus
 radosgw
 ReadMe
 reST
 RESTful
 reStructuredText
+rsyslog
 RTD
 sandboxed
 sandboxing
@@ -94,6 +100,7 @@ subnets
 subtree
 subtrees
 syslog
+systemd
 TCP
 TLS
 ufw
@@ -104,6 +111,7 @@ url
 USNs
 Utilize
 utilizing
+VLANs
 VM
 WAL
 YAML
