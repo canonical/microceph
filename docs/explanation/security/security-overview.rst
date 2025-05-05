@@ -302,7 +302,7 @@ Alerting
 --------
 
 * Configure Monitoring: Enable the Prometheus MGR module
-  (sudo microceph.ceph mgr module enable prometheus) and configure it if necessary
+  (sudo microceph.ceph mgr module enable Prometheus) and configure it if necessary
   via Ceph MGR configuration options (e.g., sudo microceph.ceph config set mgr mgr/prometheus/...).  
 * Security Alerts: Configure alerts for security anomalies and health issues such as:  
 
