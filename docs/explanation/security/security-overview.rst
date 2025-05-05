@@ -287,8 +287,8 @@ Auditing and centralized logging
 * Enable Auditing:  
 
   * Configure Ceph logging levels via Ceph configuration options
-  (e.g., log_to_file \= true, debug_mon, debug_osd). Check MicroCeph
-  documentation for how to set these. Ceph logs are found in /var/snap/microceph/common/logs/ceph/.  
+    (e.g., log_to_file \= true, debug_mon, debug_osd). Check MicroCeph
+    documentation for how to set these. Ceph logs are found in /var/snap/microceph/common/logs/ceph/.  
   * microcephd logs to /var/log/syslog, see the MicroCeph documentation for details on setting log levels.  
 
 * Centralized Logging: Configure host-level standard log shipping mechanisms
