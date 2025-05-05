@@ -15,7 +15,7 @@ confidentiality. This guide provides an overview of security aspects, potential
 attack vectors, and some best practices for deploying and operating MicroCeph
 in a secure manner.
 
-Architectural Overview
+Architectural overview
 ----------------------
 
 Understanding the MicroCeph architecture is the first step towards securing it.
@@ -53,14 +53,14 @@ Components
 * Client Workloads: Consume Ceph storage via RBD block devices, RGW object buckets,
   or CephFS shared filesystems.
 
-Attack Surface
+Attack surface
 --------------
 
 The attack surface encompasses all points where an unauthorized user could attempt
 to enter or extract data from the system. For MicroCeph, these include:
 
-Open Ports and Network Interfaces
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Open ports and network interfaces
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Ceph daemons and potentially microcephd listen on TCP ports. Use host-level firewalls
 (like ufw, firewalld, or nftables) to control access.
@@ -114,8 +114,8 @@ Ceph daemons and potentially microcephd listen on TCP ports. Use host-level fire
      - Audit all open ports on the host system.
 
 
-Network Protocols and Endpoints
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Network protocols and endpoints
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * Ceph Protocol (Messenger v1/v2): Used for all internal Ceph communication (MON, OSD, MGR, MDS).
   Messenger v2 (default in newer Ceph versions) provides encryption capabilities for data in transit.  
@@ -130,8 +130,8 @@ Network Protocols and Endpoints
 * Local Socket API (microcephd): Communication between microceph CLI and microcephd
   occurs over a Unix domain socket, protected by filesystem permissions.
 
-Data Interfaces
-^^^^^^^^^^^^^^^
+Data interfaces
+~~~~~~~~~~~~~~~
 
 * Block Devices and Filesystems: OSDs interact directly with underlying storage
   (disks, partitions, or files configured via microceph disk add). The OSD processes
@@ -142,8 +142,8 @@ Data Interfaces
 * CephFS Mounts: Clients mounting CephFS interact via the Ceph kernel module or FUSE,
   requiring Cephx authentication.
 
-Management Infrastructure
-^^^^^^^^^^^^^^^^^^^^^^^^^
+Management infrastructure
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The primary management attack surface is the host, snap environment, and the microcephd service:
 
@@ -159,13 +159,13 @@ The primary management attack surface is the host, snap environment, and the mic
   `here <https://snapcraft.io/docs/snap-confinement>`_ for details on confinement.  
 * Ceph Dashboard: If enabled, secure its access via network controls and strong authentication.
 
-Access Controls
+Access controls
 ---------------
 
 Robust access controls limit users and services to only the permissions they require.
 
-Cephx Authentication and Authorization
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Cephx authentication and authorization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Cephx remains the native Ceph authentication system for Ceph client/daemon interactions.
 
@@ -174,16 +174,16 @@ Cephx remains the native Ceph authentication system for Ceph client/daemon inter
 * Capabilities (Caps): Assign the minimum necessary capabilities to each key 
   e.g., ``mon``, ``allow r``, ``osd``, ``allow``). Avoid using the client.admin key for applications.
 
-User Management (Ceph Dashboard / RGW)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+User management (Ceph Dashboard / RGW)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * Dashboard Users: Manage user accounts and roles within the Ceph Dashboard for
   accessing monitoring and limited management functions.  
 * RGW Users: If using RGW, manage its separate S3/Swift users, keys (access key, secret key),
   and potentially quotas using RGW admin commands (sudo microceph.radosgw-admin ...).
 
-Management Infrastructure Access
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Management infrastructure access
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Control access at multiple levels:
 
@@ -219,8 +219,8 @@ Encryption
 
 Protecting data confidentiality both in transit and at rest:
 
-In Transit:
-^^^^^^^^^^^
+In transit:
+~~~~~~~~~~~
 
 * Ceph Messenger v2: Configure Ceph internal communication (between MON, OSD, MGR, MDS)
   to use secure mode via Ceph configuration options (e.g., ms_cluster_mode \= secure).  
@@ -232,8 +232,8 @@ In Transit:
 * microceph CLI to microcephd: Communication occurs over a local Unix domain socket
   and is not typically encrypted itself, relying on filesystem permissions for security.
 
-At Rest:
-^^^^^^^^
+At rest:
+~~~~~~~~
 
 * OSD Encryption (via LUKS): MicroCeph supports encrypting data stored on OSDs using LUKS,
   configured during disk addition (via flags to microceph disk add). This protects data
@@ -245,13 +245,13 @@ At Rest:
   to protect Ceph keys, the dqlite database, configs, and potentially cached data against
   physical access. Manage FDE at the OS level.
 
-Secure Deployment
+Secure deployment
 -----------------
 
 Incorporate security from the initial setup of your MicroCeph instance.
 
-Network Architecture
-^^^^^^^^^^^^^^^^^^^^
+Network architecture
+~~~~~~~~~~~~~~~~~~~~
 
 * Segmentation: If the MicroCeph host has multiple network interfaces, configure Ceph's
   public_network and cluster_network settings appropriately (check MicroCeph docs for details),
@@ -269,8 +269,8 @@ Network Architecture
   * Allow only necessary ports between specific hosts/networks (refer to the port table).  
   * Restrict access to management interfaces (SSH, Juju, Dashboard) to trusted administrative networks.
 
-Minimum Privileges
-^^^^^^^^^^^^^^^^^^
+Minimum privileges
+~~~~~~~~~~~~~~~~~~
 
 
 * Cephx Keys: Create dedicated Cephx keys for each client/application with minimal capabilities.
@@ -281,7 +281,7 @@ Minimum Privileges
 * Explicit Assignment: Ensure all access relies on explicit permissions/capabilities
   rather than default permissive settings.
 
-Auditing and Centralized Logging
+Auditing and centralized logging
 --------------------------------
 
 * Enable Auditing:  
@@ -312,13 +312,13 @@ Alerting
   * Significant performance deviations.  
   * Host system issues (CPU, RAM, Disk I/O).
 
-Secure Operation
+Secure operation
 ----------------
 
 Maintaining security is an ongoing process.
 
-Vulnerability Management
-^^^^^^^^^^^^^^^^^^^^^^^^
+Vulnerability management
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 * Monitor Advisories: Actively track CVEs and security advisories for:  
 
@@ -331,8 +331,8 @@ Vulnerability Management
   (e.g., apt update && apt upgrade for Debian/Ubuntu). Use snap channels
   (e.g., the /candidate channel) for testing before refreshing stable.
 
-Incident Response
-^^^^^^^^^^^^^^^^^
+Incident response
+~~~~~~~~~~~~~~~~~
 
 * Develop a Plan: Have a documented Incident Response (IR) plan for your
   MicroCeph environment, including steps related to microcephd and the dqlite database.  
@@ -341,8 +341,8 @@ Incident Response
   (potentially involving database restoration if needed), and post-mortem analysis.  
 * Practice: Test the plan periodically.
 
-Perform Audits
-^^^^^^^^^^^^^^
+Perform audits
+~~~~~~~~~~~~~~
 
 * Regular Checks: Conduct periodic security audits of the MicroCeph host, configuration,
   and data directories.  
@@ -350,8 +350,8 @@ Perform Audits
   configuration, Cephx permissions (sudo microceph.ceph auth ls), OS access controls
   (sudo rules, SSH keys, file permissions on /var/snap/microceph/), and encryption settings.
 
-Perform Upgrades
-^^^^^^^^^^^^^^^^
+Perform upgrades
+~~~~~~~~~~~~~~~~
 
 * Stay Current: Regularly upgrade MicroCeph (sudo snap refresh microceph), snapd
   (sudo snap refresh snapd), and the underlying OS (using the host's package manager) for
@@ -360,8 +360,8 @@ Perform Upgrades
 * Schedule Proactively: Plan and test upgrades, especially for security vulnerabilities.
   Utilize snap channels for pre-production testing.
 
-Release Notes
-^^^^^^^^^^^^^
+Release notes
+~~~~~~~~~~~~~
 
 * Always read the release notes for Ceph versions included in MicroCeph snap updates,
   the MicroCeph snap itself, and the host OS before upgrading or making significant changes,
