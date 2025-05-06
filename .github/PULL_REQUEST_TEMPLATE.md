@@ -24,7 +24,7 @@ Delete options that are not relevant.
 Please describe the addition/modification of tests done to verify this change. Also list any
 relevant details for your test configuration.
 
-## Contributor's checklist
+## Contributor checklist
 
 Please check that you have:
 
