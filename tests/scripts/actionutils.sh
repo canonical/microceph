@@ -210,6 +210,13 @@ function enable_mon() {
     sudo microceph enable mon
 }
 
+function disable_mon() {
+    # Support disable mon properly. Also see issue
+    # https://github.com/canonical/microceph/issues/512
+    set -x
+    sudo snap stop microceph.mon --disable
+}
+
 function enable_rgw_ssl() {
     set -x
     # Generate the SSL material
