@@ -64,7 +64,7 @@ func (m *Maintenance) Enter(req types.MaintenanceRequest) ([]Result, error) {
 	// Preflight checks for entering maintenance mode
 	preflightChecks := []Operation{
 		&CheckOsdOkToStopOps{ClusterOps: m.ClusterOps},
-		&CheckNonOsdSvcEnoughOps{ClusterOps: m.ClusterOps, MinMon: 3, MinMds: 1, MinMgr: 1},
+		&CheckNonOsdSvcEnoughOps{ClusterOps: m.ClusterOps},
 	}
 
 	// Main operations
