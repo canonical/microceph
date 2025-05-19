@@ -277,47 +277,31 @@ parts:
       - share/ceph
 
   dqlite:
-    after:
-      - raft
     source: https://github.com/canonical/dqlite
     source-type: git
     source-depth: 1
+    source-tag: v1.18.0
     plugin: autotools
     autotools-configure-parameters:
       - --prefix=
+      - --enable-build-raft
     stage-packages:
       - libuv1
       - libsqlite3-0
+      - liblz4-1
     build-packages:
+      - make
       - libuv1-dev
+      - liblz4-dev
       - libsqlite3-dev
       - pkg-config
     organize:
       usr/lib/: lib/
     prime:
       - lib/libdqlite*so*
-      - lib/*/libuv*
-
-  raft:
-    source: https://github.com/canonical/raft
-    source-type: git
-    source-depth: 1
-    plugin: autotools
-    autotools-configure-parameters:
-      - --prefix=
-    stage-packages:
-      - libuv1
-      - liblz4-1
-    build-packages:
-      - libuv1-dev
-      - liblz4-dev
-      - pkg-config
-    organize:
-      usr/lib/: lib/
-    prime:
       - lib/libraft*so*
-      - lib/*/libuv.so*
-
+      - lib/*/libuv*so*
+  
   microceph:
     source: microceph/
     after:
@@ -368,7 +352,6 @@ parts:
     after:
       - ceph
       - dqlite
-      - raft
       - microceph
     plugin: nil
     override-prime: |
