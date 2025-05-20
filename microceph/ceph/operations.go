@@ -130,10 +130,12 @@ func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
 		"mds": 0,
 	}
 	for _, service := range services {
-		// do not count the service on this node
+		// count the number of each service type remaining when excluding services on this node
 		if service.Location != name {
 			remains[service.Service]++
 		}
+
+		// count the total number of each service type
 		totals[service.Service]++
 	}
 
