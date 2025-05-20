@@ -124,23 +124,21 @@ func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
 		"mgr": 0,
 		"mds": 0,
 	}
-	totals := map[string]int{
-		"mon": 0,
-		"mgr": 0,
-		"mds": 0,
-	}
+	total_mon_services := 0
 	for _, service := range services {
-		// count the number of each service type remaining when excluding services on this node
+		// do not count the services on this node (these are the services remaining if this node is down)
 		if service.Location != name {
 			remains[service.Service]++
 		}
 
-		// count the total number of each service type
-		totals[service.Service]++
+		// count the total number of mon services, so we can calculate the minimum number of mon services required for quorum
+		if service.Service == "mon" {
+			total_mon_services += 1
+		}
 	}
 
 	// a majority of ceph-mon services must remain active to retain quorum
-	minMon := totals["mon"] / 2 + 1
+	minMon := total_mon_services / 2 + 1
 	// only need one ceph-mds and one ceph-mgr: they operate as one active, the rest in standby
 	minMds := 1
 	minMgr := 1
