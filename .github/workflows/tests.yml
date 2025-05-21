@@ -509,11 +509,12 @@ jobs:
         ~/actionutils.sh headexec remove_disk osd.4
         ~/actionutils.sh headexec remove_node node-wrk3
 
-        if ~/actionutils.sh headexec "microceph cluster maintenance enter node-wrk1"; then
-          echo "Unexpected to succeed entering maintenance mode with less than 4 nodes"
-          exit 1
-        fi
-        echo "It's expected to fail entering maintenance mode with less than 4 nodes"
+        # this should succeed, because 2/3 remaining nodes is still a majority for quorum
+        ~/actionutils.sh headexec "microceph cluster maintenance enter node-wrk1"
+
+        # TODO: add a regression test here when https://github.com/canonical/microceph/issues/558 is fixed
+
+        ~/actionutils.sh headexec "microceph cluster maintenance exit node-wrk1"
 
     - name: Test force enter and exit maintainenace mode without set noout and stop osd
       run: ~/actionutils.sh test_maintenance_enter_and_exit_force node-wrk1
