@@ -40,7 +40,7 @@ type cmdReplicationStatusRbd struct {
 
 func (c *cmdReplicationStatusRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "status <resource>",
+		Use:   "rbd <resource>",
 		Short: "Show RBD resource (Pool or Image) replication status",
 		RunE:  c.Run,
 	}
