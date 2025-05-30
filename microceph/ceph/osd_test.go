@@ -3,17 +3,31 @@ package ceph
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/tests"
+	"github.com/spf13/afero"
 
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
+
+// MockPathValidator is a mock implementation of PathValidator for testing.
+type MockPathValidator struct {
+	mock.Mock
+}
+
+// IsBlockdevPath mocks the path validation.
+func (m *MockPathValidator) IsBlockdevPath(path string) bool {
+	args := m.Called(path)
+	return args.Bool(0)
+}
 
 // osdSuite is the test suite for adding OSDs.
 type osdSuite struct {
@@ -167,7 +181,9 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 
 	processExec = r
 
-	err := switchFailureDomain("osd", "host")
+	mgr := NewOSDManager(nil)
+	mgr.fs = afero.NewMemMapFs()
+	err := mgr.switchFailureDomain("osd", "host")
 	assert.NoError(s.T(), err)
 }
 
@@ -202,7 +218,10 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
 	s.TestStateInterface.On("ClusterState").Return(state).Maybe()
-	err := updateFailureDomain(context.Background(), s.TestStateInterface.ClusterState())
+
+	mgr := NewOSDManager(s.TestStateInterface.ClusterState())
+	mgr.fs = afero.NewMemMapFs()
+	err := mgr.updateFailureDomain(context.Background(), s.TestStateInterface.ClusterState())
 	assert.NoError(s.T(), err)
 
 }
@@ -216,11 +235,14 @@ func (s *osdSuite) TestHaveOSDInCeph() {
 
 	processExec = r
 
-	res, err := haveOSDInCeph(0)
+	mgr := NewOSDManager(nil)
+	mgr.runner = r
+
+	res, err := mgr.haveOSDInCeph(0)
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), res, true)
 
-	res, err = haveOSDInCeph(77)
+	res, err = mgr.haveOSDInCeph(77)
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), res, false)
 
@@ -318,4 +340,368 @@ func (s *osdSuite) TestIsOsdNooutSetFail() {
 	set, err := isOsdNooutSet()
 	assert.False(s.T(), set)
 	assert.Error(s.T(), err)
+}
+
+// TestAddBulkDisksValidation ensures batch addition arguments are checked.
+func (s *osdSuite) TestAddBulkDisksValidation() {
+	mgr := NewOSDManager(nil)
+	mgr.fs = afero.NewMemMapFs()
+	disks := []types.DiskParameter{
+		{Path: "/dev/sda"},
+		{Path: "/dev/sdb"},
+	}
+	wal := &types.DiskParameter{Path: "/dev/wal"}
+
+	resp := mgr.addBulkDisks(context.Background(), disks, wal, nil)
+	assert.NotEmpty(s.T(), resp.ValidationError)
+	assert.Equal(s.T(), "Failure", resp.Reports[0].Report)
+}
+
+// TestNewOSDManager tests the OSDManager constructor
+func (s *osdSuite) TestNewOSDManager() {
+	state := &mocks.MockState{}
+	mgr = NewOSDManager(state)
+	assert.NotNil(s.T(), mgr)
+	assert.Equal(s.T(), state, mgr.state)
+	assert.NotNil(s.T(), mgr.runner)
+	assert.NotNil(s.T(), mgr.fs)
+}
+
+// TestSetStablePath tests device path stabilization
+func (s *osdSuite) TestSetStablePath() {
+	mgr := NewOSDManager(nil)
+	fs := afero.NewMemMapFs()
+	mgr.fs = fs
+
+	// Create mock validator
+	mockValidator := &MockPathValidator{}
+	mgr.validator = mockValidator
+
+	// Create mock storage with disk info
+	storage := &api.ResourcesStorage{
+		Disks: []api.ResourcesStorageDisk{
+			{
+				Device:     "8:0",
+				DeviceID:   "test-disk-id",
+				DevicePath: "pci-0000:00:1f.2-ata-1",
+			},
+		},
+	}
+
+	// Test with invalid device path (not a block device)
+	param := &types.DiskParameter{Path: "/invalid/path"}
+	mockValidator.On("IsBlockdevPath", "/invalid/path").Return(false).Once()
+	err := mgr.setStablePath(storage, param)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "invalid disk path")
+
+	// Test with valid device path
+	param2 := &types.DiskParameter{Path: "/dev/sda"}
+	mockValidator.On("IsBlockdevPath", "/dev/sda").Return(true).Once()
+	err = mgr.setStablePath(storage, param2)
+	assert.NoError(s.T(), err)
+}
+
+// TestStabilizeDevicePathSuccess tests successful device path stabilization
+func (s *osdSuite) TestStabilizeDevicePathSuccess() {
+	mgr := NewOSDManager(nil)
+	mgr.fs = afero.NewMemMapFs()
+
+	// Mock storage interface
+	mockStorage := mocks.NewStorageInterface(s.T())
+	mgr.storage = mockStorage
+
+	// Mock validator
+	mockValidator := &MockPathValidator{}
+	mgr.validator = mockValidator
+
+	expectedStorage := &api.ResourcesStorage{
+		Disks: []api.ResourcesStorageDisk{
+			{
+				Device:     "8:0",
+				DeviceID:   "test-disk-id",
+				DevicePath: "pci-0000:00:1f.2-ata-1",
+			},
+		},
+	}
+	mockStorage.On("GetStorage").Return(expectedStorage, nil).Once()
+	mockValidator.On("IsBlockdevPath", "/dev/sda").Return(true).Once()
+
+	physParam := &types.DiskParameter{Path: "/dev/sda"}
+	storage, err := mgr.stabilizeDevicePath(physParam)
+
+	// Should succeed now with mocked validation
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), expectedStorage, storage)
+}
+
+// TestPrepareDisk tests disk preparation
+func (s *osdSuite) TestPrepareDisk() {
+	mgr := NewOSDManager(nil)
+	// Use OsFs for symlink support, but in a temp directory
+	mgr.fs = afero.NewOsFs()
+
+	// Mock runner for wipe operations
+	r := mocks.NewRunner(s.T())
+	mgr.runner = r
+
+	// Create temp directory for test
+	tempDir := s.T().TempDir()
+	osdPath := filepath.Join(tempDir, "ceph-0")
+	err := mgr.fs.MkdirAll(osdPath, 0755)
+	assert.NoError(s.T(), err)
+
+	// Test without wipe or encrypt
+	disk := &types.DiskParameter{Path: "/dev/sda"}
+	err = mgr.prepareDisk(disk, "", osdPath, 0)
+	assert.NoError(s.T(), err)
+
+	// Verify symlink was created for data device (suffix == "")
+	linkPath := filepath.Join(osdPath, "block")
+	exists, err := afero.Exists(mgr.fs, linkPath)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), exists)
+
+	// Test WAL device (suffix != "", no symlink should be created)
+	walOsdPath := filepath.Join(tempDir, "ceph-1")
+	err = mgr.fs.MkdirAll(walOsdPath, 0755)
+	assert.NoError(s.T(), err)
+	walDisk := &types.DiskParameter{Path: "/dev/sdb"}
+	err = mgr.prepareDisk(walDisk, ".wal", walOsdPath, 1)
+	assert.NoError(s.T(), err)
+
+	// Test with wipe - use a different temp directory to avoid symlink conflicts
+	wipeOsdPath := filepath.Join(tempDir, "ceph-2")
+	err = mgr.fs.MkdirAll(wipeOsdPath, 0755)
+	assert.NoError(s.T(), err)
+	r.On("RunCommandContext", mock.Anything, "dd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("", nil).Once()
+	wipeDisk := &types.DiskParameter{Path: "/dev/sdc", Wipe: true}
+	err = mgr.prepareDisk(wipeDisk, "", wipeOsdPath, 2)
+	assert.NoError(s.T(), err)
+}
+
+// TestCheckEncryptSupport tests encryption support validation
+func (s *osdSuite) TestCheckEncryptSupport() {
+	mgr := NewOSDManager(nil)
+	fs := afero.NewMemMapFs()
+	mgr.fs = fs
+
+	// Mock the processExec for isIntfConnected calls
+	r := mocks.NewRunner(s.T())
+	originalProcessExec := processExec
+	processExec = r
+	defer func() { processExec = originalProcessExec }()
+
+	// Test missing /dev/mapper/control
+	err := mgr.checkEncryptSupport()
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "missing /dev/mapper/control")
+
+	// Create /dev/mapper/control
+	err = fs.MkdirAll("/dev/mapper", 0755)
+	assert.NoError(s.T(), err)
+	err = afero.WriteFile(fs, "/dev/mapper/control", []byte(""), 0644)
+	assert.NoError(s.T(), err)
+
+	// Mock interface check to return false (not connected)
+	r.On("RunCommand", "snapctl", "is-connected", "dm-crypt").Return("", fmt.Errorf("not connected")).Once()
+
+	// Test dm-crypt interface not connected
+	err = mgr.checkEncryptSupport()
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "dm-crypt interface")
+
+	// Mock interface check to return true (connected)
+	r.On("RunCommand", "snapctl", "is-connected", "dm-crypt").Return("", nil).Once()
+
+	// Test missing dm_crypt module
+	err = mgr.checkEncryptSupport()
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "missing dm_crypt module")
+
+	// Create dm_crypt module
+	err = fs.MkdirAll("/sys/module/dm_crypt", 0755)
+	assert.NoError(s.T(), err)
+
+	// Mock interface check again for final test
+	r.On("RunCommand", "snapctl", "is-connected", "dm-crypt").Return("", nil).Once()
+
+	// Test /run access
+	err = fs.MkdirAll("/run", 0755)
+	assert.NoError(s.T(), err)
+
+	err = mgr.checkEncryptSupport()
+	// Should pass all checks now
+	assert.NoError(s.T(), err)
+}
+
+// TestTimeoutWipe tests device wiping with timeout
+func (s *osdSuite) TestTimeoutWipe() {
+	mgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	mgr.runner = r
+
+	// Test successful wipe
+	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sda", "bs=4M", "count=10", "status=none").Return("", nil).Once()
+	err := mgr.timeoutWipe("/dev/sda")
+	assert.NoError(s.T(), err)
+
+	// Test failed wipe
+	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sdb", "bs=4M", "count=10", "status=none").Return("", fmt.Errorf("wipe failed")).Once()
+	err = mgr.timeoutWipe("/dev/sdb")
+	assert.Error(s.T(), err)
+}
+
+// TestWipeDevice tests device wiping with retry logic
+func (s *osdSuite) TestWipeDevice() {
+	mgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	mgr.runner = r
+
+	// Test successful wipe on first try
+	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sda", "bs=4M", "count=10", "status=none").Return("", nil).Once()
+	mgr.wipeDevice(context.Background(), "/dev/sda")
+
+	// Test wipe that succeeds after retries
+	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sdb", "bs=4M", "count=10", "status=none").Return("", fmt.Errorf("busy")).Once()
+	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sdb", "bs=4M", "count=10", "status=none").Return("", nil).Once()
+	mgr.wipeDevice(context.Background(), "/dev/sdb")
+}
+
+// TestKillOSD tests OSD process termination
+func (s *osdSuite) TestKillOSD() {
+	mgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	mgr.runner = r
+
+	// Test successful kill
+	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 0$").Return("", nil).Once()
+	err := mgr.killOSD(0)
+	assert.NoError(s.T(), err)
+
+	// Test failed kill
+	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 1$").Return("", fmt.Errorf("process not found")).Once()
+	err = mgr.killOSD(1)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "failed to kill osd.1")
+}
+
+// TestOutDownOSD tests taking OSD out and down
+func (s *osdSuite) TestOutDownOSD() {
+	mgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	mgr.runner = r
+
+	// Test successful out and down
+	r.On("RunCommand", "ceph", "osd", "out", "osd.0").Return("", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "down", "osd.0").Return("", nil).Once()
+	err := mgr.outDownOSD(0)
+	assert.NoError(s.T(), err)
+
+	// Test failed out command
+	r.On("RunCommand", "ceph", "osd", "out", "osd.1").Return("", fmt.Errorf("out failed")).Once()
+	err = mgr.outDownOSD(1)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "failed to take osd.1 out")
+
+	// Test failed down command
+	r.On("RunCommand", "ceph", "osd", "out", "osd.2").Return("", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "down", "osd.2").Return("", fmt.Errorf("down failed")).Once()
+	err = mgr.outDownOSD(2)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "failed to take osd.2 down")
+}
+
+// TestDoPurge tests OSD purge command
+func (s *osdSuite) TestDoPurge() {
+	mgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	mgr.runner = r
+
+	// Test successful purge
+	r.On("RunCommand", "ceph", "osd", "purge", "osd.0", "--yes-i-really-mean-it").Return("", nil).Once()
+	err := mgr.doPurge(0)
+	assert.NoError(s.T(), err)
+
+	// Test failed purge
+	r.On("RunCommand", "ceph", "osd", "purge", "osd.1", "--yes-i-really-mean-it").Return("", fmt.Errorf("purge failed")).Once()
+	err = mgr.doPurge(1)
+	assert.Error(s.T(), err)
+}
+
+// TestTestSafeStop tests OSD safe stop check
+func (s *osdSuite) TestTestSafeStop() {
+	mgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	mgr.runner = r
+
+	// Test safe to stop
+	r.On("RunCommand", "ceph", "osd", "ok-to-stop", "osd.0").Return("", nil).Once()
+	result := mgr.testSafeStop([]int64{0})
+	assert.True(s.T(), result)
+
+	// Test not safe to stop
+	r.On("RunCommand", "ceph", "osd", "ok-to-stop", "osd.1").Return("", fmt.Errorf("not safe")).Once()
+	result = mgr.testSafeStop([]int64{1})
+	assert.False(s.T(), result)
+
+	// Test multiple OSDs
+	r.On("RunCommand", "ceph", "osd", "ok-to-stop", "osd.0", "osd.1").Return("", nil).Once()
+	result = mgr.testSafeStop([]int64{0, 1})
+	assert.True(s.T(), result)
+}
+
+// TestTestSafeDestroy tests OSD safe destroy check
+func (s *osdSuite) TestTestSafeDestroy() {
+	mgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	mgr.runner = r
+
+	// Test safe to destroy
+	r.On("RunCommand", "ceph", "osd", "safe-to-destroy", "osd.0").Return("", nil).Once()
+	result := mgr.testSafeDestroy(0)
+	assert.True(s.T(), result)
+
+	// Test not safe to destroy
+	r.On("RunCommand", "ceph", "osd", "safe-to-destroy", "osd.1").Return("", fmt.Errorf("not safe")).Once()
+	result = mgr.testSafeDestroy(1)
+	assert.False(s.T(), result)
+}
+
+// TestReweightOSD tests OSD reweighting
+func (s *osdSuite) TestReweightOSD() {
+	mgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	mgr.runner = r
+
+	// Test successful reweight
+	r.On("RunCommand", "ceph", "osd", "crush", "reweight", "osd.0", "0.000000").Return("", nil).Once()
+	mgr.reweightOSD(context.Background(), 0, 0.0)
+
+	// Test failed reweight (should only log warning, not return error)
+	r.On("RunCommand", "ceph", "osd", "crush", "reweight", "osd.1", "1.000000").Return("", fmt.Errorf("reweight failed")).Once()
+	mgr.reweightOSD(context.Background(), 1, 1.0)
+}
+
+// TestValidateAddOSDArgs tests OSD addition argument validation
+func (s *osdSuite) TestValidateAddOSDArgs() {
+	mgr := NewOSDManager(nil)
+
+	// Test valid args
+	data := types.DiskParameter{Path: "/dev/sda"}
+	err := mgr.validateAddOSDArgs(data, nil, nil)
+	assert.NoError(s.T(), err)
+
+	// Test loopback with WAL (should fail)
+	loopData := types.DiskParameter{LoopSize: 1024}
+	wal := &types.DiskParameter{Path: "/dev/wal"}
+	err = mgr.validateAddOSDArgs(loopData, wal, nil)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "loopback and WAL/DB are mutually exclusive")
+
+	// Test loopback with DB (should fail)
+	db := &types.DiskParameter{Path: "/dev/db"}
+	err = mgr.validateAddOSDArgs(loopData, nil, db)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "loopback and WAL/DB are mutually exclusive")
 }
