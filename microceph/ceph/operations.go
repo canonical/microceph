@@ -120,36 +120,21 @@ func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
 		return fmt.Errorf("error listing services: %v", err)
 	}
 
-	remains := map[string]int{
-		"mon": 0,
-		"mgr": 0,
-		"mds": 0,
-	}
-	total_mon_services := 0
+	totalMons := 0
 	for _, service := range services {
-		// do not count the services on this node (these are the services remaining if this node is down)
-		if service.Location != name {
-			remains[service.Service]++
-		}
-
-		// count the total number of mon services, so we can calculate the minimum number of mon services required for quorum
 		if service.Service == "mon" {
-			total_mon_services += 1
+			totalMons++
 		}
 	}
 
-	// a majority of ceph-mon services must remain active to retain quorum
-	minMon := total_mon_services / 2 + 1
-	// only need one ceph-mds and one ceph-mgr: they operate as one active, the rest in standby
-	minMds := 1
-	minMgr := 1
+	minMds := 1               // only need at least one: they operate as one active, the rest in standby
+	minMgr := 1               // only need at least one: they operate as one active, the rest in standby
+	minMon := totalMons/2 + 1 // a majority of ceph mon services must remain active to retain quorum
 
-	// the remaining services must be sufficient to make the cluster healthy after the node enters
-	// maintanence mode.
-	if remains["mon"] < minMon || remains["mds"] < minMds || remains["mgr"] < minMgr {
-		return fmt.Errorf("need at least %d mon, %d mds, and %d mgr services in the cluster besides those in node '%s'", minMon, minMds, minMgr, name)
+	err = EnsureNonOsdSvcEnough(services, name, minMon, minMgr, minMds)
+	if err != nil {
+		return fmt.Errorf("Insufficient non OSD services: %v", err)
 	}
-	logger.Infof("remaining mon (%d), mds (%d), and mgr (%d) services in the cluster are enough after '%s' enters maintenance mode", remains["mon"], remains["mds"], remains["mgr"], name)
 
 	return nil
 }
