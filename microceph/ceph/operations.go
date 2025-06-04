@@ -110,10 +110,6 @@ func (o *CheckOsdOkToStopOps) GetName() string {
 // CheckNonOsdSvcEnoughOps is an operation to check if non-osd service in a node are enough.
 type CheckNonOsdSvcEnoughOps struct {
 	ClusterOps
-
-	MinMon int
-	MinMds int
-	MinMgr int
 }
 
 // Run checks if non-osds service in a node are enough.
@@ -123,31 +119,28 @@ func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
 		return fmt.Errorf("error listing services: %v", err)
 	}
 
-	remains := map[string]int{
-		"mon": 0,
-		"mgr": 0,
-		"mds": 0,
-	}
+	totalMons := 0
 	for _, service := range services {
-		// do not count the service on this node
-		if service.Location != name {
-			remains[service.Service]++
+		if service.Service == "mon" {
+			totalMons++
 		}
 	}
 
-	// the remaining services must be sufficient to make the cluster healthy after the node enters
-	// maintanence mode.
-	if remains["mon"] < o.MinMon || remains["mds"] < o.MinMds || remains["mgr"] < o.MinMgr {
-		return fmt.Errorf("need at least %d mon, %d mds, and %d mgr services in the cluster besides those in node '%s'", o.MinMon, o.MinMds, o.MinMgr, name)
+	minMds := 1               // only need at least one: they operate as one active, the rest in standby
+	minMgr := 1               // only need at least one: they operate as one active, the rest in standby
+	minMon := totalMons/2 + 1 // a majority of ceph mon services must remain active to retain quorum
+
+	err = EnsureNonOsdSvcEnough(services, name, minMon, minMgr, minMds)
+	if err != nil {
+		return fmt.Errorf("Insufficient non OSD services: %v", err)
 	}
-	logger.Infof("remaining mon (%d), mds (%d), and mgr (%d) services in the cluster are enough after '%s' enters maintenance mode", remains["mon"], remains["mds"], remains["mgr"], name)
 
 	return nil
 }
 
 // DryRun prints out the action plan.
 func (o *CheckNonOsdSvcEnoughOps) DryRun(name string) string {
-	return fmt.Sprintf("Check if there are at least %d mon, %d mds, and %d mgr services in the cluster besides those in node '%s'", o.MinMon, o.MinMds, o.MinMgr, name)
+	return fmt.Sprintf("Check if there are at least a majority of mon services, 1 mds service, and 1 mgr service in the cluster besides those in node '%s'", name)
 }
 
 // GetName returns the name of the action
