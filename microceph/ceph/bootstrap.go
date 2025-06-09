@@ -49,8 +49,8 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 		monIp = fmt.Sprintf("[%s]", monIp)
 	}
 
-	// Enforce v2 in monnitors.
-	monIp = "v2:" + monIp
+	// Support both v1 and v2 for mons.
+	monIp = "any:" + monIp
 
 	err = conf.WriteConfig(
 		map[string]any{

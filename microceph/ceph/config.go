@@ -359,9 +359,9 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	// Ensure that IPv6 addresses have square brackets around them (if IPv6 is used).
 	monitorAddresses = formatIPv6(monitorAddresses)
 
-	// Enforce v2 in monitors.
+	// Support both v1 and v2 on mons.
 	for ix := range monitorAddresses {
-		monitorAddresses[ix] = "v2:" + monitorAddresses[ix]
+		monitorAddresses[ix] = "any:" + monitorAddresses[ix]
 	}
 
 	conf := NewCephConfig(constants.CephConfFileName)

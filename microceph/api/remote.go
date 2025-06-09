@@ -145,7 +145,7 @@ func renderConfAndKeyringFiles(remoteName string, localName string, configs map[
 	keyringFileName := remoteName + ".keyring"
 
 	for ix := range monHosts {
-		monHosts[ix] = "v2:" + monHosts[ix]
+		monHosts[ix] = "any:" + monHosts[ix]
 	}
 
 	// Populate Template
