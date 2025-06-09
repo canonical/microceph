@@ -144,6 +144,10 @@ func renderConfAndKeyringFiles(remoteName string, localName string, configs map[
 	confFileName := remoteName + ".conf"
 	keyringFileName := remoteName + ".keyring"
 
+	for ix := range monHosts {
+		monHosts[ix] = "v2:" + monHosts[ix]
+	}
+
 	// Populate Template
 	err := ceph.NewCephConfig(confFileName).WriteConfig(
 		map[string]any{
