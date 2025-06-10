@@ -7,6 +7,8 @@ import (
 	"github.com/canonical/lxd/shared/logger"
 
 	"github.com/canonical/microcluster/v2/state"
+
+	"github.com/canonical/microceph/microceph/api/types"
 )
 
 // RunOperations runs the provided operations or return the action plan.
@@ -131,7 +133,32 @@ func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
 	minMgr := 1               // only need at least one: they operate as one active, the rest in standby
 	minMon := totalMons/2 + 1 // a majority of ceph mon services must remain active to retain quorum
 
-	err = EnsureNonOsdSvcEnough(services, name, minMon, minMgr, minMds)
+	activeMons, err := getActiveMons()
+	if err != nil {
+		return fmt.Errorf("Error getting active mon services: %v", err)
+	}
+	activeMgrs, err := getActiveMgrs()
+	if err != nil {
+		return fmt.Errorf("Error getting active mgr services: %v", err)
+	}
+	activeMdss, err := getActiveMdss()
+	if err != nil {
+		return fmt.Errorf("Error getting active mds services: %v", err)
+	}
+
+	activeServices := []types.Service{}
+	for _, location := range activeMons {
+		activeServices = append(activeServices, types.Service{Service: "mon", Location: location})
+	}
+	for _, location := range activeMgrs {
+		activeServices = append(activeServices, types.Service{Service: "mgr", Location: location})
+	}
+	for _, location := range activeMdss {
+		activeServices = append(activeServices, types.Service{Service: "mds", Location: location})
+	}
+	fmt.Println(activeServices)
+
+	err = EnsureNonOsdSvcEnough(activeServices, name, minMon, minMgr, minMds)
 	if err != nil {
 		return fmt.Errorf("Insufficient non OSD services: %v", err)
 	}

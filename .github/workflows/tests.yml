@@ -475,9 +475,6 @@ jobs:
     - name: Setup cluster
       run: ~/actionutils.sh cluster_nodes internal
 
-    - name: Enable one extra ceph mon for redundancy
-      run: ~/actionutils.sh nodeexec node-wrk3 enable_mon
-
     - name: Add and wait for OSDs
       run: |
         set -uex
@@ -503,18 +500,34 @@ jobs:
     - name: Test enter and exit maintainenace mode with set noout and stop osd
       run: ~/actionutils.sh test_maintenance_enter_set_noout_stop_osds_and_exit node-wrk1
 
-    - name: Scale down the cluster to 3 nodes
+    - name: Scale down the cluster to 3 nodes and stop 1 mon
       run: |
         set -uex
+        # reduce to 3 node cluster
         ~/actionutils.sh headexec remove_disk osd.4
         ~/actionutils.sh headexec remove_node node-wrk3
 
-        # this should succeed, because 2/3 remaining nodes is still a majority for quorum
-        ~/actionutils.sh headexec "microceph cluster maintenance enter node-wrk1"
+        # reduce to only 2 active mons in a 3 node cluster
+        ~/actionutils.sh headexec disable_mon node-wrk2
+        # wait for the cluster to report warning
+        for i in {0..100}; do
+            if ~/actionutils.sh headexec "microceph.ceph health | grep quorum" ; then
+              echo "Waiting for the cluster to be out of quorum..."
+              exit 0
+            fi
+            sleep 1
+        done
 
-        # TODO: add a regression test here when https://github.com/canonical/microceph/issues/558 is fixed
+        echo "Did not reach cluster warning state when there is only 2 out of 3 active mons"
+        exit 1
 
-        ~/actionutils.sh headexec "microceph cluster maintenance exit node-wrk1"
+    - name: Test not enough active mons for quorum
+      run: |
+        set -uex
+        if ~/actionutils.sh headexec "microceph cluster maintenance enter node-wrk1"; then
+          echo "Unexpected to succeed entering maintenance mode with 2 out of 3 mons active"
+          exit 1
+        fi
 
     - name: Test force enter and exit maintainenace mode without set noout and stop osd
       run: ~/actionutils.sh test_maintenance_enter_and_exit_force node-wrk1
