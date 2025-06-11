@@ -266,7 +266,7 @@ Run the below command to create the file and configure s3cmd:
    use_https = False
    EOF
 
-Instead of running this command, you can of course also set up the configuration file using your favorite editor.
+Instead of running this command, you can of course also set up the configuration file using your favourite editor.
 
 This configuration will do the following:
 
