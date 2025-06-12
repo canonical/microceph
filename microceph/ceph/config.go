@@ -359,6 +359,11 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	// Ensure that IPv6 addresses have square brackets around them (if IPv6 is used).
 	monitorAddresses = formatIPv6(monitorAddresses)
 
+	// Support both v1 and v2 on mons.
+	for ix := range monitorAddresses {
+		monitorAddresses[ix] = "any:" + monitorAddresses[ix]
+	}
+
 	conf := NewCephConfig(constants.CephConfFileName)
 
 	// Check if host has IP address on the configured public network.
