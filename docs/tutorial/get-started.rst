@@ -250,77 +250,36 @@ To install ``s3cmd``, run the following command:
 
     sudo apt-get install s3cmd
 
-Configure the ``s3cmd`` tool:
+To configure the s3cmd tool, create a file named ``.s3cfg`` in your home directory. This should be an INI-style configuration file with a single ``[default]`` section and key-value pairs for configuration.
 
-.. code-block:: none
-
-    s3cmd --configure
-
-This will invoke an interactive configuration session, and later create a file named ``.s3cfg``
-in your home directory with all the settings chosen in the interactive session.
-
-Remember that we had set secrets for our user earlier; we will use those when prompted to provide
-a secret key and access key. We'll set our host name (``ubuntu``) as the S3 endpoint, and use the default
-[US] region.
+Run the below command to create the file and configure s3cmd:
 
 .. terminal::
+   cat > ~/.s3cfg <<EOF
+   [default]
+   access_key = foo
+   secret_key = bar
+   host_base = ubuntu
+   host_bucket = ubuntu/%(bucket)
+   check_ssl_certificate = False
+   check_ssl_hostname = False
+   use_https = False
+   EOF
 
-    Enter new values or accept defaults in brackets with Enter.
-    Refer to user manual for detailed description of all options.
+Instead of running this command, you can of course also set up the configuration file using your favourite editor.
 
-    Access key and Secret key are your identifiers for Amazon S3. Leave them empty for using the env variables.
-    Access Key: foo
-    Secret Key: bar
-    Default Region [US]: 
+This configuration will do the following:
 
-    Use "s3.amazonaws.com" for S3 Endpoint and not modify it to the target Amazon S3.
-    S3 Endpoint [s3.amazonaws.com]: ubuntu
+- Configure secret and access key that we had set earlier.
+- Configure the host to contact. We have named our host ``ubuntu``, so this is what we will set here.
+- Configure the host bucket template. The host bucket scheme allows users to specify virtual hosting style access or other access modes. For our uses, we will set it to the host name, followed by the bucket name.
+- Finally, we did not configure SSL/TLS for our endpoint, so we are disabling it for s3cmd as well.
 
-    Use "%(bucket)s.s3.amazonaws.com" to the target Amazon S3. "%(bucket)s" and "%(location)s" vars can be used
-    if the target S3 system supports dns based buckets.
-    DNS-style bucket+hostname:port template for accessing a bucket [%(bucket)s.s3.amazonaws.com]: 
+As a good security practice, it should also be ensured that the ``.s3cfg`` file is only readable by the user as it does contain the secret key. Run chmod like this:
 
-    Encryption password is used to protect your files from reading
-    by unauthorized persons while in transfer to S3
-    Encryption password: Ubuntu-pass
-    Path to GPG program [/usr/bin/gpg]: 
+.. terminal::
+   chmod 0600 ~/.s3cfg
 
-    When using secure HTTPS protocol all communication with Amazon S3
-    servers is protected from 3rd party eavesdropping. This method is
-    slower than plain HTTP, and can only be proxied with Python 2.7 or newer
-    Use HTTPS protocol [Yes]: No
-
-    On some networks all internet access must go through a HTTP proxy.
-    Try setting it here if you can't connect to S3 directly
-    HTTP Proxy server name: 
-
-    New settings:
-    Access Key: foo
-    Secret Key: bar
-    Default Region: US
-    S3 Endpoint: ubuntu
-    DNS-style bucket+hostname:port template for accessing a bucket: %(bucket)s.s3.amazonaws.com
-    Encryption password: Ubuntu-pass
-    Path to GPG program: /usr/bin/gpg
-    Use HTTPS protocol: False
-    HTTP Proxy server name: 
-    HTTP Proxy server port: 0
-
-    Test access with supplied credentials? [Y/n] y
-    Please wait, attempting to list all buckets...
-    Success. Your access key and secret key worked fine :-)
-
-    Now verifying that encryption works...
-    Success. Encryption and decryption worked fine :-)
-
-    Save settings? [y/N] y
-    Configuration saved to '/home/ubuntu/.s3cfg'
-
-We have successfully configured ``s3cmd``.  To see the full configuration, inspect the config file. 
-
-.. code-block:: none
-
-    cat ~/.s3cfg
 
 Create a bucket
 ^^^^^^^^^^^^^^^
