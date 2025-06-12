@@ -138,6 +138,64 @@ func getMons() (common.Set, error) {
 	return retval, nil
 }
 
+func getActiveMons() ([]string, error) {
+	output, err := processExec.RunCommand("ceph", "-s", "-f", "json")
+	if err != nil {
+		logger.Errorf("Failed fetching ceph status: %v", err)
+		return nil, err
+	}
+
+	logger.Debugf("Ceph Status:\n%s", output)
+
+	// Get the active mons services.
+	activeMons := []string{}
+	result := gjson.Get(output, "quorum_names")
+	for _, name := range result.Array() {
+		activeMons = append(activeMons, name.String())
+	}
+
+	return activeMons, nil
+}
+
+func getActiveMgrs() ([]string, error) {
+	output, err := processExec.RunCommand("ceph", "mgr", "dump", "-f", "json")
+	if err != nil {
+		logger.Errorf("Failed fetching Mgr dump: %v", err)
+		return nil, err
+	}
+
+	logger.Debugf("Mgr Dump:\n%s", output)
+
+	// Get the active mgr services.
+	activeMgrs := []string{}
+	result := gjson.Get(output, "standbys.#.name")
+	for _, name := range result.Array() {
+		activeMgrs = append(activeMgrs, name.String())
+	}
+	activeMgrs = append(activeMgrs, gjson.Get(output, "active_name").String())
+
+	return activeMgrs, nil
+}
+
+func getActiveMdss() ([]string, error) {
+	output, err := processExec.RunCommand("ceph", "fs", "status", "-f", "json")
+	if err != nil {
+		logger.Errorf("Failed fetching fs status: %v", err)
+		return nil, err
+	}
+
+	logger.Debugf("Fs Status:\n%s", output)
+
+	// Get the active mds services.
+	activeMdss := []string{}
+	result := gjson.Get(output, "mdsmap.#.name")
+	for _, name := range result.Array() {
+		activeMdss = append(activeMdss, name.String())
+	}
+
+	return activeMdss, nil
+}
+
 func getUpOsds() (common.Set, error) {
 	retval := common.Set{}
 	output, err := processExec.RunCommand("ceph", "osd", "dump", "-f", "json-pretty")
