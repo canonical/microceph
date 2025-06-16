@@ -188,3 +188,55 @@ func (s *configWriterSuite) TestWriteCephKeyring() {
 	assert.Equal(s.T(), nil, err)
 	assert.Contains(s.T(), string(data), "key = secretkey")
 }
+
+// Test NFS Ganesha config writing
+func (s *configWriterSuite) TestWriteGaneshaConfig() {
+	config := newGaneshaConfig(s.Tmp)
+
+	err := config.WriteConfig(
+		map[string]any{
+			"clusterID":    "lish",
+			"confDir":      "/foo/lish",
+			"minorVersions": 2,
+		},
+		0644,
+	)
+
+	assert.Equal(s.T(), nil, err)
+	// Check that the file exists
+	_, err = os.Stat(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+	// Check contents of the file
+	data, err := os.ReadFile(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+
+	dataStr := string(data)
+	assert.Contains(s.T(), dataStr, "Minor_Versions = 2;")
+	assert.Contains(s.T(), dataStr, "namespace = \"lish\";")
+	assert.Contains(s.T(), dataStr, "ceph_conf = \"/foo/lish/ceph.conf\";")
+	assert.Contains(s.T(), dataStr, "watch_url = \"rados://.nfs/lish/conf-nfs.lish\";")
+	assert.Contains(s.T(), dataStr, "url = \"rados://.nfs/lish/conf-nfs.lish\";")
+}
+
+// Test ceph config writing for NFS Ganesha
+func (s *configWriterSuite) TestWriteGaneshaCephConfig() {
+	config := newGaneshaCephConfig(s.Tmp)
+
+	err := config.WriteConfig(
+		map[string]any{
+			"monitors": "foo",
+			"confDir":  "/foo/lish",
+		},
+		0644,
+	)
+
+	assert.Equal(s.T(), nil, err)
+	// Check that the file exists
+	_, err = os.Stat(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+	// Check contents of the file
+	data, err := os.ReadFile(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+	assert.Contains(s.T(), string(data), "mon host = foo")
+	assert.Contains(s.T(), string(data), "keyring = /foo/lish/keyring")
+}
