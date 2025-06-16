@@ -1,0 +1,18 @@
+#!/bin/bash
+
+. "${SNAP}/commands/common"
+
+limits
+
+wait_for_config
+
+conf="${SNAP_DATA}/conf/ganesha/ganesha.conf"
+logs="${SNAP_COMMON}/logs/ganesha/ganesha.log"
+pid_file="${SNAP_DATA}/run/ganesha/ganesha.pid"
+
+mkdir -p "${SNAP_DATA}/run/ganesha"
+
+if [ -n "${conf}" ]; then
+    exec ganesha.nfsd -C -L "${logs}" -f "${conf}" -p "${pid_file}" -N NIV_EVENT -F
+fi
+

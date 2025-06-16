@@ -50,6 +50,11 @@ var mdsServiceCmd = rest.Endpoint{
 	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
 	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
 }
+var nfsServiceCmd = rest.Endpoint{
+	Path:   "services/nfs",
+	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
+}
 var rgwServiceCmd = rest.Endpoint{
 	Path:   "services/rgw",
 	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
