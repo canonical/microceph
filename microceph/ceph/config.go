@@ -22,8 +22,9 @@ import (
 type ClusterConfigPermission string
 
 const (
-	ClusterConfigRO ClusterConfigPermission = "read_only"
-	ClusterConfigRW ClusterConfigPermission = "read_write"
+	ClusterConfigRO    ClusterConfigPermission = "read_only"      // Read Only
+	ClusterConfigRW    ClusterConfigPermission = "read_write"     // Read/ Write
+	ClusterConfigEXPRW ClusterConfigPermission = "exp_read_write" // Read/ Write but experimental features
 )
 
 type ClusterConfigDefinition struct {
@@ -84,6 +85,10 @@ func GetConstConfigTable() ConfigTable {
 		"rgw_swift_versioning_enabled":                {"global", ClusterConfigRW, []string{"rgw"}},
 		"rgw_swift_enforce_content_length":            {"global", ClusterConfigRW, []string{"rgw"}},
 		"rgw_swift_custom_header":                     {"global", ClusterConfigRW, []string{"rgw"}},
+		// RGW QAT config keys
+		"qat_compressor_enabled":    {"client.radosgw.gateway", ClusterConfigEXPRW, []string{"rgw"}},
+		"openssl_engine_opts":       {"client.radosgw.gateway", ClusterConfigEXPRW, []string{"rgw"}},
+		"plugin_crypto_accelerator": {"client.radosgw.gateway", ClusterConfigEXPRW, []string{"rgw"}},
 	}
 }
 
@@ -160,15 +165,22 @@ func RemoveConfigItem(c types.Config) error {
 		return err
 	}
 
+	config := GetConstConfigTable()[c.Key]
 	args := []string{
 		"config",
 		"rm",
-		GetConstConfigTable()[c.Key].Who,
+		config.Who,
 		c.Key,
 	}
 
 	_, err = processExec.RunCommand("ceph", args...)
 	if err != nil {
+		return err
+	}
+
+	if config.Permission == ClusterConfigEXPRW {
+		err := fmt.Errorf(constants.ExperimentalConfigErrTemplate, "reset", c.Key)
+		logger.Warn(err.Error())
 		return err
 	}
 
@@ -207,10 +219,11 @@ func ListConfigs() (types.Configs, error) {
 
 // ****** Helper Functions ******//
 func setConfigItem(c types.Config) error {
+	config := GetConstConfigTable()[c.Key]
 	args := []string{
 		"config",
 		"set",
-		GetConstConfigTable()[c.Key].Who,
+		config.Who,
 		c.Key,
 		c.Value,
 		"-f",
@@ -219,6 +232,12 @@ func setConfigItem(c types.Config) error {
 
 	_, err := processExec.RunCommand("ceph", args...)
 	if err != nil {
+		return err
+	}
+
+	if config.Permission == ClusterConfigEXPRW {
+		err := fmt.Errorf(constants.ExperimentalConfigErrTemplate, "set", c.Key)
+		logger.Warn(err.Error())
 		return err
 	}
 
@@ -233,7 +252,8 @@ func canSetConfig(key string) (bool, error) {
 		return false, err
 	}
 
-	if config.Permission != ClusterConfigRW {
+	// check if write operation is permitted.
+	if !strings.Contains(string(config.Permission), "write") {
 		err := fmt.Errorf("requested key %s does not support write operation", key)
 		logger.Warnf(err.Error())
 		return false, err
