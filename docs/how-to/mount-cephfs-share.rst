@@ -60,7 +60,7 @@ This step is required for ``mount.ceph`` i.e. making mount aware of ceph device 
 
 Fetch the ``ceph.conf`` and ``ceph.keyring`` file :
 
-Ideally, a keyring file for any CephX user which has access to CephFs will work.
+Ideally, a keyring file for any Cephx user which has access to CephFs will work.
 For the sake of simplicity, we are using admin keys in this example.
 
 .. code-block:: none
@@ -90,7 +90,7 @@ Mount the filesystem:
     $ sudo mkdir /mnt/mycephfs
     $ sudo mount -t ceph :/ /mnt/mycephfs/ -o name=admin,fs=newFs
 
-Here, we provide the CephX user (admin in our example) and the fs created earlier (newFs).
+Here, we provide the Cephx user (admin in our example) and the fs created earlier (newFs).
 
 With this, you now have a CephFs mounted at ``/mnt/mycephfs`` on
 your client machine that you can perform IO to.
