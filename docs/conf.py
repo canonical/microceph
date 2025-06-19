@@ -221,6 +221,8 @@ redirects = {}
 linkcheck_ignore = [
     "http://127.0.0.1:8000",
     "https://github.com/canonical/ACME/*"
+    "https://app.element.io/#/room/#ceph-general:ubuntu.com:"
+    "https://matrix.to/#/#documentation:ubuntu.com:"
     ]
 
 
