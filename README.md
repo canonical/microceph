@@ -62,6 +62,7 @@ If you need a comprehensive status report of your cluster, including its health 
 ```
 sudo ceph status
 ```
+
 > [!NOTE]
 > MicroCeph supports the usage of Ceph native tooling where snap-level commands are not yet available.
 
