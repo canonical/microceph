@@ -79,6 +79,7 @@ Created snap package microceph_0+git.ac1da26_amd64.snap
 ```
 
 The newly created .snap artifact can then be installed as
+
 ```bash
 # Dangerous flag for locally built snap
 sudo snap install --dangerous microceph_*.snap
