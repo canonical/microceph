@@ -38,10 +38,10 @@ devices for write-ahead logging and database management.
 The command takes arguments which is either one or more paths to block
 devices such as /dev/sdb, or a specification for loop files.
 
-For block devices, add a space separated list of paths,
-e.g. "/dev/sda /dev/sdb ...". You may also add WAL and DB devices,
-but doing this is mutually exclusive with adding more than one OSD
-block device at a time.
+For block devices, add a space separated list of absolute paths, e.g.
+"/dev/sda /dev/sdb ...". You may also specify WAL and DB devices referred
+to by absolute paths. However when specifying WAL and DB devices you
+may only add a single OSD block device at a time.
 
 The specification for loop files is of the form loop,<size>,<nr>
 
