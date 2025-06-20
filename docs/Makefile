@@ -1,6 +1,6 @@
 # Minimal makefile for Sphinx documentation
 #
-# Add your customisation to `Makefile` instead.
+# Add your customisation to `conf.py` instead.
 
 # You can set these variables from the command line, and also
 # from the environment for the first two.
