@@ -5,7 +5,7 @@ Perform failover for replicated RBD resources
 In case of a disaster, all replicated RBD pools can be failed over to a non-primary remote.
 
 An operator can perform promotion on a non-primary cluster, this will in turn promote all replicated rbd
-images in all rbd pools and make them primary. This enables them to be consumed by vms and other workloads.
+images in all rbd pools and make them primary. This enables them to be consumed by VMs and other workloads.
 
 Prerequisites
 --------------
