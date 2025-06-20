@@ -41,7 +41,7 @@ devices such as /dev/sdb, or a specification for loop files.
 For block devices, add a space separated list of absolute paths, e.g.
 "/dev/sda /dev/sdb ...". You may also specify WAL and DB devices referred
 to by absolute paths. However when specifying WAL and DB devices you
-may only add a single OSD block device at a time though.
+may only add a single OSD block device at a time.
 
 The specification for loop files is of the form loop,<size>,<nr>
 

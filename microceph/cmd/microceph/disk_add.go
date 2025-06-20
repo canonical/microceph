@@ -37,7 +37,7 @@ func (c *cmdDiskAdd) Command() *cobra.Command {
 		Long: `Adds one or more new Ceph disks (OSDs) to the cluster, alongside optional devices for write-ahead logging and database management.
 The command takes arguments which is either one or more paths to block devices such as /dev/sdb, or a specification for loop files.
 
-For block devices, add a space separated list of (absolute) paths, e.g. "/dev/sdb /dev/sdc ...". You may also specify external WAL and DB devices referred to by absolute paths. However when specifying WAL and DB devices you may only add a single OSD block device at a time though.
+For block devices, add a space separated list of (absolute) paths, e.g. "/dev/sdb /dev/sdc ...". You may also specify external WAL and DB devices referred to by absolute paths. However when specifying WAL and DB devices you may only add a single OSD block device at a time.
 
 The specification for loop files is of the form loop,<size>,<nr>
 
