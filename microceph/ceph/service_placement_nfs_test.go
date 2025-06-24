@@ -43,3 +43,16 @@ func (s *servicePlacementNFSSuite) TestInvalidPayload() {
 	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
 	assert.ErrorContains(s.T(), err, "expected V4MinVersion to be in the interval")
 }
+
+func (s *servicePlacementNFSSuite) TestAddressUnavailable() {
+	service := "nfs"
+
+	payload := types.EnableService{
+		Name:    service,
+		Wait:    true,
+		Payload: "{\"ClusterID\":\"foo\",\"ServiceAddress\":\"42.42.42.42:9999\"}",
+	}
+
+	err := ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
+	assert.ErrorContains(s.T(), err, "error encountered during address availability check")
+}

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/canonical/microcluster/v2/microcluster"
 	microclusterclient "github.com/canonical/microcluster/v2/client"
+	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -20,6 +20,7 @@ type cmdEnableNFS struct {
 	flagClusterID    string
 	flagV4MinVersion uint
 	flagTarget       string
+	flagServiceAddr  string
 	client           *microclusterclient.Client
 }
 
@@ -32,7 +33,8 @@ func (c *cmdEnableNFS) Command() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&c.flagClusterID, "cluster-id", "", "NFS Cluster ID")
 	cmd.PersistentFlags().UintVar(&c.flagV4MinVersion, "v4-min-version", 1, "Minimum supported version")
 	cmd.PersistentFlags().StringVar(&c.flagTarget, "target", "", "Server hostname (default: this server)")
-	cmd.Flags().BoolVar(&c.wait, "wait", true, "Wait for rgw service to be up.")
+	cmd.PersistentFlags().StringVar(&c.flagTarget, "service-addr", "0.0.0.0:2049", "Bind IP:PORT for the NFS Ganesha service")
+	cmd.Flags().BoolVar(&c.wait, "wait", true, "Wait for nfs service to be up")
 	return cmd
 }
 
@@ -46,7 +48,12 @@ func (c *cmdEnableNFS) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("please provide a valid v4 minimum version (0, 1, 2) using the `--v4-min-version` flag")
 	}
 
-	jsp, err := json.Marshal(ceph.NFSServicePlacement{ClusterID: c.flagClusterID, V4MinVersion: c.flagV4MinVersion})
+	obj := ceph.NFSServicePlacement{
+		ClusterID:      c.flagClusterID,
+		V4MinVersion:   c.flagV4MinVersion,
+		ServiceAddress: c.flagServiceAddr,
+	}
+	jsp, err := json.Marshal(obj)
 	if err != nil {
 		return err
 	}
