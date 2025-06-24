@@ -37,3 +37,24 @@ func (s *enableNFSSuite) TestCmdEnableNFSInvalidV4() {
 	err := cmd.Run(nil, []string{})
 	assert.ErrorContains(s.T(), err, "please provide a valid v4 minimum version (0, 1, 2) using the `--v4-min-version` flag")
 }
+
+func (s *enableNFSSuite) TestCmdEnableNFSInvalidAddress() {
+	cmd := cmdEnableNFS{
+		flagClusterID: "foo",
+		flagBindAddr:  "10.20.30",
+	}
+
+	err := cmd.Run(nil, []string{})
+	assert.ErrorContains(s.T(), err, "could not parse the given `--bind-address`")
+}
+
+func (s *enableNFSSuite) TestCmdEnableNFSInvalidPort() {
+	cmd := cmdEnableNFS{
+		flagClusterID: "foo",
+		flagBindAddr:  "0.0.0.0",
+		flagBindPort:  0,
+	}
+
+	err := cmd.Run(nil, []string{})
+	assert.ErrorContains(s.T(), err, "please provide a valid port number [1, 49151] using the `--bind-port` flag")
+}

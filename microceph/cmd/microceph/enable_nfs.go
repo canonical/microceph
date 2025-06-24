@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 
 	"github.com/canonical/microcluster/v2/microcluster"
 	microclusterclient "github.com/canonical/microcluster/v2/client"
@@ -18,6 +19,8 @@ type cmdEnableNFS struct {
 	common           *CmdControl
 	wait             bool
 	flagClusterID    string
+	flagBindAddr     string
+	flagBindPort     uint
 	flagV4MinVersion uint
 	flagTarget       string
 	client           *microclusterclient.Client
@@ -25,14 +28,16 @@ type cmdEnableNFS struct {
 
 func (c *cmdEnableNFS) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "nfs --cluster-id <cluster-id> [--v4-min-version 0/1/2] [--target <server>] [--wait <bool>]",
+		Use:   "nfs --cluster-id <cluster-id> [--bind-address <ip-address>] [--port <port-num>] [--v4-min-version 0/1/2] [--target <server>] [--wait <bool>]",
 		Short: "Enable the NFS Ganesha service on the --target server (default: this server)",
 		RunE:  c.Run,
 	}
 	cmd.PersistentFlags().StringVar(&c.flagClusterID, "cluster-id", "", "NFS Cluster ID")
+	cmd.PersistentFlags().StringVar(&c.flagBindAddr, "bind-address", "0.0.0.0", "Bind address to use for the NFS Ganesha service")
+	cmd.PersistentFlags().UintVar(&c.flagBindPort, "bind-port", 2049, "Bind port to use for the NFS Ganesha service")
 	cmd.PersistentFlags().UintVar(&c.flagV4MinVersion, "v4-min-version", 1, "Minimum supported version")
 	cmd.PersistentFlags().StringVar(&c.flagTarget, "target", "", "Server hostname (default: this server)")
-	cmd.Flags().BoolVar(&c.wait, "wait", true, "Wait for rgw service to be up")
+	cmd.Flags().BoolVar(&c.wait, "wait", true, "Wait for nfs service to be up")
 	return cmd
 }
 
@@ -46,7 +51,23 @@ func (c *cmdEnableNFS) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("please provide a valid v4 minimum version (0, 1, 2) using the `--v4-min-version` flag")
 	}
 
-	jsp, err := json.Marshal(ceph.NFSServicePlacement{ClusterID: c.flagClusterID, V4MinVersion: c.flagV4MinVersion})
+	ip := net.ParseIP(c.flagBindAddr)
+	if ip == nil {
+		return fmt.Errorf("could not parse the given `--bind-address`")
+	}
+
+	// 49152 - 65535 - dynamic and / or private ports.
+	if c.flagBindPort == 0 || c.flagBindPort > 49151 {
+		return fmt.Errorf("please provide a valid port number [1, 49151] using the `--bind-port` flag")
+	}
+
+	obj := ceph.NFSServicePlacement{
+		ClusterID:    c.flagClusterID,
+		V4MinVersion: c.flagV4MinVersion,
+		BindAddress:  c.flagBindAddr,
+		BindPort:     c.flagBindPort,
+	}
+	jsp, err := json.Marshal(obj)
 	if err != nil {
 		return err
 	}

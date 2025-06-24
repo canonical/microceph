@@ -71,7 +71,7 @@ func (s *NFSSuite) TestEnableNFS() {
 	processExec = r
 
 	// function call
-	err = EnableNFS(s.TestStateInterface, clusterID, 2, []string{})
+	err = EnableNFS(s.TestStateInterface, clusterID, "0.0.0.0", 2049, 2, []string{})
 
 	assert.NoError(s.T(), err)
 }
@@ -111,7 +111,7 @@ func (s *NFSSuite) TestDisableNFS() {
 	processExec = r
 
 	// function call
-	err = DisableNFS(context.Background(), s.TestStateInterface)
+	err = DisableNFS(context.Background(), s.TestStateInterface, "foo")
 
 	assert.NoError(s.T(), err)
 

@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/canonical/lxd/shared/api"
 
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
@@ -14,7 +17,7 @@ import (
 )
 
 // EnableNFS enables the NFS Ganesha service on the cluster and adds initial configuration.
-func EnableNFS(s interfaces.StateInterface, clusterID string, v4MinVersion uint, monitorAddresses []string) error {
+func EnableNFS(s interfaces.StateInterface, clusterID, bindAddress string, bindPort, v4MinVersion uint, monitorAddresses []string) error {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return err
@@ -29,6 +32,8 @@ func EnableNFS(s interfaces.StateInterface, clusterID string, v4MinVersion uint,
 
 	// Create NFS Ganesha configuration.
 	configs := map[string]any{
+		"bindAddr":      bindAddress,
+		"bindPort":      bindPort,
 		"confDir":       ganeshaConfDir,
 		"clusterID":     clusterID,
 		"minorVersions": v4MinVersion,
@@ -75,7 +80,7 @@ func EnableNFS(s interfaces.StateInterface, clusterID string, v4MinVersion uint,
 }
 
 // DisableNFS disables the NFS service on the cluster.
-func DisableNFS(ctx context.Context, s interfaces.StateInterface) error {
+func DisableNFS(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
 	pathConsts := constants.GetPathConst()
 	ganeshaConfDir := filepath.Join(pathConsts.ConfPath, "ganesha")
 
@@ -168,18 +173,19 @@ func createNFSKeyring(path, clusterID string) error {
 
 // ensureNFSPool creates the NFS Pool for Ganesha if it doesn't exist.
 func ensureNFSPool(clusterID string) error {
-	_, err := radosCreatePool(".nfs")
+	_, err := radosRun("ls", "--pool", ".nfs", "--all", "--create")
 	if err != nil && !strings.Contains(err.Error(), "File exists") {
 		return fmt.Errorf("failed to create .nfs pool: %w", err)
 	}
 
 	// the command is idempotent.
-	_, err = osdEnablePool(".nfs", "nfs")
+	_, err = osdEnablePoolApp(".nfs", "nfs")
 	if err != nil {
 		return fmt.Errorf("failed to enable .nfs pool: %w", err)
 	}
 
-	_, err = radosCreateObject(".nfs", clusterID, fmt.Sprintf("conf-nfs.%s", clusterID))
+	object := fmt.Sprintf("conf-nfs.%s", clusterID)
+	_, err = radosRun("create", "-p", ".nfs", "-N", clusterID, object)
 	if err != nil && !strings.Contains(err.Error(), "File exists") {
 		return fmt.Errorf("failed to create object for Ganesha: %w", err)
 	}
@@ -187,12 +193,25 @@ func ensureNFSPool(clusterID string) error {
 	return nil
 }
 
+// osdEnablePoolApp enables the use of an application on the given pool.
+func osdEnablePoolApp(pool, app string) (string, error) {
+	return cephRun("osd", "pool", "application", "enable", pool, app)
+}
+
+// addNodeToSharedGraceMgmtDb adds the given node into the Shared Grace Management Database, which
+// is used by the rados_cluster recovery backend.
 func addNodeToSharedGraceMgmtDb(cephConfPath, clusterID, node string) error {
 	// the command is idempotent.
-	_, err := ganeshaRadosGrace(cephConfPath, ".nfs", clusterID, "nfs.ganesha", node)
+	_, err := ganeshaRadosGraceAddNode(cephConfPath, ".nfs", clusterID, "nfs.ganesha", node)
 	if err != nil {
 		return fmt.Errorf("failed to add node to the shared grace management database: %w", err)
 	}
 
 	return nil
+}
+
+// ganeshaRadosGraceAddNode adds the given node into the Shared Grace Management Database, which
+// is used by the rados_cluster recovery backend.
+func ganeshaRadosGraceAddNode(cephConfPath, pool, namespace, userID, node string) (string, error) {
+	return processExec.RunCommand("ganesha-rados-grace", "--cephconf", cephConfPath, "--pool", pool, "--ns", namespace, "--userid", userID, "add", node)
 }

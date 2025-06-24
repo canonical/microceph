@@ -42,4 +42,27 @@ func (s *servicePlacementNFSSuite) TestInvalidPayload() {
 
 	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
 	assert.ErrorContains(s.T(), err, "expected v4_min_version to be in the interval")
+
+	payload.Payload = "{\"cluster_id\":\"foo\",\"bind_address\":\"10.20.30\"}"
+
+	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
+	assert.ErrorContains(s.T(), err, "bind_address could not be parsed")
+
+	payload.Payload = "{\"cluster_id\":\"foo\",\"bind_port\":99999}"
+
+	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
+	assert.ErrorContains(s.T(), err, "expected bind_port number to be in range [1-49151]")
+}
+
+func (s *servicePlacementNFSSuite) TestAddressUnavailable() {
+	service := "nfs"
+
+	payload := types.EnableService{
+		Name:    service,
+		Wait:    true,
+		Payload: "{\"cluster_id\":\"foo\",\"bind_address\":\"42.42.42.42\"}",
+	}
+
+	err := ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
+	assert.ErrorContains(s.T(), err, "error encountered during address availability check")
 }

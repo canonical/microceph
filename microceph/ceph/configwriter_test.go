@@ -195,8 +195,10 @@ func (s *configWriterSuite) TestWriteGaneshaConfig() {
 
 	err := config.WriteConfig(
 		map[string]any{
-			"clusterID":    "lish",
-			"confDir":      "/foo/lish",
+			"bindAddr":      "10.20.30.40",
+			"bindPort":      "9999",
+			"clusterID":     "lish",
+			"confDir":       "/foo/lish",
 			"minorVersions": 2,
 		},
 		0644,
@@ -211,6 +213,8 @@ func (s *configWriterSuite) TestWriteGaneshaConfig() {
 	assert.Equal(s.T(), nil, err)
 
 	dataStr := string(data)
+	assert.Contains(s.T(), dataStr, "Bind_Addr = 10.20.30.40;")
+	assert.Contains(s.T(), dataStr, "NFS_Port = 9999;")
 	assert.Contains(s.T(), dataStr, "Minor_Versions = 2;")
 	assert.Contains(s.T(), dataStr, "namespace = \"lish\";")
 	assert.Contains(s.T(), dataStr, "ceph_conf = \"/foo/lish/ceph.conf\";")

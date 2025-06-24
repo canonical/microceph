@@ -107,7 +107,8 @@ NFS_CORE_PARAM {
 	Enable_NLM = false;
 	Enable_RQUOTA = false;
 	Protocols = 4;
-	NFS_Port = 2049;
+	Bind_Addr = {{.bindAddr}};
+	NFS_Port = {{.bindPort}};
 }
 
 NFSv4 {
