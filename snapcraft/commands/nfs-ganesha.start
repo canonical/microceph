@@ -15,4 +15,3 @@ mkdir -p "${SNAP_DATA}/run/ganesha"
 if [ -n "${conf}" ]; then
     exec ganesha.nfsd -C -L "${logs}" -f "${conf}" -p "${pid_file}" -N NIV_EVENT -F
 fi
-

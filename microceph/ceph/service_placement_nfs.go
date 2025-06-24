@@ -3,19 +3,28 @@ package ceph
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/canonical/microceph/microceph/interfaces"
 )
 
 type NFSServicePlacement struct {
-	ClusterID    string
-	V4MinVersion uint
+	ClusterID    string `json:"cluster_id"`
+	V4MinVersion uint   `json:"v4_min_version"`
 }
 
 func (nfs *NFSServicePlacement) PopulateParams(s interfaces.StateInterface, payload string) error {
 	err := json.Unmarshal([]byte(payload), &nfs)
 	if err != nil {
 		return err
+	}
+
+	if len(nfs.ClusterID) == 0 {
+		return fmt.Errorf("expected cluster_id to be non-empty")
+	}
+
+	if nfs.V4MinVersion > 2 {
+		return fmt.Errorf("expected v4_min_version to be in the interval [0, 2]")
 	}
 
 	return nil
