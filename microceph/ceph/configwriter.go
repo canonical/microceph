@@ -129,7 +129,7 @@ RADOS_URLS {
 }
 
 LOG {
-	COMPONENTS {
+	Components {
 		ALL = FULL_DEBUG;
 	}
 }

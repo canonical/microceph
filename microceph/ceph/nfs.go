@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 )
 
 // EnableNFS enables the NFS Ganesha service on the cluster and adds initial configuration.
@@ -23,17 +23,12 @@ func EnableNFS(s interfaces.StateInterface, clusterID string, v4MinVersion uint,
 		return err
 	}
 
-	err = ensureNFSPool(clusterID)
-	if err != nil {
-		return err
-	}
-
-	err = os.MkdirAll(ganeshaConfDir, 0644)
+	err = os.MkdirAll(ganeshaConfDir, 0744)
 	if err != nil && !os.IsExist(err) {
 		return err
 	}
 
-	// Create Ganesha configuration.
+	// Create NFS Ganesha configuration.
 	configs := map[string]any{
 		"confDir":       ganeshaConfDir,
 		"clusterID":     clusterID,
@@ -47,7 +42,7 @@ func EnableNFS(s interfaces.StateInterface, clusterID string, v4MinVersion uint,
 		return err
 	}
 
-	// Create Ganesha Ceph configuration.
+	// Create NFS Ganesha Ceph configuration.
 	configs = map[string]any{
 		"confDir":  ganeshaConfDir,
 		"monitors": strings.Join(monitorAddresses, ","),
@@ -59,12 +54,19 @@ func EnableNFS(s interfaces.StateInterface, clusterID string, v4MinVersion uint,
 		return err
 	}
 
-	// Create Ganesha Ceph keyring.
+	// Create NFS Ganesha Ceph keyring.
 	err = createNFSKeyring(ganeshaConfDir, clusterID)
 	if err != nil {
 		return err
 	}
 
+	// Create the NFS Pool if needed.
+	err = ensureNFSPool(clusterID)
+	if err != nil {
+		return err
+	}
+
+	// Add the node to the Shared Grace Management Database.
 	err = addNodeToSharedGraceMgmtDb(filepath.Join(ganeshaConfDir, "ceph.conf"), clusterID, hostname)
 	if err != nil {
 		return nil
@@ -85,7 +87,7 @@ func DisableNFS(ctx context.Context, s interfaces.StateInterface) error {
 		return fmt.Errorf("Failed to stop NFS service: %w", err)
 	}
 
-	// Remove the keyring.
+	// Remove the NFS Ganesha Ceph keyring.
 	err = os.Remove(filepath.Join(ganeshaConfDir, "keyring"))
 	if err != nil {
 		return fmt.Errorf("failed to remove NFS keyring: %w", err)
