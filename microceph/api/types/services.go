@@ -20,6 +20,11 @@ type EnableService struct {
 	// Enable Service passes all additional data as a json payload string.
 }
 
+// NFSService holds the Cluster ID of the NFS Service.
+type NFSService struct {
+	ClusterID string `json:"cluster_id" yaml:"cluster_id"`
+}
+
 // RGWService holds a port number and enable/disable flag
 type RGWService struct {
 	Service
