@@ -85,7 +85,7 @@ func EnableNFS(s interfaces.StateInterface, clusterID, serviceAddress string, v4
 }
 
 // DisableNFS disables the NFS service on the cluster.
-func DisableNFS(ctx context.Context, s interfaces.StateInterface) error {
+func DisableNFS(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
 	pathConsts := constants.GetPathConst()
 	ganeshaConfDir := filepath.Join(pathConsts.ConfPath, "ganesha")
 

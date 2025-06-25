@@ -159,6 +159,24 @@ func cmdDeleteService(s state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, nil)
 }
 
+func cmdNFSServiceDelete(s state.State, r *http.Request) response.Response {
+	var svc types.NFSService
+
+	err := json.NewDecoder(r.Body).Decode(&svc)
+	if err != nil {
+		logger.Errorf("Failed decoding disable service request: %v", err)
+		return response.InternalError(err)
+	}
+
+	err := ceph.DisableNFS(r.Context(), interfaces.CephState{State: s}, svc.ClusterID)
+	if err != nil {
+		logger.Errorf("Failed disabling NFS: %v", err)
+		return response.SmartError(err)
+	}
+
+	return response.EmptySyncResponse
+}
+
 func cmdRGWServiceDelete(s state.State, r *http.Request) response.Response {
 	err := ceph.DisableRGW(r.Context(), interfaces.CephState{State: s})
 	if err != nil {
