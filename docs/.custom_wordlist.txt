@@ -177,6 +177,7 @@ VM
 WAL
 YAML
 
+AGPL
 addons
 Alertmanager
 api
@@ -324,22 +325,6 @@ Sandboxing
 scalability
 scalable
 sda
-<<<<<<< Updated upstream
-ESM
-Livepatch
-
-vms
-resync
-failover
-Failover
-Failback
-
-MiB
-s3cmd
-INI
-chmod
-cmd
-=======
 sdb
 snapd
 ssl
@@ -369,4 +354,3 @@ WAL
 writeback
 writethrough
 YAML
->>>>>>> Stashed changes
