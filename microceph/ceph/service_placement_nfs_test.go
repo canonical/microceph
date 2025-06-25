@@ -4,10 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/canonical/microceph/microceph/tests"
+	"github.com/canonical/lxd/shared/api"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/mocks"
+	"github.com/canonical/microceph/microceph/tests"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -24,6 +26,7 @@ func TestServicesPlacementNFS(t *testing.T) {
 // Set up test suite
 func (s *servicePlacementNFSSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
+	s.TestStateInterface = mocks.NewStateInterface(s.T())
 }
 
 func (s *servicePlacementNFSSuite) TestInvalidPayload() {
@@ -65,4 +68,25 @@ func (s *servicePlacementNFSSuite) TestAddressUnavailable() {
 
 	err := ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
 	assert.ErrorContains(s.T(), err, "error encountered during address availability check")
+}
+
+func (s *servicePlacementNFSSuite) TestDBUpdate() {
+	u := api.NewURL()
+
+	state := &mocks.MockState{
+		URL:         u,
+		ClusterName: "foohost",
+	}
+
+	s.TestStateInterface.On("ClusterState").Return(state)
+
+	nfs := NFSServicePlacement{
+		ClusterID:    "foo",
+		V4MinVersion: 2,
+		BindAddress:  "42.42.42.42",
+		BindPort:     9999,
+	}
+
+	err := nfs.DbUpdate(context.Background(), s.TestStateInterface)
+	assert.NoError(s.T(), err)
 }
