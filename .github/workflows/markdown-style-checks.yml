@@ -19,6 +19,6 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    - uses: DavidAnson/markdownlint-cli2-action@v16
+    - uses: DavidAnson/markdownlint-cli2-action@b4c9feab76d8025d1e83c653fa3990936df0e6c8 # Commit hash for v16 tag
       with:
         config: "docs/.sphinx/.markdownlint.json"
