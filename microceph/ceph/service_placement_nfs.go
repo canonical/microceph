@@ -76,7 +76,29 @@ func (nfs *NFSServicePlacement) PostPlacementCheck(s interfaces.StateInterface) 
 }
 
 func (nfs *NFSServicePlacement) DbUpdate(ctx context.Context, s interfaces.StateInterface) error {
-	return genericDbUpdate(ctx, s, "nfs")
+	bytes, err := json.Marshal(map[string]any{
+		"v4_min_version": nfs.V4MinVersion,
+	})
+	if err != nil {
+		return err
+	}
+	config := string(bytes)
+
+	bytes, err = json.Marshal(map[string]any{
+		"bind_address": nfs.BindAddress,
+		"bind_port":    nfs.BindPort,
+	})
+	if err != nil {
+		return err
+	}
+	info := string(bytes)
+
+	err = ensureNFSServiceGroupRecord(ctx, s, nfs.ClusterID, config)
+	if err != nil {
+		return nil
+	}
+
+	return createNFSServiceGroupRecord(ctx, s, nfs.ClusterID, info)
 }
 
 // isAddressAvailable checks if the given local address is available or not.

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/canonical/lxd/shared/api"
+
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
@@ -101,6 +103,14 @@ func (s *NFSSuite) TestDisableNFS() {
 		assert.NoError(s.T(), err)
 		defer os.Remove(file)
 	}
+
+	u := api.NewURL()
+	state := &mocks.MockState{
+		URL:         u,
+		ClusterName: "foohost",
+	}
+	s.TestStateInterface = mocks.NewStateInterface(s.T())
+	s.TestStateInterface.On("ClusterState").Return(state)
 
 	r := mocks.NewRunner(s.T())
 

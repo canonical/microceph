@@ -107,25 +107,124 @@ func DisableNFS(ctx context.Context, s interfaces.StateInterface, clusterID stri
 		return fmt.Errorf("failed to remove NFS Ganesha configuration: %w", err)
 	}
 
+	err = deleteNFSServiceGroupRecord(ctx, s, clusterID)
+	if err != nil {
+		return err
+	}
+
+	err = deleteUnreferencedNFSServiceGroupRecord(ctx, s, clusterID)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
-// nfsCreateServiceDatabase creates a nfs service record in the database.
-func nfsCreateServiceDatabase(ctx context.Context, s interfaces.StateInterface) error {
+// ensureNFSServiceGroupRecord creates a nfs record in the service_groups database if it doesn't exist.
+func ensureNFSServiceGroupRecord(ctx context.Context, s interfaces.StateInterface, clusterID, config string) error {
 	if s.ClusterState().ServerCert() == nil {
 		return fmt.Errorf("no server certificate")
 	}
 
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		// Create the service.
-		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "nfs"})
+		// Check if the ServiceGroup already exists or not.
+		serviceGroup, err := database.GetServiceGroup(ctx, tx, "nfs", clusterID)
+		if err != nil && !api.StatusErrorCheck(err, http.StatusNotFound) {
+			return fmt.Errorf("failed to get service group record: %w", err)
+		}
+
+		// If it exists, make sure the config matches.
+		if serviceGroup != nil {
+			if serviceGroup.Config != config {
+				return fmt.Errorf("conflicting service group configurations")
+			}
+
+			return nil
+		}
+
+		// Create the ServiceGroup record.
+		_, err = database.CreateServiceGroup(ctx, tx, database.ServiceGroup{GroupID: clusterID, Service: "nfs", Config: config})
 		if err != nil {
-			return fmt.Errorf("failed to record role: %w", err)
+			return fmt.Errorf("failed to record service group: %w", err)
 		}
 
 		return nil
 	})
+
 	return err
+}
+
+// deleteUnreferencedNFSServiceGroupRecord delete the nfs record in the service_groups database if there is no grouped_service referencing it.
+func deleteUnreferencedNFSServiceGroupRecord(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
+	if s.ClusterState().ServerCert() == nil {
+		return fmt.Errorf("no server certificate")
+	}
+
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		// Check if there is any GroupedService referencing this ServiceGroup.
+		service := "nfs"
+		filter := database.GroupedServiceFilter{
+			Service: &service,
+			GroupID: &clusterID,
+		}
+		groupedServices, err := database.GetGroupedServices(ctx, tx, filter)
+		if err != nil {
+			return fmt.Errorf("failed to get grouped services records: %w", err)
+		}
+
+		if len(groupedServices) > 0 {
+			// There's still at least one GroupedService referencing this ServiceGroup.
+			return nil
+		}
+
+		// Delete the ServiceGroup record.
+		err = database.DeleteServiceGroup(ctx, tx, "nfs", clusterID)
+		if err != nil {
+			return fmt.Errorf("failed to delete service group record: %w", err)
+		}
+
+		return nil
+	})
+
+	return err
+}
+
+// createNFSServiceGroupRecord creates a record in the grouped_services database.
+func createNFSServiceGroupRecord(ctx context.Context, s interfaces.StateInterface, clusterID, info string) error {
+	if s.ClusterState().ServerCert() == nil {
+		return fmt.Errorf("no server certificate")
+	}
+
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		// Create the GroupedService record.
+		_, err := database.CreateGroupedService(ctx, tx, database.GroupedService{Member: s.ClusterState().Name(), GroupID: clusterID, Service: "nfs", Info: info})
+		if err != nil {
+			return fmt.Errorf("failed to record grouped service: %w", err)
+		}
+
+		return nil
+	})
+
+	return err
+}
+
+// deleteNFSServiceGroupRecord removes a record in the grouped_services database.
+func deleteNFSServiceGroupRecord(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
+        if s.ClusterState().ServerCert() == nil {
+                return fmt.Errorf("no server certificate")
+        }
+
+        err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+                // Delete the GroupedService record.
+                err := database.DeleteGroupedService(ctx, tx, s.ClusterState().Name(), "nfs", clusterID)
+                if err != nil {
+                        return fmt.Errorf("failed to delete grouped service record: %w", err)
+                }
+
+                return nil
+        })
+
+        return err
 }
 
 // startNFS starts the NFS service.

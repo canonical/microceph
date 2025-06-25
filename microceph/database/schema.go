@@ -18,6 +18,7 @@ var SchemaExtensions = []schema.Update{
 	schemaUpdate3,
 	schemaUpdate4,
 	schemaUpdate5,
+	schemaUpdate6,
 }
 
 // getClusterTableName returns the name of the table that holds the record of cluster members from sqlite_master.
@@ -180,6 +181,31 @@ CREATE TABLE remote (
   name                          TEXT     NOT  NULL,
   local_name                    TEXT     NOT  NULL,
   UNIQUE(name)
+);
+  `
+	_, err := tx.ExecContext(ctx, stmt)
+
+	return err
+}
+
+// schemaUpdate6 adds the service_groups and grouped_services tables
+func schemaUpdate6(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE service_groups (
+  id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
+  service                       TEXT     NOT  NULL,
+  group_id                      TEXT     NOT  NULL,
+  config                        BLOB,
+  UNIQUE (service, group_id)
+);
+
+CREATE TABLE grouped_services (
+  id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
+  service_group_id              INTEGER  NOT  NULL,
+  member_id                     INTEGER  NOT  NULL,
+  info                          BLOB,
+  FOREIGN KEY (service_group_id) REFERENCES "service_groups" (id) ON DELETE CASCADE,
+  FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE
 );
   `
 	_, err := tx.ExecContext(ctx, stmt)
