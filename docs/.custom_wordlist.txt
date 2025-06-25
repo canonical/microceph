@@ -200,9 +200,11 @@ CephFS
 CephHealthWarning
 Cephx
 Charmhub
+chmod
 CIDR
 CLA
 CLI
+cmd
 color
 conf
 config
@@ -241,6 +243,7 @@ hostname
 hostnames
 HTTPS
 IAM
+INI
 installable
 integratable
 Intra
