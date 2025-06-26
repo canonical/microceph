@@ -49,6 +49,9 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 		monIp = fmt.Sprintf("[%s]", monIp)
 	}
 
+	// Support both v1 and v2 for mons.
+	monIp = "any:" + monIp
+
 	err = conf.WriteConfig(
 		map[string]any{
 			"fsid":   fsid,
