@@ -1,0 +1,24 @@
+name: Markdown style checks
+
+on:
+  push:
+    branches:
+    - main
+    paths:
+    - 'docs/**'   # Only run on changes to the docs directory
+  pull_request:
+    branches:
+    - '*'
+    paths:
+    - 'docs/**'   # Only run on changes to the docs directory
+
+jobs:
+  markdown-lint:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: DavidAnson/markdownlint-cli2-action@b4c9feab76d8025d1e83c653fa3990936df0e6c8 # Commit hash for v16 tag
+      with:
+        config: "docs/.sphinx/.markdownlint.json"

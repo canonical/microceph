@@ -72,7 +72,7 @@ This step is required even if the client machine is a MicroCeph node itself.
 
 Fetch the ``ceph.conf`` and ``ceph.keyring`` file :
 
-Ideally, a keyring file for any CephX user which has access to RBD devices will work.
+Ideally, a keyring file for any Cephx user which has access to RBD devices will work.
 For the sake of simplicity, we are using admin keys in this example.
 
 .. code-block:: none
