@@ -168,7 +168,7 @@ func cmdNFSServiceDelete(s state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
-	err := ceph.DisableNFS(r.Context(), interfaces.CephState{State: s}, svc.ClusterID)
+	err = ceph.DisableNFS(r.Context(), interfaces.CephState{State: s}, svc.ClusterID)
 	if err != nil {
 		logger.Errorf("Failed disabling NFS: %v", err)
 		return response.SmartError(err)
