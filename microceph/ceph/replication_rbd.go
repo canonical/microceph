@@ -132,7 +132,11 @@ func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any)
 
 	logger.Infof("REPRBD: Local(%s) Remote(%s)", dbRec[0].LocalName, dbRec[0].Name)
 	if rh.Request.ResourceType == types.RbdResourcePool {
-		return handlePoolEnablement(rh, dbRec[0].LocalName, dbRec[0].Name)
+		if rh.Request.ReplicationType == types.RbdReplicationSnapshot {
+			return fmt.Errorf("Snapshot-based replication is only supported for individual RBD images, not pools")
+		} else {
+			return handlePoolEnablement(rh, dbRec[0].LocalName, dbRec[0].Name)
+		}
 	} else if rh.Request.ResourceType == types.RbdResourceImage {
 		return handleImageEnablement(rh, dbRec[0].LocalName, dbRec[0].Name)
 	}
