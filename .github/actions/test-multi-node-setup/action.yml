@@ -1,0 +1,98 @@
+name: MicroCeph Test Multi Node Setup
+description: Common setup steps for MicroCeph multi node testing
+
+inputs:
+  container-network-name:
+    description: Container network name for create_containers.
+    required: false
+    default: "public"
+
+  ceph-release:
+    description: |
+      Ceph release to be installed from the store. If empty, the local
+      microceph snap will be installed instead.
+    required: false
+    default: ""
+
+  bootstrap-parameters:
+    description: |
+      Space-separated parameters to be used for the "Bootstrap" step.
+      Skipped if empty.
+    required: false
+    default: bootstrap_head public
+
+  setup-cluster-parameters:
+    description: |
+      Space-separated parameters to be used for the "Setup cluster" step.
+      Skipped if empty.
+    required: false
+    default: cluster_nodes public
+
+  osd-count:
+    description: Number of OSDs to add. Skipped if 0.
+    required: false
+    default: 0
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download snap
+      uses: actions/download-artifact@v4
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Copy utils
+      shell: bash
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      shell: bash
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      shell: bash
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        ~/actionutils.sh install_tools
+        ~/actionutils.sh setup_lxd
+
+    - name: Create containers with loopback devices
+      shell: bash
+      run: ~/actionutils.sh create_containers ${{ inputs.container-network-name }}
+
+    - name: Install ceph release from store
+      if: "${{ inputs.ceph-release != '' }}"
+      shell: bash
+      run: ~/actionutils.sh install_store ${{ inputs.ceph-release }}
+
+    - name: Install local microceph snap
+      if: "${{ inputs.ceph-release == '' }}"
+      shell: bash
+      run: ~/actionutils.sh install_multinode
+
+    - name: Bootstrap
+      if: "${{ inputs.bootstrap-parameters != '' }}"
+      shell: bash
+      run: ~/actionutils.sh ${{ inputs.bootstrap-parameters }}
+
+    - name: Setup cluster
+      if: "${{ inputs.setup-cluster-parameters != '' }}"
+      shell: bash
+      run: ~/actionutils.sh ${{ inputs.setup-cluster-parameters }}
+
+    - name: Add and wait for OSDs
+      if: ${{ inputs.osd-count != 0 }}
+      shell: bash
+      run: |
+        set -uex
+        for i in $(seq 0 $[${{ inputs.osd-count }} - 1]) ; do
+          ~/actionutils.sh add_osd_to_node "node-wrk$i"
+        done
+
+        ~/actionutils.sh headexec wait_for_osds ${{ inputs.osd-count }}
+
+        lxc exec node-wrk0 -- sh -c "microceph.ceph -s"
