@@ -39,6 +39,10 @@ func (c *cmdRemoteImport) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("please provide a local name using `--local-name` flag")
 	}
 
+	if c.localName == args[0] {
+		return fmt.Errorf("local alias (--local-name) and remote name must be different to avoid site conflicts")
+	}
+
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
