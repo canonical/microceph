@@ -10,6 +10,11 @@ description: |-
 
 confinement: strict
 
+package-repositories:
+  - type: apt
+    ppa: lmlogiudice/ceph-1921-noble
+    priority: always
+
 plugs:
   load-rbd:
     interface: kernel-module-load
@@ -132,6 +137,16 @@ apps:
       - network
       - network-bind
       - process-control
+  "ceph-exporter":
+    command: commands/ceph-exporter.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+    plugs:
+      - network
+      - network-bind
+      - process-control
   # Commands
   ceph:
     command: commands/ceph
@@ -198,6 +213,7 @@ parts:
       - ceph-osd
       - radosgw
       - rbd-mirror
+      - ceph-exporter
       # Utilities
       - coreutils
       - uuid-runtime
