@@ -3,6 +3,9 @@ package ceph
 import (
 	"fmt"
 	"path/filepath"
+
+	"github.com/canonical/lxd/shared/logger"
+	"github.com/tidwall/gjson"
 )
 
 func bootstrapMds(hostname string, path string) error {
@@ -23,4 +26,23 @@ func bootstrapMds(hostname string, path string) error {
 	}
 
 	return nil
+}
+
+func getActiveMdss() ([]string, error) {
+	output, err := processExec.RunCommand("ceph", "fs", "status", "-f", "json")
+	if err != nil {
+		logger.Errorf("Failed fetching fs status: %v", err)
+		return nil, err
+	}
+
+	logger.Debugf("Fs Status:\n%s", output)
+
+	// Get the active mds services.
+	activeMdss := []string{}
+	result := gjson.Get(output, "mdsmap.#.name")
+	for _, name := range result.Array() {
+		activeMdss = append(activeMdss, name.String())
+	}
+
+	return activeMdss, nil
 }
