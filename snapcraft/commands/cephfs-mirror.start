@@ -1,0 +1,7 @@
+#!/bin/bash
+
+. "${SNAP}/commands/common"
+
+limits
+
+exec cephfs-mirror -f --cluster ceph --id "cephfs-mirror.$(hostname)"

@@ -21,6 +21,7 @@ func (c *cmdEnable) Command() *cobra.Command {
 	enableMdsCmd := cmdEnableMDS{common: c.common}
 	enableNFSCmd := cmdEnableNFS{common: c.common}
 	enableRbdMirrorCmd := cmdEnableRBDMirror{common: c.common}
+	enableFsMirrorCmd := cmdEnableFsMirror{common: c.common}
 
 	cmd.AddCommand(enableRGWCmd.Command())
 	cmd.AddCommand(enableMonCmd.Command())
@@ -28,6 +29,7 @@ func (c *cmdEnable) Command() *cobra.Command {
 	cmd.AddCommand(enableMdsCmd.Command())
 	cmd.AddCommand(enableNFSCmd.Command())
 	cmd.AddCommand(enableRbdMirrorCmd.Command())
+	cmd.AddCommand(enableFsMirrorCmd.Command())
 
 	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
 	cmd.Args = cobra.NoArgs
