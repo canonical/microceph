@@ -53,7 +53,7 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 	useV1 := true
 	if data.V2Only {
 		useV1 = false
-		data.MonIp = "v2:" + data.MonIp + ":6789"
+		data.MonIp = "any:" + data.MonIp
 	}
 
 	err = conf.WriteConfig(

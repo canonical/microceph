@@ -55,7 +55,7 @@ ms bind ipv4 = {{.ipv4}}
 ms bind ipv6 = {{.ipv6}}
 # https://tracker.ceph.com/issues/70390
 bluestore_elastic_shared_blobs = false
-{{if .useV1}}ms_bind_msgr1 = {{.useV1}}{{end}}
+ms_bind_msgr1 = {{.useV1}}
 
 [client]
 {{if .isCache}}rbd_cache = {{.isCache}}{{end}}

@@ -157,7 +157,7 @@ func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx
 	}
 
 	if v2Only {
-		monHost = "v2:" + monHost + ":6789"
+		monHost = "any:" + monHost
 	}
 
 	key := fmt.Sprintf("mon.host.%s", s.ClusterState().Name())
