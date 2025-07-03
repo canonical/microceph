@@ -26,7 +26,7 @@ function install_microceph() {
     sudo snap connect microceph:load-rbd
     sudo snap connect microceph:microceph-support
     sudo snap connect microceph:network-bind
-    sudo snap connect microceph:process-control    
+    sudo snap connect microceph:process-control
 
     if [ -n "${mon_ip}" ]; then
         sudo microceph cluster bootstrap --mon-ip "${mon_ip}"
@@ -114,6 +114,13 @@ function enable_rgw() {
 function enable_mon() {
     set -x
     sudo microceph enable mon
+}
+
+function disable_mon() {
+    # Support disable mon properly. Also see issue
+    # https://github.com/canonical/microceph/issues/512
+    set -x
+    sudo snap stop microceph.mon --disable
 }
 
 function enable_rgw_ssl() {
