@@ -144,6 +144,14 @@ func renderConfAndKeyringFiles(remoteName string, localName string, configs map[
 	confFileName := remoteName + ".conf"
 	keyringFileName := remoteName + ".keyring"
 
+	useV1 := true
+	for ix := range monHosts {
+		if strings.HasPrefix(monHosts[ix], "v2:") {
+			useV1 = false
+			break
+		}
+	}
+
 	// Populate Template
 	err := ceph.NewCephConfig(confFileName).WriteConfig(
 		map[string]any{
@@ -152,6 +160,7 @@ func renderConfAndKeyringFiles(remoteName string, localName string, configs map[
 			"pubNet":   configs["public_network"],
 			"ipv4":     strings.Contains(configs["public_network"], "."),
 			"ipv6":     strings.Contains(configs["public_network"], ":"),
+			"useV1":    useV1,
 		},
 		0644,
 	)
