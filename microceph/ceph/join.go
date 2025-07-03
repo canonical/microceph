@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/canonical/microceph/microceph/constants"
@@ -138,7 +139,8 @@ func checkAndCreateServiceRecord(s interfaces.StateInterface, ctx context.Contex
 }
 
 func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx) error {
-	v2Only, err := msgrv2OnlyFile(constants.CephConfFileName)
+	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf", constants.CephConfFileName)
+	v2Only, err := msgrv2OnlyFile(confPath)
 	if err != nil {
 		return err
 	}
