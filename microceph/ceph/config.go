@@ -359,9 +359,14 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	// Ensure that IPv6 addresses have square brackets around them (if IPv6 is used).
 	monitorAddresses = formatIPv6(monitorAddresses)
 
-	// Support both v1 and v2 on mons.
+	// Figure out what to do with protocols V1 and V2.
+	useV1 := true
 	for ix := range monitorAddresses {
-		monitorAddresses[ix] = "any:" + monitorAddresses[ix]
+		// If any other monitor is strictly V2, so are we.
+		if strings.HasPrefix(monitorAddresses[ix], "v2:") {
+			useV1 = false
+			break
+		}
 	}
 
 	conf := NewCephConfig(constants.CephConfFileName)
@@ -392,6 +397,7 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 			"isCacheWritethrough": clientConfig.IsCacheWritethrough,
 			"cacheMaxDirty":       clientConfig.CacheMaxDirty,
 			"cacheTargetDirty":    clientConfig.CacheTargetDirty,
+			"useV1":               useV1,
 		},
 		0644,
 	)

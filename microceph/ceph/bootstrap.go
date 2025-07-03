@@ -49,18 +49,23 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 		monIp = fmt.Sprintf("[%s]", monIp)
 	}
 
-	// Support both v1 and v2 for mons.
-	monIp = "any:" + monIp
+	// Figure out what to do regarding V1 and V2 protocols.
+	useV1 := true
+	if data.V2Only {
+		useV1 = false
+		data.MonIp = "v2:" + data.MonIp + ":6789"
+	}
 
 	err = conf.WriteConfig(
 		map[string]any{
 			"fsid":   fsid,
 			"runDir": pathConsts.RunPath,
 			// First monitor bootstrap IP as passed to microcluster.
-			"monitors": monIp,
+			"monitors": data.MonIp,
 			"pubNet":   data.PublicNet,
 			"ipv4":     strings.Contains(data.PublicNet, "."),
 			"ipv6":     strings.Contains(data.PublicNet, ":"),
+			"useV1":    useV1,
 		},
 		0644,
 	)
