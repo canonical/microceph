@@ -10,6 +10,10 @@ function cleaript() {
 }
 
 function setup_lxd() {
+    lxd_check=$(sudo snap list | grep -cF "lxd" || true)
+    if [[ $lxd_check -ne 1 ]]; then
+      sudo snap install lxd
+    fi
     sudo snap refresh
     sudo snap set lxd daemon.group=adm
     sudo lxd init --auto
@@ -222,6 +226,45 @@ function get_lxd_network() {
     echo "$nw"
 }
 
+function create_vms() {
+  set -eux
+  # print useful information about the system
+  free
+  lscpu
+
+  local count="${1?missing}"
+  # decrement by 1 as looping from 0th to count.
+  count=$((count - 1))
+  for i in $(seq 0 $count) ; do
+    vm_name="node-wrk${i}" # node name
+    lxc launch ubuntu:24.04 $vm_name --vm -c limits.cpu=4 -c limits.memory=8GiB -d root,size=30GB
+  done
+
+  # wait for VMs to be up.
+  for i in $(seq 0 $count) ; do
+    vm_name="node-wrk${i}" # node name
+    for i in $(seq 0 60); do
+      hn=$(lxc exec $vm_name -- sh -c "hostname") || true
+      if [[ -z $hn ]]; then
+        echo "VM $vm_name is not up, waiting..."
+        sleep 5s
+      else
+        break
+      fi
+    done
+  done
+
+  # fail if hostname can't be fetched from vms.
+  for i in $(seq 0 $count) ; do
+    vm_name="node-wrk${i}" # node name
+    hn=$(lxc exec $vm_name -- sh -c "hostname") || true
+    lxc file push /home/runner/microceph_*.snap $vm_name/mnt/
+    lxc exec $vm_name -- sh -c "sudo apt update"
+    lxc exec $vm_name -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
+    lxc exec $vm_name -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
+  done
+}
+
 function create_containers() {
     set -eux
     local net_name="${1?missing}"
@@ -269,16 +312,25 @@ function create_containers() {
 function remote_simple_bootstrap_two_sites() {
     # Bootstrap sitea
     lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap"
-    lxc exec node-wrk0 -- sh -c "microceph disk add loop,2G,3"
+    lxc exec node-wrk0 -- sh -c "microceph disk add loop,1G,2"
     tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk1" )
     lxc exec node-wrk1 -- sh -c "microceph cluster join $tok"
+    lxc exec node-wrk1 -- sh -c "microceph disk add loop,1G,2"
     sleep 10
     # Bootstrap siteb
     lxc exec node-wrk2 -- sh -c "microceph cluster bootstrap"
-    lxc exec node-wrk2 -- sh -c "microceph disk add loop,2G,3"
+    lxc exec node-wrk2 -- sh -c "microceph disk add loop,1G,2"
     tok=$(lxc exec node-wrk2 -- sh -c "microceph cluster add node-wrk3" )
     lxc exec node-wrk3 -- sh -c "microceph cluster join $tok"
+    lxc exec node-wrk3 -- sh -c "microceph disk add loop,1G,2"
     sleep 10
+}
+
+function remote_install_ceph_common() {
+  lxc exec node-wrk0 -- sh -c "sudo apt install ceph-common -y"
+  lxc exec node-wrk1 -- sh -c "sudo apt install ceph-common -y"
+  lxc exec node-wrk2 -- sh -c "sudo apt install ceph-common -y"
+  lxc exec node-wrk3 -- sh -c "sudo apt install ceph-common -y"
 }
 
 function remote_exchange_site_tokens() {
@@ -340,9 +392,46 @@ function remote_configure_rbd_mirroring() {
     lxc exec node-wrk0 -- sh -c "microceph replication enable rbd pool_two/image_two --type snapshot --remote siteb"
 }
 
-function remote_enable_rbd_mirror_daemon() {
-    lxc exec node-wrk0 -- sh -c "microceph enable rbd-mirror"
-    lxc exec node-wrk2 -- sh -c "microceph enable rbd-mirror"
+function remote_configure_cephfs_mirroring() {
+    set -eux
+    for i in 0 2; do
+      echo "Prepping filesystem on node-wrk$i"
+      lxc exec "node-wrk$i" -- bash -c "sudo rm -rf /etc/ceph"
+      lxc exec "node-wrk$i" -- bash -c "sudo ln -s /var/snap/microceph/current/conf /etc/ceph"
+      lxc exec "node-wrk$i" -- bash -c "sudo ceph fs volume create vol"
+      lxc exec "node-wrk$i" -- bash -c "mkdir -p /mnt/vol"
+      lxc exec "node-wrk$i" -- bash -c "sudo mount -t ceph :/ /mnt/vol/ -o name=admin,fs=vol"
+      sleep 20s
+      lxc exec "node-wrk$i" -- bash -c "sudo ceph mgr module enable mirroring"
+      lxc exec "node-wrk$i" -- bash -c "sudo ceph fs snapshot mirror enable vol"
+    done
+
+    # Bootstrapping FS mirror peer
+    echo "Bootstrapping FS Mirror peer"
+    peer_token=$(lxc exec node-wrk2 -- bash -c "sudo ceph fs snapshot mirror peer_bootstrap create vol client.fsmir-vol-primary secondary | jq '.token' | tr -d '\"'")
+    lxc exec node-wrk0 -- bash -c "sudo ceph fs snapshot mirror peer_bootstrap import vol $peer_token"
+
+    # Make directories on primary fs
+    lxc exec node-wrk0 -- bash -c "mkdir /mnt/vol/dir1"
+    lxc exec node-wrk0 -- bash -c "mkdir /mnt/vol/dir2"
+
+    # enable snapshot mirror for directories
+    lxc exec node-wrk0 -- bash -c "sudo ceph fs snapshot mirror add vol /dir1"
+    lxc exec node-wrk0 -- bash -c "sudo ceph fs snapshot mirror add vol /dir2"
+}
+
+function remote_enable_mirror_daemon() {
+    local service="${1?missing}"
+
+    lxc exec node-wrk0 -- sh -c "microceph enable $service"
+    lxc exec node-wrk2 -- sh -c "microceph enable $service"
+}
+
+function remote_disable_mirror_daemon() {
+    local service="${1?missing}"
+
+    lxc exec node-wrk0 -- sh -c "microceph disable $service"
+    lxc exec node-wrk2 -- sh -c "microceph disable $service"
 }
 
 function remote_wait_for_secondary_to_sync() {
@@ -373,6 +462,34 @@ function remote_wait_for_secondary_to_sync() {
     fi
 }
 
+function remote_wait_cephfs_for_secondary_to_sync() {
+    set -eux
+    
+    local attempts="${1?missing}"
+    STR1="ABCDEFGH"
+    STR2="IJKLMNOP"
+    lxc exec node-wrk0 -- sh -c "echo $STR1 >> /mnt/vol/dir1/test_file"
+    lxc exec node-wrk0 -- sh -c "echo $STR2 >> /mnt/vol/dir2/test_file"
+
+    sleep 30s
+
+    lxc exec node-wrk0 -- sh -c "mkdir /mnt/vol/dir1/.snap/one-snap"
+    lxc exec node-wrk0 -- sh -c "mkdir /mnt/vol/dir2/.snap/two-snap"
+
+    echo "Waiting for files to appear on secondary"
+    for i in $(seq 1 $attempts); do
+      echo "Iteration $i"
+      file1_exists=$(lxc exec node-wrk0 -- sh -c "stat /mnt/vol/dir1/test_file > /dev/null && echo $?")
+      file2_exists=$(lxc exec node-wrk0 -- sh -c "stat /mnt/vol/dir1/test_file > /dev/null && echo $?")
+      if [[ $file1_exists -eq 0 && $file2_exists -eq 0 ]]; then
+        echo "Files exist on secondary site."
+      else
+        echo "Files have not appeared on secondary yet."
+        sleep 5s
+      fi
+    done
+}
+
 function remote_verify_rbd_mirroring() {
     set -eux
 
@@ -384,6 +501,34 @@ function remote_verify_rbd_mirroring() {
     lxc exec node-wrk3 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_two"
 
     lxc exec node-wrk0 -- sh -c "sudo microceph replication status rbd --json"
+}
+
+function remote_verify_cephfs_mirroring() {
+    set -eux
+
+    lxc file pull node-wrk0/mnt/vol/dir1/test_file ./node0_file1
+    lxc file pull node-wrk0/mnt/vol/dir2/test_file ./node0_file2
+    lxc file pull node-wrk2/mnt/vol/dir1/test_file ./node2_file1
+    lxc file pull node-wrk2/mnt/vol/dir2/test_file ./node2_file2
+
+    node0_file1=$(< ./node0_file1)
+    node0_file2=$(< ./node0_file2)
+    node2_file1=$(< ./node2_file1)
+    node2_file2=$(< ./node2_file2)
+
+    if [ $node0_file1 != $node2_file1 ]; then
+      echo "Contents of primary: $node0_file1 are different from secondary: $node2_file1";
+      exit1
+    else
+      echo "file1 matches on primary and secondary"
+    fi
+
+    if [ $node0_file2 != $node2_file2 ]; then
+      echo "Contents of primary: $node0_file2 are different from secondary: $node2_file2";
+      exit1
+    else
+      echo "file2 matches on primary and secondary";
+    fi
 }
 
 function remote_failover_to_siteb() {
@@ -759,7 +904,10 @@ function wait_for_rgw() {
 function free_runner_disk() {
     # Remove stuff we don't need to get some extra disk
     sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-    sudo docker rmi $(docker images -q)
+    imgs=$(sudo docker images -q)
+    if [[ -n $imgs ]]; then
+      sudo docker rmi $imgs;
+    fi
 }
 
 
