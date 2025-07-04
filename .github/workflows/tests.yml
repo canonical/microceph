@@ -832,8 +832,8 @@ jobs:
     - name: Exercise RGW again
       run: ~/actionutils.sh testrgw "newFile"
 
-  replication-tests:
-    name: Test MicroCeph Remote Replication features.
+  rbd-replication-test:
+    name: Test MicroCeph RBD Remote Replication features.
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
@@ -876,7 +876,7 @@ jobs:
       run: ~/actionutils.sh remote_perform_remote_ops_check
 
     - name: Enable RBD Mirror Daemon
-      run : ~/actionutils.sh remote_enable_rbd_mirror_daemon
+      run : ~/actionutils.sh remote_enable_mirror_daemon "rbd-mirror"
 
     - name: Verify snapshot replication on pool fails
       run: ~/actionutils.sh remote_verify_snapshot_pool_replication_fails
@@ -898,6 +898,62 @@ jobs:
 
     - name: Verify Remote removal
       run: ~/actionutils.sh remote_remove_and_verify
+
+  cephfs-replication-test:
+    name: Test MicroCeph Cephfs Remote Replication features.
+    runs-on: ubuntu-24.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v4
+      with:
+        name: snaps
+        path: /home/runner
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install dependencies
+      run: ~/actionutils.sh setup_lxd
+
+    - name: Create virtual machines with block devices
+      run: ~/actionutils.sh create_vms 4
+
+    - name: Bootstrap
+      run: ~/actionutils.sh remote_simple_bootstrap_two_sites
+
+    - name: Exchange Cluster tokens
+      run: ~/actionutils.sh remote_exchange_site_tokens
+
+    - name: Verify Remote authentication
+      run: ~/actionutils.sh remote_perform_remote_ops_check
+
+    - name: Enable Cephfs Mirror Daemon
+      run : ~/actionutils.sh remote_enable_mirror_daemon "cephfs-mirror"
+
+    - name: Install ceph-common
+      run : ~/actionutils.sh remote_install_ceph_common
+
+    - name: Configure CephFS mirror
+      run : ~/actionutils.sh remote_configure_cephfs_mirroring
+
+    - name: Perform IO and Wait for CephFS mirror to sync directories
+      run : ~/actionutils.sh remote_wait_cephfs_for_secondary_to_sync 40
+
+    - name: Verify Data integrity
+      run : ~/actionutils.sh remote_verify_cephfs_mirroring
+
+    - name: Disable Cephfs Mirror daemons
+      run : ~/actionutils.sh remote_enable_mirror_daemon "cephfs-mirror"
 
   nfs-test:
     name: Test MicroCeph NFS feature
