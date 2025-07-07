@@ -146,7 +146,7 @@ func renderConfAndKeyringFiles(remoteName string, localName string, configs map[
 
 	useV1 := true
 	for ix := range monHosts {
-		if strings.HasPrefix(monHosts[ix], "any:") {
+		if strings.HasPrefix(monHosts[ix], "v2:") {
 			useV1 = false
 			break
 		}

@@ -27,7 +27,8 @@ func msgrv2OnlyFile(path string) (bool, error) {
 	scanner := bufio.NewScanner(file)
 
 	for scanner.Scan() {
-		if strings.Contains(scanner.Text(), "ms_bind_msgr1 = false") {
+		line := scanner.Text()
+		if strings.Contains(line, "mon host") && strings.Contains(line, "v2:") {
 			return true, nil
 		}
 	}
@@ -157,7 +158,7 @@ func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx
 	}
 
 	if v2Only {
-		monHost = "any:" + monHost
+		monHost = "v2:" + monHost
 	}
 
 	key := fmt.Sprintf("mon.host.%s", s.ClusterState().Name())

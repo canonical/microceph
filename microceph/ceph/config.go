@@ -363,7 +363,7 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	useV1 := true
 	for ix := range monitorAddresses {
 		// If any other monitor is strictly V2, so are we.
-		if strings.HasPrefix(monitorAddresses[ix], "any:") {
+		if strings.HasPrefix(monitorAddresses[ix], "v2:") {
 			useV1 = false
 			break
 		}
