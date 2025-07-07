@@ -120,20 +120,20 @@ NFSv4 {
 
 RADOS_KV {
 	ceph_conf = "{{.confDir}}/ceph.conf";
-	UserId = "nfs.ganesha";
+	UserId = "{{.userID}}";
 	pool = ".nfs";
 	namespace = "{{.clusterID}}";
 }
 
 RADOS_URLS {
 	ceph_conf = "{{.confDir}}/ceph.conf";
-	UserId = "nfs.ganesha";
+	UserId = "{{.userID}}";
 	watch_url = "rados://.nfs/{{.clusterID}}/conf-nfs.{{.clusterID}}";
 }
 
 LOG {
 	Components {
-		ALL = FULL_DEBUG;
+		ALL = NIV_EVENT;
 	}
 }
 

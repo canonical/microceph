@@ -32,3 +32,8 @@ type ServiceGroupFilter struct {
 	GroupID *string
 	Service *string
 }
+
+// NFSServiceGroupConfig is a struct containing a ServiceGroup's configuration.
+type NFSServiceGroupConfig struct {
+	V4MinVersion uint `json:"v4_min_version"`
+}

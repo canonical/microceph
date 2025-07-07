@@ -93,7 +93,6 @@ func GetConfigTableServiceSet() common.Set {
 		"mgr": struct{}{},
 		"osd": struct{}{},
 		"mds": struct{}{},
-		"nfs": struct{}{},
 		"rgw": struct{}{},
 	}
 }

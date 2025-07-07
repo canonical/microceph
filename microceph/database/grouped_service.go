@@ -30,8 +30,15 @@ type GroupedService struct {
 	Info    string
 }
 
+// GroupedServiceFilter is a required struct for use with lxd-generate. It is used for filtering fields on database fetches.
 type GroupedServiceFilter struct {
 	Service *string
 	GroupID *string
 	Member  *string
+}
+
+// NFSServiceInfo is a struct containing GroupedService information.
+type NFSServiceInfo struct {
+	BindAddress string `json:"bind_address"`
+	BindPort    uint   `json:"bind_port"`
 }

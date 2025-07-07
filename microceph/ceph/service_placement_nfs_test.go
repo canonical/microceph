@@ -44,17 +44,17 @@ func (s *servicePlacementNFSSuite) TestInvalidPayload() {
 	payload.Payload = "{\"cluster_id\":\"foo\",\"v4_min_version\":10}"
 
 	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
-	assert.ErrorContains(s.T(), err, "expected v4_min_version to be in the interval")
+	assert.ErrorContains(s.T(), err, "expected v4_min_version '10' to be in the interval")
 
 	payload.Payload = "{\"cluster_id\":\"foo\",\"bind_address\":\"10.20.30\"}"
 
 	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
-	assert.ErrorContains(s.T(), err, "bind_address could not be parsed")
+	assert.ErrorContains(s.T(), err, "bind_address '10.20.30' could not be parsed")
 
 	payload.Payload = "{\"cluster_id\":\"foo\",\"bind_port\":99999}"
 
 	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
-	assert.ErrorContains(s.T(), err, "expected bind_port number to be in range [1-49151]")
+	assert.ErrorContains(s.T(), err, "expected bind_port number '99999' to be in range [1-49151]")
 }
 
 func (s *servicePlacementNFSSuite) TestAddressUnavailable() {
@@ -72,12 +72,10 @@ func (s *servicePlacementNFSSuite) TestAddressUnavailable() {
 
 func (s *servicePlacementNFSSuite) TestDBUpdate() {
 	u := api.NewURL()
-
 	state := &mocks.MockState{
 		URL:         u,
 		ClusterName: "foohost",
 	}
-
 	s.TestStateInterface.On("ClusterState").Return(state)
 
 	nfs := NFSServicePlacement{
@@ -88,5 +86,5 @@ func (s *servicePlacementNFSSuite) TestDBUpdate() {
 	}
 
 	err := nfs.DbUpdate(context.Background(), s.TestStateInterface)
-	assert.NoError(s.T(), err)
+	assert.EqualError(s.T(), err, "no server certificate")
 }

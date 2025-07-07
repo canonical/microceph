@@ -19,7 +19,7 @@ type cmdDisableNFS struct {
 
 func (c *cmdDisableNFS) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "nfs",
+		Use:   "nfs --cluster-id <cluster-id> [--target <server>]",
 		Short: "Disable the NFS Ganesha service on the --target server (default: this server)",
 		RunE:  c.Run,
 	}

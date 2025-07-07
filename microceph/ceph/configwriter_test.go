@@ -197,6 +197,7 @@ func (s *configWriterSuite) TestWriteGaneshaConfig() {
 		map[string]any{
 			"bindAddr":      "10.20.30.40",
 			"bindPort":      "9999",
+			"userID":        "foo",
 			"clusterID":     "lish",
 			"confDir":       "/foo/lish",
 			"minorVersions": 2,
@@ -216,6 +217,7 @@ func (s *configWriterSuite) TestWriteGaneshaConfig() {
 	assert.Contains(s.T(), dataStr, "Bind_Addr = 10.20.30.40;")
 	assert.Contains(s.T(), dataStr, "NFS_Port = 9999;")
 	assert.Contains(s.T(), dataStr, "Minor_Versions = 2;")
+	assert.Contains(s.T(), dataStr, "UserId = \"foo\";")
 	assert.Contains(s.T(), dataStr, "namespace = \"lish\";")
 	assert.Contains(s.T(), dataStr, "ceph_conf = \"/foo/lish/ceph.conf\";")
 	assert.Contains(s.T(), dataStr, "watch_url = \"rados://.nfs/lish/conf-nfs.lish\";")

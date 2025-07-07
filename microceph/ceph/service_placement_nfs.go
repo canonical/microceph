@@ -8,6 +8,7 @@ import (
 	"net"
 	"syscall"
 
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
 
@@ -29,7 +30,7 @@ func (nfs *NFSServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 	}
 
 	if nfs.V4MinVersion > 2 {
-		return fmt.Errorf("expected v4_min_version to be in the interval [0, 2]")
+		return fmt.Errorf("expected v4_min_version '%d' to be in the interval [0, 2]", nfs.V4MinVersion)
 	}
 
 	if len(nfs.BindAddress) == 0 {
@@ -37,14 +38,14 @@ func (nfs *NFSServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 	} else {
 		ip := net.ParseIP(nfs.BindAddress)
 		if ip == nil {
-			return fmt.Errorf("bind_address could not be parsed")
+			return fmt.Errorf("bind_address '%s' could not be parsed", nfs.BindAddress)
 		}
 	}
 
 	if nfs.BindPort == 0 {
 		nfs.BindPort = 2049
 	} else if nfs.BindPort > 49151 {
-		return fmt.Errorf("expected bind_port number to be in range [1-49151]")
+		return fmt.Errorf("expected bind_port number '%d' to be in range [1-49151]", nfs.BindPort)
 	}
 
 	return nil
@@ -68,7 +69,7 @@ func (nfs *NFSServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 		return err
 	}
 
-	return EnableNFS(s, nfs.ClusterID, nfs.BindAddress, nfs.BindPort, nfs.V4MinVersion, monitors)
+	return EnableNFS(s, nfs, monitors)
 }
 
 func (nfs *NFSServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {
@@ -76,29 +77,15 @@ func (nfs *NFSServicePlacement) PostPlacementCheck(s interfaces.StateInterface) 
 }
 
 func (nfs *NFSServicePlacement) DbUpdate(ctx context.Context, s interfaces.StateInterface) error {
-	bytes, err := json.Marshal(map[string]any{
-		"v4_min_version": nfs.V4MinVersion,
-	})
-	if err != nil {
-		return err
+	groupConfig := database.NFSServiceGroupConfig{
+		V4MinVersion: nfs.V4MinVersion,
 	}
-	config := string(bytes)
-
-	bytes, err = json.Marshal(map[string]any{
-		"bind_address": nfs.BindAddress,
-		"bind_port":    nfs.BindPort,
-	})
-	if err != nil {
-		return err
-	}
-	info := string(bytes)
-
-	err = ensureNFSServiceGroupRecord(ctx, s, nfs.ClusterID, config)
-	if err != nil {
-		return nil
+	serviceInfo := database.NFSServiceInfo{
+		BindAddress: nfs.BindAddress,
+		BindPort:    nfs.BindPort,
 	}
 
-	return createNFSServiceGroupRecord(ctx, s, nfs.ClusterID, info)
+	return database.GroupedServicesQuery.AddNew(ctx, s, "nfs", nfs.ClusterID, groupConfig, serviceInfo)
 }
 
 // isAddressAvailable checks if the given local address is available or not.
