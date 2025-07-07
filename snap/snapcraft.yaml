@@ -10,6 +10,11 @@ description: |-
 
 confinement: strict
 
+package-repositories:
+  - type: apt
+    ppa: lmlogiudice/ceph-1920-qatsys
+    priority: always
+
 plugs:
   load-rbd:
     interface: kernel-module-load
