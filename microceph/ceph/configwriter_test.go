@@ -43,7 +43,6 @@ func (s *configWriterSuite) TestWriteCephConfig() {
 			"runDir":   "/tmp/somedir",
 			"monitors": "foohost",
 			"addr":     "foohost",
-            "useV1":    true,
 		},
 		0644,
 	)

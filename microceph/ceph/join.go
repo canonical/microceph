@@ -36,6 +36,11 @@ func msgrv2OnlyFile(path string) (bool, error) {
 	return false, scanner.Err()
 }
 
+func msgrv2OnlyCluster() (bool, error) {
+	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf", constants.CephConfFileName)
+	return msgrv2OnlyFile(confPath)
+}
+
 // Join will join an existing Ceph deployment.
 func Join(ctx context.Context, s interfaces.StateInterface) error {
 	pathFileMode := constants.GetPathFileMode()
@@ -140,8 +145,7 @@ func checkAndCreateServiceRecord(s interfaces.StateInterface, ctx context.Contex
 }
 
 func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx) error {
-	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf", constants.CephConfFileName)
-	v2Only, err := msgrv2OnlyFile(confPath)
+	v2Only, err := msgrv2OnlyCluster()
 	if err != nil {
 		return err
 	}
@@ -158,7 +162,7 @@ func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx
 	}
 
 	if v2Only {
-		monHost = "v2:" + monHost
+		monHost = "v2:" + monHost + ":3300"
 	}
 
 	key := fmt.Sprintf("mon.host.%s", s.ClusterState().Name())

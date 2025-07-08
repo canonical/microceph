@@ -44,16 +44,12 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 	}
 
 	// Ensure mon-ip is enclosed in square brackets if IPv6.
-	monIp := data.MonIp
-	if net.ParseIP(monIp) != nil && strings.Contains(monIp, ":") {
-		monIp = fmt.Sprintf("[%s]", monIp)
+	if net.ParseIP(data.MonIp) != nil && strings.Contains(data.MonIp, ":") {
+		data.MonIp = fmt.Sprintf("[%s]", data.MonIp)
 	}
 
-	// Figure out what to do regarding V1 and V2 protocols.
-	useV1 := true
 	if data.V2Only {
-		useV1 = false
-		data.MonIp = "v2:" + data.MonIp
+		data.MonIp = "v2:" + data.MonIp + ":3300"
 	}
 
 	err = conf.WriteConfig(
@@ -65,7 +61,6 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 			"pubNet":   data.PublicNet,
 			"ipv4":     strings.Contains(data.PublicNet, "."),
 			"ipv6":     strings.Contains(data.PublicNet, ":"),
-			"useV1":    useV1,
 		},
 		0644,
 	)
