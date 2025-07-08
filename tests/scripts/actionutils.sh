@@ -17,7 +17,6 @@ function setup_lxd() {
 
 function install_microceph() {
     local mon_ip="${1}"
-    local v2="${2}"
     # Install locally built microceph snap and connect interfaces
     sudo snap install --dangerous ~/microceph_*.snap
     sudo snap connect microceph:block-devices
@@ -30,9 +29,9 @@ function install_microceph() {
     sudo snap connect microceph:process-control
 
     if [ -n "${mon_ip}" ]; then
-        sudo microceph cluster bootstrap --mon-ip "${mon_ip}" "${v2}"
+        sudo microceph cluster bootstrap --mon-ip "${mon_ip}"
     else
-        sudo microceph cluster bootstrap "${v2}"
+        sudo microceph cluster bootstrap
     fi
     sudo microceph.ceph version
     sudo microceph.ceph status

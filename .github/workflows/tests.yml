@@ -897,7 +897,7 @@ jobs:
       run: ~/actionutils.sh remote_remove_and_verify
 
   messenger-v2-tests:
-    name: messenger v2 tests
+    name: Messenger v2 tests
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
