@@ -17,6 +17,7 @@ function setup_lxd() {
 
 function install_microceph() {
     local mon_ip="${1}"
+    local v2="${2}"
     # Install locally built microceph snap and connect interfaces
     sudo snap install --dangerous ~/microceph_*.snap
     sudo snap connect microceph:block-devices
@@ -26,12 +27,12 @@ function install_microceph() {
     sudo snap connect microceph:load-rbd
     sudo snap connect microceph:microceph-support
     sudo snap connect microceph:network-bind
-    sudo snap connect microceph:process-control    
+    sudo snap connect microceph:process-control
 
     if [ -n "${mon_ip}" ]; then
-        sudo microceph cluster bootstrap --mon-ip "${mon_ip}"
+        sudo microceph cluster bootstrap --mon-ip "${mon_ip}" "${v2}"
     else
-        sudo microceph cluster bootstrap
+        sudo microceph cluster bootstrap "${v2}"
     fi
     sudo microceph.ceph version
     sudo microceph.ceph status
@@ -547,13 +548,14 @@ function bootstrap_head() {
     set -ex
 
     local arg=$1
+    local v2=$2
     if [ "$arg" = "public" ]; then
         # Bootstrap microceph on the head node
         local nw=$(get_lxd_network public)
         local gw=$(echo "$nw" | cut -d/ -f1)
         local mask=$(echo "$nw" | cut -d/ -f2)
         local node_ip="${gw}0"
-        lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --public-network=$nw"
+        lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --public-network=$nw $v2"
         sleep 5
         # Verify ceph.conf
         verify_bootstrap_configs node-wrk0 "${nw}" "${node_ip}"
@@ -562,12 +564,12 @@ function bootstrap_head() {
         local nw=$(get_lxd_network internal)
         local gw=$(echo "$nw" | cut -d/ -f1)
         local node_ip="${gw}0"
-        lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --microceph-ip=$node_ip"
+        lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --microceph-ip=$node_ip $v2"
         sleep 10
         # Verify microceph IP
         lxc exec node-wrk0 -- sh -c "microceph status | grep node-wrk0 | grep $node_ip"
     else
-        lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap"
+        lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap $v2"
     fi
 
     lxc exec node-wrk0 -- sh -c "microceph status"
@@ -1115,6 +1117,24 @@ function test_maintenance_enter_set_noout_stop_osds_and_exit_force() {
     done
 
     echo "Passed: test running maintenance enter and exit with --set-noout=true --stop-osds=true --force."
+}
+
+function test_v2_single_node() {
+    lxc exec -- sh -c "microceph.ceph mon dump | grep -q v1:"
+    if [ "$?" -eq 0 ]; then
+        echo "messenger V1 is still supported"
+        exit 1
+    fi
+}
+
+function test_v2_all_nodes() {
+    for i in 0 1 2 3 ; do
+        lxc exec -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -q v1:"
+        if [ "$?" -eq 0 ]; then
+            echo "messenger V1 is active on node $i"
+            exit 1
+        fi
+    done
 }
 
 run="${1}"
