@@ -901,7 +901,7 @@ jobs:
 
   messenger-v2-tests:
     name: Messenger v2 tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: build-microceph
     steps:
     - name: Download snap
@@ -942,5 +942,5 @@ jobs:
     - name: Setup cluster
       run: ~/actionutils.sh cluster_nodes public
 
-    - name: Veriy messenger v2 on all nodes
+    - name: Verify messenger v2 on all nodes
       run: ~/actionutils.sh test_v2_all_nodes
