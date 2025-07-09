@@ -98,6 +98,39 @@ function add_lvm_vol() {
     fi
 }
 
+function disable_nfs() {
+    set -x
+
+    # Disable nfs with the given cluster_id
+    local cluster_id="${1}"
+    sudo microceph disable nfs --cluster-id "${cluster_id}"
+}
+
+function enable_nfs() {
+    set -x
+
+    # Enable nfs with the given cluster_id and wait for it.
+    local cluster_id="${1}"
+    sudo microceph enable nfs --cluster-id "${cluster_id}" --wait
+}
+
+function create_nfs_fs() {
+    set -x
+
+    # Create a new NFS FS with the microceph NFS rados pools.
+    local fsname="${1}"
+    sudo microceph.ceph fs new "${fsname}" .nfs.metadata .nfs
+}
+
+function create_nfs_export() {
+    set -x
+
+    # Create a NFS export for the given cluster and NFS FS.
+    local cluster_id="${1}"
+    local fsname="${2}"
+    sudo microceph.ceph nfs export create cephfs "${cluster_id}" "/${fsname}dir" "${fsname}"
+}
+
 function disable_rgw() {
     set -x
     # Disable rgw

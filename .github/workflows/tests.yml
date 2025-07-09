@@ -895,3 +895,68 @@ jobs:
 
     - name: Verify Remote removal
       run: ~/actionutils.sh remote_remove_and_verify
+
+  nfs-tests:
+    name: Test MicroCeph NFS feature.
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v4
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install and setup
+      run: ~/actionutils.sh install_microceph
+
+    - name: Add loopback file OSDs
+      run: |
+        set -uex
+        sudo microceph disk add loop,1G,3
+        ~/actionutils.sh wait_for_osds 3
+        sudo microceph.ceph -s
+
+    - name: Enable NFS
+      run: ~/actionutils.sh enable_nfs foo
+
+    - name: Create NFS FS
+      run: ~/actionutils.sh create_nfs_fs testfs
+
+    - name: Create NFS export
+      run: ~/actionutils.sh create_nfs_export foo testfs
+
+    - name: Mount and test NFS
+      run: |
+        set -uex
+
+        # Needed to mount the Ceph NFS share.
+        sudo apt install ceph-common
+        sudo mkdir /mnt/nfs
+        sudo cp /var/snap/microceph/current/conf/ceph.conf /etc/ceph/
+        sudo cp /var/snap/microceph/current/conf/ceph.client.admin.keyring /etc/ceph/
+
+        addr="$(hostname -I | cut -d ' ' -f1)"
+        sudo mount -t ceph "${addr}:/" /mnt/nfs -o name=admin
+
+        echo "Hello there!" | sudo tee /mnt/nfs/general.kenobi
+        cat /mnt/nfs/general.kenobi
+
+        sudo umount /mnt/nfs
+
+    - name: Disable NFS
+      run: ~/actionutils.sh disable_nfs foo
