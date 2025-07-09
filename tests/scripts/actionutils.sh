@@ -1136,6 +1136,16 @@ function test_v2_all_nodes() {
     done
 }
 
+# Test that enabling snapshot replication on an RBD pool fails with the correct error message.
+# Usage: remote_verify_snapshot_pool_replication_fails
+function remote_verify_snapshot_pool_replication_fails() {
+    set -eux
+
+    # This function must be called only after the pool has been created (e.g., after bootstrap or before Configure RBD mirror)
+    lxc exec node-wrk0 -- sh -c \
+        '! microceph replication enable rbd pool_one --type snapshot --remote siteb | grep "Snapshot-based replication is only supported for individual RBD images"'
+}
+
 run="${1}"
 shift
 
