@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/lxd/shared/revert"
 
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
@@ -14,6 +18,7 @@ import (
 
 // EnableNFS enables the NFS Ganesha service on the cluster and adds initial configuration.
 func EnableNFS(s interfaces.StateInterface, nfs *NFSServicePlacement, monitorAddresses []string) error {
+	logger.Debugf("Enabling NFS on node with ClusterID '%s'", nfs.ClusterID)
 	hostname, err := os.Hostname()
 	if err != nil {
 		return err
@@ -26,15 +31,26 @@ func EnableNFS(s interfaces.StateInterface, nfs *NFSServicePlacement, monitorAdd
 		return err
 	}
 
+	revert := revert.New()
+	defer revert.Fail()
+	revert.Add(func() {
+		err = os.RemoveAll(ganeshaConfDir)
+		if err != nil {
+			logger.Errorf("Cleaning up '%s' failed: %v", ganeshaConfDir, err)
+		}
+	})
+
 	// Create NFS Ganesha configuration.
 	userID := fmt.Sprintf("nfs.%s.%s", nfs.ClusterID, hostname)
 	configs := map[string]any{
 		"bindAddr":      nfs.BindAddress,
 		"bindPort":      nfs.BindPort,
+		"snapDir":       pathConsts.SnapPath,
+		"runDir":        pathConsts.RunPath,
 		"confDir":       ganeshaConfDir,
 		"userID":        userID,
 		"clusterID":     nfs.ClusterID,
-		"minorVersions": nfs.V4MinVersion,
+		"minorVersions": nfsVersionsStr(nfs.V4MinVersion),
 	}
 
 	ganeshaConf := newGaneshaConfig(ganeshaConfDir)
@@ -56,29 +72,66 @@ func EnableNFS(s interfaces.StateInterface, nfs *NFSServicePlacement, monitorAdd
 	}
 
 	// Create NFS Ganesha Ceph keyring.
+	logger.Debugf("Creating ceph client 'client.%s' for NFS Ganesha (ClusterID '%s')", userID, nfs.ClusterID)
 	err = createNFSKeyring(ganeshaConfDir, nfs.ClusterID, userID)
 	if err != nil {
 		return err
 	}
 
+	revert.Add(func() {
+		err := DeleteClientKey(userID)
+		if err != nil {
+			logger.Errorf("Cleaning up NFS Ganesha ceph client 'client.%s' failed: %v", userID, err)
+		}
+	})
+
 	// Create the NFS Pools if needed.
+	logger.Debugf("Creating NFS Rados Pools (ClusterID '%s')", nfs.ClusterID)
 	err = ensureNFSPools(nfs.ClusterID)
 	if err != nil {
 		return err
 	}
 
 	// Add the node to the Shared Grace Management Database.
+	logger.Debugf("Adding node to Shared Grace Management Database (ClusterID '%s')", nfs.ClusterID)
 	err = addNodeToSharedGraceMgmtDb(filepath.Join(ganeshaConfDir, "ceph.conf"), nfs.ClusterID, userID, hostname)
 	if err != nil {
 		return err
 	}
 
+	revert.Add(func() {
+		err := removeNodeFromSharedGraceMgmtDb(filepath.Join(ganeshaConfDir, "ceph.conf"), nfs.ClusterID, userID, hostname)
+		if err != nil {
+			logger.Errorf("Removing node from Shared Grace Management Database failed: %v", err)
+		}
+	})
+
 	// Start the NFS Ganesha service.
-	return startNFS()
+	logger.Debugf("Starting NFS Ganesha service (ClusterID '%s')", nfs.ClusterID)
+	err = startNFS()
+	if err != nil {
+		return err
+	}
+
+	revert.Success() // Added revert functions are not run on return.
+
+	logger.Debugf("Enabled NFS on node with ClusterID '%s'", nfs.ClusterID)
+
+	return nil
+}
+
+func nfsVersionsStr(minVersion uint) string {
+	var versions []string
+	for i := range minVersion + 1 {
+		versions = append(versions, strconv.FormatUint(uint64(i), 10))
+	}
+
+	return strings.Join(versions, ",")
 }
 
 // DisableNFS disables the NFS service on the cluster.
 func DisableNFS(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
+	logger.Debugf("Disabling NFS on node with ClusterID '%s'", clusterID)
 	hostname, err := os.Hostname()
 	if err != nil {
 		return err
@@ -88,12 +141,14 @@ func DisableNFS(ctx context.Context, s interfaces.StateInterface, clusterID stri
 	ganeshaConfDir := filepath.Join(pathConsts.ConfPath, "ganesha")
 
 	// Stop the NFS Ganesha service.
+	logger.Debugf("Stopping NFS Ganesha service (ClusterID '%s')", clusterID)
 	err = stopNFS()
 	if err != nil {
 		return err
 	}
 
 	// Remove the node from the Shared Grace Management Database.
+	logger.Debugf("Removing node from Shared Grace Management Database (ClusterID '%s')", clusterID)
 	userID := fmt.Sprintf("nfs.%s.%s", clusterID, hostname)
 	err = removeNodeFromSharedGraceMgmtDb(filepath.Join(ganeshaConfDir, "ceph.conf"), clusterID, userID, hostname)
 	if err != nil {
@@ -101,6 +156,7 @@ func DisableNFS(ctx context.Context, s interfaces.StateInterface, clusterID stri
 	}
 
 	// Remove the NFS Ganesha Ceph keyring.
+	logger.Debugf("Removing ceph client 'client.%s' (ClusterID '%s')", userID, clusterID)
 	err = DeleteClientKey(userID)
 	if err != nil {
 		return fmt.Errorf("failed to remove NFS keyring: %w", err)
@@ -122,7 +178,16 @@ func DisableNFS(ctx context.Context, s interfaces.StateInterface, clusterID stri
 		return fmt.Errorf("failed to remove NFS Ganesha configuration: %w", err)
 	}
 
-	return database.GroupedServicesQuery.RemoveForHost(ctx, s, "nfs", clusterID)
+	// Remove database records.
+	logger.Debugf("Removing NFS service records from database (ClusterID '%s')", clusterID)
+	err = database.GroupedServicesQuery.RemoveForHost(ctx, s, "nfs", clusterID)
+	if err != nil {
+		return err
+	}
+
+	logger.Debugf("Disabled NFS on node with ClusterID '%s'", clusterID)
+
+	return nil
 }
 
 // startNFS starts the NFS service.
@@ -147,16 +212,18 @@ func stopNFS() error {
 
 // createNFSKeyring creates the NFS keyring.
 func createNFSKeyring(path, clusterID, userID string) error {
-	if err := os.MkdirAll(path, 0770); err != nil {
+	err := os.MkdirAll(path, 0770)
+	if err != nil {
 		return err
 	}
 	// Create the keyring.
 	keyringPath := filepath.Join(path, "keyring")
-	if _, err := os.Stat(keyringPath); err == nil {
+	_, err = os.Stat(keyringPath)
+	if err == nil {
 		return nil
 	}
 
-	err := genAuth(
+	err = genAuth(
 		keyringPath,
 		fmt.Sprintf("client.%s", userID),
 		[]string{"mon", "allow r"},

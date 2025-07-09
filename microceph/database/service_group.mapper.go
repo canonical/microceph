@@ -67,7 +67,7 @@ UPDATE service_groups
 // serviceGroupColumns returns a string of column names to be used with a SELECT statement for the entity.
 // Use this function when building statements to retrieve database entries matching the ServiceGroup entity.
 func serviceGroupColumns() string {
-	return "services_groups.service, services_groups.group_id, services_groups.config"
+	return "service_groups.service, service_groups.group_id, service_groups.config"
 }
 
 // getServiceGroups can be used to run handwritten sql.Stmts to return a slice of objects.
@@ -88,7 +88,7 @@ func getServiceGroups(ctx context.Context, stmt *sql.Stmt, args ...any) ([]Servi
 
 	err := query.SelectObjects(ctx, stmt, dest, args...)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to fetch from \"services_groups\" table: %w", err)
+		return nil, fmt.Errorf("Failed to fetch from \"service_groups\" table: %w", err)
 	}
 
 	return objects, nil
@@ -112,7 +112,7 @@ func getServiceGroupsRaw(ctx context.Context, tx *sql.Tx, sql string, args ...an
 
 	err := query.Scan(ctx, tx, sql, dest, args...)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to fetch from \"services_groups\" table: %w", err)
+		return nil, fmt.Errorf("Failed to fetch from \"service_groups\" table: %w", err)
 	}
 
 	return objects, nil
@@ -227,7 +227,7 @@ func GetServiceGroups(ctx context.Context, tx *sql.Tx, filters ...ServiceGroupFi
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("Failed to fetch from \"services_groups\" table: %w", err)
+		return nil, fmt.Errorf("Failed to fetch from \"service_groups\" table: %w", err)
 	}
 
 	return objects, nil
@@ -242,7 +242,7 @@ func GetServiceGroup(ctx context.Context, tx *sql.Tx, service string, groupID st
 
 	objects, err := GetServiceGroups(ctx, tx, filter)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to fetch from \"services_groups\" table: %w", err)
+		return nil, fmt.Errorf("Failed to fetch from \"service_groups\" table: %w", err)
 	}
 
 	switch len(objects) {
@@ -251,7 +251,7 @@ func GetServiceGroup(ctx context.Context, tx *sql.Tx, service string, groupID st
 	case 1:
 		return &objects[0], nil
 	default:
-		return nil, errors.New("More than one \"services_groups\" entry matches")
+		return nil, errors.New("More than one \"service_groups\" entry matches")
 	}
 }
 
@@ -271,7 +271,7 @@ func GetServiceGroupID(ctx context.Context, tx *sql.Tx, service string, groupID 
 	}
 
 	if err != nil {
-		return -1, fmt.Errorf("Failed to get \"services_groups\" ID: %w", err)
+		return -1, fmt.Errorf("Failed to get \"service_groups\" ID: %w", err)
 	}
 
 	return id, nil
@@ -302,7 +302,7 @@ func CreateServiceGroup(ctx context.Context, tx *sql.Tx, object ServiceGroup) (i
 	}
 
 	if exists {
-		return -1, api.StatusErrorf(http.StatusConflict, "This \"services_groups\" entry already exists")
+		return -1, api.StatusErrorf(http.StatusConflict, "This \"service_groups\" entry already exists")
 	}
 
 	args := make([]any, 3)
@@ -321,12 +321,12 @@ func CreateServiceGroup(ctx context.Context, tx *sql.Tx, object ServiceGroup) (i
 	// Execute the statement.
 	result, err := stmt.Exec(args...)
 	if err != nil {
-		return -1, fmt.Errorf("Failed to create \"services_groups\" entry: %w", err)
+		return -1, fmt.Errorf("Failed to create \"service_groups\" entry: %w", err)
 	}
 
 	id, err := result.LastInsertId()
 	if err != nil {
-		return -1, fmt.Errorf("Failed to fetch \"services_groups\" entry ID: %w", err)
+		return -1, fmt.Errorf("Failed to fetch \"service_groups\" entry ID: %w", err)
 	}
 
 	return id, nil
@@ -342,7 +342,7 @@ func DeleteServiceGroup(ctx context.Context, tx *sql.Tx, service string, groupID
 
 	result, err := stmt.Exec(service, groupID)
 	if err != nil {
-		return fmt.Errorf("Delete \"services_groups\": %w", err)
+		return fmt.Errorf("Delete \"service_groups\": %w", err)
 	}
 
 	n, err := result.RowsAffected()
@@ -374,7 +374,7 @@ func UpdateServiceGroup(ctx context.Context, tx *sql.Tx, service string, groupID
 
 	result, err := stmt.Exec(object.Service, object.GroupID, object.Config, id)
 	if err != nil {
-		return fmt.Errorf("Update \"services_groups\" entry failed: %w", err)
+		return fmt.Errorf("Update \"service_groups\" entry failed: %w", err)
 	}
 
 	n, err := result.RowsAffected()

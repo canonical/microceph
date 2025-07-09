@@ -125,7 +125,7 @@ function create_nfs_fs() {
 function create_nfs_export() {
     set -x
 
-    # Create a new NFS FS with the microceph NFS rados pools.
+    # Create a NFS export for the given cluster and NFS FS.
     local cluster_id="${1}"
     local fsname="${2}"
     sudo microceph.ceph nfs export create cephfs "${cluster_id}" "/${fsname}dir" "${fsname}"

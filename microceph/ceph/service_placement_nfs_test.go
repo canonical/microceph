@@ -4,9 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/canonical/lxd/shared/api"
-
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
 
@@ -71,13 +70,6 @@ func (s *servicePlacementNFSSuite) TestAddressUnavailable() {
 }
 
 func (s *servicePlacementNFSSuite) TestDBUpdate() {
-	u := api.NewURL()
-	state := &mocks.MockState{
-		URL:         u,
-		ClusterName: "foohost",
-	}
-	s.TestStateInterface.On("ClusterState").Return(state)
-
 	nfs := NFSServicePlacement{
 		ClusterID:    "foo",
 		V4MinVersion: 2,
@@ -85,6 +77,27 @@ func (s *servicePlacementNFSSuite) TestDBUpdate() {
 		BindPort:     9999,
 	}
 
-	err := nfs.DbUpdate(context.Background(), s.TestStateInterface)
-	assert.EqualError(s.T(), err, "no server certificate")
+	groupConfig := database.NFSServiceGroupConfig{
+                V4MinVersion: nfs.V4MinVersion,
+	}
+
+        serviceInfo := database.NFSServiceInfo{
+                BindAddress: nfs.BindAddress,
+                BindPort:    nfs.BindPort,
+        }
+
+	db := mocks.NewGroupedServiceQueryIntf(s.T())
+
+	// AddNew call
+	ctx := context.Background()
+	db.On("AddNew", []interface{}{ctx, s.TestStateInterface, "nfs", nfs.ClusterID, groupConfig, serviceInfo}...).Return(nil).Once()
+
+	// patch GroupedServicesQuery
+	originalDB := database.GroupedServicesQuery
+	defer func() { database.GroupedServicesQuery = originalDB }()
+	database.GroupedServicesQuery = db
+
+	err := nfs.DbUpdate(ctx, s.TestStateInterface)
+
+	assert.NoError(s.T(), err)
 }

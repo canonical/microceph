@@ -14,6 +14,7 @@ import (
 
 var _ = api.ServerEnvironment{}
 
+//go:generate mockery --name GroupedServiceQueryIntf
 type GroupedServiceQueryIntf interface {
 	// Add Method
 	AddNew(ctx context.Context, s interfaces.StateInterface, service, groupID string, groupConfig, serviceInfo any) error

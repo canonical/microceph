@@ -7,9 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/canonical/lxd/shared/api"
-
 	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
 
@@ -89,6 +88,14 @@ func (s *NFSSuite) TestEnableNFS() {
 	assert.NoError(s.T(), err)
 }
 
+func (s *NFSSuite) TestNfsVersionsStr() {
+	versions := nfsVersionsStr(2)
+	assert.Equal(s.T(), "0,1,2", versions)
+
+	versions = nfsVersionsStr(0)
+	assert.Equal(s.T(), "0", versions)
+}
+
 func (s *NFSSuite) TestDisableNFS() {
 	hostname, err := os.Hostname()
 	assert.NoError(s.T(), err)
@@ -118,14 +125,6 @@ func (s *NFSSuite) TestDisableNFS() {
 		defer os.Remove(file)
 	}
 
-	u := api.NewURL()
-	state := &mocks.MockState{
-		URL:         u,
-		ClusterName: "foohost",
-	}
-	s.TestStateInterface = mocks.NewStateInterface(s.T())
-	s.TestStateInterface.On("ClusterState").Return(state)
-
 	r := mocks.NewRunner(s.T())
 
 	// stopNFS call
@@ -144,10 +143,21 @@ func (s *NFSSuite) TestDisableNFS() {
 	// patch processExec
 	processExec = r
 
-	// function call
-	err = DisableNFS(context.Background(), s.TestStateInterface, clusterID)
+	db := mocks.NewGroupedServiceQueryIntf(s.T())
 
-	assert.EqualError(s.T(), err, "no server certificate")
+	// RemoveFromHost call
+	ctx := context.Background()
+	db.On("RemoveForHost", []interface{}{ctx, s.TestStateInterface, "nfs", clusterID}...).Return(nil).Once()
+
+	// patch GroupedServicesQuery
+	originalDB := database.GroupedServicesQuery
+	defer func() { database.GroupedServicesQuery = originalDB }()
+	database.GroupedServicesQuery = db
+
+	// function call
+	err = DisableNFS(ctx, s.TestStateInterface, clusterID)
+
+	assert.NoError(s.T(), err)
 
 	for _, file := range files {
 		_, err := os.Stat(file)
