@@ -61,8 +61,8 @@ func EnableNFS(s interfaces.StateInterface, nfs *NFSServicePlacement, monitorAdd
 		return err
 	}
 
-	// Create the NFS Pool if needed.
-	err = ensureNFSPool(nfs.ClusterID)
+	// Create the NFS Pools if needed.
+	err = ensureNFSPools(nfs.ClusterID)
 	if err != nil {
 		return err
 	}
@@ -168,15 +168,20 @@ func createNFSKeyring(path, clusterID, userID string) error {
 	return nil
 }
 
-// ensureNFSPool creates the NFS Pool for Ganesha if it doesn't exist.
-func ensureNFSPool(clusterID string) error {
+// ensureNFSPools creates the NFS data and metadata Pools for Ganesha if they do not exist.
+func ensureNFSPools(clusterID string) error {
 	_, err := radosRun("ls", "--pool", ".nfs", "--all", "--create")
 	if err != nil && !strings.Contains(err.Error(), "File exists") {
 		return fmt.Errorf("failed to create .nfs pool: %w", err)
 	}
 
+	_, err = radosRun("ls", "--pool", ".nfs.metadata", "--all", "--create")
+	if err != nil && !strings.Contains(err.Error(), "File exists") {
+		return fmt.Errorf("failed to create .nfs.metadata pool: %w", err)
+	}
+
 	// the command is idempotent.
-	_, err = osdEnablePoolApp(".nfs", "nfs")
+	_, err = osdEnablePoolApp(".nfs", "cephfs")
 	if err != nil {
 		return fmt.Errorf("failed to enable .nfs pool: %w", err)
 	}

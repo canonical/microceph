@@ -56,11 +56,13 @@ func (s *NFSSuite) TestEnableNFS() {
 	user := fmt.Sprintf("client.%s", userID)
 	r.On("RunCommand", []interface{}{"ceph", "auth", "get-or-create", user, "mon", "allow r", "osd", "allow rw pool=.nfs namespace=foo", "-o", keyringPath}...).Return("ok", nil).Once()
 
-	// ensureNFSPool calls
+	// ensureNFSPools calls
 	r.On("RunCommand", []interface{}{
 		"rados", "ls", "--pool", ".nfs", "--all", "--create"}...).Return("ok", nil).Once()
 	r.On("RunCommand", []interface{}{
-		"ceph", "osd", "pool", "application", "enable", ".nfs", "nfs"}...).Return("ok", nil).Once()
+		"rados", "ls", "--pool", ".nfs.metadata", "--all", "--create"}...).Return("ok", nil).Once()
+	r.On("RunCommand", []interface{}{
+		"ceph", "osd", "pool", "application", "enable", ".nfs", "cephfs"}...).Return("ok", nil).Once()
 	r.On("RunCommand", []interface{}{
 		"rados", "create", "--pool", ".nfs", "-N", clusterID, obj}...).Return("ok", nil).Once()
 
@@ -193,7 +195,7 @@ func (s *NFSSuite) TestCreateNFSKeyring() {
 	assert.NoError(s.T(), err)
 }
 
-func (s *NFSSuite) TestEnsureNFSPoolFailPool() {
+func (s *NFSSuite) TestEnsureNFSPoolsFailPool() {
 	r := mocks.NewRunner(s.T())
 	clusterID := "foo"
 
@@ -206,12 +208,12 @@ func (s *NFSSuite) TestEnsureNFSPoolFailPool() {
 	processExec = r
 
 	// function call
-	err := ensureNFSPool(clusterID)
+	err := ensureNFSPools(clusterID)
 
 	assert.ErrorContains(s.T(), err, "expected to fail")
 }
 
-func (s *NFSSuite) TestEnsureNFSPoolFailEnable() {
+func (s *NFSSuite) TestEnsureNFSPoolsFailEnable() {
 	r := mocks.NewRunner(s.T())
 	clusterID := "foo"
 
@@ -219,21 +221,23 @@ func (s *NFSSuite) TestEnsureNFSPoolFailEnable() {
 	existsErr := fmt.Errorf("File exists")
 	r.On("RunCommand", []interface{}{
 		"rados", "ls", "--pool", ".nfs", "--all", "--create"}...).Return("", existsErr).Once()
+	r.On("RunCommand", []interface{}{
+		"rados", "ls", "--pool", ".nfs.metadata", "--all", "--create"}...).Return("ok", nil).Once()
 
 	expectedErr := fmt.Errorf("expected to fail")
 	r.On("RunCommand", []interface{}{
-		"ceph", "osd", "pool", "application", "enable", ".nfs", "nfs"}...).Return("", expectedErr).Once()
+		"ceph", "osd", "pool", "application", "enable", ".nfs", "cephfs"}...).Return("", expectedErr).Once()
 
 	// patch processExec
 	processExec = r
 
 	// function call
-	err := ensureNFSPool(clusterID)
+	err := ensureNFSPools(clusterID)
 
 	assert.ErrorContains(s.T(), err, "expected to fail")
 }
 
-func (s *NFSSuite) TestEnsureNFSPoolFailCreateObj() {
+func (s *NFSSuite) TestEnsureNFSPoolsFailCreateObj() {
 	r := mocks.NewRunner(s.T())
 	clusterID := "foo"
 	obj := "conf-nfs.foo"
@@ -241,9 +245,11 @@ func (s *NFSSuite) TestEnsureNFSPoolFailCreateObj() {
 	// mocks and expectations
 	r.On("RunCommand", []interface{}{
 		"rados", "ls", "--pool", ".nfs", "--all", "--create"}...).Return("ok", nil).Once()
+	r.On("RunCommand", []interface{}{
+		"rados", "ls", "--pool", ".nfs.metadata", "--all", "--create"}...).Return("ok", nil).Once()
 
 	r.On("RunCommand", []interface{}{
-		"ceph", "osd", "pool", "application", "enable", ".nfs", "nfs"}...).Return("ok", nil).Once()
+		"ceph", "osd", "pool", "application", "enable", ".nfs", "cephfs"}...).Return("ok", nil).Once()
 
 	expectedErr := fmt.Errorf("expected to fail")
 	r.On("RunCommand", []interface{}{
@@ -253,12 +259,12 @@ func (s *NFSSuite) TestEnsureNFSPoolFailCreateObj() {
 	processExec = r
 
 	// function call
-	err := ensureNFSPool(clusterID)
+	err := ensureNFSPools(clusterID)
 
 	assert.ErrorContains(s.T(), err, "expected to fail")
 }
 
-func (s *NFSSuite) TestEnsureNFSPool() {
+func (s *NFSSuite) TestEnsureNFSPools() {
 	r := mocks.NewRunner(s.T())
 	clusterID := "foo"
 	obj := "conf-nfs.foo"
@@ -266,9 +272,11 @@ func (s *NFSSuite) TestEnsureNFSPool() {
 	// mocks and expectations
 	r.On("RunCommand", []interface{}{
 		"rados", "ls", "--pool", ".nfs", "--all", "--create"}...).Return("ok", nil).Once()
+	r.On("RunCommand", []interface{}{
+		"rados", "ls", "--pool", ".nfs.metadata", "--all", "--create"}...).Return("ok", nil).Once()
 
 	r.On("RunCommand", []interface{}{
-		"ceph", "osd", "pool", "application", "enable", ".nfs", "nfs"}...).Return("ok", nil).Once()
+		"ceph", "osd", "pool", "application", "enable", ".nfs", "cephfs"}...).Return("ok", nil).Once()
 
 	existsErr := fmt.Errorf("File exists")
 	r.On("RunCommand", []interface{}{
@@ -278,7 +286,7 @@ func (s *NFSSuite) TestEnsureNFSPool() {
 	processExec = r
 
 	// function call
-	err := ensureNFSPool(clusterID)
+	err := ensureNFSPools(clusterID)
 
 	assert.NoError(s.T(), err)
 }
