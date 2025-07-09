@@ -1119,16 +1119,23 @@ function test_maintenance_enter_set_noout_stop_osds_and_exit_force() {
 }
 
 function test_v2_single_node() {
-    lxc exec -- sh -c "microceph.ceph mon dump | grep -q v1:"
+    local out=$(lxc exec node-wrk0 -- sh -c "microceph.ceph mon dump")
+    echo "$out" | grep -q "v1:"
     if [ "$?" -eq 0 ]; then
-        echo "messenger V1 is still supported"
+        echo "messenger V1 address is still present"
+        exit 1
+    fi
+
+    echo "$out" | grep -q "6789"
+    if [ "$?" -eq 0 ]; then
+        echo "messenger V1 port is still being used"
         exit 1
     fi
 }
 
 function test_v2_all_nodes() {
     for i in 0 1 2 3 ; do
-        lxc exec -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -q v1:"
+        lxc exec "node-wrk${i}" -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep -q v1:"
         if [ "$?" -eq 0 ]; then
             echo "messenger V1 is active on node $i"
             exit 1
