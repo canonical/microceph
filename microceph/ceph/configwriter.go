@@ -109,6 +109,7 @@ NFS_CORE_PARAM {
 	Protocols = 4;
 	Bind_Addr = {{.bindAddr}};
 	NFS_Port = {{.bindPort}};
+	Plugins_Dir = /snap/microceph/current/lib/x86_64-linux-gnu/ganesha;
 }
 
 NFSv4 {
@@ -116,6 +117,10 @@ NFSv4 {
 	RecoveryBackend = 'rados_cluster';
 	Minor_Versions = {{.minorVersions}};
 	UseGetpwnam = true;
+}
+
+NFS_KRB5 {
+	CCacheDir = /var/snap/microceph/current/run/ganesha;
 }
 
 RADOS_KV {
