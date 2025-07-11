@@ -957,3 +957,7 @@ jobs:
 
     - name: Disable NFS
       run: ~/actionutils.sh disable_nfs foo
+
+    - name: Setup tmate session
+      if: ${{ failure() }}
+      uses: mxschmitt/action-tmate@v3
