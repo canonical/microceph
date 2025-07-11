@@ -122,7 +122,8 @@ func EnableNFS(s interfaces.StateInterface, nfs *NFSServicePlacement, monitorAdd
 
 func nfsVersionsStr(minVersion uint) string {
 	var versions []string
-	for i := range minVersion + 1 {
+
+	for i := minVersion; i <= 2; i++ {
 		versions = append(versions, strconv.FormatUint(uint64(i), 10))
 	}
 
@@ -131,6 +132,13 @@ func nfsVersionsStr(minVersion uint) string {
 
 // DisableNFS disables the NFS service on the cluster.
 func DisableNFS(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
+	exists, err := database.GroupedServicesQuery.ExistsOnHost(ctx, s, "nfs", clusterID)
+	if err != nil {
+		return fmt.Errorf("failed to verify the node's NFS service ClusterID: %w", err)
+	} else if !exists {
+		return fmt.Errorf("NFS service with ClusterID '%s' not found on node '%s'", clusterID, s.ClusterState().Name())
+	}
+
 	logger.Debugf("Disabling NFS on node with ClusterID '%s'", clusterID)
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -192,7 +200,7 @@ func DisableNFS(ctx context.Context, s interfaces.StateInterface, clusterID stri
 
 // startNFS starts the NFS service.
 func startNFS() error {
-	err := snapStart("nfs-ganesha", true)
+	err := snapStart("nfs", true)
 	if err != nil {
 		return fmt.Errorf("failed to start NFS Ganesha service: %w", err)
 	}
@@ -202,7 +210,7 @@ func startNFS() error {
 
 // stopNFS stops the NFS service.
 func stopNFS() error {
-	err := snapStop("nfs-ganesha", true)
+	err := snapStop("nfs", true)
 	if err != nil {
 		return fmt.Errorf("failed to stop NFS Ganesha service: %w", err)
 	}

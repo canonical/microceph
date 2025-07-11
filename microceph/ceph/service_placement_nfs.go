@@ -60,7 +60,7 @@ func (nfs *NFSServicePlacement) HospitalityCheck(s interfaces.StateInterface) er
 		return fmt.Errorf("address '%s' is currently in use.", address)
 	}
 
-	return genericHospitalityCheck("nfs-ganesha")
+	return genericHospitalityCheck("nfs")
 }
 
 func (nfs *NFSServicePlacement) ServiceInit(ctx context.Context, s interfaces.StateInterface) error {
@@ -73,7 +73,7 @@ func (nfs *NFSServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 }
 
 func (nfs *NFSServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {
-	return genericPostPlacementCheck("nfs-ganesha")
+	return genericPostPlacementCheck("nfs")
 }
 
 func (nfs *NFSServicePlacement) DbUpdate(ctx context.Context, s interfaces.StateInterface) error {

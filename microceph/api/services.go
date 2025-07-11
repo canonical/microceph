@@ -169,6 +169,11 @@ func cmdNFSDeleteService(s state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
+	if len(svc.ClusterID) == 0 {
+		err := fmt.Errorf("Expected cluster_id to not be empty.")
+		return response.SmartError(err)
+	}
+
 	err = ceph.DisableNFS(r.Context(), interfaces.CephState{State: s}, svc.ClusterID)
 	if err != nil {
 		logger.Errorf("Failed disabling NFS: %v", err)

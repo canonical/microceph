@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/canonical/lxd/shared/api"
+
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -70,7 +72,7 @@ func (s *NFSSuite) TestEnableNFS() {
 		"ganesha-rados-grace", "--cephconf", cephconf, "--pool", ".nfs", "--ns", clusterID, "--userid", userID, "add", hostname}...).Return("ok", nil).Once()
 
 	// startNFS call
-	r.On("RunCommand", "snapctl", "start", "microceph.nfs-ganesha", "--enable").Return("ok", nil).Once()
+	r.On("RunCommand", "snapctl", "start", "microceph.nfs", "--enable").Return("ok", nil).Once()
 
 	// patch processExec
 	processExec = r
@@ -90,10 +92,55 @@ func (s *NFSSuite) TestEnableNFS() {
 
 func (s *NFSSuite) TestNfsVersionsStr() {
 	versions := nfsVersionsStr(2)
-	assert.Equal(s.T(), "0,1,2", versions)
+	assert.Equal(s.T(), "2", versions)
 
 	versions = nfsVersionsStr(0)
-	assert.Equal(s.T(), "0", versions)
+	assert.Equal(s.T(), "0,1,2", versions)
+}
+
+func (s *NFSSuite) TestDisableNFSErrorDB() {
+	db := mocks.NewGroupedServiceQueryIntf(s.T())
+
+	// ExistsOnHost call
+	ctx := context.Background()
+	clusterID := "foo"
+	err := fmt.Errorf("I've been expecting you")
+	db.On("ExistsOnHost", []interface{}{ctx, s.TestStateInterface, "nfs", clusterID}...).Return(false, err).Once()
+
+	// patch GroupedServicesQuery
+	originalDB := database.GroupedServicesQuery
+	defer func() { database.GroupedServicesQuery = originalDB }()
+	database.GroupedServicesQuery = db
+
+	err = DisableNFS(ctx, s.TestStateInterface, clusterID)
+
+	assert.ErrorContains(s.T(), err, "I've been expecting you")
+}
+
+func (s *NFSSuite) TestDisableNFSNotExists() {
+	s.TestStateInterface = mocks.NewStateInterface(s.T())
+	u := api.NewURL()
+	state := &mocks.MockState{
+		URL:         u,
+		ClusterName: "foohost",
+	}
+	s.TestStateInterface.On("ClusterState").Return(state)
+
+	db := mocks.NewGroupedServiceQueryIntf(s.T())
+
+	// ExistsOnHost call
+	ctx := context.Background()
+	clusterID := "foo"
+	db.On("ExistsOnHost", []interface{}{ctx, s.TestStateInterface, "nfs", clusterID}...).Return(false, nil).Once()
+
+	// patch GroupedServicesQuery
+	originalDB := database.GroupedServicesQuery
+	defer func() { database.GroupedServicesQuery = originalDB }()
+	database.GroupedServicesQuery = db
+
+	err := DisableNFS(ctx, s.TestStateInterface, clusterID)
+
+	assert.ErrorContains(s.T(), err, "NFS service with ClusterID 'foo' not found on node")
 }
 
 func (s *NFSSuite) TestDisableNFS() {
@@ -125,13 +172,27 @@ func (s *NFSSuite) TestDisableNFS() {
 		defer os.Remove(file)
 	}
 
+	db := mocks.NewGroupedServiceQueryIntf(s.T())
+
+	// ExistsOnHost call
+	ctx := context.Background()
+	clusterID := "foo"
+	db.On("ExistsOnHost", []interface{}{ctx, s.TestStateInterface, "nfs", clusterID}...).Return(true, nil).Once()
+
+	// RemoveFromHost call
+	db.On("RemoveForHost", []interface{}{ctx, s.TestStateInterface, "nfs", clusterID}...).Return(nil).Once()
+
+	// patch GroupedServicesQuery
+	originalDB := database.GroupedServicesQuery
+	defer func() { database.GroupedServicesQuery = originalDB }()
+	database.GroupedServicesQuery = db
+
 	r := mocks.NewRunner(s.T())
 
 	// stopNFS call
-	r.On("RunCommand", "snapctl", "stop", "microceph.nfs-ganesha", "--disable").Return("ok", nil).Once()
+	r.On("RunCommand", "snapctl", "stop", "microceph.nfs", "--disable").Return("ok", nil).Once()
 
 	// removeNodeFromSharedGraceMgmtDb call
-	clusterID := "foo"
 	userID := fmt.Sprintf("nfs.%s.%s", clusterID, hostname)
 	r.On("RunCommand", []interface{}{
 		"ganesha-rados-grace", "--cephconf", cephConf, "--pool", ".nfs", "--ns", clusterID, "--userid", userID, "remove", hostname}...).Return("ok", nil).Once()
@@ -142,17 +203,6 @@ func (s *NFSSuite) TestDisableNFS() {
 
 	// patch processExec
 	processExec = r
-
-	db := mocks.NewGroupedServiceQueryIntf(s.T())
-
-	// RemoveFromHost call
-	ctx := context.Background()
-	db.On("RemoveForHost", []interface{}{ctx, s.TestStateInterface, "nfs", clusterID}...).Return(nil).Once()
-
-	// patch GroupedServicesQuery
-	originalDB := database.GroupedServicesQuery
-	defer func() { database.GroupedServicesQuery = originalDB }()
-	database.GroupedServicesQuery = db
 
 	// function call
 	err = DisableNFS(ctx, s.TestStateInterface, clusterID)
@@ -167,7 +217,7 @@ func (s *NFSSuite) TestDisableNFS() {
 
 func (s *NFSSuite) TestStartNFS() {
 	r := mocks.NewRunner(s.T())
-	r.On("RunCommand", "snapctl", "start", "microceph.nfs-ganesha", "--enable").Return("ok", nil).Once()
+	r.On("RunCommand", "snapctl", "start", "microceph.nfs", "--enable").Return("ok", nil).Once()
 
 	// patch processExec
 	processExec = r
@@ -179,7 +229,7 @@ func (s *NFSSuite) TestStartNFS() {
 
 func (s *NFSSuite) TestStopNFS() {
 	r := mocks.NewRunner(s.T())
-	r.On("RunCommand", "snapctl", "stop", "microceph.nfs-ganesha", "--disable").Return("ok", nil).Once()
+	r.On("RunCommand", "snapctl", "stop", "microceph.nfs", "--disable").Return("ok", nil).Once()
 
 	// patch processExec
 	processExec = r

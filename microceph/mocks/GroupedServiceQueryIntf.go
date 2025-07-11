@@ -5,6 +5,7 @@ package mocks
 import (
 	context "context"
 
+	database "github.com/canonical/microceph/microceph/database"
 	interfaces "github.com/canonical/microceph/microceph/interfaces"
 
 	mock "github.com/stretchr/testify/mock"
@@ -31,6 +32,64 @@ func (_m *GroupedServiceQueryIntf) AddNew(ctx context.Context, s interfaces.Stat
 	}
 
 	return r0
+}
+
+// ExistsOnHost provides a mock function with given fields: ctx, s, service, groupID
+func (_m *GroupedServiceQueryIntf) ExistsOnHost(ctx context.Context, s interfaces.StateInterface, service string, groupID string) (bool, error) {
+	ret := _m.Called(ctx, s, service, groupID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ExistsOnHost")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string) (bool, error)); ok {
+		return rf(ctx, s, service, groupID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string) bool); ok {
+		r0 = rf(ctx, s, service, groupID)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, interfaces.StateInterface, string, string) error); ok {
+		r1 = rf(ctx, s, service, groupID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// GetGroupedServicesOnHost provides a mock function with given fields: ctx, s
+func (_m *GroupedServiceQueryIntf) GetGroupedServicesOnHost(ctx context.Context, s interfaces.StateInterface) ([]database.GroupedService, error) {
+	ret := _m.Called(ctx, s)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetGroupedServicesOnHost")
+	}
+
+	var r0 []database.GroupedService
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface) ([]database.GroupedService, error)); ok {
+		return rf(ctx, s)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface) []database.GroupedService); ok {
+		r0 = rf(ctx, s)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]database.GroupedService)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, interfaces.StateInterface) error); ok {
+		r1 = rf(ctx, s)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
 
 // RemoveForHost provides a mock function with given fields: ctx, s, service, groupID

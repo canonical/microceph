@@ -19,6 +19,12 @@ type GroupedServiceQueryIntf interface {
 	// Add Method
 	AddNew(ctx context.Context, s interfaces.StateInterface, service, groupID string, groupConfig, serviceInfo any) error
 
+	// Get Methods
+	GetGroupedServicesOnHost(ctx context.Context, s interfaces.StateInterface) ([]GroupedService, error)
+
+	// Exists Methods
+	ExistsOnHost(ctx context.Context, s interfaces.StateInterface, service, groupID string) (bool, error)
+
 	// Delete Methods
 	RemoveForHost(ctx context.Context, s interfaces.StateInterface, service, groupID string) error
 }
@@ -74,6 +80,53 @@ func (g GroupedServiceQueryImpl) AddNew(ctx context.Context, s interfaces.StateI
 	})
 
 	return err
+}
+
+// GetGroupedServicesOnHost returns an array of grouped services present on the host.
+func (g GroupedServiceQueryImpl) GetGroupedServicesOnHost(ctx context.Context, s interfaces.StateInterface) ([]GroupedService, error) {
+	if s.ClusterState().ServerCert() == nil {
+		return []GroupedService{}, fmt.Errorf("no server certificate")
+	}
+
+	var services []GroupedService
+	var err error
+
+	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		member := s.ClusterState().Name()
+		filter := GroupedServiceFilter{
+			Member: &member,
+		}
+
+		services, err = GetGroupedServices(ctx, tx, filter)
+		if err != nil {
+			return fmt.Errorf("failed to get grouped services records: %w", err)
+		}
+
+		return nil
+	})
+
+	return services, err
+}
+
+// ExistsOnHost checks if a given grouped service exists on this host or not.
+func (g GroupedServiceQueryImpl) ExistsOnHost(ctx context.Context, s interfaces.StateInterface, service, groupID string) (bool, error) {
+	if s.ClusterState().ServerCert() == nil {
+		return false, fmt.Errorf("no server certificate")
+	}
+
+	var exists bool
+	var err error
+
+	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		exists, err = GroupedServiceExists(ctx, tx, service, groupID, s.ClusterState().Name())
+		if err != nil {
+			return fmt.Errorf("failed to check if grouped service record exists: %w", err)
+		}
+
+		return nil
+	})
+
+	return exists, err
 }
 
 // RemoveForHost deletes the given service record in the grouped_service database, and deletes the

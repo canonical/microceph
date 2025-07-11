@@ -940,5 +940,20 @@ jobs:
     - name: Create NFS export
       run: ~/actionutils.sh create_nfs_export foo testfs
 
+    - name: Mount and test NFS
+      run: |
+        set -uex
+
+        # Needed to mount the Ceph NFS share.
+        sudo apt install nfs-common
+
+        addr="$(hostname -I | cut -d ' ' -f1)"
+        sudo mount -t ceph "${addr}:/" /mnt -o name=admin
+
+        echo "Hello there!" > /mnt/general.kenobi
+        cat /mnt/general.kenobi
+
+        sudo umount /mnt
+
     - name: Disable NFS
       run: ~/actionutils.sh disable_nfs foo

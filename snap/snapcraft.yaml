@@ -100,7 +100,7 @@ apps:
       - network
       - network-bind
       - process-control
-  nfs-ganesha:
+  nfs:
     command: commands/nfs-ganesha.start
     daemon: simple
     install-mode: disable

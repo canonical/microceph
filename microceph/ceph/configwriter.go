@@ -119,6 +119,15 @@ NFSv4 {
 	UseGetpwnam = true;
 }
 
+# The libcephfs client will aggressively cache information while it
+# can, so there is little benefit to ganesha actively caching the same
+# objects. Doing so can also hurt cache coherency. Here, we disable
+# as much attribute and directory caching as we can.
+MDCACHE {
+        # Size the dirent cache down as small as possible.
+        Dir_Chunk = 0;
+}
+
 NFS_KRB5 {
 	CCacheDir = "{{.runDir}}/ganesha";
 }
@@ -138,7 +147,7 @@ RADOS_URLS {
 
 LOG {
 	Components {
-		ALL = NIV_EVENT;
+		ALL = EVENT;
 	}
 }
 
