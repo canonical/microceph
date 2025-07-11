@@ -471,9 +471,17 @@ func getMonitorsFromConfig(configs map[string]string) []string {
 func formatIPv6(addrs []string) []string {
 	formatted := []string{}
 	for _, addr := range addrs {
+		isv2 := strings.HasPrefix(addr, "v2:")
+		if isv2 {
+			// Remove the leading "v2:" and the ":3300" suffix.
+			addr = addr[3 : len(addr)-5]
+		}
 		ip := net.ParseIP(addr)
 		if ip != nil && strings.Contains(addr, ":") {
 			addr = fmt.Sprintf("[%s]", addr)
+			if isv2 {
+				addr = "v2:" + addr + ":3300"
+			}
 		}
 
 		formatted = append(formatted, addr)
