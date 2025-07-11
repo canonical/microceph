@@ -59,7 +59,7 @@ func (g GroupedServiceQueryImpl) AddNew(ctx context.Context, s interfaces.StateI
 
 		if serviceGroup != nil {
 			// If it exists, make sure the config matches.
-			if serviceGroup.Config != groupConfig {
+			if serviceGroup.Config != groupConfigStr {
 				return fmt.Errorf("conflicting service group configurations")
 			}
 		} else {
