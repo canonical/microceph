@@ -945,15 +945,18 @@ jobs:
         set -uex
 
         # Needed to mount the Ceph NFS share.
-        sudo apt install nfs-common
+        sudo apt install ceph-common
+        sudo mkdir /mnt/nfs
+        sudo cp /var/snap/microceph/current/conf/ceph.conf /etc/ceph/
+        sudo cp /var/snap/microceph/current/conf/ceph.client.admin.keyring /etc/ceph/
 
         addr="$(hostname -I | cut -d ' ' -f1)"
-        sudo mount -t ceph "${addr}:/" /mnt -o name=admin
+        sudo mount -t ceph "${addr}:/" /mnt/nfs -o name=admin
 
-        echo "Hello there!" > /mnt/general.kenobi
-        cat /mnt/general.kenobi
+        echo "Hello there!" | sudo tee /mnt/nfs/general.kenobi
+        cat /mnt/nfs/general.kenobi
 
-        sudo umount /mnt
+        sudo umount /mnt/nfs
 
     - name: Disable NFS
       run: ~/actionutils.sh disable_nfs foo
