@@ -22,6 +22,7 @@ type cmdClusterBootstrap struct {
 	flagMonIp       string
 	flagPubNet      string
 	flagClusterNet  string
+	flagV2Only      bool
 }
 
 func (c *cmdClusterBootstrap) Command() *cobra.Command {
@@ -35,6 +36,7 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.flagMonIp, "mon-ip", "", "Public address for bootstrapping ceph mon service.")
 	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public network Ceph daemons bind to.")
 	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster network Ceph daemons bind to.")
+	cmd.Flags().BoolVar(&c.flagV2Only, "v2-only", false, "Whether to support V2 messenger only or both V1 and V2")
 	return cmd
 }
 
@@ -66,6 +68,7 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 		MonIp:      c.flagMonIp,
 		PublicNet:  c.flagPubNet,
 		ClusterNet: c.flagClusterNet,
+		V2Only:     c.flagV2Only,
 	}
 
 	err = preCheckBootstrapConfig(data)

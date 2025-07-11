@@ -44,9 +44,12 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 	}
 
 	// Ensure mon-ip is enclosed in square brackets if IPv6.
-	monIp := data.MonIp
-	if net.ParseIP(monIp) != nil && strings.Contains(monIp, ":") {
-		monIp = fmt.Sprintf("[%s]", monIp)
+	if net.ParseIP(data.MonIp) != nil && strings.Contains(data.MonIp, ":") {
+		data.MonIp = fmt.Sprintf("[%s]", data.MonIp)
+	}
+
+	if data.V2Only {
+		data.MonIp = "v2:" + data.MonIp + ":3300"
 	}
 
 	err = conf.WriteConfig(
@@ -54,7 +57,7 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 			"fsid":   fsid,
 			"runDir": pathConsts.RunPath,
 			// First monitor bootstrap IP as passed to microcluster.
-			"monitors": monIp,
+			"monitors": data.MonIp,
 			"pubNet":   data.PublicNet,
 			"ipv4":     strings.Contains(data.PublicNet, "."),
 			"ipv6":     strings.Contains(data.PublicNet, ":"),
