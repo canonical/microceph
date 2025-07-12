@@ -40,6 +40,7 @@ type PathConst struct {
 	RootFs       string
 	ProcPath     string
 	SSLFilesPath string
+	SnapPath     string
 }
 
 type PathFileMode map[string]os.FileMode
@@ -53,6 +54,7 @@ var GetPathConst = func() PathConst {
 		RootFs:       filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/"),
 		ProcPath:     filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/proc"),
 		SSLFilesPath: filepath.Join(os.Getenv("SNAP_COMMON"), "/"),
+		SnapPath:     filepath.Join(os.Getenv("SNAP"), "/"),
 	}
 }
 

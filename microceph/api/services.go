@@ -50,6 +50,11 @@ var mdsServiceCmd = rest.Endpoint{
 	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
 	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
 }
+var nfsServiceCmd = rest.Endpoint{
+	Path:   "services/nfs",
+	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Delete: rest.EndpointAction{Handler: cmdNFSDeleteService, ProxyTarget: true},
+}
 var rgwServiceCmd = rest.Endpoint{
 	Path:   "services/rgw",
 	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
@@ -152,6 +157,30 @@ func cmdDeleteService(s state.State, r *http.Request) response.Response {
 	}
 
 	return response.SyncResponse(true, nil)
+}
+
+// cmdNFSDeleteService handles the NFS service deletion.
+func cmdNFSDeleteService(s state.State, r *http.Request) response.Response {
+	var svc types.NFSService
+
+	err := json.NewDecoder(r.Body).Decode(&svc)
+	if err != nil {
+		logger.Errorf("Failed decoding disable service request: %v", err)
+		return response.InternalError(err)
+	}
+
+	if len(svc.ClusterID) == 0 {
+		err := fmt.Errorf("Expected cluster_id to not be empty.")
+		return response.SmartError(err)
+	}
+
+	err = ceph.DisableNFS(r.Context(), interfaces.CephState{State: s}, svc.ClusterID)
+	if err != nil {
+		logger.Errorf("Failed disabling NFS: %v", err)
+		return response.SmartError(err)
+	}
+
+	return response.EmptySyncResponse
 }
 
 func cmdRGWServiceDelete(s state.State, r *http.Request) response.Response {

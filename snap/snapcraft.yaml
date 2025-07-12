@@ -31,22 +31,28 @@ slots:
         - "$SNAP_DATA/conf"
 
 environment:
-  LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/erasure-code
+  LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib/ganesha:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/erasure-code
   PYTHONPATH: $SNAP/lib/python3/dist-packages
 
 layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph
+  /usr/lib/ganesha:
+    symlink: $SNAP/lib/ganesha
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/rados-classes:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/rados-classes
   /etc/ceph:
     bind: $SNAP_DATA/conf
+  /etc/ganesha:
+    bind: $SNAP_DATA/conf/ganesha
   /usr/share/ceph:
     bind: $SNAP/share/ceph
   /var/lib/ceph:
     bind: $SNAP_COMMON/data
   /var/log/ceph:
     bind: $SNAP_COMMON/logs
+  /var/log/ganesha:
+    bind: $SNAP_COMMON/logs/ganesha
 
 apps:
   # Service
@@ -86,6 +92,16 @@ apps:
       - process-control
   mgr:
     command: commands/mgr.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+    plugs:
+      - network
+      - network-bind
+      - process-control
+  nfs:
+    command: commands/nfs-ganesha.start
     daemon: simple
     install-mode: disable
     after:
@@ -347,6 +363,26 @@ parts:
     prime:
       - bin/microceph
       - bin/microcephd
+
+  nfs-ganesha:
+    plugin: nil
+    stage-packages:
+      - nfs-ganesha
+      - nfs-ganesha-ceph
+      - nfs-ganesha-rados-grace
+    organize:
+      sbin/: bin/
+      usr/bin/: bin/
+      usr/sbin/: bin/
+      usr/lib/: lib/
+    prime:
+      - bin/*
+      - lib/*/ganesha
+      - lib/*/libganesha_*.so*
+      - lib/*/libnfsidmap.so*
+      - lib/*/libntirpc.so*
+      - lib/*/liburcu-bp.so*
+      - lib/*/libwbclient.so*
 
   strip:
     after:

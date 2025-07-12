@@ -14,6 +14,10 @@ func (c *cmdDisable) Command() *cobra.Command {
 		Short: "Disables a feature on the cluster",
 	}
 
+	// Disable NFS
+	disableNFSCmd := cmdDisableNFS{common: c.common}
+	cmd.AddCommand(disableNFSCmd.Command())
+
 	// Disable RGW
 	disableRGWCmd := cmdDisableRGW{common: c.common}
 	cmd.AddCommand(disableRGWCmd.Command())
