@@ -1,0 +1,14 @@
+[project]
+name = "microceph-orch"
+version = "0.1.0"
+description = "MicroCeph orchestrator module for Ceph Mgr"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.32.3",
+    "requests-unixsocket>=0.4.1",
+    "snap-helpers",
+    "urllib3>=2.4.0",
+]
+
+[tool.uv.sources]
+snap-helpers = { git = "https://github.com/albertodonato/snap-helpers" }
