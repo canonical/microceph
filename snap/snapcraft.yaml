@@ -32,7 +32,7 @@ slots:
 
 environment:
   LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib/ganesha:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/erasure-code
-  PYTHONPATH: $SNAP/lib/python3/dist-packages
+  PYTHONPATH: $SNAP/lib/python3/dist-packages:$SNAP/lib/python3.12/site-packages
 
 layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:
@@ -179,6 +179,23 @@ apps:
       - network
 
 parts:
+  microceph-orch:
+    plugin: python
+    # build-snaps:
+    #   - astral-uv
+    source: ./microceph-orch
+    after:
+      - microceph
+      - ceph
+    override-prime: |
+      set -eux
+      a=$(pwd)
+      craftctl default
+      mkdir -p share/ceph/mgr/microceph
+      # Force copy to overwrite.
+      cp -rf lib/python3.12/site-packages/microceph share/ceph/mgr/
+      cp -rf lib/python3.12/site-packages/orchestrator share/ceph/mgr/
+
   ceph:
     plugin: nil
     override-prime: |
@@ -193,6 +210,7 @@ parts:
                 --abbrev=10 | sed -s 's/^v//')
       printf "ceph-version: ${pkg_version}\nmicroceph-git: ${git_version}\n" > share/metadata.yaml
     override-stage: |
+      set -eux
       craftctl default
       pkg_version=$(
         dpkg-deb -f \
@@ -220,6 +238,8 @@ parts:
       - python3-setuptools
       - python3-packaging
       - libatomic1
+      - python3-ceph-common # used by microceph-orch
+
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -396,7 +416,7 @@ parts:
 
       # Strip libraries (excluding python3 scripts)
       find "${CRAFT_PRIME}"/lib -type f \
-        -not -path "${CRAFT_PRIME}/lib/python3/*" \
+        -not -path "${CRAFT_PRIME}/lib/python3*/*" \
         -exec strip -s {} +
 
   wrappers:
