@@ -75,7 +75,13 @@ func (c *cmdStatus) Run(cmd *cobra.Command, args []string) error {
 				continue
 			}
 
-			srvServices = append(srvServices, service.Service)
+			// grouped service should appear as service.groupId
+			service_name := service.Service
+			if len(service.GroupID) != 0 {
+				service_name = fmt.Sprintf("%s.%s", service.Service, service.GroupID)
+			}
+
+			srvServices = append(srvServices, service_name)
 		}
 		sort.Strings(srvServices)
 

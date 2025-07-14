@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path"
 
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/lxd/lxd/response"
@@ -28,6 +29,20 @@ func cmdServicesGet(s state.State, r *http.Request) response.Response {
 	services, err := ceph.ListServices(r.Context(), s)
 	if err != nil {
 		return response.InternalError(err)
+	}
+
+	groupedServices, err := database.GroupedServicesQuery.GetGroupedServices(r.Context(), interfaces.CephState{State: s})
+	if err != nil {
+		return response.InternalError(err)
+	}
+
+	for _, groupedService := range groupedServices {
+		services = append(services, types.Service{
+			Service:  groupedService.Service,
+			Location: groupedService.Member,
+			GroupID:  groupedService.GroupID,
+			Info:     groupedService.Info,
+		})
 	}
 
 	return response.SyncResponse(true, services)

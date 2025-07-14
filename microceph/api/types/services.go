@@ -8,6 +8,8 @@ type Services []Service
 type Service struct {
 	Service  string `json:"service" yaml:"service"`
 	Location string `json:"location" yaml:"location"`
+	GroupID  string `json:"group_id" yaml:"group_id"`
+	Info     string `json:"info" yaml:"info"`
 }
 
 // Name: Name of the service to be enabled

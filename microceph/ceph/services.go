@@ -180,6 +180,8 @@ func ListServices(ctx context.Context, s state.State) (types.Services, error) {
 			services = append(services, types.Service{
 				Location: service.Member,
 				Service:  service.Service,
+				Info:     "",
+				GroupID:  "",
 			})
 		}
 
