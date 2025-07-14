@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/tests"
@@ -22,8 +23,16 @@ func (s *disableNFSSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
 }
 
-func (s *disableNFSSuite) TestCmdDisableNFSEmpty() {
+func (s *disableNFSSuite) TestCmdDisableNFSInvalid() {
 	cmd := cmdDisableNFS{}
 	err := cmd.Run(nil, []string{})
-	assert.ErrorContains(s.T(), err, "please provide a cluster ID using the `--cluster-id` flag")
+	assert.ErrorContains(s.T(), err, "please provide a valid cluster ID using the `--cluster-id` flag")
+
+	cmd.flagClusterID = ".foo"
+	err = cmd.Run(nil, []string{})
+	assert.ErrorContains(s.T(), err, "please provide a valid cluster ID using the `--cluster-id` flag")
+
+	cmd.flagClusterID = strings.Repeat("a", 64)
+	err = cmd.Run(nil, []string{})
+	assert.ErrorContains(s.T(), err, "please provide a valid cluster ID using the `--cluster-id` flag")
 }

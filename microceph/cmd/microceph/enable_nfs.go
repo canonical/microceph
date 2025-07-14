@@ -32,7 +32,7 @@ func (c *cmdEnableNFS) Command() *cobra.Command {
 		Short: "Enable the NFS Ganesha service on the --target server (default: this server)",
 		RunE:  c.Run,
 	}
-	cmd.PersistentFlags().StringVar(&c.flagClusterID, "cluster-id", "", "NFS Cluster ID")
+	cmd.PersistentFlags().StringVar(&c.flagClusterID, "cluster-id", "", fmt.Sprintf("NFS Cluster ID (must match regex: '%s'", types.NFSClusterIDRegex.String()))
 	cmd.PersistentFlags().StringVar(&c.flagBindAddr, "bind-address", "0.0.0.0", "Bind address to use for the NFS Ganesha service")
 	cmd.PersistentFlags().UintVar(&c.flagBindPort, "bind-port", 2049, "Bind port to use for the NFS Ganesha service")
 	cmd.PersistentFlags().UintVar(&c.flagV4MinVersion, "v4-min-version", 1, "Minimum supported version")
@@ -43,8 +43,8 @@ func (c *cmdEnableNFS) Command() *cobra.Command {
 
 // Run handles the enable nfs command.
 func (c *cmdEnableNFS) Run(cmd *cobra.Command, args []string) error {
-	if len(c.flagClusterID) == 0 {
-		return fmt.Errorf("please provide a cluster ID using the `--cluster-id` flag")
+	if !types.NFSClusterIDRegex.MatchString(c.flagClusterID) {
+		return fmt.Errorf("please provide a valid cluster ID using the `--cluster-id` flag (regex: '%s')", types.NFSClusterIDRegex.String())
 	}
 
 	if c.flagV4MinVersion > 2 {

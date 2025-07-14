@@ -180,12 +180,12 @@ func cmdNFSDeleteService(s state.State, r *http.Request) response.Response {
 
 	err := json.NewDecoder(r.Body).Decode(&svc)
 	if err != nil {
-		logger.Errorf("Failed decoding disable service request: %v", err)
+		logger.Errorf("failed decoding disable service request: %v", err)
 		return response.InternalError(err)
 	}
 
-	if len(svc.ClusterID) == 0 {
-		err := fmt.Errorf("Expected cluster_id to not be empty.")
+	if !types.NFSClusterIDRegex.MatchString(svc.ClusterID) {
+		err := fmt.Errorf("expected cluster_id to be valid (regex: '%s')", types.NFSClusterIDRegex.String())
 		return response.SmartError(err)
 	}
 

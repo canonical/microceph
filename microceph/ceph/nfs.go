@@ -245,28 +245,33 @@ func createNFSKeyring(path, clusterID, userID string) error {
 
 // ensureNFSPools creates the NFS data and metadata Pools for Ganesha if they do not exist.
 func ensureNFSPools(clusterID string) error {
+	logger.Debugf("Creating '.nfs' rados pool if it doesn't exist.")
 	_, err := radosRun("ls", "--pool", ".nfs", "--all", "--create")
 	if err != nil && !strings.Contains(err.Error(), "File exists") {
 		return fmt.Errorf("failed to create .nfs pool: %w", err)
 	}
 
+	logger.Debugf("Creating '.nfs.metadata' rados pool if it doesn't exist.")
 	_, err = radosRun("ls", "--pool", ".nfs.metadata", "--all", "--create")
 	if err != nil && !strings.Contains(err.Error(), "File exists") {
 		return fmt.Errorf("failed to create .nfs.metadata pool: %w", err)
 	}
 
 	// the command is idempotent.
+	logger.Debugf("Enabling cephfs application on '.nfs' pool.")
 	_, err = osdEnablePoolApp(".nfs", "cephfs")
 	if err != nil {
 		return fmt.Errorf("failed to enable .nfs pool: %w", err)
 	}
 
 	object := fmt.Sprintf("conf-nfs.%s", clusterID)
+	logger.Debugf("Creating '%s' rados object in pool '.nfs' in namespace '%s'.", object, clusterID)
 	_, err = radosRun("create", "--pool", ".nfs", "-N", clusterID, object)
 	if err != nil && !strings.Contains(err.Error(), "File exists") {
 		return fmt.Errorf("failed to create object for Ganesha: %w", err)
 	}
 
+	logger.Debugf("Finished creating rados pools and objects for NFS with ClusterID %s.", clusterID)
 	return nil
 }
 

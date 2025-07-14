@@ -8,6 +8,7 @@ import (
 	"net"
 	"syscall"
 
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
@@ -25,8 +26,8 @@ func (nfs *NFSServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 		return err
 	}
 
-	if len(nfs.ClusterID) == 0 {
-		return fmt.Errorf("expected cluster_id to be non-empty")
+	if !types.NFSClusterIDRegex.MatchString(nfs.ClusterID) {
+		return fmt.Errorf("expected cluster_id to be valid (regex: '%s')", types.NFSClusterIDRegex.String())
 	}
 
 	if nfs.V4MinVersion > 2 {

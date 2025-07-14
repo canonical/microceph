@@ -378,6 +378,7 @@ parts:
     prime:
       - bin/*
       - lib/*/ganesha
+      - lib/*/libevent_core-*.so*
       - lib/*/libganesha_*.so*
       - lib/*/libnfsidmap.so*
       - lib/*/libntirpc.so*

@@ -2,6 +2,8 @@ package ceph
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -38,7 +40,22 @@ func (s *servicePlacementNFSSuite) TestInvalidPayload() {
 	}
 
 	err := ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
-	assert.ErrorContains(s.T(), err, "expected cluster_id to be non-empty")
+	assert.ErrorContains(s.T(), err, "expected cluster_id to be valid")
+
+	payload.Payload = "{\"cluster_id\":\".foo\"}"
+
+	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
+	assert.ErrorContains(s.T(), err, "expected cluster_id to be valid")
+
+	payload.Payload = fmt.Sprintf("{\"cluster_id\":\"%s\"}", strings.Repeat("a", 64))
+
+	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
+	assert.ErrorContains(s.T(), err, "expected cluster_id to be valid")
+
+
+	payload.Payload = "{\"cluster_id\":\"foo\",\"v4_min_version\":10}"
+
+	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
 
 	payload.Payload = "{\"cluster_id\":\"foo\",\"v4_min_version\":10}"
 

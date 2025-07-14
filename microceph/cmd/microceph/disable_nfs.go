@@ -23,15 +23,15 @@ func (c *cmdDisableNFS) Command() *cobra.Command {
 		Short: "Disable the NFS Ganesha service on the --target server (default: this server)",
 		RunE:  c.Run,
 	}
-	cmd.PersistentFlags().StringVar(&c.flagClusterID, "cluster-id", "", "NFS Cluster ID")
+	cmd.PersistentFlags().StringVar(&c.flagClusterID, "cluster-id", "", fmt.Sprintf("NFS Cluster ID (must match regex: '%s'", types.NFSClusterIDRegex.String()))
 	cmd.PersistentFlags().StringVar(&c.flagTarget, "target", "", "Server hostname (default: this server)")
 	return cmd
 }
 
 // Run handles the disable nfs command.
 func (c *cmdDisableNFS) Run(cmd *cobra.Command, args []string) error {
-	if len(c.flagClusterID) == 0 {
-		return fmt.Errorf("please provide a cluster ID using the `--cluster-id` flag")
+	if !types.NFSClusterIDRegex.MatchString(c.flagClusterID) {
+		return fmt.Errorf("please provide a valid cluster ID using the `--cluster-id` flag (regex: '%s')", types.NFSClusterIDRegex.String())
 	}
 
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
