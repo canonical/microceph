@@ -29,6 +29,17 @@ func (m *MockPathValidator) IsBlockdevPath(path string) bool {
 	return args.Bool(0)
 }
 
+// MockMountChecker is a mock implementation of MountChecker for testing.
+type MockMountChecker struct {
+	mock.Mock
+}
+
+// IsMounted mocks the mount checking.
+func (m *MockMountChecker) IsMounted(device string) (bool, error) {
+	args := m.Called(device)
+	return args.Bool(0), args.Error(1)
+}
+
 // osdSuite is the test suite for adding OSDs.
 type osdSuite struct {
 	tests.BaseSuite
@@ -404,16 +415,16 @@ func (s *osdSuite) TestSetStablePath() {
 
 // TestStabilizeDevicePathSuccess tests successful device path stabilization
 func (s *osdSuite) TestStabilizeDevicePathSuccess() {
-	mgr := NewOSDManager(nil)
-	mgr.fs = afero.NewMemMapFs()
+	osdmgr := NewOSDManager(nil)
+	osdmgr.fs = afero.NewMemMapFs()
 
 	// Mock storage interface
 	mockStorage := mocks.NewStorageInterface(s.T())
-	mgr.storage = mockStorage
+	osdmgr.storage = mockStorage
 
 	// Mock validator
 	mockValidator := &MockPathValidator{}
-	mgr.validator = mockValidator
+	osdmgr.validator = mockValidator
 
 	expectedStorage := &api.ResourcesStorage{
 		Disks: []api.ResourcesStorageDisk{
@@ -428,31 +439,133 @@ func (s *osdSuite) TestStabilizeDevicePathSuccess() {
 	mockValidator.On("IsBlockdevPath", "/dev/sda").Return(true).Once()
 
 	physParam := &types.DiskParameter{Path: "/dev/sda"}
-	storage, err := mgr.stabilizeDevicePath(physParam)
+	storage, err := osdmgr.stabilizeDevicePath(physParam)
 
 	// Should succeed now with mocked validation
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), expectedStorage, storage)
 }
 
-// TestPrepareDisk tests disk preparation
+// TestPrepareDisk tests disk preparation (block, WAL, and wiping)
 func (s *osdSuite) TestPrepareDisk() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 	// Use OsFs for symlink support, but in a temp directory
-	mgr.fs = afero.NewOsFs()
+	osdmgr.fs = afero.NewOsFs()
+
+	// Mock validator and mount checker for tests
+	mockValidator := &MockPathValidator{}
+	osdmgr.validator = mockValidator
+	mockMountChecker := &MockMountChecker{}
+	osdmgr.mountChecker = mockMountChecker
 
 	// Mock runner for wipe operations
 	r := mocks.NewRunner(s.T())
-	mgr.runner = r
+	osdmgr.runner = r
 
 	// Create temp directory for test
 	tempDir := s.T().TempDir()
 	osdPath := filepath.Join(tempDir, "ceph-0")
-	err := mgr.fs.MkdirAll(osdPath, 0755)
+	err := osdmgr.fs.MkdirAll(osdPath, 0755)
 	assert.NoError(s.T(), err)
 
 	// Test without wipe or encrypt
 	disk := &types.DiskParameter{Path: "/dev/sda"}
+	// Ab/use MockValidator to return false (not a block device) to skip mount check
+	mockValidator.On("IsBlockdevPath", "/dev/sda").Return(false).Once()
+	err = osdmgr.prepareDisk(disk, "", osdPath, 0)
+	assert.NoError(s.T(), err)
+
+	// Verify symlink was created for data device
+	linkPath := filepath.Join(osdPath, "block")
+	exists, err := afero.Exists(osdmgr.fs, linkPath)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), exists)
+
+	// Test WAL device (suffix != "", no symlink expected)
+	walOsdPath := filepath.Join(tempDir, "ceph-1")
+	err = osdmgr.fs.MkdirAll(walOsdPath, 0755)
+	assert.NoError(s.T(), err)
+	walDisk := &types.DiskParameter{Path: "/dev/sdb"}
+	// Again mock validator to return false (not a block device) to skip mount check
+	mockValidator.On("IsBlockdevPath", "/dev/sdb").Return(false).Once()
+	err = osdmgr.prepareDisk(walDisk, ".wal", walOsdPath, 1)
+	assert.NoError(s.T(), err)
+
+	// Test with wipe - use a different temp directory to avoid symlink conflicts
+	wipeOsdPath := filepath.Join(tempDir, "ceph-2")
+	err = osdmgr.fs.MkdirAll(wipeOsdPath, 0755)
+	assert.NoError(s.T(), err)
+	r.On("RunCommandContext", mock.Anything, "dd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("", nil).Once()
+	wipeDisk := &types.DiskParameter{Path: "/dev/sdc", Wipe: true}
+	// As above mock validator to return false
+	mockValidator.On("IsBlockdevPath", "/dev/sdc").Return(false).Once()
+	err = osdmgr.prepareDisk(wipeDisk, "", wipeOsdPath, 2)
+	assert.NoError(s.T(), err)
+}
+
+// TestPrepareDiskMountedDevice tests that prepareDisk fails when device is mounted
+func (s *osdSuite) TestPrepareDiskMountedDevice() {
+	osdmgr := NewOSDManager(nil)
+
+	mockValidator := &MockPathValidator{}
+	osdmgr.validator = mockValidator
+
+	// Mock mount checker to return true (device is mounted)
+	mockMountChecker := &MockMountChecker{}
+	osdmgr.mountChecker = mockMountChecker
+
+	// Use OsFs instead of mem fs for symlink support
+	osdmgr.fs = afero.NewOsFs()
+
+	disk := &types.DiskParameter{Path: "/dev/sda"}
+	// Mocks to simulate a mounted device block device
+	mockValidator.On("IsBlockdevPath", "/dev/sda").Return(true).Once()
+	mockMountChecker.On("IsMounted", "/dev/sda").Return(true, nil).Once()
+
+	err := osdmgr.prepareDisk(disk, "", "/tmp/osd", 0)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "device /dev/sda is currently mounted")
+}
+
+// TestPrepareDiskNotMountedDevice tests that prepareDisk succeeds when device is not mounted
+func (s *osdSuite) TestPrepareDiskNotMountedDevice() {
+	mgr := NewOSDManager(nil)
+
+	mockValidator := &MockPathValidator{}
+	mgr.validator = mockValidator
+	mockMountChecker := &MockMountChecker{}
+	mgr.mountChecker = mockMountChecker
+
+	// Use OsFs for symlink support, but in a temp directory
+	mgr.fs = afero.NewOsFs()
+
+	// Create temp directory for test
+	tempDir := s.T().TempDir()
+
+	// Create empty /proc/mounts
+	procDir := filepath.Join(tempDir, "proc")
+	err := mgr.fs.MkdirAll(procDir, 0755)
+	assert.NoError(s.T(), err)
+	err = afero.WriteFile(mgr.fs, filepath.Join(procDir, "mounts"), []byte(""), 0644)
+	assert.NoError(s.T(), err)
+
+	// Create the device file
+	devDir := filepath.Join(tempDir, "dev")
+	err = mgr.fs.MkdirAll(devDir, 0755)
+	assert.NoError(s.T(), err)
+	err = afero.WriteFile(mgr.fs, filepath.Join(devDir, "sda"), []byte(""), 0644)
+	assert.NoError(s.T(), err)
+
+	// Create OSD directory
+	osdPath := filepath.Join(tempDir, "osd")
+	err = mgr.fs.MkdirAll(osdPath, 0755)
+	assert.NoError(s.T(), err)
+
+	disk := &types.DiskParameter{Path: "/dev/sda"}
+	// Simulate an unmounted block device
+	mockValidator.On("IsBlockdevPath", "/dev/sda").Return(true).Once()
+	mockMountChecker.On("IsMounted", "/dev/sda").Return(false, nil).Once()
+
 	err = mgr.prepareDisk(disk, "", osdPath, 0)
 	assert.NoError(s.T(), err)
 
@@ -461,30 +574,117 @@ func (s *osdSuite) TestPrepareDisk() {
 	exists, err := afero.Exists(mgr.fs, linkPath)
 	assert.NoError(s.T(), err)
 	assert.True(s.T(), exists)
+}
 
-	// Test WAL device (suffix != "", no symlink should be created)
-	walOsdPath := filepath.Join(tempDir, "ceph-1")
-	err = mgr.fs.MkdirAll(walOsdPath, 0755)
-	assert.NoError(s.T(), err)
-	walDisk := &types.DiskParameter{Path: "/dev/sdb"}
-	err = mgr.prepareDisk(walDisk, ".wal", walOsdPath, 1)
+// TestPrepareDiskNonBlockDevice tests that mount check is skipped for non-block devices
+func (s *osdSuite) TestPrepareDiskNonBlockDevice() {
+	osdmgr := NewOSDManager(nil)
+
+	// Use OsFs for symlink support
+	osdmgr.fs = afero.NewOsFs()
+
+	// Mock validator to return false (not a block device)
+	mockValidator := &MockPathValidator{}
+	osdmgr.validator = mockValidator
+
+	// Mock mount checker (won't be called since it's not a block device)
+	mockMountChecker := &MockMountChecker{}
+	osdmgr.mountChecker = mockMountChecker
+
+	// Create temp directory for test
+	tempDir := s.T().TempDir()
+
+	// Create OSD directory
+	osdPath := filepath.Join(tempDir, "osd")
+	err := osdmgr.fs.MkdirAll(osdPath, 0755)
 	assert.NoError(s.T(), err)
 
-	// Test with wipe - use a different temp directory to avoid symlink conflicts
-	wipeOsdPath := filepath.Join(tempDir, "ceph-2")
-	err = mgr.fs.MkdirAll(wipeOsdPath, 0755)
+	// Create a file to symlink to
+	sourceFile := filepath.Join(tempDir, "some-file")
+	err = afero.WriteFile(osdmgr.fs, sourceFile, []byte("test"), 0644)
 	assert.NoError(s.T(), err)
-	r.On("RunCommandContext", mock.Anything, "dd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("", nil).Once()
-	wipeDisk := &types.DiskParameter{Path: "/dev/sdc", Wipe: true}
-	err = mgr.prepareDisk(wipeDisk, "", wipeOsdPath, 2)
+
+	disk := &types.DiskParameter{Path: sourceFile}
+	mockValidator.On("IsBlockdevPath", sourceFile).Return(false).Once()
+
+	// Should not check mount status and proceed
+	err = osdmgr.prepareDisk(disk, "", osdPath, 0)
 	assert.NoError(s.T(), err)
+
+	// Verify symlink was created for data device (suffix == "")
+	linkPath := filepath.Join(osdPath, "block")
+	exists, err := afero.Exists(osdmgr.fs, linkPath)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), exists)
+}
+
+// TestCheckDeviceHasPartitions tests partition detection
+func (s *osdSuite) TestCheckDeviceHasPartitions() {
+	osdmgr := NewOSDManager(nil)
+	fs := afero.NewMemMapFs()
+	osdmgr.fs = fs
+
+	// Create mock validator
+	mockValidator := &MockPathValidator{}
+	osdmgr.validator = mockValidator
+
+	// Test with non-block device (should return false)
+	mockValidator.On("IsBlockdevPath", "/some/file").Return(false).Once()
+	storage := &api.ResourcesStorage{}
+	hasPartitions, err := osdmgr.checkDeviceHasPartitions(storage, "/some/file")
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), hasPartitions)
+
+	// Test with block device that has no partitions
+	mockValidator.On("IsBlockdevPath", "/dev/sda").Return(true).Once()
+	storage = &api.ResourcesStorage{
+		Disks: []api.ResourcesStorageDisk{
+			{
+				Device:     "8:0",
+				DeviceID:   "test-disk-id",
+				DevicePath: "pci-0000:00:1f.2-ata-1",
+				Partitions: []api.ResourcesStorageDiskPartition{}, // No partitions
+			},
+		},
+	}
+	hasPartitions, err = osdmgr.checkDeviceHasPartitions(storage, "/dev/sda")
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), hasPartitions)
+
+	// Test with block device that has partitions
+	mockValidator.On("IsBlockdevPath", "/dev/sdb").Return(true).Once()
+	storage = &api.ResourcesStorage{
+		Disks: []api.ResourcesStorageDisk{
+			{
+				Device:     "8:16",
+				DeviceID:   "test-disk-id-2",
+				DevicePath: "pci-0000:00:1f.2-ata-2",
+				Partitions: []api.ResourcesStorageDiskPartition{
+					{Device: "8:17", Partition: 1},
+					{Device: "8:18", Partition: 2},
+				},
+			},
+		},
+	}
+	hasPartitions, err = osdmgr.checkDeviceHasPartitions(storage, "/dev/sdb")
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), hasPartitions)
+
+	// Test with device not found in storage
+	mockValidator.On("IsBlockdevPath", "/dev/sdc").Return(true).Once()
+	storage = &api.ResourcesStorage{
+		Disks: []api.ResourcesStorageDisk{}, // Empty disks list
+	}
+	hasPartitions, err = osdmgr.checkDeviceHasPartitions(storage, "/dev/sdc")
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), hasPartitions)
 }
 
 // TestCheckEncryptSupport tests encryption support validation
 func (s *osdSuite) TestCheckEncryptSupport() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 	fs := afero.NewMemMapFs()
-	mgr.fs = fs
+	osdmgr.fs = fs
 
 	// Mock the processExec for isIntfConnected calls
 	r := mocks.NewRunner(s.T())
@@ -493,7 +693,7 @@ func (s *osdSuite) TestCheckEncryptSupport() {
 	defer func() { processExec = originalProcessExec }()
 
 	// Test missing /dev/mapper/control
-	err := mgr.checkEncryptSupport()
+	err := osdmgr.checkEncryptSupport()
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "missing /dev/mapper/control")
 
@@ -507,7 +707,7 @@ func (s *osdSuite) TestCheckEncryptSupport() {
 	r.On("RunCommand", "snapctl", "is-connected", "dm-crypt").Return("", fmt.Errorf("not connected")).Once()
 
 	// Test dm-crypt interface not connected
-	err = mgr.checkEncryptSupport()
+	err = osdmgr.checkEncryptSupport()
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "dm-crypt interface")
 
@@ -515,7 +715,7 @@ func (s *osdSuite) TestCheckEncryptSupport() {
 	r.On("RunCommand", "snapctl", "is-connected", "dm-crypt").Return("", nil).Once()
 
 	// Test missing dm_crypt module
-	err = mgr.checkEncryptSupport()
+	err = osdmgr.checkEncryptSupport()
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "missing dm_crypt module")
 
@@ -526,182 +726,180 @@ func (s *osdSuite) TestCheckEncryptSupport() {
 	// Mock interface check again for final test
 	r.On("RunCommand", "snapctl", "is-connected", "dm-crypt").Return("", nil).Once()
 
-	// Test /run access
+	// Test successful encryption support check, need /run directory
 	err = fs.MkdirAll("/run", 0755)
 	assert.NoError(s.T(), err)
-
-	err = mgr.checkEncryptSupport()
-	// Should pass all checks now
+	err = osdmgr.checkEncryptSupport()
 	assert.NoError(s.T(), err)
 }
 
 // TestTimeoutWipe tests device wiping with timeout
 func (s *osdSuite) TestTimeoutWipe() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
-	mgr.runner = r
+	osdmgr.runner = r
 
 	// Test successful wipe
 	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sda", "bs=4M", "count=10", "status=none").Return("", nil).Once()
-	err := mgr.timeoutWipe("/dev/sda")
+	err := osdmgr.timeoutWipe("/dev/sda")
 	assert.NoError(s.T(), err)
 
 	// Test failed wipe
 	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sdb", "bs=4M", "count=10", "status=none").Return("", fmt.Errorf("wipe failed")).Once()
-	err = mgr.timeoutWipe("/dev/sdb")
+	err = osdmgr.timeoutWipe("/dev/sdb")
 	assert.Error(s.T(), err)
 }
 
 // TestWipeDevice tests device wiping with retry logic
 func (s *osdSuite) TestWipeDevice() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
-	mgr.runner = r
+	osdmgr.runner = r
 
 	// Test successful wipe on first try
 	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sda", "bs=4M", "count=10", "status=none").Return("", nil).Once()
-	mgr.wipeDevice(context.Background(), "/dev/sda")
+	osdmgr.wipeDevice(context.Background(), "/dev/sda")
 
 	// Test wipe that succeeds after retries
 	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sdb", "bs=4M", "count=10", "status=none").Return("", fmt.Errorf("busy")).Once()
 	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sdb", "bs=4M", "count=10", "status=none").Return("", nil).Once()
-	mgr.wipeDevice(context.Background(), "/dev/sdb")
+	osdmgr.wipeDevice(context.Background(), "/dev/sdb")
 }
 
 // TestKillOSD tests OSD process termination
 func (s *osdSuite) TestKillOSD() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
-	mgr.runner = r
+	osdmgr.runner = r
 
 	// Test successful kill
 	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 0$").Return("", nil).Once()
-	err := mgr.killOSD(0)
+	err := osdmgr.killOSD(0)
 	assert.NoError(s.T(), err)
 
 	// Test failed kill
 	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 1$").Return("", fmt.Errorf("process not found")).Once()
-	err = mgr.killOSD(1)
+	err = osdmgr.killOSD(1)
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "failed to kill osd.1")
 }
 
 // TestOutDownOSD tests taking OSD out and down
 func (s *osdSuite) TestOutDownOSD() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
-	mgr.runner = r
+	osdmgr.runner = r
 
 	// Test successful out and down
 	r.On("RunCommand", "ceph", "osd", "out", "osd.0").Return("", nil).Once()
 	r.On("RunCommand", "ceph", "osd", "down", "osd.0").Return("", nil).Once()
-	err := mgr.outDownOSD(0)
+	err := osdmgr.outDownOSD(0)
 	assert.NoError(s.T(), err)
 
 	// Test failed out command
 	r.On("RunCommand", "ceph", "osd", "out", "osd.1").Return("", fmt.Errorf("out failed")).Once()
-	err = mgr.outDownOSD(1)
+	err = osdmgr.outDownOSD(1)
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "failed to take osd.1 out")
 
 	// Test failed down command
 	r.On("RunCommand", "ceph", "osd", "out", "osd.2").Return("", nil).Once()
 	r.On("RunCommand", "ceph", "osd", "down", "osd.2").Return("", fmt.Errorf("down failed")).Once()
-	err = mgr.outDownOSD(2)
+	err = osdmgr.outDownOSD(2)
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "failed to take osd.2 down")
 }
 
 // TestDoPurge tests OSD purge command
 func (s *osdSuite) TestDoPurge() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
-	mgr.runner = r
+	osdmgr.runner = r
 
 	// Test successful purge
 	r.On("RunCommand", "ceph", "osd", "purge", "osd.0", "--yes-i-really-mean-it").Return("", nil).Once()
-	err := mgr.doPurge(0)
+	err := osdmgr.doPurge(0)
 	assert.NoError(s.T(), err)
 
 	// Test failed purge
 	r.On("RunCommand", "ceph", "osd", "purge", "osd.1", "--yes-i-really-mean-it").Return("", fmt.Errorf("purge failed")).Once()
-	err = mgr.doPurge(1)
+	err = osdmgr.doPurge(1)
 	assert.Error(s.T(), err)
 }
 
 // TestTestSafeStop tests OSD safe stop check
 func (s *osdSuite) TestTestSafeStop() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
-	mgr.runner = r
+	osdmgr.runner = r
 
 	// Test safe to stop
 	r.On("RunCommand", "ceph", "osd", "ok-to-stop", "osd.0").Return("", nil).Once()
-	result := mgr.testSafeStop([]int64{0})
+	result := osdmgr.testSafeStop([]int64{0})
 	assert.True(s.T(), result)
 
 	// Test not safe to stop
 	r.On("RunCommand", "ceph", "osd", "ok-to-stop", "osd.1").Return("", fmt.Errorf("not safe")).Once()
-	result = mgr.testSafeStop([]int64{1})
+	result = osdmgr.testSafeStop([]int64{1})
 	assert.False(s.T(), result)
 
 	// Test multiple OSDs
 	r.On("RunCommand", "ceph", "osd", "ok-to-stop", "osd.0", "osd.1").Return("", nil).Once()
-	result = mgr.testSafeStop([]int64{0, 1})
+	result = osdmgr.testSafeStop([]int64{0, 1})
 	assert.True(s.T(), result)
 }
 
 // TestTestSafeDestroy tests OSD safe destroy check
 func (s *osdSuite) TestTestSafeDestroy() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
-	mgr.runner = r
+	osdmgr.runner = r
 
 	// Test safe to destroy
 	r.On("RunCommand", "ceph", "osd", "safe-to-destroy", "osd.0").Return("", nil).Once()
-	result := mgr.testSafeDestroy(0)
+	result := osdmgr.testSafeDestroy(0)
 	assert.True(s.T(), result)
 
 	// Test not safe to destroy
 	r.On("RunCommand", "ceph", "osd", "safe-to-destroy", "osd.1").Return("", fmt.Errorf("not safe")).Once()
-	result = mgr.testSafeDestroy(1)
+	result = osdmgr.testSafeDestroy(1)
 	assert.False(s.T(), result)
 }
 
 // TestReweightOSD tests OSD reweighting
 func (s *osdSuite) TestReweightOSD() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
-	mgr.runner = r
+	osdmgr.runner = r
 
 	// Test successful reweight
 	r.On("RunCommand", "ceph", "osd", "crush", "reweight", "osd.0", "0.000000").Return("", nil).Once()
-	mgr.reweightOSD(context.Background(), 0, 0.0)
+	osdmgr.reweightOSD(context.Background(), 0, 0.0)
 
 	// Test failed reweight (should only log warning, not return error)
 	r.On("RunCommand", "ceph", "osd", "crush", "reweight", "osd.1", "1.000000").Return("", fmt.Errorf("reweight failed")).Once()
-	mgr.reweightOSD(context.Background(), 1, 1.0)
+	osdmgr.reweightOSD(context.Background(), 1, 1.0)
 }
 
 // TestValidateAddOSDArgs tests OSD addition argument validation
 func (s *osdSuite) TestValidateAddOSDArgs() {
-	mgr := NewOSDManager(nil)
+	osdmgr := NewOSDManager(nil)
 
 	// Test valid args
 	data := types.DiskParameter{Path: "/dev/sda"}
-	err := mgr.validateAddOSDArgs(data, nil, nil)
+	err := osdmgr.validateAddOSDArgs(data, nil, nil)
 	assert.NoError(s.T(), err)
 
-	// Test loopback with WAL (should fail)
+	// Test loopback with WAL, should fail as we req. a real block device
 	loopData := types.DiskParameter{LoopSize: 1024}
 	wal := &types.DiskParameter{Path: "/dev/wal"}
-	err = mgr.validateAddOSDArgs(loopData, wal, nil)
+	err = osdmgr.validateAddOSDArgs(loopData, wal, nil)
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "loopback and WAL/DB are mutually exclusive")
 
 	// Test loopback with DB (should fail)
 	db := &types.DiskParameter{Path: "/dev/db"}
-	err = mgr.validateAddOSDArgs(loopData, nil, db)
+	err = osdmgr.validateAddOSDArgs(loopData, nil, db)
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "loopback and WAL/DB are mutually exclusive")
 }
