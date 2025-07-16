@@ -360,7 +360,7 @@ func (s *osdSuite) TestAddBulkDisksValidation() {
 // TestNewOSDManager tests the OSDManager constructor
 func (s *osdSuite) TestNewOSDManager() {
 	state := &mocks.MockState{}
-	mgr = NewOSDManager(state)
+	mgr := NewOSDManager(state)
 	assert.NotNil(s.T(), mgr)
 	assert.Equal(s.T(), state, mgr.state)
 	assert.NotNil(s.T(), mgr.runner)
