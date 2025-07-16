@@ -18,6 +18,7 @@ Available commands:
    mds         Enable the MDS service on the --target server (default: this server)
    mgr         Enable the MGR service on the --target server (default: this server)
    mon         Enable the MON service on the --target server (default: this server)
+   nfs         Enable the NFS Ganesha service on the --target server (default: this server)
    rgw         Enable the RGW service on the --target server (default: this server)
 
 Global flags:
@@ -89,6 +90,30 @@ Flags:
    --target string   Server hostname (default: this server)
    --wait            Wait for mon service to be up. (default true)
    
+
+``nfs``
+-------
+
+Enables the NFS Ganesha service on the --target server (default: this server).
+
+Usage:
+
+.. code-block:: none
+
+   microceph enable nfs --cluster-id <cluster-id> [--bind-address <ip-address>] [--bind-port <port-num>] [--v4-min-version 0/1/2] [--target <server>] [--wait <bool>] [flags]
+
+
+Flags:
+
+.. code-block:: none
+
+   --bind-address string   Bind address to use for the NFS Ganesha service (default "0.0.0.0")
+   --bind-port uint        Bind port to use for the NFS Ganesha service (default 2049)
+   --cluster-id string     NFS Cluster ID (must match regex: '^[\w][\w.-]{1,61}[\w]$')
+   --target string         Server hostname (default: this server)
+   --v4-min-version uint   Minimum supported version (default 1)
+   --wait                  Wait for nfs service to be up (default true)
+
 
 ``rgw``
 -------
