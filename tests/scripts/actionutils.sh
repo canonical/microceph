@@ -148,21 +148,21 @@ function enable_nfs_in_nodes() {
     done
 }
 
-function create_nfs_fs() {
+function create_nfs_fs_volume() {
     set -x
 
-    # Create a new NFS FS with the microceph NFS rados pools.
-    local fsname="${1}"
-    sudo microceph.ceph fs new "${fsname}" .nfs.metadata .nfs
+    # Create a new NFS FS volume.
+    local volume_name="${1}"
+    sudo microceph.ceph fs volume create "${volume_name}"
 }
 
-function create_nfs_fs_in_node() {
+function create_nfs_fs_volume_in_node() {
     set -x
 
-    # Create a new NFS FS with the microceph NFS rados pools.
-    local fsname="${1}"
+    # Create a new NFS FS volume.
+    local volume_name="${1}"
     local container="${2}"
-    lxc exec $container -- sh -c "microceph.ceph fs new ${fsname} .nfs.metadata .nfs"
+    lxc exec $container -- sh -c "microceph.ceph fs volume create ${volume_name}"
 }
 
 function create_nfs_export() {

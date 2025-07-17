@@ -937,8 +937,8 @@ jobs:
     - name: Enable NFS
       run: ~/actionutils.sh enable_nfs foo
 
-    - name: Create NFS FS
-      run: ~/actionutils.sh create_nfs_fs testfs
+    - name: Create NFS FS volume
+      run: ~/actionutils.sh create_nfs_fs_volume testfs
 
     - name: Create NFS export
       run: ~/actionutils.sh create_nfs_export foo testfs
@@ -1013,8 +1013,8 @@ jobs:
     - name: Enable NFS
       run: ~/actionutils.sh enable_nfs_in_nodes foo node-wrk0 node-wrk1 node-wrk2
 
-    - name: Create NFS FS
-      run: ~/actionutils.sh create_nfs_fs_in_node testfs node-wrk0
+    - name: Create NFS FS volume
+      run: ~/actionutils.sh create_nfs_fs_volume_in_node testfs node-wrk0
 
     - name: Create NFS export
       run: ~/actionutils.sh create_nfs_export_in_node foo testfs node-wrk0
