@@ -8,6 +8,7 @@ import logging
 from typing import Tuple, Dict, Any, List, Optional
 from collections import defaultdict
 import time
+import json
 
 from ceph.deployment.inventory import Device, Devices
 from ceph.deployment.service_spec import (
@@ -53,8 +54,6 @@ class MicroCephOrchestrator(Orchestrator,
         """
         super(MicroCephOrchestrator, self).__init__(*args, **kwargs)
         self.microceph = Client.from_socket()
-        logger.info(f"SysExec: {sys.executable}, SysVersion: {sys.version}, SysPath: {sys.path}, SysPrefix: {sys.prefix}, SysExecPrefix: {sys.exec_prefix}, SysBasePrefix: {sys.base_prefix}, SysBaseExecPrefix: {sys.base_exec_prefix}")
-        logger.info(f"OS: {os.environ.items()}")
         self.run = True
 
     def serve(self) -> None:
@@ -126,10 +125,12 @@ class MicroCephOrchestrator(Orchestrator,
 
         :return: list of HostSpec
         """
-        return [
-            HostSpec(m['name'], m['address'], status=m['status'])
-            for m in self.microceph.cluster.get_cluster_members()
-        ]
+        specs = []
+        for m in self.microceph.cluster.get_cluster_members():
+            addr, _, _ = m['address'].rpartition(":")
+            specs.append(HostSpec(m['name'], addr, status=m['status']))
+
+        return specs
 
     @handle_orch_error
     def describe_service(self,
@@ -147,16 +148,27 @@ class MicroCephOrchestrator(Orchestrator,
             service_map[svc['service']].append(svc['location'])
 
         service_descs = []
-        for service, locations in service_map.items():
+        for service in services:
             spec = None
-            if service == 'mon':
-                spec = MONSpec('mon', count=len(locations))
-            elif service == 'mds':
-                spec = MDSSpec('mds')
-            elif service == 'rgw':
-                spec = RGWSpec('rgw')
+            name = service['service']
+            hostname = service['location']
+            svc_id = service['group_id']
+            info = service['info']
+            logger.info(f"InfoStr: {info}")
+            
+            if service_type and name != service_type:
+                continue
+
+            if name == 'mon':
+                spec = MONSpec(service_type='mon', placement=PlacementSpec(hosts=[hostname], count=1))
+            elif name == 'mds':
+                spec = MDSSpec(service_type='mds', placement=PlacementSpec(hosts=[hostname], count=1))
+            elif name == 'rgw':
+                spec = RGWSpec(service_type='rgw', placement=PlacementSpec(hosts=[hostname], count=1))
+            elif name == 'nfs':
+                spec = NFSServiceSpec(service_id=svc_id, placement=PlacementSpec(hosts=[hostname], count=1))
             else:
-                spec = ServiceSpec(service_type=service, count=len(locations))
+                spec = ServiceSpec(service_type=name, placement=PlacementSpec(hosts=[hostname], count=1))
 
             service_descs.append(ServiceDescription(
                 spec=spec
@@ -179,13 +191,31 @@ class MicroCephOrchestrator(Orchestrator,
         services = self.microceph.services.list_services()
         descriptions = []
         for svc in services:
-            daemon_type = svc['service']
-            hostname = svc['location']
+            svc_daemon_type = svc['service']
+            svc_hostname = svc['location']
+            svc_group_ip = svc['group_id']
+            svc_ip = None
+            svc_ports = None
+            svc_name = f"{svc_daemon_type}.{svc_group_ip}" if svc_group_ip else svc_daemon_type
+            if daemon_type:
+                if svc_daemon_type != daemon_type:
+                    continue
+
+            if svc_daemon_type == 'nfs':
+                info = json.loads(svc['info'])
+                svc_ip = None if "0.0.0.0" in info['bind_address'] else info['bind_address']
+                svc_ports = [info['bind_port']]
+            
             descriptions.append(DaemonDescription(
-                daemon_type=daemon_type,
-                daemon_id=hostname,
-                hostname=hostname
+                service_name=svc_name,
+                daemon_type=svc_daemon_type,
+                daemon_id=svc_hostname,
+                hostname=svc_hostname,
+                ip=svc_ip,
+                ports=svc_ports
             ))
+
+        logger.info(descriptions)
         return descriptions
 
     def get_inventory(self,
