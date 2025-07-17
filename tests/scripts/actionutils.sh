@@ -98,6 +98,92 @@ function add_lvm_vol() {
     fi
 }
 
+function disable_nfs() {
+    set -x
+
+    # Disable nfs with the given cluster_id
+    local cluster_id="${1}"
+    sudo microceph disable nfs --cluster-id "${cluster_id}"
+}
+
+function disable_nfs_in_nodes() {
+    set -x
+
+    if [ "$#" -lt 2 ]; then
+      echo "Expected cluster_id and at least one container name."
+      exit 1
+    fi
+
+    # Disable nfs with the given cluster_id in containers.
+    local cluster_id="${1}"
+    shift 1
+
+    for container in "$@"; do
+      lxc exec $container -- sh -c "microceph disable nfs --cluster-id ${cluster_id}"
+    done
+}
+
+function enable_nfs() {
+    set -x
+
+    # Enable nfs with the given cluster_id and wait for it.
+    local cluster_id="${1}"
+    sudo microceph enable nfs --cluster-id "${cluster_id}" --wait
+}
+
+function enable_nfs_in_nodes() {
+    set -x
+
+    if [ "$#" -lt 2 ]; then
+      echo "Expected cluster_id and at least one container name."
+      exit 1
+    fi
+
+    # Enable nfs with the given cluster_id in containers.
+    local cluster_id="${1}"
+    shift 1
+
+    for container in "$@"; do
+      lxc exec $container -- sh -c "microceph enable nfs --cluster-id ${cluster_id}"
+    done
+}
+
+function create_nfs_fs() {
+    set -x
+
+    # Create a new NFS FS with the microceph NFS rados pools.
+    local fsname="${1}"
+    sudo microceph.ceph fs new "${fsname}" .nfs.metadata .nfs
+}
+
+function create_nfs_fs_in_node() {
+    set -x
+
+    # Create a new NFS FS with the microceph NFS rados pools.
+    local fsname="${1}"
+    local container="${2}"
+    lxc exec $container -- sh -c "microceph.ceph fs new ${fsname} .nfs.metadata .nfs"
+}
+
+function create_nfs_export() {
+    set -x
+
+    # Create a NFS export for the given cluster and NFS FS.
+    local cluster_id="${1}"
+    local fsname="${2}"
+    sudo microceph.ceph nfs export create cephfs "${cluster_id}" "/${fsname}dir" "${fsname}"
+}
+
+function create_nfs_export_in_node() {
+    set -x
+
+    # Create a NFS export for the given cluster and NFS FS.
+    local cluster_id="${1}"
+    local fsname="${2}"
+    local container="${3}"
+    lxc exec $container -- sh -c "microceph.ceph nfs export create cephfs ${cluster_id} /${fsname}dir ${fsname}"
+}
+
 function disable_rgw() {
     set -x
     # Disable rgw

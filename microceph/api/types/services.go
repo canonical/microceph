@@ -1,6 +1,10 @@
 // Package types provides shared types and structs.
 package types
 
+import (
+	"regexp"
+)
+
 // Services holds a slice of services
 type Services []Service
 
@@ -8,6 +12,8 @@ type Services []Service
 type Service struct {
 	Service  string `json:"service" yaml:"service"`
 	Location string `json:"location" yaml:"location"`
+	GroupID  string `json:"group_id" yaml:"group_id"`
+	Info     string `json:"info" yaml:"info"`
 }
 
 // Name: Name of the service to be enabled
@@ -19,6 +25,14 @@ type EnableService struct {
 	Payload string `json:"payload" yaml:"payload"`
 	// Enable Service passes all additional data as a json payload string.
 }
+
+// NFSService holds the Cluster ID of the NFS Service.
+type NFSService struct {
+	ClusterID string `json:"cluster_id" yaml:"cluster_id"`
+}
+
+// NFSClusterIDRegex is a regex for acceptable ClusterIDs.
+var NFSClusterIDRegex = regexp.MustCompile(`^[\w][\w.-]{1,61}[\w]$`)
 
 // RGWService holds a port number and enable/disable flag
 type RGWService struct {
