@@ -85,9 +85,9 @@ func EnableNFS(s interfaces.StateInterface, nfs *NFSServicePlacement, monitorAdd
 		}
 	})
 
-	// Create the NFS Pools if needed.
-	logger.Debugf("Creating NFS Rados Pools (ClusterID '%s')", nfs.ClusterID)
-	err = ensureNFSPools(nfs.ClusterID)
+	// Create the NFS Pool if needed.
+	logger.Debugf("Creating NFS Rados Pool (ClusterID '%s')", nfs.ClusterID)
+	err = ensureNFSPool(nfs.ClusterID)
 	if err != nil {
 		return err
 	}
@@ -243,25 +243,19 @@ func createNFSKeyring(path, clusterID, userID string) error {
 	return nil
 }
 
-// ensureNFSPools creates the NFS data and metadata Pools for Ganesha if they do not exist.
-func ensureNFSPools(clusterID string) error {
+// ensureNFSPool creates the NFS Pool for Ganesha if it does not exist.
+func ensureNFSPool(clusterID string) error {
 	logger.Debugf("Creating '.nfs' rados pool if it doesn't exist.")
 	_, err := radosRun("ls", "--pool", ".nfs", "--all", "--create")
 	if err != nil && !strings.Contains(err.Error(), "File exists") {
 		return fmt.Errorf("failed to create .nfs pool: %w", err)
 	}
 
-	logger.Debugf("Creating '.nfs.metadata' rados pool if it doesn't exist.")
-	_, err = radosRun("ls", "--pool", ".nfs.metadata", "--all", "--create")
-	if err != nil && !strings.Contains(err.Error(), "File exists") {
-		return fmt.Errorf("failed to create .nfs.metadata pool: %w", err)
-	}
-
 	// the command is idempotent.
-	logger.Debugf("Enabling cephfs application on '.nfs' pool.")
-	_, err = osdEnablePoolApp(".nfs", "cephfs")
+	logger.Debugf("Enabling nfs application on '.nfs' pool.")
+	_, err = osdEnablePoolApp(".nfs", "nfs")
 	if err != nil {
-		return fmt.Errorf("failed to enable .nfs pool: %w", err)
+		return fmt.Errorf("failed to enable 'nfs' on the .nfs pool: %w", err)
 	}
 
 	object := fmt.Sprintf("conf-nfs.%s", clusterID)
@@ -271,7 +265,7 @@ func ensureNFSPools(clusterID string) error {
 		return fmt.Errorf("failed to create object for Ganesha: %w", err)
 	}
 
-	logger.Debugf("Finished creating rados pools and objects for NFS with ClusterID %s.", clusterID)
+	logger.Debugf("Finished creating the rados pool and object for NFS with ClusterID %s.", clusterID)
 	return nil
 }
 
