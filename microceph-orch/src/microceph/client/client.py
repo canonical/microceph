@@ -13,7 +13,7 @@ import requests_unixsocket  # type: ignore [import-untyped]
 from snaphelpers import Snap
 from urllib3 import poolmanager
 
-from .cluster import StatusService, ExtendedAPIService
+from .cluster import StatusService, ExtendedAPIService, MicroClusterService
 
 
 class MTLSAdapter(requests.adapters.HTTPAdapter):
@@ -88,6 +88,7 @@ class Client:
                 MTLSAdapter(certificate_authority=certificate_authority),
             )
 
+        self.cluster = MicroClusterService(self._session, self._endpoint, self._certs)
         self.status = StatusService(self._session, self._endpoint, self._certs)
         self.services = ExtendedAPIService(self._session, self._endpoint, self._certs)
 
