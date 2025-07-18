@@ -31,7 +31,9 @@ Check Ceph cluster's status:
         usage:   137 MiB used, 12 GiB / 12 GiB avail
         pgs:     97 active+clean
 
-Create data/metadata pools for CephFs:
+Create data/metadata pools for CephFs (if you've `enabled NFS in MicroCeph
+<enable-service-instances>`, you can use the existing `.nfs` and
+`.nfs.metadata` pools instead):
 
 .. code-block:: none
 
