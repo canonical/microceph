@@ -2,15 +2,22 @@ package common
 
 import (
 	"bufio"
-	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/constants"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/spf13/afero"
 )
 
 // IsMounted checks if a device is mounted.
 func IsMounted(device string) (bool, error) {
+	return IsMountedWithFs(device, afero.NewOsFs())
+}
+
+// IsMountedWithFs checks if a device is mounted using the provided filesystem.
+func IsMountedWithFs(device string, fs afero.Fs) (bool, error) {
 	// Resolve any symlink and get the absolute path of the device.
 	// Note /proc/mounts contains the absolute path of the device as well.
 	resolvedPath, err := filepath.EvalSymlinks(filepath.Join(constants.GetPathConst().RootFs, device))
@@ -18,7 +25,7 @@ func IsMounted(device string) (bool, error) {
 		// Handle errors other than not existing differently as EvalSymlinks takes care of symlink resolution
 		return false, err
 	}
-	file, err := os.Open(filepath.Join(constants.GetPathConst().ProcPath, "mounts"))
+	file, err := fs.Open(filepath.Join(constants.GetPathConst().ProcPath, "mounts"))
 	if err != nil {
 		return false, err
 	}
@@ -43,6 +50,11 @@ func IsMounted(device string) (bool, error) {
 
 // IsCephDevice checks if a given device is used as either a WAL or DB block device in any Ceph OSD.
 func IsCephDevice(device string) (bool, error) {
+	return IsCephDeviceWithFs(device, afero.NewOsFs())
+}
+
+// IsCephDeviceWithFs checks if a given device is used as either a WAL or DB block device in any Ceph OSD using the provided filesystem.
+func IsCephDeviceWithFs(device string, fs afero.Fs) (bool, error) {
 	// Resolve the given device path first to handle any symlinks
 	resolved, err := filepath.EvalSymlinks(device)
 	if err != nil {
@@ -51,7 +63,7 @@ func IsCephDevice(device string) (bool, error) {
 	}
 	// Check all ceph data dirs
 	baseDir := filepath.Join(constants.GetPathConst().DataPath, "osd")
-	osdDirs, err := os.ReadDir(baseDir)
+	osdDirs, err := afero.ReadDir(fs, baseDir)
 	if err != nil {
 		// Likely no OSDs exist yet
 		logger.Debugf("couldn't read osd data dir %s: %v", baseDir, err)

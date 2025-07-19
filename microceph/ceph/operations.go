@@ -73,7 +73,8 @@ func (o *CheckOsdOkToStopOps) Run(name string) error {
 		return err
 	}
 
-	if !testSafeStop(OsdsToCheck) {
+	mgr := NewOSDManager(o.State)
+	if !mgr.testSafeStop(OsdsToCheck) {
 		return fmt.Errorf("osds.%v cannot be safely stopped", OsdsToCheck)
 	}
 
