@@ -2,8 +2,6 @@
 # Copyright 2025, Canonical Ltd.
 #
 
-import os, sys
-
 import logging
 from typing import Tuple, Dict, Any, List, Optional
 from collections import defaultdict
@@ -14,11 +12,10 @@ from ceph.deployment.inventory import Device, Devices
 from ceph.deployment.service_spec import (
     ServiceSpec,
     PlacementSpec,
-    HostPlacementSpec,
-    IngressSpec,
     RGWSpec,
     MONSpec,
-    MDSSpec, NFSServiceSpec,
+    MDSSpec,
+    NFSServiceSpec,
 )
 
 from mgr_module import MgrModule
@@ -41,6 +38,12 @@ from .client.service import RemoteException
 
 logger = logging.getLogger(__name__)
 
+daemon_spec_map = {
+    'mon': MONSpec,
+    'mds': MDSSpec,
+    'rgw': RGWSpec,
+    'nfs': NFSServiceSpec,
+}
 
 class MicroCephOrchestrator(Orchestrator,
                             MgrModule,
@@ -132,6 +135,24 @@ class MicroCephOrchestrator(Orchestrator,
 
         return specs
 
+    def _get_service_hostlist(self, recorded_services: list) -> dict:
+        """Get a dict describing the distribution of services"""
+        service_hostlist = defaultdict(list)
+        for record in recorded_services:
+            service_name = record['service'] if not record['group_id'] else f"{record['service']}.{record['group_id']}"
+            service_host = record['location']
+            service_hostlist[service_name].append(service_host)
+            logger.info(f"microcephs record service({service_name}) at ({service_host}) configured({record['info']})")
+        return service_hostlist
+
+    def _elaborate_service(self, service: str):
+        """Elaborate a service into id and type"""
+        if '.' in service:
+            segments = service.split('.')
+            return segments[0], segments[1]
+        else:
+            return service, ""
+
     @handle_orch_error
     def describe_service(self,
                 service_type: Optional[str] = None,
@@ -142,36 +163,31 @@ class MicroCephOrchestrator(Orchestrator,
         logger.info(f"describing service... service_type={service_type}, service_name={service_name}, "
                     f"refresh={refresh}")
 
-        services = self.microceph.services.list_services()
-        service_map = defaultdict(list)
-        for svc in services:
-            service_map[svc['service']].append(svc['location'])
+        recorded_services = self.microceph.services.list_services()
+        service_hostlist = self._get_service_hostlist(recorded_services)
 
         service_descs = []
-        for service in services:
+        for svc_name, hostlist in service_hostlist.items():
             spec = None
-            name = service['service']
-            hostname = service['location']
-            svc_id = service['group_id']
-            info = service['info']
-            logger.info(f"InfoStr: {info}")
-            
-            if service_type and name != service_type:
+            svc_type, svc_id = self._elaborate_service(svc_name)
+            logger.info(f"{svc_name} under description for filter {service_type}")
+
+            # skip unrelated services if a specific daemon type is requested.
+            if service_type and svc_type != service_type:
                 continue
 
-            if name == 'mon':
-                spec = MONSpec(service_type='mon', placement=PlacementSpec(hosts=[hostname], count=1))
-            elif name == 'mds':
-                spec = MDSSpec(service_type='mds', placement=PlacementSpec(hosts=[hostname], count=1))
-            elif name == 'rgw':
-                spec = RGWSpec(service_type='rgw', placement=PlacementSpec(hosts=[hostname], count=1))
-            elif name == 'nfs':
-                spec = NFSServiceSpec(service_id=svc_id, placement=PlacementSpec(hosts=[hostname], count=1))
+            if svc_type in daemon_spec_map:
+                spec = daemon_spec_map[svc_type](
+                    service_id=svc_id, service_type=svc_type, placement=PlacementSpec(hosts=hostlist, count=len(hostlist))
+                )
             else:
-                spec = ServiceSpec(service_type=name, placement=PlacementSpec(hosts=[hostname], count=1))
+                spec = ServiceSpec(
+                    service_id=svc_id, service_type=svc_type, placement=PlacementSpec(hosts=hostlist, count=len(hostlist))
+                )
 
             service_descs.append(ServiceDescription(
-                spec=spec
+                spec=spec,
+                running=len(hostlist)
             ))
 
         return service_descs
