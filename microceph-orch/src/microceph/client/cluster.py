@@ -12,34 +12,6 @@ LOG = logging.getLogger(__name__)
 class MicroClusterService(service.BaseService):
     """Client for default MicroCluster Service API."""
 
-    def bootstrap_cluster(self, name: str, address: str) -> None:
-        """Bootstrap the micro cluster.
-
-        Bootstraps the cluster adding local node specified by
-        name as bootstrap node. The address should be in
-        format <IP>:<PORT> where the microcluster service
-        is running.
-
-        Raises NodeAlreadyExistsException if bootstrap is
-        invoked on already existing node in cluster.
-        """
-        data = {"bootstrap": True, "address": address, "name": name}
-        self._post("/core/control", data=json.dumps(data))
-
-    def join(self, name: str, address: str, token: str) -> None:
-        """Join node to the micro cluster.
-
-        Verified the token with the list of saved tokens and
-        joins the node with the given name and address.
-
-        Raises NodeAlreadyExistsException if the node is already
-        part of the cluster.
-        Raises NodeJoinException if the token doesnot match or not
-        part of the generated tokens list.
-        """
-        data = {"join_token": token, "address": address, "name": name}
-        self._post("/core/control", data=json.dumps(data))
-
     def get_cluster_members(self) -> list:
         """List members in the cluster.
 
@@ -62,30 +34,6 @@ class MicroClusterService(service.BaseService):
         member of the cluster.
         """
         self._delete(f"/core/1.0/cluster/{name}")
-
-    def generate_token(self, name: str) -> str:
-        """Generate token for the node.
-
-        Generate a new token for the node with name.
-
-        Raises TokenAlreadyGeneratedException if token is already
-        generated.
-        """
-        data = {"name": name}
-        result = self._post("/core/control/tokens", data=json.dumps(data))
-        return result.get("metadata")
-
-    def list_tokens(self) -> list:
-        """List all generated tokens."""
-        tokens = self._get("/core/control/tokens")
-        return tokens.get("metadata")
-
-    def delete_token(self, name: str) -> None:
-        """Delete token for the node.
-
-        Raises TokenNotFoundException if token does not exist.
-        """
-        self._delete(f"/core/1.0/tokens/{name}")
 
 class StatusService(service.BaseService):
     """Client for the MicroCeph status API."""

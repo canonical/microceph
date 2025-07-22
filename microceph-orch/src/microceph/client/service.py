@@ -81,7 +81,7 @@ class URLNotFoundException(RemoteException):
 
 
 class BaseService(ABC):
-    """BaseService is the base service class for sunbeam clusterd services."""
+    """BaseService is the base service class for microcluster services."""
 
     def __init__(
         self,
@@ -90,13 +90,13 @@ class BaseService(ABC):
         certs=None,
         timeout: int | float | None = None,
     ):
-        """Creates a new BaseService for the sunbeam clusterd API.
+        """Creates a new BaseService for the microcluster API.
 
         The service class is used to provide convenient APIs for clients to
-        use when interacting with the sunbeam clusterd api.
+        use when interacting with the microcluster api.
 
 
-        :param session: session to use when interacting with the sunbeam clusterd API
+        :param session: session to use when interacting with the microcluster API
         :type: Session
         """
         self.__session = session
@@ -137,7 +137,7 @@ class BaseService(ABC):
             msg = str(e)
             if "FileNotFoundError" in msg:
                 raise ClusterServiceUnavailableException(
-                    "Sunbeam Cluster socket not found, is clusterd running ?"
+                    "Microcluster socket not found, is clusterd running ?"
                     " Check with 'snap services openstack.clusterd'",
                 ) from e
             raise ClusterServiceUnavailableException(msg)
@@ -145,21 +145,21 @@ class BaseService(ABC):
         try:
             response.raise_for_status()
         except HTTPError as e:
-            # Do some nice translating to sunbeamdexceptions
+            # Do some nice translating to microclusterdexceptions
             error = response.json().get("error")
             if "remote with name" in error:
                 raise NodeAlreadyExistsException(
-                    "Already node exists in the sunbeam cluster"
+                    "Already node exists in the microcluster"
                 )
             elif "not found" == error:
                 raise URLNotFoundException("URL not found")
             elif "No remote exists with the given name" in error:
                 raise NodeNotExistInClusterException(
-                    "Node does not exist in the sunbeam cluster"
+                    "Node does not exist in the microcluster"
                 )
             elif "Node not found" in error:
                 raise NodeNotExistInClusterException(
-                    "Node does not exist in the sunbeam cluster"
+                    "Node does not exist in the microcluster"
                 )
             elif "Failed to join cluster with the given join token" in error:
                 raise NodeJoinException(
@@ -171,7 +171,7 @@ class BaseService(ABC):
                 )
             elif "Database is not yet initialized" in error:
                 raise ClusterServiceUnavailableException(
-                    "Sunbeam Cluster not initialized"
+                    "Microcluster not initialized"
                 )
             elif "InternalTokenRecord not found" in error:
                 raise TokenNotFoundException("Token not found for the node")
