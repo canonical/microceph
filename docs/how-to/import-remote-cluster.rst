@@ -26,6 +26,11 @@ At the primary cluster, this token can be imported to create the remote record.
 
    sudo microceph remote import simple eyJmc2lkIjoiN2FiZmMwYmItNjIwNC00M2FmLTg4NDQtMjg3NDg2OGNiYTc0Iiwia2V5cmluZy5jbGllbnQubWFnaWNhbCI6IkFRQ0hJdmRtNG91SUNoQUFraGsvRldCUFI0WXZCRkpzUC92dDZ3PT0iLCJtb24uaG9zdC5zaW1wbGUtcmVpbmRlZXIiOiIxMC40Mi44OC42OSIsInB1YmxpY19uZXR3b3JrIjoiMTAuNDIuODguNjkvMjQifQ== --local-name magical
 
+.. note::
+
+   The value of ``--local-name`` must be different from the remote cluster name (``simple`` in this example).
+   Using the same name for both will result in an error to avoid conflicts during replication.
+
 This will create the required $simple.conf and $simple.keyring files.
 Note: Importing a remote cluster is a uni-directional operation. For symmetric
 relations both clusters should be added as remotes at each other.

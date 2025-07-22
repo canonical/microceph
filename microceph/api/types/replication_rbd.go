@@ -97,6 +97,7 @@ type RbdReplicationRequest struct {
 	SourcePool  string `json:"source_pool" yaml:"source_pool"`
 	SourceImage string `json:"source_image" yaml:"source_image"`
 	RemoteName  string `json:"remote" yaml:"remote"`
+	LocalAlias  string `json:"local_alias" yaml:"local_alias"`
 	// snapshot in d,h,m format
 	Schedule        string                 `json:"schedule" yaml:"schedule"`
 	ReplicationType RbdReplicationType     `json:"replication_type" yaml:"replication_type"`
