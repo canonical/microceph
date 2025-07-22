@@ -234,10 +234,11 @@ class MicroCephOrchestrator(Orchestrator,
         logger.info(descriptions)
         return descriptions
 
+    @handle_orch_error
     def get_inventory(self,
                 host_filter: Optional[InventoryFilter] = None,
                 refresh: bool = False
-            ) -> OrchResult[List[InventoryHost]]:
+            ) -> List[InventoryHost]:
 
         disks = self.microceph.services.list_disks()
         disks_by_host = defaultdict(list)
@@ -253,7 +254,11 @@ class MicroCephOrchestrator(Orchestrator,
                 devices=Devices(diskettes)
             ))
 
-        return OrchResult(inventory)
+        return inventory
+
+    def apply_rbd_mirror(self, spec: ServiceSpec) -> OrchResult[str]:
+        logger.info(f"Received Apply Request for RBD Mirror: Spec: {vars(spec).items()}")
+        raise NotImplementedError() 
 
     def apply_rgw(self, spec: RGWSpec) -> OrchResult[str]:
         """
