@@ -1131,15 +1131,17 @@ function test_v2_single_node() {
         echo "messenger V1 port is still being used"
         exit 1
     fi
-    # make sure port 3300 (v2) is used, while 6789 (v1) is not.
-    tail -n +2 /proc/net/tcp | awk '{split($2, a, ":"); print strtonum("0x" a[2])}' | grep -q 3300
+
+    sudo ss -Htnpl 'sport :3300' | grep -c ceph-mon
     if [ "$?" -ne 0 ]; then
-        echo "port 3300 is not being used"
+        echo "ceph-mon is not listening on port 3300"
+        exit 1
     fi
 
-    tail -n +2 /proc/net/tcp | awk '{split($2, a, ":"); print strtonum("0x" a[2])}' | grep -q 6789
+    sudo ss -Htnpl 'sport :6789' | grep -c ceph-mon
     if [ "$?" -eq 0 ]; then
-        echo "port 6789 is still being used"
+        echo "ceph-mon is still listening on port 6789"
+        exit 1
     fi
 }
 
