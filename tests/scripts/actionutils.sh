@@ -1131,6 +1131,16 @@ function test_v2_single_node() {
         echo "messenger V1 port is still being used"
         exit 1
     fi
+    # make sure port 3300 (v2) is used, while 6789 (v1) is not.
+    tail -n +2 /proc/net/tcp | awk '{split($2, a, ":"); print strtonum("0x" a[2])}' | grep -q 3300
+    if [ "$?" -ne 0 ]; then
+        echo "port 3300 is not being used"
+    fi
+
+    tail -n +2 /proc/net/tcp | awk '{split($2, a, ":"); print strtonum("0x" a[2])}' | grep -q 6789
+    if [ "$?" -eq 0 ]; then
+        echo "port 6789 is still being used"
+    fi
 }
 
 function test_v2_all_nodes() {
