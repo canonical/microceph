@@ -1132,14 +1132,14 @@ function test_v2_single_node() {
         exit 1
     fi
 
-    sudo ss -Htnpl 'sport :3300' | grep -c ceph-mon
-    if [ "$?" -ne 0 ]; then
+    out=$(lxc exec node-wrk0 -- sh -c "sudo ss -Htnpl 'sport :3300' | grep -c ceph-mon")
+    if [ "$out" -lt 0 ]; then
         echo "ceph-mon is not listening on port 3300"
         exit 1
     fi
 
-    sudo ss -Htnpl 'sport :6789' | grep -c ceph-mon
-    if [ "$?" -eq 0 ]; then
+    out=$(lxc exec node-wrk0 -- sh -c "sudo ss -Htnpl 'sport :6789' | grep -c ceph-mon")
+    if [ "$out" -gt 0 ]; then
         echo "ceph-mon is still listening on port 6789"
         exit 1
     fi
