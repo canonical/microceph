@@ -31,7 +31,6 @@ func (s *StorageDeviceTestSuite) SetupTest() {
 	mountsContent := "/dev/root / ext4 rw,relatime,discard,errors=remount-ro 0 0\n"
 	mountsContent += filepath.Join(s.Tmp, "dev", "sdb") + " /mnt ext2 rw,relatime 0 0\n"
 	_ = os.WriteFile(mountsFile, []byte(mountsContent), 0644)
-
 }
 
 func (s *StorageDeviceTestSuite) TestIsCephDeviceNotADevice() {
@@ -57,7 +56,6 @@ func (s *StorageDeviceTestSuite) TestIsMounted() {
 	mounted, err = IsMounted("/dev/sdc")
 	s.NoError(err, "There should not be an error when checking if a device is not mounted")
 	s.False(mounted, "The device should not be mounted")
-
 }
 
 func TestStorageDeviceSuite(t *testing.T) {

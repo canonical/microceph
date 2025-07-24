@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 
@@ -48,27 +49,70 @@ func (v SharedPathValidator) IsBlockdevPath(path string) bool {
 	return shared.IsBlockdevPath(path)
 }
 
+// MountChecker provides an interface for checking if devices are mounted - introduced for mocking in tests.
+type MountChecker interface {
+	IsMounted(device string) (bool, error)
+}
+
+// SharedMountChecker is the production implementation using common.IsMounted.
+type SharedMountChecker struct{}
+
+// IsMounted checks if the given device is mounted.
+func (m SharedMountChecker) IsMounted(device string) (bool, error) {
+	return common.IsMounted(device)
+}
+
+// FileStater provides an interface for getting file statistics - introduced for mocking in tests.
+type FileStater interface {
+	GetFileStat(path string) (uid int, gid int, major uint32, minor uint32, inode uint64, nlink int, err error)
+}
+
+// SharedFileStater is the production implementation using shared.GetFileStat.
+type SharedFileStater struct{}
+
+// GetFileStat gets file statistics for the given path.
+func (f SharedFileStater) GetFileStat(path string) (uid int, gid int, major uint32, minor uint32, inode uint64, nlink int, err error) {
+	return shared.GetFileStat(path)
+}
+
+
 // OSDManager handles OSD operations. It holds the state, a runner for executing commands and a filesystem interface.
 type OSDManager struct {
-	state     state.State
-	runner    Runner
-	fs        afero.Fs
-	storage   interfaces.StorageInterface
-	validator PathValidator
+	state        state.State
+	runner       Runner
+	fs           afero.Fs
+	storage      interfaces.StorageInterface
+	validator    PathValidator
+	mountChecker MountChecker
+	fileStater   FileStater
 }
+
 
 // NewOSDManager returns a new OSD manager instance.
 func NewOSDManager(s state.State) *OSDManager {
 	return &OSDManager{
-		state:     s,
-		runner:    processExec,
-		fs:        afero.NewOsFs(),
-		storage:   StorageImpl{},
-		validator: SharedPathValidator{},
+		state:        s,
+		runner:       processExec,
+		fs:           afero.NewOsFs(),
+		storage:      StorageImpl{},
+		validator:    SharedPathValidator{},
+		mountChecker: SharedMountChecker{},
+		fileStater:   SharedFileStater{},
 	}
 }
 
 func (m *OSDManager) prepareDisk(disk *types.DiskParameter, suffix string, osdPath string, osdID int64) error {
+	// Check if device is mounted (only for actual block devices, not loop files)
+	if m.validator.IsBlockdevPath(disk.Path) {
+		mounted, err := m.mountChecker.IsMounted(disk.Path)
+		if err != nil {
+			return fmt.Errorf("failed to check if device %s is mounted: %w", disk.Path, err)
+		}
+		if mounted {
+			return fmt.Errorf("device %s is currently mounted and cannot be used - aborting", disk.Path)
+		}
+	}
+
 	if disk.Wipe {
 		err := m.timeoutWipe(disk.Path)
 		if err != nil {
@@ -311,7 +355,7 @@ func (m *OSDManager) setStablePath(storage *api.ResourcesStorage, param *types.D
 		return fmt.Errorf("invalid disk path: %s", param.Path)
 	}
 
-	_, _, major, minor, _, _, err := shared.GetFileStat(param.Path)
+	_, _, major, minor, _, _, err := m.fileStater.GetFileStat(param.Path)
 	if err != nil {
 		logger.Errorf("failed to get block device path %s: %v", param.Path, err)
 		return fmt.Errorf("invalid disk path: %w", err)
@@ -360,6 +404,36 @@ func (m *OSDManager) setStablePath(storage *api.ResourcesStorage, param *types.D
 	}
 	logger.Infof("Set stable path for to %s", param.Path)
 	return nil
+}
+
+// checkDeviceHasPartitions checks if a block device has partitions using the LXD resource API.
+// Returns true if the device has partitions, false otherwise.
+func (m *OSDManager) checkDeviceHasPartitions(storage *api.ResourcesStorage, devicePath string) (bool, error) {
+	// Only check block devices
+	if !m.validator.IsBlockdevPath(devicePath) {
+		return false, nil
+	}
+
+	_, _, major, minor, _, _, err := m.fileStater.GetFileStat(devicePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to get device info for %s: %w", devicePath, err)
+	}
+
+	dev := fmt.Sprintf("%d:%d", major, minor)
+
+	// Find the disk in storage info
+	for _, disk := range storage.Disks {
+		if disk.Device == dev {
+			// Check if this disk has any partitions
+			if len(disk.Partitions) > 0 {
+				logger.Debugf("Device %s has %d partitions", devicePath, len(disk.Partitions))
+				return true, nil
+			}
+			break
+		}
+	}
+
+	return false, nil
 }
 
 // parseBackingSpec parses a loopback file specification.
@@ -451,6 +525,20 @@ func (m *OSDManager) addLoopBackOSDs(ctx context.Context, spec string) error {
 	return nil
 }
 
+// checkPartitionsOnDevice checks if a device has partitions and returns an error if it does (unless wipe is enabled)
+func (m *OSDManager) checkPartitionsOnDevice(disk *types.DiskParameter, storage *api.ResourcesStorage, deviceType string) error {
+	if !disk.Wipe {
+		hasPartitions, err := m.checkDeviceHasPartitions(storage, disk.Path)
+		if err != nil {
+			return fmt.Errorf("failed to check partitions on %s device %s: %w", deviceType, disk.Path, err)
+		}
+		if hasPartitions {
+			return fmt.Errorf("%s device %s has partitions - use --wipe to override", deviceType, disk.Path)
+		}
+	}
+	return nil
+}
+
 // bootstrapOSD bootstraps an OSD.
 func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.DiskParameter, storage *api.ResourcesStorage) error {
 	logger.Infof("Bootstrapping OSD %s to %d", osdDataPath, nr)
@@ -463,6 +551,12 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 			return fmt.Errorf("failed to set stable path for WAL: %w", err)
 		}
 
+		// Check for partitions on WAL device unless wipe is enabled
+		err = m.checkPartitionsOnDevice(wal, storage, "WAL")
+		if err != nil {
+			return err
+		}
+
 		err = m.prepareDisk(wal, ".wal", osdDataPath, nr)
 		if err != nil {
 			return fmt.Errorf("failed to set up WAL device: %w", err)
@@ -473,6 +567,12 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 		err = m.setStablePath(storage, db)
 		if err != nil {
 			return fmt.Errorf("failed to set stable path for DB: %w", err)
+		}
+
+		// Check for partitions on DB device unless wipe is enabled
+		err = m.checkPartitionsOnDevice(db, storage, "DB")
+		if err != nil {
+			return err
 		}
 
 		err = m.prepareDisk(db, ".db", osdDataPath, nr)
@@ -739,6 +839,14 @@ func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal
 	if err != nil {
 		logger.Errorf("failed to prepare OSD data for %s: %v", data.Path, err)
 		return err
+	}
+
+	// Check for partitions on data device unless wipe is enabled
+	if storage != nil {
+		err = m.checkPartitionsOnDevice(&data, storage, "data")
+		if err != nil {
+			return err
+		}
 	}
 
 	err = m.prepareDisk(&data, "", osdDataPath, nr)
