@@ -95,3 +95,42 @@ func IsCephDeviceWithFs(device string, fs afero.Fs) (bool, error) {
 	logger.Debugf("device %s is not used as WAL or DB device for any OSD", device)
 	return false, nil
 }
+
+// IsPristineDisk checks if a block device is pristine by reading the first 2048 bytes
+// and verifying they are all zeros.
+func IsPristineDisk(devicePath string) (bool, error) {
+	return IsPristineDiskWithFs(devicePath, afero.NewOsFs())
+}
+
+// IsPristineDiskWithFs checks if a block device is pristine using the provided filesystem.
+func IsPristineDiskWithFs(devicePath string, fs afero.Fs) (bool, error) {
+	const wantBytes = 2048
+
+	file, err := fs.Open(devicePath)
+	if err != nil {
+		logger.Errorf("failed to open device %s: %v", devicePath, err)
+		return false, err
+	}
+	defer file.Close()
+
+	data := make([]byte, wantBytes)
+	readBytes, err := file.Read(data)
+	if err != nil {
+		logger.Errorf("failed to read from device %s: %v", devicePath, err)
+		return false, err
+	}
+
+	if readBytes != wantBytes {
+		logger.Warnf("short read from %s: got %d bytes, expected %d", devicePath, readBytes, wantBytes)
+		return false, nil
+	}
+
+	// Check if all bytes are zero
+	for _, b := range data {
+		if b != 0x0 {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}

@@ -75,27 +75,42 @@ func (f SharedFileStater) GetFileStat(path string) (uid int, gid int, major uint
 	return shared.GetFileStat(path)
 }
 
+// PristineChecker provides an interface for checking if a block device is pristine - introduced for mocking in tests.
+type PristineChecker interface {
+	IsPristineDisk(devicePath string) (bool, error)
+}
+
+// SharedPristineChecker is the production implementation for checking pristine disks.
+type SharedPristineChecker struct{}
+
+// IsPristineDisk checks if a block device is pristine by delegating to the common storage module.
+func (p SharedPristineChecker) IsPristineDisk(devicePath string) (bool, error) {
+	return common.IsPristineDisk(devicePath)
+}
+
 // OSDManager handles OSD operations. It holds the state, a runner for executing commands and a filesystem interface.
 type OSDManager struct {
-	state        state.State
-	runner       common.Runner
-	fs           afero.Fs
-	storage      interfaces.StorageInterface
-	validator    PathValidator
-	mountChecker MountChecker
-	fileStater   FileStater
+	state           state.State
+	runner          Runner
+	fs              afero.Fs
+	storage         interfaces.StorageInterface
+	validator       PathValidator
+	mountChecker    MountChecker
+	fileStater      FileStater
+	pristineChecker PristineChecker
 }
 
 // NewOSDManager returns a new OSD manager instance.
 func NewOSDManager(s state.State) *OSDManager {
 	return &OSDManager{
-		state:        s,
-		runner:       common.ProcessExec,
-		fs:           afero.NewOsFs(),
-		storage:      StorageImpl{},
-		validator:    SharedPathValidator{},
-		mountChecker: SharedMountChecker{},
-		fileStater:   SharedFileStater{},
+		state:           s,
+		runner:          processExec,
+		fs:              afero.NewOsFs(),
+		storage:         StorageImpl{},
+		validator:       SharedPathValidator{},
+		mountChecker:    SharedMountChecker{},
+		fileStater:      SharedFileStater{},
+		pristineChecker: SharedPristineChecker{},
 	}
 }
 
@@ -537,6 +552,20 @@ func (m *OSDManager) checkPartitionsOnDevice(disk *types.DiskParameter, storage 
 	return nil
 }
 
+// checkPristineDevice checks if a device is pristine and returns an error if it's not (unless wipe is enabled)
+func (m *OSDManager) checkPristineDevice(disk *types.DiskParameter, deviceType string) error {
+	if !disk.Wipe {
+		isPristine, err := m.pristineChecker.IsPristineDisk(disk.Path)
+		if err != nil {
+			return fmt.Errorf("failed to check if %s device %s is pristine: %w", deviceType, disk.Path, err)
+		}
+		if !isPristine {
+			return fmt.Errorf("%s device %s is not pristine (contains data) - use --wipe to override", deviceType, disk.Path)
+		}
+	}
+	return nil
+}
+
 // bootstrapOSD bootstraps an OSD.
 func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.DiskParameter, storage *api.ResourcesStorage) error {
 	logger.Infof("Bootstrapping OSD %s to %d", osdDataPath, nr)
@@ -555,6 +584,12 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 			return err
 		}
 
+		// Check if WAL device is pristine unless wipe is enabled
+		err = m.checkPristineDevice(wal, "WAL")
+		if err != nil {
+			return err
+		}
+
 		err = m.prepareDisk(wal, ".wal", osdDataPath, nr)
 		if err != nil {
 			return fmt.Errorf("failed to set up WAL device: %w", err)
@@ -569,6 +604,12 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 
 		// Check for partitions on DB device unless wipe is enabled
 		err = m.checkPartitionsOnDevice(db, storage, "DB")
+		if err != nil {
+			return err
+		}
+
+		// Check if DB device is pristine unless wipe is enabled
+		err = m.checkPristineDevice(db, "DB")
 		if err != nil {
 			return err
 		}
@@ -847,6 +888,14 @@ func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal
 		}
 	}
 
+	// Check if data device is pristine unless wipe is enabled
+	if storage != nil {
+		err = m.checkPristineDevice(&data, "data")
+		if err != nil {
+			return err
+		}
+	}
+
 	err = m.prepareDisk(&data, "", osdDataPath, nr)
 	if err != nil {
 		logger.Errorf("failed to prepare disk for %s: %v", data.Path, err)
@@ -1020,7 +1069,7 @@ func (m *OSDManager) purgeOSD(osd int64) error {
 			// Success: break the retry loop
 			break
 		}
-		// we're getting a RunError from ProcessExec.RunCommand, and it
+		// we're getting a RunError from processExec.RunCommand, and it
 		// wraps the original exit error if there's one
 		exitError, ok := err.(shared.RunError).Unwrap().(*exec.ExitError)
 		if !ok {
@@ -1240,7 +1289,7 @@ func setOsdNooutFlag(set bool) error {
 		command = "unset"
 	}
 
-	_, err := common.ProcessExec.RunCommand("ceph", "osd", command, "noout")
+	_, err := processExec.RunCommand("ceph", "osd", command, "noout")
 	if err != nil {
 		logger.Errorf("failed to %s noout flag: %v", command, err)
 		return fmt.Errorf("failed to %s noout flag: %w", command, err)
@@ -1249,7 +1298,7 @@ func setOsdNooutFlag(set bool) error {
 }
 
 func isOsdNooutSet() (bool, error) {
-	output, err := common.ProcessExec.RunCommand("ceph", "osd", "dump")
+	output, err := processExec.RunCommand("ceph", "osd", "dump")
 	if err != nil {
 		logger.Errorf("failed to dump osd info: %v", err)
 		return false, fmt.Errorf("failed to dump osd info: %w", err)
@@ -1379,7 +1428,7 @@ func (m *OSDManager) killOSD(osd int64) error {
 
 func SetReplicationFactor(pools []string, size int64) error {
 	ssize := fmt.Sprintf("%d", size)
-	_, err := common.ProcessExec.RunCommand("ceph", "config", "set", "global",
+	_, err := processExec.RunCommand("ceph", "config", "set", "global",
 		"osd_pool_default_size", ssize)
 	if err != nil {
 		return fmt.Errorf("failed to set pool size default: %w", err)
@@ -1390,7 +1439,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 		allowSizeOne = "false"
 	}
 
-	_, err = common.ProcessExec.RunCommand("ceph", "config", "set", "global",
+	_, err = processExec.RunCommand("ceph", "config", "set", "global",
 		"mon_allow_pool_size_one", allowSizeOne)
 	if err != nil {
 		return fmt.Errorf("failed to set size one pool config option: %w", err)
@@ -1398,7 +1447,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 
 	if len(pools) == 1 && pools[0] == "*" {
 		// Apply setting to all existing pools.
-		out, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
+		out, err := processExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
 		if err != nil {
 			return fmt.Errorf("failed to list pools: %w", err)
 		}
@@ -1415,7 +1464,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 			continue
 		}
 
-		_, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "set", pool, "size", ssize, "--yes-i-really-mean-it")
+		_, err := processExec.RunCommand("ceph", "osd", "pool", "set", pool, "size", ssize, "--yes-i-really-mean-it")
 		if err != nil {
 			return fmt.Errorf("failed to set pool size for %s: %w", pool, err)
 		}
@@ -1426,7 +1475,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 
 // GetOSDPools returns a list of OSD Pools and their configurations.
 func GetOSDPools() ([]types.Pool, error) {
-	out, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
+	out, err := processExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pools: %w", err)
 	}
@@ -1439,7 +1488,7 @@ func GetOSDPools() ([]types.Pool, error) {
 
 	pools := make([]types.Pool, 0, len(poolNames))
 	for _, name := range poolNames {
-		out, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "get", name, "all", "--format", "json")
+		out, err := processExec.RunCommand("ceph", "osd", "pool", "get", name, "all", "--format", "json")
 		if err != nil {
 			return nil, fmt.Errorf("Failed to fetch configuration for OSD pool %q: %w", name, err)
 		}
@@ -1468,7 +1517,7 @@ type CephPool struct {
 func ListPools(application string) []CephPool {
 	args := []string{"osd", "pool", "ls", "detail", "--format", "json"}
 
-	output, err := common.ProcessExec.RunCommand("ceph", args...)
+	output, err := processExec.RunCommand("ceph", args...)
 	if err != nil {
 		return []CephPool{}
 	}
