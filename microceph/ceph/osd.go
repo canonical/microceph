@@ -62,6 +62,20 @@ func (m SharedMountChecker) IsMounted(device string) (bool, error) {
 	return common.IsMounted(device)
 }
 
+// FileStater provides an interface for getting file statistics - introduced for mocking in tests.
+type FileStater interface {
+	GetFileStat(path string) (uid int, gid int, major uint32, minor uint32, inode uint64, nlink int, err error)
+}
+
+// SharedFileStater is the production implementation using shared.GetFileStat.
+type SharedFileStater struct{}
+
+// GetFileStat gets file statistics for the given path.
+func (f SharedFileStater) GetFileStat(path string) (uid int, gid int, major uint32, minor uint32, inode uint64, nlink int, err error) {
+	return shared.GetFileStat(path)
+}
+
+
 // OSDManager handles OSD operations. It holds the state, a runner for executing commands and a filesystem interface.
 type OSDManager struct {
 	state        state.State
@@ -70,7 +84,9 @@ type OSDManager struct {
 	storage      interfaces.StorageInterface
 	validator    PathValidator
 	mountChecker MountChecker
+	fileStater   FileStater
 }
+
 
 // NewOSDManager returns a new OSD manager instance.
 func NewOSDManager(s state.State) *OSDManager {
@@ -81,6 +97,7 @@ func NewOSDManager(s state.State) *OSDManager {
 		storage:      StorageImpl{},
 		validator:    SharedPathValidator{},
 		mountChecker: SharedMountChecker{},
+		fileStater:   SharedFileStater{},
 	}
 }
 
@@ -338,7 +355,7 @@ func (m *OSDManager) setStablePath(storage *api.ResourcesStorage, param *types.D
 		return fmt.Errorf("invalid disk path: %s", param.Path)
 	}
 
-	_, _, major, minor, _, _, err := shared.GetFileStat(param.Path)
+	_, _, major, minor, _, _, err := m.fileStater.GetFileStat(param.Path)
 	if err != nil {
 		logger.Errorf("failed to get block device path %s: %v", param.Path, err)
 		return fmt.Errorf("invalid disk path: %w", err)
@@ -397,7 +414,7 @@ func (m *OSDManager) checkDeviceHasPartitions(storage *api.ResourcesStorage, dev
 		return false, nil
 	}
 
-	_, _, major, minor, _, _, err := shared.GetFileStat(devicePath)
+	_, _, major, minor, _, _, err := m.fileStater.GetFileStat(devicePath)
 	if err != nil {
 		return false, fmt.Errorf("failed to get device info for %s: %w", devicePath, err)
 	}
@@ -508,6 +525,20 @@ func (m *OSDManager) addLoopBackOSDs(ctx context.Context, spec string) error {
 	return nil
 }
 
+// checkPartitionsOnDevice checks if a device has partitions and returns an error if it does (unless wipe is enabled)
+func (m *OSDManager) checkPartitionsOnDevice(disk *types.DiskParameter, storage *api.ResourcesStorage, deviceType string) error {
+	if !disk.Wipe {
+		hasPartitions, err := m.checkDeviceHasPartitions(storage, disk.Path)
+		if err != nil {
+			return fmt.Errorf("failed to check partitions on %s device %s: %w", deviceType, disk.Path, err)
+		}
+		if hasPartitions {
+			return fmt.Errorf("%s device %s has partitions - use --wipe to override", deviceType, disk.Path)
+		}
+	}
+	return nil
+}
+
 // bootstrapOSD bootstraps an OSD.
 func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.DiskParameter, storage *api.ResourcesStorage) error {
 	logger.Infof("Bootstrapping OSD %s to %d", osdDataPath, nr)
@@ -521,14 +552,9 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 		}
 
 		// Check for partitions on WAL device unless wipe is enabled
-		if !wal.Wipe {
-			hasPartitions, err := m.checkDeviceHasPartitions(storage, wal.Path)
-			if err != nil {
-				return fmt.Errorf("failed to check partitions on WAL device %s: %w", wal.Path, err)
-			}
-			if hasPartitions {
-				return fmt.Errorf("WAL device %s has partitions - use --wipe to override", wal.Path)
-			}
+		err = m.checkPartitionsOnDevice(wal, storage, "WAL")
+		if err != nil {
+			return err
 		}
 
 		err = m.prepareDisk(wal, ".wal", osdDataPath, nr)
@@ -544,14 +570,9 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 		}
 
 		// Check for partitions on DB device unless wipe is enabled
-		if !db.Wipe {
-			hasPartitions, err := m.checkDeviceHasPartitions(storage, db.Path)
-			if err != nil {
-				return fmt.Errorf("failed to check partitions on DB device %s: %w", db.Path, err)
-			}
-			if hasPartitions {
-				return fmt.Errorf("DB device %s has partitions - use --wipe to override", db.Path)
-			}
+		err = m.checkPartitionsOnDevice(db, storage, "DB")
+		if err != nil {
+			return err
 		}
 
 		err = m.prepareDisk(db, ".db", osdDataPath, nr)
@@ -821,13 +842,10 @@ func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal
 	}
 
 	// Check for partitions on data device unless wipe is enabled
-	if storage != nil && !data.Wipe {
-		hasPartitions, err := m.checkDeviceHasPartitions(storage, data.Path)
+	if storage != nil {
+		err = m.checkPartitionsOnDevice(&data, storage, "data")
 		if err != nil {
-			return fmt.Errorf("failed to check partitions on data device %s: %w", data.Path, err)
-		}
-		if hasPartitions {
-			return fmt.Errorf("data device %s has partitions - use --wipe to override", data.Path)
+			return err
 		}
 	}
 
