@@ -1,8 +1,8 @@
 package common
 
 import (
-	"bufio"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -19,33 +19,33 @@ func IsMounted(device string) (bool, error) {
 // IsMountedWithFs checks if a device is mounted using the provided filesystem.
 func IsMountedWithFs(device string, fs afero.Fs) (bool, error) {
 	// Resolve any symlink and get the absolute path of the device.
-	// Note /proc/mounts contains the absolute path of the device as well.
 	resolvedPath, err := filepath.EvalSymlinks(filepath.Join(constants.GetPathConst().RootFs, device))
 	if err != nil {
 		// Handle errors other than not existing differently as EvalSymlinks takes care of symlink resolution
 		return false, err
 	}
-	file, err := fs.Open(filepath.Join(constants.GetPathConst().ProcPath, "mounts"))
-	if err != nil {
-		return false, err
-	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		// Each line in /proc/mounts is of the format:
-		// device mountpoint fstype options dump pass
-		// --> split the line into parts and check if the first part matches
-		parts := strings.Fields(scanner.Text())
-		if len(parts) > 0 && parts[0] == resolvedPath {
-			return true, nil
-		}
-	}
-	err = scanner.Err()
+	// Use findmnt to check if the device is mounted, more reliable than checking /proc/mounts directly.
+	// findmnt --source returns 0 if the device is mounted, 1 if not
+	_, err = ProcessExec.RunCommand("findmnt", "--source", resolvedPath)
 	if err != nil {
+		// Check if it's an exit status error (device not mounted)
+		// Handle both direct exec.ExitError and wrapped errors
+		if exitError, ok := err.(*exec.ExitError); ok {
+			if exitError.ExitCode() == 1 {
+				// Exit code 1 means device not found/not mounted
+				return false, nil
+			}
+		} else if strings.Contains(err.Error(), "exit status 1") {
+			// Handle wrapped exit status 1 from shared.RunCommand
+			return false, nil
+		}
+		// Other errors (command not found, permission issues, etc.)
 		return false, err
 	}
-	return false, nil
+
+	// Exit code 0 means device is mounted
+	return true, nil
 }
 
 // IsCephDevice checks if a given device is used as either a WAL or DB block device in any Ceph OSD.

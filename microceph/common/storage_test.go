@@ -1,12 +1,57 @@
 package common
 
 import (
+	"context"
 	"github.com/canonical/microceph/microceph/tests"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
+
+// MockRunner implements the Runner interface for testing
+type MockRunner struct {
+	mock.Mock
+}
+
+func (m *MockRunner) RunCommand(name string, arg ...string) (string, error) {
+	args := m.Called(append([]interface{}{name}, interfaceSlice(arg)...)...)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockRunner) RunCommandContext(ctx context.Context, name string, arg ...string) (string, error) {
+	args := m.Called(append([]interface{}{ctx, name}, interfaceSlice(arg)...)...)
+	return args.String(0), args.Error(1)
+}
+
+// Helper function to convert []string to []interface{}
+func interfaceSlice(slice []string) []interface{} {
+	result := make([]interface{}, len(slice))
+	for i, v := range slice {
+		result[i] = v
+	}
+	return result
+}
+
+// MockExitError simulates an exec.ExitError with a specific exit code
+type MockExitError struct {
+	*exec.ExitError
+	code int
+}
+
+func NewMockExitError(code int) *MockExitError {
+	return &MockExitError{code: code}
+}
+
+func (e *MockExitError) ExitCode() int {
+	return e.code
+}
+
+func (e *MockExitError) Error() string {
+	return "exit status " + string(rune(e.code+'0'))
+}
 
 type StorageDeviceTestSuite struct {
 	tests.BaseSuite
@@ -25,12 +70,6 @@ func (s *StorageDeviceTestSuite) SetupTest() {
 	os.MkdirAll(filepath.Join(s.Tmp, "dev"), 0775)
 	os.Create(filepath.Join(s.Tmp, "dev", "sdb"))
 	os.Create(filepath.Join(s.Tmp, "dev", "sdc"))
-
-	// create a /proc/mounts like file
-	mountsFile := filepath.Join(s.Tmp, "proc", "mounts")
-	mountsContent := "/dev/root / ext4 rw,relatime,discard,errors=remount-ro 0 0\n"
-	mountsContent += filepath.Join(s.Tmp, "dev", "sdb") + " /mnt ext2 rw,relatime 0 0\n"
-	_ = os.WriteFile(mountsFile, []byte(mountsContent), 0644)
 }
 
 func (s *StorageDeviceTestSuite) TestIsCephDeviceNotADevice() {
@@ -48,14 +87,26 @@ func (s *StorageDeviceTestSuite) TestIsCephDeviceHaveDevice() {
 }
 
 func (s *StorageDeviceTestSuite) TestIsMounted() {
-	// we added a /proc/mounts like file containing an entry for /dev/sdb
-	mounted, err := IsMounted("/dev/sdb")
-	s.NoError(err, "There should not be an error when checking if a device is mounted")
-	s.True(mounted, "The device should be mounted")
+	// Test with a device that doesn't exist in the real filesystem
+	// This should return an error from EvalSymlinks since the path doesn't exist
+	mounted, err := IsMounted("/dev/nonexistent")
+	s.Error(err, "There should be an error when checking a non-existent device")
+	s.False(mounted, "A non-existent device should not be mounted")
 
-	mounted, err = IsMounted("/dev/sdc")
-	s.NoError(err, "There should not be an error when checking if a device is not mounted")
-	s.False(mounted, "The device should not be mounted")
+	// Second test, need to mock ProcessExec to avoid calling the real findmnt
+	originalProcessExec := ProcessExec
+	defer func() { ProcessExec = originalProcessExec }()
+	mockRunner := &MockRunner{}
+	ProcessExec = mockRunner
+
+	// Mock findmnt to return exit status 1 (device not mounted)
+	mockRunner.On("RunCommand", "findmnt", "--source", mock.AnythingOfType("string")).Return("", NewMockExitError(1)).Once()
+
+	devicePath := "/dev/sdb" // We have a dummy device path for testing
+	mounted, err = IsMounted(devicePath)
+	// Should handle exit code 1 as "not mounted" without error
+	s.NoError(err, "There should not be an error when findmnt returns 'not mounted'")
+	s.False(mounted, "Device should not be mounted in test environment")
 }
 
 func TestStorageDeviceSuite(t *testing.T) {
