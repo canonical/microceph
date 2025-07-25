@@ -925,8 +925,11 @@ jobs:
     - name: Install dependencies
       run: ~/actionutils.sh setup_lxd
 
-    - name: Create virtual machines with block devices
-      run: ~/actionutils.sh create_vms 4
+    - name: Create containers with loopback devices
+      run: ~/actionutils.sh create_containers public
+
+    - name: Install local microceph snap
+      run: ~/actionutils.sh install_multinode
 
     - name: Bootstrap
       run: ~/actionutils.sh remote_simple_bootstrap_two_sites
@@ -940,8 +943,8 @@ jobs:
     - name: Enable Cephfs Mirror Daemon
       run : ~/actionutils.sh remote_enable_mirror_daemon "cephfs-mirror"
 
-    - name: Install ceph-common
-      run : ~/actionutils.sh remote_install_ceph_common
+    - name: Install ceph-common on host
+      run : sudo apt install ceph-common -y
 
     - name: Configure CephFS mirror
       run : ~/actionutils.sh remote_configure_cephfs_mirroring
@@ -953,7 +956,7 @@ jobs:
       run : ~/actionutils.sh remote_verify_cephfs_mirroring
 
     - name: Disable Cephfs Mirror daemons
-      run : ~/actionutils.sh remote_enable_mirror_daemon "cephfs-mirror"
+      run : ~/actionutils.sh remote_disable_mirror_daemon "cephfs-mirror"
 
   nfs-test:
     name: Test MicroCeph NFS feature

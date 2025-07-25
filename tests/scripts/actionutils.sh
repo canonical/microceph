@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# global bash vars
+STR1="ABCDEFGH"
+STR2="IJKLMNOP"
+
 function cleaript() {
     # Docker can inject rules causing firewall conflicts
     sudo iptables -P FORWARD ACCEPT  || true
@@ -326,13 +330,6 @@ function remote_simple_bootstrap_two_sites() {
     sleep 10
 }
 
-function remote_install_ceph_common() {
-  lxc exec node-wrk0 -- sh -c "sudo apt install ceph-common -y"
-  lxc exec node-wrk1 -- sh -c "sudo apt install ceph-common -y"
-  lxc exec node-wrk2 -- sh -c "sudo apt install ceph-common -y"
-  lxc exec node-wrk3 -- sh -c "sudo apt install ceph-common -y"
-}
-
 function remote_exchange_site_tokens() {
     set -eux
     sitea_token=$(lxc exec node-wrk0 -- sh -c "microceph cluster export siteb")
@@ -396,28 +393,39 @@ function remote_configure_cephfs_mirroring() {
     set -eux
     for i in 0 2; do
       echo "Prepping filesystem on node-wrk$i"
-      lxc exec "node-wrk$i" -- bash -c "sudo rm -rf /etc/ceph"
-      lxc exec "node-wrk$i" -- bash -c "sudo ln -s /var/snap/microceph/current/conf /etc/ceph"
-      lxc exec "node-wrk$i" -- bash -c "sudo ceph fs volume create vol"
-      lxc exec "node-wrk$i" -- bash -c "mkdir -p /mnt/vol"
-      lxc exec "node-wrk$i" -- bash -c "sudo mount -t ceph :/ /mnt/vol/ -o name=admin,fs=vol"
-      sleep 20s
-      lxc exec "node-wrk$i" -- bash -c "sudo ceph mgr module enable mirroring"
-      lxc exec "node-wrk$i" -- bash -c "sudo ceph fs snapshot mirror enable vol"
+      lxc exec "node-wrk$i" -- bash -c "sudo microceph.ceph fs volume create vol"
+      lxc exec "node-wrk$i" -- bash -c "sudo microceph.ceph mgr module enable mirroring"
+      lxc exec "node-wrk$i" -- bash -c "sudo microceph.ceph fs snapshot mirror enable vol"
     done
 
     # Bootstrapping FS mirror peer
     echo "Bootstrapping FS Mirror peer"
-    peer_token=$(lxc exec node-wrk2 -- bash -c "sudo ceph fs snapshot mirror peer_bootstrap create vol client.fsmir-vol-primary secondary | jq '.token' | tr -d '\"'")
-    lxc exec node-wrk0 -- bash -c "sudo ceph fs snapshot mirror peer_bootstrap import vol $peer_token"
+    peer_token=$(lxc exec node-wrk2 -- bash -c "sudo microceph.ceph fs snapshot mirror peer_bootstrap create vol client.fsmir-vol-primary secondary" | jq '.token' | tr -d '\"')
+    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror peer_bootstrap import vol $peer_token"
 
-    # Make directories on primary fs
-    lxc exec node-wrk0 -- bash -c "mkdir /mnt/vol/dir1"
-    lxc exec node-wrk0 -- bash -c "mkdir /mnt/vol/dir2"
+    # install primary cluster keys/conf
+    sudo lxc file pull node-wrk0/var/snap/microceph/current/conf/ceph.conf /etc/ceph/
+    sudo lxc file pull node-wrk0/var/snap/microceph/current/conf/ceph.keyring /etc/ceph/
+    sudo cat /etc/ceph/ceph.conf
+
+    # mount primary filesystem
+    sudo mkdir /mnt/primary
+    sudo mount -t ceph :/ /mnt/primary/ -o name=admin,fs=vol
+
+    # perform FS IO on primary cluster mount
+    sudo mkdir /mnt/primary/dir1
+    sudo mkdir /mnt/primary/dir2
+    echo $STR1 | sudo tee /mnt/primary/dir1/test_file
+    echo $STR2 | sudo tee /mnt/primary/dir2/test_file
 
     # enable snapshot mirror for directories
-    lxc exec node-wrk0 -- bash -c "sudo ceph fs snapshot mirror add vol /dir1"
-    lxc exec node-wrk0 -- bash -c "sudo ceph fs snapshot mirror add vol /dir2"
+    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror add vol /dir1"
+    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror add vol /dir2"
+
+    # take snapshots
+    sudo mkdir /mnt/primary/dir1/.snap/two-snap
+    sudo mkdir /mnt/primary/dir2/.snap/two-snap
+    sleep 20s
 }
 
 function remote_enable_mirror_daemon() {
@@ -464,23 +472,22 @@ function remote_wait_for_secondary_to_sync() {
 
 function remote_wait_cephfs_for_secondary_to_sync() {
     set -eux
-    
     local attempts="${1?missing}"
-    STR1="ABCDEFGH"
-    STR2="IJKLMNOP"
-    lxc exec node-wrk0 -- sh -c "echo $STR1 >> /mnt/vol/dir1/test_file"
-    lxc exec node-wrk0 -- sh -c "echo $STR2 >> /mnt/vol/dir2/test_file"
 
-    sleep 30s
+    # install secondary cluster keys/conf
+    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.conf /etc/ceph/
+    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.keyring /etc/ceph/
+    cat /etc/ceph/ceph.conf
 
-    lxc exec node-wrk0 -- sh -c "mkdir /mnt/vol/dir1/.snap/one-snap"
-    lxc exec node-wrk0 -- sh -c "mkdir /mnt/vol/dir2/.snap/two-snap"
+    # mount secondary filesystem
+    sudo mkdir /mnt/secondary
+    sudo mount -t ceph :/ /mnt/secondary/ -o name=admin,fs=vol
 
     echo "Waiting for files to appear on secondary"
     for i in $(seq 1 $attempts); do
       echo "Iteration $i"
-      file1_exists=$(lxc exec node-wrk0 -- sh -c "stat /mnt/vol/dir1/test_file > /dev/null && echo $?")
-      file2_exists=$(lxc exec node-wrk0 -- sh -c "stat /mnt/vol/dir1/test_file > /dev/null && echo $?")
+      file1_exists=$(stat /mnt/secondary/dir1/test_file > /dev/null && echo $?)
+      file2_exists=$(stat /mnt/secondary/dir1/test_file > /dev/null && echo $?)
       if [[ $file1_exists -eq 0 && $file2_exists -eq 0 ]]; then
         echo "Files exist on secondary site."
       else
@@ -505,16 +512,10 @@ function remote_verify_rbd_mirroring() {
 
 function remote_verify_cephfs_mirroring() {
     set -eux
-
-    lxc file pull node-wrk0/mnt/vol/dir1/test_file ./node0_file1
-    lxc file pull node-wrk0/mnt/vol/dir2/test_file ./node0_file2
-    lxc file pull node-wrk2/mnt/vol/dir1/test_file ./node2_file1
-    lxc file pull node-wrk2/mnt/vol/dir2/test_file ./node2_file2
-
-    node0_file1=$(< ./node0_file1)
-    node0_file2=$(< ./node0_file2)
-    node2_file1=$(< ./node2_file1)
-    node2_file2=$(< ./node2_file2)
+    node0_file1=$(< /mnt/primary/dir1/test_file)
+    node0_file2=$(< /mnt/primary/dir2/test_file)
+    node2_file1=$(< /mnt/secondary/dir1/test_file)
+    node2_file2=$(< /mnt/secondary/dir2/test_file)
 
     if [ $node0_file1 != $node2_file1 ]; then
       echo "Contents of primary: $node0_file1 are different from secondary: $node2_file1";
@@ -639,6 +640,7 @@ function install_multinode() {
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
         lxc exec $container -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
         lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
+        lxc exec $container -- sh -c "snap alias microceph.ceph ceph"
         # Hack: allow access to sysfs hardware info through lxc
         lxc exec $container -- sh -c "sed -e 's|/sys/devices/\*\*/ r,|/sys/devices/** r,|' -i.bak /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"
         lxc exec $container -- sh -c "apparmor_parser -r /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"
