@@ -75,27 +75,42 @@ func (f SharedFileStater) GetFileStat(path string) (uid int, gid int, major uint
 	return shared.GetFileStat(path)
 }
 
+// PristineChecker provides an interface for checking if a block device is pristine - introduced for mocking in tests.
+type PristineChecker interface {
+	IsPristineDisk(devicePath string) (bool, error)
+}
+
+// SharedPristineChecker is the production implementation for checking pristine disks.
+type SharedPristineChecker struct{}
+
+// IsPristineDisk checks if a block device is pristine by delegating to the common storage module.
+func (p SharedPristineChecker) IsPristineDisk(devicePath string) (bool, error) {
+	return common.IsPristineDisk(devicePath)
+}
+
 // OSDManager handles OSD operations. It holds the state, a runner for executing commands and a filesystem interface.
 type OSDManager struct {
-	state        state.State
-	runner       common.Runner
-	fs           afero.Fs
-	storage      interfaces.StorageInterface
-	validator    PathValidator
-	mountChecker MountChecker
-	fileStater   FileStater
+	state           state.State
+	runner          common.Runner
+	fs              afero.Fs
+	storage         interfaces.StorageInterface
+	validator       PathValidator
+	mountChecker    MountChecker
+	fileStater      FileStater
+	pristineChecker PristineChecker
 }
 
 // NewOSDManager returns a new OSD manager instance.
 func NewOSDManager(s state.State) *OSDManager {
 	return &OSDManager{
-		state:        s,
-		runner:       common.ProcessExec,
-		fs:           afero.NewOsFs(),
-		storage:      StorageImpl{},
-		validator:    SharedPathValidator{},
-		mountChecker: SharedMountChecker{},
-		fileStater:   SharedFileStater{},
+		state:           s,
+		runner:          common.ProcessExec,
+		fs:              afero.NewOsFs(),
+		storage:         StorageImpl{},
+		validator:       SharedPathValidator{},
+		mountChecker:    SharedMountChecker{},
+		fileStater:      SharedFileStater{},
+		pristineChecker: SharedPristineChecker{},
 	}
 }
 
@@ -537,6 +552,20 @@ func (m *OSDManager) checkPartitionsOnDevice(disk *types.DiskParameter, storage 
 	return nil
 }
 
+// checkPristineDevice checks if a device is pristine and returns an error if it's not (unless wipe is enabled)
+func (m *OSDManager) checkPristineDevice(disk *types.DiskParameter, deviceType string) error {
+	if !disk.Wipe {
+		isPristine, err := m.pristineChecker.IsPristineDisk(disk.Path)
+		if err != nil {
+			return fmt.Errorf("failed to check if %s device %s is pristine: %w", deviceType, disk.Path, err)
+		}
+		if !isPristine {
+			return fmt.Errorf("%s device %s is not pristine (contains data) - use --wipe to override", deviceType, disk.Path)
+		}
+	}
+	return nil
+}
+
 // bootstrapOSD bootstraps an OSD.
 func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.DiskParameter, storage *api.ResourcesStorage) error {
 	logger.Infof("Bootstrapping OSD %s to %d", osdDataPath, nr)
@@ -555,6 +584,12 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 			return err
 		}
 
+		// Check if WAL device is pristine unless wipe is enabled
+		err = m.checkPristineDevice(wal, "WAL")
+		if err != nil {
+			return err
+		}
+
 		err = m.prepareDisk(wal, ".wal", osdDataPath, nr)
 		if err != nil {
 			return fmt.Errorf("failed to set up WAL device: %w", err)
@@ -569,6 +604,12 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 
 		// Check for partitions on DB device unless wipe is enabled
 		err = m.checkPartitionsOnDevice(db, storage, "DB")
+		if err != nil {
+			return err
+		}
+
+		// Check if DB device is pristine unless wipe is enabled
+		err = m.checkPristineDevice(db, "DB")
 		if err != nil {
 			return err
 		}
@@ -847,6 +888,14 @@ func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal
 		}
 	}
 
+	// Check if data device is pristine unless wipe is enabled
+	if storage != nil {
+		err = m.checkPristineDevice(&data, "data")
+		if err != nil {
+			return err
+		}
+	}
+
 	err = m.prepareDisk(&data, "", osdDataPath, nr)
 	if err != nil {
 		logger.Errorf("failed to prepare disk for %s: %v", data.Path, err)
@@ -1020,7 +1069,7 @@ func (m *OSDManager) purgeOSD(osd int64) error {
 			// Success: break the retry loop
 			break
 		}
-		// we're getting a RunError from ProcessExec.RunCommand, and it
+		// we're getting a RunError from common.ProcessExec.RunCommand, and it
 		// wraps the original exit error if there's one
 		exitError, ok := err.(shared.RunError).Unwrap().(*exec.ExitError)
 		if !ok {

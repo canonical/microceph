@@ -121,6 +121,13 @@ jobs:
         rc=$(sudo microceph disk add "/dev/sdi21" "/dev/sdi22" --db-device "/dev/sdi23" |& grep -c "not supported for batch disk addition")
         if [[ $rc -eq 0 ]] ; then echo "Batch disk addition should fail with db device: $rc"; exit 1; fi
 
+    - name: Add OSDs with in-use block devices
+      run: |
+        sudo microceph status
+        sudo lsblk -f
+        ~/actionutils.sh verify_pristine_check
+        ~/actionutils.sh verify_mount_check
+
     - name: Add OSDs
       run: |
         ~/actionutils.sh add_encrypted_osds

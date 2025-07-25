@@ -52,6 +52,17 @@ func (m *MockFileStater) GetFileStat(path string) (uid int, gid int, major uint3
 	return args.Int(0), args.Int(1), args.Get(2).(uint32), args.Get(3).(uint32), args.Get(4).(uint64), args.Int(5), args.Error(6)
 }
 
+// MockPristineChecker is a mock implementation of PristineChecker for testing.
+type MockPristineChecker struct {
+	mock.Mock
+}
+
+// IsPristineDisk mocks the pristine disk check operation.
+func (m *MockPristineChecker) IsPristineDisk(devicePath string) (bool, error) {
+	args := m.Called(devicePath)
+	return args.Bool(0), args.Error(1)
+}
+
 // osdSuite is the test suite for adding OSDs.
 type osdSuite struct {
 	tests.BaseSuite
@@ -946,3 +957,33 @@ func (s *osdSuite) TestValidateAddOSDArgs() {
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "loopback and WAL/DB are mutually exclusive")
 }
+
+// TestIsPristineDisk tests pristine disk checking
+func (s *osdSuite) TestIsPristineDisk() {
+	// Create a custom OSD manager with mocked pristine checker
+	osdmgr := &OSDManager{
+		pristineChecker: &MockPristineChecker{},
+	}
+
+	mockPristineChecker := osdmgr.pristineChecker.(*MockPristineChecker)
+
+	// Test pristine disk (all zeros)
+	mockPristineChecker.On("IsPristineDisk", "/dev/pristine").Return(true, nil).Once()
+	isPristine, err := osdmgr.pristineChecker.IsPristineDisk("/dev/pristine")
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), isPristine)
+
+	// Test non-pristine disk (has data)
+	mockPristineChecker.On("IsPristineDisk", "/dev/used").Return(false, nil).Once()
+	isPristine, err = osdmgr.pristineChecker.IsPristineDisk("/dev/used")
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), isPristine)
+
+	// Test error reading disk
+	mockPristineChecker.On("IsPristineDisk", "/dev/error").Return(false, fmt.Errorf("permission denied")).Once()
+	isPristine, err = osdmgr.pristineChecker.IsPristineDisk("/dev/error")
+	assert.Error(s.T(), err)
+	assert.False(s.T(), isPristine)
+	assert.Contains(s.T(), err.Error(), "permission denied")
+}
+
