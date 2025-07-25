@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"reflect"
 	"strings"
 	"time"
@@ -26,7 +27,7 @@ type cephVersion struct {
 
 // getCurrentVersion extracts the version codename from the 'ceph -v' output
 func getCurrentVersion() (string, error) {
-	output, err := processExec.RunCommand("ceph", "-v")
+	output, err := common.ProcessExec.RunCommand("ceph", "-v")
 	if err != nil {
 		return "", fmt.Errorf("failed to get ceph version: %w", err)
 	}
@@ -49,7 +50,7 @@ func checkVersions() (bool, error) {
 	)
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		out, err := processExec.RunCommand("ceph", "versions")
+		out, err := common.ProcessExec.RunCommand("ceph", "versions")
 		if err != nil {
 			return false, fmt.Errorf("failed to get Ceph versions: %w", err)
 		}
@@ -83,7 +84,7 @@ func checkVersions() (bool, error) {
 }
 
 func osdReleaseRequired(version string) (bool, error) {
-	out, err := processExec.RunCommand("ceph", "osd", "dump", "-f", "json")
+	out, err := common.ProcessExec.RunCommand("ceph", "osd", "dump", "-f", "json")
 	if err != nil {
 		return false, fmt.Errorf("failed to get OSD dump: %w", err)
 	}
@@ -103,7 +104,7 @@ func osdReleaseRequired(version string) (bool, error) {
 }
 
 func updateOSDRelease(version string) error {
-	_, err := processExec.RunCommand("ceph", "osd", "require-osd-release",
+	_, err := common.ProcessExec.RunCommand("ceph", "osd", "require-osd-release",
 		version, "--yes-i-really-mean-it")
 	if err != nil {
 		return fmt.Errorf("failed to update OSD release version: %w", err)

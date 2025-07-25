@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -300,5 +301,5 @@ func removeNodeFromSharedGraceMgmtDb(cephConfPath, clusterID, userID, node strin
 
 // ganeshaRadosGraceRun runs the ganesha-rados-grace command with the given arguments.
 func ganeshaRadosGraceRun(args ...string) (string, error) {
-	return processExec.RunCommand("ganesha-rados-grace", args...)
+	return common.ProcessExec.RunCommand("ganesha-rados-grace", args...)
 }

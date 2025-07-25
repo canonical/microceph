@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 	"testing"
@@ -72,8 +73,8 @@ func (s *NFSSuite) TestEnableNFS() {
 	// startNFS call
 	r.On("RunCommand", "snapctl", "start", "microceph.nfs", "--enable").Return("ok", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	nfs := &NFSServicePlacement{
 		ClusterID:    clusterID,
@@ -199,8 +200,8 @@ func (s *NFSSuite) TestDisableNFS() {
 	clientUser := fmt.Sprintf("client.%s", userID)
 	r.On("RunCommand", "ceph", "auth", "del", clientUser).Return("ok", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// function call
 	err = DisableNFS(ctx, s.TestStateInterface, clusterID)
@@ -217,8 +218,8 @@ func (s *NFSSuite) TestStartNFS() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "snapctl", "start", "microceph.nfs", "--enable").Return("ok", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// function call
 	err := startNFS()
@@ -229,8 +230,8 @@ func (s *NFSSuite) TestStopNFS() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "snapctl", "stop", "microceph.nfs", "--disable").Return("ok", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// function call
 	err := stopNFS()
@@ -244,8 +245,8 @@ func (s *NFSSuite) TestCreateNFSKeyring() {
 	// mocks and expectations
 	r.On("RunCommand", []interface{}{"ceph", "auth", "get-or-create", "client.lish", "mon", "allow r", "osd", "allow rw pool=.nfs namespace=foo", "-o", keyringPath}...).Return("ok", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// function call
 	err := createNFSKeyring(s.Tmp, "foo", "lish")
@@ -262,8 +263,8 @@ func (s *NFSSuite) TestEnsureNFSPoolFailPool() {
 	r.On("RunCommand", []interface{}{
 		"rados", "ls", "--pool", ".nfs", "--all", "--create"}...).Return("", expectedErr).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// function call
 	err := ensureNFSPool(clusterID)
@@ -284,8 +285,8 @@ func (s *NFSSuite) TestEnsureNFSPoolFailEnable() {
 	r.On("RunCommand", []interface{}{
 		"ceph", "osd", "pool", "application", "enable", ".nfs", "nfs"}...).Return("", expectedErr).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// function call
 	err := ensureNFSPool(clusterID)
@@ -309,8 +310,8 @@ func (s *NFSSuite) TestEnsureNFSPoolFailCreateObj() {
 	r.On("RunCommand", []interface{}{
 		"rados", "create", "--pool", ".nfs", "-N", clusterID, obj}...).Return("", expectedErr).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// function call
 	err := ensureNFSPool(clusterID)
@@ -334,8 +335,8 @@ func (s *NFSSuite) TestEnsureNFSPool() {
 	r.On("RunCommand", []interface{}{
 		"rados", "create", "--pool", ".nfs", "-N", clusterID, obj}...).Return("", existsErr).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// function call
 	err := ensureNFSPool(clusterID)
@@ -359,8 +360,8 @@ func (s *NFSSuite) TestAddNodeToSharedGraceMgmtDb() {
 	r.On("RunCommand", []interface{}{
 		"ganesha-rados-grace", "--cephconf", cephconf, "--pool", ".nfs", "--ns", clusterID, "--userid", userID, "add", node2}...).Return("", expectedErr).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// function call
 	err := addNodeToSharedGraceMgmtDb(cephconf, clusterID, userID, node)
@@ -389,8 +390,8 @@ func (s *NFSSuite) TestRemoveNodeFromSharedGraceMgmtDb() {
 	r.On("RunCommand", []interface{}{
 		"ganesha-rados-grace", "--cephconf", cephconf, "--pool", ".nfs", "--ns", clusterID, "--userid", userID, "remove", node2}...).Return("", expectedErr).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// function call
 	err := removeNodeFromSharedGraceMgmtDb(cephconf, clusterID, userID, node)

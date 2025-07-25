@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"testing"
 
@@ -34,7 +35,7 @@ func (ks *RbdMirrorSuite) TestVerbosePoolStatus() {
 	// mocks and expectations
 	r.On("RunCommand", []interface{}{
 		"rbd", "mirror", "pool", "status", "pool", "--verbose", "--format", "json"}...).Return(string(output), nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	// Method call
 	resp, err := GetRbdMirrorVerbosePoolStatus("pool", "", "")
@@ -50,7 +51,7 @@ func (ks *RbdMirrorSuite) TestPoolStatus() {
 	// mocks and expectations
 	r.On("RunCommand", []interface{}{
 		"rbd", "mirror", "pool", "status", "pool", "--format", "json"}...).Return(string(output), nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	// Method call
 	resp, err := GetRbdMirrorPoolStatus("pool", "", "")
@@ -68,7 +69,7 @@ func (ks *RbdMirrorSuite) TestImageStatus() {
 	// mocks and expectations
 	r.On("RunCommand", []interface{}{
 		"rbd", "mirror", "image", "status", "pool/image_one", "--format", "json"}...).Return(string(output), nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	// Method call
 	resp, err := GetRbdMirrorImageStatus("pool", "image_one", "", "")
@@ -85,7 +86,7 @@ func (ks *RbdMirrorSuite) TestPoolInfo() {
 	// mocks and expectations
 	r.On("RunCommand", []interface{}{
 		"rbd", "mirror", "pool", "info", "pool", "--format", "json"}...).Return(string(output), nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	// Method call
 	resp, err := GetRbdMirrorPoolInfo("pool", "", "")
@@ -103,7 +104,7 @@ func (ks *RbdMirrorSuite) TestPromotePoolOnSecondary() {
 		"rbd", "mirror", "pool", "promote", "pool"}...).Return("", fmt.Errorf("%s", string(output))).Once()
 	r.On("RunCommand", []interface{}{
 		"rbd", "mirror", "pool", "promote", "pool", "--force"}...).Return("ok", nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	// Test stardard promotion.
 	err := handlePoolPromotion("pool", false)
@@ -127,7 +128,7 @@ func (ks *RbdMirrorSuite) TestDemotePoolOnSecondary() {
 		"rbd", "mirror", "image", "resync", "pool/image_one"}...).Return("ok", nil).Once()
 	r.On("RunCommand", []interface{}{
 		"rbd", "mirror", "image", "resync", "pool/image_two"}...).Return("ok", nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	// Test stardard promotion.
 	err := handlePoolDemotion("pool")

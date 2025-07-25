@@ -3,6 +3,7 @@ package ceph
 import (
 	"fmt"
 	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 )
@@ -14,7 +15,7 @@ func genMonmap(path string, fsid string) error {
 		path,
 	}
 
-	_, err := processExec.RunCommand("monmaptool", args...)
+	_, err := common.ProcessExec.RunCommand("monmaptool", args...)
 	if err != nil {
 		return err
 	}
@@ -30,7 +31,7 @@ func addMonmap(path string, name string, address string) error {
 		path,
 	}
 
-	_, err := processExec.RunCommand("monmaptool", args...)
+	_, err := common.ProcessExec.RunCommand("monmaptool", args...)
 	if err != nil {
 		return err
 	}
@@ -47,7 +48,7 @@ func bootstrapMon(hostname string, path string, monmap string, keyring string) e
 		"--keyring", keyring,
 	}
 
-	_, err := processExec.RunCommand("ceph-mon", args...)
+	_, err := common.ProcessExec.RunCommand("ceph-mon", args...)
 	if err != nil {
 		return err
 	}

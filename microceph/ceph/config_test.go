@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"encoding/json"
+	"github.com/canonical/microceph/microceph/common"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/tests"
@@ -51,7 +52,7 @@ func (s *configSuite) TestSetConfig() {
 
 	r := mocks.NewRunner(s.T())
 	addConfigSetExpectations(r, t.Key, t.Value)
-	processExec = r
+	common.ProcessExec = r
 
 	err := SetConfigItem(t)
 	assert.NoError(s.T(), err)
@@ -69,7 +70,7 @@ func (s *configSuite) TestSetROConfigBypassChecks() {
 
 	r := mocks.NewRunner(s.T())
 	addConfigSetExpectations(r, t.Key, t.Value)
-	processExec = r
+	common.ProcessExec = r
 
 	err := SetConfigItemUnsafe(t)
 	assert.NoError(s.T(), err)
@@ -87,7 +88,7 @@ func (s *configSuite) TestGetConfig() {
 
 	r := mocks.NewRunner(s.T())
 	addConfigOpExpectations(r, "get", "mon", t.Key, t.Value)
-	processExec = r
+	common.ProcessExec = r
 
 	_, err := GetConfigItem(t)
 	assert.NoError(s.T(), err)
@@ -105,7 +106,7 @@ func (s *configSuite) TestResetConfig() {
 
 	r := mocks.NewRunner(s.T())
 	addConfigOpExpectations(r, "rm", "global", t.Key, t.Value)
-	processExec = r
+	common.ProcessExec = r
 
 	err := RemoveConfigItem(t)
 	assert.NoError(s.T(), err)
@@ -116,7 +117,7 @@ func (s *configSuite) TestListConfig() {
 
 	r := mocks.NewRunner(s.T())
 	addListConfigExpectations(r, t.Key, t.Value)
-	processExec = r
+	common.ProcessExec = r
 
 	configs, err := ListConfigs()
 	assert.NoError(s.T(), err)

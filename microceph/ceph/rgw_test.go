@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,7 +64,7 @@ func (s *rgwSuite) TestEnableRGW() {
 
 	addRGWEnableExpectations(r)
 
-	processExec = r
+	common.ProcessExec = r
 
 	err := EnableRGW(s.TestStateInterface, 8081, 443, "", "", []string{"10.1.1.1", "10.2.2.2"})
 
@@ -79,7 +80,7 @@ func (s *rgwSuite) TestEnableRGW() {
 func (s *rgwSuite) TestEnableRGWWithInvalidSSLCertificate() {
 	r := mocks.NewRunner(s.T())
 
-	processExec = r
+	common.ProcessExec = r
 
 	err := EnableRGW(s.TestStateInterface, 80, 443, "invalid-certificate", validSSLPrivateKey, []string{"10.1.1.1", "10.2.2.2"})
 
@@ -95,7 +96,7 @@ func (s *rgwSuite) TestEnableRGWWithInvalidSSLCertificate() {
 func (s *rgwSuite) TestEnableRGWWithInvalidSSLPrivateKey() {
 	r := mocks.NewRunner(s.T())
 
-	processExec = r
+	common.ProcessExec = r
 
 	err := EnableRGW(s.TestStateInterface, 80, 443, validSSLCertificate, "invalid-private-key", []string{"10.1.1.1", "10.2.2.2"})
 
@@ -113,7 +114,7 @@ func (s *rgwSuite) TestEnableRGWWithMissingSSLCertificate() {
 
 	addRGWEnableExpectations(r)
 
-	processExec = r
+	common.ProcessExec = r
 
 	err := EnableRGW(s.TestStateInterface, 0, 443, "", validSSLPrivateKey, []string{"10.1.1.1", "10.2.2.2"})
 
@@ -130,7 +131,7 @@ func (s *rgwSuite) TestEnableRGWWithMissingSSLPrivateKey() {
 
 	addRGWEnableExpectations(r)
 
-	processExec = r
+	common.ProcessExec = r
 
 	err := EnableRGW(s.TestStateInterface, 0, 443, validSSLCertificate, "", []string{"10.1.1.1", "10.2.2.2"})
 
@@ -147,7 +148,7 @@ func (s *rgwSuite) TestEnableRGWWithSSL() {
 
 	addRGWEnableExpectations(r)
 
-	processExec = r
+	common.ProcessExec = r
 
 	err := EnableRGW(s.TestStateInterface, 8081, 443, validSSLCertificate, validSSLPrivateKey, []string{"10.1.1.1", "10.2.2.2"})
 
@@ -165,7 +166,7 @@ func (s *rgwSuite) TestDisableRGW() {
 
 	addStopRGWExpectations(s, r)
 
-	processExec = r
+	common.ProcessExec = r
 
 	err := DisableRGW(context.Background(), s.TestStateInterface)
 
