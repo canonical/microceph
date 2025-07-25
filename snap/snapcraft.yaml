@@ -10,6 +10,11 @@ description: |-
 
 confinement: strict
 
+package-repositories:
+  - type: apt
+    ppa: lmlogiudice/ceph-mcorch
+    priority: always
+
 plugs:
   load-rbd:
     interface: kernel-module-load
@@ -194,7 +199,6 @@ parts:
       mkdir -p share/ceph/mgr/microceph
       # Force copy to overwrite.
       cp -rf lib/python3.12/site-packages/microceph share/ceph/mgr/
-      cp -rf lib/python3.12/site-packages/orchestrator share/ceph/mgr/
 
   ceph:
     plugin: nil
