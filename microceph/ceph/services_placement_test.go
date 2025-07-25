@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/tests"
@@ -84,7 +85,7 @@ func (s *servicesPlacementSuite) TestHospitalityCheckFailure() {
 	service := "rgw"
 
 	r := mocks.NewRunner(s.T())
-	processExec = r
+	common.ProcessExec = r
 	addSnapServiceActiveExpectations(r, service, "active", nil)
 
 	payload := types.EnableService{

@@ -122,7 +122,7 @@ func getUpRgws() (common.Set, error) {
 
 func getMons() (common.Set, error) {
 	retval := common.Set{}
-	output, err := processExec.RunCommand("ceph", "mon", "dump", "-f", "json-pretty")
+	output, err := common.ProcessExec.RunCommand("ceph", "mon", "dump", "-f", "json-pretty")
 	if err != nil {
 		logger.Errorf("Failed fetching Mon dump: %v", err)
 		return nil, err
@@ -140,7 +140,7 @@ func getMons() (common.Set, error) {
 
 func getUpOsds() (common.Set, error) {
 	retval := common.Set{}
-	output, err := processExec.RunCommand("ceph", "osd", "dump", "-f", "json-pretty")
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "dump", "-f", "json-pretty")
 	if err != nil {
 		logger.Errorf("Failed fetching OSD dump: %v", err)
 		return nil, err

@@ -104,7 +104,7 @@ func (s *bootstrapSuite) TestBootstrap() {
 	addEnableMsgr2Expectations(r)
 	addNetworkExpectationsBootstrap(nw, s.TestStateInterface)
 
-	processExec = r
+	common.ProcessExec = r
 	common.Network = nw
 
 	err := Bootstrap(context.Background(), s.TestStateInterface, common.BootstrapConfig{MonIp: "1.1.1.1", PublicNet: "1.1.1.1/24"})
@@ -121,7 +121,7 @@ func (s *bootstrapSuite) TestBootstrapDataPrep() {
 
 	addNetworkExpectations(nw, s.TestStateInterface)
 
-	processExec = r
+	common.ProcessExec = r
 	common.Network = nw
 
 	// Case 1. Only mon-ip is provided.

@@ -145,7 +145,7 @@ func GetConfigItem(c types.Config) (types.Configs, error) {
 	}
 
 	ret[0].Key = c.Key
-	ret[0].Value, err = processExec.RunCommand("ceph", args...)
+	ret[0].Value, err = common.ProcessExec.RunCommand("ceph", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func RemoveConfigItem(c types.Config) error {
 		c.Key,
 	}
 
-	_, err = processExec.RunCommand("ceph", args...)
+	_, err = common.ProcessExec.RunCommand("ceph", args...)
 	if err != nil {
 		return err
 	}
@@ -186,7 +186,7 @@ func ListConfigs() (types.Configs, error) {
 		"json-pretty",
 	}
 
-	output, err := processExec.RunCommand("ceph", args...)
+	output, err := common.ProcessExec.RunCommand("ceph", args...)
 	if err != nil {
 		return configs, err
 	}
@@ -217,7 +217,7 @@ func setConfigItem(c types.Config) error {
 		"json-pretty",
 	}
 
-	_, err := processExec.RunCommand("ceph", args...)
+	_, err := common.ProcessExec.RunCommand("ceph", args...)
 	if err != nil {
 		return err
 	}

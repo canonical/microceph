@@ -75,11 +75,10 @@ func (f SharedFileStater) GetFileStat(path string) (uid int, gid int, major uint
 	return shared.GetFileStat(path)
 }
 
-
 // OSDManager handles OSD operations. It holds the state, a runner for executing commands and a filesystem interface.
 type OSDManager struct {
 	state        state.State
-	runner       Runner
+	runner       common.Runner
 	fs           afero.Fs
 	storage      interfaces.StorageInterface
 	validator    PathValidator
@@ -87,12 +86,11 @@ type OSDManager struct {
 	fileStater   FileStater
 }
 
-
 // NewOSDManager returns a new OSD manager instance.
 func NewOSDManager(s state.State) *OSDManager {
 	return &OSDManager{
 		state:        s,
-		runner:       processExec,
+		runner:       common.ProcessExec,
 		fs:           afero.NewOsFs(),
 		storage:      StorageImpl{},
 		validator:    SharedPathValidator{},
@@ -1022,7 +1020,7 @@ func (m *OSDManager) purgeOSD(osd int64) error {
 			// Success: break the retry loop
 			break
 		}
-		// we're getting a RunError from processExec.RunCommand, and it
+		// we're getting a RunError from ProcessExec.RunCommand, and it
 		// wraps the original exit error if there's one
 		exitError, ok := err.(shared.RunError).Unwrap().(*exec.ExitError)
 		if !ok {
@@ -1242,7 +1240,7 @@ func setOsdNooutFlag(set bool) error {
 		command = "unset"
 	}
 
-	_, err := processExec.RunCommand("ceph", "osd", command, "noout")
+	_, err := common.ProcessExec.RunCommand("ceph", "osd", command, "noout")
 	if err != nil {
 		logger.Errorf("failed to %s noout flag: %v", command, err)
 		return fmt.Errorf("failed to %s noout flag: %w", command, err)
@@ -1251,7 +1249,7 @@ func setOsdNooutFlag(set bool) error {
 }
 
 func isOsdNooutSet() (bool, error) {
-	output, err := processExec.RunCommand("ceph", "osd", "dump")
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "dump")
 	if err != nil {
 		logger.Errorf("failed to dump osd info: %v", err)
 		return false, fmt.Errorf("failed to dump osd info: %w", err)
@@ -1381,7 +1379,7 @@ func (m *OSDManager) killOSD(osd int64) error {
 
 func SetReplicationFactor(pools []string, size int64) error {
 	ssize := fmt.Sprintf("%d", size)
-	_, err := processExec.RunCommand("ceph", "config", "set", "global",
+	_, err := common.ProcessExec.RunCommand("ceph", "config", "set", "global",
 		"osd_pool_default_size", ssize)
 	if err != nil {
 		return fmt.Errorf("failed to set pool size default: %w", err)
@@ -1392,7 +1390,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 		allowSizeOne = "false"
 	}
 
-	_, err = processExec.RunCommand("ceph", "config", "set", "global",
+	_, err = common.ProcessExec.RunCommand("ceph", "config", "set", "global",
 		"mon_allow_pool_size_one", allowSizeOne)
 	if err != nil {
 		return fmt.Errorf("failed to set size one pool config option: %w", err)
@@ -1400,7 +1398,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 
 	if len(pools) == 1 && pools[0] == "*" {
 		// Apply setting to all existing pools.
-		out, err := processExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
+		out, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
 		if err != nil {
 			return fmt.Errorf("failed to list pools: %w", err)
 		}
@@ -1417,7 +1415,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 			continue
 		}
 
-		_, err := processExec.RunCommand("ceph", "osd", "pool", "set", pool, "size", ssize, "--yes-i-really-mean-it")
+		_, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "set", pool, "size", ssize, "--yes-i-really-mean-it")
 		if err != nil {
 			return fmt.Errorf("failed to set pool size for %s: %w", pool, err)
 		}
@@ -1428,7 +1426,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 
 // GetOSDPools returns a list of OSD Pools and their configurations.
 func GetOSDPools() ([]types.Pool, error) {
-	out, err := processExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
+	out, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pools: %w", err)
 	}
@@ -1441,7 +1439,7 @@ func GetOSDPools() ([]types.Pool, error) {
 
 	pools := make([]types.Pool, 0, len(poolNames))
 	for _, name := range poolNames {
-		out, err := processExec.RunCommand("ceph", "osd", "pool", "get", name, "all", "--format", "json")
+		out, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "get", name, "all", "--format", "json")
 		if err != nil {
 			return nil, fmt.Errorf("Failed to fetch configuration for OSD pool %q: %w", name, err)
 		}
@@ -1470,7 +1468,7 @@ type CephPool struct {
 func ListPools(application string) []CephPool {
 	args := []string{"osd", "pool", "ls", "detail", "--format", "json"}
 
-	output, err := processExec.RunCommand("ceph", args...)
+	output, err := common.ProcessExec.RunCommand("ceph", args...)
 	if err != nil {
 		return []CephPool{}
 	}

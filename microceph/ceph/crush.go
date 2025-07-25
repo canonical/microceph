@@ -3,6 +3,7 @@ package ceph
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"strings"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -12,7 +13,7 @@ import (
 
 // addCrushRule creates a new default crush rule with a given name and failure domain
 func addCrushRule(name string, failureDomain string) error {
-	_, err := processExec.RunCommand("ceph", "osd", "crush", "rule", "create-replicated", name, "default", failureDomain)
+	_, err := common.ProcessExec.RunCommand("ceph", "osd", "crush", "rule", "create-replicated", name, "default", failureDomain)
 	if err != nil {
 		return err
 	}
@@ -22,7 +23,7 @@ func addCrushRule(name string, failureDomain string) error {
 
 // listCrushRules returns a list of crush rule names
 func listCrushRules() ([]string, error) {
-	output, err := processExec.RunCommand("ceph", "osd", "crush", "rule", "ls")
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "crush", "rule", "ls")
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +47,7 @@ func haveCrushRule(name string) bool {
 
 // getCrushRuleID returns the id of a crush rule with the given name
 func getCrushRuleID(name string) (string, error) {
-	output, err := processExec.RunCommand("ceph", "osd", "crush", "rule", "dump", name)
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "crush", "rule", "dump", name)
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +78,7 @@ func getPoolsForDomain(domain string) ([]string, error) {
 		return nil, err
 	}
 
-	output, err := processExec.RunCommand("ceph", "osd", "pool", "ls", "detail", "--format=json")
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "ls", "detail", "--format=json")
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +91,7 @@ func getPoolsForDomain(domain string) ([]string, error) {
 
 // setPoolCrushRule sets the crush rule for a given pool
 func setPoolCrushRule(pool string, rule string) error {
-	_, err := processExec.RunCommand("ceph", "osd", "pool", "set", pool, "crush_rule", rule)
+	_, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "set", pool, "crush_rule", rule)
 	if err != nil {
 		return err
 	}

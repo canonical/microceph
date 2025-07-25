@@ -3,6 +3,7 @@ package ceph
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,7 +80,7 @@ func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 	addMonDumpExpectations(r)
 	addOsdDumpExpectations(r)
 	addServiceRestartExpectations(r, ts)
-	processExec = r
+	common.ProcessExec = r
 
 	services := types.Services{
 		types.Service{Service: "mon", Location: "foohost"},

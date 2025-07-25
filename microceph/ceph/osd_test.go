@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"path/filepath"
 	"testing"
 
@@ -236,7 +237,7 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 	// set pool crush rule
 	addOsdPoolSetExpectations(r)
 
-	processExec = r
+	common.ProcessExec = r
 
 	mgr := NewOSDManager(nil)
 	mgr.fs = afero.NewMemMapFs()
@@ -267,7 +268,7 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 	// set pool crush rule
 	addOsdPoolSetExpectations(r)
 
-	processExec = r
+	common.ProcessExec = r
 
 	c := mocks.NewMemberCounterInterface(s.T())
 	c.On("Count", mock.Anything).Return(3, nil).Once()
@@ -290,7 +291,7 @@ func (s *osdSuite) TestHaveOSDInCeph() {
 	addOsdTreeExpectations(r)
 	addOsdTreeExpectations(r)
 
-	processExec = r
+	common.ProcessExec = r
 
 	mgr := NewOSDManager(nil)
 	mgr.runner = r
@@ -311,8 +312,8 @@ func (s *osdSuite) TestSetOsdStateOkay() {
 	addSetOsdStateUpExpectations(r)
 	addSetOsdStateDownExpectations(r)
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	err := SetOsdState(true)
 	assert.NoError(s.T(), err)
@@ -327,8 +328,8 @@ func (s *osdSuite) TestSetOsdStateFail() {
 	addSetOsdStateUpFailedExpectations(r)
 	addSetOsdStateDownFailedExpectations(r)
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	err := SetOsdState(true)
 	assert.Error(s.T(), err)
@@ -343,8 +344,8 @@ func (s *osdSuite) TestSetOsdNooutFlagOkay() {
 	addOsdtNooutFlagTrueExpectations(r)
 	addOsdtNooutFlagFalseExpectations(r)
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	err := setOsdNooutFlag(true)
 	assert.NoError(s.T(), err)
@@ -358,8 +359,8 @@ func (s *osdSuite) TestSetOsdNooutFlagFail() {
 	r := mocks.NewRunner(s.T())
 	addOsdtNooutFlagFailedExpectations(r)
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	err := setOsdNooutFlag(true)
 	assert.Error(s.T(), err)
@@ -371,8 +372,8 @@ func (s *osdSuite) TestIsOsdNooutSetOkay() {
 	addIsOsdNooutSetTrueExpections(r)
 	addIsOsdNooutSetFalseExpections(r)
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// noout is set
 	set, err := isOsdNooutSet()
@@ -390,8 +391,8 @@ func (s *osdSuite) TestIsOsdNooutSetFail() {
 	r := mocks.NewRunner(s.T())
 	addIsOsdNooutSetFailedExpections(r)
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// error running ceph osd dump
 	set, err := isOsdNooutSet()
@@ -728,11 +729,11 @@ func (s *osdSuite) TestCheckEncryptSupport() {
 	fs := afero.NewMemMapFs()
 	osdmgr.fs = fs
 
-	// Mock the processExec for isIntfConnected calls
+	// Mock the ProcessExec for isIntfConnected calls
 	r := mocks.NewRunner(s.T())
-	originalProcessExec := processExec
-	processExec = r
-	defer func() { processExec = originalProcessExec }()
+	originalProcessExec := common.ProcessExec
+	common.ProcessExec = r
+	defer func() { common.ProcessExec = originalProcessExec }()
 
 	// Test missing /dev/mapper/control
 	err := osdmgr.checkEncryptSupport()

@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"strings"
 
 	"github.com/canonical/lxd/shared/logger"
@@ -14,7 +15,7 @@ func isIntfConnected(name string) bool {
 		name,
 	}
 
-	_, err := processExec.RunCommand("snapctl", args...)
+	_, err := common.ProcessExec.RunCommand("snapctl", args...)
 	if err != nil { // Non-zero return code when connection not present.
 		logger.Errorf("Failure: check is-connected %s: %v", name, err)
 		return false
@@ -35,7 +36,7 @@ func snapStart(service string, enable bool) error {
 		args = append(args, "--enable")
 	}
 
-	_, err := processExec.RunCommand("snapctl", args...)
+	_, err := common.ProcessExec.RunCommand("snapctl", args...)
 	if err != nil {
 		return err
 	}
@@ -54,7 +55,7 @@ func snapStop(service string, disable bool) error {
 		args = append(args, "--disable")
 	}
 
-	_, err := processExec.RunCommand("snapctl", args...)
+	_, err := common.ProcessExec.RunCommand("snapctl", args...)
 	if err != nil {
 		return err
 	}
@@ -74,7 +75,7 @@ func snapRestart(service string, isReload bool) error {
 
 	args = append(args, fmt.Sprintf("microceph.%s", service))
 
-	_, err := processExec.RunCommand("snapctl", args...)
+	_, err := common.ProcessExec.RunCommand("snapctl", args...)
 	if err != nil {
 		return err
 	}
@@ -89,7 +90,7 @@ func snapCheckActive(service string) error {
 		fmt.Sprintf("microceph.%s", service),
 	}
 
-	out, err := processExec.RunCommand("snapctl", args...)
+	out, err := common.ProcessExec.RunCommand("snapctl", args...)
 	if err != nil {
 		return err
 	}

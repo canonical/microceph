@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"errors"
+	"github.com/canonical/microceph/microceph/common"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/mocks"
@@ -51,7 +52,7 @@ func (s *startSuite) TestStartOSDReleaseUpdate() {
 	r := mocks.NewRunner(s.T())
 
 	addExpected(r)
-	processExec = r
+	common.ProcessExec = r
 
 	err := PostRefresh()
 	assert.NoError(s.T(), err)
@@ -62,7 +63,7 @@ func (s *startSuite) TestInvalidVersionString() {
 	r := mocks.NewRunner(s.T())
 	// only expect the version command, others shouldnt be reached
 	r.On("RunCommand", "ceph", "-v").Return("invalid version", nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	err := PostRefresh()
 	assert.Error(s.T(), err)
@@ -86,7 +87,7 @@ func (s *startSuite) TestMultipleVersionsPresent() {
 
 	r.On("RunCommand", "ceph", "-v").Return(version, nil).Once()
 	r.On("RunCommand", "ceph", "versions").Return(versionsJson, nil).Times(10)
-	processExec = r
+	common.ProcessExec = r
 
 	err := PostRefresh()
 	assert.NoError(s.T(), err)
@@ -107,7 +108,7 @@ func (s *startSuite) TestNoOSDVersions() {
 
 	r.On("RunCommand", "ceph", "-v").Return(version, nil).Once()
 	r.On("RunCommand", "ceph", "versions").Return(versionsJson, nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	err := PostRefresh()
 	assert.NoError(s.T(), err) // no OSD versions, so no update required
@@ -133,7 +134,7 @@ func (s *startSuite) TestOSDReleaseUpToDate() {
 	r.On("RunCommand", "ceph", "-v").Return(version, nil).Once()
 	r.On("RunCommand", "ceph", "versions").Return(versionsJson, nil).Once()
 	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return(osdDump, nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	err := PostRefresh()
 	assert.NoError(s.T(), err)
@@ -161,7 +162,7 @@ func (s *startSuite) TestOSDReleaseUpdateFails() {
 	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return(osdDump, nil).Once()
 	r.On("RunCommand", "ceph", "osd", "require-osd-release", "squid", "--yes-i-really-mean-it").
 		Return("", errors.New("update failed")).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	err := PostRefresh()
 	assert.Error(s.T(), err)
@@ -172,7 +173,7 @@ func (s *startSuite) TestOSDReleaseUpdateFails() {
 func (s *startSuite) TestCephVersionCommandFails() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "-v").Return("", errors.New("command failed")).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	err := PostRefresh()
 	assert.Error(s.T(), err)

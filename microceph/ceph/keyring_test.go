@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"github.com/canonical/microceph/microceph/common"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/mocks"
@@ -31,7 +32,7 @@ func (ks *KeyringSuite) TestClientKeyringCreation() {
 		"ceph", "auth", "get-or-create", "client.RemoteName"}...).Return("ok", nil).Once()
 	r.On("RunCommand", []interface{}{
 		"ceph", "auth", "print-key", "client.RemoteName"}...).Return("ABCD", nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	// Method call
 	clientKey, err := CreateClientKey("RemoteName")
@@ -46,7 +47,7 @@ func (ks *KeyringSuite) TestClientKeyringDelete() {
 	// mocks and expectations
 	r.On("RunCommand", []interface{}{
 		"ceph", "auth", "del", "client.RemoteName"}...).Return("ok", nil).Once()
-	processExec = r
+	common.ProcessExec = r
 
 	// Method call
 	err := DeleteClientKey("RemoteName")

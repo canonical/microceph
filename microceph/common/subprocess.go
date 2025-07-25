@@ -1,4 +1,4 @@
-package ceph
+package common
 
 import (
 	"context"
@@ -26,4 +26,4 @@ func (c RunnerImpl) RunCommandContext(ctx context.Context, name string, arg ...s
 
 // Singleton runner: make this patch-able for testing purposes.
 // By default executes via shared.RunCommand()
-var processExec Runner = RunnerImpl{}
+var ProcessExec Runner = RunnerImpl{}
