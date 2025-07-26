@@ -148,6 +148,16 @@ apps:
       - network
       - network-bind
       - process-control
+  "cephfs-mirror":
+    command: commands/cephfs-mirror.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+    plugs:
+      - network
+      - network-bind
+      - process-control
   # Commands
   ceph:
     command: commands/ceph
@@ -214,6 +224,7 @@ parts:
       - ceph-osd
       - radosgw
       - rbd-mirror
+      - cephfs-mirror
       # Utilities
       - coreutils
       - uuid-runtime
@@ -240,6 +251,7 @@ parts:
       - bin/radosgw
       - bin/radosgw-admin
       - bin/rbd-mirror
+      - bin/cephfs-mirror
       - bin/truncate
       - bin/uuidgen
       - lib/*/ceph
