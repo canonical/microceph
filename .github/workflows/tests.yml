@@ -508,7 +508,7 @@ jobs:
         ~/actionutils.sh headexec remove_node node-wrk3
 
         # reduce to only 2 active mons in a 3 node cluster
-        ~/actionutils.sh headexec disable_mon node-wrk2
+        ~/actionutils.sh nodeexec node-wrk2 disable_mon
         # wait for the cluster to report warning
         for i in {0..100}; do
             if ~/actionutils.sh headexec "microceph.ceph health | grep quorum" ; then
