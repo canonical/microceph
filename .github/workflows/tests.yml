@@ -899,6 +899,145 @@ jobs:
     - name: Verify Remote removal
       run: ~/actionutils.sh remote_remove_and_verify
 
+  nfs-test:
+    name: Test MicroCeph NFS feature
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v4
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install and setup
+      run: ~/actionutils.sh install_microceph
+
+    - name: Add loopback file OSDs
+      run: |
+        set -uex
+        sudo microceph disk add loop,1G,3
+        ~/actionutils.sh wait_for_osds 3
+        sudo microceph.ceph -s
+
+    - name: Enable NFS
+      run: ~/actionutils.sh enable_nfs foo
+
+    - name: Create NFS FS volume
+      run: ~/actionutils.sh create_nfs_fs_volume testfs
+
+    - name: Create NFS export
+      run: ~/actionutils.sh create_nfs_export foo testfs
+
+    - name: Mount and test NFS
+      run: |
+        set -uex
+
+        # Needed to mount the Ceph NFS share.
+        sudo apt install ceph-common
+        sudo mkdir /mnt/nfs
+        sudo cp /var/snap/microceph/current/conf/ceph.conf /etc/ceph/
+        sudo cp /var/snap/microceph/current/conf/ceph.client.admin.keyring /etc/ceph/
+
+        addr="$(hostname -I | cut -d ' ' -f1)"
+        sudo mount -t ceph "${addr}:/" /mnt/nfs -o name=admin
+
+        echo "Hello there!" | sudo tee /mnt/nfs/general.kenobi
+        cat /mnt/nfs/general.kenobi
+
+        sudo umount /mnt/nfs
+
+    - name: Disable NFS
+      run: ~/actionutils.sh disable_nfs foo
+
+  nfs-multinode-test:
+    name: Test MicroCeph NFS feature (multinode)
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v4
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install dependencies
+      run: ~/actionutils.sh setup_lxd
+
+    - name: Create containers with loopback devices
+      run: ~/actionutils.sh create_containers public
+
+    - name: Install local microceph snap
+      run: ~/actionutils.sh install_multinode
+
+    - name: Bootstrap
+      run: ~/actionutils.sh bootstrap_head public
+
+    - name: Setup cluster
+      run: ~/actionutils.sh cluster_nodes public
+
+    - name: Add 3 OSDs
+      run: |
+        for c in node-wrk0 node-wrk1 node-wrk2 ; do
+          ~/actionutils.sh add_osd_to_node $c
+        done
+
+    - name: Enable NFS
+      run: ~/actionutils.sh enable_nfs_in_nodes foo node-wrk0 node-wrk1 node-wrk2
+
+    - name: Create NFS FS volume
+      run: ~/actionutils.sh create_nfs_fs_volume_in_node testfs node-wrk0
+
+    - name: Create NFS export
+      run: ~/actionutils.sh create_nfs_export_in_node foo testfs node-wrk0
+
+    - name: Mount and test NFS
+      run: |
+        set -uex
+
+        # Needed to mount the NFS share.
+        sudo apt install nfs-common
+
+        addr="$(lxc exec node-wrk0 -- bash -c 'hostname -I' | cut -d ' ' -f1)"
+        sudo mkdir /mnt/nfs
+        sudo mount -t nfs -o rw "${addr}:/testfsdir" /mnt/nfs/
+
+        echo "Hello there!" | sudo tee /mnt/nfs/general.kenobi
+        cat /mnt/nfs/general.kenobi
+
+        sudo umount /mnt/nfs
+
+    - name: Disable NFS
+      run: ~/actionutils.sh disable_nfs_in_nodes foo node-wrk0 node-wrk1 node-wrk2
+
   messenger-v2-tests:
     name: Messenger v2 tests
     runs-on: ubuntu-22.04
