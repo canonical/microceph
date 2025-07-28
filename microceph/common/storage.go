@@ -1,6 +1,7 @@
 package common
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,16 +30,13 @@ func IsMountedWithFs(device string, fs afero.Fs) (bool, error) {
 	// findmnt --source returns 0 if the device is mounted, 1 if not
 	_, err = ProcessExec.RunCommand("findmnt", "--source", resolvedPath)
 	if err != nil {
-		// Check if it's an exit status error (device not mounted)
-		// Handle both direct exec.ExitError and wrapped errors
-		if exitError, ok := err.(*exec.ExitError); ok {
+		// Try to unwrap and check the original error
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
 			if exitError.ExitCode() == 1 {
 				// Exit code 1 means device not found/not mounted
 				return false, nil
 			}
-		} else if strings.Contains(err.Error(), "exit status 1") {
-			// Handle wrapped exit status 1 from shared.RunCommand
-			return false, nil
 		}
 		// Other errors (command not found, permission issues, etc.)
 		return false, err

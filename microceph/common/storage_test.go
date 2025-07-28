@@ -35,22 +35,24 @@ func interfaceSlice(slice []string) []interface{} {
 	return result
 }
 
-// MockExitError simulates an exec.ExitError with a specific exit code
-type MockExitError struct {
-	*exec.ExitError
-	code int
+// createRealExitError creates a real exec.ExitError by running a command that fails
+func createRealExitError(code int) error {
+	var cmd *exec.Cmd
+	if code == 1 {
+		// Use 'false' command which always exits with code 1
+		cmd = exec.Command("false")
+	} else {
+		// For other exit codes, use 'sh -c "exit N"'
+		cmd = exec.Command("sh", "-c", "exit "+string(rune(code+'0')))
+	}
+	
+	err := cmd.Run()
+	// This will be a real *exec.ExitError with the correct exit code
+	return err
 }
 
-func NewMockExitError(code int) *MockExitError {
-	return &MockExitError{code: code}
-}
-
-func (e *MockExitError) ExitCode() int {
-	return e.code
-}
-
-func (e *MockExitError) Error() string {
-	return "exit status " + string(rune(e.code+'0'))
+func NewMockExitError(code int) error {
+	return createRealExitError(code)
 }
 
 type StorageDeviceTestSuite struct {
@@ -99,14 +101,21 @@ func (s *StorageDeviceTestSuite) TestIsMounted() {
 	mockRunner := &MockRunner{}
 	ProcessExec = mockRunner
 
-	// Mock findmnt to return exit status 1 (device not mounted)
-	mockRunner.On("RunCommand", "findmnt", "--source", mock.AnythingOfType("string")).Return("", NewMockExitError(1)).Once()
+	// Mock findmnt to return exit status 1 (device not mounted) using real exec.ExitError
+	exitError1 := createRealExitError(1)
+	mockRunner.On("RunCommand", "findmnt", "--source", mock.AnythingOfType("string")).Return("", exitError1).Once()
 
 	devicePath := "/dev/sdb" // We have a dummy device path for testing
 	mounted, err = IsMounted(devicePath)
 	// Should handle exit code 1 as "not mounted" without error
 	s.NoError(err, "There should not be an error when findmnt returns 'not mounted'")
 	s.False(mounted, "Device should not be mounted in test environment")
+
+	// Test device that is mounted (exit code 0)
+	mockRunner.On("RunCommand", "findmnt", "--source", mock.AnythingOfType("string")).Return("", nil).Once()
+	mounted, err = IsMounted(devicePath)
+	s.NoError(err, "There should not be an error when findmnt returns 'mounted'")
+	s.True(mounted, "Device should be mounted when findmnt returns exit code 0")
 }
 
 func TestStorageDeviceSuite(t *testing.T) {
