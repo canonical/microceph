@@ -3,6 +3,7 @@ package ceph
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,7 @@ func GetRbdMirrorPoolInfo(pool string, cluster string, client string) (RbdReplic
 	// add --cluster and --id args
 	args = appendRemoteClusterArgs(args, cluster, client)
 
-	output, err := processExec.RunCommand("rbd", args...)
+	output, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Warnf("REPRBD: failed pool info operation on res(%s): %v", pool, err)
 		return RbdReplicationPoolInfo{Mode: types.RbdResourceDisabled}, nil
@@ -67,7 +68,7 @@ func populatePoolStatus(status string) (RbdReplicationPoolStatus, error) {
 func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdReplicationPoolStatus, error) {
 	args := []string{"mirror", "pool", "status", pool, "--format", "json"}
 
-	output, err := processExec.RunCommand("rbd", args...)
+	output, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Warnf("failed pool status operation on res(%s): %v", pool, err)
 		return RbdReplicationPoolStatus{State: StateDisabledReplication}, nil
@@ -103,7 +104,7 @@ func GetRbdMirrorVerbosePoolStatus(pool string, cluster string, client string) (
 	args := []string{"mirror", "pool", "status", pool, "--verbose", "--format", "json"}
 
 	// Get verbose pool status
-	output, err := processExec.RunCommand("rbd", args...)
+	output, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Warnf("REPRBD: failed verbose pool status operation on res(%s): %v", pool, err)
 		return RbdReplicationVerbosePoolStatus{Summary: RbdReplicationPoolStatus{State: StateDisabledReplication}}, nil
@@ -150,7 +151,7 @@ func GetRbdMirrorImageStatus(pool string, image string, cluster string, client s
 	response := RbdReplicationImageStatus{}
 	args := []string{"mirror", "image", "status", resource, "--format", "json"}
 
-	output, err := processExec.RunCommand("rbd", args...)
+	output, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Warnf("failed image status operation on res(%s): %v", resource, err)
 		return RbdReplicationImageStatus{State: StateDisabledReplication}, nil
@@ -349,7 +350,7 @@ func configurePoolMirroring(pool string, mode types.RbdResourceType, localName s
 	// add --cluster and --id args
 	args = appendRemoteClusterArgs(args, remoteName, localName)
 
-	_, err := processExec.RunCommand("rbd", args...)
+	_, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("failed to execute rbd command: %v", err)
@@ -372,7 +373,7 @@ func configureImageMirroring(req types.RbdReplicationRequest) error {
 		args = []string{"mirror", "image", "enable", fmt.Sprintf("%s/%s", pool, image), string(mode)}
 	}
 
-	_, err := processExec.RunCommand("rbd", args...)
+	_, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("failed to configure rbd image feature: %v", err)
@@ -430,7 +431,7 @@ func listSnapshotSchedule(pool string, image string) ([]byte, error) {
 		args = append(args, image)
 	}
 
-	output, err := processExec.RunCommand("rbd", args...)
+	output, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return []byte(""), err
@@ -445,7 +446,7 @@ func listAllImagesInPool(pool string, localName string, remoteName string) []str
 	// add --cluster and --id args
 	args = appendRemoteClusterArgs(args, remoteName, localName)
 
-	output, err := processExec.RunCommand("rbd", args...)
+	output, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		return []string{}
 	}
@@ -483,7 +484,7 @@ func configureSnapshotSchedule(pool string, image string, schedule string, start
 		}
 	}
 
-	_, err := processExec.RunCommand("rbd", args...)
+	_, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return err
@@ -496,7 +497,7 @@ func configureSnapshotSchedule(pool string, image string, schedule string, start
 func createSnapshot(pool string, image string) error {
 	args := []string{"mirror", "image", "snapshot", fmt.Sprintf("%s/%s", pool, image)}
 
-	_, err := processExec.RunCommand("rbd", args...)
+	_, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return err
@@ -510,7 +511,7 @@ func configureImageFeatures(pool string, image string, op string, feature string
 	// op is enable or disable
 	args := []string{"feature", op, fmt.Sprintf("%s/%s", pool, image), feature}
 
-	_, err := processExec.RunCommand("rbd", args...)
+	_, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("failed to configure rbd image feature: %v", err)
@@ -547,7 +548,7 @@ func flagImageForResync(poolName string, imageName string) error {
 		"mirror", "image", "resync", fmt.Sprintf("%s/%s", poolName, imageName),
 	}
 
-	_, err := processExec.RunCommand("rbd", args...)
+	_, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		return err
 	}
@@ -566,7 +567,7 @@ func peerBootstrapCreate(pool string, client string, cluster string) (string, er
 		args = appendRemoteClusterArgs(args, cluster, client)
 	}
 
-	output, err := processExec.RunCommand("rbd", args...)
+	output, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return "", fmt.Errorf("failed to bootstrap peer token: %v", err)
@@ -592,7 +593,7 @@ func peerBootstrapImport(pool string, client string, cluster string) error {
 		args = appendRemoteClusterArgs(args, cluster, client)
 	}
 
-	_, err := processExec.RunCommand("rbd", args...)
+	_, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("failed to import peer bootstrap token: %v", err)
@@ -610,7 +611,7 @@ func peerRemove(pool string, peerId string, localName string, remoteName string)
 	// add --cluster and --id args
 	args = appendRemoteClusterArgs(args, remoteName, localName)
 
-	_, err := processExec.RunCommand("rbd", args...)
+	_, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("failed to remove peer(%s) for pool(%s): %v", peerId, pool, err)
@@ -631,7 +632,7 @@ func promotePool(poolName string, isForce bool, remoteName string, localName str
 	// add --cluster and --id args
 	args = appendRemoteClusterArgs(args, remoteName, localName)
 
-	output, err := processExec.RunCommand("rbd", args...)
+	output, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		return fmt.Errorf("failed to promote pool(%s): %v", poolName, err)
 	}
@@ -648,7 +649,7 @@ func demotePool(poolName string, remoteName string, localName string) error {
 	// add --cluster and --id args
 	args = appendRemoteClusterArgs(args, remoteName, localName)
 
-	output, err := processExec.RunCommand("rbd", args...)
+	output, err := common.ProcessExec.RunCommand("rbd", args...)
 	if err != nil {
 		return fmt.Errorf("failed to promote pool(%s): %v", poolName, err)
 	}

@@ -29,6 +29,7 @@ func GetServicePlacementTable() map[string](PlacementIntf) {
 		"mon":        &MonServicePlacement{"mon"},
 		"mgr":        &GenericServicePlacement{"mgr"},
 		"mds":        &GenericServicePlacement{"mds"},
+		"nfs":        &NFSServicePlacement{},
 		"rgw":        &RgwServicePlacement{},
 		"rbd-mirror": &ClientServicePlacement{"rbd-mirror"},
 	}

@@ -3,6 +3,7 @@ package ceph
 import (
 	"bufio"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"strings"
 )
@@ -23,7 +24,7 @@ func genKeyring(path, name string, caps ...[]string) error {
 		args = append(args, "--cap", capability[0], capability[1])
 	}
 
-	_, err := processExec.RunCommand("ceph-authtool", args...)
+	_, err := common.ProcessExec.RunCommand("ceph-authtool", args...)
 	if err != nil {
 		return err
 	}
@@ -38,7 +39,7 @@ func importKeyring(path string, source string) error {
 		source,
 	}
 
-	_, err := processExec.RunCommand("ceph-authtool", args...)
+	_, err := common.ProcessExec.RunCommand("ceph-authtool", args...)
 	if err != nil {
 		return err
 	}

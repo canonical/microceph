@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"fmt"
+	"github.com/canonical/microceph/microceph/common"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/database"
@@ -46,8 +47,8 @@ func (s *operationsSuite) TestCheckOsdOkToStopOpsTrue() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "ok-to-stop", "osd.1").Return("ok", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// osd.1 in microceph-0 is okay to stop
 	ops := CheckOsdOkToStopOps{ClusterOps: ClusterOps{nil, context.Background()}}
@@ -75,8 +76,8 @@ func (s *operationsSuite) TestCheckOsdOkToStopOpsFalse() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "ok-to-stop", "osd.1").Return("fail", fmt.Errorf("some reasons")).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	// osd.1 in microceph-0 is not okay to stop
 	ops := CheckOsdOkToStopOps{ClusterOps: ClusterOps{nil, context.Background()}}
@@ -101,8 +102,8 @@ func (s *operationsSuite) TestSetNooutOpsOkay() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "set", "noout").Return("ok", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := SetNooutOps{}
 	err := ops.Run("microceph-0")
@@ -113,8 +114,8 @@ func (s *operationsSuite) TestSetNooutOpsFail() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "set", "noout").Return("fail", fmt.Errorf("some reasons")).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := SetNooutOps{}
 	err := ops.Run("microceph-0")
@@ -125,8 +126,8 @@ func (s *operationsSuite) TestAssertNooutFlagSetOpsTrue() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "dump").Return("flags noout", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := AssertNooutFlagSetOps{}
 	err := ops.Run("microceph-0")
@@ -137,8 +138,8 @@ func (s *operationsSuite) TestAssertNooutFlagSetOpsFalse() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "dump").Return("flags", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := AssertNooutFlagSetOps{}
 	err := ops.Run("microceph-0")
@@ -149,8 +150,8 @@ func (s *operationsSuite) TestAssertNooutFlagSetOpsError() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "dump").Return("fail", fmt.Errorf("some reasons")).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := AssertNooutFlagSetOps{}
 	err := ops.Run("microceph-0")
@@ -161,8 +162,8 @@ func (s *operationsSuite) TestAssertNooutFlagUnsetOpsTrue() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "dump").Return("flags", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := AssertNooutFlagUnsetOps{}
 	err := ops.Run("microceph-0")
@@ -173,8 +174,8 @@ func (s *operationsSuite) TestAssertNooutFlagUnsetOpsFalse() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "dump").Return("flags noout", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := AssertNooutFlagUnsetOps{}
 	err := ops.Run("microceph-0")
@@ -185,8 +186,8 @@ func (s *operationsSuite) TestAssertNooutFlagUnsetOpsError() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "dump").Return("fail", fmt.Errorf("some reasons")).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := AssertNooutFlagUnsetOps{}
 	err := ops.Run("microceph-0")
@@ -197,8 +198,8 @@ func (s *operationsSuite) TestStopOsdOpsOkay() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "snapctl", "stop", "microceph.osd", "--disable").Return("okay", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := StopOsdOps{ClusterOps: ClusterOps{nil, context.Background()}}
 	err := ops.Run("microceph-0")
@@ -209,8 +210,8 @@ func (s *operationsSuite) TestStopOsdOpsFail() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "snapctl", "stop", "microceph.osd", "--disable").Return("fail", fmt.Errorf("some reasons")).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := StopOsdOps{ClusterOps: ClusterOps{nil, context.Background()}}
 	err := ops.Run("microceph-0")
@@ -221,8 +222,8 @@ func (s *operationsSuite) TestStartOsdOpsOkay() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "snapctl", "start", "microceph.osd", "--enable").Return("okay", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := StartOsdOps{ClusterOps: ClusterOps{nil, context.Background()}}
 	err := ops.Run("microceph-0")
@@ -235,8 +236,8 @@ func (s *operationsSuite) TestStartOsdOpsFail() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "snapctl", "start", "microceph.osd", "--enable").Return("fail", fmt.Errorf("some reasons")).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := StartOsdOps{ClusterOps: ClusterOps{nil, context.Background()}}
 	err := ops.Run("microceph-0")
@@ -247,8 +248,8 @@ func (s *operationsSuite) TestUnSetNooutOpsOkay() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "unset", "noout").Return("ok", nil).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := UnsetNooutOps{}
 	err := ops.Run("microceph-0")
@@ -259,8 +260,8 @@ func (s *operationsSuite) TestUnSetNooutOpsFail() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "osd", "unset", "noout").Return("fail", fmt.Errorf("some reasons")).Once()
 
-	// patch processExec
-	processExec = r
+	// patch ProcessExec
+	common.ProcessExec = r
 
 	ops := UnsetNooutOps{}
 	err := ops.Run("microceph-0")

@@ -18,14 +18,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
+
+	"github.com/spf13/afero"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/lxd/shared/revert"
 
-	"github.com/canonical/lxd/lxd/resources"
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/microcluster/v2/state"
 	"github.com/pborman/uuid"
@@ -34,19 +36,93 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 )
 
-func prepareDisk(disk *types.DiskParameter, suffix string, osdPath string, osdID int64) error {
+// PathValidator provides an interface for validating device paths - introduced for mocking in tests.
+type PathValidator interface {
+	IsBlockdevPath(path string) bool
+}
+
+// SharedPathValidator is the production implementation using shared.IsBlockdevPath.
+type SharedPathValidator struct{}
+
+// IsBlockdevPath validates if the given path is a block device path.
+func (v SharedPathValidator) IsBlockdevPath(path string) bool {
+	return shared.IsBlockdevPath(path)
+}
+
+// MountChecker provides an interface for checking if devices are mounted - introduced for mocking in tests.
+type MountChecker interface {
+	IsMounted(device string) (bool, error)
+}
+
+// SharedMountChecker is the production implementation using common.IsMounted.
+type SharedMountChecker struct{}
+
+// IsMounted checks if the given device is mounted.
+func (m SharedMountChecker) IsMounted(device string) (bool, error) {
+	return common.IsMounted(device)
+}
+
+// FileStater provides an interface for getting file statistics - introduced for mocking in tests.
+type FileStater interface {
+	GetFileStat(path string) (uid int, gid int, major uint32, minor uint32, inode uint64, nlink int, err error)
+}
+
+// SharedFileStater is the production implementation using shared.GetFileStat.
+type SharedFileStater struct{}
+
+// GetFileStat gets file statistics for the given path.
+func (f SharedFileStater) GetFileStat(path string) (uid int, gid int, major uint32, minor uint32, inode uint64, nlink int, err error) {
+	return shared.GetFileStat(path)
+}
+
+// OSDManager handles OSD operations. It holds the state, a runner for executing commands and a filesystem interface.
+type OSDManager struct {
+	state        state.State
+	runner       common.Runner
+	fs           afero.Fs
+	storage      interfaces.StorageInterface
+	validator    PathValidator
+	mountChecker MountChecker
+	fileStater   FileStater
+}
+
+// NewOSDManager returns a new OSD manager instance.
+func NewOSDManager(s state.State) *OSDManager {
+	return &OSDManager{
+		state:        s,
+		runner:       common.ProcessExec,
+		fs:           afero.NewOsFs(),
+		storage:      StorageImpl{},
+		validator:    SharedPathValidator{},
+		mountChecker: SharedMountChecker{},
+		fileStater:   SharedFileStater{},
+	}
+}
+
+func (m *OSDManager) prepareDisk(disk *types.DiskParameter, suffix string, osdPath string, osdID int64) error {
+	// Check if device is mounted (only for actual block devices, not loop files)
+	if m.validator.IsBlockdevPath(disk.Path) {
+		mounted, err := m.mountChecker.IsMounted(disk.Path)
+		if err != nil {
+			return fmt.Errorf("failed to check if device %s is mounted: %w", disk.Path, err)
+		}
+		if mounted {
+			return fmt.Errorf("device %s is currently mounted and cannot be used - aborting", disk.Path)
+		}
+	}
+
 	if disk.Wipe {
-		err := timeoutWipe(disk.Path)
+		err := m.timeoutWipe(disk.Path)
 		if err != nil {
 			return fmt.Errorf("failed to wipe device %s: %w", disk.Path, err)
 		}
 	}
 	if disk.Encrypt {
-		err := checkEncryptSupport()
+		err := m.checkEncryptSupport()
 		if err != nil {
 			return fmt.Errorf("encryption unsupported on this machine: %w", err)
 		}
-		path, err := setupEncryptedOSD(disk.Path, osdPath, osdID, suffix)
+		path, err := m.setupEncryptedOSD(disk.Path, osdPath, osdID, suffix)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt device %s: %w", disk.Path, err)
 		}
@@ -57,7 +133,17 @@ func prepareDisk(disk *types.DiskParameter, suffix string, osdPath string, osdID
 	if suffix != "" {
 		return nil
 	}
-	return os.Symlink(disk.Path, filepath.Join(osdPath, "block"))
+	link := filepath.Join(osdPath, "block")
+	lfs, ok := m.fs.(afero.Linker)
+	if !ok {
+		return fmt.Errorf("%T doesn't support symlinks", m.fs)
+	}
+	err := lfs.SymlinkIfPossible(disk.Path, link)
+	if err != nil {
+		logger.Errorf("failed to symlink %s: %v", disk.Path, err)
+		return err
+	}
+	return nil
 }
 
 // setupEncryptedOSD sets up an encrypted OSD on the given disk.
@@ -65,8 +151,14 @@ func prepareDisk(disk *types.DiskParameter, suffix string, osdPath string, osdID
 // Takes a path to the disk device as well as the OSD data path, the OSD id and
 // a suffix (to differentiate invocations between data, WAL and DB devices).
 // Returns the path to the encrypted device and an error if any.
-func setupEncryptedOSD(devicePath string, osdDataPath string, osdID int64, suffix string) (string, error) {
-	if err := os.Symlink(devicePath, filepath.Join(osdDataPath, "unencrypted"+suffix)); err != nil {
+func (m *OSDManager) setupEncryptedOSD(devicePath string, osdDataPath string, osdID int64, suffix string) (string, error) {
+	lfs, ok := m.fs.(afero.Linker)
+	if !ok {
+		return "", fmt.Errorf("symlinks not supported by this filesystem")
+	}
+	err := lfs.SymlinkIfPossible(devicePath, filepath.Join(osdDataPath, "unencrypted"+suffix))
+	if err != nil {
+		logger.Errorf("failed to symlink unencrypted block device %s: %v", devicePath, err)
 		return "", fmt.Errorf("failed to add unencrypted block symlink: %w", err)
 	}
 
@@ -77,12 +169,14 @@ func setupEncryptedOSD(devicePath string, osdDataPath string, osdID int64, suffi
 	}
 
 	// Store key in ceph key value store
-	if err = storeKey(key, osdID, suffix); err != nil {
+	err = m.storeKey(key, osdID, suffix)
+	if err != nil {
 		return "", fmt.Errorf("key store error: %w", err)
 	}
 
 	// Encrypt the device
-	if err = encryptDevice(devicePath, key); err != nil {
+	encryptDevice(devicePath, key)
+	if err != nil {
 		return "", fmt.Errorf("failed to encrypt: %w", err)
 	}
 
@@ -120,7 +214,8 @@ func encryptDevice(path string, key []byte) error {
 	if err != nil {
 		return fmt.Errorf("error in cryptsetup pipe: %s", err)
 	}
-	if _, err = stdin.Write(key); err != nil {
+	_, err = stdin.Write(key)
+	if err != nil {
 		return fmt.Errorf("error writing key to cryptsetup pipe: %s", err)
 	}
 	stdin.Close()
@@ -132,9 +227,9 @@ func encryptDevice(path string, key []byte) error {
 }
 
 // Store the key in the ceph key value store, under a name that derives from the osd id.
-func storeKey(key []byte, osdID int64, suffix string) error {
+func (m *OSDManager) storeKey(key []byte, osdID int64, suffix string) error {
 	// Run the ceph config-key set command
-	_, err := processExec.RunCommand("ceph", "config-key", "set", fmt.Sprintf("microceph:osd%s.%d/key", suffix, osdID), string(key))
+	_, err := m.runner.RunCommand("ceph", "config-key", "set", fmt.Sprintf("microceph:osd%s.%d/key", suffix, osdID), string(key))
 	if err != nil {
 		return fmt.Errorf("failed to store key: %w", err)
 	}
@@ -156,7 +251,8 @@ func openEncryptedDevice(path string, osdID int64, key []byte, suffix string) (s
 	if err != nil {
 		return "", fmt.Errorf("error in cryptsetup pipe: %s", err)
 	}
-	if _, err = stdin.Write(key); err != nil {
+	_, err = stdin.Write(key)
+	if err != nil {
 		return "", fmt.Errorf("error writing key to cryptsetup pipe: %s", err)
 	}
 	stdin.Close()
@@ -176,9 +272,10 @@ Verify your version of snapd by running "snap version"
 // - Check if the kernel module is loaded.
 // - Check if we have a mapper control file.
 // - Check if we can access /run
-func checkEncryptSupport() error {
+func (m *OSDManager) checkEncryptSupport() error {
 	// Check if we have a mapper
-	if _, err := os.Stat("/dev/mapper/control"); err != nil {
+	_, err := m.fs.Stat("/dev/mapper/control")
+	if err != nil {
 		return fmt.Errorf("missing /dev/mapper/control: %w", err)
 	}
 
@@ -189,20 +286,21 @@ func checkEncryptSupport() error {
 	}
 
 	// Check if we have the dm_crypt module
-	inf, err := os.Stat("/sys/module/dm_crypt")
+	inf, err := m.fs.Stat("/sys/module/dm_crypt")
 	if err != nil || inf == nil || !inf.IsDir() {
 		return fmt.Errorf("missing dm_crypt module: %w", err)
 	}
 
 	// Check if we can list the /run directory; older snapd had an issue with this, https://github.com/snapcore/snapd/pull/12445
-	if _, err = os.ReadDir("/run"); err != nil {
+	_, err = afero.ReadDir(m.fs, "/run")
+	if err != nil {
 		return fmt.Errorf("can't access /run, might need to update snapd to >=2.59.1: %w", err)
 	}
 	return nil
 }
 
 // switchFailureDomain switches the crush rules failure domain from old to new
-func switchFailureDomain(old string, new string) error {
+func (m *OSDManager) switchFailureDomain(old string, new string) error {
 	var err error
 
 	newRule := fmt.Sprintf("microceph_auto_%s", new)
@@ -230,29 +328,34 @@ func switchFailureDomain(old string, new string) error {
 // updateFailureDomain checks if we need to update the crush rules failure domain.
 // Once we have at least 3 nodes with at least 1 OSD each, we set the failure domain to host.
 // Currently this function only handles scale-up scenarios, i.e. adding a new node.
-func updateFailureDomain(ctx context.Context, s state.State) error {
+func (m *OSDManager) updateFailureDomain(ctx context.Context, s state.State) error {
+	logger.Infof("Checking if we need to update failure domain for OSDs")
 	numNodes, err := database.MemberCounter.Count(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to count members: %w", err)
 	}
 
 	if numNodes >= 3 {
-		err = switchFailureDomain("osd", "host")
+		logger.Infof("We have %d nodes, switching failure domain to host", numNodes)
+		err = m.switchFailureDomain("osd", "host")
 		if err != nil {
 			return fmt.Errorf("failed to set host failure domain: %w", err)
 		}
+		logger.Infof("Successfully switched failure domain to host")
 	}
 	return nil
 }
 
-func setStablePath(storage *api.ResourcesStorage, param *types.DiskParameter) error {
+func (m *OSDManager) setStablePath(storage *api.ResourcesStorage, param *types.DiskParameter) error {
 	// Validate the path.
-	if !shared.IsBlockdevPath(param.Path) {
+	if !m.validator.IsBlockdevPath(param.Path) {
+		logger.Errorf("not a block device path: %s", param.Path)
 		return fmt.Errorf("invalid disk path: %s", param.Path)
 	}
 
-	_, _, major, minor, _, _, err := shared.GetFileStat(param.Path)
+	_, _, major, minor, _, _, err := m.fileStater.GetFileStat(param.Path)
 	if err != nil {
+		logger.Errorf("failed to get block device path %s: %v", param.Path, err)
 		return fmt.Errorf("invalid disk path: %w", err)
 	}
 
@@ -264,12 +367,16 @@ func setStablePath(storage *api.ResourcesStorage, param *types.DiskParameter) er
 			candidate := fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID)
 
 			// check if candidate exists
-			if shared.PathExists(candidate) && !shared.IsDir(candidate) {
-				param.Path = candidate
+			if exists, _ := afero.Exists(m.fs, candidate); exists {
+				if isDir, _ := afero.IsDir(m.fs, candidate); !isDir {
+					param.Path = candidate
+				}
 			} else {
 				candidate = fmt.Sprintf("/dev/disk/by-path/%s", disk.DevicePath)
-				if shared.PathExists(candidate) && !shared.IsDir(candidate) {
-					param.Path = candidate
+				if exists, _ := afero.Exists(m.fs, candidate); exists {
+					if isDir, _ := afero.IsDir(m.fs, candidate); !isDir {
+						param.Path = candidate
+					}
 				}
 			}
 
@@ -280,11 +387,11 @@ func setStablePath(storage *api.ResourcesStorage, param *types.DiskParameter) er
 		for _, part := range disk.Partitions {
 			if part.Device == dev {
 				candidate := fmt.Sprintf("/dev/disk/by-id/%s-part%d", disk.DeviceID, part.Partition)
-				if shared.PathExists(candidate) {
+				if exists, _ := afero.Exists(m.fs, candidate); exists {
 					param.Path = candidate
 				} else {
 					candidate = fmt.Sprintf("/dev/disk/by-path/%s-part%d", disk.DevicePath, part.Partition)
-					if shared.PathExists(candidate) {
+					if exists, _ := afero.Exists(m.fs, candidate); exists {
 						param.Path = candidate
 					}
 				}
@@ -293,8 +400,38 @@ func setStablePath(storage *api.ResourcesStorage, param *types.DiskParameter) er
 			}
 		}
 	}
-
+	logger.Infof("Set stable path for to %s", param.Path)
 	return nil
+}
+
+// checkDeviceHasPartitions checks if a block device has partitions using the LXD resource API.
+// Returns true if the device has partitions, false otherwise.
+func (m *OSDManager) checkDeviceHasPartitions(storage *api.ResourcesStorage, devicePath string) (bool, error) {
+	// Only check block devices
+	if !m.validator.IsBlockdevPath(devicePath) {
+		return false, nil
+	}
+
+	_, _, major, minor, _, _, err := m.fileStater.GetFileStat(devicePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to get device info for %s: %w", devicePath, err)
+	}
+
+	dev := fmt.Sprintf("%d:%d", major, minor)
+
+	// Find the disk in storage info
+	for _, disk := range storage.Disks {
+		if disk.Device == dev {
+			// Check if this disk has any partitions
+			if len(disk.Partitions) > 0 {
+				logger.Debugf("Device %s has %d partitions", devicePath, len(disk.Partitions))
+				return true, nil
+			}
+			break
+		}
+	}
+
+	return false, nil
 }
 
 // parseBackingSpec parses a loopback file specification.
@@ -353,17 +490,17 @@ func getFreeSpace(path string) (uint64, error) {
 
 // createBackingFile creates a backing file of the given size in MB
 // and returns the file name.
-func createBackingFile(dir string, size uint64) (string, error) {
+func (m *OSDManager) createBackingFile(dir string, size uint64) (string, error) {
 	backing := filepath.Join(dir, "osd-backing.img")
-	_, err := processExec.RunCommand("truncate", "-s", fmt.Sprintf("%dM", size), backing)
+	_, err := m.runner.RunCommand("truncate", "-s", fmt.Sprintf("%dM", size), backing)
 	if err != nil {
 		return "", fmt.Errorf("failed to create backing file %s: %w", backing, err)
 	}
 	return backing, nil
 }
 
-// AddLoopBackOSDs adds OSDs to the cluster backed by loopback files
-func AddLoopBackOSDs(ctx context.Context, s state.State, spec string) error {
+// addLoopBackOSDs adds OSDs to the cluster backed by loopback files
+func (m *OSDManager) addLoopBackOSDs(ctx context.Context, spec string) error {
 	size, num, err := parseBackingSpec(spec)
 	if err != nil {
 		return err
@@ -378,7 +515,7 @@ func AddLoopBackOSDs(ctx context.Context, s state.State, spec string) error {
 	}
 	// create backing files in a loop and add them to the cluster
 	for i := 0; i < num; i++ {
-		err = AddOSD(ctx, s, types.DiskParameter{LoopSize: size}, nil, nil)
+		err = m.doAddOSD(ctx, types.DiskParameter{LoopSize: size}, nil, nil)
 		if err != nil {
 			return fmt.Errorf("failed to add loop OSD: %w", err)
 		}
@@ -386,44 +523,74 @@ func AddLoopBackOSDs(ctx context.Context, s state.State, spec string) error {
 	return nil
 }
 
+// checkPartitionsOnDevice checks if a device has partitions and returns an error if it does (unless wipe is enabled)
+func (m *OSDManager) checkPartitionsOnDevice(disk *types.DiskParameter, storage *api.ResourcesStorage, deviceType string) error {
+	if !disk.Wipe {
+		hasPartitions, err := m.checkDeviceHasPartitions(storage, disk.Path)
+		if err != nil {
+			return fmt.Errorf("failed to check partitions on %s device %s: %w", deviceType, disk.Path, err)
+		}
+		if hasPartitions {
+			return fmt.Errorf("%s device %s has partitions - use --wipe to override", deviceType, disk.Path)
+		}
+	}
+	return nil
+}
+
 // bootstrapOSD bootstraps an OSD.
-func bootstrapOSD(osdDataPath string, nr int64, wal, db *types.DiskParameter, storage *api.ResourcesStorage) error {
+func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.DiskParameter, storage *api.ResourcesStorage) error {
+	logger.Infof("Bootstrapping OSD %s to %d", osdDataPath, nr)
 	var err error
 
 	args := []string{"--mkfs", "--no-mon-config", "-i", fmt.Sprintf("%d", nr)}
 	if wal != nil {
-		if err = setStablePath(storage, wal); err != nil {
+		err = m.setStablePath(storage, wal)
+		if err != nil {
 			return fmt.Errorf("failed to set stable path for WAL: %w", err)
 		}
 
-		err = prepareDisk(wal, ".wal", osdDataPath, nr)
+		// Check for partitions on WAL device unless wipe is enabled
+		err = m.checkPartitionsOnDevice(wal, storage, "WAL")
+		if err != nil {
+			return err
+		}
+
+		err = m.prepareDisk(wal, ".wal", osdDataPath, nr)
 		if err != nil {
 			return fmt.Errorf("failed to set up WAL device: %w", err)
 		}
 		args = append(args, []string{"--bluestore-block-wal-path", wal.Path}...)
 	}
 	if db != nil {
-		if err = setStablePath(storage, db); err != nil {
+		err = m.setStablePath(storage, db)
+		if err != nil {
 			return fmt.Errorf("failed to set stable path for DB: %w", err)
 		}
 
-		err = prepareDisk(db, ".db", osdDataPath, nr)
+		// Check for partitions on DB device unless wipe is enabled
+		err = m.checkPartitionsOnDevice(db, storage, "DB")
+		if err != nil {
+			return err
+		}
+
+		err = m.prepareDisk(db, ".db", osdDataPath, nr)
 		if err != nil {
 			return fmt.Errorf("failed to set up DB device: %w", err)
 		}
 		args = append(args, []string{"--bluestore-block-db-path", db.Path}...)
 	}
 
-	_, err = processExec.RunCommand("ceph-osd", args...)
+	_, err = m.runner.RunCommand("ceph-osd", args...)
 	if err != nil {
 		return fmt.Errorf("failed to bootstrap OSD: %w", err)
 	}
 
 	// Write the stamp file.
-	err = os.WriteFile(filepath.Join(osdDataPath, "ready"), []byte(""), 0600)
+	err = afero.WriteFile(m.fs, filepath.Join(osdDataPath, "ready"), []byte(""), 0600)
 	if err != nil {
 		return fmt.Errorf("failed to write stamp file: %w", err)
 	}
+	logger.Infof("OSD %s bootstrapped successfully", osdDataPath)
 	return nil
 }
 
@@ -464,13 +631,13 @@ func prepareValidationFailureResp(disks []types.DiskParameter, err error) types.
 	return ret
 }
 
-// AddBulkDisks adds multiple disks as OSDs and generates the API response for request.
-func AddBulkDisks(ctx context.Context, s state.State, disks []types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddResponse {
+// addBulkDisks adds multiple disks as OSDs and generates the API response for request.
+func (m *OSDManager) addBulkDisks(ctx context.Context, disks []types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddResponse {
 	ret := types.DiskAddResponse{}
 
 	if len(disks) == 1 {
 		// Add single disk with requested WAL/DB devices.
-		resp := AddSingleDisk(ctx, s, disks[0], wal, db)
+		resp := m.addSingleDisk(ctx, disks[0], wal, db)
 		ret.Reports = append(ret.Reports, resp)
 		ret.ValidationError = "" // Validation is done for batch requests.
 		return ret
@@ -487,25 +654,25 @@ func AddBulkDisks(ctx context.Context, s state.State, disks []types.DiskParamete
 
 	// Add all requested disks.
 	for _, disk := range disks {
-		resp := AddSingleDisk(ctx, s, disk, nil, nil)
+		resp := m.addSingleDisk(ctx, disk, nil, nil)
 		ret.Reports = append(ret.Reports, resp)
 	}
 
 	return ret
 }
 
-// AddSingleDisk is a wrapper around AddOSD which logs disk addition failures and returns a formatted response.
-func AddSingleDisk(ctx context.Context, s state.State, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
+// addSingleDisk is a wrapper around AddOSD which logs disk addition failures and returns a formatted response.
+func (m *OSDManager) addSingleDisk(ctx context.Context, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
 	if strings.Contains(disk.Path, constants.LoopSpecId) {
 		// Add file based OSDs.
-		err := AddLoopBackOSDs(ctx, s, disk.Path)
+		err := m.addLoopBackOSDs(ctx, disk.Path)
 		if err != nil {
 			logger.Errorf("failed to add disk: spec %s, err %v", disk.Path, err)
 			return types.DiskAddReport{Path: disk.Path, Report: "Failure", Error: err.Error()}
 		}
 	} else {
 		// Add physical disk based OSD.
-		err := AddOSD(ctx, s, disk, wal, db)
+		err := m.doAddOSD(ctx, disk, wal, db)
 		if err != nil {
 			logger.Errorf("failed to add disk: path %s, err %v", disk.Path, err)
 			// return failure as response.
@@ -517,127 +684,222 @@ func AddSingleDisk(ctx context.Context, s state.State, disk types.DiskParameter,
 	return types.DiskAddReport{Path: disk.Path, Report: "Success", Error: ""}
 }
 
-// AddOSD adds an OSD to the cluster, given the data, WAL and DB devices and their respective
+// addOSD adds an OSD to the cluster, given the data, WAL and DB devices and their respective
 // flags for wiping and encrypting.
-func AddOSD(ctx context.Context, s state.State, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
-	logger.Debugf("Adding OSD %s", data.Path)
+func (m *OSDManager) addOSD(ctx context.Context, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
+	logger.Infof("addOSD, params: %s, WAL: %v, DB: %v", data.Path, wal, db)
 
-	var err error
+	err := m.validateAddOSDArgs(data, wal, db)
+	if err != nil {
+		return err
+	}
 
-	// sanity: loopback file and WAL/DB are mutually exclusive
+	return m.doAddOSD(ctx, data, wal, db)
+}
+
+func (m *OSDManager) validateAddOSDArgs(data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
 	if data.LoopSize != 0 && (wal != nil || db != nil) {
 		return fmt.Errorf("loopback and WAL/DB are mutually exclusive")
 	}
+	return nil
+}
 
-	revert := revert.New()
-	defer revert.Fail()
-
-	var storage *api.ResourcesStorage
-
-	if data.LoopSize == 0 {
-		// We have a physical device.
-		// Lookup a stable path for it.
-		storage, err = resources.GetStorage()
-		if err != nil {
-			return fmt.Errorf("unable to list system disks: %w", err)
-		}
-		if err := setStablePath(storage, &data); err != nil {
-			return fmt.Errorf("failed to set stable disk path: %w", err)
-		}
+func (m *OSDManager) stabilizeDevicePath(data *types.DiskParameter) (*api.ResourcesStorage, error) {
+	logger.Infof("Stabilizing device path for %s", data.Path)
+	if data.LoopSize != 0 {
+		return nil, nil
 	}
 
-	// Record the disk.
+	storage, err := m.storage.GetStorage()
+	if err != nil {
+		logger.Errorf("failed to stabilize device path for %s, err %v", data.Path, err)
+		return nil, fmt.Errorf("unable to list system disks: %w", err)
+	}
+	err = m.setStablePath(storage, data)
+	if err != nil {
+		logger.Errorf("failed to set stable path for %s, err %v", data.Path, err)
+		return nil, fmt.Errorf("failed to set stable disk path: %w", err)
+	}
+	logger.Infof("Stabilized device path for %s", data.Path)
+	return storage, nil
+}
+
+func (m *OSDManager) createDiskRecord(ctx context.Context, data *types.DiskParameter) (int64, error) {
 	var nr int64
-	err = s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		nr, err = database.CreateDisk(ctx, tx, database.Disk{Member: s.Name(), Path: data.Path})
+	err := m.state.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		nr, err = database.CreateDisk(ctx, tx, database.Disk{Member: m.state.Name(), Path: data.Path})
 		if err != nil {
 			return fmt.Errorf("failed to record disk: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return err
+		return -1, err
 	}
 
-	logger.Debugf("Created disk record for osd.%d", nr)
+	logger.Infof("Created disk record for osd.%d", nr)
+	return nr, nil
+}
 
-	osdDataPath := filepath.Join(constants.GetPathConst().DataPath, "osd", fmt.Sprintf("ceph-%d", nr))
+func getOSDDataPath(nr int64) string {
+	return filepath.Join(constants.GetPathConst().DataPath, "osd", fmt.Sprintf("ceph-%d", nr))
+}
 
-	// if we fail later, make sure we free up the record
-	revert.Add(func() {
-		os.RemoveAll(osdDataPath)
-		s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			database.DeleteDisk(ctx, tx, s.Name(), data.Path)
+func (m *OSDManager) setupRevert(ctx context.Context, data *types.DiskParameter, osdDataPath string) *revert.Reverter {
+	revt := revert.New()
+	revt.Add(func() {
+		// try to cleanup, but don't fail
+		_ = m.fs.RemoveAll(osdDataPath)
+		_ = m.state.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			_ = database.DeleteDisk(ctx, tx, m.state.Name(), data.Path)
 			return nil
 		})
 	})
+	return revt
+}
 
-	// Create directory.
-	err = os.MkdirAll(osdDataPath, 0700)
+func (m *OSDManager) prepareOSDData(ctx context.Context, data *types.DiskParameter, osdDataPath string, nr int64) error {
+	err := m.fs.MkdirAll(osdDataPath, 0700)
 	if err != nil {
+		logger.Errorf("failed to create dir %s, err %v", osdDataPath, err)
 		return fmt.Errorf("failed to create OSD directory: %w", err)
 	}
 
-	// do we have a loopback file request?
 	if data.LoopSize != 0 {
-		backing, err := createBackingFile(osdDataPath, data.LoopSize)
+		backing, err := m.createBackingFile(osdDataPath, data.LoopSize)
 		if err != nil {
 			return err
 		}
 		data.Path = backing
 		// update db, it didn't have a path before
-		err = s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			err = database.OSDQuery.UpdatePath(ctx, s, nr, backing)
+		err = m.state.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			err = database.OSDQuery.UpdatePath(ctx, m.state, nr, backing)
 			if err != nil {
 				return fmt.Errorf("failed to update disk record: %w", err)
 			}
 			return nil
 		})
+		if err != nil {
+			return err
+		}
 	}
 
-	// Wipe and/or encrypt the disk if needed.
-	err = prepareDisk(&data, "", osdDataPath, nr)
-	if err != nil {
-		return fmt.Errorf("failed to prepare data device: %w", err)
-	}
+	return nil
+}
 
-	// Generate keyring.
-	err = genAuth(filepath.Join(osdDataPath, "keyring"), fmt.Sprintf("osd.%d", nr), []string{"mgr", "allow profile osd"}, []string{"mon", "allow profile osd"}, []string{"osd", "allow *"})
+func (m *OSDManager) generateOSDFiles(osdDataPath string, nr int64) error {
+	err := genAuth(filepath.Join(osdDataPath, "keyring"), fmt.Sprintf("osd.%d", nr), []string{"mgr", "allow profile osd"}, []string{"mon", "allow profile osd"}, []string{"osd", "allow *"})
 	if err != nil {
+		logger.Errorf("failed to generate OSD files, osd path %s, err %v", osdDataPath, err)
 		return fmt.Errorf("failed to generate OSD keyring: %w", err)
 	}
 
-	// Generate OSD uuid.
 	fsid := uuid.NewRandom().String()
-
-	// Write fsid file.
-	err = os.WriteFile(filepath.Join(osdDataPath, "fsid"), []byte(fsid), 0600)
+	err = afero.WriteFile(m.fs, filepath.Join(osdDataPath, "fsid"), []byte(fsid), 0600)
 	if err != nil {
+		logger.Errorf("failed to write fsid, osd path %s, err %v", osdDataPath, err)
 		return fmt.Errorf("failed to write fsid: %w", err)
 	}
+	logger.Infof("Generated OSD files for osd.%d, fsid %s", nr, fsid)
+	return nil
+}
 
-	// Bootstrap OSD.
-	err = bootstrapOSD(osdDataPath, nr, wal, db, storage)
-	if err != nil {
-		return err
-	}
-
-	// Spawn the OSD.
-	logger.Debugf("Spawning OSD %d", nr)
-	err = snapRestart("osd", true)
+func (m *OSDManager) spawnOSD(nr int64) error {
+	logger.Infof("Spawning OSD %d", nr)
+	err := snapRestart("osd", true)
 	if err != nil {
 		return fmt.Errorf("failed to start osd.%d: %w", nr, err)
 	}
+	return nil
+}
 
-	// Maybe update the failure domain
-	err = updateFailureDomain(ctx, s)
+// doAddOSD is the internal implementation for adding an OSD to the cluster.
+func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
+	storage, err := m.stabilizeDevicePath(&data)
 	if err != nil {
+		logger.Errorf("failed to stabilize device path for %s: %v", data.Path, err)
 		return err
 	}
 
-	revert.Success() // Revert functions added are not run on return.
-	logger.Debugf("Added osd.%d", nr)
+	nr, err := m.createDiskRecord(ctx, &data)
+	if err != nil {
+		logger.Errorf("failed to create disk record for %s: %v", data.Path, err)
+		return err
+	}
+
+	osdDataPath := getOSDDataPath(nr)
+	logger.Infof("osd data path: %s", osdDataPath)
+	revert := m.setupRevert(ctx, &data, osdDataPath)
+	defer revert.Fail()
+
+	err = m.prepareOSDData(ctx, &data, osdDataPath, nr)
+	if err != nil {
+		logger.Errorf("failed to prepare OSD data for %s: %v", data.Path, err)
+		return err
+	}
+
+	// Check for partitions on data device unless wipe is enabled
+	if storage != nil {
+		err = m.checkPartitionsOnDevice(&data, storage, "data")
+		if err != nil {
+			return err
+		}
+	}
+
+	err = m.prepareDisk(&data, "", osdDataPath, nr)
+	if err != nil {
+		logger.Errorf("failed to prepare disk for %s: %v", data.Path, err)
+		return fmt.Errorf("failed to prepare data device: %w", err)
+	}
+
+	err = m.generateOSDFiles(osdDataPath, nr)
+	if err != nil {
+		logger.Errorf("failed to generate OSD files for %s: %v", data.Path, err)
+		return err
+	}
+
+	err = m.bootstrapOSD(osdDataPath, nr, wal, db, storage)
+	if err != nil {
+		logger.Errorf("failed to bootstrap OSD %d: %v", nr, err)
+		return err
+	}
+
+	err = m.spawnOSD(nr)
+	if err != nil {
+		logger.Errorf("failed to spawn OSD %d: %v", nr, err)
+		return err
+	}
+
+	err = m.updateFailureDomain(ctx, m.state)
+	if err != nil {
+		logger.Errorf("failed to update failure domain after adding OSD %d: %v", nr, err)
+		return err
+	}
+
+	revert.Success()
+	logger.Infof("Added osd.%d", nr)
 	return nil
+}
+
+// AddLoopBackOSDs adds OSDs backed by loopback files using a one-off manager.
+func AddLoopBackOSDs(ctx context.Context, s state.State, spec string) error {
+	return NewOSDManager(s).addLoopBackOSDs(ctx, spec)
+}
+
+// AddBulkDisks adds multiple disks using a one-off manager.
+func AddBulkDisks(ctx context.Context, s state.State, disks []types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddResponse {
+	return NewOSDManager(s).addBulkDisks(ctx, disks, wal, db)
+}
+
+// AddSingleDisk adds a single disk using a one-off manager.
+func AddSingleDisk(ctx context.Context, s state.State, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
+	return NewOSDManager(s).addSingleDisk(ctx, disk, wal, db)
+}
+
+// AddOSD adds an OSD using a one-off manager.
+func AddOSD(ctx context.Context, s state.State, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
+	return NewOSDManager(s).addOSD(ctx, data, wal, db)
 }
 
 // ListOSD lists current OSD disks
@@ -707,6 +969,7 @@ func IsDowngradeNeeded(ctx context.Context, s interfaces.StateInterface, osd int
 
 // scaleDownFailureDomain scales down the failure domain from 'host' to 'osd' level
 func scaleDownFailureDomain(ctx context.Context, s interfaces.StateInterface, osd int64) error {
+	m := NewOSDManager(s.ClusterState())
 	needDowngrade, err := IsDowngradeNeeded(ctx, s, osd)
 	logger.Debugf("Downgrade needed: %v", needDowngrade)
 	if err != nil {
@@ -715,7 +978,7 @@ func scaleDownFailureDomain(ctx context.Context, s interfaces.StateInterface, os
 	if !needDowngrade {
 		return nil
 	}
-	err = switchFailureDomain("host", "osd")
+	err = m.switchFailureDomain("host", "osd")
 	if err != nil {
 		return fmt.Errorf("failed to switch failure domain: %w", err)
 	}
@@ -723,9 +986,9 @@ func scaleDownFailureDomain(ctx context.Context, s interfaces.StateInterface, os
 }
 
 // reweightOSD reweights the given OSD to the given weight
-func reweightOSD(ctx context.Context, osd int64, weight float64) {
+func (m *OSDManager) reweightOSD(ctx context.Context, osd int64, weight float64) {
 	logger.Debugf("Reweighting osd.%d to %f", osd, weight)
-	_, err := processExec.RunCommand(
+	_, err := m.runner.RunCommand(
 		"ceph", "osd", "crush", "reweight",
 		fmt.Sprintf("osd.%d", osd),
 		fmt.Sprintf("%f", weight),
@@ -736,27 +999,28 @@ func reweightOSD(ctx context.Context, osd int64, weight float64) {
 	}
 }
 
-func doPurge(osd int64) error {
+func (m *OSDManager) doPurge(osd int64) error {
 	// run ceph osd purge command
-	_, err := processExec.RunCommand(
+	_, err := m.runner.RunCommand(
 		"ceph", "osd", "purge", fmt.Sprintf("osd.%d", osd),
 		"--yes-i-really-mean-it",
 	)
 	return err
 }
 
-func purgeOSD(osd int64) error {
+func (m *OSDManager) purgeOSD(osd int64) error {
+	logger.Infof("Purging osd.%d", osd)
 	var err error
 	retries := 10
 	var backoff time.Duration
 
 	for i := 0; i < retries; i++ {
-		err = doPurge(osd)
+		err = m.doPurge(osd)
 		if err == nil {
 			// Success: break the retry loop
 			break
 		}
-		// we're getting a RunError from processExec.RunCommand, and it
+		// we're getting a RunError from ProcessExec.RunCommand, and it
 		// wraps the original exit error if there's one
 		exitError, ok := err.(shared.RunError).Unwrap().(*exec.ExitError)
 		if !ok {
@@ -783,13 +1047,14 @@ func purgeOSD(osd int64) error {
 	return nil
 }
 
-func wipeDevice(ctx context.Context, s interfaces.StateInterface, path string) {
+func (m *OSDManager) wipeDevice(ctx context.Context, path string) {
 	var err error
+	logger.Infof("wipeDevice %s", path)
 	// wipe the device, retry with exponential backoff
 	retries := 8
 	var backoff time.Duration
 	for i := 0; i < retries; i++ {
-		err = timeoutWipe(path)
+		err = m.timeoutWipe(path)
 		if err == nil {
 			// Success: break the retry loop
 			break
@@ -807,21 +1072,24 @@ func wipeDevice(ctx context.Context, s interfaces.StateInterface, path string) {
 }
 
 // timeoutWipe wipes the given device with a timeout, in order not to hang on broken disks
-func timeoutWipe(path string) error {
+func (m *OSDManager) timeoutWipe(path string) error {
+	logger.Infof("timeoutWipe device %s", path)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err := processExec.RunCommandContext(
+	_, err := m.runner.RunCommandContext(
 		ctx,
 		"dd", "if=/dev/zero",
 		fmt.Sprintf("of=%s", path),
 		"bs=4M", "count=10", "status=none",
 	)
+	logger.Infof("Wipe command finished, err: %v", err)
 	return err
 }
 
 func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, bypassSafety bool) error {
 	var err error
+	m := NewOSDManager(s.ClusterState())
 
 	// general sanity
 	err = sanityCheck(ctx, s, osd)
@@ -843,55 +1111,55 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	}
 
 	// check if the osd is still in the cluster -- if we're being re-run, it might not be
-	isPresent, err := haveOSDInCeph(osd)
+	isPresent, err := m.haveOSDInCeph(osd)
 	if err != nil {
 		return fmt.Errorf("failed to check if osd.%d is present in Ceph: %w", osd, err)
 	}
 	// reweight/drain data
 	if isPresent {
-		reweightOSD(ctx, osd, 0)
+		m.reweightOSD(ctx, osd, 0)
 	}
 	// perform safety check for stopping
 	if isPresent && !bypassSafety {
-		err = safetyCheckStop([]int64{osd})
+		err = m.safetyCheckStop([]int64{osd})
 		if err != nil {
 			return err
 		}
 	}
 	// take the OSD out and down
 	if isPresent {
-		err = outDownOSD(osd)
+		err = m.outDownOSD(osd)
 		if err != nil {
 			return err
 		}
 	}
 	// stop the OSD service, but don't fail if it's not running
 	if isPresent {
-		_ = killOSD(osd)
+		_ = m.killOSD(osd)
 	}
 	// perform safety check for destroying
 	if isPresent && !bypassSafety {
-		err = safetyCheckDestroy(osd)
+		err = m.safetyCheckDestroy(osd)
 		if err != nil {
 			return err
 		}
 	}
 	// purge the OSD
 	if isPresent {
-		err = purgeOSD(osd)
+		err = m.purgeOSD(osd)
 		if err != nil {
 			return err
 		}
 	}
 
-	err = clearStorage(ctx, s, osd)
+	err = m.clearStorage(ctx, s, osd)
 	if err != nil {
 		// log error but don't fail, we still want to remove the OSD from the cluster
 		logger.Errorf("Failed to clear storage for osd.%d: %v", osd, err)
 	}
 
 	// Remove osd config
-	err = removeOSDConfig(osd)
+	err = m.removeOSDConfig(osd)
 	if err != nil {
 		return err
 	}
@@ -904,25 +1172,33 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	return nil
 }
 
-func clearStorage(ctx context.Context, s interfaces.StateInterface, osd int64) error {
+func (m *OSDManager) clearStorage(ctx context.Context, s interfaces.StateInterface, osd int64) error {
 	path, err := database.OSDQuery.Path(ctx, s.ClusterState(), osd)
 	if err != nil {
 		return err
 	}
-	fileInfo, err := os.Lstat(path)
+
+	var fileInfo os.FileInfo
+	lfs, ok := m.fs.(afero.Lstater)
+	if !ok {
+		logger.Errorf("%T does not implement afero.Lstater", m.fs)
+		return fmt.Errorf("filesystem does not support lstat: %T", m.fs)
+	}
+	fileInfo, _, err = lfs.LstatIfPossible(path) // ignore "was lstat used" flag
 	if err != nil {
 		return err
 	}
+
 	// Typically we'll be dealing with a symlink, but lets check for safety
 	if fileInfo.Mode()&os.ModeSymlink != 0 {
-		fileInfo, err = os.Stat(path) // Follow the symlink
+		fileInfo, err = m.fs.Stat(path) // Follow the symlink
 		if err != nil {
 			return err
 		}
 	}
 	if fileInfo.Mode()&os.ModeDevice != 0 {
 		// wipe the device
-		wipeDevice(ctx, s, path)
+		m.wipeDevice(ctx, path)
 	}
 	// backing files etc. are being removed later along with config
 	return nil
@@ -940,13 +1216,13 @@ func checkMinOSDs(ctx context.Context, s interfaces.StateInterface, osd int64) e
 	return nil
 }
 
-func outDownOSD(osd int64) error {
-	_, err := processExec.RunCommand("ceph", "osd", "out", fmt.Sprintf("osd.%d", osd))
+func (m *OSDManager) outDownOSD(osd int64) error {
+	_, err := m.runner.RunCommand("ceph", "osd", "out", fmt.Sprintf("osd.%d", osd))
 	if err != nil {
 		logger.Errorf("Failed to take osd.%d out: %v", osd, err)
 		return fmt.Errorf("failed to take osd.%d out: %w", osd, err)
 	}
-	_, err = processExec.RunCommand("ceph", "osd", "down", fmt.Sprintf("osd.%d", osd))
+	_, err = m.runner.RunCommand("ceph", "osd", "down", fmt.Sprintf("osd.%d", osd))
 	if err != nil {
 		logger.Errorf("Failed to take osd.%d down: %v", osd, err)
 		return fmt.Errorf("failed to take osd.%d down: %w", osd, err)
@@ -964,7 +1240,7 @@ func setOsdNooutFlag(set bool) error {
 		command = "unset"
 	}
 
-	_, err := processExec.RunCommand("ceph", "osd", command, "noout")
+	_, err := common.ProcessExec.RunCommand("ceph", "osd", command, "noout")
 	if err != nil {
 		logger.Errorf("failed to %s noout flag: %v", command, err)
 		return fmt.Errorf("failed to %s noout flag: %w", command, err)
@@ -973,7 +1249,7 @@ func setOsdNooutFlag(set bool) error {
 }
 
 func isOsdNooutSet() (bool, error) {
-	output, err := processExec.RunCommand("ceph", "osd", "dump")
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "dump")
 	if err != nil {
 		logger.Errorf("failed to dump osd info: %v", err)
 		return false, fmt.Errorf("failed to dump osd info: %w", err)
@@ -982,14 +1258,14 @@ func isOsdNooutSet() (bool, error) {
 	return strings.Contains(output, "noout"), nil
 }
 
-func safetyCheckStop(osds []int64) error {
+func (m *OSDManager) safetyCheckStop(osds []int64) error {
 	var safeStop bool
 
 	retries := 16
 	var backoff time.Duration
 
 	for i := 0; i < retries; i++ {
-		safeStop = testSafeStop(osds)
+		safeStop = m.testSafeStop(osds)
 		if safeStop {
 			// Success: break the retry loop
 			break
@@ -1006,14 +1282,14 @@ func safetyCheckStop(osds []int64) error {
 	return nil
 }
 
-func safetyCheckDestroy(osd int64) error {
+func (m *OSDManager) safetyCheckDestroy(osd int64) error {
 	var safeDestroy bool
 
 	retries := 16
 	var backoff time.Duration
 
 	for i := 0; i < retries; i++ {
-		safeDestroy = testSafeDestroy(osd)
+		safeDestroy = m.testSafeDestroy(osd)
 		if safeDestroy {
 			// Success: break the retry loop
 			break
@@ -1030,26 +1306,26 @@ func safetyCheckDestroy(osd int64) error {
 	return nil
 }
 
-func testSafeDestroy(osd int64) bool {
+func (m *OSDManager) testSafeDestroy(osd int64) bool {
 	// run ceph osd safe-to-destroy
-	_, err := processExec.RunCommand("ceph", "osd", "safe-to-destroy", fmt.Sprintf("osd.%d", osd))
+	_, err := m.runner.RunCommand("ceph", "osd", "safe-to-destroy", fmt.Sprintf("osd.%d", osd))
 	return err == nil
 }
 
-func testSafeStop(osds []int64) bool {
+func (m *OSDManager) testSafeStop(osds []int64) bool {
 	// run ceph osd ok-to-stop
 	args := []string{"osd", "ok-to-stop"}
 	for _, osd := range osds {
 		args = append(args, fmt.Sprintf("osd.%d", osd))
 	}
-	_, err := processExec.RunCommand("ceph", args...)
+	_, err := m.runner.RunCommand("ceph", args...)
 	return err == nil
 }
 
-func removeOSDConfig(osd int64) error {
+func (m *OSDManager) removeOSDConfig(osd int64) error {
 	dataPath := filepath.Join(os.Getenv("SNAP_COMMON"), "data")
 	osdDataPath := filepath.Join(dataPath, "osd", fmt.Sprintf("ceph-%d", osd))
-	err := os.RemoveAll(osdDataPath)
+	err := m.fs.RemoveAll(osdDataPath)
 	if err != nil {
 		logger.Errorf("Failed to remove osd.%d config: %v", osd, err)
 		return fmt.Errorf("failed to remove osd.%d config: %w", osd, err)
@@ -1067,9 +1343,9 @@ type JSONData struct {
 }
 
 // haveOSDInCeph checks if the given OSD is present in the ceph cluster
-func haveOSDInCeph(osd int64) (bool, error) {
+func (m *OSDManager) haveOSDInCeph(osd int64) (bool, error) {
 	// run ceph osd tree
-	out, err := processExec.RunCommand("ceph", "osd", "tree", "-f", "json")
+	out, err := m.runner.RunCommand("ceph", "osd", "tree", "-f", "json")
 	if err != nil {
 		logger.Errorf("Failed to get ceph osd tree: %v", err)
 		return false, fmt.Errorf("failed to get ceph osd tree: %w", err)
@@ -1091,9 +1367,9 @@ func haveOSDInCeph(osd int64) (bool, error) {
 }
 
 // killOSD terminates the osd process for an osd.id
-func killOSD(osd int64) error {
+func (m *OSDManager) killOSD(osd int64) error {
 	cmdline := fmt.Sprintf("ceph-osd .* --id %d$", osd)
-	_, err := processExec.RunCommand("pkill", "-f", cmdline)
+	_, err := m.runner.RunCommand("pkill", "-f", cmdline)
 	if err != nil {
 		logger.Errorf("Failed to kill osd.%d: %v", osd, err)
 		return fmt.Errorf("failed to kill osd.%d: %w", osd, err)
@@ -1103,7 +1379,7 @@ func killOSD(osd int64) error {
 
 func SetReplicationFactor(pools []string, size int64) error {
 	ssize := fmt.Sprintf("%d", size)
-	_, err := processExec.RunCommand("ceph", "config", "set", "global",
+	_, err := common.ProcessExec.RunCommand("ceph", "config", "set", "global",
 		"osd_pool_default_size", ssize)
 	if err != nil {
 		return fmt.Errorf("failed to set pool size default: %w", err)
@@ -1114,7 +1390,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 		allowSizeOne = "false"
 	}
 
-	_, err = processExec.RunCommand("ceph", "config", "set", "global",
+	_, err = common.ProcessExec.RunCommand("ceph", "config", "set", "global",
 		"mon_allow_pool_size_one", allowSizeOne)
 	if err != nil {
 		return fmt.Errorf("failed to set size one pool config option: %w", err)
@@ -1122,7 +1398,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 
 	if len(pools) == 1 && pools[0] == "*" {
 		// Apply setting to all existing pools.
-		out, err := processExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
+		out, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
 		if err != nil {
 			return fmt.Errorf("failed to list pools: %w", err)
 		}
@@ -1139,7 +1415,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 			continue
 		}
 
-		_, err := processExec.RunCommand("ceph", "osd", "pool", "set", pool, "size", ssize, "--yes-i-really-mean-it")
+		_, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "set", pool, "size", ssize, "--yes-i-really-mean-it")
 		if err != nil {
 			return fmt.Errorf("failed to set pool size for %s: %w", pool, err)
 		}
@@ -1150,7 +1426,7 @@ func SetReplicationFactor(pools []string, size int64) error {
 
 // GetOSDPools returns a list of OSD Pools and their configurations.
 func GetOSDPools() ([]types.Pool, error) {
-	out, err := processExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
+	out, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "ls", "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pools: %w", err)
 	}
@@ -1163,7 +1439,7 @@ func GetOSDPools() ([]types.Pool, error) {
 
 	pools := make([]types.Pool, 0, len(poolNames))
 	for _, name := range poolNames {
-		out, err := processExec.RunCommand("ceph", "osd", "pool", "get", name, "all", "--format", "json")
+		out, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "get", name, "all", "--format", "json")
 		if err != nil {
 			return nil, fmt.Errorf("Failed to fetch configuration for OSD pool %q: %w", name, err)
 		}
@@ -1192,7 +1468,7 @@ type CephPool struct {
 func ListPools(application string) []CephPool {
 	args := []string{"osd", "pool", "ls", "detail", "--format", "json"}
 
-	output, err := processExec.RunCommand("ceph", args...)
+	output, err := common.ProcessExec.RunCommand("ceph", args...)
 	if err != nil {
 		return []CephPool{}
 	}
