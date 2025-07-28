@@ -91,7 +91,7 @@ func removeMon(hostname string) error {
 }
 
 func getActiveMons() ([]string, error) {
-	output, err := processExec.RunCommand("ceph", "-s", "-f", "json")
+	output, err := common.ProcessExec.RunCommand("ceph", "-s", "-f", "json")
 	if err != nil {
 		logger.Errorf("Failed fetching ceph status: %v", err)
 		return nil, err

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/tidwall/gjson"
 )
 
@@ -28,7 +29,7 @@ func bootstrapMgr(hostname string, path string) error {
 }
 
 func getActiveMgrs() ([]string, error) {
-	output, err := processExec.RunCommand("ceph", "mgr", "dump", "-f", "json")
+	output, err := common.ProcessExec.RunCommand("ceph", "mgr", "dump", "-f", "json")
 	if err != nil {
 		logger.Errorf("Failed fetching Mgr dump: %v", err)
 		return nil, err

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/tidwall/gjson"
 )
 
@@ -29,7 +30,7 @@ func bootstrapMds(hostname string, path string) error {
 }
 
 func getActiveMdss() ([]string, error) {
-	output, err := processExec.RunCommand("ceph", "fs", "status", "-f", "json")
+	output, err := common.ProcessExec.RunCommand("ceph", "fs", "status", "-f", "json")
 	if err != nil {
 		logger.Errorf("Failed fetching fs status: %v", err)
 		return nil, err
