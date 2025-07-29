@@ -1,0 +1,146 @@
+# This workflow runs biweekly
+
+name: Tag stable MicroCeph commit
+
+# Controls when the action will run. Workflow runs when there is a new stable channel
+# promoted on Snapcraft
+on:
+# Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch: null
+#  schedule:
+#    - cron: '0 0 * * MON,THU' # Runs biweekly on Tuesdays and Thursdays
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+# This workflow contains a few jobs; the first one is called "tag-stable-commit"
+jobs:
+  tag-stable-commit:
+   # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # Needed for commit search via the API
+  # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+    # Runs a single command using the runners shell
+     - name: Checkout repository
+       uses: actions/checkout@v4
+# ------------------------------------------------------------
+      # 1. Install the MicroCeph snap
+# ------------------------------------------------------------
+     - name: Install MicroCeph snap
+       run: |
+        sudo snap install microceph
+# -----------------------------------------------------------
+    # 2. Find the first name under “channels:”
+    # 3. and then parse <release version> and <commit ID>
+# -----------------------------------------------------------
+  
+     - name: Extract channel information
+       id: snap
+       uses: actions/github-script@v7
+       with:
+         script: |
+           const { execSync } = require('child_process');
+            // Run `snap info microceph`
+            const info = execSync('snap info microceph', { encoding: 'utf-8' });
+            const lines = info.split('\n');
+            // Find the "channels:" header (ignoring indentation)
+            const headerIdx = lines.findIndex(l => l.trim().startsWith('channels:'));
+            if (headerIdx === -1) {
+              core.setFailed('Could not find "channels:" in snap info output');
+              return;
+            }
+            // Get the first non-empty channel line after the header
+            const channelRaw = lines.slice(headerIdx + 1)
+                                    .find(l => l.includes('/stable:'));
+            if (!channelRaw) {
+              core.setFailed('Could not find a "/stable:" channel line');
+              return;
+            }
+            core.info(`Channel line: "${channelRaw}"`);
+            // Parse version, and commit ID
+            const m = channelRaw.match(
+              /^\s*([^/]+)\/stable:\s+([^+\s]+)\+snap([a-f0-9]+)\s/
+            );
+            if (!m) {
+              core.setFailed('Failed to parse channel line');
+              return;
+            }
+            const [, flavour, version, commit] = m;
+            core.setOutput('flavour', flavour);
+            core.setOutput('version', version);
+            core.setOutput('commit', commit);
+            core.info(`flavour=${flavour}`);
+            core.info(`version=${version}`);
+            core.info(`commit=${commit}`);
+      # ------------------------------------------------------------------------
+      # 4. Verify commit exists in the repo and print commit message first line
+      # ------------------------------------------------------------------------
+     - name: Verify commit exists
+       uses: actions/github-script@v7
+       with: 
+           script: |
+            const target = '${{ steps.snap.outputs.commit }}'.slice(0, 7);  // 7-char prefix
+            core.info(`Looking for a commit starting with "${target}" …`);
+            const commits = await github.paginate(
+              github.rest.repos.listCommits,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100
+              }
+            );
+            const hit = commits.find(c => c.sha.startsWith(target));
+            if (hit) {
+              core.info(`✅ Found commit: ${hit.sha} — ${hit.html_url}`);
+              // Print first line of the commit message
+              const firstLine = hit.commit.message.split('\n')[0];
+              core.info(`Commit message first line: "${firstLine}"`);
+            } else {
+              core.setFailed(`❌ No commit starting with "${target}" found in the repository`);
+            }
+     - name: Move latest tag to verified commit
+       uses: actions/github-script@v7
+       with:
+         script: |
+           const target = '${{ steps.snap.outputs.commit }}'.slice(0, 7);
+           core.info(`Looking for a commit starting with "${target}" …`);
+           const commits = await github.paginate(
+           github.rest.repos.listCommits,
+           {
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            per_page: 100
+           }
+           );
+           const hit = commits.find(c => c.sha.startsWith(target));
+           if (!hit) {
+           core.setFailed(`❌ No commit starting with "${target}" found in the repository`);
+           return;
+            }
+           core.info(`✅ Found commit: ${hit.sha} — ${hit.html_url}`);
+           const firstLine = hit.commit.message.split('\n')[0];
+           core.info(`Commit message first line: "${firstLine}"`);
+           // Fetch latest tag (sorted by commit recency)
+           const tags = await github.paginate(
+           github.rest.repos.listTags,
+           {
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            per_page: 100
+           }
+           );
+           if (!tags.length) {
+           core.setFailed('❌ No tags found in the repository');
+           return;
+           }
+           const latestTag = tags[0];
+           const refName = `tags/${latestTag.name}`;
+           core.info(`🔁 Moving latest tag "${latestTag.name}" from ${latestTag.commit.sha} → ${hit.sha}`);
+           await github.rest.git.updateRef({
+           owner: context.repo.owner,
+           repo: context.repo.repo,
+           ref: refName,
+           sha: hit.sha,
+           force: true
+           });
+           core.info(`✅ Tag "${latestTag.name}" now points to ${hit.sha}`);
+  
