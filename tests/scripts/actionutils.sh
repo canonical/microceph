@@ -1363,6 +1363,36 @@ function remote_verify_snapshot_pool_replication_fails() {
         '! microceph replication enable rbd pool_one --type snapshot --remote siteb | grep "Snapshot-based replication is only supported for individual RBD images"'
 }
 
+# Test pristine check
+function verify_pristine_check() {
+    set -ux
+    rootdev=$( findmnt --noheadings --output SOURCE / )
+    # adding the rootfs device should fail
+    stde=$( sudo microceph disk add $rootdev 2>&1 > /dev/null )
+    if [[ "$stde" == *"is not pristine"* ]] ; then
+        echo "Passed: can't add non-pristine $rootdev as OSD"
+    else
+        echo "Expect disk add of $rootdev to be blocked by pristine check but it wasn't"
+        echo "stderr: $stde"
+        exit 1
+    fi
+}
+
+# Test mount check
+function verify_mount_check() {
+    set -ux
+    rootdev=$( findmnt --noheadings --output SOURCE / )
+    # adding mounted device should fail even with --wipe
+    stde=$( sudo microceph disk add --wipe $rootdev 2>&1 > /dev/null )
+    if [[ "$stde" == *"is currently mounted"* ]] ; then
+        echo "Passed: can't add mounted $rootdev as OSD"
+    else
+        echo "Expect disk add of mounted $rootdev to be blocked by mount check but it wasn't"
+        echo "stderr: $stde"
+        exit 1
+    fi
+}
+
 run="${1}"
 shift
 

@@ -227,6 +227,7 @@ parts:
       - cephfs-mirror
       # Utilities
       - coreutils
+      - util-linux
       - uuid-runtime
       - python3-setuptools
       - python3-packaging
@@ -254,6 +255,7 @@ parts:
       - bin/cephfs-mirror
       - bin/truncate
       - bin/uuidgen
+      - bin/findmnt
       - lib/*/ceph
       - lib/*/libaio.so*
       - lib/*/libasn1.so*

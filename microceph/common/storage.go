@@ -1,8 +1,9 @@
 package common
 
 import (
-	"bufio"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -19,33 +20,30 @@ func IsMounted(device string) (bool, error) {
 // IsMountedWithFs checks if a device is mounted using the provided filesystem.
 func IsMountedWithFs(device string, fs afero.Fs) (bool, error) {
 	// Resolve any symlink and get the absolute path of the device.
-	// Note /proc/mounts contains the absolute path of the device as well.
 	resolvedPath, err := filepath.EvalSymlinks(filepath.Join(constants.GetPathConst().RootFs, device))
 	if err != nil {
 		// Handle errors other than not existing differently as EvalSymlinks takes care of symlink resolution
 		return false, err
 	}
-	file, err := fs.Open(filepath.Join(constants.GetPathConst().ProcPath, "mounts"))
-	if err != nil {
-		return false, err
-	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		// Each line in /proc/mounts is of the format:
-		// device mountpoint fstype options dump pass
-		// --> split the line into parts and check if the first part matches
-		parts := strings.Fields(scanner.Text())
-		if len(parts) > 0 && parts[0] == resolvedPath {
-			return true, nil
-		}
-	}
-	err = scanner.Err()
+	// Use findmnt to check if the device is mounted, more reliable than checking /proc/mounts directly.
+	// findmnt --source returns 0 if the device is mounted, 1 if not
+	_, err = ProcessExec.RunCommand("findmnt", "--source", resolvedPath)
 	if err != nil {
+		// Try to unwrap and check the original error
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			if exitError.ExitCode() == 1 {
+				// Exit code 1 means device not found/not mounted
+				return false, nil
+			}
+		}
+		// Other errors (command not found, permission issues, etc.)
 		return false, err
 	}
-	return false, nil
+
+	// Exit code 0 means device is mounted
+	return true, nil
 }
 
 // IsCephDevice checks if a given device is used as either a WAL or DB block device in any Ceph OSD.
@@ -94,4 +92,43 @@ func IsCephDeviceWithFs(device string, fs afero.Fs) (bool, error) {
 	// Fall-through: no symlink found
 	logger.Debugf("device %s is not used as WAL or DB device for any OSD", device)
 	return false, nil
+}
+
+// IsPristineDisk checks if a block device is pristine by reading the first 2048 bytes
+// and verifying they are all zeros.
+func IsPristineDisk(devicePath string) (bool, error) {
+	return IsPristineDiskWithFs(devicePath, afero.NewOsFs())
+}
+
+// IsPristineDiskWithFs checks if a block device is pristine using the provided filesystem.
+func IsPristineDiskWithFs(devicePath string, fs afero.Fs) (bool, error) {
+	const wantBytes = 2048
+
+	file, err := fs.Open(devicePath)
+	if err != nil {
+		logger.Errorf("failed to open device %s: %v", devicePath, err)
+		return false, err
+	}
+	defer file.Close()
+
+	data := make([]byte, wantBytes)
+	readBytes, err := file.Read(data)
+	if err != nil {
+		logger.Errorf("failed to read from device %s: %v", devicePath, err)
+		return false, err
+	}
+
+	if readBytes != wantBytes {
+		logger.Warnf("short read from %s: got %d bytes, expected %d", devicePath, readBytes, wantBytes)
+		return false, nil
+	}
+
+	// Check if all bytes are zero
+	for _, b := range data {
+		if b != 0x0 {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
