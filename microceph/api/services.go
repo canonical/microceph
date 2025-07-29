@@ -80,6 +80,11 @@ var rbdMirroServiceCmd = rest.Endpoint{
 	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
 	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
 }
+var fsMirroServiceCmd = rest.Endpoint{
+	Path:   "services/cephfs-mirror",
+	Put:    rest.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Delete: rest.EndpointAction{Handler: cmdDeleteService, ProxyTarget: true},
+}
 
 // cmdMonGet returns the mon service status.
 func cmdMonGet(s state.State, r *http.Request) response.Response {
@@ -159,7 +164,7 @@ func cmdRestartServicePost(s state.State, r *http.Request) response.Response {
 // cmdDeleteService handles service deletion.
 func cmdDeleteService(s state.State, r *http.Request) response.Response {
 	which := path.Base(r.URL.Path)
-	_, ok := ceph.GetConfigTableServiceSet()[which]
+	_, ok := ceph.GetServicePlacementTable()[which]
 	if !ok {
 		err := fmt.Errorf("%s is not a valid ceph service", which)
 		logger.Errorf("%v", err)

@@ -22,6 +22,10 @@ func (c *cmdDisable) Command() *cobra.Command {
 	disableRGWCmd := cmdDisableRGW{common: c.common}
 	cmd.AddCommand(disableRGWCmd.Command())
 
+	// Disable cephfs-mirror
+	disableCephfsMirror := cmdDisableCephFSMirror{common: c.common}
+	cmd.AddCommand(disableCephfsMirror.Command())
+
 	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
 	cmd.Args = cobra.NoArgs
 	cmd.Run = func(cmd *cobra.Command, args []string) { _ = cmd.Usage() }
