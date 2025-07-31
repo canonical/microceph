@@ -183,6 +183,13 @@ func getUnpartitionedDisks(cli *microCli.Client) ([]Disk, error) {
 
 // filterLocalDisks filters out the disks that are in use or otherwise not suitable for OSDs.
 func filterLocalDisks(resources *api.ResourcesStorage, disks types.Disks) ([]Disk, error) {
+	return doFilterLocalDisks(resources, disks, common.IsMounted, common.IsCephDevice)
+}
+
+// doFilterLocalDisks filters local disks but allows dep. injection for testing.
+func doFilterLocalDisks(resources *api.ResourcesStorage, disks types.Disks,
+	isMountedFunc func(string) (bool, error),
+	isCephDeviceFunc func(string) (bool, error)) ([]Disk, error) {
 	var err error
 	// Get local hostname.
 	hostname, err := os.Hostname()
@@ -197,17 +204,24 @@ func filterLocalDisks(resources *api.ResourcesStorage, disks types.Disks) ([]Dis
 			continue
 		}
 
-		if len(disk.DeviceID) == 0 {
-			continue
-		}
-
 		// Minimum size set to 2GB i.e. 2*1024*1024*1024
 		if disk.Size < constants.MinOSDSize {
-			logger.Debugf("Ignoring device %s, size less than 2GB", disk.DeviceID)
+			logger.Debugf("Ignoring device %s, size less than 2GB", disk.ID)
 			continue
 		}
 
-		devicePath := fmt.Sprintf("%s%s", constants.DevicePathPrefix, disk.DeviceID)
+		// Try to construct device path using multiple fallback methods
+		var devicePath string
+		if len(disk.DeviceID) > 0 {
+			// First preference: use DeviceID with prefix (e.g., /dev/disk/by-id/...)
+			devicePath = fmt.Sprintf("%s%s", constants.DevicePathPrefix, disk.DeviceID)
+		} else if len(disk.DevicePath) > 0 {
+			// Second preference: use DevicePath (e.g., /dev/disk/by-path/...)
+			devicePath = fmt.Sprintf("/dev/disk/by-path/%s", disk.DevicePath)
+		} else {
+			// Final fallback: use device ID directly (e.g., /dev/vdc)
+			devicePath = fmt.Sprintf("/dev/%s", disk.ID)
+		}
 
 		found := false
 		// check if disk already employed as an OSD.
@@ -227,14 +241,14 @@ func filterLocalDisks(resources *api.ResourcesStorage, disks types.Disks) ([]Dis
 		}
 
 		// check if disk is mounted or already employed as a journal or db
-		mounted, err := common.IsMounted(devicePath)
+		mounted, err := isMountedFunc(devicePath)
 		if err != nil {
 			return nil, fmt.Errorf("internal error: unable to check if disk is mounted: %w", err)
 		}
 		if mounted {
 			continue
 		}
-		isCephDev, err := common.IsCephDevice(devicePath)
+		isCephDev, err := isCephDeviceFunc(devicePath)
 		if err != nil {
 			return nil, fmt.Errorf("internal error checking if disk is ceph device: %w", err)
 		}
