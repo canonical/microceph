@@ -1,10 +1,13 @@
 package ceph
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -13,6 +16,30 @@ import (
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 )
+
+func msgrv2OnlyFile(path string) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "mon host") && strings.Contains(line, "v2:") {
+			return true, nil
+		}
+	}
+
+	return false, scanner.Err()
+}
+
+func msgrv2OnlyCluster() (bool, error) {
+	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf", constants.CephConfFileName)
+	return msgrv2OnlyFile(confPath)
+}
 
 // Join will join an existing Ceph deployment.
 func Join(ctx context.Context, s interfaces.StateInterface) error {
@@ -118,6 +145,11 @@ func checkAndCreateServiceRecord(s interfaces.StateInterface, ctx context.Contex
 }
 
 func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx) error {
+	v2Only, err := msgrv2OnlyCluster()
+	if err != nil {
+		return err
+	}
+
 	// Fetch public network
 	configItem, err := database.GetConfigItem(ctx, tx, "public_network")
 	if err != nil {
@@ -127,6 +159,10 @@ func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx
 	monHost, err := common.Network.FindIpOnSubnet(configItem.Value)
 	if err != nil {
 		return fmt.Errorf("failed to locate ip on subnet %s: %w", configItem.Value, err)
+	}
+
+	if v2Only {
+		monHost = "v2:" + monHost + ":3300"
 	}
 
 	key := fmt.Sprintf("mon.host.%s", s.ClusterState().Name())

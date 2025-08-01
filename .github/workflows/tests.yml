@@ -1103,3 +1103,49 @@ jobs:
 
     - name: Disable NFS
       run: ~/actionutils.sh disable_nfs_in_nodes foo node-wrk0 node-wrk1 node-wrk2
+
+  messenger-v2-tests:
+    name: Messenger v2 tests
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v4
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install dependencies
+      run: ~/actionutils.sh setup_lxd
+
+    - name: Create containers with loopback devices
+      run: ~/actionutils.sh create_containers public
+
+    - name: Install local microceph snap
+      run: ~/actionutils.sh install_multinode
+
+    - name: Bootstrap
+      run: ~/actionutils.sh bootstrap_head public --v2-only
+
+    - name: Verify messenger v2 on head node
+      run: ~/actionutils.sh test_v2_single_node
+
+    - name: Setup cluster
+      run: ~/actionutils.sh cluster_nodes public
+
+    - name: Verify messenger v2 on all nodes
+      run: ~/actionutils.sh test_v2_all_nodes
