@@ -16,6 +16,7 @@ Cluster designs that call for extra service instances, however, can be
 satisfied by manual means. In addition to the above-listed services, the
 following service can be added manually to a node:
 
+* NFS
 * RGW (`RADOS Gateway service`_)
 
 This is the purpose of the :command:`enable` command. It manually enables a
@@ -27,7 +28,7 @@ The syntax is:
 
    sudo microceph enable <service> --target <destination> ...
 
-Where the service value is one of 'mon', 'mds', 'mgr', and 'rgw'. The
+Where the service value is one of 'mon', 'mds', 'mgr', 'nfs' and 'rgw'. The
 destination is a node name as discerned by the output of the :command:`status`
 command:
 
@@ -87,6 +88,74 @@ Finally, view cluster status again and verify expected changes:
    - workbook (192.168.29.152)
      Services: mds, mgr, mon
      Disks: 0
+
+Example: enable a NFS service
+-----------------------------
+
+First, check the status of the cluster to get the node names and an overview of
+existing services
+
+.. code-block:: none
+
+   sudo microceph status
+
+   MicroCeph deployment summary:
+   - node1-2c3eb41e-14e8-465d-9877-df36f5d80922 (10.111.153.78)
+     Services: mds, mgr, mon, osd
+     Disks: 3
+   - workbook (192.168.29.152)
+     Services: mds, mgr, mon
+     Disks: 0
+
+View any possible extra parameters for the NFS service:
+
+.. code-block:: none
+
+   sudo microceph enable nfs --help
+
+To enable the NFS service on `node1`, and specify values for the extra
+parameters:
+
+.. code-block:: none
+
+   sudo microceph enable nfs --cluster-id foo --v4-min-version 2 --target node1
+
+Finally, view cluster status again and verify the expected changes:
+
+.. code-block:: none
+
+   MicroCeph deployment summary:
+   - node1-2c3eb41e-14e8-465d-9877-df36f5d80922 (10.111.153.78)
+     Services: mds, mgr, mon, nfs.foo osd
+     Disks: 3
+   - workbook (192.168.29.152)
+     Services: mds, mgr, mon
+     Disks: 0
+
+For the next steps (creating a share and mounting it), consult the
+:doc:`MicroCeph-backed CephFS shares <mount-cephfs-share>` guide.
+
+.. note::
+
+   Enabling NFS on multiple nodes with the same `--cluster-id` will effectively
+   result in the running NFS services to be grouped in the same service cluster.
+
+.. caution::
+
+   Nodes in the same NFS service cluster **must** have matching configuration
+   (`--v4-min-version`), otherwise MicroCeph will return an error when adding
+   new nodes to the cluster.
+
+.. caution::
+
+   A node may join only one NFS service cluster. MicroCeph will return an error
+   if there's already a NFS service registered on the node. If a node would
+   have to join a different NFS service cluster, it would have to leave the
+   original cluster first:
+
+.. code-block:: none
+
+   sudo microceph disable nfs --cluster-id foo --target node1
 
 .. LINKS
 
