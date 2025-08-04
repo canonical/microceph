@@ -9,30 +9,20 @@ on:
   workflow_dispatch: null
 #  schedule:
 #    - cron: '0 0 * * MON,THU' # Runs biweekly on Tuesdays and Thursdays
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
-# This workflow contains a few jobs; the first one is called "tag-stable-commit"
 jobs:
   tag-stable-commit:
    # The type of runner that the job will run on
     runs-on: ubuntu-latest
     permissions:
       contents: read # Needed for commit search via the API
-  # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-    # Runs a single command using the runners shell
      - name: Checkout repository
        uses: actions/checkout@v4
-# ------------------------------------------------------------
-      # 1. Install the MicroCeph snap
-# ------------------------------------------------------------
+      # Install the MicroCeph snap
      - name: Install MicroCeph snap
        run: |
         sudo snap install microceph
-# -----------------------------------------------------------
-    # 2. Find the first name under “channels:”
-    # 3. and then parse <release version> and <commit ID>
-# -----------------------------------------------------------
-  
+    # Find the first name under “channels:” that includes "/stable:" and parse <code name>, <release version> and <commit ID>
      - name: Extract channel information
        id: snap
        uses: actions/github-script@v7
@@ -58,26 +48,44 @@ jobs:
             core.info(`Channel line: "${channelRaw}"`);
             // Parse version, and commit ID
             const m = channelRaw.match(
-              /^\s*([^/]+)\/stable:\s+([^+\s]+)\+snap([a-f0-9]+)\s/
+              /^\s*([a-z]+)\/stable:\s+([0-9.]+)\+snap([a-f0-9]+)\s/i
             );
             if (!m) {
               core.setFailed('Failed to parse channel line');
               return;
             }
-            const [, flavour, version, commit] = m;
-            core.setOutput('flavour', flavour);
+            const [, codeName, version, commit] = m;
+
+            const minCodeNameLength = 1;   // At least 1 char
+            const minVersionLength = 6;     // e.g. '19.2.0' or more
+            const minCommitLength= 7;      // typical short git commit hash length
+
+            // Add minimum length requirement to validate output variables          
+            if (!codeName || codeName.length < minCodeNameLength) {
+              core.setFailed(`Invalid codeName: "${codeName}"`);
+                return;
+                }        
+            if (!version || version.length < minVersionLength) {
+              core.setFailed(`Invalid version: "${version}"`);
+                return;
+                }
+            if (!commit || commit.length < minCommitLength) {
+              core.setFailed(`Invalid commit: "${commit}"`);
+                return;
+                }
+          
+            core.setOutput('codeName', codeName);
             core.setOutput('version', version);
             core.setOutput('commit', commit);
-            core.info(`flavour=${flavour}`);
+            core.info(`codeName=${codeName}`);
             core.info(`version=${version}`);
             core.info(`commit=${commit}`);
-      # ------------------------------------------------------------------------
-      # 4. Verify commit exists in the repo and print commit message first line
-      # ------------------------------------------------------------------------
+
+      # Verify commit exists in the repo and print commit message first line
      - name: Verify commit exists
        uses: actions/github-script@v7
        with: 
-           script: |
+          script: |
             const target = '${{ steps.snap.outputs.commit }}'.slice(0, 7);  // 7-char prefix
             core.info(`Looking for a commit starting with "${target}" …`);
             const commits = await github.paginate(
@@ -90,12 +98,12 @@ jobs:
             );
             const hit = commits.find(c => c.sha.startsWith(target));
             if (hit) {
-              core.info(`✅ Found commit: ${hit.sha} — ${hit.html_url}`);
+              core.info(`Found commit: ${hit.sha} — ${hit.html_url}`);
               // Print first line of the commit message
               const firstLine = hit.commit.message.split('\n')[0];
               core.info(`Commit message first line: "${firstLine}"`);
             } else {
-              core.setFailed(`❌ No commit starting with "${target}" found in the repository`);
+              core.setFailed(`No commit starting with "${target}" found in the repository`);
             }
      - name: Move latest tag to verified commit
        uses: actions/github-script@v7
@@ -113,10 +121,10 @@ jobs:
            );
            const hit = commits.find(c => c.sha.startsWith(target));
            if (!hit) {
-           core.setFailed(`❌ No commit starting with "${target}" found in the repository`);
+           core.setFailed(`No commit starting with "${target}" found in the repository`);
            return;
             }
-           core.info(`✅ Found commit: ${hit.sha} — ${hit.html_url}`);
+           core.info(`Found commit: ${hit.sha} — ${hit.html_url}`);
            const firstLine = hit.commit.message.split('\n')[0];
            core.info(`Commit message first line: "${firstLine}"`);
            // Fetch latest tag (sorted by commit recency)
@@ -129,12 +137,12 @@ jobs:
            }
            );
            if (!tags.length) {
-           core.setFailed('❌ No tags found in the repository');
+           core.setFailed('No tags found in the repository');
            return;
            }
            const latestTag = tags[0];
            const refName = `tags/${latestTag.name}`;
-           core.info(`🔁 Moving latest tag "${latestTag.name}" from ${latestTag.commit.sha} → ${hit.sha}`);
+           core.info(`Moving latest tag "${latestTag.name}" from ${latestTag.commit.sha} → ${hit.sha}`);
            await github.rest.git.updateRef({
            owner: context.repo.owner,
            repo: context.repo.repo,
@@ -142,5 +150,5 @@ jobs:
            sha: hit.sha,
            force: true
            });
-           core.info(`✅ Tag "${latestTag.name}" now points to ${hit.sha}`);
+           core.info(`Tag "${latestTag.name}" now points to ${hit.sha}`);
   
