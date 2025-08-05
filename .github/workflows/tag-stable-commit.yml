@@ -83,6 +83,7 @@ jobs:
 
       # Verify commit exists in the repo and print commit message first line
      - name: Verify commit exists
+       id: verify
        uses: actions/github-script@v7
        with: 
           script: |
@@ -98,6 +99,7 @@ jobs:
             );
             const hit = commits.find(c => c.sha.startsWith(target));
             if (hit) {
+              core.setOutput('full_sha', hit.sha);
               core.info(`Found commit: ${hit.sha} — ${hit.html_url}`);
               // Print first line of the commit message
               const firstLine = hit.commit.message.split('\n')[0];
