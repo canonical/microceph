@@ -75,7 +75,7 @@ const (
 )
 
 // RbdResourceType defines request resource type
-type RbdResourceType string
+type RbdResourceType ReplicationResourceType
 
 const (
 	RbdResourceDisabled RbdResourceType = "disabled"
@@ -144,24 +144,12 @@ func (req *RbdReplicationRequest) SetAPIObjectId(id string) error {
 
 // GetAPIRequestType provides the REST method for the request
 func (req RbdReplicationRequest) GetAPIRequestType() string {
-	frags := strings.Split(string(req.RequestType), "-")
-	logger.Debugf("REPAPI: API frags: %v", frags)
-	if len(frags) == 0 {
-		return ""
-	}
-
-	return frags[0]
+	return GetAPIRequestTypeGeneric(req.RequestType)
 }
 
 // GetWorkloadRequestType provides the event used as the FSM trigger.
 func (req RbdReplicationRequest) GetWorkloadRequestType() string {
-	frags := strings.Split(string(req.RequestType), "-")
-	logger.Debugf("REPAPI: Workload frags: %v", frags)
-	if len(frags) < 2 {
-		return ""
-	}
-
-	return frags[1]
+	return GetWorkloadRequestTypeGeneric(req.RequestType)
 }
 
 // ################### Helpers ############################

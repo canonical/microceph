@@ -1,10 +1,16 @@
 package types
 
 import (
+	"strings"
+
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/constants"
 )
 
 // ################################## Generic Replication Request ##################################
+// ReplicationResourceType defines the resource type for any workload.
+type ReplicationResourceType string
+
 // ReplicationRequestType defines the various events replication request types.
 type ReplicationRequestType string
 
@@ -19,7 +25,7 @@ const (
 	// Get Requests
 	StatusReplicationRequest ReplicationRequestType = "GET-" + constants.EventStatusReplication
 	ListReplicationRequest   ReplicationRequestType = "GET-" + constants.EventListReplication
-	// Workload request (has no REST object)
+	// Workload request, used for site-wide workload operations like promote/demote.
 	WorkloadReplicationRequest ReplicationRequestType = ""
 )
 
@@ -27,7 +33,7 @@ type CephWorkloadType string
 
 const (
 	RbdWorkload CephWorkloadType = "rbd"
-	FsWorkload  CephWorkloadType = "cephfs"
+	CephFsWorkload  CephWorkloadType = "cephfs"
 	RgwWorkload CephWorkloadType = "rgw"
 )
 
@@ -40,4 +46,26 @@ type ReplicationRequest interface {
 	GetAPIObjectId() string
 	GetAPIRequestType() string
 	GetWorkloadRequestType() string
+}
+
+// GetAPIRequestTypeGeneric extracts and returns the REST API request type from a ReplicationRequestType.
+func GetAPIRequestTypeGeneric(requestType ReplicationRequestType) string {
+	frags := strings.Split(string(requestType), "-")
+	logger.Debugf("REPAPI: Request frags: %v", frags)
+	if len(frags) == 0 {
+		return ""
+	}
+
+	return frags[0]
+}
+
+// GetWorkloadRequestTypeGeneric extracts and returns the replication request type from a ReplicationRequestType.
+func GetWorkloadRequestTypeGeneric(requestType ReplicationRequestType) string {
+	frags := strings.Split(string(requestType), "-")
+	logger.Debugf("REPAPI: Request frags: %v", frags)
+	if len(frags) < 2 {
+		return ""
+	}
+
+	return frags[1]
 }

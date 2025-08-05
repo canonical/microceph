@@ -102,7 +102,7 @@ func cmdOpsReplication(s state.State, r *http.Request, patchRequest types.Replic
 
 		// carry RbdReplicationRequest in interface object.
 		data.SetAPIObjectId(resource)
-		// Patch request type.
+		// If the request is not WorkloadReplicationRequest, set the request type.
 		if len(patchRequest) != 0 {
 			data.RequestType = patchRequest
 		}
