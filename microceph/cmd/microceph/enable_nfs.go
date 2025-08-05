@@ -7,7 +7,6 @@ import (
 	"net"
 
 	"github.com/canonical/microcluster/v2/microcluster"
-	microclusterclient "github.com/canonical/microcluster/v2/client"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -23,7 +22,6 @@ type cmdEnableNFS struct {
 	flagBindPort     uint
 	flagV4MinVersion uint
 	flagTarget       string
-	client           *microclusterclient.Client
 }
 
 func (c *cmdEnableNFS) Command() *cobra.Command {
