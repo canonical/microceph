@@ -5,12 +5,8 @@ name: Tag stable MicroCeph commit
 # Controls when the action will run. Workflow runs when there is a new stable channel
 # promoted on Snapcraft
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    branches:
-      - main  # ← change if your default branch has a different name
 # Allows you to run this workflow manually from the Actions tab
-#  workflow_dispatch: null
+  workflow_dispatch: null
 #  schedule:
 #    - cron: '0 0 * * MON,THU' # Runs biweekly on Tuesdays and Thursdays
 jobs:
@@ -109,50 +105,47 @@ jobs:
             } else {
               core.setFailed(`No commit starting with "${target}" found in the repository`);
             }
-     - name: Move latest tag to verified commit
+     - name: Move stable tag to verified commit
+       if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
        uses: actions/github-script@v7
        with:
-         script: |
-           const target = '${{ steps.snap.outputs.commit }}'.slice(0, 7);
-           core.info(`Looking for a commit starting with "${target}" …`);
-           const commits = await github.paginate(
-           github.rest.repos.listCommits,
-           {
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            per_page: 100
-           }
-           );
-           const hit = commits.find(c => c.sha.startsWith(target));
-           if (!hit) {
-           core.setFailed(`No commit starting with "${target}" found in the repository`);
-           return;
+          github-token: ${{ env.GH_TOKEN }}
+          script: |
+            const commitSha = '${{ steps.verify.outputs.full_sha }}';
+            const codeName = '${{ steps.snap.outputs.codeName }}';
+            const version = '${{ steps.snap.outputs.version }}';
+            const stableTag = `v${version}+${codeName}`;
+            core.info(`Proposed stable tag: ${stableTag}`);
+            // Get all tags
+            const tags = await github.paginate(
+              github.rest.repos.listTags,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100
+              }
+            );
+            if (tags.length === 0) {
+              core.info(`No tags found. Creating "${stableTag}" pointing to ${commitSha}`);
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/tags/${stableTag}`,
+                sha: commitSha
+              });
+              return;
             }
-           core.info(`Found commit: ${hit.sha} — ${hit.html_url}`);
-           const firstLine = hit.commit.message.split('\n')[0];
-           core.info(`Commit message first line: "${firstLine}"`);
-           // Fetch latest tag (sorted by commit recency)
-           const tags = await github.paginate(
-           github.rest.repos.listTags,
-           {
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            per_page: 100
-           }
-           );
-           if (!tags.length) {
-           core.setFailed('No tags found in the repository');
-           return;
-           }
-           const latestTag = tags[0];
-           const refName = `tags/${latestTag.name}`;
-           core.info(`Moving latest tag "${latestTag.name}" from ${latestTag.commit.sha} → ${hit.sha}`);
-           await github.rest.git.updateRef({
-           owner: context.repo.owner,
-           repo: context.repo.repo,
-           ref: refName,
-           sha: hit.sha,
-           force: true
-           });
-           core.info(`Tag "${latestTag.name}" now points to ${hit.sha}`);
+            const tagExists = tags.find(t => t.name === stableTag);
+            if (tagExists) {
+              core.info(`Tag "${stableTag}" already exists. Nothing to do.`);
+              return;
+            }
+            core.info(`Creating tag "${stableTag}" on commit ${commitSha}`);
+            await github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `refs/tags/${stableTag}`,
+              sha: commitSha
+            });
+            core.info(`Tag "${stableTag}" now created.`);
   
