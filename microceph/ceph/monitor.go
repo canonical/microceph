@@ -2,7 +2,7 @@ package ceph
 
 import (
 	"fmt"
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"

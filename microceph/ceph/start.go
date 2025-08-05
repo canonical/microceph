@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )

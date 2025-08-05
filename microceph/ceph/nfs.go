@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/lxd/shared/revert"
 
 	"github.com/canonical/microceph/microceph/constants"

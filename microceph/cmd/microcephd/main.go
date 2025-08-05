@@ -3,11 +3,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"time"
 
-	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/canonical/microcluster/v2/state"
 	"github.com/spf13/cobra"
@@ -15,8 +16,10 @@ import (
 	"github.com/canonical/microceph/microceph/api"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/version"
 )
 
@@ -37,10 +40,7 @@ type cmdGlobal struct {
 }
 
 func (c *cmdGlobal) Run(cmd *cobra.Command, args []string) error {
-	Debug = c.flagLogDebug
-	Verbose = c.flagLogVerbose
-
-	return logger.InitLogger("", "", c.flagLogVerbose, c.flagLogDebug, nil)
+	return nil
 }
 
 type cmdDaemon struct {
@@ -62,6 +62,15 @@ func (c *cmdDaemon) Command() *cobra.Command {
 }
 
 func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
+	// Initialize the node logger with config file
+	pathConst := constants.GetPathConst()
+	var err error
+	logger.DaemonLogger, err = logger.NewLogger(filepath.Join(pathConst.DataPath, "log-config.json"))
+	if err != nil {
+		return fmt.Errorf("failed to initialize logging: %w", err)
+	}
+	logger.Infof("Logger initialized with level: %s", logger.GetLevel())
+
 	m, err := microcluster.App(microcluster.Args{StateDir: c.flagStateDir})
 	if err != nil {
 		return err

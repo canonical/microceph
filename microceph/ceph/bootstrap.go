@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 

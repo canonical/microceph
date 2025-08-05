@@ -14,7 +14,7 @@ import (
 	"github.com/Rican7/retry"
 	"github.com/Rican7/retry/backoff"
 	"github.com/Rican7/retry/strategy"
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/api/types"

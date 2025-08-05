@@ -11,7 +11,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/interfaces"
 
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/gorilla/mux"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"

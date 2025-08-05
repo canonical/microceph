@@ -10,7 +10,7 @@ import (
 	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microcluster/v2/rest"
 	"github.com/canonical/microcluster/v2/state"

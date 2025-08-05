@@ -9,7 +9,7 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microcluster/v2/cluster"
 	"github.com/canonical/microcluster/v2/state"

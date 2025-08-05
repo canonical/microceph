@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/microcluster/v2/rest"

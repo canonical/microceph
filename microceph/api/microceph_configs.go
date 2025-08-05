@@ -3,11 +3,11 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/ceph"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microcluster/v2/rest"
 	"github.com/canonical/microcluster/v2/state"
 )
@@ -37,7 +37,14 @@ func logLevelPut(s state.State, r *http.Request) response.Response {
 	}
 
 	logger.Debugf("cmdLogLevelPut: %v", req)
-	err = ceph.SetLogLevel(req.Level)
+
+	ls := strings.ToLower(req.Level)
+	i, err := logger.ParseLegacyLevels(ls) // validate
+	if err != nil {
+		return response.BadRequest(err)
+	}
+
+	err = logger.SetLevel(logger.ParseLegacyLevelsInt(i))
 	if err != nil {
 		return response.SmartError(err)
 	}
@@ -47,5 +54,11 @@ func logLevelPut(s state.State, r *http.Request) response.Response {
 }
 
 func logLevelGet(s state.State, r *http.Request) response.Response {
-	return response.SyncResponse(true, ceph.GetLogLevel())
+	currentLevel := logger.GetLevel()
+	i, err := logger.ParseLegacyLevels(currentLevel)
+	if err != nil {
+		logger.Errorf("cmdLogLevelGet: failed to parse current log level %q: %v", currentLevel, err)
+		return response.InternalError(err)
+	}
+	return response.SyncResponse(true, i)
 }

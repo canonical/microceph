@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/clilogger"
 	"github.com/canonical/microcluster/v2/client"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -29,7 +29,7 @@ func ExitMaintenance(ctx context.Context, c *client.Client, node string, dryRun,
 	c = c.UseTarget(node)
 	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("ops", "maintenance", node), data, &results)
 	if err != nil {
-		logger.Errorf("error bringing node '%s' out of maintenance: %v", node, err)
+		clilogger.Errorf("error bringing node '%s' out of maintenance: %v", node, err)
 		return types.MaintenanceResults{}, fmt.Errorf("error bringing node '%s' out of maintenance: %v", node, err)
 	}
 	return results, nil
@@ -52,7 +52,7 @@ func EnterMaintenance(ctx context.Context, c *client.Client, node string, force,
 	c = c.UseTarget(node)
 	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("ops", "maintenance", node), data, &results)
 	if err != nil {
-		logger.Errorf("error bringing node '%s' into maintenance: %v", node, err)
+		clilogger.Errorf("error bringing node '%s' into maintenance: %v", node, err)
 		return types.MaintenanceResults{}, fmt.Errorf("error bringing node '%s' into maintenance: %v", node, err)
 	}
 	return results, nil

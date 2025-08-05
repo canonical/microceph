@@ -25,7 +25,6 @@ import (
 	"github.com/spf13/afero"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/lxd/shared/revert"
 
 	"github.com/canonical/lxd/shared"
@@ -34,6 +33,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/logger"	
 )
 
 // PathValidator provides an interface for validating device paths - introduced for mocking in tests.

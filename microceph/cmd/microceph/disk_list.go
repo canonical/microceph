@@ -9,8 +9,8 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	lxdCmd "github.com/canonical/lxd/shared/cmd"
-	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/lxd/shared/units"
+	"github.com/canonical/microceph/microceph/clilogger"
 	microCli "github.com/canonical/microcluster/v2/client"
 	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
@@ -69,12 +69,14 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("internal error: unable to fetch configured disks: %w", err)
 	}
+	clilogger.Debugf("Found %d configured disks", len(configuredDisks))
 
 	// List unpartitioned disks.
 	availableDisks, err := getUnpartitionedDisks(cli)
 	if err != nil {
 		return fmt.Errorf("internal error: unable to fetch unpartitoned disks: %w", err)
 	}
+	clilogger.Debugf("Found %d unpartitioned disks", len(availableDisks))
 
 	if c.hostOnly {
 		fcg := types.Disks{}
@@ -200,13 +202,15 @@ func doFilterLocalDisks(resources *api.ResourcesStorage, disks types.Disks,
 	// Prepare the table.
 	data := []Disk{}
 	for _, disk := range resources.Disks {
+		clilogger.Debugf("Checking disk %s, size %d, type %s", disk.ID, disk.Size, disk.Type)
 		if len(disk.Partitions) > 0 {
+			clilogger.Infof("Ignoring device %s, it has partitions", disk.ID)
 			continue
 		}
 
 		// Minimum size set to 2GB i.e. 2*1024*1024*1024
 		if disk.Size < constants.MinOSDSize {
-			logger.Debugf("Ignoring device %s, size less than 2GB", disk.ID)
+			clilogger.Infof("Ignoring device %s, size less than 2GB", disk.ID)
 			continue
 		}
 

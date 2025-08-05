@@ -6,6 +6,7 @@ import (
 	"os"
 
 	cli "github.com/canonical/lxd/shared/cmd"
+	"github.com/canonical/microceph/microceph/clilogger"
 	"github.com/canonical/microceph/microceph/version"
 	"github.com/spf13/cobra"
 )
@@ -43,6 +44,11 @@ func main() {
 
 	app.SetVersionTemplate("{{.Version}}\n")
 	app.Version = version.Version()
+
+	// Initialize CLI logger based on flags
+	app.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		clilogger.InitLogger(commonCmd.FlagLogDebug, commonCmd.FlagLogVerbose)
+	}
 
 	// Top-level.
 	var cmdEnable = cmdEnable{common: &commonCmd}
