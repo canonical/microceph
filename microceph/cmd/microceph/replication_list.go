@@ -30,6 +30,9 @@ func (c *cmdReplicationList) Command() *cobra.Command {
 	listRbdCmd := cmdReplicationListRbd{common: c.common}
 	cmd.AddCommand(listRbdCmd.Command())
 
+	listCephfsCmd := cmdReplicationListCephfs{common: c.common}
+	cmd.AddCommand(listCephfsCmd.Command())
+
 	return cmd
 }
 

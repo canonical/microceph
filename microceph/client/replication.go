@@ -18,7 +18,7 @@ func SendReplicationRequest(ctx context.Context, c *microCli.Client, data types.
 	defer cancel()
 
 	// If no API object provided, create API request to the root endpoint.
-	if len(data.GetAPIObjectId()) == 0 {
+	if len(data.GetAPIObjectID()) == 0 {
 		// uses replication/$workload endpoint
 		err = c.Query(
 			queryCtx, data.GetAPIRequestType(), types.ExtendedPathPrefix,
@@ -29,7 +29,7 @@ func SendReplicationRequest(ctx context.Context, c *microCli.Client, data types.
 		// Other requests use replication/$workload/$resource endpoint
 		err = c.Query(
 			queryCtx, data.GetAPIRequestType(), types.ExtendedPathPrefix,
-			api.NewURL().Path("ops", "replication", string(data.GetWorkloadType()), data.GetAPIObjectId()),
+			api.NewURL().Path("ops", "replication", string(data.GetWorkloadType()), data.GetAPIObjectID()),
 			data, &resp,
 		)
 	}

@@ -22,10 +22,13 @@ const (
 
 // CephfsReplicationRequest implements ReplicationRequest for RBD replication.
 type CephfsReplicationRequest struct {
-	Volume     string `json:"volume" yaml:"volume"`
-	Subvolume  string `json:"subvolume" yaml:"subvolume"`
-	DirPath    string `json:"dir_path" yaml:"dir_path"`
-	RemoteName string `json:"remote" yaml:"remote"`
+	Volume string `json:"volume" yaml:"volume"`
+	// A cephfs resource could either be a directory path or a subvolume.
+	DirPath string `json:"dir_path" yaml:"dir_path"`
+	// Subvolume *MAY* be a part of a subvolume group.
+	Subvolume      string `json:"subvolume" yaml:"subvolume"`
+	SubvolumeGroup string `json:"subvolume_group" yaml:"subvolume_group"`
+	RemoteName     string `json:"remote" yaml:"remote"`
 	// Subvolume or Directory Path
 	ResourceType CephfsResourceType     `json:"resource_type" yaml:"resource_type"`
 	RequestType  ReplicationRequestType `json:"request_type" yaml:"request_type"`
@@ -41,8 +44,8 @@ func (req CephfsReplicationRequest) GetWorkloadType() CephWorkloadType {
 	return CephFsWorkload
 }
 
-// GetAPIObjectId provides the API object id i.e. /replication/cephfs/<volume-name>
-func (req CephfsReplicationRequest) GetAPIObjectId() string {
+// GetAPIObjectID provides the API object id i.e. /replication/cephfs/<volume-name>
+func (req CephfsReplicationRequest) GetAPIObjectID() string {
 	// For filesystem workloads, the only resource is the volume name.
 	if len(req.Volume) != 0 {
 		logger.Debugf("REPAPI: Resource: %s", req.Volume)
@@ -52,8 +55,8 @@ func (req CephfsReplicationRequest) GetAPIObjectId() string {
 	return ""
 }
 
-// SetAPIObjectId provides the API object id i.e. /replication/rbd/<object-id>
-func (req *CephfsReplicationRequest) SetAPIObjectId(id string) error {
+// SetAPIObjectID provides the API object id i.e. /replication/rbd/<object-id>
+func (req *CephfsReplicationRequest) SetAPIObjectID(id string) error {
 	// unescape object string
 	volume, err := url.PathUnescape(id)
 	if err != nil {
@@ -74,8 +77,9 @@ func (req CephfsReplicationRequest) GetWorkloadRequestType() string {
 	return GetWorkloadRequestTypeGeneric(req.RequestType)
 }
 
-// ####################### Helpers #######################
-// GetWorkloadResourceType gets the resource type of the said request.
+// ####### Helper Functions #######
+
+// GetCephfsResourceType gets the resource type of the said request.
 func GetCephfsResourceType(subvolume string, dirpath string) CephfsResourceType {
 	// only one of subvolume or dirpath should be set.
 	if len(subvolume) != 0 && len(dirpath) == 0 {

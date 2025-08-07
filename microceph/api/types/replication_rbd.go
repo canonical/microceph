@@ -9,6 +9,7 @@ import (
 )
 
 // Types for RBD Pool status table.
+
 type RbdPoolStatusImageBrief struct {
 	Name            string `json:"name" yaml:"name"`
 	IsPrimary       bool   `json:"is_primary" yaml:"is_primary"`
@@ -33,6 +34,7 @@ type RbdPoolStatus struct {
 }
 
 // Types for RBD Image status table.
+
 type RbdImageStatusRemoteBrief struct {
 	Name             string `json:"name" yaml:"name"`
 	Status           string `json:"status" yaml:"status"`
@@ -66,6 +68,7 @@ type RbdPoolBrief struct {
 type RbdPoolList []RbdPoolBrief
 
 // ################################## RBD Replication Request ##################################
+
 // RbdReplicationDirection defines Rbd mirror direction
 type RbdReplicationDirection string
 
@@ -111,8 +114,8 @@ func (req RbdReplicationRequest) GetWorkloadType() CephWorkloadType {
 	return RbdWorkload
 }
 
-// GetAPIObjectId provides the API object id i.e. /replication/rbd/<object-id>
-func (req RbdReplicationRequest) GetAPIObjectId() string {
+// GetAPIObjectID provides the API object id i.e. /replication/rbd/<object-id>
+func (req RbdReplicationRequest) GetAPIObjectID() string {
 	// If both Pool and Image values are present encode for query.
 	if len(req.SourceImage) != 0 && len(req.SourcePool) != 0 {
 		resource := url.QueryEscape(fmt.Sprintf("%s/%s", req.SourcePool, req.SourceImage))
@@ -123,8 +126,8 @@ func (req RbdReplicationRequest) GetAPIObjectId() string {
 	return req.SourcePool
 }
 
-// SetAPIObjectId provides the API object id i.e. /replication/rbd/<object-id>
-func (req *RbdReplicationRequest) SetAPIObjectId(id string) error {
+// SetAPIObjectID provides the API object id i.e. /replication/rbd/<object-id>
+func (req *RbdReplicationRequest) SetAPIObjectID(id string) error {
 	// unescape object string
 	object, err := url.PathUnescape(id)
 	if err != nil {
@@ -153,6 +156,7 @@ func (req RbdReplicationRequest) GetWorkloadRequestType() string {
 }
 
 // ################### Helpers ############################
+
 // GetRbdResourceType gets the resource type of the said request
 func GetRbdResourceType(poolName string, imageName string) RbdResourceType {
 	if len(poolName) != 0 && len(imageName) != 0 {
