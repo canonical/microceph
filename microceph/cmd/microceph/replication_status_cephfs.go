@@ -2,18 +2,20 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 )
 
 type cmdReplicationStatusCephfs struct {
 	common *CmdControl
-	subvolume string
-	dirPath   string
 	json   bool
 }
 
@@ -24,8 +26,6 @@ func (c *cmdReplicationStatusCephfs) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
-	cmd.Flags().StringVar(&c.subvolume, "subvolume", "", "subvolume name")
-	cmd.Flags().StringVar(&c.dirPath, "dir-path", "", "directory path in the CephFS volume")
 	cmd.Flags().BoolVar(&c.json, "json", false, "output as json string")
 	return cmd
 }
@@ -60,21 +60,54 @@ func (c *cmdReplicationStatusCephfs) Run(cmd *cobra.Command, args []string) erro
 		return nil
 	}
 
-	return printCephfsReplicationStatusTable(payload.ResourceType, resp)
+	return c.printCephfsReplicationStatusTable(resp)
 }
 
 func (c *cmdReplicationStatusCephfs) prepareCephfsPayload(requestType types.ReplicationRequestType, args []string) (types.CephfsReplicationRequest, error) {
 	retReq := types.CephfsReplicationRequest{
-		Volume:   args[0],
-		Subvolume: c.subvolume,
-		DirPath:  c.dirPath,
-		RequestType:  requestType,
-		ResourceType: types.GetCephfsResourceType(c.subvolume, c.dirPath),
+		Volume:      args[0],
+		RequestType: requestType,
 	}
 
 	return retReq, nil
 }
 
-func printCephfsReplicationStatusTable(ResourceType types.CephfsResourceType, _ string) error {
-	return fmt.Errorf("status table is not implemented for %s", ResourceType)
+func (c *cmdReplicationStatusCephfs) printCephfsReplicationStatusTable(apiResponse string) error {
+	var resp types.CephFsReplicationResponseStatus
+	err := json.Unmarshal([]byte(apiResponse), &resp)
+	if err != nil {
+		return err
+	}
+
+	rowConfig := table.RowConfig{AutoMerge: true, AutoMergeAlign: text.AlignCenter}
+
+	// Summary Section.
+	t_summary := table.NewWriter()
+	t_summary.SetOutputMirror(os.Stdout)
+	t_summary.AppendHeader(table.Row{"Summary", "Summary"}, rowConfig)
+	t_summary.AppendRow(table.Row{"Volume", resp.Volume}, rowConfig)
+	t_summary.AppendRow(table.Row{"Resource Count", resp.MirrorResourceCount}, rowConfig)
+	t_summary.AppendRow(table.Row{"Peer Count", len(resp.Peers)}, rowConfig)
+	t_summary.Render()
+
+	fmt.Println() // Add a newline for better readability
+
+	// Peers Section
+	t_remotes := table.NewWriter()
+	t_remotes.SetOutputMirror(os.Stdout)
+	t_remotes.AppendHeader(table.Row{"Remote Name", "Resource Path", "State", "Snaps Synced", "Snaps Deleted", "Snaps Renamed"}, rowConfig)
+	for _, peer := range resp.Peers {
+		for resourcePath, status := range peer.MirrorStatus {
+			t_remotes.AppendRow(table.Row{
+				peer.Name,
+				resourcePath,
+				status.State,
+				status.Synced,
+				status.Deleted,
+				status.Renamed,
+			}, rowConfig)
+		}
+	}
+	t_remotes.Render()
+	return nil
 }

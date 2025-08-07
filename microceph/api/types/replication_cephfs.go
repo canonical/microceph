@@ -3,7 +3,7 @@ package types
 import (
 	"net/url"
 
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 // ################################## CephFS Replication Request ##################################
@@ -22,10 +22,13 @@ const (
 
 // CephfsReplicationRequest implements ReplicationRequest for RBD replication.
 type CephfsReplicationRequest struct {
-	Volume     string `json:"volume" yaml:"volume"`
-	Subvolume  string `json:"subvolume" yaml:"subvolume"`
-	DirPath    string `json:"dir_path" yaml:"dir_path"`
-	RemoteName string `json:"remote" yaml:"remote"`
+	Volume string `json:"volume" yaml:"volume"`
+	// A cephfs resource could either be a directory path or a subvolume.
+	DirPath string `json:"dir_path" yaml:"dir_path"`
+	// Subvolume *MAY* be a part of a subvolume group.
+	Subvolume      string `json:"subvolume" yaml:"subvolume"`
+	SubvolumeGroup string `json:"subvolume_group" yaml:"subvolume_group"`
+	RemoteName     string `json:"remote" yaml:"remote"`
 	// Subvolume or Directory Path
 	ResourceType CephfsResourceType     `json:"resource_type" yaml:"resource_type"`
 	RequestType  ReplicationRequestType `json:"request_type" yaml:"request_type"`
@@ -41,8 +44,8 @@ func (req CephfsReplicationRequest) GetWorkloadType() CephWorkloadType {
 	return CephFsWorkload
 }
 
-// GetAPIObjectId provides the API object id i.e. /replication/cephfs/<volume-name>
-func (req CephfsReplicationRequest) GetAPIObjectId() string {
+// GetAPIObjectID provides the API object id i.e. /replication/cephfs/<volume-name>
+func (req CephfsReplicationRequest) GetAPIObjectID() string {
 	// For filesystem workloads, the only resource is the volume name.
 	if len(req.Volume) != 0 {
 		logger.Debugf("REPAPI: Resource: %s", req.Volume)
@@ -52,8 +55,8 @@ func (req CephfsReplicationRequest) GetAPIObjectId() string {
 	return ""
 }
 
-// SetAPIObjectId provides the API object id i.e. /replication/rbd/<object-id>
-func (req *CephfsReplicationRequest) SetAPIObjectId(id string) error {
+// SetAPIObjectID provides the API object id i.e. /replication/rbd/<object-id>
+func (req *CephfsReplicationRequest) SetAPIObjectID(id string) error {
 	// unescape object string
 	volume, err := url.PathUnescape(id)
 	if err != nil {
@@ -74,8 +77,44 @@ func (req CephfsReplicationRequest) GetWorkloadRequestType() string {
 	return GetWorkloadRequestTypeGeneric(req.RequestType)
 }
 
-// ####################### Helpers #######################
-// GetWorkloadResourceType gets the resource type of the said request.
+// ################################## CephFS Replication Response ##################################
+
+// LIST response
+
+// CephFsReplicationResponseListItem represents a single item in the list response
+type CephFsReplicationResponseListItem struct {
+	ResourcePath string             `json:"resource_path" yaml:"resource_path"`
+	ResourceType CephfsResourceType `json:"resource_type" yaml:"resource_type"`
+}
+
+// CephFsReplicationResponseList is a map of volumes to a slice of cephfs mirror resources.
+type CephFsReplicationResponseList map[string][]CephFsReplicationResponseListItem
+
+// STATUS response
+
+type CephFsReplicationDirMirrorStatus struct {
+	State   string `json:"state"`
+	Synced  int    `json:"snaps_synced"`
+	Deleted int    `json:"snaps_deleted"`
+	Renamed int    `json:"snaps_renamed"`
+}
+
+type CephFsReplicationMirrorStatusMap map[string]CephFsReplicationDirMirrorStatus
+
+type CephFsReplicationResponsePeerItem struct {
+	Name         string                                      `json:"name" yaml:"name"`
+	MirrorStatus map[string]CephFsReplicationDirMirrorStatus `json:"mirror_status" yaml:"mirror_status"`
+}
+
+type CephFsReplicationResponseStatus struct {
+	Volume              string                                       `json:"volume" yaml:"volume"`
+	MirrorResourceCount int                                          `json:"mirror_path_count" yaml:"mirror_path_count"`
+	Peers               map[string]CephFsReplicationResponsePeerItem `json:"peers" yaml:"peers"`
+}
+
+// ############################ Helper Functions  ##################################
+
+// GetCephfsResourceType gets the resource type of the said request.
 func GetCephfsResourceType(subvolume string, dirpath string) CephfsResourceType {
 	// only one of subvolume or dirpath should be set.
 	if len(subvolume) != 0 && len(dirpath) == 0 {

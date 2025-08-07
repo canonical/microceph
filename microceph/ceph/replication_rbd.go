@@ -109,19 +109,19 @@ func (rh *RbdReplicationHandler) PreFill(ctx context.Context, request types.Repl
 }
 
 // GetResourceState fetches the mirroring state for requested rbd pool/image.
-func (rh *RbdReplicationHandler) GetResourceState() ReplicationState {
+func (rh *RbdReplicationHandler) GetResourceState() (ReplicationState, error) {
 	// Image request but mirroring is disabled on image.
 	if rh.Request.ResourceType == types.RbdResourceImage {
-		return rh.ImageStatus.State
+		return rh.ImageStatus.State, nil
 	}
 
 	// Pool request
-	return rh.PoolStatus.State
+	return rh.PoolStatus.State, nil
 }
 
 // EnableHandler enables mirroring for requested rbd pool/image.
 func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any) error {
-	logger.Debugf("REPFSM: Enable handler, Req %v", rh.Request)
+	logger.Debugf("REPRBD: Enable handler, Req %v", rh.Request)
 
 	st := args[repArgState].(interfaces.CephState).ClusterState()
 	dbRec, err := database.GetRemoteDb(ctx, st, rh.Request.RemoteName)
@@ -146,7 +146,7 @@ func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any)
 
 // DisableHandler disables mirroring configured for requested rbd pool/image.
 func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any) error {
-	logger.Debugf("REPFSM: Disable handler, Req %v", rh.Request)
+	logger.Debugf("REPRBD: Disable handler, Req %v", rh.Request)
 
 	st := args[repArgState].(interfaces.CephState).ClusterState()
 	dbRec, err := database.GetRemoteDb(ctx, st, rh.Request.RemoteName)
@@ -167,7 +167,7 @@ func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any
 
 // ConfigureHandler configures replication properties for requested rbd pool/image.
 func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...any) error {
-	logger.Debugf("REPFSM: Configure handler, Req %v", rh.Request)
+	logger.Debugf("REPRBD: Configure handler, Req %v", rh.Request)
 
 	schedule, err := getSnapshotSchedule(rh.Request.SourcePool, rh.Request.SourceImage)
 	if err != nil {
@@ -183,7 +183,7 @@ func (rh *RbdReplicationHandler) ConfigureHandler(ctx context.Context, args ...a
 
 // ListHandler fetches a list of rbd pools/images configured for mirroring.
 func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) error {
-	logger.Debugf("REPFSM: List handler, Req %v", rh.Request)
+	logger.Debugf("REPRBD: List handler, Req %v", rh.Request)
 
 	// fetch all ceph pools initialised with rbd application.
 	pools := ListPools("rbd")
@@ -235,7 +235,7 @@ func (rh *RbdReplicationHandler) ListHandler(ctx context.Context, args ...any) e
 
 // StatusHandler fetches the status of requested rbd pool/image resource.
 func (rh *RbdReplicationHandler) StatusHandler(ctx context.Context, args ...any) error {
-	logger.Debugf("REPFSM: Status handler, Req %v", rh.Request)
+	logger.Debugf("REPRBD: Status handler, Req %v", rh.Request)
 
 	var resp any
 

@@ -3,11 +3,12 @@ package types
 import (
 	"strings"
 
-	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 // ################################## Generic Replication Request ##################################
+
 // ReplicationResourceType defines the resource type for any workload.
 type ReplicationResourceType string
 
@@ -32,9 +33,9 @@ const (
 type CephWorkloadType string
 
 const (
-	RbdWorkload CephWorkloadType = "rbd"
-	CephFsWorkload  CephWorkloadType = "cephfs"
-	RgwWorkload CephWorkloadType = "rgw"
+	RbdWorkload    CephWorkloadType = "rbd"
+	CephFsWorkload CephWorkloadType = "cephfs"
+	RgwWorkload    CephWorkloadType = "rgw"
 )
 
 // ReplicationRequest is interface for all Replication implementations (rbd, cephfs, rgw).
@@ -43,7 +44,7 @@ const (
 // 2. Replication state machine to feed the correct event trigger.
 type ReplicationRequest interface {
 	GetWorkloadType() CephWorkloadType
-	GetAPIObjectId() string
+	GetAPIObjectID() string
 	GetAPIRequestType() string
 	GetWorkloadRequestType() string
 }
