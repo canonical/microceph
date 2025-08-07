@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/canonical/microceph/microceph/common"
 	"testing"
+	"time"
 
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
@@ -72,6 +73,9 @@ func (s *startSuite) TestInvalidVersionString() {
 }
 
 func (s *startSuite) TestMultipleVersionsPresent() {
+	versionRetrySleep = func(_ time.Duration) {}
+	s.T().Cleanup(func() { versionRetrySleep = time.Sleep })
+	
 	r := mocks.NewRunner(s.T())
 	version := `ceph version 19.2.0 (e7ad5345525c7aa95470c26863873b581076945d) squid (stable)`
 	versionsJson := `{

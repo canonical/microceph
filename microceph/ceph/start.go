@@ -25,6 +25,9 @@ type cephVersion struct {
 	Overall cephVersionElem `json:"overall"`
 }
 
+// versionRetrySleep is a function that can be mocked in tests to control the sleep duration
+var versionRetrySleep = time.Sleep
+
 // getCurrentVersion extracts the version codename from the 'ceph -v' output
 func getCurrentVersion() (string, error) {
 	output, err := common.ProcessExec.RunCommand("ceph", "-v")
@@ -65,7 +68,7 @@ func checkVersions() (bool, error) {
 			if attempt < maxRetries-1 {
 				logger.Debugf("multiple versions detected (attempt %d/%d), waiting %v before retry",
 					attempt+1, maxRetries, retryDelay)
-				time.Sleep(retryDelay)
+				versionRetrySleep(retryDelay)
 				continue
 			}
 			logger.Debug("not all upgrades have completed after retries")
