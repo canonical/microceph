@@ -30,14 +30,14 @@ Global options:
 ``config``
 ----------
 
-Manages Ceph Cluster configs.
+Manages Ceph Client configs.
 
 Usage:
 
 .. code-block:: none
 
-   microceph cluster config [flags]
-   microceph cluster config [command]
+   microceph client config [flags]
+   microceph client config [command]
 
 Available Commands:
 
