@@ -6,14 +6,9 @@ source-code: https://github.com/canonical/microceph.git
 license: AGPL-3.0
 summary: Simple clustered Ceph deployment
 description: |-
- MicroCeph is snap-deployed Ceph with built-in clustering.
+  MicroCeph is snap-deployed Ceph with built-in clustering.
 
 confinement: strict
-
-package-repositories:
-  - type: apt
-    ppa: lmlogiudice/ceph-mcorch
-    priority: always
 
 plugs:
   load-rbd:
@@ -202,6 +197,7 @@ parts:
 
   ceph:
     plugin: nil
+    source: patches/
     override-prime: |
       craftctl default
       pkg_version=$(
@@ -227,6 +223,18 @@ parts:
           --abbrev=10)
         # changed as the original string was longer than 32chars.
         craftctl set version=${pkg_version}+snap${git_version}
+
+      # Apply patches to the staging environment to ensure
+      # the microceph orchestrator is enabled.
+      pushd $CRAFT_STAGE
+      ls -l $CRAFT_PART_SRC/*.patch
+      for quirk in `ls -1 $CRAFT_PART_SRC/*.patch`
+      do
+        echo "Applying patch $quirk from directory $(pwd)"
+        patch -p1 < $quirk
+        echo "Done applying patch $quirk"
+      done
+      popd
     stage-packages:
       - ceph-common
       - ceph-mds
@@ -341,7 +349,7 @@ parts:
       - lib/libdqlite*so*
       - lib/libraft*so*
       - lib/*/libuv*so*
-  
+
   microceph:
     source: microceph/
     after:
