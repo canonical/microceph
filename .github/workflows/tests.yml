@@ -100,6 +100,22 @@ jobs:
         sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"
         sudo microceph.ceph osd crush rule ls | grep -F microceph_auto_osd
 
+    - name: Enable MicroCeph Orchestrator module
+      run: |
+        set -eux
+        sudo microceph.ceph mgr module ls | grep -F "microceph"
+        sudo microceph.ceph mgr module enable microceph
+        sudo microceph.ceph orch set backend microceph
+
+    - name: Verify Orch module
+      run: |
+        set -eux
+        hn=$(hostname)
+        sudo microceph.ceph orch host ls | grep -F $hn
+        sudo microceph.ceph orch ls | grep -F "mon" | grep -F $hn
+        sudo microceph.ceph orch ls | grep -F "mds" | grep -F $hn
+        sudo microceph.ceph orch ls | grep -F "mgr" | grep -F $hn
+
     - name: Add OSD with failure
       run: |
         set -eux

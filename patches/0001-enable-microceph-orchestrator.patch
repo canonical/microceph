@@ -1,0 +1,29 @@
+From ac6934d615b73810e5b6bd1f9cb154e901ad4cf9 Mon Sep 17 00:00:00 2001
+From: Billy Olsen <billy.olsen@canonical.com>
+Date: Fri, 8 Aug 2025 16:47:07 -0700
+Subject: [PATCH 1/1] Allow the microceph orchestrator to be enabled.
+
+Update the list of available orchestrators to include the microceph
+orchestrator. This allows the microceph orchestrator to be enabled.
+
+Signed-off-by: Billy Olsen <billy.olsen@canonical.com>
+---
+ share/ceph/mgr/orchestrator/module.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/share/ceph/mgr/orchestrator/module.py b/share/ceph/mgr/orchestrator/module.py
+index ce8e6652b3a..75a7c44741a 100644
+--- a/share/ceph/mgr/orchestrator/module.py
++++ b/share/ceph/mgr/orchestrator/module.py
+@@ -351,7 +351,7 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule,
+             type='str',
+             default=None,
+             desc='Orchestrator backend',
+-            enum_allowed=['cephadm', 'rook', 'test_orchestrator'],
++            enum_allowed=['cephadm', 'microceph', 'rook', 'test_orchestrator'],
+             runtime=True,
+         ),
+         Option(
+-- 
+2.43.0
+

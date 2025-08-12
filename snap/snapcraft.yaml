@@ -6,7 +6,7 @@ source-code: https://github.com/canonical/microceph.git
 license: AGPL-3.0
 summary: Simple clustered Ceph deployment
 description: |-
- MicroCeph is snap-deployed Ceph with built-in clustering.
+  MicroCeph is snap-deployed Ceph with built-in clustering.
 
 confinement: strict
 
@@ -32,7 +32,7 @@ slots:
 
 environment:
   LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib/ganesha:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/erasure-code
-  PYTHONPATH: $SNAP/lib/python3/dist-packages
+  PYTHONPATH: $SNAP/lib/python3/dist-packages:$SNAP/lib/python3.12/site-packages
 
 layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:
@@ -189,8 +189,25 @@ apps:
       - network
 
 parts:
+  microceph-orch:
+    plugin: python
+    # build-snaps:
+    #   - astral-uv
+    source: ./microceph-orch
+    after:
+      - microceph
+      - ceph
+    override-prime: |
+      set -eux
+      a=$(pwd)
+      craftctl default
+      mkdir -p share/ceph/mgr/microceph
+      # Force copy to overwrite.
+      cp -rf lib/python3.12/site-packages/microceph share/ceph/mgr/
+
   ceph:
     plugin: nil
+    source: patches/
     override-prime: |
       craftctl default
       pkg_version=$(
@@ -203,6 +220,7 @@ parts:
                 --abbrev=10 | sed -s 's/^v//')
       printf "ceph-version: ${pkg_version}\nmicroceph-git: ${git_version}\n" > share/metadata.yaml
     override-stage: |
+      set -eux
       craftctl default
       pkg_version=$(
         dpkg-deb -f \
@@ -215,6 +233,18 @@ parts:
           --abbrev=10)
         # changed as the original string was longer than 32chars.
         craftctl set version=${pkg_version}+snap${git_version}
+
+      # Apply patches to the staging environment to ensure
+      # the microceph orchestrator is enabled.
+      pushd $CRAFT_STAGE
+      ls -l $CRAFT_PART_SRC/*.patch
+      for quirk in `ls -1 $CRAFT_PART_SRC/*.patch`
+      do
+        echo "Applying patch $quirk from directory $(pwd)"
+        patch -p1 < $quirk
+        echo "Done applying patch $quirk"
+      done
+      popd
     stage-packages:
       - ceph-common
       - ceph-mds
@@ -232,6 +262,8 @@ parts:
       - python3-setuptools
       - python3-packaging
       - libatomic1
+      - python3-ceph-common # used by microceph-orch
+
     organize:
       usr/bin/: bin/
       usr/sbin/: bin/
@@ -331,7 +363,7 @@ parts:
       - lib/libdqlite*so*
       - lib/libraft*so*
       - lib/*/libuv*so*
-  
+
   microceph:
     source: microceph/
     after:
@@ -410,7 +442,7 @@ parts:
 
       # Strip libraries (excluding python3 scripts)
       find "${CRAFT_PRIME}"/lib -type f \
-        -not -path "${CRAFT_PRIME}/lib/python3/*" \
+        -not -path "${CRAFT_PRIME}/lib/python3*/*" \
         -exec strip -s {} +
 
   wrappers:
