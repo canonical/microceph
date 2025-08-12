@@ -36,7 +36,7 @@ MicroCeph supports setting, resetting, and listing client configurations which a
 
   .. code-block:: shell
 
-    $ sudo microceph cluster config list
+    $ sudo microceph client config list
     +---+----------------+---------+----------+
     | # |      KEY       |  VALUE  |   HOST   |
     +---+----------------+---------+----------+
@@ -51,7 +51,7 @@ MicroCeph supports setting, resetting, and listing client configurations which a
 
   .. code-block:: shell
 
-    $ sudo microceph cluster config list --target beta
+    $ sudo microceph client config list --target beta
     +---+----------------+---------+----------+
     | # |      KEY       |  VALUE  |   HOST   |
     +---+----------------+---------+----------+
@@ -65,7 +65,7 @@ MicroCeph supports setting, resetting, and listing client configurations which a
 
   .. code-block:: shell
 
-    $ sudo microceph cluster config list
+    $ sudo microceph client config list
     +---+----------------+---------+----------+
     | # |      KEY       |  VALUE  |   HOST   |
     +---+----------------+---------+----------+
@@ -78,7 +78,7 @@ MicroCeph supports setting, resetting, and listing client configurations which a
 
   .. code-block:: shell
 
-    $ sudo microceph cluster config rbd_cache --target alpha
+    $ sudo microceph client config rbd_cache --target alpha
     +---+----------------+---------+----------+
     | # |      KEY       |  VALUE  |   HOST   |
     +---+----------------+---------+----------+
@@ -90,8 +90,8 @@ MicroCeph supports setting, resetting, and listing client configurations which a
 
   .. code-block:: shell
 
-   $ sudo microceph cluster config reset rbd_cache_size
-   $ sudo microceph cluster config list
+   $ sudo microceph client config reset rbd_cache_size
+   $ sudo microceph client config list
     +---+----------------+---------+----------+
     | # |      KEY       |  VALUE  |   HOST   |
     +---+----------------+---------+----------+
@@ -104,8 +104,8 @@ MicroCeph supports setting, resetting, and listing client configurations which a
 
   .. code-block:: shell
 
-   $ sudo microceph cluster config reset rbd_cache --target alpha
-   $ sudo microceph cluster config list
+   $ sudo microceph client config reset rbd_cache --target alpha
+   $ sudo microceph client config list
     +---+----------------+---------+----------+
     | # |      KEY       |  VALUE  |   HOST   |
     +---+----------------+---------+----------+
