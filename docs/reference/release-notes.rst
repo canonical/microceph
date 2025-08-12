@@ -1,10 +1,10 @@
-Overview
-========
+Release Notes
+=============
 
 The following provides details on major MicroCeph releases, beginning with the MicroCeph squid release.
 
 MicroCeph Squid
-===============
+---------------
 
 The Ceph team is happy to announce the release of MicroCeph 19.2.0
 (squid). This is the first stable release in the Squid series of
@@ -14,7 +14,7 @@ The MicroCeph squid release can be installed from the squid/stable
 track.
 
 Highlights
-----------
+~~~~~~~~~~
 
 -  Uses Ceph 19.2.0 (squid)
 -  Support for RBD remote replication
@@ -26,7 +26,7 @@ Highlights
 
 
 Important Changes
------------------
+~~~~~~~~~~~~~~~~~
 
 For added security, MicroCeph now checks hostnames upon cluster
 joining. This means that the name used when running `microceph cluster
@@ -37,14 +37,14 @@ not contain join token name` to syslog.
 
 
 Known Issues
-------------
+~~~~~~~~~~~~
 
 iSCSI users are advised that the upstream developers of Ceph encountered
 a bug during an upgrade from Ceph 19.1.1 to Ceph 19.2.0. Read Tracker
 Issue 68215 before attempting an upgrade to 19.2.0.
 
 List of pull requests
----------------------
+~~~~~~~~~~~~~~~~~~~~~
 
 - `#467 <https://github.com/canonical/microceph/pull/467>`__: Fix: increase timings for osd release
 - `#466 <https://github.com/canonical/microceph/pull/466>`__: Adjust ‘verify_health’ iterations
