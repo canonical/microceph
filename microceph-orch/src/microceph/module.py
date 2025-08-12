@@ -119,7 +119,7 @@ class MicroCephOrchestrator(Orchestrator,
         :param notify_id:
         :return:
         """
-        logger.info(f"notify called with notify_type: {notify_type} and notify_id: {notify_id}")
+        logger.info(f"noop: notify called with notify_type: {notify_type} and notify_id: {notify_id}")
 
     @handle_orch_error
     def get_hosts(self) -> List[HostSpec]:

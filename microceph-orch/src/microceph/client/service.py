@@ -7,7 +7,7 @@ from abc import ABC
 from requests.exceptions import ConnectionError, HTTPError
 from requests.sessions import Session
 
-LOG = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class RemoteException(Exception):
@@ -121,7 +121,7 @@ class BaseService(ABC):
         url = f"{netloc}/{path}"
         redact_response = kwargs.pop("redact_response", False)
         try:
-            LOG.debug("[%s] %s, args=%s", method, url, kwargs)
+            logger.debug("[%s] %s, args=%s", method, url, kwargs)
             response = self.__session.request(
                 method=method,
                 url=url,
@@ -132,7 +132,7 @@ class BaseService(ABC):
             output = response.text
             if redact_response:
                 output = "/* REDACTED */"
-            LOG.debug("Response(%s) = %s", response, output)
+            logger.debug("Response(%s) = %s", response, output)
         except ConnectionError as e:
             msg = str(e)
             if "FileNotFoundError" in msg:

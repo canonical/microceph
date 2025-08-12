@@ -1,12 +1,11 @@
 # SPDX-FileCopyrightText: 2023 - Canonical Ltd
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import logging
 
 from . import service
 
-LOG = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class MicroClusterService(service.BaseService):
