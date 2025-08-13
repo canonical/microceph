@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	lxdlogger "github.com/canonical/lxd/shared/logger"
 )
 
 var (
@@ -406,5 +408,142 @@ func WarnKV(msg string, keysAndValues ...interface{}) {
 func ErrorKV(msg string, keysAndValues ...interface{}) {
 	if DaemonLogger != nil {
 		DaemonLogger.ErrorKV(msg, keysAndValues...)
+	}
+}
+
+// LXDLoggerAdapter wraps MicroCephDaemonLogger to implement the LXD Logger interface
+type LXDLoggerAdapter struct {
+	logger *MicroCephDaemonLogger
+}
+
+// NewLXDLoggerAdapter creates a new adapter that implements the LXD Logger interface
+func NewLXDLoggerAdapter(logger *MicroCephDaemonLogger) *LXDLoggerAdapter {
+	return &LXDLoggerAdapter{
+		logger: logger,
+	}
+}
+
+// convertCtxToKV converts LXD context arguments to key-value pairs for slog
+func convertCtxToKV(args ...lxdlogger.Ctx) []interface{} {
+	if len(args) == 0 {
+		return nil
+	}
+	
+	kvPairs := make([]interface{}, 0, len(args)*2)
+	for _, ctx := range args {
+		for k, v := range ctx {
+			kvPairs = append(kvPairs, k, v)
+		}
+	}
+	return kvPairs
+}
+
+// logWithCtx is a helper that logs a message with optional context using the appropriate method
+func (a *LXDLoggerAdapter) logWithCtx(msg string, logFunc func(string), logKVFunc func(string, ...interface{}), args ...lxdlogger.Ctx) {
+	if kvPairs := convertCtxToKV(args...); kvPairs != nil {
+		logKVFunc(msg, kvPairs...)
+	} else {
+		logFunc(msg)
+	}
+}
+
+// Panic implements the LXD Logger interface
+func (a *LXDLoggerAdapter) Panic(msg string, args ...lxdlogger.Ctx) {
+	// Use Error level since we don't have Panic
+	a.logWithCtx(msg, a.logger.Error, a.logger.ErrorKV, args...)
+}
+
+// Fatal implements the LXD Logger interface
+func (a *LXDLoggerAdapter) Fatal(msg string, args ...lxdlogger.Ctx) {
+	// Use Error level since we don't have Fatal
+	a.logWithCtx(msg, a.logger.Error, a.logger.ErrorKV, args...)
+}
+
+// Error implements the LXD Logger interface
+func (a *LXDLoggerAdapter) Error(msg string, args ...lxdlogger.Ctx) {
+	a.logWithCtx(msg, a.logger.Error, a.logger.ErrorKV, args...)
+}
+
+// Warn implements the LXD Logger interface
+func (a *LXDLoggerAdapter) Warn(msg string, args ...lxdlogger.Ctx) {
+	a.logWithCtx(msg, a.logger.Warn, a.logger.WarnKV, args...)
+}
+
+// Info implements the LXD Logger interface
+func (a *LXDLoggerAdapter) Info(msg string, args ...lxdlogger.Ctx) {
+	a.logWithCtx(msg, a.logger.Info, a.logger.InfoKV, args...)
+}
+
+// Debug implements the LXD Logger interface
+func (a *LXDLoggerAdapter) Debug(msg string, args ...lxdlogger.Ctx) {
+	a.logWithCtx(msg, a.logger.Debug, a.logger.DebugKV, args...)
+}
+
+// Trace implements the LXD Logger interface
+func (a *LXDLoggerAdapter) Trace(msg string, args ...lxdlogger.Ctx) {
+	// Since MicroCephDaemonLogger doesn't have Trace, use Debug
+	a.logWithCtx(msg, a.logger.Debug, a.logger.DebugKV, args...)
+}
+
+// AddContext implements the LXD Logger interface
+func (a *LXDLoggerAdapter) AddContext(ctx lxdlogger.Ctx) lxdlogger.Logger {
+	// For simplicity, return a new adapter that prefixes messages with context
+	return &contextualLXDLoggerAdapter{
+		adapter: a,
+		context: ctx,
+	}
+}
+
+// contextualLXDLoggerAdapter handles context by prefixing it to log messages
+type contextualLXDLoggerAdapter struct {
+	adapter *LXDLoggerAdapter
+	context lxdlogger.Ctx
+}
+
+// mergeContexts combines the stored context with additional arguments
+func (c *contextualLXDLoggerAdapter) mergeContexts(args ...lxdlogger.Ctx) []lxdlogger.Ctx {
+	return append([]lxdlogger.Ctx{c.context}, args...)
+}
+
+func (c *contextualLXDLoggerAdapter) Panic(msg string, args ...lxdlogger.Ctx) {
+	c.adapter.Panic(msg, c.mergeContexts(args...)...)
+}
+
+func (c *contextualLXDLoggerAdapter) Fatal(msg string, args ...lxdlogger.Ctx) {
+	c.adapter.Fatal(msg, c.mergeContexts(args...)...)
+}
+
+func (c *contextualLXDLoggerAdapter) Error(msg string, args ...lxdlogger.Ctx) {
+	c.adapter.Error(msg, c.mergeContexts(args...)...)
+}
+
+func (c *contextualLXDLoggerAdapter) Warn(msg string, args ...lxdlogger.Ctx) {
+	c.adapter.Warn(msg, c.mergeContexts(args...)...)
+}
+
+func (c *contextualLXDLoggerAdapter) Info(msg string, args ...lxdlogger.Ctx) {
+	c.adapter.Info(msg, c.mergeContexts(args...)...)
+}
+
+func (c *contextualLXDLoggerAdapter) Debug(msg string, args ...lxdlogger.Ctx) {
+	c.adapter.Debug(msg, c.mergeContexts(args...)...)
+}
+
+func (c *contextualLXDLoggerAdapter) Trace(msg string, args ...lxdlogger.Ctx) {
+	c.adapter.Trace(msg, c.mergeContexts(args...)...)
+}
+
+func (c *contextualLXDLoggerAdapter) AddContext(ctx lxdlogger.Ctx) lxdlogger.Logger {
+	// Merge contexts
+	mergedCtx := make(lxdlogger.Ctx)
+	for k, v := range c.context {
+		mergedCtx[k] = v
+	}
+	for k, v := range ctx {
+		mergedCtx[k] = v
+	}
+	return &contextualLXDLoggerAdapter{
+		adapter: c.adapter,
+		context: mergedCtx,
 	}
 }

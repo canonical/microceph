@@ -3,15 +3,15 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/logger"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/canonical/microceph/microceph/logger"
+
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/lxd/lxd/util"
 	"github.com/canonical/lxd/shared/api"
-	lxdlogger "github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microcluster/v2/rest"
@@ -27,7 +27,7 @@ type maintenanceResponse struct {
 
 // Render renders a response for /ops/maintenance/{node} endpoint.
 func (r *maintenanceResponse) Render(w http.ResponseWriter, req *http.Request) (err error) {
-	debugLogger := lxdlogger.Logger(lxdlogger.Log)
+	debugLogger := logger.NewLXDLoggerAdapter(logger.DaemonLogger)
 	w.Header().Set("Content-Type", "application/json")
 
 	var resp api.ResponseRaw
