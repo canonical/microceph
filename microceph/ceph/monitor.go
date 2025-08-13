@@ -6,6 +6,8 @@ import (
 	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
+
+	"github.com/tidwall/gjson"
 )
 
 func genMonmap(path string, fsid string) error {
@@ -86,4 +88,23 @@ func removeMon(hostname string) error {
 		return fmt.Errorf("failed to remove monitor %q: %w", hostname, err)
 	}
 	return nil
+}
+
+func getActiveMons() ([]string, error) {
+	output, err := common.ProcessExec.RunCommand("ceph", "-s", "-f", "json")
+	if err != nil {
+		logger.Errorf("Failed fetching ceph status: %v", err)
+		return nil, err
+	}
+
+	logger.Debugf("Ceph Status:\n%s", output)
+
+	// Get the active mons services.
+	activeMons := []string{}
+	result := gjson.Get(output, "quorum_names")
+	for _, name := range result.Array() {
+		activeMons = append(activeMons, name.String())
+	}
+
+	return activeMons, nil
 }

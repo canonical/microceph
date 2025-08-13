@@ -28,7 +28,7 @@ Enabling maintenance mode
 
 - Check if OSDs on the node are ``ok-to-stop`` to ensure sufficient redundancy to tolerate the loss
   of OSDs on the node.
-- Check if the number of running services is greater than the minimum (3 MON, 1 MDS, 1 MGR)
+- Check if the number of running services is greater than the minimum (majority of MON, 1 MDS, 1 MGR)
   required for quorum.
 - *(Optional)* Apply noout flag to prevent data migration from triggering during the planned
   maintenance slot. (default=True)

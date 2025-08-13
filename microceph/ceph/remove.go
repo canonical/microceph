@@ -9,6 +9,7 @@ import (
 	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/canonical/microcluster/v2/state"
 
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 )
 
@@ -22,6 +23,30 @@ func PreRemove(m *microcluster.MicroCluster) func(ctx context.Context, s state.S
 
 		return removeNode(cli, s.Name(), force)
 	}
+}
+
+// EnsureNonOsdSvcEnough ensures non OSD services beside those in nodeName are enough to maintain a healthy cluster.
+func EnsureNonOsdSvcEnough(services types.Services, nodeName string, minMon int, minMgr int, minMds int) error {
+	// remaining non osd services maps
+	foundMap := map[string]int{
+		"mon": 0,
+		"mgr": 0,
+		"mds": 0,
+	}
+
+	// loop through services and check service counts not on the node 'nodeName'
+	for _, service := range services {
+		if service.Location != nodeName {
+			foundMap[service.Service]++
+		}
+	}
+
+	logger.Debugf("Services: %v, foundMap: %v", services, foundMap)
+	if foundMap["mon"] < minMon || foundMap["mgr"] < minMgr || foundMap["mds"] < minMds {
+		return fmt.Errorf("need at least %d mon, %d mds, and %d mgr services in the cluster besides those in node '%s'", minMon, minMds, minMgr, nodeName)
+	}
+
+	return nil
 }
 
 func removeNode(cli *microCli.Client, node string, force bool) error {
@@ -86,23 +111,11 @@ func checkPrerequisites(cli *microCli.Client, name string) error {
 	if err != nil {
 		return fmt.Errorf("Error getting services: %v", err)
 	}
-	// create a map of service names counters
-	// init with false
-	foundMap := map[string]int{
-		"mon": 0,
-		"mgr": 0,
-		"mds": 0,
-	}
-	// loop through services and check service counts
-	for _, service := range services {
-		if service.Location == name {
-			continue
-		}
-		foundMap[service.Service]++
-	}
-	logger.Debugf("Services: %v, foundMap: %v", services, foundMap)
-	if foundMap["mon"] < 3 || foundMap["mgr"] < 1 || foundMap["mds"] < 1 {
-		return fmt.Errorf("Need at least 3 mon, 1 mds, and 1 mgr besides %v", name)
+
+	// check if the remaining non OSD services is enough to maintain a healthy cluster
+	err = EnsureNonOsdSvcEnough(services, name, 3, 1, 1)
+	if err != nil {
+		return fmt.Errorf("Insufficient non OSD services: %v", err)
 	}
 
 	return nil
