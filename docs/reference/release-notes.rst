@@ -6,7 +6,7 @@ The following provides details on major MicroCeph releases, beginning with the M
 MicroCeph Squid
 ---------------
 
-The Ceph team is happy to announce the release of MicroCeph 19.2.0
+The Ceph team is happy to announce the release of MicroCeph v19
 (squid). This is the first stable release in the Squid series of
 releases.
 
