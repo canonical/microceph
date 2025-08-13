@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/clilogger"
 	microCli "github.com/canonical/microcluster/v2/client"
 	"github.com/canonical/microcluster/v2/state"
 )
@@ -43,17 +43,17 @@ func SendRemoteImportToClusterMembers(ctx context.Context, s state.State, data t
 	// Get a collection of clients to every other cluster member.
 	cluster, err := s.Cluster(false)
 	if err != nil {
-		logger.Errorf("REM: failed to get a client for every cluster member: %v", err)
+		clilogger.Errorf("Remote: failed to get a client for every cluster member: %v", err)
 		return err
 	}
 
-	logger.Infof("REM: Sending remote info to %d members", len(cluster))
+	clilogger.Infof("Remote: sending info to %d members", len(cluster))
 
 	for _, remoteClient := range cluster {
 		// In order send restart to each cluster member and wait.
 		err = SendRemoteImportRequest(ctx, &remoteClient, data)
 		if err != nil {
-			logger.Errorf("REM: %v", err)
+			clilogger.Errorf("Remote: error sending to client: %v", err)
 			return err
 		}
 	}

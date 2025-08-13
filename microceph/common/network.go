@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 type NetworkIntf interface {

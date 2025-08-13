@@ -5,7 +5,7 @@ import (
 	"github.com/canonical/microceph/microceph/common"
 	"strings"
 
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 // Check if a snapd interface is connected to microceph

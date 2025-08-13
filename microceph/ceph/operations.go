@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 
 	"github.com/canonical/microcluster/v2/state"
 

@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 // Types for RBD Pool status table.

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microceph/microceph/clilogger"
 	"github.com/canonical/microcluster/v2/client"
 	"github.com/canonical/microcluster/v2/state"
 
@@ -103,7 +103,7 @@ func SendRestartRequestToClusterMembers(ctx context.Context, s state.State, serv
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
 	cluster, err := s.Cluster(false)
 	if err != nil {
-		logger.Errorf("failed to get a client for every cluster member: %v", err)
+		clilogger.Errorf("failed to get a client for every cluster member: %v", err)
 		return err
 	}
 
@@ -111,7 +111,7 @@ func SendRestartRequestToClusterMembers(ctx context.Context, s state.State, serv
 		// In order send restart to each cluster member and wait.
 		err = RestartService(ctx, &remoteClient, &data)
 		if err != nil {
-			logger.Errorf("restart error: %v", err)
+			clilogger.Errorf("restart error: %v", err)
 			return err
 		}
 	}
