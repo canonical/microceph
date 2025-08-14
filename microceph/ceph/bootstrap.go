@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/logger"
 
 	"github.com/pborman/uuid"
 
@@ -129,6 +129,12 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 
 	// Configure defaults cluster configs for network.
 	err = setDefaultNetwork(data.ClusterNet, data.PublicNet)
+	if err != nil {
+		return err
+	}
+
+	// enable microceph orchestrator
+	err = setMicroCephOrchBackend()
 	if err != nil {
 		return err
 	}
@@ -399,5 +405,20 @@ func initMds(s interfaces.StateInterface, dataPath string) error {
 		return fmt.Errorf("Failed to start metadata server: %w", err)
 	}
 	return nil
+}
 
+func setMicroCephOrchBackend() error {
+	args := []string{"mgr", "module", "enable", "microceph"}
+	_, err := cephRun(args...)
+	if err != nil {
+		return fmt.Errorf("failed to enable microceph mgr module: %w", err)
+	}
+
+	args = []string{"orch", "set", "backend", "microceph"}
+	_, err = cephRun(args...)
+	if err != nil {
+		return fmt.Errorf("failed to set microceph orchestrator backend: %w", err)
+	}
+
+	return nil
 }
