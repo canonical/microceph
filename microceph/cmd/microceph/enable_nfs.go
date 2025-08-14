@@ -26,11 +26,11 @@ type cmdEnableNFS struct {
 
 func (c *cmdEnableNFS) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "nfs --cluster-id <cluster-id> [--bind-address <ip-address>] [--port <port-num>] [--v4-min-version 0/1/2] [--target <server>] [--wait <bool>]",
+		Use:   "nfs --cluster-id <cluster-id> [--bind-address <ip-address>] [--bind-port <port-num>] [--v4-min-version 0/1/2] [--target <server>] [--wait <bool>]",
 		Short: "Enable the NFS Ganesha service on the --target server (default: this server)",
 		RunE:  c.Run,
 	}
-	cmd.PersistentFlags().StringVar(&c.flagClusterID, "cluster-id", "", fmt.Sprintf("NFS Cluster ID (must match regex: '%s'", types.NFSClusterIDRegex.String()))
+	cmd.PersistentFlags().StringVar(&c.flagClusterID, "cluster-id", "", fmt.Sprintf("NFS Cluster ID (must match regex: '%s')", types.NFSClusterIDRegex.String()))
 	cmd.PersistentFlags().StringVar(&c.flagBindAddr, "bind-address", "0.0.0.0", "Bind address to use for the NFS Ganesha service")
 	cmd.PersistentFlags().UintVar(&c.flagBindPort, "bind-port", 2049, "Bind port to use for the NFS Ganesha service")
 	cmd.PersistentFlags().UintVar(&c.flagV4MinVersion, "v4-min-version", 1, "Minimum supported version")

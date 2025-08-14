@@ -23,7 +23,7 @@ func (c *cmdDisableNFS) Command() *cobra.Command {
 		Short: "Disable the NFS Ganesha service on the --target server (default: this server)",
 		RunE:  c.Run,
 	}
-	cmd.PersistentFlags().StringVar(&c.flagClusterID, "cluster-id", "", fmt.Sprintf("NFS Cluster ID (must match regex: '%s'", types.NFSClusterIDRegex.String()))
+	cmd.PersistentFlags().StringVar(&c.flagClusterID, "cluster-id", "", fmt.Sprintf("NFS Cluster ID (must match regex: '%s')", types.NFSClusterIDRegex.String()))
 	cmd.PersistentFlags().StringVar(&c.flagTarget, "target", "", "Server hostname (default: this server)")
 	return cmd
 }
