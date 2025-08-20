@@ -42,6 +42,8 @@ func ListCephFSVolumes() ([]Volume, error) {
 		return nil, err
 	}
 
+	logger.Infof("FSVOL: listed %s as cephfs volume", output)
+
 	volumes := gjson.Get(output, "#.name")
 	response := make([]Volume, 0, len(volumes.Array()))
 	for _, volume := range volumes.Array() {

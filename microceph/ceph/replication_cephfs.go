@@ -143,6 +143,8 @@ func (rh *CephfsReplicationHandler) ListHandler(ctx context.Context, args ...any
 		return err
 	}
 
+	logger.Debugf("REPCFS: Mirrored resources: %v", mirroredResources)
+
 	response := types.CephFsReplicationResponseList{}
 	for key, value := range mirroredResources {
 		volResp, err := GetCephFsPerVolumeListResponse(key, value)

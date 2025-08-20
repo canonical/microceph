@@ -59,6 +59,10 @@ func GetCephFSSnapshotMirrorDaemonStatus(ctx context.Context) (CephFSSnapshotMir
 
 // GetCephFSVolumeMirrorList fetches the list of paths enabled for mirroring in a volume.
 func GetCephFSVolumeMirrorList(ctx context.Context, volume string) (MirrorPathList, error) {
+	if len(volume) == 0 {
+		return nil, fmt.Errorf("volume name cannot be empty")
+	}
+
 	args := []string{"fs", "snapshot", "mirror", "ls", volume, "--format=json"}
 	output, err := cephRunContext(ctx, args...)
 	if err != nil {
