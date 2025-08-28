@@ -9,16 +9,19 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// CephFSVolume represents a CephFS volume with its subvolume groups and ungrouped subvolumes.
 type CephFSVolume struct {
 	Name                string
 	SubvolumeGroups     map[string]Subvolumegroup
 	UngroupedSubVolumes []UngroupedSubvolume
 }
 
+// Subvolumegroup represents a group of subvolumes within a CephFS volume.
 type Subvolumegroup struct {
 	SubVolumes []GroupedSubvolume
 }
 
+// Typed Strings for better readability
 type (
 	Volume             string
 	Subvolume          string
@@ -29,12 +32,11 @@ type (
 
 // Example path of a subvolume /volumes/subvolumegroup/subvolume/
 const (
-	CephFsConstrantEmptyIndex         = 0 // ""
-	CephFsConstrantStringVolumesIndex = 1 // "volumes"
-	CephFsSubVolumeGroupIndex         = 2 // "subvolume group name"
-	CephFsSubVolumeIndex              = 3 // "subvolume name"
+	CephFsSubVolumeGroupIndex = 2 // "subvolume group name"
+	CephFsSubVolumeIndex      = 3 // "subvolume name"
 )
 
+// ListCephFSVolumes lists all CephFS volumes in the cluster.
 func ListCephFSVolumes() ([]Volume, error) {
 	args := []string{"fs", "volume", "ls", "--format=json"}
 	output, err := cephRun(args...)
@@ -58,6 +60,7 @@ func ListCephFSVolumes() ([]Volume, error) {
 	return response, nil
 }
 
+// CephFsSubvolumePathDeconstruct deconstructs a CephFS subvolume path string into its subvolume and subvolumegroup names.
 func CephFsSubvolumePathDeconstruct(path string) (subvolumegroup string, subvolume string, err error) {
 	parts := strings.Split(path, "/")
 	if len(parts) < 3 {
@@ -70,6 +73,8 @@ func CephFsSubvolumePathDeconstruct(path string) (subvolumegroup string, subvolu
 	return subvolumegroup, subvolume, nil
 }
 
+// GetCephFSVolume returns a CephFSVolume struct representing the specified volume,
+// including its subvolume groups and ungrouped subvolumes.
 func GetCephFSVolume(volume Volume) (CephFSVolume, error) {
 	response := CephFSVolume{Name: string(volume)}
 	var err error
@@ -93,6 +98,7 @@ func GetCephFSVolume(volume Volume) (CephFSVolume, error) {
 	return response, nil
 }
 
+// GetCephFSSubvolumeGroups lists all subvolume groups in the specified CephFS volume.
 func GetCephFSSubvolumeGroups(volume Volume) (map[string]Subvolumegroup, error) {
 	args := []string{"fs", "subvolumegroup", "ls", string(volume), "--format=json"}
 	output, err := cephRun(args...)
@@ -119,6 +125,7 @@ func GetCephFSSubvolumeGroups(volume Volume) (map[string]Subvolumegroup, error) 
 	return response, nil
 }
 
+// GetCephFSSubvolumes lists all subvolumes in the specified CephFS volume and optionally the subvolume group.
 func GetCephFSSubvolumes(volume Volume, subvolumegroup string) ([]Subvolume, error) {
 	var args []string
 
@@ -142,10 +149,11 @@ func GetCephFSSubvolumes(volume Volume, subvolumegroup string) ([]Subvolume, err
 	return response, nil
 }
 
+// GetCephFSSubvolumePath retrieves the full path of a specified subvolume within a CephFS volume and subvolume group.
 func GetCephFSSubvolumePath(volume string, subvolumegroup string, subvolume string) (string, error) {
 	var args []string
 
-	if len(subvolumegroup) == 0 {
+	if len(subvolumegroup) != 0 {
 		args = []string{"fs", "subvolume", "getpath", volume, subvolume, subvolumegroup}
 	} else {
 		args = []string{"fs", "subvolume", "getpath", volume, subvolume}

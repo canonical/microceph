@@ -77,6 +77,13 @@ func (req CephfsReplicationRequest) GetWorkloadRequestType() string {
 	return GetWorkloadRequestTypeGeneric(req.RequestType)
 }
 
+// OverwriteRequestType overwrites the request type of the replication request.
+func (req *CephfsReplicationRequest) OverwriteRequestType(overwriteRequestType ReplicationRequestType) {
+	if len(overwriteRequestType) != 0 {
+		req.RequestType = overwriteRequestType
+	}
+}
+
 // ################################## CephFS Replication Response ##################################
 
 // LIST response

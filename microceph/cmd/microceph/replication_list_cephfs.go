@@ -73,7 +73,7 @@ func printCephfsReplicationList(response string) error {
 
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
-	t.AppendHeader(table.Row{"Volume", "Resource", "Path"}, rowConfigAutoMerge)
+	t.AppendHeader(table.Row{"Volume", "Resource", "Type"}, rowConfigAutoMerge)
 	for volume, resources := range resp {
 		for _, resource := range resources {
 			t.AppendRow(table.Row{volume, resource.ResourcePath, resource.ResourceType}, rowConfigAutoMerge)
