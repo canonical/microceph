@@ -155,6 +155,13 @@ func (req RbdReplicationRequest) GetWorkloadRequestType() string {
 	return GetWorkloadRequestTypeGeneric(req.RequestType)
 }
 
+// OverwriteRequestType sets the RequestType param to provided value.
+func (req *RbdReplicationRequest) OverwriteRequestType(overwriteRequestType ReplicationRequestType) {
+	if len(overwriteRequestType) != 0 {
+		req.RequestType = overwriteRequestType
+	}
+}
+
 // ################### Helpers ############################
 
 // GetRbdResourceType gets the resource type of the said request

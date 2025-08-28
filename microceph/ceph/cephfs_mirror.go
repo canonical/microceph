@@ -148,8 +148,8 @@ func GetCephFsMirrorPeerStatus(ctx context.Context, adminSockPath string, volume
 	return response, nil
 }
 
+// FindCephFsMirrorAdminSockPath tests relevant admin socks and returns the correct one.
 // Some CephFSMirror commands can only work with admin socket.
-// This function finds that path by testing them and returns the correct one.
 func FindCephFsMirrorAdminSockPath() (string, error) {
 	run_path := constants.GetPathConst().RunPath
 
@@ -179,7 +179,7 @@ func FindCephFsMirrorAdminSockPath() (string, error) {
 	return "", nil
 }
 
-// Executes "help" on admin socket to verify the correctness.
+// CheckFsMirrorHelperCommands executes "help" on admin socket to verify the correctness.
 func CheckFsMirrorHelperCommands(admin_socket string) error {
 	args := []string{"--admin-daemon", admin_socket, "help"}
 	output, err := cephRun(args...)
@@ -218,14 +218,13 @@ func GetCephFsMirrorVolumeAndPeersId(rh *CephfsReplicationHandler) (int, []strin
 			if fs.Name == rh.Request.Volume {
 				volumeId = fs.FilesystemID
 				peers = make([]string, 0, len(fs.Peers))
-				logger.Errorf("filesystemID %d and peers %v", volumeId, fs.Peers)
 				for _, peer := range fs.Peers {
 					if len(rh.Request.RemoteName) == 0 {
-						logger.Errorf("ALL PEERS: now %s", peer.UUID)
+						logger.Debugf("REPCFS: adding peer %s", peer.UUID)
 						peers = append(peers, peer.UUID)
 					} else {
 						if peer.Remote.ClusterName == rh.Request.RemoteName {
-							logger.Errorf("PEER MATCH: now %s", peer.UUID)
+							logger.Debugf("REPCFS: adding peer %s", peer.UUID)
 							peers = append(peers, peer.UUID)
 							break
 						}

@@ -11,6 +11,7 @@ import (
 	"github.com/canonical/microceph/microceph/logger"
 )
 
+// CephFSSnapshotMirrorDaemonStatus is the abstraction for storing
 type CephFSSnapshotMirrorDaemonStatus []struct {
 	DaemonID    int `json:"daemon_id"`
 	Filesystems []struct {
@@ -90,7 +91,7 @@ func (rh *CephfsReplicationHandler) PreFill(ctx context.Context, request types.R
 	return nil
 }
 
-// GetResourceState fetches the mirroring state for requested rbd pool/image.
+// GetResourceState fetches the mirroring state for requested cephfs subvolume/directory.
 func (rh *CephfsReplicationHandler) GetResourceState() (ReplicationState, error) {
 	isVolumeMirrorEnabled := false
 	for _, daemon := range rh.FsMirrorDaemonStatus {
@@ -116,19 +117,19 @@ func (rh *CephfsReplicationHandler) GetResourceState() (ReplicationState, error)
 	return StateEnabledReplication, nil
 }
 
-// EnableHandler enables mirroring for requested rbd pool/image.
+// EnableHandler enables mirroring for requested cephfs subvolume/directory.
 func (rh *CephfsReplicationHandler) EnableHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPCFS: Enable handler, Req %v", rh.Request)
 	return fmt.Errorf("%s not implemented for cephfs", types.EnableReplicationRequest)
 }
 
-// DisableHandler disables mirroring configured for requested rbd pool/image.
+// DisableHandler disables mirroring configured cephfs subvolume/directory.
 func (rh *CephfsReplicationHandler) DisableHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPCFS: Disable handler, Req %v", rh.Request)
 	return fmt.Errorf("%s not implemented for cephfs", types.DisableReplicationRequest)
 }
 
-// ConfigureHandler configures replication properties for requested rbd pool/image.
+// ConfigureHandler configures replication properties for requested cephfs subvolume/directory.
 func (rh *CephfsReplicationHandler) ConfigureHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPCFS: Configure handler, Req %v", rh.Request)
 	return fmt.Errorf("%s not implemented for cephfs", types.ConfigureReplicationRequest)
@@ -167,7 +168,7 @@ func (rh *CephfsReplicationHandler) ListHandler(ctx context.Context, args ...any
 	return nil
 }
 
-// StatusHandler fetches the status of requested rbd pool/image resource.
+// StatusHandler fetches the status of requested cephfs subvolume/directory..
 func (rh *CephfsReplicationHandler) StatusHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPCFS: Status handler, Req %v", rh.Request)
 
@@ -208,12 +209,13 @@ func (rh *CephfsReplicationHandler) StatusHandler(ctx context.Context, args ...a
 	return nil
 }
 
-// PromoteHandler promotes sequentially promote all secondary cluster pools to primary.
+// PromoteHandler is not implemented for cephfs workload.
 func (rh *CephfsReplicationHandler) PromoteHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPCFS: Promote handler, Req %v", rh.Request)
 	return fmt.Errorf("%s not implemented for cephfs", types.PromoteReplicationRequest)
 }
 
+// DemoteHandler is not implemented for cephfs workload.
 func (rh *CephfsReplicationHandler) DemoteHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPCFS: Demote handler, Req %v", rh.Request)
 	return fmt.Errorf("%s not implemented for cephfs", types.DemoteReplicationRequest)
@@ -253,6 +255,7 @@ func (rh *CephfsReplicationHandler) GetCephFSMirrorStatus(ctx context.Context) e
 	return nil
 }
 
+// GetCephFsPerVolumeListResponse prepares a slice of cephfs replication resources.
 func GetCephFsPerVolumeListResponse(volume Volume, mirrorList MirrorPathList) ([]types.CephFsReplicationResponseListItem, error) {
 	vol, err := GetCephFSVolume(volume)
 	if err != nil {

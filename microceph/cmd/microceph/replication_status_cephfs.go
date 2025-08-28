@@ -93,6 +93,7 @@ func (c *cmdReplicationStatusCephfs) printCephfsReplicationStatusTable(apiRespon
 	fmt.Println() // Add a newline for better readability
 
 	// Peers Section
+	rowConfig = table.RowConfig{AutoMergeAlign: text.AlignCenter}
 	t_remotes := table.NewWriter()
 	t_remotes.SetOutputMirror(os.Stdout)
 	t_remotes.AppendHeader(table.Row{"Remote Name", "Resource Path", "State", "Snaps Synced", "Snaps Deleted", "Snaps Renamed"}, rowConfig)
