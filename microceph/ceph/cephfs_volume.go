@@ -3,7 +3,6 @@ package ceph
 import (
 	"fmt"
 	"strings"
-	"unsafe"
 
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/tidwall/gjson"
@@ -89,10 +88,10 @@ func GetCephFSVolume(volume Volume) (CephFSVolume, error) {
 		return response, fmt.Errorf("failed to get ungrouped subvolumes for CephFS volume %s: %w", volume, err)
 	}
 
-	response.UngroupedSubVolumes = unsafe.Slice(
-		(*UngroupedSubvolume)(unsafe.SliceData(Subvolumes)),
-		len(Subvolumes),
-	)
+	resp := make([]UngroupedSubvolume, 0, len(Subvolumes))
+	for _, subvolume := range Subvolumes {
+		resp = append(resp, UngroupedSubvolume(subvolume))
+	}
 
 	logger.Debugf("VOLCFS: Fetched volumes %s as %v", volume, response)
 	return response, nil
@@ -119,7 +118,12 @@ func GetCephFSSubvolumeGroups(volume Volume) (map[string]Subvolumegroup, error) 
 			return nil, err
 		}
 
-		response[svgName] = Subvolumegroup{SubVolumes: unsafe.Slice((*GroupedSubvolume)(unsafe.SliceData(subvolumes)), len(subvolumes))}
+		groupedSubvolume := make([]GroupedSubvolume, 0, len(subvolumes))
+		for _, subvolume := range subvolumes {
+			groupedSubvolume = append(groupedSubvolume, GroupedSubvolume(subvolume))
+		}
+
+		response[svgName] = Subvolumegroup{SubVolumes: groupedSubvolume}
 	}
 
 	return response, nil
