@@ -8,10 +8,10 @@ import (
 	"net/url"
 
 	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microcluster/v2/rest"
 	"github.com/canonical/microcluster/v2/state"
 	"github.com/gorilla/mux"
@@ -75,45 +75,52 @@ func deleteOpsReplicationResource(s state.State, r *http.Request) response.Respo
 }
 
 // cmdOpsReplication is the common handler for all requests on replication endpoint.
-func cmdOpsReplication(s state.State, r *http.Request, patchRequest types.ReplicationRequestType) response.Response {
+func cmdOpsReplication(s state.State, r *http.Request, overwriteType types.ReplicationRequestType) response.Response {
 	// Get workload name from API
 	wl, err := url.PathUnescape(mux.Vars(r)["wl"])
 	if err != nil {
-		logger.Errorf("REP: %v", err.Error())
+		logger.Errorf("REPOPS: %v", err.Error())
 		return response.InternalError(err)
 	}
 
 	// Get resource name from API
 	resource, err := url.PathUnescape(mux.Vars(r)["name"])
 	if err != nil {
-		logger.Errorf("REP: %v", err.Error())
+		logger.Errorf("REPOPS: %v", err.Error())
 		return response.InternalError(err)
 	}
 
 	// Populate the replication request with necessary information for RESTfullnes
 	var req types.ReplicationRequest
-	if wl == string(types.RbdWorkload) {
+	switch wl {
+	case string(types.RbdWorkload):
 		var data types.RbdReplicationRequest
 		err := json.NewDecoder(r.Body).Decode(&data)
 		if err != nil {
-			logger.Errorf("REP: failed to decode request data: %v", err.Error())
+			logger.Errorf("REPOPS: failed to decode request data: %v", err.Error())
 			return response.InternalError(err)
 		}
 
 		// carry RbdReplicationRequest in interface object.
-		data.SetAPIObjectId(resource)
-		// Patch request type.
-		if len(patchRequest) != 0 {
-			data.RequestType = patchRequest
-		}
-
+		data.SetAPIObjectID(resource)
+		// If the request is not WorkloadReplicationRequest, set the request type.
+		data.OverwriteRequestType(overwriteType)
 		req = data
-	} else {
+	case string(types.CephFsWorkload):
+		var data types.CephfsReplicationRequest
+		err := json.NewDecoder(r.Body).Decode(&data)
+		if err != nil {
+			logger.Errorf("REPOPS: failed to decode request data: %v", err.Error())
+			return response.InternalError(err)
+		}
+		// If the request is not WorkloadReplicationRequest, set the request type.
+		data.OverwriteRequestType(overwriteType)
+		req = data
+	default:
 		return response.SmartError(fmt.Errorf("unknown workload %s, resource %s", wl, resource))
 	}
 
 	logger.Debugf("REPOPS: %s received for %s: %s", req.GetWorkloadRequestType(), wl, resource)
-
 	return handleReplicationRequest(s, r.Context(), req)
 }
 
@@ -133,7 +140,11 @@ func handleReplicationRequest(s state.State, ctx context.Context, req types.Repl
 	}
 
 	// Get FSM
-	repFsm := ceph.GetReplicationStateMachine(rh.GetResourceState())
+	state, err := rh.GetResourceState()
+	if err != nil {
+		return response.SmartError(err)
+	}
+	repFsm := ceph.GetReplicationStateMachine(state)
 
 	var resp string
 	event := req.GetWorkloadRequestType()
