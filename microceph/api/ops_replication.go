@@ -100,6 +100,10 @@ func cmdOpsReplication(s state.State, r *http.Request, patchRequest types.Replic
 			return response.InternalError(err)
 		}
 
+        if data.RemoteName != "" && data.RemoteName == data.LocalAlias {
+            return response.SmartError(fmt.Errorf("local alias (--local-name) and remote name must be different to avoid site conflicts"))
+        }
+
 		// carry RbdReplicationRequest in interface object.
 		data.SetAPIObjectId(resource)
 		// Patch request type.
