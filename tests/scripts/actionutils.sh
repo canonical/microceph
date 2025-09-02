@@ -442,6 +442,27 @@ function replication_verify_cephfs_list_output() {
   groupedsubvolpath=$(lxc exec "node-wrk0" -- bash -c "sudo ceph fs subvolume getpath vol testGroupedSubVol testGroup")
   lxc exec "node-wrk0" -- bash -c "sudo ceph fs snapshot mirror add vol $groupedsubvolpath"
 
+  empty="true"
+  counter=0
+  while [[ "$empty" == "true" ]]; do
+    list_output=$(lxc exec "node-wrk0" -- bash -c "sudo microceph replication list cephfs --json" | jq '.vol')
+    counter=$((counter+1))
+    echo $list_output
+    empty=$(echo $list_output | jq '. == {}')
+    if [[ "$empty" == "true" ]]; then
+      if [[ $counter -gt 50 ]]; then
+        echo "List output empty after 50 attempts, failing"
+        exit 1
+      fi
+      echo "List output empty, waiting before recheck"
+      sleep 5s
+      continue
+    fi
+
+    echo "List output not empty"
+    break
+  done
+
   list_output=$(lxc exec "node-wrk0" -- bash -c "sudo microceph replication list cephfs --json" | jq '.vol')
 
   echo $list_output | jq -c '.[]' | while read -r item; do
