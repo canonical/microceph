@@ -1128,9 +1128,9 @@ func (m *OSDManager) timeoutWipe(path string) error {
 
 	_, err := m.runner.RunCommandContext(
 		ctx,
-		"dd", "if=/dev/zero",
-		fmt.Sprintf("of=%s", path),
-		"bs=4M", "count=10", "status=none",
+		"ceph-bluestore-tool", "zap-device",
+		"--dev", path,
+		"--yes-i-really-really-mean-it",
 	)
 	logger.Infof("Wipe command finished, err: %v", err)
 	return err

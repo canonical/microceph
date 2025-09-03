@@ -558,7 +558,7 @@ func (s *osdSuite) TestPrepareDisk() {
 	// Test with wipe - use a different temp directory to avoid symlink conflicts
 	wipeDevicePath, wipeOsdPath, err := s.createMockDeviceEnvironment(osdmgr.fs, tempDir3, "sdz")
 	assert.NoError(s.T(), err)
-	r.On("RunCommandContext", mock.Anything, "dd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("", nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", wipeDevicePath, "--yes-i-really-really-mean-it").Return("", nil).Once()
 	wipeDisk := &types.DiskParameter{Path: wipeDevicePath, Wipe: true}
 	// As above mock validator to return false
 	mockValidator.On("IsBlockdevPath", wipeDevicePath).Return(false).Once()
@@ -794,12 +794,12 @@ func (s *osdSuite) TestTimeoutWipe() {
 	osdmgr.runner = r
 
 	// Test successful wipe
-	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sda", "bs=4M", "count=10", "status=none").Return("", nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sda", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	err := osdmgr.timeoutWipe("/dev/sda")
 	assert.NoError(s.T(), err)
 
 	// Test failed wipe
-	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sdb", "bs=4M", "count=10", "status=none").Return("", fmt.Errorf("wipe failed")).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sdb", "--yes-i-really-really-mean-it").Return("", fmt.Errorf("wipe failed")).Once()
 	err = osdmgr.timeoutWipe("/dev/sdb")
 	assert.Error(s.T(), err)
 }
@@ -811,12 +811,12 @@ func (s *osdSuite) TestWipeDevice() {
 	osdmgr.runner = r
 
 	// Test successful wipe on first try
-	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sda", "bs=4M", "count=10", "status=none").Return("", nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sda", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	osdmgr.wipeDevice(context.Background(), "/dev/sda")
 
 	// Test wipe that succeeds after retries
-	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sdb", "bs=4M", "count=10", "status=none").Return("", fmt.Errorf("busy")).Once()
-	r.On("RunCommandContext", mock.Anything, "dd", "if=/dev/zero", "of=/dev/sdb", "bs=4M", "count=10", "status=none").Return("", nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sdb", "--yes-i-really-really-mean-it").Return("", fmt.Errorf("busy")).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sdb", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	osdmgr.wipeDevice(context.Background(), "/dev/sdb")
 }
 
