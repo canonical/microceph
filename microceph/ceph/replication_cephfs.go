@@ -262,6 +262,8 @@ func GetCephFsPerVolumeListResponse(volume Volume, mirrorList MirrorPathList) ([
 		return nil, fmt.Errorf("failed to get CephFS volume %s: %w", volume, err)
 	}
 
+	logger.Debugf("REPCFS: Volume %v mirror list: %v", vol, mirrorList)
+
 	response := make([]types.CephFsReplicationResponseListItem, 0, len(mirrorList))
 	for _, path := range mirrorList {
 		subvolumegroup, subvolume, err := CephFsSubvolumePathDeconstruct(path)

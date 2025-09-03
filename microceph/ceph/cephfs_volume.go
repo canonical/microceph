@@ -88,10 +88,11 @@ func GetCephFSVolume(volume Volume) (CephFSVolume, error) {
 		return response, fmt.Errorf("failed to get ungrouped subvolumes for CephFS volume %s: %w", volume, err)
 	}
 
-	resp := make([]UngroupedSubvolume, 0, len(Subvolumes))
+	ungroupedSubVolumes := make([]UngroupedSubvolume, 0, len(Subvolumes))
 	for _, subvolume := range Subvolumes {
-		resp = append(resp, UngroupedSubvolume(subvolume))
+		ungroupedSubVolumes = append(ungroupedSubVolumes, UngroupedSubvolume(subvolume))
 	}
+	response.UngroupedSubVolumes = ungroupedSubVolumes
 
 	logger.Debugf("VOLCFS: Fetched volumes %s as %v", volume, response)
 	return response, nil
