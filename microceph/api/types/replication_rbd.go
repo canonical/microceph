@@ -9,6 +9,7 @@ import (
 )
 
 // Types for RBD Pool status table.
+
 type RbdPoolStatusImageBrief struct {
 	Name            string `json:"name" yaml:"name"`
 	IsPrimary       bool   `json:"is_primary" yaml:"is_primary"`
@@ -33,6 +34,7 @@ type RbdPoolStatus struct {
 }
 
 // Types for RBD Image status table.
+
 type RbdImageStatusRemoteBrief struct {
 	Name             string `json:"name" yaml:"name"`
 	Status           string `json:"status" yaml:"status"`
@@ -66,6 +68,7 @@ type RbdPoolBrief struct {
 type RbdPoolList []RbdPoolBrief
 
 // ################################## RBD Replication Request ##################################
+
 // RbdReplicationDirection defines Rbd mirror direction
 type RbdReplicationDirection string
 
@@ -75,7 +78,7 @@ const (
 )
 
 // RbdResourceType defines request resource type
-type RbdResourceType string
+type RbdResourceType ReplicationResourceType
 
 const (
 	RbdResourceDisabled RbdResourceType = "disabled"
@@ -111,8 +114,8 @@ func (req RbdReplicationRequest) GetWorkloadType() CephWorkloadType {
 	return RbdWorkload
 }
 
-// GetAPIObjectId provides the API object id i.e. /replication/rbd/<object-id>
-func (req RbdReplicationRequest) GetAPIObjectId() string {
+// GetAPIObjectID provides the API object id i.e. /replication/rbd/<object-id>
+func (req RbdReplicationRequest) GetAPIObjectID() string {
 	// If both Pool and Image values are present encode for query.
 	if len(req.SourceImage) != 0 && len(req.SourcePool) != 0 {
 		resource := url.QueryEscape(fmt.Sprintf("%s/%s", req.SourcePool, req.SourceImage))
@@ -123,8 +126,8 @@ func (req RbdReplicationRequest) GetAPIObjectId() string {
 	return req.SourcePool
 }
 
-// SetAPIObjectId provides the API object id i.e. /replication/rbd/<object-id>
-func (req *RbdReplicationRequest) SetAPIObjectId(id string) error {
+// SetAPIObjectID provides the API object id i.e. /replication/rbd/<object-id>
+func (req *RbdReplicationRequest) SetAPIObjectID(id string) error {
 	// unescape object string
 	object, err := url.PathUnescape(id)
 	if err != nil {
@@ -144,27 +147,23 @@ func (req *RbdReplicationRequest) SetAPIObjectId(id string) error {
 
 // GetAPIRequestType provides the REST method for the request
 func (req RbdReplicationRequest) GetAPIRequestType() string {
-	frags := strings.Split(string(req.RequestType), "-")
-	logger.Debugf("REPAPI: API frags: %v", frags)
-	if len(frags) == 0 {
-		return ""
-	}
-
-	return frags[0]
+	return GetAPIRequestTypeGeneric(req.RequestType)
 }
 
 // GetWorkloadRequestType provides the event used as the FSM trigger.
 func (req RbdReplicationRequest) GetWorkloadRequestType() string {
-	frags := strings.Split(string(req.RequestType), "-")
-	logger.Debugf("REPAPI: Workload frags: %v", frags)
-	if len(frags) < 2 {
-		return ""
-	}
+	return GetWorkloadRequestTypeGeneric(req.RequestType)
+}
 
-	return frags[1]
+// OverwriteRequestType sets the RequestType param to provided value.
+func (req *RbdReplicationRequest) OverwriteRequestType(overwriteRequestType ReplicationRequestType) {
+	if len(overwriteRequestType) != 0 {
+		req.RequestType = overwriteRequestType
+	}
 }
 
 // ################### Helpers ############################
+
 // GetRbdResourceType gets the resource type of the said request
 func GetRbdResourceType(poolName string, imageName string) RbdResourceType {
 	if len(poolName) != 0 && len(imageName) != 0 {

@@ -428,11 +428,60 @@ function remote_configure_cephfs_mirroring() {
     # enable snapshot mirror for directories
     lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror add vol /dir1"
     lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror add vol /dir2"
+}
 
-    # take snapshots
-    sudo mkdir /mnt/primary/dir1/.snap/two-snap
-    sudo mkdir /mnt/primary/dir2/.snap/two-snap
-    sleep 20s
+function replication_verify_cephfs_list_output() {
+  # Create a grouped subvolume and a ungrouped subvolume
+  lxc exec "node-wrk0" -- bash -c "sudo ceph fs subvolumegroup create vol testGroup"
+  lxc exec "node-wrk0" -- bash -c "sudo ceph fs subvolume create vol testSubVol"
+  lxc exec "node-wrk0" -- bash -c "sudo ceph fs subvolume create vol testGroupedSubVol testGroup"
+
+  subvolpath=$(lxc exec "node-wrk0" -- bash -c "sudo ceph fs subvolume getpath vol testSubVol")
+  lxc exec "node-wrk0" -- bash -c "sudo ceph fs snapshot mirror add vol $subvolpath"
+
+  groupedsubvolpath=$(lxc exec "node-wrk0" -- bash -c "sudo ceph fs subvolume getpath vol testGroupedSubVol testGroup")
+  lxc exec "node-wrk0" -- bash -c "sudo ceph fs snapshot mirror add vol $groupedsubvolpath"
+
+  empty="true"
+  counter=0
+  while [[ "$empty" == "true" ]]; do
+    list_output=$(lxc exec "node-wrk0" -- bash -c "sudo microceph replication list cephfs --json" | jq '.vol')
+    counter=$((counter+1))
+    echo $list_output
+    empty=$(echo $list_output | jq '. == {}')
+    if [[ "$empty" == "true" ]]; then
+      if [[ $counter -gt 50 ]]; then
+        echo "List output empty after 50 attempts, failing"
+        exit 1
+      fi
+      echo "List output empty, waiting before recheck"
+      sleep 5s
+      continue
+    fi
+
+    echo "List output not empty"
+    break
+  done
+
+  list_output=$(lxc exec "node-wrk0" -- bash -c "sudo microceph replication list cephfs --json" | jq '.vol')
+
+  echo $list_output | jq -c '.[]' | while read -r item; do
+    path=$(echo $item | jq '.resource_path')
+    type=$(echo $item | jq '.resource_type' | tr -d '"')
+
+    # if resource path contains substring volumes (subvolumes do e.g. /volumes/_nogroup/testSubVol/)
+    if [[ $path =~ "volumes" ]]; then
+      if [[ $type != "subvolume" ]]; then
+        echo "Expected subvolume type for path $path, got $type"
+        exit 1
+      fi
+    else
+      if [[ $type != "directory" ]]; then
+        echo "Expected directory type for path $path, got $type"
+        exit 1
+      fi
+    fi
+  done
 }
 
 function remote_enable_mirror_daemon() {
@@ -481,24 +530,23 @@ function remote_wait_cephfs_for_secondary_to_sync() {
     set -eux
     local attempts="${1?missing}"
 
-    # install secondary cluster keys/conf
-    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.conf /etc/ceph/
-    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.keyring /etc/ceph/
-    cat /etc/ceph/ceph.conf
+    # take snapshots
+    sudo mkdir /mnt/primary/dir1/.snap/two-snap
+    sudo mkdir /mnt/primary/dir2/.snap/two-snap
+    sleep 20s
 
-    # mount secondary filesystem
-    sudo mkdir /mnt/secondary
-    sudo mount -t ceph :/ /mnt/secondary/ -o name=admin,fs=vol
-
-    echo "Waiting for files to appear on secondary"
+    echo "waiting for cephfs resources to replicate"
     for i in $(seq 1 $attempts); do
       echo "Iteration $i"
-      file1_exists=$(stat /mnt/secondary/dir1/test_file > /dev/null && echo $?)
-      file2_exists=$(stat /mnt/secondary/dir1/test_file > /dev/null && echo $?)
-      if [[ $file1_exists -eq 0 && $file2_exists -eq 0 ]]; then
-        echo "Files exist on secondary site."
+      status=$(lxc exec node-wrk0 -- sh -c "microceph replication status cephfs vol --json")
+      mirror_status=$(echo $status | jq '.peers[].mirror_status')
+      dir1_snap_synced=$(echo $mirror_status | jq '."/dir1".snaps_synced')
+      dir2_snap_synced=$(echo $mirror_status | jq '."/dir2".snaps_synced')
+      if [[ $dir1_snap_synced -eq 1 && $dir2_snap_synced -eq 1 ]]; then
+        echo "Snapshot replicated to secondary site."
+        break
       else
-        echo "Files have not appeared on secondary yet."
+        echo "Snapshot has not appeared on secondary yet."
         sleep 5s
       fi
     done
@@ -519,8 +567,21 @@ function remote_verify_rbd_mirroring() {
 
 function remote_verify_cephfs_mirroring() {
     set -eux
+
+    # fetch primary files for comparison later
     node0_file1=$(< /mnt/primary/dir1/test_file)
     node0_file2=$(< /mnt/primary/dir2/test_file)
+
+    # install secondary cluster keys/conf
+    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.conf /etc/ceph/
+    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.keyring /etc/ceph/
+    cat /etc/ceph/ceph.conf
+
+    # mount secondary filesystem
+    sudo mkdir /mnt/secondary
+    sudo mount -t ceph :/ /mnt/secondary/ -o name=admin,fs=vol
+
+    # fetch secondary files for comparison
     node2_file1=$(< /mnt/secondary/dir1/test_file)
     node2_file2=$(< /mnt/secondary/dir2/test_file)
 

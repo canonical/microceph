@@ -12,12 +12,15 @@ import (
 	"github.com/qmuntal/stateless"
 )
 
-type repArgIndex int
-type ReplicationState string
+type (
+	repArgIndex      int
+	ReplicationState string
+)
 
 const (
 	StateDisabledReplication ReplicationState = "replication_disabled"
 	StateEnabledReplication  ReplicationState = "replication_enabled"
+	StateInvalidReplication  ReplicationState = "replication_invalid"
 )
 
 const (
@@ -28,7 +31,7 @@ const (
 
 type ReplicationHandlerInterface interface {
 	PreFill(ctx context.Context, request types.ReplicationRequest) error
-	GetResourceState() ReplicationState
+	GetResourceState() (ReplicationState, error)
 	EnableHandler(ctx context.Context, args ...any) error
 	DisableHandler(ctx context.Context, args ...any) error
 	ConfigureHandler(ctx context.Context, args ...any) error
@@ -42,7 +45,8 @@ type ReplicationHandlerInterface interface {
 func GetReplicationHandler(name string) ReplicationHandlerInterface {
 	// Add RGW and CephFs Replication handlers here.
 	table := map[string]ReplicationHandlerInterface{
-		"rbd": &RbdReplicationHandler{},
+		"rbd":    &RbdReplicationHandler{},
+		"cephfs": &CephfsReplicationHandler{},
 	}
 
 	rh, ok := table[name]
@@ -116,29 +120,33 @@ func enableHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	return rh.EnableHandler(ctx, args...)
 }
+
 func disableHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	return rh.DisableHandler(ctx, args...)
 }
+
 func configureHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	return rh.ConfigureHandler(ctx, args...)
 }
+
 func listHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	return rh.ListHandler(ctx, args...)
 }
+
 func statusHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
 	return rh.StatusHandler(ctx, args...)
 }
+
 func promoteHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("REPFSM: Entered Status Handler")
 	return rh.PromoteHandler(ctx, args...)
 }
+
 func demoteHandler(ctx context.Context, args ...any) error {
 	rh := args[repArgHandler].(ReplicationHandlerInterface)
-	logger.Infof("REPFSM: Entered Status Handler")
 	return rh.DemoteHandler(ctx, args...)
 }
