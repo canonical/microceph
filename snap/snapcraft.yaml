@@ -187,6 +187,17 @@ apps:
     command: commands/rados
     plugs:
       - network
+  ceph-bluestore-tool:
+    command: commands/ceph-bluestore-tool
+    plugs:
+      - mount-observe
+      - block-devices
+      - hardware-observe
+  ceph-authtool:
+    command: commands/ceph-authtool
+    plugs:
+      - home
+
 
 parts:
   microceph-orch:
