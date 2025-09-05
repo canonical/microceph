@@ -24,7 +24,7 @@ function setup_lxd() {
 }
 
 function install_microceph() {
-    local mon_ip="${1}"
+    local mon_ip="${1-}"
     # Install locally built microceph snap and connect interfaces
     sudo snap install --dangerous ~/microceph_*.snap
     sudo snap connect microceph:block-devices
@@ -1472,16 +1472,51 @@ function remote_verify_snapshot_pool_replication_fails() {
 # Test pristine check
 function verify_pristine_check() {
     set -ux
-    rootdev=$( findmnt --noheadings --output SOURCE / )
-    # adding the rootfs device should fail
-    stde=$( sudo microceph disk add $rootdev 2>&1 > /dev/null )
-    if [[ "$stde" == *"is not pristine"* ]] ; then
-        echo "Passed: can't add non-pristine $rootdev as OSD"
+
+    # Create some dirty disks
+    create_loop_devices
+    install_microceph
+    sudo microceph disk add /dev/sdia --wipe
+    sudo microceph disk add /dev/sdib --wipe
+    sudo microceph disk add /dev/sdic --wipe
+    wait_for_osds 3
+    sudo microceph.ceph -s
+    
+    # Remove the snap to leave dirty disks then reinstall
+    sudo snap remove microceph --purge
+    install_microceph
+
+    # Levels of dirtiness
+    # - leave sdia completely dirty
+    # - sdib use wipefs
+    sudo wipefs -a /dev/sdib
+    # - sdic zero first 10M
+    sudo dd if=/dev/zero of=/dev/sdic bs=1M count=10
+    
+    # Try to add the dirty disks - all should fail pristine check
+    stde1=$(sudo microceph disk add /dev/sdia 2>&1 > /dev/null || true)
+    stde2=$(sudo microceph disk add /dev/sdib 2>&1 > /dev/null || true)
+    stde3=$(sudo microceph disk add /dev/sdic 2>&1 > /dev/null || true)
+    
+    if [[ "$stde1" == *"is not pristine"* ]] && [[ "$stde2" == *"is not pristine"* ]] && [[ "$stde3" == *"is not pristine"* ]]; then
+        echo "Passed: can't add non-pristine disks /dev/sdia, /dev/sdib, and /dev/sdic as OSDs"
     else
-        echo "Expect disk add of $rootdev to be blocked by pristine check but it wasn't"
-        echo "stderr: $stde"
+        echo "Expect disk add of dirty disks to be blocked by pristine check but it wasn't"
+        echo "stderr1: $stde1"
+        echo "stderr2: $stde2"
+        echo "stderr3: $stde3"
         exit 1
     fi
+    
+    # Clean up - wipe the disks to verify they can be added after wiping
+    sudo microceph disk add /dev/sdia --wipe
+    sudo microceph disk add /dev/sdib --wipe
+    sudo microceph disk add /dev/sdic --wipe
+    
+    wait_for_osds 3
+    sudo microceph.ceph -s
+    
+    echo "Passed: dirty disks can be added with --wipe flag"
 }
 
 # Test mount check

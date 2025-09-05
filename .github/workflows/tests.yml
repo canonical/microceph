@@ -137,11 +137,10 @@ jobs:
         rc=$(sudo microceph disk add "/dev/sdi21" "/dev/sdi22" --db-device "/dev/sdi23" |& grep -c "not supported for batch disk addition")
         if [[ $rc -eq 0 ]] ; then echo "Batch disk addition should fail with db device: $rc"; exit 1; fi
 
-    - name: Add OSDs with in-use block devices
+    - name: Add OSDs with mounted block devices
       run: |
         sudo microceph status
         sudo lsblk -f
-        ~/actionutils.sh verify_pristine_check
         ~/actionutils.sh verify_mount_check
 
     - name: Add OSDs
@@ -1182,3 +1181,28 @@ jobs:
 
     - name: Verify messenger v2 on all nodes
       run: ~/actionutils.sh test_v2_all_nodes
+
+  wiping-test:
+    name: Verify pristineness and wiping
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+    - name: Download snap
+      uses: actions/download-artifact@v4
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Copy utils
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Free disk
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Run pristineness tests
+      run: ~/actionutils.sh verify_pristine_check
