@@ -51,39 +51,39 @@ func main() {
 	}
 
 	// Top-level.
-	var cmdEnable = cmdEnable{common: &commonCmd}
+	cmdEnable := cmdEnable{common: &commonCmd}
 	app.AddCommand(cmdEnable.Command())
 
-	var cmdDisable = cmdDisable{common: &commonCmd}
+	cmdDisable := cmdDisable{common: &commonCmd}
 	app.AddCommand(cmdDisable.Command())
 
-	var cmdInit = cmdInit{common: &commonCmd}
+	cmdInit := cmdInit{common: &commonCmd}
 	app.AddCommand(cmdInit.Command())
 
-	var cmdStatus = cmdStatus{common: &commonCmd}
+	cmdStatus := cmdStatus{common: &commonCmd}
 	app.AddCommand(cmdStatus.Command())
 
 	// Nested.
-	var cmdCluster = cmdCluster{common: &commonCmd}
+	cmdCluster := cmdCluster{common: &commonCmd}
 	app.AddCommand(cmdCluster.Command())
 
-	var cmdRemote = cmdRemote{common: &commonCmd}
+	cmdRemote := cmdRemote{common: &commonCmd}
 	app.AddCommand(cmdRemote.Command())
 
 	// Replication command
-	var cmdReplication = cmdReplication{common: &commonCmd}
+	cmdReplication := cmdReplication{common: &commonCmd}
 	app.AddCommand(cmdReplication.Command())
 
-	var cmdDisk = cmdDisk{common: &commonCmd}
+	cmdDisk := cmdDisk{common: &commonCmd}
 	app.AddCommand(cmdDisk.Command())
 
-	var cmdClient = cmdClient{common: &commonCmd}
+	cmdClient := cmdClient{common: &commonCmd}
 	app.AddCommand(cmdClient.Command())
 
-	var cmdPool = cmdPool{common: &commonCmd}
+	cmdPool := cmdPool{common: &commonCmd}
 	app.AddCommand(cmdPool.Command())
 
-	var cmdLog = cmdLog{common: &commonCmd}
+	cmdLog := cmdLog{common: &commonCmd}
 	app.AddCommand(cmdLog.Command())
 
 	app.InitDefaultHelpCmd()

@@ -306,6 +306,7 @@ parts:
       - lib/*/libboost_context.so*
       - lib/*/libboost_filesystem.so*
       - lib/*/libboost_iostreams.so*
+      - lib/*/libboost_locale.so*
       - lib/*/libboost_program_options.so*
       - lib/*/libboost_python312.so*
       - lib/*/libboost_thread.so*
@@ -317,12 +318,13 @@ parts:
       - lib/*/libfuse3.so*
       - lib/*/libibverbs.so*
       - lib/*/libicudata.so*
+      - lib/*/libicui18n.so*
       - lib/*/libicuuc.so*
       - lib/*/liblber.so*
       - lib/*/libldap.so*
-      - lib/*/libssh.so*
-      - lib/*/libncurses.so*
       - lib/*/liblua5.4.so*
+      - lib/*/libnbd.so*
+      - lib/*/libncurses.so*
       - lib/*/libndctl.so*
       - lib/*/libnghttp2.so*
       - lib/*/libnuma.so*
@@ -341,7 +343,9 @@ parts:
       - lib/*/librtmp.so*
       - lib/*/libsasl2.so*
       - lib/*/libsnappy.so*
+      - lib/*/libssh.so*
       - lib/*/libwind.so*
+      - lib/*/libxml2.so*
       - lib/python3
       - lib/*/rados-classes
       - lib/*/libtcmalloc.so*

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/tidwall/gjson"
 )
 
