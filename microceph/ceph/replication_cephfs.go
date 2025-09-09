@@ -237,6 +237,11 @@ func (rh *CephfsReplicationHandler) GetCephFSMirrorStatus(ctx context.Context) e
 		return fmt.Errorf("no CephFS volume (%d) or peers (%v) found for mirroring status", volumeId, peers)
 	}
 
+	// TODO: (utkarshbhatthere):
+	// The ceph CLI lacks any way to fetch the status of cephfs mirroring on any resource.
+	// MicroCeph uses local admin sockets to get the same, however, we should migrate to a
+	// ceph cli based output once it is available upstream.
+	// https://github.com/canonical/microceph/issues/620
 	cephfsMirrorAdminSock, err := FindCephFsMirrorAdminSockPath()
 	if err != nil || len(cephfsMirrorAdminSock) == 0 {
 		return fmt.Errorf("failed to find CephFS mirror admin socket: %w", err)
