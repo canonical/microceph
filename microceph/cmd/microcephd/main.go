@@ -75,6 +75,7 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	h := &state.Hooks{}
+	h.PreInit = PreInit
 	h.PostBootstrap = PostBootstrap
 	h.PostJoin = PostJoin
 	h.OnStart = OnStart
