@@ -2,13 +2,15 @@ package common
 
 import (
 	"context"
-	"github.com/canonical/microceph/microceph/tests"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/canonical/microceph/microceph/tests"
+	"github.com/spf13/afero"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
 )
 
 // MockRunner implements the Runner interface for testing
@@ -45,7 +47,7 @@ func createRealExitError(code int) error {
 		// For other exit codes, use 'sh -c "exit N"'
 		cmd = exec.Command("sh", "-c", "exit "+string(rune(code+'0')))
 	}
-	
+
 	err := cmd.Run()
 	// This will be a real *exec.ExitError with the correct exit code
 	return err
@@ -120,4 +122,59 @@ func (s *StorageDeviceTestSuite) TestIsMounted() {
 
 func TestStorageDeviceSuite(t *testing.T) {
 	suite.Run(t, new(StorageDeviceTestSuite))
+}
+
+// TestIsPristineDisk tests the pristine disk check
+func (s *StorageDeviceTestSuite) TestIsPristineDisk() {
+	// Create a test device file with some non-zero data
+	devicePath := filepath.Join(s.Tmp, "test-device")
+
+	// Create a device with non-zero data at the beginning
+	data := make([]byte, 4096)
+	data[100] = 0xFF // Add non-zero byte
+	err := os.WriteFile(devicePath, data, 0644)
+	s.NoError(err)
+
+	// Test with real filesystem
+	fs := afero.NewOsFs()
+
+	// Mock ProcessExec to avoid calling real ceph-bluestore-tool
+	originalProcessExec := ProcessExec
+	defer func() { ProcessExec = originalProcessExec }()
+	mockRunner := &MockRunner{}
+	ProcessExec = mockRunner
+
+	// Mock ceph-bluestore-tool to return error (no labels found)
+	mockRunner.On("RunCommand", "ceph-bluestore-tool", "show-label", "--dev", devicePath).Return("", NewMockExitError(2)).Once()
+
+	// Should detect non-pristine due to non-zero data
+	isPristine, err := IsPristineDiskWithFs(devicePath, fs)
+	s.NoError(err)
+	s.False(isPristine, "Device with non-zero data should not be pristine")
+
+	// Test with all-zero device
+	zeroData := make([]byte, 2*1024*1024) // Make it large enough for all checkpoints
+	err = os.WriteFile(devicePath, zeroData, 0644)
+	s.NoError(err)
+
+	// Mock ceph-bluestore-tool to return error (no labels found)
+	mockRunner.On("RunCommand", "ceph-bluestore-tool", "show-label", "--dev", devicePath).Return("", NewMockExitError(2)).Once()
+
+	// Should be pristine (all zeros and no labels)
+	isPristine, err = IsPristineDiskWithFs(devicePath, fs)
+	s.NoError(err)
+	s.True(isPristine, "Device with all zeros and no labels should be pristine")
+
+	// Test with labels found - create new zero device for this test
+	labelDevicePath := filepath.Join(s.Tmp, "test-device-with-labels")
+	err = os.WriteFile(labelDevicePath, zeroData, 0644)
+	s.NoError(err)
+
+	// Mock ceph-bluestore-tool to return success (labels found)
+	mockRunner.On("RunCommand", "ceph-bluestore-tool", "show-label", "--dev", labelDevicePath).Return("label data", nil).Once()
+
+	// Should not be pristine due to existing labels
+	isPristine, err = IsPristineDiskWithFs(labelDevicePath, fs)
+	s.NoError(err)
+	s.False(isPristine, "Device with existing labels should not be pristine")
 }

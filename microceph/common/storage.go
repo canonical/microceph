@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/spf13/afero"
 )
 
@@ -94,16 +94,44 @@ func IsCephDeviceWithFs(device string, fs afero.Fs) (bool, error) {
 	return false, nil
 }
 
-// IsPristineDisk checks if a block device is pristine by reading the first 2048 bytes
-// and verifying they are all zeros.
+// IsPristineDisk checks if a block device is pristine. It uses both zero-byte checking and ceph-bluestore-tool to
+// detect any existing labels or data.
 func IsPristineDisk(devicePath string) (bool, error) {
 	return IsPristineDiskWithFs(devicePath, afero.NewOsFs())
 }
 
 // IsPristineDiskWithFs checks if a block device is pristine using the provided filesystem.
 func IsPristineDiskWithFs(devicePath string, fs afero.Fs) (bool, error) {
-	const wantBytes = 2048
+	logger.Infof("Start pristine disk check for device: %s", devicePath)
 
+	// First, quick check of some likely locations for non-zero data
+	logger.Debugf("Perform zero-byte check on device: %s", devicePath)
+	pristineByZeroCheck, err := checkForZeros(devicePath, fs)
+	if err != nil {
+		logger.Errorf("Zero-byte check failed for device %s: %v", devicePath, err)
+		return false, err
+	}
+	if !pristineByZeroCheck {
+		logger.Infof("Device %s failed zero-byte check - contains non-zero data at strategic locations", devicePath)
+		return false, nil
+	}
+
+	// Second, use ceph-bluestore-tool to check for any labels
+	logger.Debugf("Performing ceph-bluestore-tool label check on device: %s", devicePath)
+	pristineByCephTool, err := checkDeviceWithBluestoreTool(devicePath)
+	if err != nil {
+		// If ceph-bluestore-tool fails for any reason, treat as pristine for robustness
+		logger.Infof("ceph-bluestore-tool check failed for %s, treating as pristine for robustness: %v", devicePath, err)
+		return true, nil
+	}
+
+	logger.Infof("Device %s pristine", devicePath)
+	return pristineByCephTool, nil
+}
+
+// checkForZeros performs lightweight zero-byte checking on some strategic locations of the device
+// in 512b chunks
+func checkForZeros(devicePath string, fs afero.Fs) (bool, error) {
 	file, err := fs.Open(devicePath)
 	if err != nil {
 		logger.Errorf("failed to open device %s: %v", devicePath, err)
@@ -111,24 +139,82 @@ func IsPristineDiskWithFs(devicePath string, fs afero.Fs) (bool, error) {
 	}
 	defer file.Close()
 
-	data := make([]byte, wantBytes)
-	readBytes, err := file.Read(data)
+	// Get blockdev size to calculate strategic check points
+	stat, err := file.Stat()
 	if err != nil {
-		logger.Errorf("failed to read from device %s: %v", devicePath, err)
+		logger.Errorf("failed to stat device %s: %v", devicePath, err)
 		return false, err
 	}
+	deviceSize := stat.Size()
+	logger.Debugf("Device %s size: %d bytes", devicePath, deviceSize)
 
-	if readBytes != wantBytes {
-		logger.Warnf("short read from %s: got %d bytes, expected %d", devicePath, readBytes, wantBytes)
-		return false, nil
+	// Define locations to check (in bytes from start)
+	checkPoints := []int64{
+		0,       // Beginning of disk (MBR, GPT primary)
+		512,     // and second sector
+		1024,    // Superblock
+		2048,    // GPT backup
+		4096,    // Filesystem superblock
+		65536,   // 64KB
+		1048576, // 1MB
 	}
 
-	// Check if all bytes are zero
-	for _, b := range data {
-		if b != 0x0 {
-			return false, nil
+	// Add some locations at the end of the disk
+	if deviceSize > 1048576 {
+		checkPoints = append(checkPoints, deviceSize-1024, deviceSize-512)
+		logger.Debugf("Device %s is large enough, add end-of-disk checkpoints", devicePath)
+	}
+
+	const checkSize = 512
+	buffer := make([]byte, checkSize)
+
+	for i, offset := range checkPoints {
+		if offset < 0 || offset+checkSize > deviceSize {
+			logger.Debugf("Skipping checkpoint %d at offset %d (out of bounds for %s)", i+1, offset, devicePath)
+			continue
 		}
+
+		logger.Debugf("Checking %d/%d at offset %d on device %s", i+1, len(checkPoints), offset, devicePath)
+
+		_, err := file.Seek(offset, 0)
+		if err != nil {
+			logger.Errorf("failed to seek to %d in device %s: %v", offset, devicePath, err)
+			return false, err
+		}
+
+		bytesRead, err := file.Read(buffer)
+		if err != nil {
+			logger.Errorf("failed to read from device %s at %d: %v", devicePath, offset, err)
+			return false, err
+		}
+
+		for j := 0; j < bytesRead; j++ {
+			if buffer[j] != 0x0 {
+				logger.Infof("Device %s has non-zero data at offset %d (byte %d: 0x%02x), not pristine", devicePath, offset, j, buffer[j])
+				return false, nil
+			}
+		}
+		logger.Debugf("Checkpoint %d/%d at %d passed (all zeros)", i+1, len(checkPoints), offset)
 	}
 
+	logger.Debugf("All %d checkpoints passed for device %s", len(checkPoints), devicePath)
 	return true, nil
+}
+
+// checkDeviceWithBluestoreTool uses ceph-bluestore-tool to check for existing labels
+func checkDeviceWithBluestoreTool(devicePath string) (bool, error) {
+	logger.Debugf("Running ceph-bluestore-tool show-label on device: %s", devicePath)
+
+	output, err := ProcessExec.RunCommand("ceph-bluestore-tool", "show-label", "--dev", devicePath)
+	if err != nil {
+		// Treat all errors as "device is pristine" for this includes "no label found"
+		logger.Infof("ceph-bluestore-tool check on %s returned error, likely pristine: %v", devicePath, err)
+		logger.Debugf("ceph-bluestore-tool output for %s: %s", devicePath, output)
+		return true, nil
+	}
+
+	// show-label succeeds --> there's an existing bluestore label
+	logger.Infof("ceph-bluestore-tool found existing bluestore labels on %s (not pristine)", devicePath)
+	logger.Debugf("ceph-bluestore-tool output for %s: %s", devicePath, output)
+	return false, nil
 }
