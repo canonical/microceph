@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/logger"
 
 	"github.com/pborman/uuid"
 
@@ -24,34 +24,21 @@ import (
 
 // Bootstrap will initialize a new Ceph deployment.
 func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.BootstrapConfig) error {
-	pathConsts := constants.GetPathConst()
-	pathFileMode := constants.GetPathFileMode()
-
-	// Create our various paths.
-	for path, perm := range pathFileMode {
-		err := os.MkdirAll(path, perm)
-		if err != nil {
-			return fmt.Errorf("unable to create %q: %w", path, err)
-		}
-	}
-
-	// Generate a new FSID.
-	fsid := uuid.NewRandom().String()
-	conf := NewCephConfig(constants.CephConfFileName)
-	err := prepareCephBootstrapData(s, &data)
+	err := CreateSnapPaths()
 	if err != nil {
 		return err
 	}
 
-	// Ensure mon-ip is enclosed in square brackets if IPv6.
-	if net.ParseIP(data.MonIp) != nil && strings.Contains(data.MonIp, ":") {
-		data.MonIp = fmt.Sprintf("[%s]", data.MonIp)
+	err = prepareCephBootstrapData(s, &data)
+	if err != nil {
+		return err
 	}
 
-	if data.V2Only {
-		data.MonIp = "v2:" + data.MonIp + ":3300"
-	}
+	fsid := uuid.NewRandom().String()
+	pathConsts := constants.GetPathConst()
 
+	// Write ceph.conf contents.
+	conf := NewCephConfig(constants.CephConfFileName)
 	err = conf.WriteConfig(
 		map[string]any{
 			"fsid":   fsid,
@@ -142,6 +129,20 @@ func Bootstrap(ctx context.Context, s interfaces.StateInterface, data common.Boo
 	return nil
 }
 
+func CreateSnapPaths() error {
+	pathFileMode := constants.GetPathFileMode()
+
+	// Create our various paths.
+	for path, perm := range pathFileMode {
+		err := os.MkdirAll(path, perm)
+		if err != nil {
+			return fmt.Errorf("unable to create %q: %w", path, err)
+		}
+	}
+
+	return nil
+}
+
 // waitForMonitor polls 'ceph mon stat' until it succeeds or the timeout is reached.
 func waitForMonitor(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
@@ -215,6 +216,16 @@ func prepareCephBootstrapData(s interfaces.StateInterface, data *common.Bootstra
 	if len(data.ClusterNet) == 0 {
 		// Cluster Network defaults to Public Network.
 		data.ClusterNet = data.PublicNet
+	}
+
+	// Ensure mon-ip is enclosed in square brackets if IPv6.
+	if net.ParseIP(data.MonIp) != nil && strings.Contains(data.MonIp, ":") {
+		data.MonIp = fmt.Sprintf("[%s]", data.MonIp)
+	}
+
+	// If v2 only addressing is used, append v2 protocol and port to the address.
+	if data.V2Only {
+		data.MonIp = "v2:" + data.MonIp + ":3300"
 	}
 
 	return nil
@@ -399,5 +410,4 @@ func initMds(s interfaces.StateInterface, dataPath string) error {
 		return fmt.Errorf("Failed to start metadata server: %w", err)
 	}
 	return nil
-
 }
