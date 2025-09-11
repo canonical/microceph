@@ -115,7 +115,6 @@ func IsPristineDiskWithFs(devicePath string, fs afero.Fs) (bool, error) {
 		logger.Infof("Device %s failed zero-byte check - contains non-zero data at strategic locations", devicePath)
 		return false, nil
 	}
-	logger.Debugf("Device %s passed zero-byte check - all strategic locations contain zeros", devicePath)
 
 	// Second, use ceph-bluestore-tool to check for any labels
 	logger.Debugf("Performing ceph-bluestore-tool label check on device: %s", devicePath)
@@ -126,12 +125,7 @@ func IsPristineDiskWithFs(devicePath string, fs afero.Fs) (bool, error) {
 		return true, nil
 	}
 
-	if pristineByCephTool {
-		logger.Infof("Device %s is pristine - passed both zero-byte and ceph-bluestore-tool checks", devicePath)
-	} else {
-		logger.Infof("Device %s is not pristine - ceph-bluestore-tool found existing labels", devicePath)
-	}
-
+	logger.Infof("Device %s pristine", devicePath)
 	return pristineByCephTool, nil
 }
 
