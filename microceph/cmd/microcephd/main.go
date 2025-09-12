@@ -15,10 +15,8 @@ import (
 
 	"github.com/canonical/microceph/microceph/api"
 	"github.com/canonical/microceph/microceph/ceph"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
-	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/version"
 )
@@ -77,23 +75,10 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	h := &state.Hooks{}
-	h.PostBootstrap = func(ctx context.Context, s state.State, initConfig map[string]string) error {
-		data := common.BootstrapConfig{}
-		interf := interfaces.CephState{State: s}
-		common.DecodeBootstrapConfig(initConfig, &data)
-		return ceph.Bootstrap(ctx, interf, data)
-	}
-
-	h.PostJoin = func(ctx context.Context, s state.State, initConfig map[string]string) error {
-		interf := interfaces.CephState{State: s}
-		return ceph.Join(ctx, interf)
-	}
-
-	h.OnStart = func(ctx context.Context, s state.State) error {
-		interf := interfaces.CephState{State: s}
-		return ceph.Start(ctx, interf)
-	}
-
+	h.PreInit = PreInit
+	h.PostBootstrap = PostBootstrap
+	h.PostJoin = PostJoin
+	h.OnStart = OnStart
 	h.PreRemove = ceph.PreRemove(m)
 
 	daemonArgs := microcluster.DaemonArgs{
