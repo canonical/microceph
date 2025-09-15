@@ -13,37 +13,12 @@ import (
 	"github.com/pborman/uuid"
 )
 
-type Bootstraper interface {
-	Prefill(bd common.BootstrapConfig) error
-	Precheck(ctx context.Context, state interfaces.StateInterface) error
-	Bootstrap(ctx context.Context, state interfaces.StateInterface) error
-}
-
-// ##### Skeletons for Bootstraper Implementations #####
-
-// GetBootstraper returns a bootstraper based on the bootstrap parameters.
-func GetBootstraper(bd common.BootstrapConfig) Bootstraper {
-	sb := SimpleBootstraper{}
-	sb.Prefill(bd)
-
-	return &sb
-}
-
 // SimpleBootstraper bootstraps microceph with a new ceph cluster.
 type SimpleBootstraper struct {
 	MonIp      string // IP address of the monitor to be created.
 	PublicNet  string // Public Network subnet.
 	ClusterNet string // Cluster Network subnet.
 	V2Only     bool   // Whether only V2 addresses should be used.
-}
-
-// AdoptBootstraper bootstraps microceph with an adopted/existing ceph cluster.
-type AdoptBootstraper struct {
-	FSID       string   // fsid of the existing ceph cluster.
-	MonHosts   []string // slice of exisiting monitor addresses.
-	AdminKey   string   // Admin key for providing microceph with privileges.
-	PublicNet  string   // Public Network subnet.
-	ClusterNet string   // Cluster Network subnet.
 }
 
 // ##### Interface Implementations for SimpleBootstraper #####
