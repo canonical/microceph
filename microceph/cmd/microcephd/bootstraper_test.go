@@ -1,9 +1,10 @@
-package common
+package main
 
 import (
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
@@ -59,13 +60,13 @@ func (s *bootstrapSuite) TestSimpleBootstrapOnlyMonIP() {
 
 	addNetworkExpectationsCaseOne(nw, s.TestStateInterface)
 
-	ProcessExec = r
-	Network = nw
+	common.ProcessExec = r
+	common.Network = nw
 
-	bootstrapData := BootstrapConfig{MonIp: "1.1.1.1"}
+	bootstrapData := common.BootstrapConfig{MonIp: "1.1.1.1"}
 	err := ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
 	assert.NoError(s.T(), err)
-	assert.True(s.T(), cmp.Equal(bootstrapData, BootstrapConfig{
+	assert.True(s.T(), cmp.Equal(bootstrapData, common.BootstrapConfig{
 		MonIp:      "1.1.1.1",
 		PublicNet:  "1.1.1.1/24",
 		ClusterNet: "1.1.1.1/24",
@@ -79,13 +80,13 @@ func (s *bootstrapSuite) TestSimpleBootstrapOnlyNet() {
 
 	addNetworkExpectationsCaseTwo(nw, s.TestStateInterface)
 
-	ProcessExec = r
-	Network = nw
-	bootstrapData := BootstrapConfig{PublicNet: "1.1.1.1/24", ClusterNet: "2.1.1.1/24"}
+	common.ProcessExec = r
+	common.Network = nw
+	bootstrapData := common.BootstrapConfig{PublicNet: "1.1.1.1/24", ClusterNet: "2.1.1.1/24"}
 
 	err := ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
 	assert.NoError(s.T(), err)
-	assert.True(s.T(), cmp.Equal(bootstrapData, BootstrapConfig{
+	assert.True(s.T(), cmp.Equal(bootstrapData, common.BootstrapConfig{
 		MonIp:      "1.1.1.1",
 		PublicNet:  "1.1.1.1/24",
 		ClusterNet: "2.1.1.1/24",
@@ -99,13 +100,13 @@ func (s *bootstrapSuite) TestSimpleBootstrapMonIpNotInPubNet() {
 
 	addNetworkExpectationsCaseThree(nw, s.TestStateInterface)
 
-	ProcessExec = r
-	Network = nw
-	bootstrapData := BootstrapConfig{MonIp: "1.1.1.1", PublicNet: "2.1.1.1/24"}
+	common.ProcessExec = r
+	common.Network = nw
+	bootstrapData := common.BootstrapConfig{MonIp: "1.1.1.1", PublicNet: "2.1.1.1/24"}
 
 	err := ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
 	assert.ErrorContains(s.T(), err, "is not available on public network")
-	assert.True(s.T(), cmp.Equal(bootstrapData, BootstrapConfig{
+	assert.True(s.T(), cmp.Equal(bootstrapData, common.BootstrapConfig{
 		MonIp:      "1.1.1.1",
 		PublicNet:  "2.1.1.1/24",
 		ClusterNet: "",
@@ -119,13 +120,13 @@ func (s *bootstrapSuite) TestSimpleBootstrapNoParamsV2Only() {
 
 	addNetworkExpectationsCaseOne(nw, s.TestStateInterface)
 
-	ProcessExec = r
-	Network = nw
+	common.ProcessExec = r
+	common.Network = nw
 
-	bootstrapData := BootstrapConfig{V2Only: true}
+	bootstrapData := common.BootstrapConfig{V2Only: true}
 	err := ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
 	assert.NoError(s.T(), err)
-	assert.Equal(s.T(), bootstrapData, BootstrapConfig{
+	assert.Equal(s.T(), bootstrapData, common.BootstrapConfig{
 		MonIp:      "1.1.1.1",
 		PublicNet:  "1.1.1.1/24",
 		ClusterNet: "1.1.1.1/24",
