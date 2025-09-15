@@ -13,10 +13,10 @@ import (
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 type ClusterConfigPermission string
@@ -328,7 +328,7 @@ func backwardCompatMonitors(ctx context.Context, s interfaces.StateInterface) ([
 }
 
 // UpdateConfig updates the ceph.conf file with the current configuration.
-func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
+var UpdateConfig = func(ctx context.Context, s interfaces.StateInterface) error {
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
 	runPath := filepath.Join(filepath.Dir(os.Getenv("SNAP_DATA")), "current", "run")
 

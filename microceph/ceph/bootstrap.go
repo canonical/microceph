@@ -200,7 +200,8 @@ func initMgr(s interfaces.StateInterface, dataPath string) error {
 }
 
 // PopulateBootstrapDatabase injects the bootstrap entries to the internal database.
-func PopulateBootstrapDatabase(ctx context.Context, s interfaces.StateInterface, fsid string, monIp string, pubNet string) error {
+// The function is defined as a var for ease of mocking in tests.
+var PopulateBootstrapDatabase = func(ctx context.Context, s interfaces.StateInterface, fsid string, monIp string, pubNet string) error {
 	if s.ClusterState().ServerCert() == nil {
 		return fmt.Errorf("no server certificate")
 	}
