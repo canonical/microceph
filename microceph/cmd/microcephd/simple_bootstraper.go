@@ -40,14 +40,14 @@ func (sb *SimpleBootstraper) Precheck(ctx context.Context, state interfaces.Stat
 	logger.Debugf("Initiating precheck for simple bootstrap: %v", sb)
 
 	// check network parameters
-	err = common.ValidateNetworkParams(state, &sb.MonIp, &sb.PublicNet, &sb.ClusterNet)
+	err = ValidateNetworkParams(state, &sb.MonIp, &sb.PublicNet, &sb.ClusterNet)
 	if err != nil {
 		logger.Errorf("Network parameter validation failed: %v", err)
 		return err
 	}
 
 	// check mon v2 parameter
-	err = common.ValidateMonV2Param(state, &sb.MonIp, sb.V2Only)
+	err = ValidateMonV2Param(state, &sb.MonIp, sb.V2Only)
 	if err != nil {
 		logger.Errorf("Mon v2 parameter validation failed: %v", err)
 		return err
