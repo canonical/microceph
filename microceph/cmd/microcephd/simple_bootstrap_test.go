@@ -1,34 +1,35 @@
-package ceph
+package main
 
 import (
-	"fmt"
+	"context"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/interfaces"
-	"github.com/canonical/microceph/microceph/tests"
-
+	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
+	"github.com/canonical/microceph/microceph/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
 
-type bootstrapSuite struct {
+type simpleBootstrapSuite struct {
 	tests.BaseSuite
 	TestStateInterface *mocks.StateInterface
 }
 
-func TestBootstrap(t *testing.T) {
-	suite.Run(t, new(bootstrapSuite))
+func TestSimpleBootstrap(t *testing.T) {
+	suite.Run(t, new(simpleBootstrapSuite))
 }
 
-func (s *bootstrapSuite) SetupTest() {
+func (s *simpleBootstrapSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
 	s.CopyCephConfigs()
 
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
 	u := api.NewURL()
+	u.Host("1.1.1.1")
 	state := &mocks.MockState{
 		URL:         u,
 		ClusterName: "foohost",
@@ -37,14 +38,14 @@ func (s *bootstrapSuite) SetupTest() {
 }
 
 // Expect: run ceph-authtool 3 times
-func addCreateKeyringExpectations(r *mocks.Runner) {
+func addCephAuthToolExpectations(r *mocks.Runner) {
 	r.On("RunCommand", tests.CmdAny("ceph-authtool", 8)...).Return("ok", nil).Once()
 	r.On("RunCommand", tests.CmdAny("ceph-authtool", 17)...).Return("ok", nil).Once()
 	r.On("RunCommand", tests.CmdAny("ceph-authtool", 3)...).Return("ok", nil).Once()
 }
 
 // Expect: run monmaptool 2 times
-func addCreateMonMapExpectations(r *mocks.Runner) {
+func addMonMapToolExpectations(r *mocks.Runner) {
 	r.On("RunCommand", tests.CmdAny("monmaptool", 8)...).Return("ok", nil).Once()
 	r.On("RunCommand", tests.CmdAny("monmaptool", 17)...).Return("ok", nil).Once()
 }
@@ -75,29 +76,61 @@ func addEnableMsgr2Expectations(r *mocks.Runner) {
 	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
 }
 
+func addCrushRuleExpectations(r *mocks.Runner) {
+	// crush rule ls
+	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return("ok", nil).Twice()
+	// crush rule create-replicated microceph_auto_osd
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Twice()
+	// crush rule dump
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return("{\"rule_id\": 1}", nil).Once()
+	// crush rule set default
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Twice()
+}
+
+// Expect: config set for public and cluster networks
+func addConfigExpectations(r *mocks.Runner) {
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()
+}
+
 // Expect: check network coherency
 func addNetworkExpectationsBootstrap(nw *mocks.NetworkIntf, _ interfaces.StateInterface) {
 	nw.On("IsIpOnSubnet", "1.1.1.1", "1.1.1.1/24").Return(true)
 }
 
-// Test a bootstrap run, mocking subprocess calls but without a live database
-func (s *bootstrapSuite) TestBootstrap() {
+// ##### Unit Tests #####
+func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 	r := mocks.NewRunner(s.T())
 	nw := mocks.NewNetworkIntf(s.T())
+	ceph.PopulateBootstrapDatabase = func(ctx context.Context, s interfaces.StateInterface, monIp string, publicNet string, clusterNet string) error {
+		return nil
+	}
 
-	addCreateKeyringExpectations(r)
-	addCreateMonMapExpectations(r)
+	ceph.UpdateConfig = func(ctx context.Context, s interfaces.StateInterface) error {
+		return nil
+	}
+
+	addCephAuthToolExpectations(r)
+	addMonMapToolExpectations(r)
 	addInitMonExpectations(r)
 	addInitMgrExpectations(r)
 	addInitMdsExpectations(r)
 	addEnableMsgr2Expectations(r)
-	addNetworkExpectationsBootstrap(nw, s.TestStateInterface)
+	addCrushRuleExpectations(r)
+	addConfigExpectations(r)
+	// addNetworkExpectationsBootstrap(nw, s.TestStateInterface)
 
 	common.ProcessExec = r
 	common.Network = nw
 
-	// err := Bootstrap(context.Background(), s.TestStateInterface, common.BootstrapConfig{MonIp: "1.1.1.1", PublicNet: "1.1.1.1/24"})
-	err := fmt.Errorf("no server certificate")
-	// we expect a missing database error
-	assert.EqualError(s.T(), err, "no server certificate")
+	bd := common.BootstrapConfig{
+		MonIp:      "1.1.1.1",
+		PublicNet:  "1.1.1.1/24",
+		ClusterNet: "1.1.1.1/24",
+	}
+
+	bootstraper := SimpleBootstraper{}
+	bootstraper.Prefill(bd)
+
+	err := bootstraper.Bootstrap(context.Background(), s.TestStateInterface)
+	assert.NoError(s.T(), err)
 }
