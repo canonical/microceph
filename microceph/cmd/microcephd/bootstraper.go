@@ -15,7 +15,7 @@ type Bootstraper interface {
 }
 
 // GetBootstraper returns a bootstraper based on the bootstrap parameters.
-func GetBootstraper(bd common.BootstrapConfig) Bootstraper {
+var GetBootstraper = func(bd common.BootstrapConfig) Bootstraper {
 	sb := SimpleBootstraper{}
 	sb.Prefill(bd)
 
