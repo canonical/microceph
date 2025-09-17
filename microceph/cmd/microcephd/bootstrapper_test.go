@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
@@ -40,14 +42,19 @@ func (s *bootstrapSuite) SetupTest() {
 
 func addNetworkExpectationsCaseOne(nw *mocks.NetworkIntf, _ interfaces.StateInterface) {
 	nw.On("FindNetworkAddress", "1.1.1.1").Return("1.1.1.1/24", nil)
+	nw.On("IsIpOnSubnet", "1.1.1.1", "1.1.1.1/24").Return(true)
+	nw.On("FindIpOnSubnet", "1.1.1.1/24").Return("1.1.1.1", nil)
 }
 
 func addNetworkExpectationsCaseTwo(nw *mocks.NetworkIntf, _ interfaces.StateInterface) {
 	nw.On("IsIpOnSubnet", "1.1.1.1", "1.1.1.1/24").Return(true)
 	nw.On("FindIpOnSubnet", "1.1.1.1/24").Return("1.1.1.1", nil)
+	nw.On("FindNetworkAddress", "1.1.1.1").Return("1.1.1.1/24", nil)
+	nw.On("FindIpOnSubnet", "2.1.1.1/24").Return("2.1.1.1", nil)
 }
 
 func addNetworkExpectationsCaseThree(nw *mocks.NetworkIntf, _ interfaces.StateInterface) {
+	nw.On("FindNetworkAddress", "1.1.1.1").Return("1.1.1.1/24", nil)
 	nw.On("IsIpOnSubnet", "1.1.1.1", "2.1.1.1/24").Return(false)
 }
 
@@ -64,7 +71,11 @@ func (s *bootstrapSuite) TestSimpleBootstrapOnlyMonIP() {
 	common.Network = nw
 
 	bootstrapData := common.BootstrapConfig{MonIp: "1.1.1.1"}
-	err := ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+
+	err := PopulateDefaultNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+	assert.NoError(s.T(), err)
+
+	err = ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
 	assert.NoError(s.T(), err)
 	assert.True(s.T(), cmp.Equal(bootstrapData, common.BootstrapConfig{
 		MonIp:      "1.1.1.1",
@@ -84,7 +95,10 @@ func (s *bootstrapSuite) TestSimpleBootstrapOnlyNet() {
 	common.Network = nw
 	bootstrapData := common.BootstrapConfig{PublicNet: "1.1.1.1/24", ClusterNet: "2.1.1.1/24"}
 
-	err := ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+	err := PopulateDefaultNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+	assert.NoError(s.T(), err)
+
+	err = ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
 	assert.NoError(s.T(), err)
 	assert.True(s.T(), cmp.Equal(bootstrapData, common.BootstrapConfig{
 		MonIp:      "1.1.1.1",
@@ -104,12 +118,15 @@ func (s *bootstrapSuite) TestSimpleBootstrapMonIpNotInPubNet() {
 	common.Network = nw
 	bootstrapData := common.BootstrapConfig{MonIp: "1.1.1.1", PublicNet: "2.1.1.1/24"}
 
-	err := ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+	err := PopulateDefaultNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+	assert.NoError(s.T(), err)
+
+	err = ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
 	assert.ErrorContains(s.T(), err, "is not available on public network")
 	assert.True(s.T(), cmp.Equal(bootstrapData, common.BootstrapConfig{
 		MonIp:      "1.1.1.1",
 		PublicNet:  "2.1.1.1/24",
-		ClusterNet: "",
+		ClusterNet: "2.1.1.1/24",
 	}))
 }
 
@@ -124,10 +141,23 @@ func (s *bootstrapSuite) TestSimpleBootstrapNoParamsV2Only() {
 	common.Network = nw
 
 	bootstrapData := common.BootstrapConfig{V2Only: true}
-	err := ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+
+	err := PopulateDefaultNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+	assert.NoError(s.T(), err)
+
+	PopulateV2OnlyMonIP(&bootstrapData.MonIp, bootstrapData.V2Only)
+
+	monIP := bootstrapData.MonIp
+	if bootstrapData.V2Only {
+		monIP = StripV2OnlyMonIP(monIP)
+	}
+
+	expectedMonIP := fmt.Sprintf("%s%s%s", constants.V2OnlyMonIPProtoPrefix, monIP, constants.V2OnlyMonIPPort)
+
+	err = ValidateNetworkParams(s.TestStateInterface, &monIP, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), bootstrapData, common.BootstrapConfig{
-		MonIp:      "1.1.1.1",
+		MonIp:      expectedMonIP,
 		PublicNet:  "1.1.1.1/24",
 		ClusterNet: "1.1.1.1/24",
 		V2Only:     true,
@@ -135,5 +165,5 @@ func (s *bootstrapSuite) TestSimpleBootstrapNoParamsV2Only() {
 
 	err = ValidateMonV2Param(s.TestStateInterface, &bootstrapData.MonIp, bootstrapData.V2Only)
 	assert.NoError(s.T(), err)
-	assert.Equal(s.T(), "v2:1.1.1.1:3300", bootstrapData.MonIp)
+	assert.Equal(s.T(), expectedMonIP, bootstrapData.MonIp)
 }

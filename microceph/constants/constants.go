@@ -27,7 +27,11 @@ const (
 
 // Path and filename constants
 
-const CephConfFileName = "ceph.conf"
+const (
+	CephConfFileName       = "ceph.conf"
+	V2OnlyMonIPPort        = ":3300"
+	V2OnlyMonIPProtoPrefix = "v2:"
+)
 
 // Misc
 const (

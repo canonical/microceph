@@ -3,86 +3,130 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
 	"strings"
 
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
 )
 
 // Bootstrapper encapsulates the bootstrap
 type Bootstrapper interface {
-	Prefill(bd common.BootstrapConfig) error
+	Prefill(bd common.BootstrapConfig, state interfaces.StateInterface) error
 	Precheck(ctx context.Context, state interfaces.StateInterface) error
 	Bootstrap(ctx context.Context, state interfaces.StateInterface) error
 }
 
 // GetBootstrapper returns a bootstrapper implementation based on the bootstrap parameters.
-var GetBootstrapper = func(bd common.BootstrapConfig) Bootstrapper {
+var GetBootstrapper = func(bd common.BootstrapConfig, state interfaces.StateInterface) (Bootstrapper, error) {
 	sb := SimpleBootstrapper{}
-	sb.Prefill(bd)
+	err := sb.Prefill(bd, state)
+	if err != nil {
+		logger.Errorf("failed to prefill simple bootstrapper: %v", err)
+		return nil, err
+	}
 
-	return &sb
+	return &sb, nil
 }
 
 // ##### Validation methods for various members of the bootstrap config structure #####
 
-// ValidateNetworkParams validates network parameters for bootstrap and assign default values if needed.
-func ValidateNetworkParams(state interfaces.StateInterface, monIP *string, publicNet *string, clusterNet *string) error {
+// PopulateDefaultNetworkParams provides missing network parameters with default values.
+func PopulateDefaultNetworkParams(state interfaces.StateInterface, monIP *string, publicNet *string, clusterNet *string) error {
 	var err error
-	// if no mon-ip is provided, either deduce from public network or fallback to default.
-	if len(*monIP) == 0 {
+
+	if len(*monIP) != 0 {
+		logger.Debugf("mon ip provided as %s, will be used to deduce public network not provided", *monIP)
+	} else { // Initialise mon-ip if not provided.
 		if len(*publicNet) == 0 {
 			// Use default value if public address is also not provided.
 			*monIP = state.ClusterState().Address().Hostname()
+			logger.Debugf("mon ip and public network missing, using default value as %s", *monIP)
 		} else {
 			// deduce mon-ip from the public network parameter.
 			*monIP, err = common.Network.FindIpOnSubnet(*publicNet)
 			if err != nil {
-				return fmt.Errorf("failed to locate %s on host: %w", *monIP, err)
+				logger.Errorf("failed to deduce mon ip from public network %s: %v", *publicNet, err)
+				return err
 			}
+			logger.Debugf("mon ip missing, deduced from public network %s as %s", *publicNet, *monIP)
 		}
-		logger.Debugf("No mon ip provided, using default value as %s", *monIP)
 	}
 
-	// at this point mon ip is non empty.
-	if len(*publicNet) != 0 {
-		// Verify that the public network and mon-ip params are coherent.
-		if !common.Network.IsIpOnSubnet(*monIP, *publicNet) {
-			return fmt.Errorf("monIP %s is not available on public network %s", *monIP, *publicNet)
-		}
-		logger.Debugf("mon ip %s is compliant with public network %s", *monIP, *publicNet)
-	} else {
-		// Deduce Public network based on mon-ip param.
+	// Initialise public network if not provided.
+	if len(*publicNet) == 0 {
 		*publicNet, err = common.Network.FindNetworkAddress(*monIP)
 		if err != nil {
-			return fmt.Errorf("failed to locate %s on host: %w", *monIP, err)
+			err = fmt.Errorf("failed to locate %s on host: %v", *monIP, err)
+			logger.Error(err.Error())
+			return err
 		}
-		logger.Debugf("No public network provided, defaulting to mon ip (%s) subnet value as %s", *monIP, *publicNet)
 	}
 
+	// Initialise cluster network if not provided.
 	if len(*clusterNet) == 0 {
-		// Cluster Network defaults to Public Network.
 		*clusterNet = *publicNet
 		logger.Debugf("No cluster network provided, defaulting to public network (%s)", *publicNet)
-	}
-
-	// Ensure mon-ip is enclosed in square brackets if IPv6.
-	if net.ParseIP(*monIP) != nil && strings.Contains(*monIP, ":") {
-		*monIP = fmt.Sprintf("[%s]", *monIP)
-		logger.Debugf("mon ip is ipv6, enclosing in square brackets: %s", *monIP)
 	}
 
 	return nil
 }
 
-// ValidateMonV2Param validates the mon v2 only parameter and adjusts the mon-ip.
-func ValidateMonV2Param(state interfaces.StateInterface, monIP *string, v2Only bool) error {
-	// If v2 only addressing is used, append v2 protocol and port to the address.
+// PopulateV2OnlyMonIP adds v2 protocol strictly
+func PopulateV2OnlyMonIP(monIP *string, v2Only bool) {
 	if v2Only {
-		*monIP = "v2:" + *monIP + ":3300"
+		*monIP = constants.V2OnlyMonIPProtoPrefix + *monIP + constants.V2OnlyMonIPPort
 		logger.Debugf("mon v2 only is set, using mon ip as %s", *monIP)
+	}
+}
+
+func StripV2OnlyMonIP(monIP string) string {
+	if strings.Contains(monIP, constants.V2OnlyMonIPProtoPrefix) {
+		monIP = strings.ReplaceAll(monIP, constants.V2OnlyMonIPProtoPrefix, "")
+		monIP = strings.ReplaceAll(monIP, constants.V2OnlyMonIPPort, "")
+	}
+
+	return monIP
+}
+
+// ValidateNetworkParams validates network parameters for bootstrap and assign default values if needed.
+func ValidateNetworkParams(state interfaces.StateInterface, monIP *string, publicNet *string, clusterNet *string) error {
+	var err error
+
+	// check if mon IP available on host
+	_, err = common.Network.FindNetworkAddress(*monIP)
+	if err != nil {
+		err = fmt.Errorf("failed to locate monIP %s on host: %v", *monIP, err)
+		logger.Error(err.Error())
+		return err
+	}
+
+	// check if mon ip and public network compatible
+	if !common.Network.IsIpOnSubnet(*monIP, *publicNet) {
+		err := fmt.Errorf("monIP %s is not available on public network %s", *monIP, *publicNet)
+		logger.Error(err.Error())
+		return err
+	}
+
+	// check if cluster network is available on host interfaces
+	_, err = common.Network.FindIpOnSubnet(*clusterNet)
+	if err != nil {
+		logger.Errorf("failed to locate cluster network %s on host: %v", *clusterNet, err)
+		return err
+	}
+
+	return nil
+}
+
+// ValidateMonV2Param validates the mon v2 only parameter
+func ValidateMonV2Param(state interfaces.StateInterface, monIP *string, v2Only bool) error {
+	if v2Only {
+		if !strings.HasPrefix(*monIP, constants.V2OnlyMonIPProtoPrefix) || !strings.HasSuffix(*monIP, constants.V2OnlyMonIPPort) {
+			err := fmt.Errorf("mon v2 only is set but mon ip %s does not have v2 protocol strictly", *monIP)
+			logger.Error(err.Error())
+			return err
+		}
 	}
 
 	return nil

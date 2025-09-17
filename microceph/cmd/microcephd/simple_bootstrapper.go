@@ -15,7 +15,7 @@ import (
 
 // SimpleBootstrapper bootstraps microceph with a new ceph cluster.
 type SimpleBootstrapper struct {
-	MonIp      string // IP address of the monitor to be created.
+	MonIP      string // IP address of the monitor to be created.
 	PublicNet  string // Public Network subnet.
 	ClusterNet string // Cluster Network subnet.
 	V2Only     bool   // Whether only V2 addresses should be used.
@@ -24,12 +24,19 @@ type SimpleBootstrapper struct {
 // ##### Interface Implementations for SimpleBootstrapper #####
 
 // Prefill prepares the bootstrap payload sb.
-func (sb *SimpleBootstrapper) Prefill(bd common.BootstrapConfig) error {
-	sb.MonIp = bd.MonIp
+func (sb *SimpleBootstrapper) Prefill(bd common.BootstrapConfig, state interfaces.StateInterface) error {
+	sb.MonIP = bd.MonIp
 	sb.PublicNet = bd.PublicNet
 	sb.ClusterNet = bd.ClusterNet
 	sb.V2Only = bd.V2Only
 
+	err := PopulateDefaultNetworkParams(state, &sb.MonIP, &sb.PublicNet, &sb.ClusterNet)
+	if err != nil {
+		logger.Errorf("failed to populate default network parameters: %v", err)
+		return err
+	}
+
+	PopulateV2OnlyMonIP(&sb.MonIP, sb.V2Only)
 	return nil
 }
 
@@ -39,15 +46,21 @@ func (sb *SimpleBootstrapper) Precheck(ctx context.Context, state interfaces.Sta
 
 	logger.Debugf("Initiating precheck for simple bootstrap: %v", sb)
 
+	// drop v2 vectors before validation
+	monIP := sb.MonIP
+	if sb.V2Only {
+		monIP = StripV2OnlyMonIP(monIP)
+	}
+
 	// check network parameters
-	err = ValidateNetworkParams(state, &sb.MonIp, &sb.PublicNet, &sb.ClusterNet)
+	err = ValidateNetworkParams(state, &monIP, &sb.PublicNet, &sb.ClusterNet)
 	if err != nil {
 		logger.Errorf("Network parameter validation failed: %v", err)
 		return err
 	}
 
 	// check mon v2 parameter
-	err = ValidateMonV2Param(state, &sb.MonIp, sb.V2Only)
+	err = ValidateMonV2Param(state, &sb.MonIP, sb.V2Only)
 	if err != nil {
 		logger.Errorf("Mon v2 parameter validation failed: %v", err)
 		return err
@@ -70,16 +83,10 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 		return err
 	}
 
-	cephConfFile := ceph.CephConfFile{
-		FsID:     fsid,
-		RunDir:   pathConsts.RunPath,
-		Monitors: []string{sb.MonIp},
-		PubNet:   sb.PublicNet,
-	}
-
-	err = cephConfFile.Render(constants.CephConfFileName)
+	err = ceph.GenerateCephConfFile(fsid, pathConsts.RunPath, sb.MonIP, sb.PublicNet)
 	if err != nil {
-		logger.Errorf("failed to generate ceph.conf: %v", err)
+		err = fmt.Errorf("failed to generate ceph.conf: %w", err)
+		logger.Error(err.Error())
 		return err
 	}
 
@@ -90,13 +97,13 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 	}
 
 	// Update the database as soon as keyrings are available.
-	err = ceph.PopulateBootstrapDatabase(ctx, state, fsid, sb.MonIp, sb.PublicNet)
+	err = ceph.PopulateBootstrapDatabase(ctx, state, fsid, sb.MonIP, sb.PublicNet)
 	if err != nil {
 		return err
 	}
 
 	// Bring up essential ceph services
-	err = ceph.BootstrapCephServices(state, path, fsid, sb.MonIp)
+	err = ceph.BootstrapCephServices(state, path, fsid, sb.MonIP)
 	if err != nil {
 		return err
 	}

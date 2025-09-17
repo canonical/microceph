@@ -83,6 +83,7 @@ func (nwi networkImpl) FindNetworkAddress(address string) (string, error) {
 				continue
 			}
 
+			// record for reporting
 			nw = append(nw, addr.String())
 			if ipNet.IP.Equal(monIp) {
 				return addr.String(), nil

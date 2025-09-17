@@ -53,17 +53,17 @@ func (_m *Bootstrapper) Precheck(ctx context.Context, state interfaces.StateInte
 	return r0
 }
 
-// Prefill provides a mock function with given fields: bd
-func (_m *Bootstrapper) Prefill(bd common.BootstrapConfig) error {
-	ret := _m.Called(bd)
+// Prefill provides a mock function with given fields: bd, state
+func (_m *Bootstrapper) Prefill(bd common.BootstrapConfig, state interfaces.StateInterface) error {
+	ret := _m.Called(bd, state)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Prefill")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(common.BootstrapConfig) error); ok {
-		r0 = rf(bd)
+	if rf, ok := ret.Get(0).(func(common.BootstrapConfig, interfaces.StateInterface) error); ok {
+		r0 = rf(bd, state)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -79,7 +79,7 @@ func NewBootstrapper(t interface {
 },
 ) *Bootstrapper {
 	mock := &Bootstrapper{}
-	mock.Mock.Test(t)
+	mock.Test(t)
 
 	t.Cleanup(func() { mock.AssertExpectations(t) })
 
