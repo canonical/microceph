@@ -1,3 +1,4 @@
+// Package common package contains abstractions used by multiple other packages.
 package common
 
 import (
@@ -5,7 +6,7 @@ import (
 )
 
 // BootstrapConfig holds all additional parameters that could be provided to the bootstrap API/CLI command.
-// This structure is then consumed by the bootstraper interface implementations to prepare specific
+// This structure is then consumed by the bootstrapper interface implementations to prepare specific
 // parameters required for bootstrap.
 type BootstrapConfig struct {
 	MonIp      string // IP address of the monitor to be created.

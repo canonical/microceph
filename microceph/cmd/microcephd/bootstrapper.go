@@ -11,16 +11,16 @@ import (
 	"github.com/canonical/microceph/microceph/logger"
 )
 
-// Bootstraper encapsulates the bootstrap
-type Bootstraper interface {
+// Bootstrapper encapsulates the bootstrap
+type Bootstrapper interface {
 	Prefill(bd common.BootstrapConfig) error
 	Precheck(ctx context.Context, state interfaces.StateInterface) error
 	Bootstrap(ctx context.Context, state interfaces.StateInterface) error
 }
 
-// GetBootstraper returns a bootstraper based on the bootstrap parameters.
-var GetBootstraper = func(bd common.BootstrapConfig) Bootstraper {
-	sb := SimpleBootstraper{}
+// GetBootstrapper returns a bootstrapper implementation based on the bootstrap parameters.
+var GetBootstrapper = func(bd common.BootstrapConfig) Bootstrapper {
+	sb := SimpleBootstrapper{}
 	sb.Prefill(bd)
 
 	return &sb

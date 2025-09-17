@@ -10,8 +10,7 @@ import (
 	"github.com/canonical/microcluster/v2/state"
 )
 
-// PreBootstrap is run before the daemon is initialized and bootstrapped.
-
+// PreInit is run before the daemon is initialized on bootstrap and join.
 func PreInit(ctx context.Context, s state.State, bootstrap bool, initConfig map[string]string) error {
 	if bootstrap {
 		logger.Debugf("PreInit for bootstrap: %v", initConfig)
@@ -19,9 +18,9 @@ func PreInit(ctx context.Context, s state.State, bootstrap bool, initConfig map[
 		bd := common.BootstrapConfig{}
 		common.DecodeBootstrapConfig(initConfig, &bd)
 
-		bootstraper := GetBootstraper(bd)
+		bootstrapper := GetBootstrapper(bd)
 
-		return bootstraper.Precheck(ctx, interfaces.CephState{State: s})
+		return bootstrapper.Precheck(ctx, interfaces.CephState{State: s})
 	}
 
 	return nil
@@ -33,15 +32,15 @@ func PostBootstrap(ctx context.Context, s state.State, initConfig map[string]str
 	bd := common.BootstrapConfig{}
 	common.DecodeBootstrapConfig(initConfig, &bd)
 
-	bootstraper := GetBootstraper(bd)
+	bootstrapper := GetBootstrapper(bd)
 
 	// paramerter modifications are not carried forward, so we need to precheck again for setting defaults.
-	err := bootstraper.Precheck(ctx, interfaces.CephState{State: s})
+	err := bootstrapper.Precheck(ctx, interfaces.CephState{State: s})
 	if err != nil {
 		return nil
 	}
 
-	return bootstraper.Bootstrap(ctx, interfaces.CephState{State: s})
+	return bootstrapper.Bootstrap(ctx, interfaces.CephState{State: s})
 }
 
 func PostJoin(ctx context.Context, s state.State, initConfig map[string]string) error {

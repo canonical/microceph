@@ -41,11 +41,11 @@ func (s *hooksSuite) SetupTest() {
 
 // ##### Unit Tests #####
 func (s *hooksSuite) TestPreInit() {
-	bootstraper := mocks.NewBootstraper(s.T())
+	bootstrapper := mocks.NewBootstrapper(s.T())
 
-	bootstraper.On("Precheck", mock.Anything, mock.Anything).Return(nil).Once()
+	bootstrapper.On("Precheck", mock.Anything, mock.Anything).Return(nil).Once()
 
-	GetBootstraper = func(bd common.BootstrapConfig) Bootstraper { return bootstraper }
+	GetBootstrapper = func(bd common.BootstrapConfig) Bootstrapper { return bootstrapper }
 
 	// simple bootstrap input (empty input)
 	err := PreInit(context.Background(), s.TestStateInterface.ClusterState(), true, map[string]string{})
@@ -53,12 +53,12 @@ func (s *hooksSuite) TestPreInit() {
 }
 
 func (s *hooksSuite) TestPostBootstrap() {
-	bootstraper := mocks.NewBootstraper(s.T())
+	bootstrapper := mocks.NewBootstrapper(s.T())
 
-	bootstraper.On("Precheck", mock.Anything, mock.Anything).Return(nil).Once()
-	bootstraper.On("Bootstrap", mock.Anything, mock.Anything).Return(nil).Once()
+	bootstrapper.On("Precheck", mock.Anything, mock.Anything).Return(nil).Once()
+	bootstrapper.On("Bootstrap", mock.Anything, mock.Anything).Return(nil).Once()
 
-	GetBootstraper = func(bd common.BootstrapConfig) Bootstraper { return bootstraper }
+	GetBootstrapper = func(bd common.BootstrapConfig) Bootstrapper { return bootstrapper }
 
 	err := PostBootstrap(context.Background(), s.TestStateInterface.ClusterState(), map[string]string{})
 	assert.NoError(s.T(), err)
