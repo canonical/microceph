@@ -92,11 +92,6 @@ func addConfigExpectations(r *mocks.Runner) {
 	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()
 }
 
-// Expect: check network coherency
-func addNetworkExpectationsBootstrap(nw *mocks.NetworkIntf, _ interfaces.StateInterface) {
-	nw.On("IsIpOnSubnet", "1.1.1.1", "1.1.1.1/24").Return(true)
-}
-
 // ##### Unit Tests #####
 func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 	r := mocks.NewRunner(s.T())
@@ -128,9 +123,9 @@ func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 		ClusterNet: "1.1.1.1/24",
 	}
 
-	bootstraper := SimpleBootstraper{}
-	bootstraper.Prefill(bd)
+	bootstrapper := SimpleBootstrapper{}
+	bootstrapper.Prefill(bd)
 
-	err := bootstraper.Bootstrap(context.Background(), s.TestStateInterface)
+	err := bootstrapper.Bootstrap(context.Background(), s.TestStateInterface)
 	assert.NoError(s.T(), err)
 }

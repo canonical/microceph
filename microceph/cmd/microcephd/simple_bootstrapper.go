@@ -13,18 +13,18 @@ import (
 	"github.com/pborman/uuid"
 )
 
-// SimpleBootstraper bootstraps microceph with a new ceph cluster.
-type SimpleBootstraper struct {
+// SimpleBootstrapper bootstraps microceph with a new ceph cluster.
+type SimpleBootstrapper struct {
 	MonIp      string // IP address of the monitor to be created.
 	PublicNet  string // Public Network subnet.
 	ClusterNet string // Cluster Network subnet.
 	V2Only     bool   // Whether only V2 addresses should be used.
 }
 
-// ##### Interface Implementations for SimpleBootstraper #####
+// ##### Interface Implementations for SimpleBootstrapper #####
 
 // Prefill prepares the bootstrap payload sb.
-func (sb *SimpleBootstraper) Prefill(bd common.BootstrapConfig) error {
+func (sb *SimpleBootstrapper) Prefill(bd common.BootstrapConfig) error {
 	sb.MonIp = bd.MonIp
 	sb.PublicNet = bd.PublicNet
 	sb.ClusterNet = bd.ClusterNet
@@ -34,7 +34,7 @@ func (sb *SimpleBootstraper) Prefill(bd common.BootstrapConfig) error {
 }
 
 // Precheck verifies all provided values are correct before bootstrapping.
-func (sb *SimpleBootstraper) Precheck(ctx context.Context, state interfaces.StateInterface) error {
+func (sb *SimpleBootstrapper) Precheck(ctx context.Context, state interfaces.StateInterface) error {
 	var err error
 
 	logger.Debugf("Initiating precheck for simple bootstrap: %v", sb)
@@ -58,7 +58,7 @@ func (sb *SimpleBootstraper) Precheck(ctx context.Context, state interfaces.Stat
 	return nil
 }
 
-func (sb *SimpleBootstraper) Bootstrap(ctx context.Context, state interfaces.StateInterface) error {
+func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.StateInterface) error {
 	fsid := uuid.NewRandom().String()
 	pathConsts := constants.GetPathConst()
 
