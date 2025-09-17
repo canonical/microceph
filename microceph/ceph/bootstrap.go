@@ -71,6 +71,24 @@ func BootstrapCephConfigs(cn string, pn string) error {
 	return nil
 }
 
+func GenerateCephConfFile(fsid string, runPath string, monIP string, pubNet string) error {
+	var err error
+	cephConfFile := CephConfFile{
+		FsID:     fsid,
+		RunDir:   runPath,
+		Monitors: formatIPv6([]string{monIP}),
+		PubNet:   pubNet,
+	}
+
+	err = cephConfFile.Render(constants.CephConfFileName)
+	if err != nil {
+		logger.Errorf("failed to generate ceph.conf: %v", err)
+		return err
+	}
+
+	return nil
+}
+
 func CreateKeyrings(confPath string) (string, error) {
 	// Generate the temporary monitor keyring.
 	path, err := os.MkdirTemp("", "")

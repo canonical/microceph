@@ -124,7 +124,7 @@ func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 	}
 
 	bootstrapper := SimpleBootstrapper{}
-	bootstrapper.Prefill(bd)
+	bootstrapper.Prefill(bd, interfaces.StateInterface(s.TestStateInterface))
 
 	err := bootstrapper.Bootstrap(context.Background(), s.TestStateInterface)
 	assert.NoError(s.T(), err)

@@ -18,7 +18,11 @@ func PreInit(ctx context.Context, s state.State, bootstrap bool, initConfig map[
 		bd := common.BootstrapConfig{}
 		common.DecodeBootstrapConfig(initConfig, &bd)
 
-		bootstrapper := GetBootstrapper(bd)
+		bootstrapper, err := GetBootstrapper(bd, interfaces.CephState{State: s})
+		if err != nil {
+			logger.Errorf("failed to get bootstrapper: %v", err)
+			return err
+		}
 
 		return bootstrapper.Precheck(ctx, interfaces.CephState{State: s})
 	}
@@ -32,12 +36,10 @@ func PostBootstrap(ctx context.Context, s state.State, initConfig map[string]str
 	bd := common.BootstrapConfig{}
 	common.DecodeBootstrapConfig(initConfig, &bd)
 
-	bootstrapper := GetBootstrapper(bd)
-
-	// paramerter modifications are not carried forward, so we need to precheck again for setting defaults.
-	err := bootstrapper.Precheck(ctx, interfaces.CephState{State: s})
+	bootstrapper, err := GetBootstrapper(bd, interfaces.CephState{State: s})
 	if err != nil {
-		return nil
+		logger.Errorf("failed to get bootstrapper: %v", err)
+		return err
 	}
 
 	return bootstrapper.Bootstrap(ctx, interfaces.CephState{State: s})
