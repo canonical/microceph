@@ -934,21 +934,27 @@ function add_osd_to_node() {
 
 function wait_for_osds() {
     local expect="${1?missing}"
-    res=0
-    for i in $(seq 1 8); do
-        res=$( ( sudo microceph.ceph -s | grep -F osd: | sed -E "s/.* ([[:digit:]]*) in .*/\1/" ) || true )
-        if [[ $res -ge $expect ]] ; then
+    local res=0
+    local tries=8
+
+    for ((i=0; i<tries; i++)); do
+        # jq: return num in osds, or 0
+        res=$(sudo microceph.ceph -s -f json 2>/dev/null | jq -r '.osdmap.num_in_osds // 0')
+        [[ "$res" =~ ^[0-9]+$ ]] || res=0
+
+        if (( res >= expect )); then
             echo "Found >=${expect} OSDs"
             break
         else
-            echo -n '.'
+            printf '.'
             sleep 2
         fi
     done
+
     sudo microceph.ceph -s
-    if [[ $res -lt $expect ]] ; then
+    if (( res < expect )); then
         echo "Never reached ${expect} OSDs"
-        return -1
+        return 1
     fi
 }
 
