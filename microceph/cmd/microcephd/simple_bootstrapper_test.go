@@ -37,6 +37,12 @@ func (s *simpleBootstrapSuite) SetupTest() {
 	s.TestStateInterface.On("ClusterState").Return(state).Maybe()
 }
 
+func addNetworkSimpleBootstrapExpectations(nw *mocks.NetworkIntf) {
+	nw.On("FindNetworkAddress", "1.1.1.1").Return("1.1.1.1/24", nil)
+	nw.On("IsIpOnSubnet", "1.1.1.1", "1.1.1.1/24").Return(true)
+	nw.On("FindIpOnSubnet", "1.1.1.1/24").Return("1.1.1.1", nil)
+}
+
 // Expect: run ceph-authtool 3 times
 func addCephAuthToolExpectations(r *mocks.Runner) {
 	r.On("RunCommand", tests.CmdAny("ceph-authtool", 8)...).Return("ok", nil).Once()
@@ -96,7 +102,7 @@ func addConfigExpectations(r *mocks.Runner) {
 func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 	r := mocks.NewRunner(s.T())
 	nw := mocks.NewNetworkIntf(s.T())
-	ceph.PopulateBootstrapDatabase = func(ctx context.Context, s interfaces.StateInterface, monIp string, publicNet string, clusterNet string) error {
+	ceph.PopulateBootstrapDatabase = func(ctx context.Context, s interfaces.StateInterface, services []string, configs map[string]string) error {
 		return nil
 	}
 
@@ -104,6 +110,7 @@ func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 		return nil
 	}
 
+	addNetworkSimpleBootstrapExpectations(nw)
 	addCephAuthToolExpectations(r)
 	addMonMapToolExpectations(r)
 	addInitMonExpectations(r)
@@ -112,7 +119,6 @@ func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 	addEnableMsgr2Expectations(r)
 	addCrushRuleExpectations(r)
 	addConfigExpectations(r)
-	// addNetworkExpectationsBootstrap(nw, s.TestStateInterface)
 
 	common.ProcessExec = r
 	common.Network = nw
@@ -124,8 +130,12 @@ func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 	}
 
 	bootstrapper := SimpleBootstrapper{}
-	bootstrapper.Prefill(bd, interfaces.StateInterface(s.TestStateInterface))
+	err := bootstrapper.Prefill(bd, interfaces.StateInterface(s.TestStateInterface))
+	assert.NoError(s.T(), err)
 
-	err := bootstrapper.Bootstrap(context.Background(), s.TestStateInterface)
+	err = bootstrapper.Precheck(context.Background(), s.TestStateInterface)
+	assert.NoError(s.T(), err)
+
+	err = bootstrapper.Bootstrap(context.Background(), s.TestStateInterface)
 	assert.NoError(s.T(), err)
 }

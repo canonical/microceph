@@ -20,14 +20,23 @@ type Bootstrapper interface {
 
 // GetBootstrapper returns a bootstrapper implementation based on the bootstrap parameters.
 var GetBootstrapper = func(bd common.BootstrapConfig, state interfaces.StateInterface) (Bootstrapper, error) {
-	sb := SimpleBootstrapper{}
-	err := sb.Prefill(bd, state)
+	var bootstrapper Bootstrapper
+
+	if len(bd.AdoptFSID) != 0 && len(bd.AdoptMonHosts) != 0 && len(bd.AdoptAdminKey) != 0 {
+		logger.Debugf("Adopt ceph cluster with %+v", bd)
+		bootstrapper = &AdoptBootstrapper{}
+	} else {
+		bootstrapper = &SimpleBootstrapper{}
+	}
+
+	// Perform Prefill
+	err := bootstrapper.Prefill(bd, state)
 	if err != nil {
 		logger.Errorf("failed to prefill simple bootstrapper: %v", err)
 		return nil, err
 	}
 
-	return &sb, nil
+	return bootstrapper, nil
 }
 
 // ##### Validation methods for various members of the bootstrap config structure #####

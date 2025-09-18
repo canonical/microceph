@@ -28,9 +28,10 @@ const (
 // Path and filename constants
 
 const (
-	CephConfFileName       = "ceph.conf"
-	V2OnlyMonIPPort        = ":3300"
-	V2OnlyMonIPProtoPrefix = "v2:"
+	CephConfFileName         = "ceph.conf"
+	CephAdminKeyringFileName = "ceph.keyring"
+	V2OnlyMonIPPort          = ":3300"
+	V2OnlyMonIPProtoPrefix   = "v2:"
 )
 
 // Misc
@@ -70,9 +71,10 @@ var GetPathConst = func() PathConst {
 
 // File Modes
 const (
-	PermissionWorldNoAccess      = 0750
-	PermissionOnlyUserAccess     = 0700
-	PermissionUserRwWorldRAccess = 0644
+	PermissionWorldNoAccess        = 0750
+	PermissionOnlyUserAccess       = 0700
+	PermissionUserRwWorldRAccess   = 0644
+	PermissionUserRWGroupROWorldNA = 0640
 )
 
 func GetPathFileMode() PathFileMode {
