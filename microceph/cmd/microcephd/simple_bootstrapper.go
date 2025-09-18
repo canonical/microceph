@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/common"
@@ -83,7 +84,7 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 		return err
 	}
 
-	err = ceph.GenerateCephConfFile(fsid, pathConsts.RunPath, sb.MonIP, sb.PublicNet)
+	err = ceph.GenerateCephConfFile(fsid, pathConsts.RunPath, sb.MonIP, sb.PublicNet, constants.CephConfFileName)
 	if err != nil {
 		err = fmt.Errorf("failed to generate ceph.conf: %w", err)
 		logger.Error(err.Error())
@@ -96,8 +97,13 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 		return err
 	}
 
+	services, configs, err := sb.getServicesAndConfigsforDBUpdation(fsid, state.ClusterState().Name())
+	if err != nil {
+		return err
+	}
+
 	// Update the database as soon as keyrings are available.
-	err = ceph.PopulateBootstrapDatabase(ctx, state, fsid, sb.MonIP, sb.PublicNet)
+	err = ceph.PopulateBootstrapDatabase(ctx, state, services, configs)
 	if err != nil {
 		return err
 	}
@@ -129,4 +135,24 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 	logger.Debugf("Successfully bootstrapped new ceph cluster with fsid %s", fsid)
 
 	return nil
+}
+
+func (sb *SimpleBootstrapper) getServicesAndConfigsforDBUpdation(fsid string, hostname string) ([]string, map[string]string, error) {
+	pathConsts := constants.GetPathConst()
+	adminKey, err := ceph.ParseKeyring(filepath.Join(pathConsts.ConfPath, "ceph.client.admin.keyring"))
+	if err != nil {
+		err = fmt.Errorf("failed parsing admin keyring: %w", err)
+		logger.Error(err.Error())
+		return nil, nil, err
+	}
+
+	services := []string{"mon", "mgr", "mds"}
+	configs := map[string]string{
+		"fsid":                               fsid,
+		constants.AdminKeyringFieldName:      adminKey,
+		fmt.Sprintf("mon.host.%s", hostname): sb.MonIP,
+		"public_network":                     sb.PublicNet,
+	}
+
+	return services, configs, nil
 }

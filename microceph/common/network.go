@@ -3,6 +3,7 @@ package common
 import (
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/canonical/microceph/microceph/logger"
 )
@@ -19,6 +20,7 @@ type networkImpl struct{}
 // for the provided subnet. It returns the FIRST found IP address or an empty string
 // in case of errors.
 func (nwi networkImpl) FindIpOnSubnet(subnet string) (string, error) {
+	subnet = strings.TrimSpace(subnet)
 	_, sn, err := net.ParseCIDR(subnet)
 	if err != nil {
 		return "", err
@@ -56,10 +58,11 @@ func (nwi networkImpl) FindIpOnSubnet(subnet string) (string, error) {
 // It returns the containing subnet address on success or an empty string on failure.
 func (nwi networkImpl) FindNetworkAddress(address string) (string, error) {
 	nw := []string{}
+	address = strings.TrimSpace(address)
 
 	// Parse provided address.
-	monIp := net.ParseIP(address)
-	if monIp == nil {
+	monIP := net.ParseIP(address)
+	if monIP == nil {
 		return "", fmt.Errorf("provided address %s is invalid", address)
 	}
 
@@ -85,17 +88,20 @@ func (nwi networkImpl) FindNetworkAddress(address string) (string, error) {
 
 			// record for reporting
 			nw = append(nw, addr.String())
-			if ipNet.IP.Equal(monIp) {
+			if ipNet.IP.Equal(monIP) {
 				return addr.String(), nil
 			}
 		}
 	}
 
-	return "", fmt.Errorf("provided mon-ip (%s) does not belong to any suitable network: %v", monIp, nw)
+	return "", fmt.Errorf("provided mon-ip (%s) does not belong to any suitable network: %v", monIP, nw)
 }
 
 // IsIpOnSubnet checks if the provided ip address is on the provided subnet.
 func (nwi networkImpl) IsIpOnSubnet(address string, subnet string) bool {
+	address = strings.TrimSpace(address)
+	subnet = strings.TrimSpace(subnet)
+
 	ip := net.ParseIP(address)
 	if ip == nil {
 		return false
