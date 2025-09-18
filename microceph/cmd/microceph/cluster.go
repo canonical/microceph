@@ -22,6 +22,10 @@ func (c *cmdCluster) Command() *cobra.Command {
 	clusterBootstrapCmd := cmdClusterBootstrap{common: c.common, cluster: c}
 	cmd.AddCommand(clusterBootstrapCmd.Command())
 
+	// Adopt
+	clusterAdoptCmd := cmdClusterAdopt{common: c.common, cluster: c}
+	cmd.AddCommand(clusterAdoptCmd.Command())
+
 	// Join
 	clusterJoinCmd := cmdClusterJoin{common: c.common, cluster: c}
 	cmd.AddCommand(clusterJoinCmd.Command())
