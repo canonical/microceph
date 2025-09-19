@@ -26,6 +26,7 @@ var GetBootstrapper = func(bd common.BootstrapConfig, state interfaces.StateInte
 		logger.Debugf("Adopt ceph cluster with %+v", bd)
 		bootstrapper = &AdoptBootstrapper{}
 	} else {
+		logger.Debugf("Simple bootstrap with %+v", bd)
 		bootstrapper = &SimpleBootstrapper{}
 	}
 
