@@ -940,7 +940,7 @@ function add_osd_to_node() {
 function wait_for_osds() {
     local expect="${1?missing}"
     local res=0
-    local tries=8
+    local tries=10
     
     install_tools
     for ((i=0; i<tries; i++)); do
@@ -953,7 +953,7 @@ function wait_for_osds() {
             break
         else
             printf '.'
-            sleep 2
+            sleep 5
         fi
     done
 
