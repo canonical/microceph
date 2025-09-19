@@ -50,6 +50,11 @@ function install_microceph() {
     sudo microceph.ceph health
 }
 
+function install_tools() {
+    sudo apt-get update -qq
+    sudo apt-get -qq -y install s3cmd jq
+}
+
 function create_loop_devices() {
     for l in a b c; do
       loop_file="$(sudo mktemp -p /mnt XXXX.img)"
@@ -270,7 +275,6 @@ function create_vms() {
     vm_name="node-wrk${i}" # node name
     hn=$(lxc exec $vm_name -- sh -c "hostname") || true
     lxc file push /home/runner/microceph_*.snap $vm_name/mnt/
-    lxc exec $vm_name -- sh -c "sudo apt update"
     lxc exec $vm_name -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
     lxc exec $vm_name -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
   done
@@ -314,7 +318,7 @@ function create_containers() {
         # Hack around bug #1712808
         lxc exec $container -- sh -c "ln -s /bin/true /usr/local/bin/udevadm"
     done
-
+    install_tools
 }
 
 # functions with remote_ prefix have following assumptions:
@@ -706,6 +710,7 @@ function remote_remove_and_verify() {
 function install_multinode() {
     # Install and setup microceph snap
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
+        nodeexec $container install_tools
         lxc exec $container -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
         lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
         lxc exec $container -- sh -c "snap alias microceph.ceph ceph"
@@ -934,21 +939,28 @@ function add_osd_to_node() {
 
 function wait_for_osds() {
     local expect="${1?missing}"
-    res=0
-    for i in $(seq 1 8); do
-        res=$( ( sudo microceph.ceph -s | grep -F osd: | sed -E "s/.* ([[:digit:]]*) in .*/\1/" ) || true )
-        if [[ $res -ge $expect ]] ; then
+    local res=0
+    local tries=8
+    
+    install_tools
+    for ((i=0; i<tries; i++)); do
+        # jq: return num in osds, or 0
+        res=$(sudo microceph.ceph -s -f json 2>/dev/null | jq -r '.osdmap.num_in_osds // 0')
+        [[ "$res" =~ ^[0-9]+$ ]] || res=0
+
+        if (( res >= expect )); then
             echo "Found >=${expect} OSDs"
             break
         else
-            echo -n '.'
+            printf '.'
             sleep 2
         fi
     done
+
     sudo microceph.ceph -s
-    if [[ $res -lt $expect ]] ; then
+    if (( res < expect )); then
         echo "Never reached ${expect} OSDs"
-        return -1
+        return 1
     fi
 }
 
@@ -993,8 +1005,6 @@ function testrgw() {
         sudo microceph.radosgw-admin user create --uid=test --display-name=test
         sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey
     fi
-    sudo apt-get update -qq
-    sudo apt-get -qq install s3cmd
     echo hello-radosgw > ~/$filename.txt
     s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl mb s3://testbucket
     s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/$filename.txt s3://testbucket
@@ -1013,7 +1023,6 @@ function testrgw_ssl() {
         sudo microceph.radosgw-admin user create --uid=test --display-name=test
         sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey
     fi
-    sudo apt-get update -qq
     echo hello-radosgw-ssl > ~/$filename.txt
     s3cmd --ca-certs=/tmp/ca.crt --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey mb s3://testbucketssl
     s3cmd --ca-certs=/tmp/ca.crt --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey put -P ~/$filename.txt s3://testbucketssl

@@ -88,6 +88,7 @@ jobs:
 
     - name: Install and setup
       run: |
+        ~/actionutils.sh install_tools
         ~/actionutils.sh install_microceph
 
         set -uex
@@ -583,7 +584,9 @@ jobs:
       run: ~/actionutils.sh free_runner_disk
 
     - name: Install and setup
-      run: ~/actionutils.sh install_microceph
+      run: |
+        ~/actionutils.sh install_tools        
+        ~/actionutils.sh install_microceph
 
     - name: Add loopback file OSDs
       run: |
@@ -636,7 +639,9 @@ jobs:
       run: ~/actionutils.sh free_runner_disk
 
     - name: Install and setup
-      run: ~/actionutils.sh install_microceph
+      run: |
+        ~/actionutils.sh install_tools        
+        ~/actionutils.sh install_microceph
 
     - name: Add loopback file OSDs
       run: |
@@ -702,7 +707,9 @@ jobs:
       run: ~/actionutils.sh free_runner_disk
 
     - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      run: |
+        ~/actionutils.sh install_tools
+        ~/actionutils.sh setup_lxd
 
     - name: Create containers with loopback devices
       run: ~/actionutils.sh create_containers public
@@ -773,7 +780,9 @@ jobs:
       run: ~/actionutils.sh free_runner_disk
 
     - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      run: |
+        ~/actionutils.sh install_tools
+        ~/actionutils.sh setup_lxd
 
     - name: Create containers with loopback devices
       run: ~/actionutils.sh create_containers public
@@ -847,7 +856,9 @@ jobs:
       run: ~/actionutils.sh free_runner_disk
 
     - name: Install and setup
-      run: ~/actionutils.sh install_microceph
+      run: |
+        ~/actionutils.sh install_tools        
+        ~/actionutils.sh install_microceph
 
     - name: Add loopback file OSDs
       run: |
@@ -894,7 +905,9 @@ jobs:
       run: ~/actionutils.sh free_runner_disk
 
     - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      run: |
+        ~/actionutils.sh install_tools        
+        ~/actionutils.sh setup_lxd
 
     - name: Create containers with loopback devices
       run: ~/actionutils.sh create_containers public
