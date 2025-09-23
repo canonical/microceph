@@ -49,7 +49,7 @@ cryptographic technology used in MicroCeph.
 .. toctree::
    :maxdepth: 2
 
-   MicroCeph Architecture <microceph-architecture>
+   MicroCeph architecture <microceph-architecture>
    Security in MicroCeph <security/security-overview>
 
 If you have a specific goal, but are already familiar with MicroCeph, our :doc:`how-to guides <../how-to/index>` have more in-depth detail and instructions.
