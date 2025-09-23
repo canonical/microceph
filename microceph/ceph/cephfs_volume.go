@@ -98,6 +98,21 @@ func GetCephFSVolume(volume Volume) (CephFSVolume, error) {
 	return response, nil
 }
 
+func CephFSSubvolumeExists(volume string, subvolumegroup string, subvolume string) bool {
+	subvolumes, err := GetCephFSSubvolumes(Volume(volume), subvolumegroup)
+	if err != nil {
+		return false
+	}
+
+	for _, sv := range subvolumes {
+		if string(sv) == subvolume {
+			return true
+		}
+	}
+
+	return false
+}
+
 // GetCephFSSubvolumeGroups lists all subvolume groups in the specified CephFS volume.
 func GetCephFSSubvolumeGroups(volume Volume) (map[string]Subvolumegroup, error) {
 	args := []string{"fs", "subvolumegroup", "ls", string(volume), "--format=json"}

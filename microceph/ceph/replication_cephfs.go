@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
 )
 
@@ -120,6 +122,26 @@ func (rh *CephfsReplicationHandler) GetResourceState() (ReplicationState, error)
 // EnableHandler enables mirroring for requested cephfs subvolume/directory.
 func (rh *CephfsReplicationHandler) EnableHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPCFS: Enable handler, Req %v", rh.Request)
+
+	st := args[repArgState].(interfaces.CephState)
+	err := verifyEnableRequestData(ctx, st, rh.Request)
+	if err != nil {
+		logger.Errorf("Cannot fulfill %s request, data validation failed for %+v: %v", types.EnableReplicationRequest, rh.Request, err)
+		return err
+	}
+
+	err = enableCephFSVolumeMirror(ctx, rh.Request)
+	if err != nil {
+		logger.Errorf("Failed to enable mirroring on CephFS volume %s: %v", rh.Request.Volume, err)
+		return err
+	}
+
+	err = enableCephFSResourceMirror(ctx, rh.Request)
+	if err != nil {
+		logger.Errorf("Failed to enable mirroring on CephFS resource %+v: %v", rh.Request, err)
+		return err
+	}
+
 	return fmt.Errorf("%s not implemented for cephfs", types.EnableReplicationRequest)
 }
 
@@ -257,6 +279,79 @@ func (rh *CephfsReplicationHandler) GetCephFSMirrorStatus(ctx context.Context) e
 	}
 
 	rh.Status = response
+	return nil
+}
+
+func verifyEnableRequestData(ctx context.Context, s interfaces.CephState, request types.CephfsReplicationRequest) error {
+	if len(request.Volume) == 0 {
+		return fmt.Errorf("missing CephFS volume name")
+	}
+
+	if len(request.RemoteName) == 0 {
+		return fmt.Errorf("missing remote cluster name")
+	} else {
+		// check if a remote with remote name exists.
+		remotes, err := database.GetRemoteDb(ctx, s.ClusterState(), request.RemoteName)
+		if err != nil {
+			logger.Errorf("Failed to query remote %s from db: %v", request.RemoteName, err)
+			return err
+		}
+
+		found := false
+		for _, remote := range remotes {
+			if remote.Name == request.RemoteName {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			err := fmt.Errorf("Remote %s not found in db", request.RemoteName)
+			logger.Error(err.Error())
+			return err
+		}
+	}
+
+	if request.ResourceType != types.CephfsResourceSubvolume && request.ResourceType != types.CephfsResourceDirectory {
+		return fmt.Errorf("invalid resource type (%s) for CephFS replication", request.ResourceType)
+	}
+
+	if request.ResourceType == types.CephfsResourceSubvolume {
+		if len(request.Subvolume) == 0 {
+			return fmt.Errorf("missing subvolume name for resource type %s", request.ResourceType)
+		}
+
+		// check if subvolume exists in the volume
+		vol, err := GetCephFSVolume(Volume(request.Volume))
+		if err != nil {
+			err = fmt.Errorf("Failed to get CephFS volume %s: %v", request.Volume, err)
+			logger.Error(err.Error())
+			return err
+		}
+
+		if !CephFSSubvolumeExists(vol.Name, request.SubvolumeGroup, request.Subvolume) {
+			err := fmt.Errorf("subvolume %s/%s not found in volume %s", request.SubvolumeGroup, request.Subvolume, request.Volume)
+			logger.Error(err.Error())
+			return err
+		}
+	}
+
+	if request.ResourceType == types.CephfsResourceDirectory && len(request.DirPath) == 0 {
+		return fmt.Errorf("missing directory path for resource type %s", request.ResourceType)
+	}
+
+	return nil
+}
+
+func enableCephFSVolumeMirror(ctx context.Context, request types.CephfsReplicationRequest) error {
+	// TODO: (utkarshbhatthere):
+	// Implement
+	return nil
+}
+
+func enableCephFSResourceMirror(ctx context.Context, request types.CephfsReplicationRequest) error {
+	// TODO: (utkarshbhatthere):
+	// Implement
 	return nil
 }
 
