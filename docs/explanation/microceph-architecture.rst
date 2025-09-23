@@ -1,12 +1,16 @@
-MicroCeph Architecture
+MicroCeph architecture
 ======================
 
-Understanding the MicroCeph architecture is the first step towards securing it.
 MicroCeph packages core Ceph daemons (MON, MGR, OSD, and optionally RGW, MDS)
 into a single snap. These daemons are managed by the microcephd service, which
 uses a distributed dqlite database for configuration and state. Management is
 primarily done via the microceph command-line tool interacting with microcephd,
 alongside standard snapd services.
+
+.. figure:: assets/microceph-cluster.png
+
+  MicroCeph Architecture Overview
+
 
 Components
 ~~~~~~~~~~
