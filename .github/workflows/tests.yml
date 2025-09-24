@@ -998,12 +998,16 @@ jobs:
         run: ~/actionutils.sh remote_configure_cephfs_mirroring
 
       - name: Verify CephFS mirror list
-        run: ~/actionutils.sh replication_verify_cephfs_list_output node-wrk0
+        run: ~/actionutils.sh replication_verify_cephfs_list_output
+
       - name: Perform IO and Wait for CephFS mirror to sync directories
         run: ~/actionutils.sh remote_wait_cephfs_for_secondary_to_sync 40
 
       - name: Verify Data integrity
         run: ~/actionutils.sh remote_verify_cephfs_mirroring
+
+      - name: Disable mirroring for volume
+        run: ~/actionutils.sh remote_disable_cephfs_mirroring
 
       - name: Disable Cephfs Mirror daemons
         run: ~/actionutils.sh remote_disable_mirror_daemon "cephfs-mirror"
