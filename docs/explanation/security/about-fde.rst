@@ -56,7 +56,7 @@ Limitations
 .. warning::
   - It is important to note that MicroCeph FDE *only* encompasses OSDs. Other data, such as state information for monitors, logs, configuration etc., will *not* be encrypted by this mechanism.
   - Also note that the encryption key will be stored on the Ceph monitors as part of the Ceph key/value store.
-  - As aluded to above, FDE protects data on disks. However while the host is running, this data will be made accessible to allow retrieval. This implies that if a malicious program were to run on the machine, it would also be able to access the data -- FDE cannot protect against this scenario.
+  - As alluded to above, FDE protects data on disks. However while the host is running, this data will be made accessible to allow retrieval. This implies that if a malicious program were to run on the machine, it would also be able to access the data -- FDE cannot protect against this scenario.
 
 Usage
 -----

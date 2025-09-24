@@ -84,6 +84,7 @@ dqlite
 dropdown
 EBS
 EKS
+exfiltration
 favicon
 FDE
 filesystem
