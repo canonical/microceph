@@ -44,6 +44,7 @@ migrate services and more.
    migrate-auto-services
    remove-disk
    perform-cluster-maintenance
+   enable-fde
 
 Managing a remote cluster
 -------------------------
