@@ -2,9 +2,6 @@
 Full disk encryption in MicroCeph
 =================================
 
-Overview
---------
-
 MicroCeph supports automatic full disk encryption (FDE) on OSDs.
 
 Full disk encryption is a security measure that protects the data on a
@@ -40,28 +37,18 @@ cluster configuration, and use it to encrypt the given disk via
 <https://gitlab.com/cryptsetup/cryptsetup/-/wikis/home>`_.
 
 
-Prerequisites
--------------
-
-To use FDE, the following prerequisites must be met:
-
-- The installed snapd daemon version on the host must be >= 2.59.1
-- The ``dm-crypt`` kernel module must be available. Note that some cloud-optimised kernels do not ship dm-crypt by default. Check by running ``sudo modinfo dm-crypt``
-- The snap dm-crypt plug has to be connected, and ``microceph.daemon`` subsequently restarted
-
 
 Limitations
 -----------
 
-.. warning::
-  - It is important to note that MicroCeph FDE *only* encompasses OSDs. Other data, such as state information for monitors, logs, configuration etc., will *not* be encrypted by this mechanism.
-  - Also note that the encryption key will be stored on the Ceph monitors as part of the Ceph key/value store.
-  - As alluded to above, FDE protects data on disks. However while the host is running, this data will be made accessible to allow retrieval. This implies that if a malicious program were to run on the machine, it would also be able to access the data -- FDE cannot protect against this scenario.
+* It is important to note that MicroCeph FDE *only* encompasses OSDs. Other data, such as state information for monitors, logs, configuration etc., will *not* be encrypted by this mechanism.
+* Also note that the encryption key will be stored on the Ceph monitors as part of the Ceph key/value store.
+* As alluded to above, FDE protects data on disks. However while the host is running, this data will be made accessible to allow retrieval. This implies that if a malicious program were to run on the machine, it would also be able to access the data -- FDE cannot protect against this scenario.
 
 Usage
 -----
 
-See the :doc:`how-to <../../how-to/enable-fde>` for details on enabling FDE for MicroCeph OSDs.
+See our :doc: `how-to guide for enabling FDE <../../how-to/enable-fde>` for MicroCeph OSDs.
 
 
 

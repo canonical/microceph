@@ -1,14 +1,11 @@
-==========================================
-Enabling full disk encryption in MicroCeph
-==========================================
-
-Overview
---------
+========================================
+Enable full disk encryption in MicroCeph
+========================================
 
 Full disk encryption (FDE) in MicroCeph allows operating encrypted
-OSDs in a MicroCeph cluster. See the :doc:`explanation
-<../explanation/security/about-fde>` section about details on FDE
-protection and limitations.
+OSDs in a MicroCeph cluster. See the :doc:`FDE explanation
+<../explanation/security/about-fde>` to learn more about FDE
+protection and its limitations.
 
 Prerequisites
 -------------
@@ -25,8 +22,8 @@ To use FDE, the following prerequisites must be met:
      sudo snap restart microceph.daemon
 
 
-Enabling FDE
-------------
+Enable FDE
+----------
 
 FDE for OSDs is activated by passing the optional ``--encrypt`` flag when adding disks:
 
@@ -34,5 +31,5 @@ FDE for OSDs is activated by passing the optional ``--encrypt`` flag when adding
 
     sudo microceph disk add /dev/sdx --wipe --encrypt
 
-Note there is no facility to encrypt an OSD that is already part of the cluster. To enable encryption you will have to take the OSD disk out of the cluster, ensure data is replicated and the cluster converged and is healthy, and then re-introduce the OSD with encryption.
+Note that there is no facility to encrypt an OSD that is already part of the cluster. To enable encryption you will have to take the OSD disk out of the cluster, ensure data is replicated and the cluster converged and is healthy, and then re-introduce the OSD with encryption.
 
