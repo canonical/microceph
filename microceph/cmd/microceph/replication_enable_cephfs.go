@@ -100,5 +100,5 @@ func getCephFSResourceType(subvolume string, dirpath string) types.CephfsResourc
 		return types.CephfsResourceDirectory
 	}
 
-	return types.CephfsResourceInvalid
+	return types.CephfsResourceVolume
 }

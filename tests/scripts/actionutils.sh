@@ -405,14 +405,11 @@ function remote_configure_cephfs_mirroring() {
     for i in 0 2; do
       echo "Prepping filesystem on node-wrk$i"
       lxc exec "node-wrk$i" -- bash -c "sudo microceph.ceph fs volume create vol"
-      lxc exec "node-wrk$i" -- bash -c "sudo microceph.ceph mgr module enable mirroring"
-      lxc exec "node-wrk$i" -- bash -c "sudo microceph.ceph fs snapshot mirror enable vol"
     done
 
-    # Bootstrapping FS mirror peer
-    echo "Bootstrapping FS Mirror peer"
-    peer_token=$(lxc exec node-wrk2 -- bash -c "sudo microceph.ceph fs snapshot mirror peer_bootstrap create vol client.fsmir-vol-primary secondary" | jq '.token' | tr -d '\"')
-    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror peer_bootstrap import vol $peer_token"
+    # enable for dir paths
+    lxc exec "node-wrk0" -- bash -c "sudo microceph replication enable cephfs --volume vol --dir-path /dir1/ --remote siteb"
+    lxc exec "node-wrk0" -- bash -c "sudo microceph replication enable cephfs --volume vol --dir-path /dir2/ --remote siteb"
 
     # install primary cluster keys/conf
     sudo lxc file pull node-wrk0/var/snap/microceph/current/conf/ceph.conf /etc/ceph/
@@ -567,6 +564,12 @@ function remote_verify_rbd_mirroring() {
     lxc exec node-wrk3 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_two"
 
     lxc exec node-wrk0 -- sh -c "sudo microceph replication status rbd --json"
+}
+
+function remote_disable_cephfs_mirroring() {
+  set -eux
+
+  lxc exec node-wrk0 -- sh -c "sudo microceph replication disable cephfs --volume vol"
 }
 
 function remote_verify_cephfs_mirroring() {
