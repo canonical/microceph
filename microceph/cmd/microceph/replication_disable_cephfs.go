@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
@@ -20,8 +21,8 @@ type cmdReplicationDisableCephFS struct {
 
 func (c *cmdReplicationDisableCephFS) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "rbd <resource>",
-		Short: "Disable replication for RBD resource (Pool or Image)",
+		Use:   "cephfs <resource>",
+		Short: "Disable replication for CephFS resource (Directory or Subvolume)",
 		RunE:  c.Run,
 	}
 
@@ -31,7 +32,6 @@ func (c *cmdReplicationDisableCephFS) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.dirpath, "dir-path", "", "Directory path relative to file system")
 
 	cmd.MarkFlagRequired("volume")
-	cmd.MarkFlagsOneRequired("dir-path", "subvolume")
 	cmd.MarkFlagsMutuallyExclusive("dir-path", "subvolumegroup")
 	cmd.MarkFlagsMutuallyExclusive("dir-path", "subvolume")
 
@@ -47,7 +47,8 @@ func (c *cmdReplicationDisableCephFS) PreRun(cmd *cobra.Command, args []string) 
 }
 
 func (c *cmdReplicationDisableCephFS) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
+	if len(args) != 0 {
+		fmt.Println("This command does not expect any positional arguments")
 		return cmd.Help()
 	}
 

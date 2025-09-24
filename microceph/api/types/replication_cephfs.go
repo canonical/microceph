@@ -12,6 +12,8 @@ import (
 type CephfsResourceType ReplicationResourceType
 
 const (
+	// CephfsResourceVolume represent a cephfs volume (for teardown operation)
+	CephfsResourceVolume CephfsResourceType = "volume"
 	// CephfsResourceSubvolume represents a CephFS subvolume.
 	CephfsResourceSubvolume CephfsResourceType = "subvolume"
 	// CephfsResourceDirectory represents a directory path in a CephFS volume.
