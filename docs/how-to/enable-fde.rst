@@ -7,7 +7,7 @@ Overview
 
 Full disk encryption (FDE) in MicroCeph allows operating encrypted
 OSDs in a MicroCeph cluster. See the :doc:`explanation
-<../explanation/about-fde.rst>` section about details on FDE
+<../explanation/security/about-fde>` section about details on FDE
 protection and limitations.
 
 Prerequisites
