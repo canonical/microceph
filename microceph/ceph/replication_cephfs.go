@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
@@ -130,6 +131,11 @@ func (rh *CephfsReplicationHandler) EnableHandler(ctx context.Context, args ...a
 		return err
 	}
 
+	err = enableMgrModule(constants.MgrModuleMirroring)
+	if err != nil {
+		return err
+	}
+
 	err = enableCephFSVolumeMirror(ctx, rh.Request)
 	if err != nil {
 		logger.Errorf("Failed to enable mirroring on CephFS volume %s: %v", rh.Request.Volume, err)
@@ -142,13 +148,32 @@ func (rh *CephfsReplicationHandler) EnableHandler(ctx context.Context, args ...a
 		return err
 	}
 
-	return fmt.Errorf("%s not implemented for cephfs", types.EnableReplicationRequest)
+	return nil
 }
 
 // DisableHandler disables mirroring configured cephfs subvolume/directory.
 func (rh *CephfsReplicationHandler) DisableHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPCFS: Disable handler, Req %v", rh.Request)
-	return fmt.Errorf("%s not implemented for cephfs", types.DisableReplicationRequest)
+
+	var err error
+	switch rh.Request.ResourceType {
+	case types.CephfsResourceVolume:
+		err = disableCephFSVolumeMirror(ctx, rh.Request, rh.MirrorList)
+	case types.CephfsResourceSubvolume:
+		err = cephFSSnapshotMirrorRemovePath(ctx, rh.Request.Volume, fmt.Sprintf("/volumes/%s/%s", rh.Request.SubvolumeGroup, rh.Request.Subvolume))
+	case types.CephfsResourceDirectory:
+		err = cephFSSnapshotMirrorRemovePath(ctx, rh.Request.Volume, rh.Request.DirPath)
+	default:
+		err = fmt.Errorf("REPCFS: Disabe request failed, invalid resource type found (%s)", rh.Request.ResourceType)
+	}
+
+	if err != nil {
+		err = fmt.Errorf("REPCFS: Failed to disable mirroring on CephFS resource %+v: %w", rh.Request, err)
+		logger.Error(err.Error())
+		return err
+	}
+
+	return nil
 }
 
 // ConfigureHandler configures replication properties for requested cephfs subvolume/directory.
@@ -344,14 +369,73 @@ func verifyEnableRequestData(ctx context.Context, s interfaces.CephState, reques
 }
 
 func enableCephFSVolumeMirror(ctx context.Context, request types.CephfsReplicationRequest) error {
-	// TODO: (utkarshbhatthere):
-	// Implement
+	peerExists, err := cephFSSnapshotMirrorPeerExists(ctx, request.Volume, request.RemoteName)
+	if err != nil {
+		logger.Errorf("Failed to check if peer %s exists for CephFS volume %s: %v", request.RemoteName, request.Volume, err)
+		return err
+	}
+
+	if !peerExists {
+		// Note: CephFS operates on push replication, hence we need to import a remote ceph
+		// user with permissions to write on the remote cluster.
+		token, err := cephFSSnapshotMirrorPeerCreate(request.Volume, request.RemoteName, request.RemoteName)
+		if err != nil {
+			logger.Errorf("Failed to create peer for remote %s on CephFS volume %s: %v", request.RemoteName, request.Volume, err)
+			return err
+		}
+
+		err = cephFSSnapshotMirrorPeerImport(request.Volume, token)
+		if err != nil {
+			logger.Errorf("Failed to import peer for remote %s on CephFS volume %s: %v", request.RemoteName, request.Volume, err)
+			return err
+		}
+	}
+
+	err = cephFSSnapshotMirrorEnableVolume(request.Volume)
+	if err != nil {
+		logger.Errorf("Failed to enable mirroring on CephFS volume %s: %v", request.Volume, err)
+		return err
+	}
+
 	return nil
 }
 
 func enableCephFSResourceMirror(ctx context.Context, request types.CephfsReplicationRequest) error {
-	// TODO: (utkarshbhatthere):
-	// Implement
+	var resourcePath string
+
+	switch request.ResourceType {
+	case types.CephfsResourceSubvolume:
+		resourcePath = fmt.Sprintf("/volumes/%s/%s", request.SubvolumeGroup, request.Subvolume)
+	case types.CephfsResourceDirectory:
+		resourcePath = request.DirPath
+	default:
+		return fmt.Errorf("invalid resource type (%s) for CephFS replication", request.ResourceType)
+	}
+
+	err := cephFSSnapshotMirrorAddPath(ctx, request.Volume, resourcePath)
+	if err != nil {
+		err := fmt.Errorf("Failed to enable mirroring on CephFS volume %s: %v", request.Volume, err)
+		logger.Error(err.Error())
+		return err
+	}
+
+	return nil
+}
+
+func disableCephFSVolumeMirror(ctx context.Context, request types.CephfsReplicationRequest, mirrorPathList []string) error {
+	if !request.IsForceOp {
+		err := fmt.Errorf("Disabling it for the volume (%s) may result in data-loss, please use appropriate parmaters", request.Volume)
+		return err
+	}
+
+	for _, mirrorPath := range mirrorPathList {
+		err := cephFSSnapshotMirrorRemovePath(ctx, request.Volume, mirrorPath)
+		if err != nil {
+			logger.Errorf("Failed to remove mirror path %s on CephFS volume %s: %v", mirrorPath, request.Volume, err)
+			return err
+		}
+	}
+
 	return nil
 }
 

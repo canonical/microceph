@@ -39,8 +39,7 @@ func bootstrapFsMirror(hostname string, path string) error {
 // GetCephFSSnapshotMirrorDaemonStatus fetches the snapshot mirror status for the CephFS volume.
 func GetCephFSSnapshotMirrorDaemonStatus(ctx context.Context) (CephFSSnapshotMirrorDaemonStatus, error) {
 	response := CephFSSnapshotMirrorDaemonStatus{}
-	args := []string{"fs", "snapshot", "mirror", "daemon", "status", "--format=json"}
-	output, err := cephRunContext(ctx, args...)
+	output, err := cephFSSnapshotMirrorDaemonStatus(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CephFS snapshot mirror status: %w", err)
 	}
@@ -63,8 +62,7 @@ func GetCephFSVolumeMirrorList(ctx context.Context, volume string) (MirrorPathLi
 		return nil, fmt.Errorf("volume name cannot be empty")
 	}
 
-	args := []string{"fs", "snapshot", "mirror", "ls", volume, "--format=json"}
-	output, err := cephRunContext(ctx, args...)
+	output, err := cephFSSnapshotMirrorList(ctx, volume)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CephFS snapshot mirror list: %w", err)
 	}
