@@ -48,7 +48,7 @@ Limitations
 Usage
 -----
 
-See our :doc: `how-to guide for enabling FDE <../../how-to/enable-fde>` for MicroCeph OSDs.
+See our :doc:`how-to guide for enabling FDE <../../how-to/enable-fde>` for MicroCeph OSDs.
 
 
 
