@@ -81,3 +81,13 @@ Follow these guides to learn how to make use of the storage provided by your clu
    mount-block-device
    mount-cephfs-share
 
+
+Contact us
+----------
+
+.. toctree::
+   :maxdepth: 1
+
+   Report security issues <report-security-vuln>
+
+
