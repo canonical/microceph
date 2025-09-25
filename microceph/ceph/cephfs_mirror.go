@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -99,24 +100,15 @@ func GetCephFsAllVolumeMirrorMap(ctx context.Context) (MirrorPathMap, error) {
 
 // GetCephFSSubvolumeMirrorState fetches the subvolume mirroring state for the CephFS volume.
 func GetCephFSSubvolumeMirrorState(rh *CephfsReplicationHandler) (ReplicationState, error) {
-	subvolumegroup := rh.Request.SubvolumeGroup
-	subvolume := rh.Request.Subvolume
-	volume := rh.Request.Volume
+	r := rh.Request
 
-	subvolumePath, err := GetCephFSSubvolumePath(volume, subvolumegroup, subvolume)
-	if err != nil {
-		return StateInvalidReplication, err
-	}
-
-	return GetCephFSMirrorPathState(rh, subvolumePath)
+	return GetCephFSMirrorPathState(rh, GetCephFSSubvolumePath(r.SubvolumeGroup, r.Subvolume))
 }
 
 // GetCephFSMirrorPathState checks whether requested path is in mirror paths list
 func GetCephFSMirrorPathState(rh *CephfsReplicationHandler, path string) (ReplicationState, error) {
-	for _, mirrorPath := range rh.MirrorList {
-		if path == mirrorPath {
-			return StateEnabledReplication, nil
-		}
+	if slices.Contains(rh.MirrorList, path) {
+		return StateEnabledReplication, nil
 	}
 
 	return StateDisabledReplication, nil
@@ -149,29 +141,29 @@ func GetCephFsMirrorPeerStatus(ctx context.Context, adminSockPath string, volume
 // FindCephFsMirrorAdminSockPath tests relevant admin socks and returns the correct one.
 // Some CephFSMirror commands can only work with admin socket.
 func FindCephFsMirrorAdminSockPath() (string, error) {
-	run_path := constants.GetPathConst().RunPath
+	runPath := constants.GetPathConst().RunPath
 
-	open_sockets, err := os.ReadDir(run_path)
+	openSockets, err := os.ReadDir(runPath)
 	if err != nil {
-		logger.Errorf("failed to read run path %s: %v", run_path, err)
+		logger.Errorf("failed to read run path %s: %v", runPath, err)
 		return "", err
 	}
 
-	logger.Debugf("MIRCFS: found %d open sockets in %s", len(open_sockets), run_path)
-	for _, socket := range open_sockets {
+	logger.Debugf("MIRCFS: found %d open sockets in %s", len(openSockets), runPath)
+	for _, socket := range openSockets {
 		logger.Debugf("MIRCFS: checking file : %s", socket.Name())
 
 		if !strings.Contains(socket.Name(), "ceph-client.cephfs-mirror") {
 			continue
 		}
 
-		full_sock_path := filepath.Join(run_path, socket.Name())
-		err = CheckFsMirrorHelperCommands(full_sock_path)
+		fullSockPath := filepath.Join(runPath, socket.Name())
+		err = CheckFsMirrorHelperCommands(fullSockPath)
 		if err != nil {
 			continue
 		}
 
-		return full_sock_path, nil
+		return fullSockPath, nil
 	}
 
 	return "", nil

@@ -160,7 +160,7 @@ func (rh *CephfsReplicationHandler) DisableHandler(ctx context.Context, args ...
 	case types.CephfsResourceVolume:
 		err = disableCephFSVolumeMirror(ctx, rh.Request, rh.MirrorList)
 	case types.CephfsResourceSubvolume:
-		err = cephFSSnapshotMirrorRemovePath(ctx, rh.Request.Volume, fmt.Sprintf("/volumes/%s/%s", rh.Request.SubvolumeGroup, rh.Request.Subvolume))
+		err = cephFSSnapshotMirrorRemovePath(ctx, rh.Request.Volume, GetCephFSSubvolumePath(rh.Request.SubvolumeGroup, rh.Request.Subvolume))
 	case types.CephfsResourceDirectory:
 		err = cephFSSnapshotMirrorRemovePath(ctx, rh.Request.Volume, rh.Request.DirPath)
 	default:
@@ -405,7 +405,7 @@ func enableCephFSResourceMirror(ctx context.Context, request types.CephfsReplica
 
 	switch request.ResourceType {
 	case types.CephfsResourceSubvolume:
-		resourcePath = fmt.Sprintf("/volumes/%s/%s", request.SubvolumeGroup, request.Subvolume)
+		resourcePath = GetCephFSSubvolumePath(request.SubvolumeGroup, request.Subvolume)
 	case types.CephfsResourceDirectory:
 		resourcePath = request.DirPath
 	default:
