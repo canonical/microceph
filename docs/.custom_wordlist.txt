@@ -75,6 +75,7 @@ cryptographic
 Cryptographic
 cryptsetup
 CVEs
+cveform
 DB
 dev
 Diátaxis
@@ -124,6 +125,8 @@ microceph
 microcephd
 microcephd's
 Microcluster
+Mitigation
+Mitigations
 mon
 monospaced
 mortem
@@ -186,6 +189,7 @@ Alertmanager
 api
 API
 APIs
+arounds
 Auth
 auth
 authorization
