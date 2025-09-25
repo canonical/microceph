@@ -1,6 +1,6 @@
-======================================
-How to report security vulnerabilities
-======================================
+===============================
+Report security vulnerabilities
+===============================
 
 
 How to report
