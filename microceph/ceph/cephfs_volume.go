@@ -66,6 +66,8 @@ func CephFsSubvolumePathDeconstruct(path string) (subvolumegroup string, subvolu
 		return "", "", fmt.Errorf("invalid CephFS subvolume path: %s", path)
 	}
 
+	logger.Debugf("FSVOL: %+v", parts)
+
 	subvolumegroup = parts[CephFsSubVolumeGroupIndex]
 	subvolume = parts[CephFsSubVolumeIndex]
 
@@ -170,14 +172,13 @@ func GetCephFSSubvolumes(volume Volume, subvolumegroup string) ([]Subvolume, err
 }
 
 // GetCephFSSubvolumePath retrieves the full path of a specified subvolume within a CephFS volume and subvolume group.
-func GetCephFSSubvolumePath(volume string, subvolumegroup string, subvolume string) (string, error) {
-	var args []string
-
+func GetCephFSSubvolumePath(subvolumegroup string, subvolume string) string {
+	var retval string
 	if len(subvolumegroup) != 0 {
-		args = []string{"fs", "subvolume", "getpath", volume, subvolume, subvolumegroup}
+		retval = fmt.Sprintf("/volumes/%s/%s/", subvolumegroup, subvolume)
 	} else {
-		args = []string{"fs", "subvolume", "getpath", volume, subvolume}
+		retval = fmt.Sprintf("/volumes/_nogroup/%s/", subvolume)
 	}
 
-	return cephRun(args...)
+	return retval
 }
