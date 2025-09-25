@@ -84,8 +84,10 @@ dqlite
 dropdown
 EBS
 EKS
+exfiltration
 favicon
 FDE
+fde
 filesystem
 firewalld
 firewalled

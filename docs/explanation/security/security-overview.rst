@@ -6,7 +6,7 @@ Security overview
     :maxdepth: 2
 
     Cryptography in MicroCeph <cryptographic-approaches>
-    Full disk encryption <full-disk-encryption>
+    Full disk encryption <about-fde>
 
 Operating a MicroCeph instance involves managing Ceph storage components
 contained within a snap package, orchestrated by the microceph daemon (microcephd).
