@@ -9,6 +9,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// Manager Daemon Ops
 func bootstrapMgr(hostname string, path string) error {
 	args := []string{
 		"auth",
@@ -46,4 +47,14 @@ func getActiveMgrs() ([]string, error) {
 	activeMgrs = append(activeMgrs, gjson.Get(output, "active_name").String())
 
 	return activeMgrs, nil
+}
+
+// Mgr Module Ops
+func enableMgrModule(module string) error {
+	cmd := []string{
+		"mgr", "module", "enable", module,
+	}
+
+	_, err := cephRun(cmd...)
+	return err
 }
