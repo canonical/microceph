@@ -3,9 +3,10 @@ package ceph
 import (
 	"bufio"
 	"fmt"
-	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"strings"
+
+	"github.com/canonical/microceph/microceph/common"
 )
 
 func genKeyring(path, name string, caps ...[]string) error {
@@ -72,7 +73,7 @@ func genAuth(path string, name string, caps ...[]string) error {
 	return nil
 }
 
-func parseKeyring(path string) (string, error) {
+func ParseKeyring(path string) (string, error) {
 	// Open the CEPH keyring.
 	cephKeyring, err := os.Open(path)
 	if err != nil {

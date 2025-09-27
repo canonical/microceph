@@ -9,25 +9,36 @@ import (
 // Constants for Size Constraints
 const MinOSDSize = uint64(2147483648) // 2GB i.e. 2*1024*1024*1024
 
-const ClientConfigGlobalHostConst = "*"
-const BootstrapPortConst = 7443
+const (
+	ClientConfigGlobalHostConst = "*"
+	BootstrapPortConst          = 7443
+)
 
 // Time constants
 const RgwRestartAgeThreshold = 2 // seconds
 
 // string templates
-const LoopSpecId = "loop,"
-const DevicePathPrefix = "/dev/disk/by-id/"
-const RgwSockPattern = "client.radosgw.gateway"
-const CliForcePrompt = "If you understand the *RISK* and you're *ABSOLUTELY CERTAIN* that is what you want, pass --yes-i-really-mean-it."
+const (
+	LoopSpecId       = "loop,"
+	DevicePathPrefix = "/dev/disk/by-id/"
+	RgwSockPattern   = "client.radosgw.gateway"
+	CliForcePrompt   = "If you understand the *RISK* and you're *ABSOLUTELY CERTAIN* that is what you want, pass --yes-i-really-mean-it."
+)
 
 // Path and filename constants
 
-const CephConfFileName = "ceph.conf"
+const (
+	CephConfFileName         = "ceph.conf"
+	CephAdminKeyringFileName = "ceph.keyring"
+	V2OnlyMonIPPort          = ":3300"
+	V2OnlyMonIPProtoPrefix   = "v2:"
+)
 
 // Misc
-const AdminKeyringFieldName = "keyring.client.admin"
-const AdminKeyringTemplate = "keyring.client.%s"
+const (
+	AdminKeyringFieldName = "keyring.client.admin"
+	AdminKeyringTemplate  = "keyring.client.%s"
+)
 
 // Ceph Error Substrings
 const RbdMirrorNonPrimaryPromoteErr = "image is primary within a remote cluster or demotion is not propagated yet"
@@ -59,8 +70,12 @@ var GetPathConst = func() PathConst {
 }
 
 // File Modes
-const PermissionWorldNoAccess = 0750
-const PermissionOnlyUserAccess = 0700
+const (
+	PermissionWorldNoAccess        = 0750
+	PermissionOnlyUserAccess       = 0700
+	PermissionUserRwWorldRAccess   = 0644
+	PermissionUserRWGroupROWorldNA = 0640
+)
 
 func GetPathFileMode() PathFileMode {
 	pathConsts := GetPathConst()
@@ -73,17 +88,23 @@ func GetPathFileMode() PathFileMode {
 }
 
 // Regexes
+
+// ClusterNameRegex is the regex for validating cluster names (a-z0-9)
 const ClusterNameRegex = "^[a-z0-9]+$"
 
 // Replication Events
-const EventEnableReplication = "enable_replication"
-const EventDisableReplication = "disable_replication"
-const EventListReplication = "list_replication"
-const EventStatusReplication = "status_replication"
-const EventConfigureReplication = "configure_replication"
+const (
+	EventEnableReplication    = "enable_replication"
+	EventDisableReplication   = "disable_replication"
+	EventListReplication      = "list_replication"
+	EventStatusReplication    = "status_replication"
+	EventConfigureReplication = "configure_replication"
+)
 
-// Rbd features
+// RbdJournalingEnableFeatureSet is a slice of features needed for journaling replication in RBD.
 var RbdJournalingEnableFeatureSet = [...]string{"exclusive-lock", "journaling"}
 
-const EventPromoteReplication = "promote_replication"
-const EventDemoteReplication = "demote_replication"
+const (
+	EventPromoteReplication = "promote_replication"
+	EventDemoteReplication  = "demote_replication"
+)
