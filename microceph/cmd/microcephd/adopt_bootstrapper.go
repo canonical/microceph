@@ -127,7 +127,7 @@ func (ab *AdoptBootstrapper) Bootstrap(ctx context.Context, state interfaces.Sta
 	return nil
 }
 
-// UpdateCephClusterConfigs updates the ceph cluster configurations like network parameters.
+// UpdateCephClusterConfigs configures the ceph cluster network parameters.
 func (ab *AdoptBootstrapper) updateCephClusterConfigs() error {
 	publicNet, err := ceph.GetConfigItem(types.Config{
 		Key: "public_network",
@@ -137,10 +137,7 @@ func (ab *AdoptBootstrapper) updateCephClusterConfigs() error {
 	}
 
 	pn := publicNet[0].Value
-	if len(pn) != 0 {
-		// Override the deduced public network from the ceph cluster config
-		ab.PublicNet = pn
-	} else {
+	if len(pn) == 0 {
 		// Populate MicroCeph deduced public network
 		err = ceph.SetConfigItemUnsafe(types.Config{
 			Key:   "public_network",
@@ -160,9 +157,7 @@ func (ab *AdoptBootstrapper) updateCephClusterConfigs() error {
 	}
 
 	cn := clusterNet[0].Value
-	if len(cn) != 0 {
-		ab.ClusterNet = cn
-	} else {
+	if len(cn) == 0 {
 		// Populate MicroCeph deduced cluster network
 		err = ceph.SetConfigItem(types.Config{
 			Key:   "cluster_network",
