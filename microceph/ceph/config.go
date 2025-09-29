@@ -328,7 +328,7 @@ func backwardCompatMonitors(ctx context.Context, s interfaces.StateInterface) ([
 }
 
 // UpdateConfig updates the ceph.conf file with the current configuration.
-var UpdateConfig = func(ctx context.Context, s interfaces.StateInterface) error {
+func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
 	runPath := filepath.Join(filepath.Dir(os.Getenv("SNAP_DATA")), "current", "run")
 

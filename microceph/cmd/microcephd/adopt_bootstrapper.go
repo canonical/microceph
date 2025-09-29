@@ -124,13 +124,6 @@ func (ab *AdoptBootstrapper) Bootstrap(ctx context.Context, state interfaces.Sta
 		return err
 	}
 
-	// Re-generate the configurations from database
-	err = ceph.UpdateConfig(ctx, state)
-	if err != nil {
-		logger.Errorf("failed to update ceph conf from db: %v", err)
-		return err
-	}
-
 	return nil
 }
 

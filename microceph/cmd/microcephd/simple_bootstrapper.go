@@ -126,12 +126,6 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 		return err
 	}
 
-	// Re-generate the configuration from the database.
-	err = ceph.UpdateConfig(ctx, state)
-	if err != nil {
-		return fmt.Errorf("failed to re-generate the configuration: %w", err)
-	}
-
 	logger.Debugf("Successfully bootstrapped new ceph cluster with fsid %s", fsid)
 
 	return nil

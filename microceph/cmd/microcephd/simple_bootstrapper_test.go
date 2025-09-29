@@ -106,10 +106,6 @@ func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 		return nil
 	}
 
-	ceph.UpdateConfig = func(ctx context.Context, s interfaces.StateInterface) error {
-		return nil
-	}
-
 	addNetworkSimpleBootstrapExpectations(nw)
 	addCephAuthToolExpectations(r)
 	addMonMapToolExpectations(r)

@@ -72,10 +72,6 @@ func (s *adoptBootstrapSuite) TestAdoptBootstrap() {
 		return nil
 	}
 
-	ceph.UpdateConfig = func(ctx context.Context, s interfaces.StateInterface) error {
-		return nil
-	}
-
 	addNetworkExpectations(nw)
 	addCephConnectivityCheckExpectations(r)
 	addConfigAdoptExpectations(r)
