@@ -204,7 +204,7 @@ else:
 
 redirects = {
     # The FDE topic was split to a how-to and explanation; explanation topic was renamed
-    'explanation/security/full-disk-encryption": "../../about-fde',
+    'explanation/security/full-disk-encryption': '../../about-fde',
 }
 
 ###########################
