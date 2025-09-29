@@ -12,6 +12,7 @@ import (
 
 // PreInit is run before the daemon is initialized on bootstrap and join.
 func PreInit(ctx context.Context, s state.State, bootstrap bool, initConfig map[string]string) error {
+	logger.Debugf("Executed Hook: PreInit (bootstrap=%v)", bootstrap)
 	if bootstrap {
 		logger.Debugf("PreInit for bootstrap: %v", initConfig)
 		// Parse Bootstrap API parameters
@@ -32,6 +33,7 @@ func PreInit(ctx context.Context, s state.State, bootstrap bool, initConfig map[
 
 // PostBootstrap is run after the daemon is initialized and bootstrapped.
 func PostBootstrap(ctx context.Context, s state.State, initConfig map[string]string) error {
+	logger.Debug("Executed Hook: PostBootstrap")
 	// Parse Bootstrap API parameters
 	bd := common.BootstrapConfig{}
 	common.DecodeBootstrapConfig(initConfig, &bd)
@@ -46,11 +48,13 @@ func PostBootstrap(ctx context.Context, s state.State, initConfig map[string]str
 }
 
 func PostJoin(ctx context.Context, s state.State, initConfig map[string]string) error {
+	logger.Debug("Executed Hook: PostJoin")
 	interf := interfaces.CephState{State: s}
 	return ceph.Join(ctx, interf)
 }
 
 func OnStart(ctx context.Context, s state.State) error {
+	logger.Debug("Executed Hook: OnStart")
 	interf := interfaces.CephState{State: s}
 	return ceph.Start(ctx, interf)
 }
