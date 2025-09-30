@@ -38,6 +38,8 @@ func (sb *SimpleBootstrapper) Prefill(bd common.BootstrapConfig, state interface
 	}
 
 	PopulateV2OnlyMonIP(&sb.MonIP, sb.V2Only)
+
+	logger.Debugf("Simple Bootstrap prefill finished with %+v", sb)
 	return nil
 }
 
@@ -45,7 +47,7 @@ func (sb *SimpleBootstrapper) Prefill(bd common.BootstrapConfig, state interface
 func (sb *SimpleBootstrapper) Precheck(ctx context.Context, state interfaces.StateInterface) error {
 	var err error
 
-	logger.Debugf("Initiating precheck for simple bootstrap: %v", sb)
+	logger.Debugf("Initiating precheck for simple bootstrap: %+v", sb)
 
 	// drop v2 vectors before validation
 	monIP := sb.MonIP

@@ -42,25 +42,27 @@ func (ab *AdoptBootstrapper) Prefill(bd common.BootstrapConfig, state interfaces
 		return err
 	}
 
+	logger.Debugf("Adopt Bootstrap prefill finished with %+v", ab)
+
 	return nil
 }
 
 // Precheck verifies all provided values are correct before bootstrapping
 func (ab *AdoptBootstrapper) Precheck(ctx context.Context, state interfaces.StateInterface) error {
 	if len(ab.FSID) == 0 {
-		err := fmt.Errorf("missing fsid is mandatory for adopting a ceph cluster")
+		err := fmt.Errorf("need fsid for adopting a ceph cluster, none provided")
 		logger.Error(err.Error())
 		return err
 	}
 
 	if len(ab.AdminKey) == 0 {
-		err := fmt.Errorf("cannot adopt a ceph cluster without admin key")
+		err := fmt.Errorf("need admin key for adopting a ceph cluster, none provided")
 		logger.Error(err.Error())
 		return err
 	}
 
 	if len(ab.MonHosts) == 0 {
-		err := fmt.Errorf("missing mon hosts mandatory for adopting a ceph cluster")
+		err := fmt.Errorf("need atleast one mon host for adopting a ceph cluster, none provided")
 		logger.Error(err.Error())
 		return err
 	}
@@ -147,6 +149,7 @@ func (ab *AdoptBootstrapper) updateCephClusterConfigs() error {
 			logger.Errorf("failed to set public_network config in ceph cluster: %v", err)
 			return err
 		}
+		logger.Debugf("Configured ceph public network as %s", ab.PublicNet)
 	}
 
 	clusterNet, err := ceph.GetConfigItem(types.Config{
@@ -167,6 +170,7 @@ func (ab *AdoptBootstrapper) updateCephClusterConfigs() error {
 			logger.Errorf("failed to set cluster_network config in ceph cluster: %v", err)
 			return err
 		}
+		logger.Debugf("Configured ceph cluster network as %s", ab.ClusterNet)
 	}
 
 	return nil

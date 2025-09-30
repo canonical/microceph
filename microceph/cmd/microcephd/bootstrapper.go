@@ -40,15 +40,13 @@ var GetBootstrapper = func(bd common.BootstrapConfig, state interfaces.StateInte
 	return bootstrapper, nil
 }
 
-// ##### Validation methods for various members of the bootstrap config structure #####
-
 // PopulateDefaultNetworkParams provides missing network parameters with default values.
 func PopulateDefaultNetworkParams(state interfaces.StateInterface, monIP *string, publicNet *string, clusterNet *string) error {
 	var err error
 
-	if len(*monIP) != 0 {
-		logger.Debugf("mon ip provided as %s, will be used to deduce public network not provided", *monIP)
-	} else { // Initialise mon-ip if not provided.
+	logger.Debugf("Provided Bootstrap params: mon ip (%s), public net (%s), cluster net (%s)", *monIP, *publicNet, *clusterNet)
+
+	if len(*monIP) == 0 { // Initialise mon-ip if not provided.
 		if len(*publicNet) == 0 {
 			// Use default value if public address is also not provided.
 			*monIP = state.ClusterState().Address().Hostname()
@@ -100,6 +98,8 @@ func StripV2OnlyMonIP(monIP string) string {
 	return monIP
 }
 
+// ##### Validation methods for various members of the bootstrap config structure #####
+
 // ValidateNetworkParams validates network parameters for bootstrap and assign default values if needed.
 func ValidateNetworkParams(state interfaces.StateInterface, monIP *string, publicNet *string, clusterNet *string) error {
 	var err error
@@ -125,6 +125,8 @@ func ValidateNetworkParams(state interfaces.StateInterface, monIP *string, publi
 		logger.Errorf("failed to locate cluster network %s on host: %v", *clusterNet, err)
 		return err
 	}
+
+	logger.Debugf("Succesfully validated mon-ip(%s), public_network(%s) and cluster_network(%s)", *monIP, *publicNet, *clusterNet)
 
 	return nil
 }

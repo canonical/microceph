@@ -42,6 +42,8 @@ func (ccf CephConfFile) Render(confFileName string) error {
 		return fmt.Errorf("mandatory param pubNet is missing")
 	}
 
+	logger.Debugf("writing %s with %+v", confFileName, ccf)
+
 	// Write ceph.conf contents.
 	conf := NewCephConfig(confFileName)
 	return conf.WriteConfig(
