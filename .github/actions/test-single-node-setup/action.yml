@@ -1,0 +1,46 @@
+name: MicroCeph Test Single Node Setup
+description: Common setup steps for MicroCeph single node testing
+
+inputs:
+  osd-count:
+    description: Number of OSDs to add. Skipped if 0.
+    required: false
+    default: 0
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download snap
+      uses: actions/download-artifact@v4
+      with:
+        name: snaps
+        path: /home/runner
+
+    - name: Copy utils
+      shell: bash
+      run: cp tests/scripts/actionutils.sh $HOME
+
+    - name: Clear FORWARD firewall rules
+      shell: bash
+      run: ~/actionutils.sh cleaript
+
+    - name: Free disk
+      shell: bash
+      run: ~/actionutils.sh free_runner_disk
+
+    - name: Install local microceph snap and setup
+      shell: bash
+      run: |
+        ~/actionutils.sh install_tools
+        ~/actionutils.sh install_microceph
+
+    - name: Add loopback file OSDs
+      if: ${{ inputs.osd-count != 0 }}
+      shell: bash
+      run: |
+        set -uex
+
+        sudo microceph disk add loop,1G,${{ inputs.osd-count }}
+        ~/actionutils.sh wait_for_osds ${{ inputs.osd-count }}
+
+        sudo microceph.ceph -s
