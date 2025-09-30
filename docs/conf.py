@@ -202,8 +202,10 @@ else:
 # NOTE: If undefined, set to None, or empty,
 #       the sphinx_reredirects extension will be disabled.
 
-redirects = {}
-
+redirects = {
+    # The FDE topic was split to a how-to and explanation; explanation topic was renamed
+    'explanation/security/full-disk-encryption': '../../security/about-fde',
+}
 
 ###########################
 # Link checker exceptions #
