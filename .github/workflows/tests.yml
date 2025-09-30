@@ -69,1153 +69,1206 @@ jobs:
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install and setup
-      run: |
-        ~/actionutils.sh install_tools
-        ~/actionutils.sh install_microceph
+      - name: Install and setup
+        run: |
+          ~/actionutils.sh install_tools
+          ~/actionutils.sh install_microceph
 
-        set -uex
-        # Verify metadata.yaml
-        meta=/var/snap/microceph/current/conf/metadata.yaml
-        cat $meta
-        grep -q ceph-version $meta
+          set -uex
+          # Verify metadata.yaml
+          meta=/var/snap/microceph/current/conf/metadata.yaml
+          cat $meta
+          grep -q ceph-version $meta
 
-        # Verify health and auto crush rule
-        sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"
-        sudo microceph.ceph osd crush rule ls | grep -F microceph_auto_osd
+          # Verify health and auto crush rule
+          sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"
+          sudo microceph.ceph osd crush rule ls | grep -F microceph_auto_osd
 
-    - name: Enable MicroCeph Orchestrator module
-      run: |
-        set -eux
-        sudo microceph.ceph mgr module ls | grep -F "microceph"
-        sudo microceph.ceph mgr module enable microceph
-        sudo microceph.ceph orch set backend microceph
+      - name: Enable MicroCeph Orchestrator module
+        run: |
+          set -eux
+          sudo microceph.ceph mgr module ls | grep -F "microceph"
+          sudo microceph.ceph mgr module enable microceph
+          sudo microceph.ceph orch set backend microceph
 
-    - name: Verify Orch module
-      run: |
-        set -eux
-        hn=$(hostname)
-        sudo microceph.ceph orch host ls | grep -F $hn
-        sudo microceph.ceph orch ls | grep -F "mon" | grep -F $hn
-        sudo microceph.ceph orch ls | grep -F "mds" | grep -F $hn
-        sudo microceph.ceph orch ls | grep -F "mgr" | grep -F $hn
+      - name: Verify Orch module
+        run: |
+          set -eux
+          hn=$(hostname)
+          sudo microceph.ceph orch host ls | grep -F $hn
+          sudo microceph.ceph orch ls | grep -F "mon" | grep -F $hn
+          sudo microceph.ceph orch ls | grep -F "mds" | grep -F $hn
+          sudo microceph.ceph orch ls | grep -F "mgr" | grep -F $hn
 
-    - name: Add OSD with failure
-      run: |
-        set -eux
-        loop_file="$(sudo mktemp -p /mnt XXXX.img)"
-        sudo truncate -s 1G "${loop_file}"
-        loop_dev="$(sudo losetup --show -f "${loop_file}")"
+      - name: Add OSD with failure
+        run: |
+          set -eux
+          loop_file="$(sudo mktemp -p /mnt XXXX.img)"
+          sudo truncate -s 1G "${loop_file}"
+          loop_dev="$(sudo losetup --show -f "${loop_file}")"
 
-        minor="${loop_dev##/dev/loop}"
-        sudo mknod -m 0660 "/dev/sdi21" b 7 "${minor}"
+          minor="${loop_dev##/dev/loop}"
+          sudo mknod -m 0660 "/dev/sdi21" b 7 "${minor}"
 
-        set +e
-        rc=$(sudo microceph disk add --wipe "/dev/sdi21" --encrypt |& grep -c Failure)
-        if [[ $rc -eq 0 ]] ; then echo "FDE should fail without dmcrypt: $rc"; exit 1; fi
+          set +e
+          rc=$(sudo microceph disk add --wipe "/dev/sdi21" --encrypt |& grep -c Failure)
+          if [[ $rc -eq 0 ]] ; then echo "FDE should fail without dmcrypt: $rc"; exit 1; fi
 
-        # actually creating additional loop devices is not required since this should fail in validation.
-        rc=$(sudo microceph disk add "/dev/sdi21" "/dev/sdi22" --wal-device "/dev/sdi23" |& grep -c "not supported for batch disk addition")
-        if [[ $rc -eq 0 ]] ; then echo "Batch disk addition should fail with wal device: $rc"; exit 1; fi
+          # actually creating additional loop devices is not required since this should fail in validation.
+          rc=$(sudo microceph disk add "/dev/sdi21" "/dev/sdi22" --wal-device "/dev/sdi23" |& grep -c "not supported for batch disk addition")
+          if [[ $rc -eq 0 ]] ; then echo "Batch disk addition should fail with wal device: $rc"; exit 1; fi
 
-        rc=$(sudo microceph disk add "/dev/sdi21" "/dev/sdi22" --db-device "/dev/sdi23" |& grep -c "not supported for batch disk addition")
-        if [[ $rc -eq 0 ]] ; then echo "Batch disk addition should fail with db device: $rc"; exit 1; fi
+          rc=$(sudo microceph disk add "/dev/sdi21" "/dev/sdi22" --db-device "/dev/sdi23" |& grep -c "not supported for batch disk addition")
+          if [[ $rc -eq 0 ]] ; then echo "Batch disk addition should fail with db device: $rc"; exit 1; fi
 
-    - name: Add OSDs with mounted block devices
-      run: |
-        sudo microceph status
-        sudo lsblk -f
-        ~/actionutils.sh verify_mount_check
+      - name: Add OSDs with mounted block devices
+        run: |
+          sudo microceph status
+          sudo lsblk -f
+          ~/actionutils.sh verify_mount_check
 
-    - name: Add OSDs
-      run: |
-        ~/actionutils.sh add_encrypted_osds
-        ~/actionutils.sh add_lvm_vol
+      - name: Add OSDs
+        run: |
+          ~/actionutils.sh add_encrypted_osds
+          ~/actionutils.sh add_lvm_vol
 
-    - name: Enable RGW
-      run: ~/actionutils.sh enable_rgw
+      - name: Enable RGW
+        run: ~/actionutils.sh enable_rgw
 
-    - name: Run system tests
-      run: |
-        set -eux
-        # List disks
-        sudo microceph disk list
-        # Show ceph's status
-        sudo microceph.ceph status
-        # Ceph status expectations for a single node cluster
-        test_single() {
-            local status="$1"
-            ( echo "$status" | grep -qF "mon: 1 daemons" ) || { echo fail ; return ; }
-            ( echo "$status" | grep -qE "mgr: .*active, " )|| { echo fail ; return ; }
-            ( echo "$status" | grep -qF "osd: 3 osds" )    || { echo fail ; return ; }
-            ( echo "$status" | grep -qF "rgw: 1 daemon" )  || { echo fail ; return ; }
-            echo ok
-        }
-        # Confirm ceph is healthy and services started
-        res=$( test_single "$( sudo microceph.ceph status )" )
-        [ $res = "ok" ] || { echo "single node status fails" ; exit 1 ; }
-        # Check health after restart
-        sudo snap stop microceph
-        sudo snap start microceph
-        for i in $(seq 1 16); do
-            status=$( sudo microceph.ceph status )
-            echo "$status"
-            res=$( test_single "$status" )
-            if [ $res = "ok" ] ; then
-                echo "Single tests pass"
-                break
-            else
-                echo "Single tests fail, retry $i/16"
-                sleep 15
-            fi
-        done
-        sleep 1
-        pgrep ceph-osd || { echo "No ceph-osd process found" ; exit 1; }
+      - name: Run system tests
+        run: |
+          set -eux
+          # List disks
+          sudo microceph disk list
+          # Show ceph's status
+          sudo microceph.ceph status
+          # Ceph status expectations for a single node cluster
+          test_single() {
+              local status="$1"
+              ( echo "$status" | grep -qF "mon: 1 daemons" ) || { echo fail ; return ; }
+              ( echo "$status" | grep -qE "mgr: .*active, " )|| { echo fail ; return ; }
+              ( echo "$status" | grep -qF "osd: 3 osds" )    || { echo fail ; return ; }
+              ( echo "$status" | grep -qF "rgw: 1 daemon" )  || { echo fail ; return ; }
+              echo ok
+          }
+          # Confirm ceph is healthy and services started
+          res=$( test_single "$( sudo microceph.ceph status )" )
+          [ $res = "ok" ] || { echo "single node status fails" ; exit 1 ; }
+          # Check health after restart
+          sudo snap stop microceph
+          sudo snap start microceph
+          for i in $(seq 1 16); do
+              status=$( sudo microceph.ceph status )
+              echo "$status"
+              res=$( test_single "$status" )
+              if [ $res = "ok" ] ; then
+                  echo "Single tests pass"
+                  break
+              else
+                  echo "Single tests fail, retry $i/16"
+                  sleep 15
+              fi
+          done
+          sleep 1
+          pgrep ceph-osd || { echo "No ceph-osd process found" ; exit 1; }
 
-    - name: Exercise RGW
-      run: ~/actionutils.sh testrgw
+      - name: Exercise RGW
+        run: ~/actionutils.sh testrgw
 
-    - name: Disable RGW
-      run: ~/actionutils.sh disable_rgw
+      - name: Disable RGW
+        run: ~/actionutils.sh disable_rgw
 
-    - name: Enable RGW with SSL enabled
-      run: ~/actionutils.sh enable_rgw_ssl
+      - name: Enable RGW with SSL enabled
+        run: ~/actionutils.sh enable_rgw_ssl
 
-    - name: Exercise RGW with SSL enabled
-      run: ~/actionutils.sh testrgw_ssl
+      - name: Exercise RGW with SSL enabled
+        run: ~/actionutils.sh testrgw_ssl
 
-    - name: Test Cluster Config
-      run: |
-        set -eux
-        cip=$(ip -4 -j route | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
+      - name: Test Cluster Config
+        run: |
+          set -eux
+          cip=$(ip -4 -j route | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
 
-        # pre config set timestamp for service age
-        ts=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
+          # pre config set timestamp for service age
+          ts=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
 
-        # set config
-        sudo microceph cluster config set cluster_network $cip/8 --wait
+          # set config
+          sudo microceph cluster config set cluster_network $cip/8 --wait
 
-        # post config set timestamp for service age
-        ts2=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
+          # post config set timestamp for service age
+          ts2=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
 
-        # Check config output
-        output=$(sudo microceph cluster config get cluster_network | grep -cim1 'cluster_network')
-        if [[ $output -lt 1 ]] ; then echo "config check failed: $output"; exit 1; fi
+          # Check config output
+          output=$(sudo microceph cluster config get cluster_network | grep -cim1 'cluster_network')
+          if [[ $output -lt 1 ]] ; then echo "config check failed: $output"; exit 1; fi
 
-        # Check service restarted
-        if [ $ts2 -lt $ts ]; then echo "config check failed: TS1: $ts2 TS2: $ts3"; exit 1; fi
+          # Check service restarted
+          if [ $ts2 -lt $ts ]; then echo "config check failed: TS1: $ts2 TS2: $ts3"; exit 1; fi
 
-        # reset config
-        sudo microceph cluster config reset cluster_network --wait
+          # reset config
+          sudo microceph cluster config reset cluster_network --wait
 
-        # post config reset timestamp for service age
-        ts3=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
+          # post config reset timestamp for service age
+          ts3=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
 
-        # Check service restarted
-        if [ $ts3 -lt $ts2 ]; then echo "config check failed: TS2: $ts2 TS3: $ts3"; exit 1; fi
+          # Check service restarted
+          if [ $ts3 -lt $ts2 ]; then echo "config check failed: TS2: $ts2 TS3: $ts3"; exit 1; fi
 
-    - name: Test pool operations
-      run: |
-        set +e
-        sudo microceph.ceph osd pool create mypool
-        sudo microceph pool set-rf --size 1 ""
-        sudo microceph.ceph config get osd.1 osd_pool_default_size | fgrep -x "1"
-        sudo microceph pool list | fgrep "mypool" | fgrep -q " 3 "
-        sudo microceph pool set-rf --size 3 mypool
-        sudo microceph.ceph osd pool get mypool size | fgrep -x "size: 3"
-        sudo microceph pool list | fgrep "mypool" | fgrep -q " 3 "
-        sudo microceph pool set-rf --size 1 "*"
-        sudo microceph.ceph osd pool get mypool size | fgrep -x "size: 1"
-        sudo microceph pool list | fgrep "mypool" | fgrep -q " 1 "
+      - name: Test pool operations
+        run: |
+          set +e
+          sudo microceph.ceph osd pool create mypool
+          sudo microceph pool set-rf --size 1 ""
+          sudo microceph.ceph config get osd.1 osd_pool_default_size | fgrep -x "1"
+          sudo microceph pool list | fgrep "mypool" | fgrep -q " 3 "
+          sudo microceph pool set-rf --size 3 mypool
+          sudo microceph.ceph osd pool get mypool size | fgrep -x "size: 3"
+          sudo microceph pool list | fgrep "mypool" | fgrep -q " 3 "
+          sudo microceph pool set-rf --size 1 "*"
+          sudo microceph.ceph osd pool get mypool size | fgrep -x "size: 1"
+          sudo microceph pool list | fgrep "mypool" | fgrep -q " 1 "
 
-    - name: Test log operations
-      run: |
-        set +e
-        sudo microceph log set-level warning
-        output=$(sudo microceph log get-level)
-        if [[ "$output" != "3" ]] ; then echo "incorrect log level: $output"; exit 1; fi
+      - name: Test log operations
+        run: |
+          set +e
+          sudo microceph log set-level warning
+          output=$(sudo microceph log get-level)
+          if [[ "$output" != "3" ]] ; then echo "incorrect log level: $output"; exit 1; fi
 
-    - name: Print logs for failure
-      if: failure()
-      run: |
-        sudo snap logs microceph -n 1000
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          sudo snap logs microceph -n 1000
 
-    - name: Test square brackets around IPv6
-      run: |
-        sudo snap remove microceph
-        export MON_IP="fd42:7273:f336:a22::1"
-        sudo ip -6 addr add dev eth0 "${MON_IP}"
-        ~/actionutils.sh install_microceph "${MON_IP}"
-        cat /var/snap/microceph/current/conf/ceph.conf
-        fgrep -q "[${MON_IP}]" /var/snap/microceph/current/conf/ceph.conf
+      - name: Test square brackets around IPv6
+        run: |
+          sudo snap remove microceph
+          export MON_IP="fd42:7273:f336:a22::1"
+          sudo ip -6 addr add dev eth0 "${MON_IP}"
+          ~/actionutils.sh install_microceph "${MON_IP}"
+          cat /var/snap/microceph/current/conf/ceph.conf
+          fgrep -q "[${MON_IP}]" /var/snap/microceph/current/conf/ceph.conf
 
-    - name: API Testing
-      run: |
-        ~/actionutils.sh install_hurl
-        ~/actionutils.sh hurl tests/hurl/services-mon.hurl
-        ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
+      - name: API Testing
+        run: |
+          ~/actionutils.sh install_hurl
+          ~/actionutils.sh hurl tests/hurl/services-mon.hurl
+          ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
 
   multi-node-tests:
     name: Multi node testing
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
 
-    - name: Create containers with loopback devices
-      run: ~/actionutils.sh create_containers public
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
 
-    - name: Install local microceph snap
-      run: ~/actionutils.sh install_multinode
+      - name: Install local microceph snap
+        run: ~/actionutils.sh install_multinode
 
-    - name: Bootstrap
-      run: ~/actionutils.sh bootstrap_head public
+      - name: Bootstrap
+        run: ~/actionutils.sh bootstrap_head public
 
-    - name: Setup cluster
-      run: ~/actionutils.sh cluster_nodes public
+      - name: Setup cluster
+        run: ~/actionutils.sh cluster_nodes public
 
-    - name: Verify config
-      run: ~/actionutils.sh test_ceph_conf
+      - name: Verify config
+        run: ~/actionutils.sh test_ceph_conf
 
-    - name: Add 2 OSDs
-      run: |
-        for c in node-wrk1 node-wrk2 ; do
-          ~/actionutils.sh add_osd_to_node $c
-        done
-        lxc exec node-wrk0 -- sh -c "microceph.ceph -s"
+      - name: Add 2 OSDs
+        run: |
+          for c in node-wrk1 node-wrk2 ; do
+            ~/actionutils.sh add_osd_to_node $c
+          done
+          lxc exec node-wrk0 -- sh -c "microceph.ceph -s"
 
-    - name: Exercise microceph status
-      run: |
-        set -uex
-        lxc exec node-wrk0 -- sh -c "sudo microceph status"
+      - name: Exercise microceph status
+        run: |
+          set -uex
+          lxc exec node-wrk0 -- sh -c "sudo microceph status"
 
-    - name: Test failure domain scale up
-      run: |
-        set -uex
-        # We still have failure domain OSD
-        lxc exec node-wrk0 -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 1
-        # Add a 3rd OSD, should switch to host failure domain
-        ~/actionutils.sh add_osd_to_node node-wrk0
-        ~/actionutils.sh headexec wait_for_osds 3
-        sleep 1
-        lxc exec node-wrk0 -- sh -c "sudo microceph.ceph -s"
-        # Now default to host rule
-        lxc exec node-wrk0 -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 2
-    - name: Test 3 osds present
-      run: |
-        set -uex
-        lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
+      - name: Test failure domain scale up
+        run: |
+          set -uex
+          # We still have failure domain OSD
+          lxc exec node-wrk0 -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 1
+          # Add a 3rd OSD, should switch to host failure domain
+          ~/actionutils.sh add_osd_to_node node-wrk0
+          ~/actionutils.sh headexec wait_for_osds 3
+          sleep 1
+          lxc exec node-wrk0 -- sh -c "sudo microceph.ceph -s"
+          # Now default to host rule
+          lxc exec node-wrk0 -- sh -c "sudo microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 2
+      - name: Test 3 osds present
+        run: |
+          set -uex
+          lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
 
-    - name: Test crush rules
-      run: |
-        set -uex
-        lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host
-        lxc exec node-wrk0 -- sh -c "microceph.ceph osd pool ls detail" | grep -F "crush_rule 2"
+      - name: Test crush rules
+        run: |
+          set -uex
+          lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host
+          lxc exec node-wrk0 -- sh -c "microceph.ceph osd pool ls detail" | grep -F "crush_rule 2"
 
-    - name: Add another OSD
-      run: |
-        ~/actionutils.sh add_osd_to_node node-wrk3
-        ~/actionutils.sh headexec wait_for_osds 4
+      - name: Add another OSD
+        run: |
+          ~/actionutils.sh add_osd_to_node node-wrk3
+          ~/actionutils.sh headexec wait_for_osds 4
 
-    - name: Remove OSD again
-      run: |
-        set -uex
-        lxc exec node-wrk0 -- sh -c "microceph disk remove 4"
-        lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
+      - name: Remove OSD again
+        run: |
+          set -uex
+          lxc exec node-wrk0 -- sh -c "microceph disk remove 4"
+          lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"
 
-    - name: Test migrate services
-      run: |
-        set -uex
-        ~/actionutils.sh test_migration node-wrk1 node-wrk3
+      - name: Test migrate services
+        run: |
+          set -uex
+          ~/actionutils.sh test_migration node-wrk1 node-wrk3
 
-    - name: Enable services on wrk1
-      run: ~/actionutils.sh headexec enable_services node-wrk1
+      - name: Enable services on wrk1
+        run: ~/actionutils.sh headexec enable_services node-wrk1
 
-    - name: Remove OSD again but don't scaledown crush rule.
-      run: |
-        set -uex
-        lxc exec node-wrk0 -- sh -c "microceph disk remove 3 --prohibit-crush-scaledown --bypass-safety-checks"
-        lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host
+      - name: Remove OSD again but don't scaledown crush rule.
+        run: |
+          set -uex
+          lxc exec node-wrk0 -- sh -c "microceph disk remove 3 --prohibit-crush-scaledown --bypass-safety-checks"
+          lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host
 
-    - name: Re-Add OSD
-      run: |
-        set -uex
-        ~/actionutils.sh add_osd_to_node node-wrk0
-        ~/actionutils.sh headexec wait_for_osds 3
+      - name: Re-Add OSD
+        run: |
+          set -uex
+          ~/actionutils.sh add_osd_to_node node-wrk0
+          ~/actionutils.sh headexec wait_for_osds 3
 
-    - name: Test remove node wrk3
-      run: |
-        set -uex
-        ~/actionutils.sh headexec remove_node node-wrk3
-        if lxc exec node-wrk0 -- sh -c "microceph status" | grep -q "^- node-wrk3 " ; then
-            echo "Failed: node-wrk3 still present"
-            exit 1
-        fi
-        output=$(lxc exec node-wrk0 -- sh -c "microceph.ceph -s")
-        (echo $output | fgrep "mon: 3 daemons") ||
-        (echo $output | grep "mon: 4 daemons.*out of quorum: node-wrk3")
+      - name: Test remove node wrk3
+        run: |
+          set -uex
+          ~/actionutils.sh headexec remove_node node-wrk3
+          if lxc exec node-wrk0 -- sh -c "microceph status" | grep -q "^- node-wrk3 " ; then
+              echo "Failed: node-wrk3 still present"
+              exit 1
+          fi
+          output=$(lxc exec node-wrk0 -- sh -c "microceph.ceph -s")
+          (echo $output | fgrep "mon: 3 daemons") ||
+          (echo $output | grep "mon: 4 daemons.*out of quorum: node-wrk3")
 
-    - name: Test client configurations
-      run: ~/actionutils.sh check_client_configs
+      - name: Test client configurations
+        run: ~/actionutils.sh check_client_configs
 
-    - name: Print logs for failure
-      if: failure()
-      run: |
-        sudo snap logs microceph -n 1000
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          sudo snap logs microceph -n 1000
 
   multi-node-tests-with-custom-microceph-ip:
     name: Multi node testing with custom microceph IP
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
 
-    - name: Create containers with loopback devices
-      run: ~/actionutils.sh create_containers internal
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers internal
 
-    - name: Install local microceph snap
-      run: ~/actionutils.sh install_multinode
+      - name: Install local microceph snap
+        run: ~/actionutils.sh install_multinode
 
-    - name: Bootstrap
-      run: ~/actionutils.sh bootstrap_head internal
+      - name: Bootstrap
+        run: ~/actionutils.sh bootstrap_head internal
 
-    - name: Setup cluster
-      run: ~/actionutils.sh cluster_nodes internal
+      - name: Setup cluster
+        run: ~/actionutils.sh cluster_nodes internal
 
-    - name: Add 3 OSDs
-      run: |
-        for c in node-wrk0 node-wrk1 node-wrk2 ; do
-          ~/actionutils.sh add_osd_to_node $c
-        done
+      - name: Add 3 OSDs
+        run: |
+          for c in node-wrk0 node-wrk1 node-wrk2 ; do
+            ~/actionutils.sh add_osd_to_node $c
+          done
 
-    - name: Test 3 osds present
-      run: |
-        set -uex
-        ~/actionutils.sh headexec wait_for_osds 3
-        lxc exec node-wrk0 -- sh -c "microceph.ceph -s"
+      - name: Test 3 osds present
+        run: |
+          set -uex
+          ~/actionutils.sh headexec wait_for_osds 3
+          lxc exec node-wrk0 -- sh -c "microceph.ceph -s"
 
-    - name: Print logs for failure
-      if: failure()
-      run: |
-        sudo snap logs microceph -n 1000
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          sudo snap logs microceph -n 1000
 
   test-maintenance-modes:
     name: Test maintenance mode
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
 
-    - name: Create 4 containers with loopback devices
-      run: ~/actionutils.sh create_containers internal
+      - name: Create 4 containers with loopback devices
+        run: ~/actionutils.sh create_containers internal
 
-    - name: Install local microceph snap
-      run: ~/actionutils.sh install_multinode
+      - name: Install local microceph snap
+        run: ~/actionutils.sh install_multinode
 
-    - name: Bootstrap
-      run: ~/actionutils.sh bootstrap_head internal
+      - name: Bootstrap
+        run: ~/actionutils.sh bootstrap_head internal
 
-    - name: Setup cluster
-      run: ~/actionutils.sh cluster_nodes internal
+      - name: Setup cluster
+        run: ~/actionutils.sh cluster_nodes internal
 
-    - name: Add and wait for OSDs
-      run: |
-        set -uex
-        for i in 0 1 2 3 ; do
-          ~/actionutils.sh add_osd_to_node "node-wrk$i"
-        done
-        ~/actionutils.sh headexec wait_for_osds 4
+      - name: Add and wait for OSDs
+        run: |
+          set -uex
+          for i in 0 1 2 3 ; do
+            ~/actionutils.sh add_osd_to_node "node-wrk$i"
+          done
+          ~/actionutils.sh headexec wait_for_osds 4
 
-    - name: Wait for ceph cluster to settle
-      run: |
-        sleep 30
-        ~/actionutils.sh headexec verify_health
+      - name: Wait for ceph cluster to settle
+        run: |
+          sleep 30
+          ~/actionutils.sh headexec verify_health
 
-    - name: Test dry run maintenance enter
-      run: ~/actionutils.sh test_dry_run_maintenance_enter node-wrk1
+      - name: Test dry run maintenance enter
+        run: ~/actionutils.sh test_dry_run_maintenance_enter node-wrk1
 
-    - name: Test dry run maintenance exit
-      run: ~/actionutils.sh test_dry_run_maintenance_exit node-wrk1
+      - name: Test dry run maintenance exit
+        run: ~/actionutils.sh test_dry_run_maintenance_exit node-wrk1
 
-    - name: Test enter and exit maintainenace mode without set noout and stop osd
-      run: ~/actionutils.sh test_maintenance_enter_and_exit node-wrk1
+      - name: Test enter and exit maintainenace mode without set noout and stop osd
+        run: ~/actionutils.sh test_maintenance_enter_and_exit node-wrk1
 
-    - name: Test enter and exit maintainenace mode with set noout and stop osd
-      run: ~/actionutils.sh test_maintenance_enter_set_noout_stop_osds_and_exit node-wrk1
+      - name: Test enter and exit maintainenace mode with set noout and stop osd
+        run: ~/actionutils.sh test_maintenance_enter_set_noout_stop_osds_and_exit node-wrk1
 
-    - name: Scale down the cluster to 3 nodes and stop 1 mon
-      run: |
-        set -uex
-        # reduce to 3 node cluster
-        ~/actionutils.sh headexec remove_disk osd.4
-        ~/actionutils.sh headexec remove_node node-wrk3
+      - name: Scale down the cluster to 3 nodes and stop 1 mon
+        run: |
+          set -uex
+          # reduce to 3 node cluster
+          ~/actionutils.sh headexec remove_disk osd.4
+          ~/actionutils.sh headexec remove_node node-wrk3
 
-        # reduce to only 2 active mons in a 3 node cluster
-        ~/actionutils.sh nodeexec node-wrk2 disable_mon
-        # wait for the cluster to report warning
-        for i in {0..100}; do
-            if ~/actionutils.sh headexec "microceph.ceph health | grep quorum" ; then
-              echo "Waiting for the cluster to be out of quorum..."
-              exit 0
-            fi
-            sleep 1
-        done
+          # reduce to only 2 active mons in a 3 node cluster
+          ~/actionutils.sh nodeexec node-wrk2 disable_mon
+          # wait for the cluster to report warning
+          for i in {0..100}; do
+              if ~/actionutils.sh headexec "microceph.ceph health | grep quorum" ; then
+                echo "Waiting for the cluster to be out of quorum..."
+                exit 0
+              fi
+              sleep 1
+          done
 
-        echo "Did not reach cluster warning state when there is only 2 out of 3 active mons"
-        exit 1
-
-    - name: Test not enough active mons for quorum
-      run: |
-        set -uex
-        if ~/actionutils.sh headexec "microceph cluster maintenance enter node-wrk1"; then
-          echo "Unexpected to succeed entering maintenance mode with 2 out of 3 mons active"
+          echo "Did not reach cluster warning state when there is only 2 out of 3 active mons"
           exit 1
-        fi
 
-    - name: Test force enter and exit maintainenace mode without set noout and stop osd
-      run: ~/actionutils.sh test_maintenance_enter_and_exit_force node-wrk1
+      - name: Test not enough active mons for quorum
+        run: |
+          set -uex
+          if ~/actionutils.sh headexec "microceph cluster maintenance enter node-wrk1"; then
+            echo "Unexpected to succeed entering maintenance mode with 2 out of 3 mons active"
+            exit 1
+          fi
 
-    - name: Test force enter and exit maintainenace mode with set noout and stop osd
-      run: ~/actionutils.sh test_maintenance_enter_set_noout_stop_osds_and_exit_force node-wrk1
+      - name: Test force enter and exit maintainenace mode without set noout and stop osd
+        run: ~/actionutils.sh test_maintenance_enter_and_exit_force node-wrk1
+
+      - name: Test force enter and exit maintainenace mode with set noout and stop osd
+        run: ~/actionutils.sh test_maintenance_enter_set_noout_stop_osds_and_exit_force node-wrk1
 
   loop-file-tests:
     name: Test with loopback file OSDs
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install and setup
-      run: |
-        ~/actionutils.sh install_tools        
-        ~/actionutils.sh install_microceph
+      - name: Install and setup
+        run: |
+          ~/actionutils.sh install_tools        
+          ~/actionutils.sh install_microceph
 
-    - name: Add loopback file OSDs
-      run: |
-        set -uex
-        sudo microceph disk add loop,1G,4
-        ~/actionutils.sh wait_for_osds 4
-        sudo microceph.ceph -s
+      - name: Add loopback file OSDs
+        run: |
+          set -uex
+          sudo microceph disk add loop,1G,4
+          ~/actionutils.sh wait_for_osds 4
+          sudo microceph.ceph -s
 
-    - name: Enable RGW
-      run: ~/actionutils.sh enable_rgw
+      - name: Enable RGW
+        run: ~/actionutils.sh enable_rgw
 
-    - name: Exercise RGW
-      run: ~/actionutils.sh testrgw
+      - name: Exercise RGW
+        run: ~/actionutils.sh testrgw
 
-    - name: Remove OSD
-      run: |
-        set -uex
-        sudo microceph disk remove osd.1
-        ~/actionutils.sh wait_for_osds 3
-        sudo microceph.ceph -s
+      - name: Remove OSD
+        run: |
+          set -uex
+          sudo microceph disk remove osd.1
+          ~/actionutils.sh wait_for_osds 3
+          sudo microceph.ceph -s
 
-    - name: Print logs for failure
-      if: failure()
-      run: |
-        sudo snap logs microceph -n 1000
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          sudo snap logs microceph -n 1000
 
   wal-db-tests:
     name: Test WAL/DB device usage
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install and setup
-      run: |
-        ~/actionutils.sh install_tools        
-        ~/actionutils.sh install_microceph
+      - name: Install and setup
+        run: |
+          ~/actionutils.sh install_tools        
+          ~/actionutils.sh install_microceph
 
-    - name: Add loopback file OSDs
-      run: |
-        set -uex
-        sudo microceph disk add loop,1G,3
-        ~/actionutils.sh wait_for_osds 3
-        sudo microceph.ceph -s
+      - name: Add loopback file OSDs
+        run: |
+          set -uex
+          sudo microceph disk add loop,1G,3
+          ~/actionutils.sh wait_for_osds 3
+          sudo microceph.ceph -s
 
-    - name: Add WAL/DB enabled OSD
-      run: |
-        set -uex
-        ~/actionutils.sh create_loop_devices
-        sudo microceph disk list
-        sudo microceph disk add /dev/sdia --wal-device /dev/sdib --db-device /dev/sdic
-        ~/actionutils.sh wait_for_osds 4
-        sudo microceph.ceph -s
+      - name: Add WAL/DB enabled OSD
+        run: |
+          set -uex
+          ~/actionutils.sh create_loop_devices
+          sudo microceph disk list
+          sudo microceph disk add /dev/sdia --wal-device /dev/sdib --db-device /dev/sdic
+          ~/actionutils.sh wait_for_osds 4
+          sudo microceph.ceph -s
 
-    - name: Check that disk list doesn't contain WAL/DB blockdevs
-      run: |
-        set -uex
-        sudo microceph disk list
-        for d in sdb sdc ; do
-            if sudo microceph disk list | grep -q /dev/$d ; then
-                echo "Error: found WAL/DB device: /dev/$d"
-                exit 1
-            fi
-        done
+      - name: Check that disk list doesn't contain WAL/DB blockdevs
+        run: |
+          set -uex
+          sudo microceph disk list
+          for d in sdb sdc ; do
+              if sudo microceph disk list | grep -q /dev/$d ; then
+                  echo "Error: found WAL/DB device: /dev/$d"
+                  exit 1
+              fi
+          done
 
-    - name: Enable RGW
-      run: ~/actionutils.sh enable_rgw
+      - name: Enable RGW
+        run: ~/actionutils.sh enable_rgw
 
-    - name: Exercise RGW
-      run: ~/actionutils.sh testrgw
+      - name: Exercise RGW
+        run: ~/actionutils.sh testrgw
 
-    - name: Print logs for failure
-      if: failure()
-      run: |
-        sudo snap logs microceph -n 1000
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          sudo snap logs microceph -n 1000
 
   upgrade-quincy-tests:
     name: Test quincy upgrades
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install dependencies
-      run: |
-        ~/actionutils.sh install_tools
-        ~/actionutils.sh setup_lxd
+      - name: Install dependencies
+        run: |
+          ~/actionutils.sh install_tools
+          ~/actionutils.sh setup_lxd
 
-    - name: Create containers with loopback devices
-      run: ~/actionutils.sh create_containers public
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
 
-    - name: Install quincy stable from store
-      run: ~/actionutils.sh install_store quincy/stable
+      - name: Install quincy stable from store
+        run: ~/actionutils.sh install_store quincy/stable
 
-    - name: Bootstrap
-      run: ~/actionutils.sh bootstrap_head
+      - name: Bootstrap
+        run: ~/actionutils.sh bootstrap_head
 
-    - name: Setup cluster
-      run: ~/actionutils.sh cluster_nodes
+      - name: Setup cluster
+        run: ~/actionutils.sh cluster_nodes
 
-    - name: Add 3 OSDs
-      run: |
-        for c in node-wrk0 node-wrk1 node-wrk2 ; do
-          ~/actionutils.sh add_osd_to_node $c
-        done
-        ~/actionutils.sh headexec wait_for_osds 3
+      - name: Add 3 OSDs
+        run: |
+          for c in node-wrk0 node-wrk1 node-wrk2 ; do
+            ~/actionutils.sh add_osd_to_node $c
+          done
+          ~/actionutils.sh headexec wait_for_osds 3
 
-    - name: Enable RGW
-      run: ~/actionutils.sh headexec enable_rgw
+      - name: Enable RGW
+        run: ~/actionutils.sh headexec enable_rgw
 
-    - name: Exercise RGW
-      run: ~/actionutils.sh headexec testrgw
+      - name: Exercise RGW
+        run: ~/actionutils.sh headexec testrgw
 
-    - name: Install local build
-      run: ~/actionutils.sh upgrade_multinode
+      - name: Install local build
+        run: ~/actionutils.sh upgrade_multinode
 
-    - name: Wait until 3 OSDs are up
-      run:  ~/actionutils.sh headexec wait_for_osds 3
+      - name: Wait until 3 OSDs are up
+        run: ~/actionutils.sh headexec wait_for_osds 3
 
-    - name: Verify health
-      run:  ~/actionutils.sh headexec verify_health
+      - name: Verify health
+        run: ~/actionutils.sh headexec verify_health
 
-    - name: Exercise RGW again
-      run: ~/actionutils.sh headexec testrgw
+      - name: Exercise RGW again
+        run: ~/actionutils.sh headexec testrgw
 
-    - name: Exercise microceph status
-      run: |
-        set -uex
-        lxc exec node-wrk0 -- sh -c "sudo microceph status"
-
+      - name: Exercise microceph status
+        run: |
+          set -uex
+          lxc exec node-wrk0 -- sh -c "sudo microceph status"
 
   upgrade-reef-tests:
     name: Test reef upgrades
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install dependencies
-      run: |
-        ~/actionutils.sh install_tools
-        ~/actionutils.sh setup_lxd
+      - name: Install dependencies
+        run: |
+          ~/actionutils.sh install_tools
+          ~/actionutils.sh setup_lxd
 
-    - name: Create containers with loopback devices
-      run: ~/actionutils.sh create_containers public
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
 
-    - name: Install reef stable from store
-      run: ~/actionutils.sh install_store reef/stable
+      - name: Install reef stable from store
+        run: ~/actionutils.sh install_store reef/stable
 
-    - name: Bootstrap
-      run: ~/actionutils.sh bootstrap_head
+      - name: Bootstrap
+        run: ~/actionutils.sh bootstrap_head
 
-    - name: Setup cluster
-      run: ~/actionutils.sh cluster_nodes
+      - name: Setup cluster
+        run: ~/actionutils.sh cluster_nodes
 
-    - name: Add 3 OSDs
-      run: |
-        for c in node-wrk0 node-wrk1 node-wrk2 ; do
-          ~/actionutils.sh add_osd_to_node $c
-        done
-        ~/actionutils.sh headexec wait_for_osds 3
+      - name: Add 3 OSDs
+        run: |
+          for c in node-wrk0 node-wrk1 node-wrk2 ; do
+            ~/actionutils.sh add_osd_to_node $c
+          done
+          ~/actionutils.sh headexec wait_for_osds 3
 
-    - name: Enable RGW
-      run: ~/actionutils.sh headexec enable_rgw
+      - name: Enable RGW
+        run: ~/actionutils.sh headexec enable_rgw
 
-    - name: Exercise RGW
-      run: ~/actionutils.sh headexec testrgw
+      - name: Exercise RGW
+        run: ~/actionutils.sh headexec testrgw
 
-    - name: Install local build
-      run: ~/actionutils.sh upgrade_multinode
+      - name: Install local build
+        run: ~/actionutils.sh upgrade_multinode
 
-    - name: Wait until 3 OSDs are up
-      run:  ~/actionutils.sh headexec wait_for_osds 3
+      - name: Wait until 3 OSDs are up
+        run: ~/actionutils.sh headexec wait_for_osds 3
 
-    - name: Verify health
-      run:  ~/actionutils.sh headexec verify_health
+      - name: Verify health
+        run: ~/actionutils.sh headexec verify_health
 
-    - name: Exercise RGW again
-      run: ~/actionutils.sh headexec testrgw
+      - name: Exercise RGW again
+        run: ~/actionutils.sh headexec testrgw
 
-    - name: Exercise microceph status
-      run: |
-        set -uex
-        lxc exec node-wrk0 -- sh -c "sudo microceph status"
+      - name: Exercise microceph status
+        run: |
+          set -uex
+          lxc exec node-wrk0 -- sh -c "sudo microceph status"
 
-    - name: Setup upterm session
-      if: ${{ failure() && runner.debug }}
-      uses: lhotari/action-upterm@v1
+      - name: Setup upterm session
+        if: ${{ failure() && runner.debug }}
+        uses: lhotari/action-upterm@v1
 
   cluster-tests:
     name: Test MicroCeph Cluster features.
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install and setup
-      run: |
-        ~/actionutils.sh install_tools        
-        ~/actionutils.sh install_microceph
+      - name: Install and setup
+        run: |
+          ~/actionutils.sh install_tools        
+          ~/actionutils.sh install_microceph
 
-    - name: Add loopback file OSDs
-      run: |
-        set -uex
-        sudo microceph disk add loop,1G,3
-        ~/actionutils.sh wait_for_osds 3
-        sudo microceph.ceph -s
+      - name: Add loopback file OSDs
+        run: |
+          set -uex
+          sudo microceph disk add loop,1G,3
+          ~/actionutils.sh wait_for_osds 3
+          sudo microceph.ceph -s
 
-    - name: Enable RGW
-      run: ~/actionutils.sh enable_rgw
+      - name: Enable RGW
+        run: ~/actionutils.sh enable_rgw
 
-    - name: Exercise RGW
-      run: ~/actionutils.sh testrgw
+      - name: Exercise RGW
+        run: ~/actionutils.sh testrgw
 
-    - name: Bombard MicroCeph with cluster configs
-      run: ~/actionutils.sh bombard_rgw_configs
+      - name: Bombard MicroCeph with cluster configs
+        run: ~/actionutils.sh bombard_rgw_configs
 
-    - name: Exercise RGW again
-      run: ~/actionutils.sh testrgw "newFile"
+      - name: Exercise RGW again
+        run: ~/actionutils.sh testrgw "newFile"
 
   rbd-replication-test:
     name: Test MicroCeph RBD Remote Replication features.
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install dependencies
-      run: |
-        ~/actionutils.sh install_tools        
-        ~/actionutils.sh setup_lxd
+      - name: Install dependencies
+        run: |
+          ~/actionutils.sh install_tools        
+          ~/actionutils.sh setup_lxd
 
-    - name: Create containers with loopback devices
-      run: ~/actionutils.sh create_containers public
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
 
-    - name: Install local microceph snap
-      run: ~/actionutils.sh install_multinode
+      - name: Install local microceph snap
+        run: ~/actionutils.sh install_multinode
 
-    - name: Bootstrap
-      run: ~/actionutils.sh remote_simple_bootstrap_two_sites
+      - name: Bootstrap
+        run: ~/actionutils.sh remote_simple_bootstrap_two_sites
 
-    - name: Exchange Cluster tokens
-      run: ~/actionutils.sh remote_exchange_site_tokens
+      - name: Exchange Cluster tokens
+        run: ~/actionutils.sh remote_exchange_site_tokens
 
-    - name: Verify Remote authentication
-      run: ~/actionutils.sh remote_perform_remote_ops_check
+      - name: Verify Remote authentication
+        run: ~/actionutils.sh remote_perform_remote_ops_check
 
-    - name: Enable RBD Mirror Daemon
-      run : ~/actionutils.sh remote_enable_mirror_daemon "rbd-mirror"
+      - name: Enable RBD Mirror Daemon
+        run: ~/actionutils.sh remote_enable_mirror_daemon "rbd-mirror"
 
-    - name: Verify snapshot replication on pool fails
-      run: ~/actionutils.sh remote_verify_snapshot_pool_replication_fails
+      - name: Verify snapshot replication on pool fails
+        run: ~/actionutils.sh remote_verify_snapshot_pool_replication_fails
 
-    - name: Configure RBD mirror
-      run : ~/actionutils.sh remote_configure_rbd_mirroring
+      - name: Configure RBD mirror
+        run: ~/actionutils.sh remote_configure_rbd_mirroring
 
-    - name: Wait for RBD mirror to sync images
-      run : ~/actionutils.sh remote_wait_for_secondary_to_sync 4
+      - name: Wait for RBD mirror to sync images
+        run: ~/actionutils.sh remote_wait_for_secondary_to_sync 4
 
-    - name: Verify RBD mirror
-      run : ~/actionutils.sh remote_verify_rbd_mirroring
+      - name: Verify RBD mirror
+        run: ~/actionutils.sh remote_verify_rbd_mirroring
 
-    - name: Failover site A to Site B
-      run : ~/actionutils.sh remote_failover_to_siteb
+      - name: Failover site A to Site B
+        run: ~/actionutils.sh remote_failover_to_siteb
 
-    - name: Disable RBD mirror
-      run : ~/actionutils.sh remote_disable_rbd_mirroring
+      - name: Disable RBD mirror
+        run: ~/actionutils.sh remote_disable_rbd_mirroring
 
-    - name: Verify Remote removal
-      run: ~/actionutils.sh remote_remove_and_verify
+      - name: Verify Remote removal
+        run: ~/actionutils.sh remote_remove_and_verify
 
   cephfs-replication-test:
     name: Test MicroCeph Cephfs Remote Replication features.
     runs-on: ubuntu-24.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
 
-    - name: Create containers with loopback devices
-      run: ~/actionutils.sh create_containers public
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
 
-    - name: Install local microceph snap
-      run: ~/actionutils.sh install_multinode
+      - name: Install local microceph snap
+        run: ~/actionutils.sh install_multinode
 
-    - name: Bootstrap
-      run: ~/actionutils.sh remote_simple_bootstrap_two_sites
+      - name: Bootstrap
+        run: ~/actionutils.sh remote_simple_bootstrap_two_sites
 
-    - name: Exchange Cluster tokens
-      run: ~/actionutils.sh remote_exchange_site_tokens
+      - name: Exchange Cluster tokens
+        run: ~/actionutils.sh remote_exchange_site_tokens
 
-    - name: Verify Remote authentication
-      run: ~/actionutils.sh remote_perform_remote_ops_check
+      - name: Verify Remote authentication
+        run: ~/actionutils.sh remote_perform_remote_ops_check
 
-    - name: Enable Cephfs Mirror Daemon
-      run : ~/actionutils.sh remote_enable_mirror_daemon "cephfs-mirror"
+      - name: Enable Cephfs Mirror Daemon
+        run: ~/actionutils.sh remote_enable_mirror_daemon "cephfs-mirror"
 
-    - name: Install ceph-common on host
-      run : sudo apt install ceph-common -y
+      - name: Install ceph-common on host
+        run: sudo apt install ceph-common -y
 
-    - name: Configure CephFS mirror
-      run : ~/actionutils.sh remote_configure_cephfs_mirroring
+      - name: Configure CephFS mirror
+        run: ~/actionutils.sh remote_configure_cephfs_mirroring
 
-    - name: Verify CephFS mirror list
-      run : ~/actionutils.sh replication_verify_cephfs_list_output
+      - name: Verify CephFS mirror list
+        run: ~/actionutils.sh replication_verify_cephfs_list_output node-wrk0
+      - name: Perform IO and Wait for CephFS mirror to sync directories
+        run: ~/actionutils.sh remote_wait_cephfs_for_secondary_to_sync 40
 
-    - name: Perform IO and Wait for CephFS mirror to sync directories
-      run : ~/actionutils.sh remote_wait_cephfs_for_secondary_to_sync 40
+      - name: Verify Data integrity
+        run: ~/actionutils.sh remote_verify_cephfs_mirroring
 
-    - name: Verify Data integrity
-      run : ~/actionutils.sh remote_verify_cephfs_mirroring
-
-    - name: Disable Cephfs Mirror daemons
-      run : ~/actionutils.sh remote_disable_mirror_daemon "cephfs-mirror"
+      - name: Disable Cephfs Mirror daemons
+        run: ~/actionutils.sh remote_disable_mirror_daemon "cephfs-mirror"
 
   nfs-test:
     name: Test MicroCeph NFS feature
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install and setup
-      run: ~/actionutils.sh install_microceph
+      - name: Install and setup
+        run: ~/actionutils.sh install_microceph
 
-    - name: Add loopback file OSDs
-      run: |
-        set -uex
-        sudo microceph disk add loop,1G,3
-        ~/actionutils.sh wait_for_osds 3
-        sudo microceph.ceph -s
+      - name: Add loopback file OSDs
+        run: |
+          set -uex
+          sudo microceph disk add loop,1G,3
+          ~/actionutils.sh wait_for_osds 3
+          sudo microceph.ceph -s
 
-    - name: Enable NFS
-      run: ~/actionutils.sh enable_nfs foo
+      - name: Enable NFS
+        run: ~/actionutils.sh enable_nfs foo
 
-    - name: Create NFS FS volume
-      run: ~/actionutils.sh create_nfs_fs_volume testfs
+      - name: Create NFS FS volume
+        run: ~/actionutils.sh create_nfs_fs_volume testfs
 
-    - name: Create NFS export
-      run: ~/actionutils.sh create_nfs_export foo testfs
+      - name: Create NFS export
+        run: ~/actionutils.sh create_nfs_export foo testfs
 
-    - name: Mount and test NFS
-      run: |
-        set -uex
+      - name: Mount and test NFS
+        run: |
+          set -uex
 
-        # Needed to mount the Ceph NFS share.
-        sudo apt install ceph-common
-        sudo mkdir /mnt/nfs
-        sudo cp /var/snap/microceph/current/conf/ceph.conf /etc/ceph/
-        sudo cp /var/snap/microceph/current/conf/ceph.client.admin.keyring /etc/ceph/
+          # Needed to mount the Ceph NFS share.
+          sudo apt install ceph-common
+          sudo mkdir /mnt/nfs
+          sudo cp /var/snap/microceph/current/conf/ceph.conf /etc/ceph/
+          sudo cp /var/snap/microceph/current/conf/ceph.client.admin.keyring /etc/ceph/
 
-        addr="$(hostname -I | cut -d ' ' -f1)"
-        sudo mount -t ceph "${addr}:/" /mnt/nfs -o name=admin
+          addr="$(hostname -I | cut -d ' ' -f1)"
+          sudo mount -t ceph "${addr}:/" /mnt/nfs -o name=admin
 
-        echo "Hello there!" | sudo tee /mnt/nfs/general.kenobi
-        cat /mnt/nfs/general.kenobi
+          echo "Hello there!" | sudo tee /mnt/nfs/general.kenobi
+          cat /mnt/nfs/general.kenobi
 
-        sudo umount /mnt/nfs
+          sudo umount /mnt/nfs
 
-    - name: Disable NFS
-      run: ~/actionutils.sh disable_nfs foo
+      - name: Disable NFS
+        run: ~/actionutils.sh disable_nfs foo
 
   nfs-multinode-test:
     name: Test MicroCeph NFS feature (multinode)
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
 
-    - name: Create containers with loopback devices
-      run: ~/actionutils.sh create_containers public
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
 
-    - name: Install local microceph snap
-      run: ~/actionutils.sh install_multinode
+      - name: Install local microceph snap
+        run: ~/actionutils.sh install_multinode
 
-    - name: Bootstrap
-      run: ~/actionutils.sh bootstrap_head public
+      - name: Bootstrap
+        run: ~/actionutils.sh bootstrap_head public
 
-    - name: Setup cluster
-      run: ~/actionutils.sh cluster_nodes public
+      - name: Setup cluster
+        run: ~/actionutils.sh cluster_nodes public
 
-    - name: Add 3 OSDs
-      run: |
-        for c in node-wrk0 node-wrk1 node-wrk2 ; do
-          ~/actionutils.sh add_osd_to_node $c
-        done
+      - name: Add 3 OSDs
+        run: |
+          for c in node-wrk0 node-wrk1 node-wrk2 ; do
+            ~/actionutils.sh add_osd_to_node $c
+          done
 
-    - name: Enable NFS
-      run: ~/actionutils.sh enable_nfs_in_nodes foo node-wrk0 node-wrk1 node-wrk2
+      - name: Enable NFS
+        run: ~/actionutils.sh enable_nfs_in_nodes foo node-wrk0 node-wrk1 node-wrk2
 
-    - name: Create NFS FS volume
-      run: ~/actionutils.sh create_nfs_fs_volume_in_node testfs node-wrk0
+      - name: Create NFS FS volume
+        run: ~/actionutils.sh create_nfs_fs_volume_in_node testfs node-wrk0
 
-    - name: Create NFS export
-      run: ~/actionutils.sh create_nfs_export_in_node foo testfs node-wrk0
+      - name: Create NFS export
+        run: ~/actionutils.sh create_nfs_export_in_node foo testfs node-wrk0
 
-    - name: Mount and test NFS
-      run: |
-        set -uex
+      - name: Mount and test NFS
+        run: |
+          set -uex
 
-        # Needed to mount the NFS share.
-        sudo apt install nfs-common
+          # Needed to mount the NFS share.
+          sudo apt install nfs-common
 
-        addr="$(lxc exec node-wrk0 -- bash -c 'hostname -I' | cut -d ' ' -f1)"
-        sudo mkdir /mnt/nfs
-        sudo mount -t nfs -o rw "${addr}:/testfsdir" /mnt/nfs/
+          addr="$(lxc exec node-wrk0 -- bash -c 'hostname -I' | cut -d ' ' -f1)"
+          sudo mkdir /mnt/nfs
+          sudo mount -t nfs -o rw "${addr}:/testfsdir" /mnt/nfs/
 
-        echo "Hello there!" | sudo tee /mnt/nfs/general.kenobi
-        cat /mnt/nfs/general.kenobi
+          echo "Hello there!" | sudo tee /mnt/nfs/general.kenobi
+          cat /mnt/nfs/general.kenobi
 
-        sudo umount /mnt/nfs
+          sudo umount /mnt/nfs
 
-    - name: Disable NFS
-      run: ~/actionutils.sh disable_nfs_in_nodes foo node-wrk0 node-wrk1 node-wrk2
+      - name: Disable NFS
+        run: ~/actionutils.sh disable_nfs_in_nodes foo node-wrk0 node-wrk1 node-wrk2
 
   messenger-v2-tests:
     name: Messenger v2 tests
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
 
-    - name: Create containers with loopback devices
-      run: ~/actionutils.sh create_containers public
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
 
-    - name: Install local microceph snap
-      run: ~/actionutils.sh install_multinode
+      - name: Install local microceph snap
+        run: ~/actionutils.sh install_multinode
 
-    - name: Bootstrap
-      run: ~/actionutils.sh bootstrap_head public --v2-only
+      - name: Bootstrap
+        run: ~/actionutils.sh bootstrap_head public --v2-only
 
-    - name: Verify messenger v2 on head node
-      run: ~/actionutils.sh test_v2_single_node
+      - name: Verify messenger v2 on head node
+        run: ~/actionutils.sh test_v2_single_node
 
-    - name: Setup cluster
-      run: ~/actionutils.sh cluster_nodes public
+      - name: Setup cluster
+        run: ~/actionutils.sh cluster_nodes public
 
-    - name: Verify messenger v2 on all nodes
-      run: ~/actionutils.sh test_v2_all_nodes
+      - name: Verify messenger v2 on all nodes
+        run: ~/actionutils.sh test_v2_all_nodes
 
   wiping-test:
     name: Verify pristineness and wiping
     runs-on: ubuntu-22.04
     needs: build-microceph
     steps:
-    - name: Download snap
-      uses: actions/download-artifact@v4
-      with:
-        name: snaps
-        path: /home/runner
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
 
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
 
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
 
-    - name: Run pristineness tests
-      run: ~/actionutils.sh verify_pristine_check
+      - name: Run pristineness tests
+        run: ~/actionutils.sh verify_pristine_check
+
+  cephadm-adopt-test:
+    name: Adopt test with cephadm
+    runs-on: ubuntu-24.04
+    needs: build-microceph
+    steps:
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
+
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
+
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
+
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
+
+      - name: Setup two single node machines for cephadm
+        run: |
+          ~/adoptutils.sh create_cephadm_vm primary
+          ~/adoptutils.sh create_cephadm_vm secondary
+
+      - name: Bootstrap
+        run: |
+          ~/adoptutils.sh bootstrap_cephadm primary
+          ~/adoptutils.sh bootstrap_cephadm secondary
+
+      - name: Adopt cephadm cluster using microceph
+        run: |
+          ~/adoptutils.sh adopt_cephadm primary
+          ~/adoptutils.sh adopt_cephadm secondary
+
+      - name: Exchange remote tokens between primary and secondary microceph
+        run: ~/adoptutils.sh exchange_adopt_remote_tokens primary secondary
+
+      - name: Enable mds and cephfs-mirror services
+        run: ~/adoptutils.sh remote_enable_fs_rep primary secondary
+
+      - name: Bootstrap cephfs-mirror peer
+        run: ~adoptutils.sh bootstrap_adopt_cephfs_mirror primary secondary
+
+      - name: Verify remote subvolume
+        run: ~adoptutils.sh replication_adopt_check_subvolume_on_sec primary secondary
