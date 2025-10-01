@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 function create_cephadm_vm() {
-  set -eux
+  set -u
   input=$1
 
   if [[ -z $input ]]; then
@@ -20,22 +20,30 @@ function create_cephadm_vm() {
   lxc storage volume attach default $name-2 $name
   lxc storage volume attach default $name-3 $name
 
-  status=$(lxc ls | grep $name | cut -d" " -f 4)
+  exec_ls_on_vm $name
+  success=$?
   for i in $(seq 1 10); do
-    if [[ $status != "RUNNING" ]]; then
+    if [[ $success -ne 0 ]]; then
       echo "waiting."
       sleep 20s
     fi
-    status=$(lxc ls | grep $name | cut -d" " -f 4)
+    exec_ls_on_vm $name
+    success=$?
   done
 
-  status=$(lxc ls | grep $name | cut -d" " -f 4)
-  if [[ $status != "RUNNING" ]]; then
+  if [[ $success -ne 0 ]]; then
     echo "Timeout waiting for machine"
     exit 1
   fi
 
   lxc ls
+}
+
+function exec_ls_on_vm() {
+  set -u
+  name=$1
+
+  lxc exec $name -- sh -c "ls"
 }
 
 function bootstrap_cephadm() {
@@ -69,8 +77,10 @@ function adopt_cephadm() {
   # Admin Key
   key=$(lxc exec $name -- sh -c "cat /etc/ceph/ceph.client.admin.keyring" | grep key | cut -d " " -f 3)
 
+  lxc file push /home/runner/*.snap $name/root/
+
   # install microceph snap
-  lxc exec $name -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
+  lxc exec $name -- sh -c "sudo snap install --dangerous /root/microceph_*.snap"
   for feat in block-devices hardware-observe mount-observe load-rbd microceph-support network-bind process-control; do
     lxc exec $name -- sh -c "sudo snap connect microceph:$feat"
   done
@@ -128,21 +138,23 @@ function replication_adopt_check_subvolume_on_sec() {
   pri_name=$1
   sec_name=$2
 
-  lxc exec $pri_name -- bash -c "sudo ceph fs subvolume create vol test"
+  lxc exec $pri_name -- bash -c "sudo microceph.ceph fs subvolume create vol test"
 
-  subvolpath=$(lxc exec $pri_name -- bash -c "sudo ceph fs subvolume getpath vol test")
-  lxc exec $pri_name -- bash -c "sudo ceph fs snapshot mirror add vol $subvolpath"
+  subvolpath=$(lxc exec $pri_name -- bash -c "sudo microceph.ceph fs subvolume getpath vol test")
+  lxc exec $pri_name -- bash -c "sudo microceph.ceph fs snapshot mirror add vol $subvolpath"
 
   found="false"
+  test_svn="test"
   counter=0
   while [[ "$found" == "false" ]]; do
     # check subvolumes at secondary
-    list_output=$(lxc exec $sec_name -- bash -c "ceph fs subvolume ls vol | jq '.[].name'")
+    list_output=$(lxc exec $sec_name -- bash -c "sudo microceph.ceph fs subvolume ls vol | jq '.[].name'")
     counter=$((counter + 1))
     echo $list_output
 
     for sv_name in $list_output; do
-      if [[ $sv_name == "test" ]]; then
+      check_name=$(echo $sv_name | tr -d '\"')
+      if [[ $check_name == $test_svn ]]; then
         echo "subvolume $sv_name found"
         found="true"
         break

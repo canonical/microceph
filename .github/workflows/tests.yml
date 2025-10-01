@@ -1270,7 +1270,7 @@ jobs:
         run: ~/adoptutils.sh remote_enable_fs_rep primary secondary
 
       - name: Bootstrap cephfs-mirror peer
-        run: ~adoptutils.sh bootstrap_adopt_cephfs_mirror primary secondary
+        run: ~/adoptutils.sh bootstrap_adopt_cephfs_mirror primary secondary
 
       - name: Verify remote subvolume
-        run: ~adoptutils.sh replication_adopt_check_subvolume_on_sec primary secondary
+        run: ~/adoptutils.sh replication_adopt_check_subvolume_on_sec primary secondary
