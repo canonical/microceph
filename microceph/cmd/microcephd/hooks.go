@@ -19,7 +19,7 @@ func PreInit(ctx context.Context, s state.State, bootstrap bool, initConfig map[
 		bd := common.BootstrapConfig{}
 		common.DecodeBootstrapConfig(initConfig, &bd)
 
-		bootstrapper, err := GetBootstrapper(bd, interfaces.CephState{State: s})
+		bootstrapper, err := getBootstrapper(bd, interfaces.CephState{State: s})
 		if err != nil {
 			logger.Errorf("failed to get bootstrapper: %v", err)
 			return err
@@ -38,7 +38,7 @@ func PostBootstrap(ctx context.Context, s state.State, initConfig map[string]str
 	bd := common.BootstrapConfig{}
 	common.DecodeBootstrapConfig(initConfig, &bd)
 
-	bootstrapper, err := GetBootstrapper(bd, interfaces.CephState{State: s})
+	bootstrapper, err := getBootstrapper(bd, interfaces.CephState{State: s})
 	if err != nil {
 		logger.Errorf("failed to get bootstrapper: %v", err)
 		return err

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 function create_cephadm_vm() {
+  set -eux
   input=$1
 
   if [[ -z $input ]]; then
@@ -18,6 +19,23 @@ function create_cephadm_vm() {
   lxc storage volume attach default $name-1 $name
   lxc storage volume attach default $name-2 $name
   lxc storage volume attach default $name-3 $name
+
+  status=$(lxc ls | grep $name | cut -d" " -f 4)
+  for i in $(seq 1 10); do
+    if [[ $status != "RUNNING" ]]; then
+      echo "waiting."
+      sleep 20s
+    fi
+    status=$(lxc ls | grep $name | cut -d" " -f 4)
+  done
+
+  status=$(lxc ls | grep $name | cut -d" " -f 4)
+  if [[ $status != "RUNNING" ]]; then
+    echo "Timeout waiting for machine"
+    exit 1
+  fi
+
+  lxc ls
 }
 
 function bootstrap_cephadm() {

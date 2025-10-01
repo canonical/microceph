@@ -46,7 +46,7 @@ func (s *hooksSuite) TestPreInit() {
 
 	bootstrapper.On("Precheck", mock.Anything, mock.Anything).Return(nil).Once()
 
-	GetBootstrapper = func(bd common.BootstrapConfig, state interfaces.StateInterface) (Bootstrapper, error) {
+	getBootstrapper = func(bd common.BootstrapConfig, state interfaces.StateInterface) (Bootstrapper, error) {
 		return bootstrapper, nil
 	}
 
@@ -60,7 +60,7 @@ func (s *hooksSuite) TestPostBootstrap() {
 
 	bootstrapper.On("Bootstrap", mock.Anything, mock.Anything).Return(nil).Once()
 
-	GetBootstrapper = func(bd common.BootstrapConfig, state interfaces.StateInterface) (Bootstrapper, error) {
+	getBootstrapper = func(bd common.BootstrapConfig, state interfaces.StateInterface) (Bootstrapper, error) {
 		return bootstrapper, nil
 	}
 

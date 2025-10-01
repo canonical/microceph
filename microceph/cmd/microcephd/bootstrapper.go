@@ -18,8 +18,8 @@ type Bootstrapper interface {
 	Bootstrap(ctx context.Context, state interfaces.StateInterface) error
 }
 
-// GetBootstrapper returns a bootstrapper implementation based on the bootstrap parameters.
-var GetBootstrapper = func(bd common.BootstrapConfig, state interfaces.StateInterface) (Bootstrapper, error) {
+// getBootstrapper returns a bootstrapper implementation based on the bootstrap parameters.
+var getBootstrapper = func(bd common.BootstrapConfig, state interfaces.StateInterface) (Bootstrapper, error) {
 	var bootstrapper Bootstrapper
 
 	if len(bd.AdoptFSID) != 0 && len(bd.AdoptMonHosts) != 0 && len(bd.AdoptAdminKey) != 0 {
