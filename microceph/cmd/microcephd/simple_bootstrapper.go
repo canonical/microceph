@@ -99,7 +99,7 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 		return err
 	}
 
-	services, configs, err := sb.getServicesAndConfigsforDBUpdation(fsid, state.ClusterState().Name())
+	services, configs, err := getServicesAndConfigsforDBUpdation(fsid, state.ClusterState().Name(), sb)
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 	return nil
 }
 
-func (sb *SimpleBootstrapper) getServicesAndConfigsforDBUpdation(fsid string, hostname string) ([]string, map[string]string, error) {
+var getServicesAndConfigsforDBUpdation = func(fsid string, hostname string, sb *SimpleBootstrapper) ([]string, map[string]string, error) {
 	pathConsts := constants.GetPathConst()
 	adminKey, err := ceph.ParseKeyring(filepath.Join(pathConsts.ConfPath, "ceph.client.admin.keyring"))
 	if err != nil {

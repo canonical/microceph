@@ -137,7 +137,12 @@ func BootstrapCephServices(state interfaces.StateInterface, tempKeyringPath stri
 
 // PopulateBootstrapDatabase injects the bootstrap entries to the internal database.
 // The function is defined as a var for ease of mocking in tests.
-var PopulateBootstrapDatabase = func(ctx context.Context, s interfaces.StateInterface, services []string, configs map[string]string) error {
+func PopulateBootstrapDatabase(ctx context.Context, s interfaces.StateInterface, services []string, configs map[string]string) error {
+	if len(services) == 0 && len(configs) == 0 {
+		logger.Debug("No services or configs to populate in the database")
+		return nil
+	}
+
 	if s.ClusterState().ServerCert() == nil {
 		return fmt.Errorf("no server certificate")
 	}

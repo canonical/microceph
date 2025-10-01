@@ -116,7 +116,7 @@ func (ab *AdoptBootstrapper) Bootstrap(ctx context.Context, state interfaces.Sta
 		return err
 	}
 
-	configs, err := ab.getConfigsforDBUpdation()
+	configs, err := getConfigsforDBUpdation(ab)
 	if err != nil {
 		return err
 	}
@@ -176,7 +176,7 @@ func (ab *AdoptBootstrapper) updateCephClusterConfigs() error {
 	return nil
 }
 
-func (ab *AdoptBootstrapper) getConfigsforDBUpdation() (map[string]string, error) {
+var getConfigsforDBUpdation = func(ab *AdoptBootstrapper) (map[string]string, error) {
 	configs := map[string]string{
 		"fsid":                          ab.FSID,
 		constants.AdminKeyringFieldName: ab.AdminKey,

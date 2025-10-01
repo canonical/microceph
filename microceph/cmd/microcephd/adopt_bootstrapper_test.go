@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -68,8 +67,9 @@ func addConfigAdoptExpectations(r *mocks.Runner) {
 func (s *adoptBootstrapSuite) TestAdoptBootstrap() {
 	r := mocks.NewRunner(s.T())
 	nw := mocks.NewNetworkIntf(s.T())
-	ceph.PopulateBootstrapDatabase = func(ctx context.Context, s interfaces.StateInterface, services []string, configs map[string]string) error {
-		return nil
+
+	getConfigsforDBUpdation = func(_ *AdoptBootstrapper) (map[string]string, error) {
+		return map[string]string{}, nil
 	}
 
 	addNetworkExpectations(nw)
