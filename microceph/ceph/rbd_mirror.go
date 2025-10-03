@@ -3,18 +3,19 @@ package ceph
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/canonical/microceph/microceph/common"
+
 	"github.com/Rican7/retry"
 	"github.com/Rican7/retry/backoff"
 	"github.com/Rican7/retry/strategy"
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/tidwall/gjson"
 )
 
@@ -680,7 +681,7 @@ func IsRemoteConfiguredForRbdMirror(remoteName string) bool {
 
 // appendRemoteClusterArgs appends the cluster and client arguments to ceph commands
 func appendRemoteClusterArgs(args []string, cluster string, client string) []string {
-	logger.Debugf("RBD Replication: old args are %v", args)
+	logger.Debugf("REP: old args are %v", args)
 	// check if appendage is needed
 	if len(cluster) == 0 && len(client) == 0 {
 		// return as is
@@ -697,7 +698,7 @@ func appendRemoteClusterArgs(args []string, cluster string, client string) []str
 		args = append(args, client)
 	}
 
-	logger.Debugf("RBD Replication: new args are %v", args)
+	logger.Debugf("REP: new args are %v", args)
 
 	// return modified args
 	return args
