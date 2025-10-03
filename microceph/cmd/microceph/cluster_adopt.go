@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/canonical/lxd/lxd/util"
+	"github.com/canonical/lxd/shared/logger"
 	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 
@@ -21,32 +24,28 @@ type cmdClusterAdopt struct {
 	flagMicrocephIP string
 	flagFSID        string
 	flagMonHosts    []string
-	flagAdminKey    string
 	flagPubNet      string
 	flagClusterNet  string
 }
 
 func (c *cmdClusterAdopt) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "adopt",
+		Use:   "adopt [Admin Key File]",
 		Short: "adopt an existing ceph cluster",
+		Long:  "Reads provided file containing admin key or stdin if no input or '-' is provided.",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
 	cmd.Flags().StringVar(&c.flagMicrocephIP, "microceph-ip", "", "Ceph cluster fsid")
 	cmd.Flags().StringVar(&c.flagFSID, "fsid", "", "Ceph cluster fsid")
 	cmd.Flags().StringSliceVar(&c.flagMonHosts, "mon-hosts", []string{}, "Comma separated list of mon addresses")
-	cmd.Flags().StringVar(&c.flagAdminKey, "admin-key", "", "Admin user key for the ceph cluster")
 	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public network Ceph daemons bind to")
 	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster network Ceph daemons bind to")
 	return cmd
 }
 
 func (c *cmdClusterAdopt) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return fmt.Errorf("unable to configure MicroCeph: %w", err)
@@ -60,6 +59,11 @@ func (c *cmdClusterAdopt) Run(cmd *cobra.Command, args []string) error {
 
 	// populate default microceph address if not provided.
 	populateMicroCephAddress(&c.flagMicrocephIP)
+	adminKey, err := c.fetchAdminKey(cmd, args)
+	if err != nil || len(adminKey) == 0 {
+		logger.Errorf("failed to fetch admin key (%s): %v", adminKey, err)
+		return err
+	}
 
 	// Set parameter data for Ceph bootstrap.
 	data := common.BootstrapConfig{
@@ -67,7 +71,7 @@ func (c *cmdClusterAdopt) Run(cmd *cobra.Command, args []string) error {
 		ClusterNet:    c.flagClusterNet,
 		AdoptFSID:     c.flagFSID,
 		AdoptMonHosts: c.flagMonHosts,
-		AdoptAdminKey: c.flagAdminKey,
+		AdoptAdminKey: adminKey,
 	}
 
 	err = c.preCheckAdoptConfig(data)
@@ -90,6 +94,30 @@ func (c *cmdClusterAdopt) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func (c *cmdClusterAdopt) fetchAdminKey(cmd *cobra.Command, args []string) (string, error) {
+	inputReader := cmd.InOrStdin()
+
+	if len(args) > 0 && args[0] != "-" {
+		file, err := os.Open(args[0])
+		if err != nil {
+			logger.Errorf("failed to open admin key file: %v", err)
+			return "", err
+		}
+		// over-write inputReader if file path is provided.
+		inputReader = file
+	}
+
+	adminkey, err := io.ReadAll(inputReader)
+	if err != nil {
+		logger.Errorf("failed to read admin key: %v", err)
+		return "", err
+	}
+
+	key := strings.TrimSpace(string(adminkey))
+
+	return key, nil
 }
 
 func (c *cmdClusterAdopt) preCheckAdoptConfig(data common.BootstrapConfig) error {

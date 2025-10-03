@@ -86,7 +86,7 @@ function adopt_cephadm() {
   done
 
   # Adopt cephadm cluster using microceph --public-network=10.230.118.167/24 --cluster-network=10.230.118.167/247/24
-  lxc exec $name -- bash -c "sudo microceph cluster adopt --fsid=$fsid --admin-key=$key --mon-hosts=$mon_ip"
+  lxc exec $name -- bash -c "echo $key | sudo microceph cluster adopt --fsid=$fsid --mon-hosts=$mon_ip -"
 }
 
 function exchange_adopt_remote_tokens() {
