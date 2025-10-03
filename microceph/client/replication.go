@@ -10,7 +10,7 @@ import (
 	microCli "github.com/canonical/microcluster/v2/client"
 )
 
-// Sends replication request for creating, deleting, getting, and listing remote replication.
+// SendReplicationRequest sends replication request for creating, deleting, getting, and listing remote replication.
 func SendReplicationRequest(ctx context.Context, c *microCli.Client, data types.ReplicationRequest) (string, error) {
 	var err error
 	var resp string
