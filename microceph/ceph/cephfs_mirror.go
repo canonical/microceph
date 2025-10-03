@@ -38,6 +38,7 @@ func bootstrapFsMirror(hostname string, path string) error {
 // ###### Replication Helpers ######
 
 // GetCephFSSnapshotMirrorDaemonStatus fetches the snapshot mirror status for the CephFS volume.
+// The response is empty when either the cephfs-mirror daemon is not enabled or no volumes are enabled for mirroring.
 func GetCephFSSnapshotMirrorDaemonStatus(ctx context.Context) (CephFSSnapshotMirrorDaemonStatus, error) {
 	response := CephFSSnapshotMirrorDaemonStatus{}
 	output, err := cephFSSnapshotMirrorDaemonStatus(ctx)

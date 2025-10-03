@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/canonical/microceph/microceph/logger"
 )
@@ -49,14 +50,25 @@ func cephFSSnapshotMirrorRemovePath(ctx context.Context, volume string, path str
 }
 
 func cephFSSnapshotMirrorPeerCreate(volume string, remoteName string, localName string) (string, error) {
-	return cephRun(cephFSSnapshotMirrorCmd([]string{
+	output, err := cephRun(cephFSSnapshotMirrorCmd([]string{
 		"peer_bootstrap", "create", volume,
 		fmt.Sprintf("client.fsmir-%s-%s", volume, remoteName),
 		localName,
 		// operation on remote cluster
 		"--cluster", remoteName,
 		"--id", localName,
+		"-f", "json",
 	})...)
+	if err != nil {
+		logger.Errorf("failed to create CephFS snapshot mirror peer: %v", err)
+		return "", err
+	}
+
+	logger.Debugf("CephFS snapshot mirror peer create output:(%s)", output)
+
+	ret := strings.ReplaceAll(output, "\n", "")
+
+	return ret, nil
 }
 
 func cephFSSnapshotMirrorPeerImport(volume string, token string) error {
@@ -114,4 +126,15 @@ func cephFSSnapshotMirrorCmd(args []string) []string {
 	}
 
 	return append(cmd, args...)
+}
+
+func dropEscapedChars(input string, dropStr string) string {
+	ret := fmt.Sprintf("%s", []byte(input))
+
+	logger.Debugf("Drop char Input (%s)", ret)
+
+	retval := strings.ReplaceAll(ret, dropStr, ``)
+
+	logger.Debugf("Drop char Output (%s)", retval)
+	return retval
 }

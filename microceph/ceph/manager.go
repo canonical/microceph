@@ -1,10 +1,13 @@
 package ceph
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/tidwall/gjson"
 )
@@ -50,11 +53,46 @@ func getActiveMgrs() ([]string, error) {
 }
 
 // Mgr Module Ops
-func enableMgrModule(module string) error {
-	cmd := []string{
-		"mgr", "module", "enable", module,
-	}
+
+// EnableMgrModule enabled a mgr module on specified ceph cluster and verifies if is comes up
+func EnableMgrModule(ctx context.Context, module string, remote string, local string) error {
+	args := []string{"mgr", "module", "enable", module}
+
+	cmd := appendRemoteClusterArgs(args, remote, local)
 
 	_, err := cephRun(cmd...)
-	return err
+	if err != nil {
+		logger.Errorf("Failed to enable remote cluster (%s) mgr module %s: %v", remote, module, err)
+		return err
+	}
+
+	return nil
+}
+
+func verifyMgrModuleEnabled(ctx context.Context, module string, remote string, local string) error {
+	args := []string{"mgr", "module", "ls", "-f", "json"}
+
+	cmd := appendRemoteClusterArgs(args, remote, local)
+
+	output, err := cephRunContext(ctx, cmd...)
+	if err != nil {
+		logger.Errorf("Failed to list remote cluster (%s) mgr modules: %v", remote, err)
+		return err
+	}
+
+	result := gjson.Get(output, "enabled_modules")
+	if !result.Exists() || !result.Bool() {
+		return fmt.Errorf("mgr module %s not enabled", module)
+	}
+
+	logger.Debugf("Enabled Mgr Modules:\n%+v", result.Array())
+
+	for _, module := range result.Array() {
+		logger.Debugf("Mgr Module: %s", module.String())
+		if strings.Compare(module.String(), constants.MgrModuleMirroring) == 0 {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("could not enable mgr module %s", module)
 }

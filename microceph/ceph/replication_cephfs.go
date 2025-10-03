@@ -12,6 +12,7 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
+	"github.com/tidwall/gjson"
 )
 
 // CephFSSnapshotMirrorDaemonStatus is the abstraction for storing
@@ -65,15 +66,16 @@ func (rh *CephfsReplicationHandler) PreFill(ctx context.Context, request types.R
 	req := request.(types.CephfsReplicationRequest)
 	rh.Request = req
 
+	// Enable ceph-mgr mirroring module on local cluster
+	err = EnableMgrModule(ctx, constants.MgrModuleMirroring, "", "")
+	if err != nil {
+		return fmt.Errorf("failed to enable mgr module %s: %w", constants.MgrModuleMirroring, err)
+	}
+
 	// fetch snapshot mirror daemon status
 	rh.FsMirrorDaemonStatus, err = GetCephFSSnapshotMirrorDaemonStatus(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get CephFS snapshot mirror status: %w", err)
-	}
-
-	// Mandatory requirement for cephfs mirroring.
-	if len(rh.FsMirrorDaemonStatus) == 0 {
-		return fmt.Errorf("no cephfs-mirror daemon available, enable service")
 	}
 
 	if len(rh.Request.Volume) != 0 {
@@ -131,12 +133,30 @@ func (rh *CephfsReplicationHandler) EnableHandler(ctx context.Context, args ...a
 		return err
 	}
 
-	err = enableMgrModule(constants.MgrModuleMirroring)
+	dbRec, err := database.GetRemoteDb(ctx, st.ClusterState(), rh.Request.RemoteName)
 	if err != nil {
+		err := fmt.Errorf("remote (%s) does not exist: %w", rh.Request.RemoteName, err)
+		logger.Error(err.Error())
 		return err
 	}
 
-	err = enableCephFSVolumeMirror(ctx, rh.Request)
+	logger.Infof("REPCFS: LocalName(%s) RemoteName(%s)", dbRec[0].LocalName, dbRec[0].Name)
+
+	err = verifyRemoteCephFSVolumeExists(rh.Request.Volume, dbRec[0].Name, dbRec[0].LocalName)
+	if err != nil {
+		logger.Errorf("Failed to verify if remote cephfs volume %s: %v", rh.Request.Volume, err)
+		return err
+	}
+
+	// Enable the mgr module on the remote cluster.
+	err = EnableMgrModule(ctx, constants.MgrModuleMirroring, dbRec[0].Name, dbRec[0].LocalName)
+	if err != nil {
+		err := fmt.Errorf("failed to enable mgr module %s on remote cluster %s: %w", constants.MgrModuleMirroring, dbRec[0].Name, err)
+		logger.Error(err.Error())
+		return err
+	}
+
+	err = enableCephFSVolumeMirror(ctx, rh.Request.Volume, dbRec[0].Name, dbRec[0].LocalName)
 	if err != nil {
 		logger.Errorf("Failed to enable mirroring on CephFS volume %s: %v", rh.Request.Volume, err)
 		return err
@@ -237,7 +257,7 @@ func (rh *CephfsReplicationHandler) StatusHandler(ctx context.Context, args ...a
 
 			// cannot directly modify struct fields in a map, so retrieve, modify and reassign
 			for _, peer := range fs.Peers {
-				responsePeer, _ := response.Peers[peer.UUID]
+				responsePeer := response.Peers[peer.UUID]
 				responsePeer.Name = peer.Remote.ClusterName
 				response.Peers[peer.UUID] = responsePeer
 			}
@@ -279,9 +299,9 @@ func (rh *CephfsReplicationHandler) GetCephFSMirrorStatus(ctx context.Context) e
 		return fmt.Errorf("%s is not %s", rh.Request.RequestType, types.StatusReplicationRequest)
 	}
 
-	volumeId, peers := GetCephFsMirrorVolumeAndPeersId(rh)
-	if volumeId < 0 || len(peers) == 0 {
-		return fmt.Errorf("no CephFS volume (%d) or peers (%v) found for mirroring status", volumeId, peers)
+	volumeID, peers := GetCephFsMirrorVolumeAndPeersId(rh)
+	if volumeID < 0 || len(peers) == 0 {
+		return fmt.Errorf("no CephFS volume (%d) or peers (%v) found for mirroring status", volumeID, peers)
 	}
 
 	// TODO: (utkarshbhatthere):
@@ -297,7 +317,7 @@ func (rh *CephfsReplicationHandler) GetCephFSMirrorStatus(ctx context.Context) e
 	response := MirrorStatus{}
 	for _, peer := range peers {
 		// Get the mirror status for each peer
-		response[peer], err = GetCephFsMirrorPeerStatus(ctx, cephfsMirrorAdminSock, volumeId, peer)
+		response[peer], err = GetCephFsMirrorPeerStatus(ctx, cephfsMirrorAdminSock, volumeID, peer)
 		if err != nil {
 			return fmt.Errorf("failed to get CephFS mirror status for peer %s: %w", peer, err)
 		}
@@ -368,32 +388,72 @@ func verifyEnableRequestData(ctx context.Context, s interfaces.CephState, reques
 	return nil
 }
 
-func enableCephFSVolumeMirror(ctx context.Context, request types.CephfsReplicationRequest) error {
-	peerExists, err := cephFSSnapshotMirrorPeerExists(ctx, request.Volume, request.RemoteName)
+func enableCephFSMgrModules(ctx context.Context, remote string, local string) error {
+	err := EnableMgrModule(ctx, constants.MgrModuleMirroring, "", "")
 	if err != nil {
-		logger.Errorf("Failed to check if peer %s exists for CephFS volume %s: %v", request.RemoteName, request.Volume, err)
+		err := fmt.Errorf("failed to enable mgr module %s on local cluster: %w", constants.MgrModuleMirroring, err)
+		logger.Error(err.Error())
+		return err
+	}
+
+	err = EnableMgrModule(ctx, constants.MgrModuleMirroring, remote, local)
+	if err != nil {
+		err := fmt.Errorf("failed to enable mgr module %s on remote cluster %s: %w", constants.MgrModuleMirroring, remote, err)
+		logger.Error(err.Error())
+		return err
+	}
+
+	return nil
+}
+
+func verifyRemoteCephFSVolumeExists(vol string, remote string, local string) error {
+	volumes, err := ListRemoteCephFSVolumes(remote, local)
+	if err != nil {
+		logger.Errorf("Failed to list remote cephfs volumes for remote %s: %v", remote, err)
+		return err
+	}
+
+	for _, volume := range volumes {
+		if strings.Compare(string(volume), vol) == 0 {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("cephfs volume %s not found on remote %s", vol, remote)
+}
+
+func enableCephFSVolumeMirror(ctx context.Context, volume string, remote string, local string) error {
+	peerExists, err := cephFSSnapshotMirrorPeerExists(ctx, volume, remote)
+	if err != nil {
+		logger.Errorf("Failed to check if peer %s exists for CephFS volume %s: %v", remote, volume, err)
 		return err
 	}
 
 	if !peerExists {
 		// Note: CephFS operates on push replication, hence we need to import a remote ceph
 		// user with permissions to write on the remote cluster.
-		token, err := cephFSSnapshotMirrorPeerCreate(request.Volume, request.RemoteName, request.RemoteName)
+
+		tokenOutput, err := cephFSSnapshotMirrorPeerCreate(volume, remote, local)
 		if err != nil {
-			logger.Errorf("Failed to create peer for remote %s on CephFS volume %s: %v", request.RemoteName, request.Volume, err)
+			logger.Errorf("Failed to create peer for remote %s on CephFS volume %s: %v", remote, volume, err)
 			return err
 		}
 
-		err = cephFSSnapshotMirrorPeerImport(request.Volume, token)
+		logger.Debugf("REPCFS: Peer token output: %s", tokenOutput)
+
+		token := gjson.Get(tokenOutput, "token")
+
+		logger.Debugf("REPCFS: Peer token: %s", token.String())
+		err = cephFSSnapshotMirrorPeerImport(volume, token.String())
 		if err != nil {
-			logger.Errorf("Failed to import peer for remote %s on CephFS volume %s: %v", request.RemoteName, request.Volume, err)
+			logger.Errorf("Failed to import peer for remote %s on CephFS volume %s: %v", remote, volume, err)
 			return err
 		}
 	}
 
-	err = cephFSSnapshotMirrorEnableVolume(request.Volume)
+	err = cephFSSnapshotMirrorEnableVolume(volume)
 	if err != nil {
-		logger.Errorf("Failed to enable mirroring on CephFS volume %s: %v", request.Volume, err)
+		logger.Errorf("Failed to enable mirroring on CephFS volume %s: %v", volume, err)
 		return err
 	}
 

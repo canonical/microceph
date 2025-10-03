@@ -56,7 +56,25 @@ func ListCephFSVolumes() ([]Volume, error) {
 		response = append(response, Volume(volume.String()))
 	}
 
-	return response, nil
+	return parseListVolOutputJson(output)
+}
+
+func ListRemoteCephFSVolumes(remote string, local string) ([]Volume, error) {
+	if len(remote) == 0 || len(local) == 0 {
+		return nil, fmt.Errorf("both remote(%s) and local(%s) names must be provided", remote, local)
+	}
+
+	args := []string{"fs", "volume", "ls", "--format=json"}
+	cmd := appendRemoteClusterArgs(args, remote, local)
+
+	output, err := cephRun(cmd...)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Infof("FSVOL: listed %s as remote cluster (%s) cephfs volumes", output, remote)
+
+	return parseListVolOutputJson(output)
 }
 
 // CephFsSubvolumePathDeconstruct deconstructs a CephFS subvolume path string into its subvolume and subvolumegroup names.
@@ -181,4 +199,21 @@ func GetCephFSSubvolumePath(subvolumegroup string, subvolume string) string {
 	}
 
 	return retval
+}
+
+// ##### Helper Functions #####
+
+func parseListVolOutputJson(output string) ([]Volume, error) {
+	volumes := gjson.Get(output, "#.name")
+	response := make([]Volume, 0, len(volumes.Array()))
+	for _, volume := range volumes.Array() {
+		if len(volume.String()) == 0 {
+			continue
+		}
+
+		logger.Debugf("FSVOL: found %s as cephfs volume", volume.String())
+		response = append(response, Volume(volume.String()))
+	}
+
+	return response, nil
 }
