@@ -3,13 +3,33 @@ package ceph
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/common"
 	"strings"
+
+	"github.com/canonical/microceph/microceph/common"
 
 	"github.com/canonical/microceph/microceph/api/types"
 
 	"github.com/tidwall/gjson"
 )
+
+// ##### Public Methods #####
+
+// BootstrapCrushRules sets up and configures the crush rules for failure domain handling.
+func BootstrapCrushRules() error {
+	// setup up crush rules
+	err := ensureCrushRules()
+	if err != nil {
+		return err
+	}
+
+	// configure the default crush rule for new pools
+	err = setDefaultCrushRule("microceph_auto_osd")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 // addCrushRule creates a new default crush rule with a given name and failure domain
 func addCrushRule(name string, failureDomain string) error {

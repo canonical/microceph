@@ -15,7 +15,9 @@ import (
 
 // PreRemove cleans up the underlying ceph services before the node is removed from the dqlite cluster.
 func PreRemove(m *microcluster.MicroCluster) func(ctx context.Context, s state.State, force bool) error {
+	logger.Debug("Setting up PreRemove hook")
 	return func(ctx context.Context, s state.State, force bool) error {
+		logger.Infof("Executing PreRemove hook for node %s (force=%v)", s.Name(), force)
 		cli, err := m.LocalClient()
 		if err != nil {
 			return err
@@ -50,7 +52,6 @@ func EnsureNonOsdSvcEnough(services types.Services, nodeName string, minMon int,
 }
 
 func removeNode(cli *microCli.Client, node string, force bool) error {
-
 	logger.Debugf("Removing cluster member %v, force: %v", node, force)
 
 	// check prerquisites unless we're forcing
@@ -137,5 +138,4 @@ func deleteNodeServices(cli *microCli.Client, name string) error {
 		}
 	}
 	return nil
-
 }
