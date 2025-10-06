@@ -2,13 +2,30 @@ package ceph
 
 import (
 	"fmt"
-	"github.com/canonical/microceph/microceph/logger"
-	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/logger"
+
 	"github.com/tidwall/gjson"
 )
+
+func createMonMap(s interfaces.StateInterface, path string, fsid string, address string) error {
+	// Generate initial monitor map.
+	err := genMonmap(filepath.Join(path, "mon.map"), fsid)
+	if err != nil {
+		return fmt.Errorf("failed to generate monitor map: %w", err)
+	}
+
+	err = addMonmap(filepath.Join(path, "mon.map"), s.ClusterState().Name(), address)
+	if err != nil {
+		return fmt.Errorf("failed to add monitor map: %w", err)
+	}
+
+	return nil
+}
 
 func genMonmap(path string, fsid string) error {
 	args := []string{
