@@ -198,7 +198,6 @@ apps:
     plugs:
       - home
 
-
 parts:
   microceph-orch:
     plugin: python
@@ -357,7 +356,7 @@ parts:
     source: https://github.com/canonical/dqlite
     source-type: git
     source-depth: 1
-    source-tag: v1.18.0
+    source-tag: v1.17.0
     plugin: autotools
     autotools-configure-parameters:
       - --prefix=
