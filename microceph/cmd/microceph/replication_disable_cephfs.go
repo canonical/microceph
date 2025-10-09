@@ -17,6 +17,7 @@ type cmdReplicationDisableCephFS struct {
 	subvolume      string
 	subvolumegroup string
 	dirpath        string
+	flagForce      bool
 }
 
 func (c *cmdReplicationDisableCephFS) Command() *cobra.Command {
@@ -30,6 +31,8 @@ func (c *cmdReplicationDisableCephFS) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.subvolumegroup, "subvolumegroup", "", "CephFS Subvolume Group")
 	cmd.Flags().StringVar(&c.subvolume, "subvolume", "", "CephFS Subvolume")
 	cmd.Flags().StringVar(&c.dirpath, "dir-path", "", "Directory path relative to file system")
+
+	cmd.Flags().BoolVar(&c.flagForce, "force", false, "forcefully disable replication for resource")
 
 	cmd.MarkFlagRequired("volume")
 	cmd.MarkFlagsMutuallyExclusive("dir-path", "subvolumegroup")
@@ -79,6 +82,7 @@ func (c *cmdReplicationDisableCephFS) prepareCephFSPayload() (types.CephfsReplic
 		DirPath:        c.dirpath,
 		RequestType:    types.DisableReplicationRequest,
 		ResourceType:   getCephFSResourceType(c.subvolume, c.dirpath),
+		IsForceOp:      c.flagForce,
 	}
 
 	return retReq, nil
