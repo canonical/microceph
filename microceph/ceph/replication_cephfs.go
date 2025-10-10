@@ -425,8 +425,19 @@ func verifyRemoteCephFSVolumeExists(vol string, remote string, local string) err
 func enableCephFSVolumeMirror(ctx context.Context, volume string, remote string, local string) error {
 	peerExists, err := cephFSSnapshotMirrorPeerExists(ctx, volume, remote)
 	if err != nil {
-		logger.Errorf("Failed to check if peer %s exists for CephFS volume %s: %v", remote, volume, err)
-		return err
+		// fail if volume mirroring is enabled.
+		if !strings.Contains(err.Error(), constants.VolumeNotMirrored) {
+			logger.Errorf("Failed to check if peer %s exists for CephFS volume %s: %v", remote, volume, err)
+			return err
+		}
+
+		// enable volume mirroring if not already enabled.
+		logger.Debugf("CephFS snapshot mirror not enabled on volume %s", volume)
+		err = cephFSSnapshotMirrorEnableVolume(volume)
+		if err != nil {
+			logger.Errorf("Failed to enable mirroring on CephFS volume %s: %v", volume, err)
+			return err
+		}
 	}
 
 	if !peerExists {
@@ -449,12 +460,6 @@ func enableCephFSVolumeMirror(ctx context.Context, volume string, remote string,
 			logger.Errorf("Failed to import peer for remote %s on CephFS volume %s: %v", remote, volume, err)
 			return err
 		}
-	}
-
-	err = cephFSSnapshotMirrorEnableVolume(volume)
-	if err != nil {
-		logger.Errorf("Failed to enable mirroring on CephFS volume %s: %v", volume, err)
-		return err
 	}
 
 	return nil

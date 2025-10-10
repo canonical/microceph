@@ -66,8 +66,10 @@ func GetCephFSVolumeMirrorList(ctx context.Context, volume string) (MirrorPathLi
 
 	output, err := cephFSSnapshotMirrorList(ctx, volume)
 	if err != nil {
-		if strings.Contains(err.Error(), "is not mirrored") {
+		logger.Errorf("failed to fetch cephfs snapshot mirror list for volume (%s): %v", volume, err)
+		if strings.Contains(err.Error(), constants.VolumeNotMirrored) {
 			// empty slice when volume is not mirrored
+			logger.Debugf("volume %s is not mirrored, returning empty list", volume)
 			return []string{}, nil
 		}
 		return nil, fmt.Errorf("failed to get CephFS snapshot mirror list: %w", err)
