@@ -23,7 +23,7 @@ type cmdReplicationDisableCephFS struct {
 func (c *cmdReplicationDisableCephFS) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cephfs <resource>",
-		Short: "Disable replication for CephFS resource (Directory or Subvolume)",
+		Short: "Disable replication for CephFS resource",
 		RunE:  c.Run,
 	}
 

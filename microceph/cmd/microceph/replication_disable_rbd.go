@@ -17,7 +17,7 @@ type cmdReplicationDisableRbd struct {
 func (c *cmdReplicationDisableRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rbd <resource>",
-		Short: "Disable replication for RBD resource (Pool or Image)",
+		Short: "Disable replication for RBD resource",
 		RunE:  c.Run,
 	}
 

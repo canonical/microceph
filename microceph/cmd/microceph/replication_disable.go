@@ -11,7 +11,7 @@ type cmdReplicationDisable struct {
 func (c *cmdReplicationDisable) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "disable",
-		Short: "Disable replication",
+		Short: "Disable replication for a workload",
 	}
 
 	disableRbdCmd := cmdReplicationDisableRbd{common: c.common}
