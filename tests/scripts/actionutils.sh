@@ -425,10 +425,6 @@ function remote_configure_cephfs_mirroring() {
     sudo mkdir /mnt/primary/dir2
     echo $STR1 | sudo tee /mnt/primary/dir1/test_file
     echo $STR2 | sudo tee /mnt/primary/dir2/test_file
-
-    # enable snapshot mirror for directories
-    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror add vol /dir1"
-    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror add vol /dir2"
 }
 
 function replication_verify_cephfs_list_output() {
