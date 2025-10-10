@@ -22,7 +22,7 @@ type cmdReplicationStatusCephfs struct {
 func (c *cmdReplicationStatusCephfs) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cephfs <volume>",
-		Short: "Show CephFS resource (directory or subvolume) replication status",
+		Short: "Show CephFS resource replication status",
 		RunE:  c.Run,
 	}
 

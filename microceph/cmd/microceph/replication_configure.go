@@ -10,19 +10,19 @@ import (
 )
 
 type cmdReplicationConfigure struct {
-  common *CmdControl
+	common *CmdControl
 }
 
 func (c *cmdReplicationConfigure) Command() *cobra.Command {
-  cmd := &cobra.Command{
-    Use: "configure",
-    Short: "configure replication parameters",
-  }
+	cmd := &cobra.Command{
+		Use:   "configure",
+		Short: "Configure replication parameters",
+	}
 
-  configureRbdCmd := cmdReplicationConfigureRbd{common: c.common}
-  cmd.AddCommand(configureRbdCmd.Command())
-  
-  return cmd
+	configureRbdCmd := cmdReplicationConfigureRbd{common: c.common}
+	cmd.AddCommand(configureRbdCmd.Command())
+
+	return cmd
 }
 
 type cmdReplicationConfigureRbd struct {
@@ -33,7 +33,7 @@ type cmdReplicationConfigureRbd struct {
 func (c *cmdReplicationConfigureRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rbd <resource>",
-		Short: "Configure replication parameters for RBD resource (Pool or Image)",
+		Short: "Configure replication parameters for RBD resource",
 		RunE:  c.Run,
 	}
 
