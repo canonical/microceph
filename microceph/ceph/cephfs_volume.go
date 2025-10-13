@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/tidwall/gjson"
 )
@@ -59,6 +60,7 @@ func ListCephFSVolumes() ([]Volume, error) {
 	return parseListVolOutputJson(output)
 }
 
+// ListRemoteCephFSVolumes fetches the list of CephFS volumes from a remote cluster.
 func ListRemoteCephFSVolumes(remote string, local string) ([]Volume, error) {
 	if len(remote) == 0 || len(local) == 0 {
 		return nil, fmt.Errorf("both remote(%s) and local(%s) names must be provided", remote, local)
@@ -118,14 +120,18 @@ func GetCephFSVolume(volume Volume) (CephFSVolume, error) {
 	return response, nil
 }
 
+// CephFSSubvolumeExists checks if a specific subvolume exists within a given CephFS volume and subvolume group.
 func CephFSSubvolumeExists(volume string, subvolumegroup string, subvolume string) bool {
 	subvolumes, err := GetCephFSSubvolumes(Volume(volume), subvolumegroup)
 	if err != nil {
 		return false
 	}
 
+	logger.Debugf("volume %s and subvolumegroup %s found subvolumes: %+v", volume, subvolumegroup, subvolumes)
+
 	for _, sv := range subvolumes {
 		if string(sv) == subvolume {
+			logger.Debugf("Found subvolume %s", subvolume)
 			return true
 		}
 	}
@@ -191,14 +197,12 @@ func GetCephFSSubvolumes(volume Volume, subvolumegroup string) ([]Subvolume, err
 
 // GetCephFSSubvolumePath retrieves the full path of a specified subvolume within a CephFS volume and subvolume group.
 func GetCephFSSubvolumePath(subvolumegroup string, subvolume string) string {
-	var retval string
-	if len(subvolumegroup) != 0 {
-		retval = fmt.Sprintf("/volumes/%s/%s/", subvolumegroup, subvolume)
-	} else {
-		retval = fmt.Sprintf("/volumes/_nogroup/%s/", subvolume)
+	if len(subvolumegroup) == 0 {
+		// Use nogroup value in place of subvolume
+		subvolumegroup = constants.CephFSSubvolumeNoGroup
 	}
 
-	return retval
+	return fmt.Sprintf(constants.CephFSSubvolumePathTemplate, subvolumegroup, subvolume)
 }
 
 // ##### Helper Functions #####

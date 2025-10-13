@@ -156,7 +156,7 @@ func (rh *CephfsReplicationHandler) EnableHandler(ctx context.Context, args ...a
 		return err
 	}
 
-	err = enableCephFSVolumeMirror(ctx, rh.Request.Volume, dbRec[0].Name, dbRec[0].LocalName)
+	err = bootstrapCephFSMirrorPeerForVolume(ctx, rh.Request.Volume, dbRec[0].Name, dbRec[0].LocalName)
 	if err != nil {
 		logger.Errorf("Failed to enable mirroring on CephFS volume %s: %v", rh.Request.Volume, err)
 		return err
@@ -178,6 +178,9 @@ func (rh *CephfsReplicationHandler) DisableHandler(ctx context.Context, args ...
 	var err error
 	switch rh.Request.ResourceType {
 	case types.CephfsResourceVolume:
+		if len(rh.Request.SubvolumeGroup) != 0 {
+			return fmt.Errorf("Disable not supported for subvolumegroup. Provide a subvolume name to proceed.")
+		}
 		err = disableCephFSVolumeMirror(ctx, rh.Request, rh.MirrorList)
 	case types.CephfsResourceSubvolume:
 		err = cephFSSnapshotMirrorRemovePath(ctx, rh.Request.Volume, GetCephFSSubvolumePath(rh.Request.SubvolumeGroup, rh.Request.Subvolume))
@@ -334,27 +337,21 @@ func verifyEnableRequestData(ctx context.Context, s interfaces.CephState, reques
 
 	if len(request.RemoteName) == 0 {
 		return fmt.Errorf("missing remote cluster name")
-	} else {
-		// check if a remote with remote name exists.
-		remotes, err := database.GetRemoteDb(ctx, s.ClusterState(), request.RemoteName)
-		if err != nil {
-			logger.Errorf("Failed to query remote %s from db: %v", request.RemoteName, err)
-			return err
-		}
+	}
 
-		found := false
-		for _, remote := range remotes {
-			if remote.Name == request.RemoteName {
-				found = true
-				break
-			}
-		}
+	// check if a remote with remote name exists.
+	remotes, err := database.GetRemoteDb(ctx, s.ClusterState(), request.RemoteName)
+	if err != nil {
+		logger.Errorf("Failed to query remote %s from db: %v", request.RemoteName, err)
+		return err
+	}
 
-		if !found {
-			err := fmt.Errorf("Remote %s not found in db", request.RemoteName)
-			logger.Error(err.Error())
-			return err
-		}
+	logger.Debugf("REPCFS: Found remotes in db: %v", remotes)
+
+	if len(remotes) == 0 {
+		err := fmt.Errorf("Remote %s not found in db (%v)", request.RemoteName, remotes)
+		logger.Error(err.Error())
+		return err
 	}
 
 	if request.ResourceType != types.CephfsResourceSubvolume && request.ResourceType != types.CephfsResourceDirectory {
@@ -419,19 +416,20 @@ func verifyRemoteCephFSVolumeExists(vol string, remote string, local string) err
 		}
 	}
 
-	return fmt.Errorf("cephfs volume %s not found on remote %s", vol, remote)
+	return fmt.Errorf("cephfs volume %s not found, remote %s only has %v", vol, remote, volumes)
 }
 
-func enableCephFSVolumeMirror(ctx context.Context, volume string, remote string, local string) error {
+// bootstrapCephFSMirrorPeerForVolume bootstraps the remote peer for requested volume.
+func bootstrapCephFSMirrorPeerForVolume(ctx context.Context, volume string, remote string, local string) error {
 	peerExists, err := cephFSSnapshotMirrorPeerExists(ctx, volume, remote)
 	if err != nil {
-		// fail if volume mirroring is enabled.
+		// the command fails if mirroring is not enabled on the volume, return err otherwise.
 		if !strings.Contains(err.Error(), constants.VolumeNotMirrored) {
 			logger.Errorf("Failed to check if peer %s exists for CephFS volume %s: %v", remote, volume, err)
 			return err
 		}
 
-		// enable volume mirroring if not already enabled.
+		// enable volume mirroring
 		logger.Debugf("CephFS snapshot mirror not enabled on volume %s", volume)
 		err = cephFSSnapshotMirrorEnableVolume(volume)
 		if err != nil {
@@ -442,7 +440,8 @@ func enableCephFSVolumeMirror(ctx context.Context, volume string, remote string,
 
 	if !peerExists {
 		// Note: CephFS operates on push replication, hence we need to import a remote ceph
-		// user with permissions to write on the remote cluster.
+		// user with permissions to write on the remote cluster. This code block creates a
+		// remote peer token and imports in on the local cluster.
 
 		tokenOutput, err := cephFSSnapshotMirrorPeerCreate(volume, remote, local)
 		if err != nil {
@@ -465,6 +464,7 @@ func enableCephFSVolumeMirror(ctx context.Context, volume string, remote string,
 	return nil
 }
 
+// enableCephFSResourceMirror deduces and adds the resource path to mirroring
 func enableCephFSResourceMirror(ctx context.Context, request types.CephfsReplicationRequest) error {
 	var resourcePath string
 
@@ -487,6 +487,7 @@ func enableCephFSResourceMirror(ctx context.Context, request types.CephfsReplica
 	return nil
 }
 
+// disableCephFSVolumeMirror iterates over all paths enabled for mirroring in a volume and disables them.
 func disableCephFSVolumeMirror(ctx context.Context, request types.CephfsReplicationRequest, mirrorPathList []string) error {
 	if !request.IsForceOp {
 		err := fmt.Errorf("Disabling it for the volume (%s) may result in data-loss, please use appropriate parmaters", request.Volume)
