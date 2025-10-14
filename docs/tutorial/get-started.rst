@@ -151,9 +151,10 @@ will now use this tool to create an RGW user called ``user``, with the display n
 
 .. code-block:: none
 
-    sudo radosgw-admin user create --uid=user --display-name=user
+    sudo radosgw-admin user create --uid=user --display-name=user --access-key=foo --secret-key=bar
 
-The output should include user details as shown below, with auto-generated access and secret keys.
+The output should include user details as shown below, if ``access-key`` or ``secret-key`` is not provided
+by the user, it will be generated automatically.
 
 .. terminal::
 
@@ -167,42 +168,13 @@ The output should include user details as shown below, with auto-generated acces
     "keys": [
         {
             "user": "user",
-            "access_key": "NJ7YZ3LYI45M4Q1A08OS",
-            "secret_key": "H7OTclVbZIwhd2o0NLPu0D7Ass8ouSKmtSewuYwK",
+            "access_key": "foo",
+            "secret_key": "bar",
             "active": true,
             "create_date": "2024-11-28T13:07:41.561437Z"
         }
     ],
     ...
-
-Set user secrets
-~~~~~~~~~~~~~~~~
-Let's define secrets for this user, setting ``access_key`` to ``foo``, and ``--secret-key`` to ``bar``.
-
-.. code-block:: none
-
-    sudo radosgw-admin key create --uid=user --key-type=s3 --access-key=foo --secret-key=bar
-
-.. terminal::
-
-    ... 
-    [
-        {
-            "user": "user",
-            "access_key": "NJ7YZ3LYI45M4Q1A08OS",
-            "secret_key": "H7OTclVbZIwhd2o0NLPu0D7Ass8ouSKmtSewuYwK",
-            "active": true,
-            "create_date": "2024-11-28T13:07:41.561437Z"
-        },
-        {
-            "user": "user",
-            "access_key": "foo",
-            "secret_key": "bar",
-            "active": true,
-            "create_date": "2024-11-28T13:54:36.065214Z"
-        }
-    ],
-   ...
 
 Consuming the storage
 ---------------------
@@ -212,7 +184,7 @@ Access RGW
 
 Before attempting to consume the object storage in the cluster, validate that you can access RGW by running :command:`curl` on your node.
 
-Find the IP address of the node running the  ``rgw`` service:
+Find the IP address of the node running the ``rgw`` service:
 
 .. code-block:: none
     
@@ -235,85 +207,77 @@ Then, run :command:`curl` from this node.
 
     <?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>anonymous</ID></Owner><Buckets></Bucket
 
+.. note::
+    Make note of the IP address used above, as it will is reused in subsequent steps.
+
 Create an S3 bucket
 ~~~~~~~~~~~~~~~~~~~
 
 You have verified that your cluster is accessible via RGW. To interact with S3, we need to make sure that the
-``s3cmd`` utility is installed and configured.
+``aws-cli`` utility is installed and configured.
 
-Install and configure ``s3cmd``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Install and configure ``aws-cli``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-To install ``s3cmd``, run the following command:
+To install ``aws-cli``, run the following command:
 
 .. code-block:: none
 
-    sudo apt-get install s3cmd
+    sudo snap install aws-cli --classic
 
-To configure the s3cmd tool, create a file named ``.s3cfg`` in your home directory. This should be an INI-style configuration file with a single ``[default]`` section and key-value pairs for configuration.
+Run the below command to interactively populate required parameters as follows:
 
-Run the below command to create the file and configure s3cmd:
+.. code-block:: none
 
-.. terminal::
-   cat > ~/.s3cfg <<EOF
-   [default]
-   access_key = foo
-   secret_key = bar
-   host_base = ubuntu
-   host_bucket = ubuntu/%(bucket)
-   check_ssl_certificate = False
-   check_ssl_hostname = False
-   use_https = False
-   EOF
-
-Instead of running this command, you can of course also set up the configuration file using your favourite editor.
-
-This configuration will do the following:
-
-- Configure secret and access key that we had set earlier.
-- Configure the host to contact. We have named our host ``ubuntu``, so this is what we will set here.
-- Configure the host bucket template. The host bucket scheme allows users to specify virtual hosting style access or other access modes. For our uses, we will set it to the host name, followed by the bucket name.
-- Finally, we did not configure SSL/TLS for our endpoint, so we are disabling it for s3cmd as well.
-
-As a good security practice, it should also be ensured that the ``.s3cfg`` file is only readable by the user as it does contain the secret key. Run chmod like this:
+    aws configure
 
 .. terminal::
-   chmod 0600 ~/.s3cfg
 
+    AWS Access Key ID [****************foo]: foo
+    AWS Secret Access Key [****************bar]: bar
+    Default region name [default]: default
+    Default output format [None]:
 
 Create a bucket
 ^^^^^^^^^^^^^^^
 
-You have verified that your cluster is accessible via RGW. Now, let's create a bucket using the ``s3cmd`` tool:
+You have verified that your cluster is accessible via RGW. Now, let's create a bucket using the ``aws s3`` command:
 
 .. code-block:: none
 
-    s3cmd mb -P s3://mybucket
-
-.. note::
-
-    The ``-P`` flag ensures that the bucket is publicly visible, enabling you to access stored objects easily via a public URL.
+    aws s3 mb s3://mybucket --endpoint=http://10.246.114.49
 
 .. terminal::
 
-    Bucket 's3://mybucket/' created
+    make_bucket: mybucket
 
 Our bucket is successfully created.
 
-Upload an image into the  bucket
+Upload a file into the bucket
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: none
 
-    s3cmd put -P image.jpg s3://mybucket
+    aws s3 cp ./image.jpg s3://mybucket --endpoint=http://10.246.114.49
 
 .. terminal::
 
-    upload: 'image.jpg' -> 's3://mybucket/image.jpg'  [1 of 1]
-    66565 of 66565   100% in    0s     4.52 MB/s  done
-    Public URL of the object is: http://ubuntu/mybucket/image.jpg
+    upload: ./image.jpg to s3://mybucket/image.jpg
 
-The output shows that your image is stored in a publicly accessible S3 bucket. You can now click on the public object URL in the output to view the image in your browser.
+The output shows that your image is now stored in a S3 bucket.
+
+Listing the contents of a bucket
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Let's list the contents of ``s3:mybucket`` and see if our image is present there.
+
+.. code-block::
+
+    aws s3 ls s3://mybucket --endpoint=http://10.246.114.49
+
+.. terminal::
+
+    2025-10-15 12:51:03          0 image.jpg
 
 Cleaning up resources
 ---------------------
