@@ -22,9 +22,10 @@ type cmdReplicationDisableCephFS struct {
 
 func (c *cmdReplicationDisableCephFS) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "cephfs <resource>",
-		Short: "Disable replication for CephFS resource",
-		RunE:  c.Run,
+		Use:     "cephfs",
+		Short:   "Disable replication for CephFS resource",
+		RunE:    c.Run,
+		PreRunE: c.PreRun,
 	}
 
 	cmd.Flags().StringVar(&c.volume, "volume", "", "CephFS volume (aka file-system)")

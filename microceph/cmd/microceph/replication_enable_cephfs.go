@@ -21,7 +21,7 @@ type cmdReplicationEnableCephFS struct {
 
 func (c *cmdReplicationEnableCephFS) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "cephfs <resource>",
+		Use:     "cephfs",
 		Short:   "Enable replication for CephFS resource (Directory or Subvolume)",
 		RunE:    c.Run,
 		PreRunE: c.PreRun, // Validate flags
