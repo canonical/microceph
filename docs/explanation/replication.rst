@@ -1,29 +1,13 @@
 Remote Replication
 ==================
 
-Remote replication in Ceph storage clusters is a key feature designed to enhance data protection and
-enable disaster recovery for organizations of all sizes. It allows data from one Ceph cluster to be
-duplicated and synchronized to another, often at a geographically distant site, ensuring that information
-remains safe even in the event of serious failures, site-wide outages, or other catastrophic events.
+Cloud storage services (like Ceph) are responsible for persisting information irrespective of faults and
+failures in parts of the cluster. These faults could be temporary network failures, disk faults, power failures
+or even failure of multiple nodes. Remote replication is a mechanism used to replicate data to a remote storage
+cluster, typically located at a different geographical site to prevent complete outage in the event of a large
+enough fault like natural disaster.
 
-This guide covers the essentials for new Ceph users, explaining the types and modes and objectives of
-replication, and their roles in disaster recovery.
-
-Recovery Objectives
--------------------
-
-Recovery Point Objective (RPO)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Recovery Point Objective is the maximum acceptable amount of data loss, measured as time, that a business
-can tolerate after a disaster or outage. It specifies how far back in time data can be recovered from
-backup or replication to minimize the impact from the disruption.
-
-Recovery Time Objective (RTO)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Recovery Time Objective is the maximum acceptable amount of time that a business process, application,
-network, or system can be down after a disruption before significant damage or intolerable consequences occur.
+This guide covers the essential replication concepts for new Ceph users.
 
 Modes of data movement
 -----------------------
@@ -33,51 +17,52 @@ Replication between clusters can be implemented in two common modes, each with s
 Push Replication:
 ~~~~~~~~~~~~~~~~~
 
-In this mode, the primary (source) cluster actively sends data updates to the secondary (target) cluster. The
-replication process is initiated and managed by the source cluster, ensuring changes are quickly and centrally
-propagated. This is easier to administer for simpler environments but can place higher resource demands on
-the primary cluster.
+In this mode, the source cluster actively sends data updates (aka deltas or diffs) to the target cluster. The
+replication process is initiated and managed by the source cluster, ensuring changes are centrally propagated.
+This is easier to administer for simpler environments but can place higher resource demands on the primary
+cluster.
 
 Pull Replication:
 ~~~~~~~~~~~~~~~~~
 
-Here, the secondary cluster initiates and manages copying updates from the primary. This model is adaptable
-for distributed, decentralized management or remote sites wanting control over bandwidth and timing. It scales
-efficiently in large environments, although the configuration is slightly more complex.
+In this mode, the target cluster initiates and manages copying (or pulling) updates from the source. This model
+provide target sites the control over bandwidth and timing. It scales efficiently in large environments, although
+is slightly more complex.
 
 Replication Architectures
 -------------------------
 
-Based on cost, complexity, and recovery objectives an organisation can choose between these two architectures.
+Based on cost, complexity, and recovery objectives a choice can be made between these two architectures.
 
 Active-Active Replication
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Both clusters (sites) handle read and write operations, synchronizing changes in real time between them.
-This ensures high availability and fault tolerance, if one site goes down, users can continue working on the
-other with no data loss. It is best for use cases requiring continuous operation and zero recovery point
-objective (RPO).
+Both clusters handle read and write operations, synchronising changes in real time between them. This ensures high
+availability as if one site goes down, users can continue operation on the other with no data loss. It is best for
+use cases requiring continuous operation and zero recovery point objective (RPO).
 
 Active-Passive Replication
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Only one cluster (active) is used for operations, while the passive cluster acts as a backup. Data is
-replicated asynchronously to the passive site, which becomes operational only during failover. This approach
-is suitable for DR in scenarios where the secondary site isn’t needed for real-time access, accepting
-minor data delays after failover.
+The active cluster is used to serve clients, while the passive cluster acts as a backup. Data is replicated asynchronously
+to the passive cluster, which becomes operational only during failover. This approach is suitable for DR in scenarios
+where the secondary site isn’t needed for real-time access, accepting minor data delays after failover.
 
-Disaster Recovery
------------------
+Disaster Recovery Objectives
+-----------------------------
 
-Active-Active
-~~~~~~~~~~~~~
+Recovery Point Objective (RPO)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-This architecture offers real-time failover and is ideal for mission-critical applications, but requires careful
-planning regarding network latency, consistency management, and administrative overhead.
+In a synchronous system updates are replicated to the target cluster in real time, thus even in case of a disaster
+the remote cluster is immediately available to replace the cluster experience outage. However, in case of asyncronous
+replication these updates are replicated in a schedule manner. Thus in case of disaster, the updates received since the
+last successful replication are lost during failover. This capacity (maximum) to loose updates to data defined in units
+of time (say 12H worth of data updates) is defined as RPO or recovery point objective.
 
-Active-Passive
-~~~~~~~~~~~~~~
+Recovery Time Objective (RTO)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Offers simpler and resource-efficient DR strategy at the cost of some data loss as agreed upon by the Recovery
-point objective (RPO).
+Recovery Time Objective is the maximum acceptable amount of time that a system can be down after a disruption before
+significant damage or intolerable consequences occur.
 
