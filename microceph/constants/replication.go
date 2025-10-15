@@ -15,6 +15,7 @@ const (
 var RbdJournalingEnableFeatureSet = [...]string{"exclusive-lock", "journaling"}
 
 var (
+	CephFSSubvolumePathPrefix   = "/volumes/"
 	CephFSSubvolumePathTemplate = "/volumes/%s/%s"
 	CephFSSubvolumeNoGroup      = "_nogroup"
 )

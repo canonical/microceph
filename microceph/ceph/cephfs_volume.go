@@ -82,7 +82,7 @@ func ListRemoteCephFSVolumes(remote string, local string) ([]Volume, error) {
 // CephFsSubvolumePathDeconstruct deconstructs a CephFS subvolume path string into its subvolume and subvolumegroup names.
 func CephFsSubvolumePathDeconstruct(path string) (subvolumegroup string, subvolume string, err error) {
 	parts := strings.Split(path, "/")
-	if len(parts) < 3 {
+	if len(parts) < 3 || !strings.HasPrefix(path, constants.CephFSSubvolumePathPrefix) {
 		return "", "", fmt.Errorf("invalid CephFS subvolume path: %s", path)
 	}
 
