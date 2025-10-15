@@ -91,20 +91,3 @@ func GetPathFileMode() PathFileMode {
 
 // ClusterNameRegex is the regex for validating cluster names (a-z0-9)
 const ClusterNameRegex = "^[a-z0-9]+$"
-
-// Replication Events
-const (
-	EventEnableReplication    = "enable_replication"
-	EventDisableReplication   = "disable_replication"
-	EventListReplication      = "list_replication"
-	EventStatusReplication    = "status_replication"
-	EventConfigureReplication = "configure_replication"
-)
-
-// RbdJournalingEnableFeatureSet is a slice of features needed for journaling replication in RBD.
-var RbdJournalingEnableFeatureSet = [...]string{"exclusive-lock", "journaling"}
-
-const (
-	EventPromoteReplication = "promote_replication"
-	EventDemoteReplication  = "demote_replication"
-)

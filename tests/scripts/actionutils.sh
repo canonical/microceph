@@ -405,14 +405,11 @@ function remote_configure_cephfs_mirroring() {
     for i in 0 2; do
       echo "Prepping filesystem on node-wrk$i"
       lxc exec "node-wrk$i" -- bash -c "sudo microceph.ceph fs volume create vol"
-      lxc exec "node-wrk$i" -- bash -c "sudo microceph.ceph mgr module enable mirroring"
-      lxc exec "node-wrk$i" -- bash -c "sudo microceph.ceph fs snapshot mirror enable vol"
     done
 
-    # Bootstrapping FS mirror peer
-    echo "Bootstrapping FS Mirror peer"
-    peer_token=$(lxc exec node-wrk2 -- bash -c "sudo microceph.ceph fs snapshot mirror peer_bootstrap create vol client.fsmir-vol-primary secondary" | jq '.token' | tr -d '\"')
-    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror peer_bootstrap import vol $peer_token"
+    # enable for dir paths
+    lxc exec "node-wrk0" -- bash -c "sudo microceph replication enable cephfs --volume vol --dir-path /dir1/ --remote siteb"
+    lxc exec "node-wrk0" -- bash -c "sudo microceph replication enable cephfs --volume vol --dir-path /dir2/ --remote siteb"
 
     # install primary cluster keys/conf
     sudo lxc file pull node-wrk0/var/snap/microceph/current/conf/ceph.conf /etc/ceph/
@@ -428,10 +425,6 @@ function remote_configure_cephfs_mirroring() {
     sudo mkdir /mnt/primary/dir2
     echo $STR1 | sudo tee /mnt/primary/dir1/test_file
     echo $STR2 | sudo tee /mnt/primary/dir2/test_file
-
-    # enable snapshot mirror for directories
-    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror add vol /dir1"
-    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs snapshot mirror add vol /dir2"
 }
 
 function replication_verify_cephfs_list_output() {
@@ -567,6 +560,16 @@ function remote_verify_rbd_mirroring() {
     lxc exec node-wrk3 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_two"
 
     lxc exec node-wrk0 -- sh -c "sudo microceph replication status rbd --json"
+}
+
+function remote_disable_cephfs_mirroring() {
+
+  lxc exec node-wrk0 -- sh -c "sudo microceph replication disable cephfs --volume vol"
+  if [ "$?" -eq 0 ]; then
+    echo "Non forced disable should fail, exiting test with non zero return code"
+    exit 1
+  fi
+  lxc exec node-wrk0 -- sh -c "sudo microceph replication disable cephfs --volume vol --force"
 }
 
 function remote_verify_cephfs_mirroring() {

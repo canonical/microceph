@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/tidwall/gjson"
 )
@@ -56,15 +57,36 @@ func ListCephFSVolumes() ([]Volume, error) {
 		response = append(response, Volume(volume.String()))
 	}
 
-	return response, nil
+	return parseListVolOutputJson(output)
+}
+
+// ListRemoteCephFSVolumes fetches the list of CephFS volumes from a remote cluster.
+func ListRemoteCephFSVolumes(remote string, local string) ([]Volume, error) {
+	if len(remote) == 0 || len(local) == 0 {
+		return nil, fmt.Errorf("both remote(%s) and local(%s) names must be provided", remote, local)
+	}
+
+	args := []string{"fs", "volume", "ls", "--format=json"}
+	cmd := appendRemoteClusterArgs(args, remote, local)
+
+	output, err := cephRun(cmd...)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Infof("FSVOL: listed %s as remote cluster (%s) cephfs volumes", output, remote)
+
+	return parseListVolOutputJson(output)
 }
 
 // CephFsSubvolumePathDeconstruct deconstructs a CephFS subvolume path string into its subvolume and subvolumegroup names.
 func CephFsSubvolumePathDeconstruct(path string) (subvolumegroup string, subvolume string, err error) {
 	parts := strings.Split(path, "/")
-	if len(parts) < 3 {
+	if len(parts) < 3 || !strings.HasPrefix(path, constants.CephFSSubvolumePathPrefix) {
 		return "", "", fmt.Errorf("invalid CephFS subvolume path: %s", path)
 	}
+
+	logger.Debugf("FSVOL: %+v", parts)
 
 	subvolumegroup = parts[CephFsSubVolumeGroupIndex]
 	subvolume = parts[CephFsSubVolumeIndex]
@@ -96,6 +118,25 @@ func GetCephFSVolume(volume Volume) (CephFSVolume, error) {
 
 	logger.Debugf("VOLCFS: Fetched volumes %s as %v", volume, response)
 	return response, nil
+}
+
+// CephFSSubvolumeExists checks if a specific subvolume exists within a given CephFS volume and subvolume group.
+func CephFSSubvolumeExists(volume string, subvolumegroup string, subvolume string) bool {
+	subvolumes, err := GetCephFSSubvolumes(Volume(volume), subvolumegroup)
+	if err != nil {
+		return false
+	}
+
+	logger.Debugf("volume %s and subvolumegroup %s found subvolumes: %+v", volume, subvolumegroup, subvolumes)
+
+	for _, sv := range subvolumes {
+		if string(sv) == subvolume {
+			logger.Debugf("Found subvolume %s", subvolume)
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetCephFSSubvolumeGroups lists all subvolume groups in the specified CephFS volume.
@@ -155,14 +196,28 @@ func GetCephFSSubvolumes(volume Volume, subvolumegroup string) ([]Subvolume, err
 }
 
 // GetCephFSSubvolumePath retrieves the full path of a specified subvolume within a CephFS volume and subvolume group.
-func GetCephFSSubvolumePath(volume string, subvolumegroup string, subvolume string) (string, error) {
-	var args []string
-
-	if len(subvolumegroup) != 0 {
-		args = []string{"fs", "subvolume", "getpath", volume, subvolume, subvolumegroup}
-	} else {
-		args = []string{"fs", "subvolume", "getpath", volume, subvolume}
+func GetCephFSSubvolumePath(subvolumegroup string, subvolume string) string {
+	if len(subvolumegroup) == 0 {
+		// Use nogroup value in place of subvolume
+		subvolumegroup = constants.CephFSSubvolumeNoGroup
 	}
 
-	return cephRun(args...)
+	return fmt.Sprintf(constants.CephFSSubvolumePathTemplate, subvolumegroup, subvolume)
+}
+
+// ##### Helper Functions #####
+
+func parseListVolOutputJson(output string) ([]Volume, error) {
+	volumes := gjson.Get(output, "#.name")
+	response := make([]Volume, 0, len(volumes.Array()))
+	for _, volume := range volumes.Array() {
+		if len(volume.String()) == 0 {
+			continue
+		}
+
+		logger.Debugf("FSVOL: found %s as cephfs volume", volume.String())
+		response = append(response, Volume(volume.String()))
+	}
+
+	return response, nil
 }
