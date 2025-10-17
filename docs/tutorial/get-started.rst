@@ -153,8 +153,7 @@ will now use this tool to create an RGW user called ``user``, with the display n
 
     sudo radosgw-admin user create --uid=user --display-name=user --access-key=foo --secret-key=bar
 
-The output should include user details as shown below, if ``access-key`` or ``secret-key`` is not provided
-by the user, it will be generated automatically.
+The output should include user details as shown below.
 
 .. terminal::
 
@@ -175,6 +174,10 @@ by the user, it will be generated automatically.
         }
     ],
     ...
+
+.. note::
+    
+    If ``access-key`` or ``secret-key`` is not provided by the user, it will be generated automatically.
 
 Consuming the storage
 ---------------------
