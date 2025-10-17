@@ -7,14 +7,14 @@ or even failure of multiple nodes. Remote replication is a mechanism used to rep
 cluster, typically located at a different geographical site to prevent complete outage in the event of a large
 enough fault like natural disaster.
 
-This section covers the essential ``remote replication concepts`` for users.
+This section covers the essential remote replication concepts for users.
 
 Modes of data movement
 -----------------------
 
 Replication between clusters can be implemented in two common modes, each with specific operational characteristics:
 
-Push replication:
+Push replication
 ~~~~~~~~~~~~~~~~~
 
 In this mode, the source cluster actively sends data updates (aka deltas or diffs) to the target cluster. The
@@ -22,7 +22,7 @@ replication process is initiated and managed by the source cluster, ensuring cha
 This is easier to administer at smaller scale but can place higher resource demands on the primary cluster for
 larger clusters.
 
-Pull replication:
+Pull replication
 ~~~~~~~~~~~~~~~~~
 
 In this mode, the target cluster initiates and manages copying (or pulling) updates from the source. This model
@@ -32,7 +32,7 @@ is slightly more complex to implement and administer.
 Replication architectures
 -------------------------
 
-Based on cost, complexity, and recovery objectives, a choice can be made between these two architectures.
+Based on cost, complexity, and recovery objectives, a choice can be made between these two architectures:
 
 Active-Active replication
 ~~~~~~~~~~~~~~~~~~~~~~~~~
