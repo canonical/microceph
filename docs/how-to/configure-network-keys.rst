@@ -53,5 +53,5 @@ The MicroCeph cluster configuration CLI supports setting, getting, resetting and
    | # | KEY | VALUE |
    +---+-----+-------+
 
-For more explanations and implementation details refer to :doc:`explanation <../explanation/cluster-configurations>`
+For more explanations and implementation details refer to :ref:`explanation-cluster-configurations`.
 
