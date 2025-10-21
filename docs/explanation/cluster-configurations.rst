@@ -1,3 +1,5 @@
+.. _explanation-cluster-configurations:
+
 ==============================
 Cluster network configurations
 ==============================
