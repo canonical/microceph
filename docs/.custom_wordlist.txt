@@ -364,7 +364,10 @@ WAL
 writeback
 writethrough
 YAML
+subvolume
+subvolumegroup
 Subvolume
-
+Subvolumes
+cephfs
 RTO
 RPO
