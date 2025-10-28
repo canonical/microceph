@@ -367,7 +367,7 @@ YAML
 subvolume
 subvolumegroup
 Subvolume
-Subvolumes
+subvolumes
 cephfs
 RTO
 RPO
