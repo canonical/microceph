@@ -1,3 +1,6 @@
+.. meta::
+  :description: Security in MicroCeph: encryption, secrets, auditing, access controls, and secure operation.
+
 Security overview
 =================
 
@@ -17,8 +20,6 @@ Ensuring the security of this system is necessary to protect data integrity and
 confidentiality. This guide provides an overview of security aspects, potential
 attack vectors, and some best practices for deploying and operating MicroCeph
 in a secure manner.
-
-
 
 Access controls
 ---------------

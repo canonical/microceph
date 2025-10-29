@@ -1,3 +1,6 @@
+.. meta::
+    :description: A tutorial for deploying a Ceph cluster on a single node using MicroCeph and store a JPEG image in an S3 bucket managed by MicroCeph.
+
 Get started
 ===========
 

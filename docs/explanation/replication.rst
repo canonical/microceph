@@ -1,3 +1,6 @@
+.. meta::
+    :description: Information about cluster-to-cluster replication in MicroCeph for disaster recovery.
+
 Remote replication
 ==================
 
