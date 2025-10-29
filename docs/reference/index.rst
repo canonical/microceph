@@ -1,4 +1,4 @@
-..meta::
+.. meta::
    :description: MicroCeph reference information, including CLI commands and release notes. 
 
 Reference

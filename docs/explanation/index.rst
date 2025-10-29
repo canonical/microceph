@@ -1,4 +1,4 @@
-..meta::
+.. meta::
    :description: Explanations of MicroCeph concepts and topics like, the MicroCeph charm, MicroCeph architecture, security, network configuration, remote replication, and cluster scaling.
 
 Explanation

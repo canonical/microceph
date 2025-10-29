@@ -1,4 +1,4 @@
-..meta::
+.. meta::
   :description: Security in MicroCeph: encryption, secrets, auditing, access controls, and secure operation.
 
 Security overview

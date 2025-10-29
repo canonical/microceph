@@ -1,4 +1,4 @@
-..meta::
+.. meta::
    :description: MicroCeph is the easiest way to deploy and manage a Ceph cluster.
 
 =========
