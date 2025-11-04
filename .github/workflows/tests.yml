@@ -872,6 +872,18 @@ jobs:
       - name: Exercise RGW
         run: ~/actionutils.sh testrgw
 
+      - name: Test Cluster List
+        run: |
+           set -uex
+           if ! sudo microceph cluster list | grep -q $HOSTNAME; then
+               echo "Failed: cluster list does not include $HOSTNAME"
+               exit 1
+           fi
+           if ! sudo microceph cluster list -f json | jq '.[]["name"]' | grep -q $HOSTNAME; then
+               echo "Failed: cluster list is improper json"
+               exit 1
+           fi
+
       - name: Bombard MicroCeph with cluster configs
         run: ~/actionutils.sh bombard_rgw_configs
 
