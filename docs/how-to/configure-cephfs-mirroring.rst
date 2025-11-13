@@ -7,49 +7,51 @@ For improved resiliency and disaster recovery, it is often desirable to replicat
 
 MicroCeph replication framework supports enabling replication for CephFS workloads to a remote MicroCeph cluster.
 
-An operator can enable this on any subvolume or a directory path relative to the parent volume.
+This guide describes how an operator can enable, monitor, and disable CephFS replication for any subvolume or a
+directory path relative to the parent volume using MicroCeph CLI commands.
+
+.. note::
+
+   The CLI commands described in this guide are to be executed on the primary MicroCeph cluster.
 
 Prerequisites
 --------------
 1. A primary and a secondary MicroCeph cluster, for example named ``primary_cluster`` and ``secondary_cluster``.
-2. Both primary_cluster and secondary_cluster have imported exchanged cluster tokens. Refer to :doc:`import remote <./import-remote-cluster>`.
-3. Both clusters have an active cephfs volume called ``vol``.
-4. Both clusters have exactly one ``cephfs-mirror`` daemon enabled. Refer to :doc:`enable cephfs-mirror <./enable-service-instances>`.
+2. Both ``primary_cluster`` and ``secondary_cluster`` have imported exchanged cluster tokens. Refer to our :doc:`how to guide for importing a remote microceph cluster <./import-remote-cluster>`.
+3. Both clusters have an active CephFS volume called ``vol``.
+4. Both clusters have exactly one ``cephfs-mirror`` daemon enabled. Refer to our :ref:`how-to guide for enabling the cephfs-mirror service <enable-cephfs-mirror-daemon>`.
 
-.. note::
-
-   The below listed commands are to be run on the primary_cluster.
 
 Enable CephFS replication
 -------------------------------
 
 An operator can enable replication for a given cephfs directory path as follows:
 
-.. code-block:: none
+.. terminal:: none
 
-   sudo microceph replication enable cephfs --volume vol --remote secondary_cluster --dir-path /dir1/dir2/dir3
+   sudo microceph replication enable cephfs --volume vol --remote secondary_cluster --dir-path </path/to/directory>
 
-Here, ``/dir1/dir2/dir3`` is the desired directory path relative to volume (vol) as root.
+Here, ``/path/to/directory`` is the desired directory path relative to volume ``vol`` as root.
 
 Similarly, an operator can enable replication for a given subvolume as follows:
 
-.. code-block:: none
+.. terminal:: none
 
    sudo microceph replication enable cephfs --volume vol --subvolume <subvolume> --subvolumegroup <subvolumegroup>
 
-Here, <subvolume> is the name of the subvolume and <subvolumegroup> is the name of the parent subvolume group. If the
-subvolume does not have a parent subvolume group, then <subvolumegroup> can be omitted.
+Here, ``<subvolume>`` is the name of the subvolume and ``<subvolumegroup>`` is the name of the parent subvolume group. If the
+subvolume does not have a parent subvolume group, then ``<subvolumegroup>`` can be omitted.
 
 Listing all CephFS replication images
 ------------------------------------------
 
 An operator can list all the resources enabled for replication as follows:
 
-.. code-block:: none
+.. terminal:: none
 
   sudo microceph replication list cephfs
 
-.. terminal::
+.. code-block::
 
   +--------+------------------------------------+-----------+
   | VOLUME | RESOURCE                           | TYPE      |
@@ -64,11 +66,11 @@ Check CephFS replication status
 
 An operator can check the current replication status of a volume as follows:
 
-.. code-block:: none
+.. terminal:: none
 
   sudo microceph replication status cephfs vol
 
-.. terminal::
+.. code-block::
 
   +--------------------------+
   |          SUMMARY         |
@@ -86,8 +88,7 @@ An operator can check the current replication status of a volume as follows:
   | primary_cluster     | /path/to/directory                 | idle   |            1 |             0 |             0 |
   +---------------------+---------------------------+--------+--------------+---------------+---------------+
 
-The status shows that there are 3 resources in the volume (vol), all with one snapshot synced to the configured remotes.
-
+The status shows that there are three resources in the volume (vol), all with one snapshot synced to the configured remotes.
 
 Disabling CephFS replication
 ---------------------------------
@@ -97,16 +98,21 @@ In some use-cases (say migration), the operator may want to disable replication 
 For subvolumes
 ^^^^^^^^^^^^^^
 
-.. code-block:: none
+Disable replication for a subvolume resource, here ``vol`` is the parent volume, ``<subvolumegroup>`` is the parent subvolume
+group and ``<subvolume>`` is the subvolume.
+
+.. terminal:: none
 
    sudo microceph replication disable cephfs --volume vol --subvolumegroup <subvolumegroup> --subvolume <subvolume>
 
-Similar to enablement, the ``subvolumegroup`` can be omitted if the subvolume does not belong to any group.
+Omit ``subvolumegroup`` if the subvolume does not belong to any group.
 
 For directory paths
 ^^^^^^^^^^^^^^^^^^^
 
-.. code-block:: none
+Disable replication for a directory resource, here ``</path/to/directory>`` is the directory path relative to the root of volume ``vol``.
+
+.. terminal:: none
 
    sudo microceph replication disable cephfs --volume vol --dir-path </path/to/directory>
 
@@ -115,7 +121,7 @@ For ``all enabled resources`` in a volume
 
 Disabling all resources in a volume is supported but requires the operator to pass the ``--force`` flag to avoid accidental disablement.
 
-.. code-block:: none
+.. terminal:: none
 
    sudo microceph replication disable cephfs --volume vol --force
 
