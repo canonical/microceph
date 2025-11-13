@@ -60,6 +60,7 @@ RBD pools and images.
 
    import-remote-cluster
    configure-rbd-mirroring
+   configure-cephfs-mirroring 
    perform-site-failover
 
 Upgrading your cluster

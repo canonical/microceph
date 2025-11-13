@@ -18,6 +18,7 @@ following service can be added manually to a node:
 
 * NFS
 * RGW (`RADOS Gateway service`_)
+* cephfs-mirror
 
 This is the purpose of the :command:`enable` command. It manually enables a
 new instance of a service on a node.
@@ -113,7 +114,7 @@ View cluster status again and verify the expected changes:
 .. code-block:: none
 
    MicroCeph deployment summary:
-   - node1-2c3eb41e-14e8-465d-9877-df36f5d80922 (10.111.153.78)
+   - node1 (10.111.153.78)
      Services: mds, mgr, mon, nfs.foo-cluster osd
      Disks: 3
    - workbook (192.168.29.152)
@@ -179,6 +180,39 @@ Finally, the client will be able to mount the NFS share:
 .. code-block:: none
 
    sudo mount -o rw -t nfs "nfs-bind-address:/fs-foo-dir /mnt
+
+.. _enable-cephfs-mirror-daemon:
+
+Enable cephfs-mirror service
+-----------------------------
+
+View any possible extra parameters for the ``cephfs-mirror`` service:
+
+.. code-block:: none
+
+   sudo microceph enable cephfs-mirror --help
+
+To enable the ``cephfs-mirror`` service on ``node1``:
+
+.. code-block:: none
+
+   sudo microceph enable cephfs-mirror --target node1
+
+View cluster status again and verify the expected changes:
+
+.. code-block:: none
+
+   MicroCeph deployment summary:
+   - node1 (10.111.153.78)
+     Services: mds, mgr, mon, cephfs-mirror, osd
+     Disks: 3
+   - workbook (192.168.29.152)
+     Services: mds, mgr, mon
+     Disks: 0
+
+.. note::
+
+   At the moment, the ``cephfs-mirror`` service can only be enabled once per cluster.
 
 .. LINKS
 
