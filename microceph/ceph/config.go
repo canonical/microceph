@@ -60,6 +60,7 @@ func GetConstConfigTable() ConfigTable {
 		// Cluster config keys
 		"public_network":              {"global", ClusterConfigRO, []string{"osd"}},
 		"cluster_network":             {"global", ClusterConfigRW, []string{"osd"}},
+		"rbd_default_features":        {"global", ClusterConfigRW, []string{}},
 		"osd_pool_default_crush_rule": {"global", ClusterConfigRW, []string{}},
 		// RGW config keys
 		"rgw_s3_auth_use_keystone":                    {"global", ClusterConfigRW, []string{"rgw"}},
