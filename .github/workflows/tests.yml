@@ -52,7 +52,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:dqlite/dev -y --no-update
           sudo apt-get update
-          sudo apt-get install -y libdqlite-dev
+          sudo apt-get install -y libdqlite1.17-dev
 
       - name: Install Go (1.21)
         uses: actions/setup-go@v5
