@@ -177,7 +177,7 @@ RBD features and older clients
 
 MicroCeph sets the default RBD features to 63 which corresponds to ``layering + exclusive-lock + object-map + fast-diff + deep-flatten + stripingv2``. This is done to ensure better performance and features for the RBD images. However, older kernels might not support all these features.
 
-If you face issues mapping RBD images on older kernels, you can either disable the unsupported features for the specific image or change the default behavior for the cluster.
+If you face issues mapping RBD images on older kernels, you can either disable the unsupported features for the specific image or change the default behaviour for the cluster.
 
 To disable unsupported features for a specific image:
 
@@ -185,7 +185,7 @@ To disable unsupported features for a specific image:
 
     $ sudo rbd feature disable block_pool/bd_foo object-map fast-diff deep-flatten
 
-To change the default behavior for the cluster, you can update the ``rbd_default_features`` config option:
+To change the default behaviour for the cluster, you can update the ``rbd_default_features`` config option:
 
 .. code-block:: none
 
@@ -203,4 +203,4 @@ Alternatively, you can set the default features for a specific pool:
 
     $ sudo rbd config pool set <pool_name> rbd_default_features <value>
 
-Refer to the `Ceph documentation <https://docs.ceph.com/en/latest/rbd/rbd-config-ref/#rbd-default-features>`_ for more details on RBD features and their bitmask values.
+Refer to the `Ceph documentation <https://docs.ceph.com/en/latest/rbd/rbd-config-ref/#image-features>`_ for more details on RBD features and their bitmask values.
