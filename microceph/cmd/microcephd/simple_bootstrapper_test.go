@@ -89,12 +89,12 @@ func addCrushRuleExpectations(r *mocks.Runner) {
 	// crush rule dump
 	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return("{\"rule_id\": 1}", nil).Once()
 	// crush rule set default
-	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Twice()
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()
 }
 
 // Expect: config set for public and cluster networks
 func addConfigExpectations(r *mocks.Runner) {
-	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Times(3)
 }
 
 // ##### Unit Tests #####

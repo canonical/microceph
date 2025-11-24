@@ -50,6 +50,18 @@ func BootstrapCephConfigs(cn string, pn string) error {
 		return err
 	}
 
+	// Default RBD features
+    // The values are documented here and have been stable for the lifetime of Ceph
+    // https://docs.ceph.com/en/latest/rbd/rbd-config-ref/#image-features
+	// 63 = layering + exclusive-lock + object-map + fast-diff + deep-flatten + stripingv2
+	err = SetConfigItem(apiTypes.Config{
+		Key:   "rbd_default_features",
+		Value: "63",
+	})
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

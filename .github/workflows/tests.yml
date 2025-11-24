@@ -52,7 +52,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:dqlite/dev -y --no-update
           sudo apt-get update
-          sudo apt-get install -y libdqlite-dev
+          sudo apt-get install -y libdqlite1.17-dev
 
       - name: Install Go (1.21)
         uses: actions/setup-go@v5
@@ -202,34 +202,7 @@ jobs:
         run: ~/actionutils.sh testrgw_ssl
 
       - name: Test Cluster Config
-        run: |
-          set -eux
-          cip=$(ip -4 -j route | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
-
-          # pre config set timestamp for service age
-          ts=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
-
-          # set config
-          sudo microceph cluster config set cluster_network $cip/8 --wait
-
-          # post config set timestamp for service age
-          ts2=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
-
-          # Check config output
-          output=$(sudo microceph cluster config get cluster_network | grep -cim1 'cluster_network')
-          if [[ $output -lt 1 ]] ; then echo "config check failed: $output"; exit 1; fi
-
-          # Check service restarted
-          if [ $ts2 -lt $ts ]; then echo "config check failed: TS1: $ts2 TS2: $ts3"; exit 1; fi
-
-          # reset config
-          sudo microceph cluster config reset cluster_network --wait
-
-          # post config reset timestamp for service age
-          ts3=$(sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2)
-
-          # Check service restarted
-          if [ $ts3 -lt $ts2 ]; then echo "config check failed: TS2: $ts2 TS3: $ts3"; exit 1; fi
+        run: ~/actionutils.sh verify_config
 
       - name: Test pool operations
         run: |

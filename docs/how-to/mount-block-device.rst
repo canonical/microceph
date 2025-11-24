@@ -171,3 +171,36 @@ Ceph cluster state post IO:
 Comparing the ceph status output before and after writing the file shows that
 the MicroCeph cluster has grown by 30MiB which is thrice the size of the file
 we wrote (10MiB). This is because MicroCeph configures 3 way replication by default.
+
+RBD features and older clients
+------------------------------
+
+MicroCeph sets the default RBD features to 63 which corresponds to ``layering + exclusive-lock + object-map + fast-diff + deep-flatten + stripingv2``. This is done to ensure better performance and features for the RBD images. However, older kernels might not support all these features.
+
+If you face issues mapping RBD images on older kernels, you can either disable the unsupported features for the specific image, change the default behaviour for the cluster, or for a specific pool.
+
+To disable unsupported features for a specific image:
+
+.. code-block:: none
+
+    $ sudo rbd feature disable block_pool/bd_foo object-map fast-diff deep-flatten
+
+To change the default behaviour for the cluster, update the ``rbd_default_features`` config option with:
+
+.. code-block:: none
+
+    $ sudo ceph config set global rbd_default_features <value>
+
+For example, to set it to only ``layering`` (value 1), run:
+
+.. code-block:: none
+
+    $ sudo ceph config set global rbd_default_features 1
+
+It's also possible to set the default features on a per-pool basis to tailor the level of compatibility needed:
+
+.. code-block:: none
+
+    $ sudo rbd config pool set <pool_name> rbd_default_features <value>
+
+Refer to the `Ceph documentation <https://docs.ceph.com/en/latest/rbd/rbd-config-ref/#image-features>`_ for more details on RBD features and their bitmask values.
