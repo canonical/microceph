@@ -20,12 +20,14 @@ plugs:
 slots:
   ceph-logs:
     interface: content
+    content: logs
     source:
       read:
         - "$SNAP_COMMON/logs"
 
   ceph-conf:
     interface: content
+    content: ceph-conf
     source:
       read:
         - "$SNAP_DATA/conf"
