@@ -51,7 +51,7 @@ func (ccf CephConfFile) Render(confFileName string) error {
 			"fsid":   ccf.FsID,
 			"runDir": ccf.RunDir,
 			// First monitor bootstrap IP as passed to microcluster.
-			"monitors": ccf.Monitors,
+			"monitors": strings.Join(formatIPv6(ccf.Monitors), ","),
 			"pubNet":   ccf.PubNet,
 			"ipv4":     strings.Contains(ccf.PubNet, "."),
 			"ipv6":     strings.Contains(ccf.PubNet, ":"),

@@ -32,7 +32,7 @@ func (c *cmdClusterAdopt) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "adopt [Admin Key File]",
 		Short: "adopt an existing ceph cluster",
-		Long:  "Reads provided file containing admin key or stdin if no input or '-' is provided.",
+		Long:  "Reads provided file containing admin key or stdin if '-' is provided.",
 		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
