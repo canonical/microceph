@@ -4,7 +4,11 @@ adopt-info: ceph
 grade: stable
 source-code: https://github.com/canonical/microceph.git
 license: AGPL-3.0
+title: MicroCeph
 summary: Simple clustered Ceph deployment
+issues: https://github.com/canonical/microceph/issues
+contact: https://app.element.io/#/room/#ceph-general:ubuntu.com
+website: [https://microceph.com]
 description: |-
   MicroCeph is snap-deployed Ceph with built-in clustering.
 
