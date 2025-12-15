@@ -320,7 +320,7 @@ func (rh *CephfsReplicationHandler) GetCephFSMirrorStatus(ctx context.Context) e
 	response := MirrorStatus{}
 	for _, peer := range peers {
 		// Get the mirror status for each peer
-		response[peer], err = GetCephFsMirrorPeerStatus(ctx, cephfsMirrorAdminSock, volumeID, peer)
+		response[peer], err = GetCephFsMirrorPeerStatus(ctx, cephfsMirrorAdminSock, rh.Request.Volume, volumeID, peer)
 		if err != nil {
 			return fmt.Errorf("failed to get CephFS mirror status for peer %s: %w", peer, err)
 		}
