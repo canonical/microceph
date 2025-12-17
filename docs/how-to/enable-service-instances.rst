@@ -16,8 +16,8 @@ Cluster designs that call for extra service instances, however, can be
 satisfied by manual means. In addition to the above-listed services, the
 following service can be added manually to a node:
 
-* NFS
-* RGW (`RADOS Gateway service`_)
+* NFS (supports grouped service model with ``--cluster-id``)
+* RGW (`RADOS Gateway service`_) (supports grouped service model with ``--group-id``)
 * cephfs-mirror
 
 This is the purpose of the :command:`enable` command. It manually enables a
@@ -29,9 +29,10 @@ The syntax is:
 
    sudo microceph enable <service> --target <destination> ...
 
-Where the service value is one of 'mon', 'mds', 'mgr', 'nfs-<cluster-id>' and
-'rgw'. The destination is a node name as discerned by the output of the
-:command:`status` command:
+Where the service value is one of 'mon', 'mds', 'mgr', 'nfs', and 'rgw'.
+Services like NFS and RGW support the grouped service model, allowing multiple
+instances to be managed as a logical group. The destination is a node name as
+discerned by the output of the :command:`status` command:
 
 .. code-block:: none
 
@@ -72,8 +73,10 @@ View any possible extra parameters for the RGW service:
 
    sudo microceph enable rgw --help
 
+**Option 1: Enable RGW service (ungrouped, legacy mode)**
+
 To enable the RGW service on node1 and specify a value for extra parameter
-`port`:
+`port` without using the grouped service model:
 
 .. code-block:: none
 
@@ -92,6 +95,49 @@ Finally, view cluster status again and verify expected changes:
    - workbook (192.168.29.152)
      Services: mds, mgr, mon
      Disks: 0
+
+**Option 2: Enable RGW service with grouped model**
+
+To enable the RGW service on node1 using the grouped service model with a
+specific group ID:
+
+.. code-block:: none
+
+   sudo microceph enable rgw --target node1 --port 8080 --group-id my-rgw-cluster
+
+View cluster status to see the grouped RGW service:
+
+.. code-block:: none
+
+   sudo microceph status
+
+   MicroCeph deployment summary:
+   - node1 (10.111.153.78)
+     Services: mds, mgr, mon, rgw.my-rgw-cluster, osd
+     Disks: 3
+   - workbook (192.168.29.152)
+     Services: mds, mgr, mon
+     Disks: 0
+
+.. note::
+
+   Enabling RGW on multiple nodes with the same ``--group-id`` will
+   effectively result in the running RGW services being grouped in the same
+   service cluster. This follows the same pattern as the NFS service.
+
+.. caution::
+
+   A node may only run one RGW service at a time, either grouped or ungrouped.
+   To switch between modes or join a different group, you must first disable
+   the existing RGW service:
+
+.. code-block:: none
+
+   # For ungrouped RGW
+   sudo microceph disable rgw --target node1
+
+   # For grouped RGW
+   sudo microceph disable rgw --group-id my-rgw-cluster --target node1
 
 Enable an NFS service
 ---------------------

@@ -45,6 +45,7 @@ migrate services and more.
 
    change-log-level
    migrate-auto-services
+   migrate-rgw-to-grouped
    remove-disk
    perform-cluster-maintenance
    Enable full disk encryption <enable-fde>
