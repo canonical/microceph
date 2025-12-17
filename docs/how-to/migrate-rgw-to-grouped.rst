@@ -92,9 +92,10 @@ Re-enable the RGW service with a group ID. Use the same configuration parameters
 
 .. note::
 
-   The ``--group-id`` must match the pattern: alphanumeric characters with dots
-   and hyphens, between 3-63 characters long (e.g., ``main-gateway``,
-   ``rgw-cluster-1``).
+   The ``--group-id`` must match the pattern: start and end with alphanumeric
+   characters, may contain alphanumeric characters, dots, hyphens, and
+   underscores in the middle, and be 3-63 characters long total (e.g.,
+   ``main-gateway``, ``rgw-cluster-1``, ``my_rgw.cluster``).
 
 Step 4: Verify the migration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -152,8 +153,9 @@ ungrouped). Disable the existing service first.
 
 **Issue**: Group ID validation error
 
-**Solution**: Ensure your ``--group-id`` follows the required pattern:
-alphanumeric characters with dots and hyphens, 3-63 characters long.
+**Solution**: Ensure your ``--group-id`` follows the required pattern: must
+start and end with alphanumeric characters, may contain alphanumeric characters,
+dots, hyphens, and underscores in the middle, and be 3-63 characters long total.
 
 **Issue**: Services not showing as grouped in status
 
