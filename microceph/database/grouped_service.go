@@ -42,3 +42,11 @@ type NFSServiceInfo struct {
 	BindAddress string `json:"bind_address"`
 	BindPort    uint   `json:"bind_port"`
 }
+
+// RGWServiceInfo is a struct containing GroupedService information.
+type RGWServiceInfo struct {
+	Port           int    `json:"port"`
+	SSLPort        int    `json:"ssl_port"`
+	SSLCertificate string `json:"ssl_certificate"`
+	SSLPrivateKey  string `json:"ssl_private_key"`
+}
