@@ -124,11 +124,11 @@ func GetCephFSMirrorPathState(rh *CephfsReplicationHandler, path string) (Replic
 // ###### Low Level Helpers ######
 
 // GetCephFsMirrorPeerStatus fetches the per directory mirroring status for a given CephFS volume and remote.
-func GetCephFsMirrorPeerStatus(ctx context.Context, adminSockPath string, volumeId int, peerId string) (types.CephFsReplicationMirrorStatusMap, error) {
+func GetCephFsMirrorPeerStatus(ctx context.Context, adminSockPath string, volume string, volumeId int, peerId string) (types.CephFsReplicationMirrorStatusMap, error) {
 	args := []string{
 		"--admin-daemon", adminSockPath,
 		"fs", "mirror", "peer", "status",
-		fmt.Sprintf("vol@%d", volumeId),
+		fmt.Sprintf("%s@%d", volume, volumeId),
 		peerId,
 	}
 	output, err := cephRun(args...)
