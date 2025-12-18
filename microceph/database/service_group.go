@@ -37,3 +37,8 @@ type ServiceGroupFilter struct {
 type NFSServiceGroupConfig struct {
 	V4MinVersion uint `json:"v4_min_version"`
 }
+
+// RGWServiceGroupConfig is a struct containing a ServiceGroup's configuration.
+type RGWServiceGroupConfig struct {
+	// Currently empty, but can be extended in the future for group-wide RGW configuration
+}

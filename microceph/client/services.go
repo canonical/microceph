@@ -61,6 +61,22 @@ func DeleteNFSService(ctx context.Context, c *client.Client, target string, svc 
 	return nil
 }
 
+// DeleteRGWService requests MicroCeph to deconfigure the RGW service on a given target node.
+func DeleteRGWService(ctx context.Context, c *client.Client, target string, svc *types.RGWService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	// Send this request to target.
+	c = c.UseTarget(target)
+
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, api.NewURL().Path("services", "rgw"), svc, nil)
+	if err != nil {
+		return fmt.Errorf("failed deleting RGW service: %w", err)
+	}
+
+	return nil
+}
+
 // Send a request to start certain service at the target node (hostname for remote target).
 func SendServicePlacementReq(ctx context.Context, c *client.Client, data *types.EnableService, target string) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)

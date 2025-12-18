@@ -80,28 +80,47 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 }
 
 // DisableRGW disables the RGW service on the cluster.
-func DisableRGW(ctx context.Context, s interfaces.StateInterface) error {
+// If groupID is provided, it removes the grouped service; otherwise, it removes the ungrouped service.
+func DisableRGW(ctx context.Context, s interfaces.StateInterface, groupID string) error {
 	pathConsts := constants.GetPathConst()
+
+	// If GroupID is provided, check if the grouped service exists
+	if groupID != "" {
+		exists, err := database.GroupedServicesQuery.ExistsOnHost(ctx, s, "rgw", groupID)
+		if err != nil {
+			return fmt.Errorf("failed to verify the node's RGW service GroupID: %w", err)
+		} else if !exists {
+			return fmt.Errorf("RGW service with GroupID '%s' not found on node '%s'", groupID, s.ClusterState().Name())
+		}
+	}
 
 	err := stopRGW()
 	if err != nil {
 		return fmt.Errorf("Failed to stop RGW service: %w", err)
 	}
 
-	err = removeServiceDatabase(ctx, s, "rgw")
-	if err != nil {
-		return err
+	// Remove database records based on service type
+	if groupID != "" {
+		err = database.GroupedServicesQuery.RemoveForHost(ctx, s, "rgw", groupID)
+		if err != nil {
+			return err
+		}
+	} else {
+		err = removeServiceDatabase(ctx, s, "rgw")
+		if err != nil {
+			return err
+		}
 	}
 
 	// Remove the keyring symlink.
 	err = os.Remove(filepath.Join(pathConsts.ConfPath, "ceph.client.radosgw.gateway.keyring"))
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove RGW keyring symlink: %w", err)
 	}
 
 	// Remove the keyring.
 	err = os.Remove(filepath.Join(pathConsts.DataPath, "radosgw", "ceph-radosgw.gateway", "keyring"))
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove RGW keyring: %w", err)
 	}
 
@@ -117,7 +136,7 @@ func DisableRGW(ctx context.Context, s interfaces.StateInterface) error {
 
 	// Remove the configuration.
 	err = os.Remove(filepath.Join(pathConsts.ConfPath, "radosgw.conf"))
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove RGW configuration: %w", err)
 	}
 

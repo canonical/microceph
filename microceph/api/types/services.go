@@ -37,8 +37,9 @@ var NFSClusterIDRegex = regexp.MustCompile(`^[\w][\w.-]{1,61}[\w]$`)
 // RGWService holds a port number and enable/disable flag
 type RGWService struct {
 	Service
-	Port    int  `json:"port" yaml:"port"`
-	Enabled bool `json:"enabled" yaml:"enabled"`
+	Port    int    `json:"port" yaml:"port"`
+	Enabled bool   `json:"enabled" yaml:"enabled"`
+	GroupID string `json:"group_id" yaml:"group_id"`
 }
 
 // MonitorStatus holds the status of all monitors

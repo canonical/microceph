@@ -168,7 +168,7 @@ func (s *rgwSuite) TestDisableRGW() {
 
 	common.ProcessExec = r
 
-	err := DisableRGW(context.Background(), s.TestStateInterface)
+	err := DisableRGW(context.Background(), s.TestStateInterface, "")
 
 	// we expect a missing database error
 	assert.EqualError(s.T(), err, "no server certificate")
