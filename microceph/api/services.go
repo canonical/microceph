@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path"
 
@@ -204,22 +205,27 @@ func cmdNFSDeleteService(s state.State, r *http.Request) response.Response {
 
 func cmdRGWServiceDelete(s state.State, r *http.Request) response.Response {
 	var svc types.RGWService
+	var groupID string
 
-	err := json.NewDecoder(r.Body).Decode(&svc)
-	if err != nil {
-		logger.Errorf("failed decoding disable service request: %v", err)
-		return response.InternalError(err)
+	// Try to decode JSON body - if it's empty (EOF), treat as ungrouped service for backward compatibility
+	if r.Body != nil {
+		err := json.NewDecoder(r.Body).Decode(&svc)
+		if err != nil && err != io.EOF {
+			logger.Errorf("failed decoding disable service request: %v", err)
+			return response.InternalError(err)
+		}
+		groupID = svc.GroupID
 	}
 
 	// Validate GroupID if provided
-	if svc.GroupID != "" {
-		if !types.NFSClusterIDRegex.MatchString(svc.GroupID) {
+	if groupID != "" {
+		if !types.NFSClusterIDRegex.MatchString(groupID) {
 			err := fmt.Errorf("expected group_id to be valid (regex: '%s')", types.NFSClusterIDRegex.String())
 			return response.SmartError(err)
 		}
 	}
 
-	err = ceph.DisableRGW(r.Context(), interfaces.CephState{State: s}, svc.GroupID)
+	err := ceph.DisableRGW(r.Context(), interfaces.CephState{State: s}, groupID)
 	if err != nil {
 		logger.Errorf("Failed disabling RGW: %v", err)
 		return response.SmartError(err)
