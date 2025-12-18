@@ -5,7 +5,7 @@ function create_cephadm_vm() {
   input=$1
 
   if [[ -z $input ]]; then
-    name=$(echo $RANDOM | md5sum | head -c 5)
+    name=$(echo "$RANDOM" | md5sum | head -c 5)
   else
     name=$input
   fi
@@ -55,7 +55,7 @@ function bootstrap_cephadm() {
 
   ip_info=$(lxc exec $name -- sh -c "ip -4 -j route")
 
-  ip=$(echo $ip_info | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
+  ip=$(echo "$ip_info" | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
 
   lxc exec $name -- sh -c "cephadm bootstrap --mon-ip $ip --single-host-defaults --skip-dashboard --skip-monitoring-stack"
   lxc exec $name -- sh -c "cephadm shell -- ceph orch apply osd --all-available-devices"
@@ -72,7 +72,7 @@ function adopt_cephadm() {
 
   # Mon IP
   ip_info=$(lxc exec $name -- sh -c "ip -4 -j route")
-  mon_ip=$(echo $ip_info | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
+  mon_ip=$(echo "$ip_info" | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
 
   # Admin Key
   key=$(lxc exec $name -- sh -c "cat /etc/ceph/ceph.client.admin.keyring" | grep key | cut -d " " -f 3)
@@ -150,10 +150,10 @@ function replication_adopt_check_subvolume_on_sec() {
     # check subvolumes at secondary
     list_output=$(lxc exec $sec_name -- bash -c "sudo microceph.ceph fs subvolume ls vol | jq '.[].name'")
     counter=$((counter + 1))
-    echo $list_output
+    echo "$list_output"
 
     for sv_name in $list_output; do
-      check_name=$(echo $sv_name | tr -d '\"')
+      check_name=$(echo "$sv_name" | tr -d '\"')
       if [[ $check_name == $test_svn ]]; then
         echo "subvolume $sv_name found"
         found="true"
