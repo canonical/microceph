@@ -92,7 +92,7 @@ function add_encrypted_osds() {
 
     # verify disks using json output.
     res=$(sudo microceph disk list --json | jq -r '.ConfiguredDisks[].path' | grep -e "/dev/sdia" -e "/dev/sdib" -c)
-    if [ $res -ne 2 ] ; then
+    if [[ $res -ne 2 ]] ; then
         echo "${res} is not equal to expected disk count (2)"
         exit 1
     fi
@@ -105,8 +105,8 @@ function add_lvm_vol() {
     sleep 20
     sudo microceph.ceph -s
     res=$(sudo microceph disk list --json | jq -r '.ConfiguredDisks[].path' | grep "/dev/vgtst/lvtest" -c)
-    if [ $res -ne 1 ] ; then
-        echo "Didnt find lvm vol"
+    if [[ $res -ne 1 ]] ; then
+        echo "Didn't find lvm vol"
         exit 1
     fi
 }
@@ -122,7 +122,7 @@ function disable_nfs() {
 function disable_nfs_in_nodes() {
     set -x
 
-    if [ "$#" -lt 2 ]; then
+    if [[ "$#" -lt 2 ]]; then
       echo "Expected cluster_id and at least one container name."
       exit 1
     fi
@@ -147,7 +147,7 @@ function enable_nfs() {
 function enable_nfs_in_nodes() {
     set -x
 
-    if [ "$#" -lt 2 ]; then
+    if [[ "$#" -lt 2 ]]; then
       echo "Expected cluster_id and at least one container name."
       exit 1
     fi
@@ -444,8 +444,8 @@ function replication_verify_cephfs_list_output() {
   while [[ "$empty" == "true" ]]; do
     list_output=$(lxc exec "node-wrk0" -- bash -c "sudo microceph replication list cephfs --json" | jq '.vol')
     counter=$((counter+1))
-    echo $list_output
-    empty=$(echo $list_output | jq '. == {}')
+    echo "$list_output"
+    empty=$(echo "$list_output" | jq '. == {}')
     if [[ "$empty" == "true" ]]; then
       if [[ $counter -gt 50 ]]; then
         echo "List output empty after 50 attempts, failing"
@@ -462,9 +462,9 @@ function replication_verify_cephfs_list_output() {
 
   list_output=$(lxc exec "node-wrk0" -- bash -c "sudo microceph replication list cephfs --json" | jq '.vol')
 
-  echo $list_output | jq -c '.[]' | while read -r item; do
-    path=$(echo $item | jq '.resource_path')
-    type=$(echo $item | jq '.resource_type' | tr -d '"')
+  echo "$list_output" | jq -c '.[]' | while read -r item; do
+    path=$(echo "$item" | jq '.resource_path')
+    type=$(echo "$item" | jq '.resource_type' | tr -d '"')
 
     # if resource path contains substring volumes (subvolumes do e.g. /volumes/_nogroup/testSubVol/)
     if [[ $path =~ "volumes" ]]; then
@@ -504,8 +504,8 @@ function remote_wait_for_secondary_to_sync() {
     for index in {1..100}; do
         echo "Check run #$index"
         list_output=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd --json")
-        echo $list_output
-        echo $list_output | jq .[].Images > images.json
+        echo "$list_output"
+        echo "$list_output" | jq .[].Images > images.json
         jq length ./images.json > lengths
         images=$(awk '{s+=$1} END {print s}' ./lengths)
         if [[ $images -eq $threshold ]] ; then
@@ -517,9 +517,9 @@ function remote_wait_for_secondary_to_sync() {
         sleep 30
     done
 
-    if [$count -eq 100] ; then
+    if [[ $count -eq 100 ]] ; then
         echo "replication sync check timed out"
-        exit -1
+        exit 1
     fi
 }
 
@@ -536,9 +536,9 @@ function remote_wait_cephfs_for_secondary_to_sync() {
     for i in $(seq 1 $attempts); do
       echo "Iteration $i"
       status=$(lxc exec node-wrk0 -- sh -c "microceph replication status cephfs vol --json")
-      mirror_status=$(echo $status | jq '.peers[].mirror_status')
-      dir1_snap_synced=$(echo $mirror_status | jq '."/dir1".snaps_synced')
-      dir2_snap_synced=$(echo $mirror_status | jq '."/dir2".snaps_synced')
+      mirror_status=$(echo "$status" | jq '.peers[].mirror_status')
+      dir1_snap_synced=$(echo "$mirror_status" | jq '."/dir1".snaps_synced')
+      dir2_snap_synced=$(echo "$mirror_status" | jq '."/dir2".snaps_synced')
       if [[ $dir1_snap_synced -eq 1 && $dir2_snap_synced -eq 1 ]]; then
         echo "Snapshot replicated to secondary site."
         break
@@ -565,7 +565,7 @@ function remote_verify_rbd_mirroring() {
 function remote_disable_cephfs_mirroring() {
 
   lxc exec node-wrk0 -- sh -c "sudo microceph replication disable cephfs --volume vol"
-  if [ "$?" -eq 0 ]; then
+  if [[ "$?" -eq 0 ]]; then
     echo "Non forced disable should fail, exiting test with non zero return code"
     exit 1
   fi
@@ -592,16 +592,16 @@ function remote_verify_cephfs_mirroring() {
     node2_file1=$(< /mnt/secondary/dir1/test_file)
     node2_file2=$(< /mnt/secondary/dir2/test_file)
 
-    if [ $node0_file1 != $node2_file1 ]; then
+    if [[ "$node0_file1" != "$node2_file1" ]]; then
       echo "Contents of primary: $node0_file1 are different from secondary: $node2_file1";
-      exit1
+      exit 1
     else
       echo "file1 matches on primary and secondary"
     fi
 
-    if [ $node0_file2 != $node2_file2 ]; then
+    if [[ "$node0_file2" != "$node2_file2" ]]; then
       echo "Contents of primary: $node0_file2 are different from secondary: $node2_file2";
-      exit1
+      exit 1
     else
       echo "file2 matches on primary and secondary";
     fi
@@ -614,7 +614,7 @@ function remote_failover_to_siteb() {
     img_count=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd --json" | grep -c "\"is_primary\":false")
     if [[ $img_count -lt 1 ]]; then
         echo "Site B has $img_count secondary images"
-        exit -1
+        exit 1
     fi
 
     # promote site b to primary
@@ -625,11 +625,11 @@ function remote_failover_to_siteb() {
     for index in {1..100}; do
         echo "Check run #$index"
         list_output=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd --json")
-        echo $list_output
-        images=$(echo $list_output | jq .[].Images)
-        echo $images
-        is_primary_count=$(echo $images | grep -c "\"is_primary\": true" || true)
-        echo $is_primary_count
+        echo "$list_output"
+        images=$(echo "$list_output" | jq .[].Images)
+        echo "$images"
+        is_primary_count=$(echo "$images" | grep -c "\"is_primary\": true" || true)
+        echo "$is_primary_count"
         if [[ $is_primary_count -gt 0 ]] ; then
             break
         fi
@@ -650,11 +650,11 @@ function remote_failover_to_siteb() {
     for index in {1..100}; do
         echo "Check run #$index"
         list_output=$(lxc exec node-wrk0 -- sh -c "sudo microceph replication list rbd --json")
-        echo $list_output
-        images=$(echo $list_output | jq .[].Images)
-        echo $images
-        is_primary_count=$(echo $images | grep -c "\"is_primary\": false" || true)
-        echo $is_primary_count
+        echo "$list_output"
+        images=$(echo "$list_output" | jq .[].Images)
+        echo "$images"
+        is_primary_count=$(echo "$images" | grep -c "\"is_primary\": false" || true)
+        echo "$is_primary_count"
         if [[ $is_primary_count -gt 0 ]] ; then
             break
         fi
@@ -686,13 +686,13 @@ function remote_remove_and_verify() {
 
     # Check remote exists
     remotes=$(lxc exec node-wrk0 -- sh -c "microceph remote list --json")
-    echo $remotes
+    echo "$remotes"
 
-    match=$(echo $remotes | grep -c '\"name\":\"siteb\"')
+    match=$(echo "$remotes" | grep -c '\"name\":\"siteb\"')
     if [[ $match -ne 1 ]] ; then
         echo "Expected remote record for siteb absent."
         lxc exec node-wrk0 -- sh -c "microceph remote list --json"
-        exit -1
+        exit 1
     fi
 
     # Remove the configured remote from MicroCeph
@@ -700,13 +700,13 @@ function remote_remove_and_verify() {
 
     # Verify remote does not exist
     remotes=$(lxc exec node-wrk0 -- sh -c "microceph remote list --json 2>&1 || true")
-    echo $remotes
+    echo "$remotes"
 
-    match=$(echo $remotes | grep -c 'no remotes configured')
+    match=$(echo "$remotes" | grep -c 'no remotes configured')
     if [[ $match -ne 1 ]] ; then
         echo "Removed remote record still present."
         lxc exec node-wrk0 -- sh -c "microceph remote list --json"
-        exit -1
+        exit 1
     fi
 }
 
@@ -764,7 +764,7 @@ function upgrade_multinode() {
         if [[ $res -ne $expect ]] ; then
             echo "Expected $expect OSD up, got $res"
             lxc exec $container -- sh -c "microceph.ceph -s"
-            exit -1
+            exit 1
         fi
     done
 }
@@ -983,7 +983,7 @@ function wait_for_rgw() {
     sudo microceph.ceph -s
     if [[ $res -lt $expect ]] ; then
         echo "Never reached ${expect} rgw daemon(s)"
-        return -1
+        return 1
     fi
 }
 
@@ -1048,7 +1048,7 @@ function testrgw() {
     echo hello-radosgw > ~/$filename.txt
     s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl mb s3://testbucket
     s3cmd --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey --no-ssl put -P ~/$filename.txt s3://testbucket
-    ( curl -s http://localhost/testbucket/$filename.txt | grep -F hello-radosgw ) || return -1
+    ( curl -s http://localhost/testbucket/$filename.txt | grep -F hello-radosgw ) || return 1
 }
 
 
@@ -1066,7 +1066,7 @@ function testrgw_ssl() {
     echo hello-radosgw-ssl > ~/$filename.txt
     s3cmd --ca-certs=/tmp/ca.crt --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey mb s3://testbucketssl
     s3cmd --ca-certs=/tmp/ca.crt --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey put -P ~/$filename.txt s3://testbucketssl
-    ( CURL_CA_BUNDLE=/tmp/ca.crt curl -s https://localhost/testbucketssl/$filename.txt | grep -F hello-radosgw-ssl ) || return -1
+    ( CURL_CA_BUNDLE=/tmp/ca.crt curl -s https://localhost/testbucketssl/$filename.txt | grep -F hello-radosgw-ssl ) || return 1
 }
 
 function enable_services() {
@@ -1144,7 +1144,7 @@ function test_migration() {
         fi
     fi
     echo "Never reached migration target"
-    return -1
+    return 1
 }
 
 function test_ceph_conf() {
@@ -1156,7 +1156,7 @@ function test_ceph_conf() {
 if ! grep -q public_net /var/snap/microceph/current/conf/ceph.conf ; then
     echo "Error: didn't find public_net in ceph.conf"
     cat /var/snap/microceph/current/conf/ceph.conf
-    exit -1
+    exit 1
 fi
 EOF
     done

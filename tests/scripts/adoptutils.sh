@@ -5,7 +5,7 @@ function create_cephadm_vm() {
   input=$1
 
   if [[ -z $input ]]; then
-    name=$(echo $RANDOM | md5sum | head -c 5)
+    name=$(echo "$RANDOM" | md5sum | head -c 5)
   else
     name=$input
   fi
@@ -55,7 +55,7 @@ function bootstrap_cephadm() {
 
   ip_info=$(lxc exec $name -- sh -c "ip -4 -j route")
 
-  ip=$(echo $ip_info | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
+  ip=$(echo "$ip_info" | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
 
   lxc exec $name -- sh -c "cephadm bootstrap --mon-ip $ip --single-host-defaults --skip-dashboard --skip-monitoring-stack"
   lxc exec $name -- sh -c "cephadm shell -- ceph orch apply osd --all-available-devices"
@@ -72,7 +72,7 @@ function adopt_cephadm() {
 
   # Mon IP
   ip_info=$(lxc exec $name -- sh -c "ip -4 -j route")
-  mon_ip=$(echo $ip_info | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
+  mon_ip=$(echo "$ip_info" | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
 
   # Admin Key
   key=$(lxc exec $name -- sh -c "cat /etc/ceph/ceph.client.admin.keyring" | grep key | cut -d " " -f 3)
@@ -141,33 +141,47 @@ function replication_adopt_check_subvolume_on_sec() {
   lxc exec $pri_name -- bash -c "sudo microceph.ceph fs subvolume create vol test"
 
   subvolpath=$(lxc exec $pri_name -- bash -c "sudo microceph.ceph fs subvolume getpath vol test")
-  lxc exec $pri_name -- bash -c "sudo microceph.ceph fs snapshot mirror add vol $subvolpath"
+  lxc exec $pri_name -- bash -c "sudo microceph.ceph fs snapshot mirror add vol \"$subvolpath\""
+
+  # Give some time for the mirror to start syncing
+  sleep 10s
 
   found="false"
   test_svn="test"
-  counter=0
-  while [[ "$found" == "false" ]]; do
+  echo "Waiting for subvolume to appear on secondary..."
+  
+  # Try for up to 15 minutes (90 attempts * 10s = 900s)
+  for i in $(seq 1 90); do
+    echo "Check attempt $i/90"
+    
     # check subvolumes at secondary
-    list_output=$(lxc exec $sec_name -- bash -c "sudo microceph.ceph fs subvolume ls vol | jq '.[].name'")
-    counter=$((counter + 1))
-    echo $list_output
-
-    for sv_name in $list_output; do
-      check_name=$(echo $sv_name | tr -d '\"')
-      if [[ $check_name == $test_svn ]]; then
-        echo "subvolume $sv_name found"
-        found="true"
-        break
-      fi
-    done
-
-    if [[ $counter -eq 60 ]]; then
-      echo "Timedout waiting for subvolume to appear"
-      exit 1
+    list_output=$(lxc exec $sec_name -- bash -c "sudo microceph.ceph fs subvolume ls vol 2>/dev/null | jq -r '.[].name' 2>/dev/null" || echo "")
+    
+    if [[ -n "$list_output" ]]; then
+      echo "Current subvolumes: $list_output"
+      
+      for sv_name in $list_output; do
+        check_name=$(echo "$sv_name" | tr -d '\"' | xargs)
+        if [[ "$check_name" == "$test_svn" ]]; then
+          echo "✓ Subvolume '$sv_name' found on secondary"
+          found="true"
+          break 2
+        fi
+      done
+    else
+      echo "No subvolumes found yet on secondary"
     fi
 
-    sleep 1m
+    if [[ $i -lt 90 ]]; then
+      sleep 10s
+    fi
   done
+
+  if [[ "$found" == "false" ]]; then
+    echo "✗ Timeout: subvolume did not appear on secondary after 15 minutes"
+    lxc exec $sec_name -- bash -c "sudo microceph.ceph fs subvolume ls vol" || true
+    exit 1
+  fi
 }
 
 run="${1}"
