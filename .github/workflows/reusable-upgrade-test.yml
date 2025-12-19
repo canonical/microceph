@@ -1,0 +1,134 @@
+name: Reusable upgrade test
+on:
+  workflow_call:
+    inputs:
+      release-channel:
+        description: "Snap channel used for the initial install"
+        required: true
+        type: string
+      upgrade-mode:
+        description: "Upgrade source: 'artifact' (default) installs the local build, 'channel' refreshes from a store channel"
+        required: false
+        type: string
+        default: artifact
+      upgrade-channel:
+        description: "Store channel used when upgrade-mode is 'channel'"
+        required: false
+        type: string
+        default: ""
+      runner:
+        description: "Runner image"
+        required: false
+        type: string
+        default: ubuntu-22.04
+      job-name:
+        description: "Custom job name"
+        required: false
+        type: string
+        default: ""
+      artifact-name:
+        description: "Name of the artifact containing the locally built snaps"
+        required: false
+        type: string
+        default: snaps
+      artifact-path:
+        description: "Directory where the artifact will be downloaded"
+        required: false
+        type: string
+        default: /home/runner
+      verify-config:
+        description: "Run additional cluster configuration checks after the upgrade"
+        required: false
+        type: boolean
+        default: false
+jobs:
+  upgrade:
+    name: ${{ inputs.job-name != '' && inputs.job-name || format('Upgrade test from {0}', inputs.release-channel) }}
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Validate upgrade-channel input
+        if: inputs.upgrade-mode == 'channel' && inputs.upgrade-channel == ''
+        run: |
+          echo "upgrade-channel input must be provided when upgrade-mode is 'channel'"
+          exit 1
+
+      - name: Download snap artifact
+        if: inputs.upgrade-mode == 'artifact'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.artifact-path }}
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
+
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
+
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
+
+      - name: Install dependencies
+        run: |
+          ~/actionutils.sh install_tools
+          ~/actionutils.sh setup_lxd
+
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
+
+      - name: Install release from store
+        run: ~/actionutils.sh install_store ${{ inputs.release-channel }}
+
+      - name: Bootstrap cluster
+        run: ~/actionutils.sh bootstrap_head
+
+      - name: Setup cluster nodes
+        run: ~/actionutils.sh cluster_nodes public
+
+      - name: Add 3 OSDs
+        run: |
+          for c in node-wrk0 node-wrk1 node-wrk2 ; do
+            ~/actionutils.sh add_osd_to_node $c
+          done
+          ~/actionutils.sh headexec wait_for_osds 3
+
+      - name: Enable RGW
+        run: ~/actionutils.sh headexec enable_rgw
+
+      - name: Exercise RGW
+        run: ~/actionutils.sh headexec testrgw
+
+      - name: Install local build
+        if: inputs.upgrade-mode == 'artifact'
+        run: ~/actionutils.sh upgrade_multinode
+
+      - name: Refresh from store channel
+        if: inputs.upgrade-mode == 'channel'
+        run: ~/actionutils.sh refresh_snap ${{ inputs.upgrade-channel }}
+
+      - name: Wait until 3 OSDs are up
+        run: ~/actionutils.sh headexec wait_for_osds 3
+
+      - name: Verify cluster health
+        run: ~/actionutils.sh headexec verify_health
+
+      - name: Exercise RGW after upgrade
+        run: ~/actionutils.sh headexec testrgw
+
+      - name: Verify cluster configuration
+        if: inputs.verify-config
+        run: ~/actionutils.sh test_ceph_conf
+
+      - name: Exercise microceph status
+        run: |
+          set -uex
+          lxc exec node-wrk0 -- sh -c "sudo microceph status"
+
+      - name: Setup upterm session
+        if: ${{ failure() && runner.debug }}
+        uses: lhotari/action-upterm@v1
