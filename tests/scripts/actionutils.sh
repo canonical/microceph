@@ -614,7 +614,7 @@ function remote_failover_to_siteb() {
     img_count=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd --json" | grep -c "\"is_primary\":false")
     if [[ $img_count -lt 1 ]]; then
         echo "Site B has $img_count secondary images"
-        exit -1
+        exit 1
     fi
 
     # promote site b to primary
@@ -625,11 +625,11 @@ function remote_failover_to_siteb() {
     for index in {1..100}; do
         echo "Check run #$index"
         list_output=$(lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd --json")
-        echo $list_output
-        images=$(echo $list_output | jq .[].Images)
-        echo $images
-        is_primary_count=$(echo $images | grep -c "\"is_primary\": true" || true)
-        echo $is_primary_count
+        echo "$list_output"
+        images=$(echo "$list_output" | jq .[].Images)
+        echo "$images"
+        is_primary_count=$(echo "$images" | grep -c "\"is_primary\": true" || true)
+        echo "$is_primary_count"
         if [[ $is_primary_count -gt 0 ]] ; then
             break
         fi
