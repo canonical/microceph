@@ -63,16 +63,17 @@ Flags:
 
 .. code-block:: none
 
-   --all-available       add all available devices as OSDs
-   --db-device string    The device used for the DB
-   --db-encrypt          Encrypt the DB device prior to use
-   --db-wipe             Wipe the DB device prior to use
-   --encrypt             Encrypt the disk prior to use (only block devices)
-   --wal-device string   The device used for WAL
-   --wal-encrypt         Encrypt the WAL device prior to use
-   --wal-wipe            Wipe the WAL device prior to use
-   --wipe                Wipe the disk prior to use
-
+   --all-available         add all available devices as OSDs
+   --db-device string      The device used for the DB
+   --db-encrypt            Encrypt the DB device prior to use
+   --db-wipe               Wipe the DB device prior to use
+   --dry-run               Show matched devices without adding them (requires --osd-match)
+   --encrypt               Encrypt the disk prior to use (only block devices)
+   --osd-match string      DSL expression to match devices for OSD creation
+   --wal-device string     The device used for WAL
+   --wal-encrypt           Encrypt the WAL device prior to use
+   --wal-wipe              Wipe the WAL device prior to use
+   --wipe                  Wipe the disk prior to use
 
 .. note::
 
@@ -85,6 +86,57 @@ Flags:
 
    WAL and DB devices can only be used with data devices that reside on a
    block device, not with loop files. Loop files do not support encryption.
+
+
+DSL-based device selection
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``--osd-match`` flag allows selecting devices using a DSL expression based
+on device attributes. This is useful for automation scenarios where device
+names may vary between nodes but functionally similar devices are present.
+
+Example expressions:
+
+.. code-block:: bash
+
+   # Select all NVMe devices
+   microceph disk add --osd-match "eq(@type, 'nvme')"
+
+   # Select devices larger than 100GiB
+   microceph disk add --osd-match "gt(@size, 100GiB)"
+
+   # Complex selection: NVMe devices from Samsung
+   microceph disk add --osd-match "and(eq(@type, 'nvme'), re('samsung', @vendor))"
+
+   # Preview matches without adding
+   microceph disk add --osd-match "eq(@type, 'sata')" --dry-run
+
+Available predicates:
+
+- ``and(a, b, ...)`` - Logical AND (variadic)
+- ``or(a, b, ...)`` - Logical OR (variadic)
+- ``not(a)`` - Logical NOT
+- ``in(x, a, b, ...)`` - True if x equals any of the other arguments
+- ``re(pattern, value)`` - Regex match (Go RE2 syntax, case-insensitive)
+- ``eq(a, b)`` - Equality
+- ``ne(a, b)`` - Not equal
+- ``gt(a, b)``, ``ge(a, b)``, ``lt(a, b)``, ``le(a, b)`` - Comparisons
+
+Available variables:
+
+- ``@type`` - Device type (sata, nvme, virtio, etc.)
+- ``@vendor`` - Vendor name extracted from model (lowercased)
+- ``@model`` - Full model string (lowercased)
+- ``@size`` - Device size in bytes (compare with units like 100GiB, 500MB)
+- ``@devnode`` - Device path (e.g., /dev/disk/by-id/...)
+- ``@host`` - Short hostname
+
+Size units: B, KiB, MiB, GiB, TiB, PiB (1024-based) or KB, MB, GB, TB, PB (1000-based).
+Numbers and units must be written without any space between them (e.g., ``100GiB``, not ``100 GiB``)
+
+Limitations:
+
+- ``--osd-match`` cannot be used together with ``--wal-device`` or ``--db-device``.
 
 
 ``list``

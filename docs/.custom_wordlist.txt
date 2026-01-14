@@ -372,3 +372,8 @@ subvolumes
 cephfs
 RTO
 RPO
+lowercased
+DSL
+KiB
+PiB
+TiB

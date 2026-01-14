@@ -2,14 +2,18 @@ package common
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/spf13/afero"
+	"golang.org/x/sys/unix"
 )
 
 // IsMounted checks if a device is mounted.
@@ -139,13 +143,11 @@ func checkForZeros(devicePath string, fs afero.Fs) (bool, error) {
 	}
 	defer file.Close()
 
-	// Get blockdev size to calculate strategic check points
-	stat, err := file.Stat()
+	deviceSize, err := getBlockDeviceSize(devicePath)
 	if err != nil {
-		logger.Errorf("failed to stat device %s: %v", devicePath, err)
+		logger.Errorf("failed to get block device size for %s: %v", devicePath, err)
 		return false, err
 	}
-	deviceSize := stat.Size()
 	logger.Debugf("Device %s size: %d bytes", devicePath, deviceSize)
 
 	// Define locations to check (in bytes from start)
@@ -199,6 +201,52 @@ func checkForZeros(devicePath string, fs afero.Fs) (bool, error) {
 
 	logger.Debugf("All %d checkpoints passed for device %s", len(checkPoints), devicePath)
 	return true, nil
+}
+
+// getBlockDeviceSize returns the size of a block device in bytes.
+// It reads from sysfs; for regular files (used in tests), it falls back to stat.Size().
+func getBlockDeviceSize(devicePath string) (int64, error) {
+	// First resolve symlinks to get the real device path
+	resolved, err := filepath.EvalSymlinks(devicePath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve device path: %w", err)
+	}
+
+	// Stat the device to get mode and device numbers
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return 0, fmt.Errorf("failed to stat device: %w", err)
+	}
+
+	// Check if this is a block device
+	if info.Mode()&os.ModeDevice != 0 {
+		// Get the underlying syscall.Stat_t to access device major/minor
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if ok {
+			// Use /sys/dev/block/<major>:<minor>/size which works for all block devices
+			// including those created with mknod (custom device node names).
+			major := unix.Major(stat.Rdev)
+			minor := unix.Minor(stat.Rdev)
+			sysfsPath := fmt.Sprintf("/sys/dev/block/%d:%d/size", major, minor)
+
+			if data, err := os.ReadFile(sysfsPath); err == nil {
+				sectors, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+				if err != nil {
+					return 0, fmt.Errorf("failed to parse device size from sysfs: %w", err)
+				}
+				// Convert sectors (512 bytes each) to bytes
+				return sectors * 512, nil
+			}
+		}
+		// Block device but couldn't get size from sysfs
+		return 0, fmt.Errorf("unable to determine block device size from sysfs")
+	}
+
+	// Regular file - use stat.Size() (used in unit tests)
+	if info.Size() == 0 {
+		return 0, fmt.Errorf("unable to determine device size (stat returned 0)")
+	}
+	return info.Size(), nil
 }
 
 // checkDeviceWithBluestoreTool uses ceph-bluestore-tool to check for existing labels

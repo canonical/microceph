@@ -64,6 +64,11 @@ func cmdDisksPost(s state.State, r *http.Request) response.Response {
 	mu.Lock()
 	defer mu.Unlock()
 
+	// Handle DSL-based device selection
+	if req.OSDMatch != "" {
+		return handleDSLDiskAdd(r, s, req)
+	}
+
 	// No usable diskpath were provided.
 	if len(req.Path) == 0 {
 		return response.SyncResponse(true, types.DiskAddResponse{})
@@ -93,6 +98,12 @@ func cmdDisksPost(s state.State, r *http.Request) response.Response {
 		response.SyncResponse(false, resp)
 	}
 
+	return response.SyncResponse(true, resp)
+}
+
+// handleDSLDiskAdd handles DSL-based device selection for OSD creation.
+func handleDSLDiskAdd(r *http.Request, s state.State, req types.DisksPost) response.Response {
+	resp := ceph.AddDisksWithDSL(r.Context(), s, req.OSDMatch, req.Encrypt, req.Wipe, req.DryRun)
 	return response.SyncResponse(true, resp)
 }
 

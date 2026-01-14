@@ -12,6 +12,12 @@ type DisksPost struct {
 	DBDev      *string  `json:"dbdev" yaml:"dbdev"`
 	DBWipe     bool     `json:"dbwipe" yaml:"dbwipe"`
 	DBEncrypt  bool     `json:"dbencrypt" yaml:"dbencrypt"`
+	// OSDMatch is a DSL expression for matching devices to use as OSDs.
+	// When set, Path is ignored and devices are selected based on the expression.
+	OSDMatch string `json:"osd_match,omitempty" yaml:"osd_match,omitempty"`
+	// DryRun when true causes the command to report which devices would be
+	// added without actually adding them. Only valid when OSDMatch is set.
+	DryRun bool `json:"dry_run,omitempty" yaml:"dry_run,omitempty"`
 }
 
 // DiskAddReport holds report for single disk addition i.e. success/failure and optional error for failures.
@@ -25,6 +31,18 @@ type DiskAddReport struct {
 type DiskAddResponse struct {
 	ValidationError string          `json:"validation_error" yaml:"validation_error"`
 	Reports         []DiskAddReport `json:"report" yaml:"report"`
+	// DryRunDevices contains the list of devices that would be added
+	// when dry_run is true. Only populated for DSL-based requests.
+	DryRunDevices []DryRunDevice `json:"dry_run_devices,omitempty" yaml:"dry_run_devices,omitempty"`
+}
+
+// DryRunDevice represents a device that would be added during a dry run.
+type DryRunDevice struct {
+	Path   string `json:"path" yaml:"path"`
+	Model  string `json:"model" yaml:"model"`
+	Size   string `json:"size" yaml:"size"`
+	Type   string `json:"type" yaml:"type"`
+	Vendor string `json:"vendor" yaml:"vendor"`
 }
 
 // DisksDelete holds an OSD number and a flag for forcing the removal
