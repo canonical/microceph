@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/microceph/microceph/common"
 )
 
 // DeviceContext holds the context for evaluating DSL expressions against a device.
@@ -16,26 +17,11 @@ type DeviceContext struct {
 }
 
 // NewDeviceContext creates a new DeviceContext from a disk resource.
-// It computes the device path using the same logic as disk_list.go.
 func NewDeviceContext(disk api.ResourcesStorageDisk, hostname string) *DeviceContext {
-	// Compute device path using multiple fallback methods
-	// (matches logic in disk_list.go:doFilterLocalDisks)
-	var devicePath string
-	if len(disk.DeviceID) > 0 {
-		// First preference: use DeviceID with prefix (e.g., /dev/disk/by-id/...)
-		devicePath = fmt.Sprintf("/dev/disk/by-id/%s", disk.DeviceID)
-	} else if len(disk.DevicePath) > 0 {
-		// Second preference: use DevicePath (e.g., /dev/disk/by-path/...)
-		devicePath = fmt.Sprintf("/dev/disk/by-path/%s", disk.DevicePath)
-	} else {
-		// Final fallback: use device ID directly (e.g., /dev/vdc)
-		devicePath = fmt.Sprintf("/dev/%s", disk.ID)
-	}
-
 	return &DeviceContext{
 		Disk:     disk,
 		Hostname: hostname,
-		Path:     devicePath,
+		Path:     common.GetDevicePath(&disk),
 	}
 }
 

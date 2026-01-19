@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/spf13/afero"
@@ -265,4 +267,115 @@ func checkDeviceWithBluestoreTool(devicePath string) (bool, error) {
 	logger.Infof("ceph-bluestore-tool found existing bluestore labels on %s (not pristine)", devicePath)
 	logger.Debugf("ceph-bluestore-tool output for %s: %s", devicePath, output)
 	return false, nil
+}
+
+// GetDevicePath computes the stable device path for a storage disk.
+// It prefers DeviceID (by-id), falls back to DevicePath (by-path), then ID (/dev/X).
+func GetDevicePath(disk *api.ResourcesStorageDisk) string {
+	if len(disk.DeviceID) > 0 {
+		return fmt.Sprintf("%s%s", constants.DevicePathPrefix, disk.DeviceID)
+	}
+	if len(disk.DevicePath) > 0 {
+		return fmt.Sprintf("/dev/disk/by-path/%s", disk.DevicePath)
+	}
+	return fmt.Sprintf("/dev/%s", disk.ID)
+}
+
+// DiskFilterConfig holds configuration for disk filtering operations.
+type DiskFilterConfig struct {
+	// IsMountedFunc checks if a device path is mounted.
+	// If nil, defaults to IsMounted.
+	IsMountedFunc func(string) (bool, error)
+
+	// IsCephDeviceFunc checks if a device is used as a Ceph WAL/DB device.
+	// If nil, defaults to IsCephDevice.
+	IsCephDeviceFunc func(string) (bool, error)
+}
+
+// FilterAvailableDisks filters storage disks to find those available for OSD creation.
+// It excludes disks that:
+// - Have partitions
+// - Are smaller than MinOSDSize (2GB)
+// - Are already configured as OSDs
+// - Are currently mounted
+// - Are used as Ceph WAL/DB devices
+func FilterAvailableDisks(storage *api.ResourcesStorage, configuredDisks types.Disks, cfg *DiskFilterConfig) ([]api.ResourcesStorageDisk, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get hostname: %w", err)
+	}
+
+	// Set defaults for nil functions
+	isMounted := IsMounted
+	isCephDevice := IsCephDevice
+	if cfg != nil {
+		if cfg.IsMountedFunc != nil {
+			isMounted = cfg.IsMountedFunc
+		}
+		if cfg.IsCephDeviceFunc != nil {
+			isCephDevice = cfg.IsCephDeviceFunc
+		}
+	}
+
+	var available []api.ResourcesStorageDisk
+
+	for _, disk := range storage.Disks {
+		logger.Debugf("FilterAvailableDisks: checking disk %s, size %d, type %s", disk.ID, disk.Size, disk.Type)
+
+		// Skip disks with partitions
+		if len(disk.Partitions) > 0 {
+			logger.Infof("FilterAvailableDisks: ignoring device %s, it has partitions", disk.ID)
+			continue
+		}
+
+		// Minimum size check (2GB)
+		if disk.Size < constants.MinOSDSize {
+			logger.Infof("FilterAvailableDisks: ignoring device %s, size less than 2GB", disk.ID)
+			continue
+		}
+
+		devicePath := GetDevicePath(&disk)
+
+		// Check if already configured as OSD on this host
+		found := false
+		for _, configured := range configuredDisks {
+			if configured.Location != hostname {
+				continue
+			}
+			if configured.Path == devicePath {
+				found = true
+				break
+			}
+		}
+		if found {
+			logger.Infof("FilterAvailableDisks: ignoring device %s, already configured as OSD", disk.ID)
+			continue
+		}
+
+		// Check if mounted
+		mounted, err := isMounted(devicePath)
+		if err != nil {
+			logger.Errorf("FilterAvailableDisks: error checking if device %s is mounted: %v", devicePath, err)
+			continue
+		}
+		if mounted {
+			logger.Infof("FilterAvailableDisks: ignoring device %s, it is mounted", disk.ID)
+			continue
+		}
+
+		// Check if used as Ceph WAL/DB device
+		isCephDev, err := isCephDevice(devicePath)
+		if err != nil {
+			logger.Errorf("FilterAvailableDisks: error checking if device %s is ceph device: %v", devicePath, err)
+			continue
+		}
+		if isCephDev {
+			logger.Infof("FilterAvailableDisks: ignoring device %s, it is a Ceph device", disk.ID)
+			continue
+		}
+
+		available = append(available, disk)
+	}
+
+	return available, nil
 }

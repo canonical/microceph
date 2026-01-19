@@ -973,8 +973,11 @@ func (m *OSDManager) MatchDisksWithDSL(ctx context.Context, dslExpr string, dryR
 		return nil, fmt.Errorf("failed to list configured disks: %w", err)
 	}
 
-	// Filter available disks
-	availableDisks, err := m.filterAvailableDisksForDSL(storage, configuredDisks)
+	// Filter available disks using the shared function
+	cfg := &common.DiskFilterConfig{
+		IsMountedFunc: m.mountChecker.IsMounted,
+	}
+	availableDisks, err := common.FilterAvailableDisks(storage, configuredDisks, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to filter available disks: %w", err)
 	}
@@ -1051,84 +1054,6 @@ func (m *OSDManager) AddDisksWithDSL(ctx context.Context, dslExpr string, encryp
 
 	// Add the matched disks (no WAL/DB support with DSL yet)
 	return m.addBulkDisks(ctx, disks, nil, nil)
-}
-
-// filterAvailableDisksForDSL filters disks to find those available for OSD creation.
-func (m *OSDManager) filterAvailableDisksForDSL(storage *api.ResourcesStorage, configuredDisks types.Disks) ([]api.ResourcesStorageDisk, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get hostname: %w", err)
-	}
-
-	var available []api.ResourcesStorageDisk
-
-	for _, disk := range storage.Disks {
-		logger.Debugf("DSL filter: checking disk %s, size %d, type %s", disk.ID, disk.Size, disk.Type)
-
-		// Skip disks with partitions
-		if len(disk.Partitions) > 0 {
-			logger.Infof("DSL filter: ignoring device %s, it has partitions", disk.ID)
-			continue
-		}
-
-		// Minimum size check (2GB)
-		if disk.Size < constants.MinOSDSize {
-			logger.Infof("DSL filter: ignoring device %s, size less than 2GB", disk.ID)
-			continue
-		}
-
-		// Compute device path
-		var devicePath string
-		if len(disk.DeviceID) > 0 {
-			devicePath = fmt.Sprintf("%s%s", constants.DevicePathPrefix, disk.DeviceID)
-		} else if len(disk.DevicePath) > 0 {
-			devicePath = fmt.Sprintf("/dev/disk/by-path/%s", disk.DevicePath)
-		} else {
-			devicePath = fmt.Sprintf("/dev/%s", disk.ID)
-		}
-
-		// Check if already configured as OSD
-		found := false
-		for _, configured := range configuredDisks {
-			if configured.Location != hostname {
-				continue
-			}
-			if configured.Path == devicePath {
-				found = true
-				break
-			}
-		}
-		if found {
-			logger.Infof("DSL filter: ignoring device %s, already configured as OSD", disk.ID)
-			continue
-		}
-
-		// Check if mounted
-		mounted, err := m.mountChecker.IsMounted(devicePath)
-		if err != nil {
-			logger.Errorf("DSL filter: error checking if device %s is mounted: %v", devicePath, err)
-			continue
-		}
-		if mounted {
-			logger.Infof("DSL filter: ignoring device %s, it is mounted", disk.ID)
-			continue
-		}
-
-		// Check if used as Ceph WAL/DB device
-		isCephDev, err := common.IsCephDevice(devicePath)
-		if err != nil {
-			logger.Errorf("DSL filter: error checking if device %s is ceph device: %v", devicePath, err)
-			continue
-		}
-		if isCephDev {
-			logger.Infof("DSL filter: ignoring device %s, it is a Ceph device", disk.ID)
-			continue
-		}
-
-		available = append(available, disk)
-	}
-
-	return available, nil
 }
 
 // extractVendor extracts the vendor name from a model string.

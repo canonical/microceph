@@ -8,18 +8,21 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/common"
 )
 
 func TestFilterLocalDisks(t *testing.T) {
-	// Mock functions that always return false (not mounted, not ceph device)
-	mockIsMounted := func(device string) (bool, error) {
-		return false, nil
-	}
-	mockIsCephDevice := func(device string) (bool, error) {
-		return false, nil
+	// Mock config with functions that always return false (not mounted, not ceph device)
+	mockCfg := &common.DiskFilterConfig{
+		IsMountedFunc: func(device string) (bool, error) {
+			return false, nil
+		},
+		IsCephDeviceFunc: func(device string) (bool, error) {
+			return false, nil
+		},
 	}
 
-	// Test cases for doFilterLocalDisks function
+	// Test cases for filterLocalDisks function
 	tests := []struct {
 		name          string
 		resources     *api.ResourcesStorage
@@ -179,7 +182,7 @@ func TestFilterLocalDisks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := doFilterLocalDisks(tt.resources, tt.disks, mockIsMounted, mockIsCephDevice)
+			result, err := filterLocalDisks(tt.resources, tt.disks, mockCfg)
 			require.NoError(t, err, tt.description)
 
 			assert.Equal(t, tt.expectedCount, len(result), tt.description)
@@ -196,12 +199,14 @@ func TestFilterLocalDisks(t *testing.T) {
 }
 
 func TestFilterLocalDisksPathPriority(t *testing.T) {
-	// Mock functions that always return false (not mounted, not ceph device)
-	mockIsMounted := func(device string) (bool, error) {
-		return false, nil
-	}
-	mockIsCephDevice := func(device string) (bool, error) {
-		return false, nil
+	// Mock config with functions that always return false (not mounted, not ceph device)
+	mockCfg := &common.DiskFilterConfig{
+		IsMountedFunc: func(device string) (bool, error) {
+			return false, nil
+		},
+		IsCephDeviceFunc: func(device string) (bool, error) {
+			return false, nil
+		},
 	}
 
 	// Test that DeviceID takes priority over DevicePath
@@ -219,7 +224,7 @@ func TestFilterLocalDisksPathPriority(t *testing.T) {
 		},
 	}
 
-	result, err := doFilterLocalDisks(resources, types.Disks{}, mockIsMounted, mockIsCephDevice)
+	result, err := filterLocalDisks(resources, types.Disks{}, mockCfg)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 

@@ -377,3 +377,7 @@ DSL
 KiB
 PiB
 TiB
+nvme
+sata
+virtio
+variadic
