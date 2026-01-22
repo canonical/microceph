@@ -285,45 +285,20 @@ func compareValues(a, b Value) (int, error) {
 		return 0, nil
 	}
 
-	// If one is a number and the other is a string, try to parse the string
-	if a.Type() == ValueTypeNumber || b.Type() == ValueTypeNumber {
-		an := a.Number()
-		bn := b.Number()
-
-		// If one value is already a number, try to use the other's Number() conversion
-		// Note: StringValue.Number() returns 0, so this only works if at least one is a number
-		if a.Type() == ValueTypeNumber && b.Type() == ValueTypeString {
-			// Try to parse b as a number with unit
-			parsed, _, err := ParseNumberWithUnit(b.String())
-			if err != nil {
-				return 0, fmt.Errorf("cannot compare number with non-numeric string '%s'", b.String())
-			}
-			bn = parsed
-		} else if b.Type() == ValueTypeNumber && a.Type() == ValueTypeString {
-			// Try to parse a as a number with unit
-			parsed, _, err := ParseNumberWithUnit(a.String())
-			if err != nil {
-				return 0, fmt.Errorf("cannot compare number with non-numeric string '%s'", a.String())
-			}
-			an = parsed
-		}
-
-		if an < bn {
+	// If both are strings, compare lexicographically
+	if a.Type() == ValueTypeString && b.Type() == ValueTypeString {
+		as, bs := a.String(), b.String()
+		if as < bs {
 			return -1, nil
 		}
-		if an > bn {
+		if as > bs {
 			return 1, nil
 		}
 		return 0, nil
 	}
 
-	// Compare as strings
-	as, bs := a.String(), b.String()
-	if as < bs {
-		return -1, nil
-	}
-	if as > bs {
-		return 1, nil
-	}
-	return 0, nil
+	// Mixed types are not allowed - return an error
+	// This prevents subtle bugs like comparing a number to a quoted string
+	// (e.g., ge(@size, '10GiB') should be written as ge(@size, 10GiB))
+	return 0, fmt.Errorf("cannot compare %s with %s: use unquoted numbers for numeric comparisons", a.Type(), b.Type())
 }
