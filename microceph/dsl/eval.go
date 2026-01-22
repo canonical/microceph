@@ -4,14 +4,12 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 )
 
 const (
-	// MaxRegexPatternLength limits regex pattern size to prevent DoS.
+	// MaxRegexPatternLength limits regex pattern size to prevent large memory
+	// allocation during compilation.
 	MaxRegexPatternLength = 1000
-	// RegexTimeout limits regex execution time to prevent ReDoS.
-	RegexTimeout = 100 * time.Millisecond
 )
 
 // Evaluator evaluates DSL expressions against a device context.
@@ -197,6 +195,8 @@ func (e *Evaluator) evalRe(f *FunctionCall) (Value, error) {
 	value := valueVal.String()
 
 	// Compile regex (case-insensitive by default for convenience)
+	// Go's regexp uses RE2 which guarantees linear time O(n*m), preventing
+	// catastrophic backtracking (ReDoS).
 	re, err := regexp.Compile("(?i)" + pattern)
 	if err != nil {
 		return nil, &EvalError{
@@ -205,44 +205,7 @@ func (e *Evaluator) evalRe(f *FunctionCall) (Value, error) {
 		}
 	}
 
-	// Execute regex with timeout to prevent ReDoS
-	matched, err := matchWithTimeout(re, value, RegexTimeout)
-	if err != nil {
-		return nil, &EvalError{
-			Pos:     f.Args[0].Pos(),
-			Message: fmt.Sprintf("regex evaluation failed: %s", err),
-		}
-	}
-
-	return BoolValue(matched), nil
-}
-
-// matchWithTimeout executes a regex match with a timeout as a safety measure.
-//
-// Note on goroutine behavior: Go's regexp package does not support cancellation,
-// so on timeout the spawned goroutine will continue until MatchString completes.
-// The buffered channel prevents the goroutine from blocking on send. This is
-// acceptable because:
-//  1. Go's RE2-based regexp guarantees linear time complexity O(n*m), preventing
-//     catastrophic backtracking that causes ReDoS in PCRE-based engines.
-//  2. Pattern length is already limited to MaxRegexPatternLength (1000 chars).
-//  3. Input strings (device attributes) are typically short (<256 chars).
-//  4. The timeout is a safety net, not the primary defense against DoS.
-//
-// Under normal operation, regex matches complete well within the timeout and
-// the goroutine exits promptly.
-func matchWithTimeout(re *regexp.Regexp, s string, timeout time.Duration) (bool, error) {
-	resultCh := make(chan bool, 1)
-	go func() {
-		resultCh <- re.MatchString(s)
-	}()
-
-	select {
-	case result := <-resultCh:
-		return result, nil
-	case <-time.After(timeout):
-		return false, fmt.Errorf("regex evaluation timed out after %v", timeout)
-	}
+	return BoolValue(re.MatchString(value)), nil
 }
 
 // evalComparison evaluates comparison functions: eq, ne, gt, ge, lt, le.
