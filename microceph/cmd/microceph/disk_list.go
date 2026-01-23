@@ -18,7 +18,6 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microceph/microceph/common"
-	"github.com/canonical/microceph/microceph/constants"
 )
 
 type cmdDiskList struct {
@@ -175,7 +174,7 @@ func getUnpartitionedDisks(cli *microCli.Client) ([]Disk, error) {
 		return nil, fmt.Errorf("internal error: unable to fetch available disks: %w", err)
 	}
 
-	data, err := filterLocalDisks(resources, disks)
+	data, err := filterLocalDisks(resources, disks, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -184,87 +183,21 @@ func getUnpartitionedDisks(cli *microCli.Client) ([]Disk, error) {
 }
 
 // filterLocalDisks filters out the disks that are in use or otherwise not suitable for OSDs.
-func filterLocalDisks(resources *api.ResourcesStorage, disks types.Disks) ([]Disk, error) {
-	return doFilterLocalDisks(resources, disks, common.IsMounted, common.IsCephDevice)
-}
-
-// doFilterLocalDisks filters local disks but allows dep. injection for testing.
-func doFilterLocalDisks(resources *api.ResourcesStorage, disks types.Disks,
-	isMountedFunc func(string) (bool, error),
-	isCephDeviceFunc func(string) (bool, error)) ([]Disk, error) {
-	var err error
-	// Get local hostname.
-	hostname, err := os.Hostname()
+// It uses the shared FilterAvailableDisks function and converts to the Disk display type.
+func filterLocalDisks(resources *api.ResourcesStorage, disks types.Disks, cfg *common.DiskFilterConfig) ([]Disk, error) {
+	availableDisks, err := common.FilterAvailableDisks(resources, disks, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("internal error: unable to fetch Hostname: %w", err)
+		return nil, err
 	}
 
-	// Prepare the table.
-	data := []Disk{}
-	for _, disk := range resources.Disks {
-		clilogger.Debugf("Checking disk %s, size %d, type %s", disk.ID, disk.Size, disk.Type)
-		if len(disk.Partitions) > 0 {
-			clilogger.Infof("Ignoring device %s, it has partitions", disk.ID)
-			continue
-		}
-
-		// Minimum size set to 2GB i.e. 2*1024*1024*1024
-		if disk.Size < constants.MinOSDSize {
-			clilogger.Infof("Ignoring device %s, size less than 2GB", disk.ID)
-			continue
-		}
-
-		// Try to construct device path using multiple fallback methods
-		var devicePath string
-		if len(disk.DeviceID) > 0 {
-			// First preference: use DeviceID with prefix (e.g., /dev/disk/by-id/...)
-			devicePath = fmt.Sprintf("%s%s", constants.DevicePathPrefix, disk.DeviceID)
-		} else if len(disk.DevicePath) > 0 {
-			// Second preference: use DevicePath (e.g., /dev/disk/by-path/...)
-			devicePath = fmt.Sprintf("/dev/disk/by-path/%s", disk.DevicePath)
-		} else {
-			// Final fallback: use device ID directly (e.g., /dev/vdc)
-			devicePath = fmt.Sprintf("/dev/%s", disk.ID)
-		}
-
-		found := false
-		// check if disk already employed as an OSD.
-		for _, entry := range disks {
-			if entry.Location != hostname {
-				continue
-			}
-
-			if entry.Path == devicePath {
-				found = true
-				break
-			}
-		}
-
-		if found {
-			continue
-		}
-
-		// check if disk is mounted or already employed as a journal or db
-		mounted, err := isMountedFunc(devicePath)
-		if err != nil {
-			return nil, fmt.Errorf("internal error: unable to check if disk is mounted: %w", err)
-		}
-		if mounted {
-			continue
-		}
-		isCephDev, err := isCephDeviceFunc(devicePath)
-		if err != nil {
-			return nil, fmt.Errorf("internal error checking if disk is ceph device: %w", err)
-		}
-		if isCephDev {
-			continue
-		}
-
+	// Convert to display format
+	data := make([]Disk, 0, len(availableDisks))
+	for _, disk := range availableDisks {
 		data = append(data, Disk{
 			Model: disk.Model,
 			Size:  units.GetByteSizeStringIEC(int64(disk.Size), 2),
 			Type:  disk.Type,
-			Path:  devicePath,
+			Path:  common.GetDevicePath(&disk),
 		})
 	}
 	return data, nil

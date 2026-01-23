@@ -372,3 +372,12 @@ subvolumes
 cephfs
 RTO
 RPO
+lowercased
+DSL
+KiB
+PiB
+TiB
+nvme
+sata
+virtio
+variadic

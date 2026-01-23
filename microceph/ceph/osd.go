@@ -20,6 +20,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/dsl"
 	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/spf13/afero"
@@ -33,7 +34,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
-	"github.com/canonical/microceph/microceph/logger"	
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 // PathValidator provides an interface for validating device paths - introduced for mocking in tests.
@@ -929,6 +930,164 @@ func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal
 	revert.Success()
 	logger.Infof("Added osd.%d", nr)
 	return nil
+}
+
+// DSLMatchResult contains the result of DSL-based device matching.
+type DSLMatchResult struct {
+	// MatchedDisks contains the disks that matched the DSL expression
+	MatchedDisks []api.ResourcesStorageDisk
+	// DryRunDevices contains device info for dry-run mode
+	DryRunDevices []types.DryRunDevice
+	// ValidationError contains any validation error message
+	ValidationError string
+}
+
+// MatchDisksWithDSL matches available disks using a DSL expression.
+// Returns matched disks or an error. If dryRun is true, returns device info without adding.
+func (m *OSDManager) MatchDisksWithDSL(ctx context.Context, dslExpr string, dryRun bool) (*DSLMatchResult, error) {
+	result := &DSLMatchResult{}
+
+	// Parse the DSL expression
+	expr, err := dsl.Parse(dslExpr)
+	if err != nil {
+		result.ValidationError = fmt.Sprintf("invalid DSL expression: %v", err)
+		return result, nil
+	}
+
+	// Validate the expression
+	err = dsl.Validate(expr)
+	if err != nil {
+		result.ValidationError = fmt.Sprintf("DSL validation error: %v", err)
+		return result, nil
+	}
+
+	// Get available storage resources
+	storage, err := m.storage.GetStorage()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get storage resources: %w", err)
+	}
+
+	// Get configured disks to filter them out
+	configuredDisks, err := database.OSDQuery.List(ctx, m.state)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list configured disks: %w", err)
+	}
+
+	// Filter available disks using the shared function
+	cfg := &common.DiskFilterConfig{
+		IsMountedFunc: m.mountChecker.IsMounted,
+	}
+	availableDisks, err := common.FilterAvailableDisks(storage, configuredDisks, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to filter available disks: %w", err)
+	}
+
+	// Get hostname for DSL evaluation
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = ""
+	}
+	// Use short hostname
+	if idx := strings.Index(hostname, "."); idx > 0 {
+		hostname = hostname[:idx]
+	}
+
+	// Apply DSL filter to match devices
+	matchedDisks, err := dsl.MatchDevices(expr, availableDisks, hostname)
+	if err != nil {
+		result.ValidationError = fmt.Sprintf("DSL evaluation error: %v", err)
+		return result, nil
+	}
+
+	result.MatchedDisks = matchedDisks
+
+	// Build dry-run device info if requested
+	if dryRun {
+		result.DryRunDevices = make([]types.DryRunDevice, len(matchedDisks))
+		for i, disk := range matchedDisks {
+			result.DryRunDevices[i] = types.DryRunDevice{
+				Path:   dsl.GetDevicePath(disk),
+				Model:  disk.Model,
+				Size:   formatBytesIEC(int64(disk.Size)),
+				Type:   disk.Type,
+				Vendor: extractVendor(disk.Model),
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// AddDisksWithDSL adds disks matching a DSL expression as OSDs.
+// If dryRun is true, returns matched devices without adding them.
+func (m *OSDManager) AddDisksWithDSL(ctx context.Context, dslExpr string, encrypt bool, wipe bool, dryRun bool) types.DiskAddResponse {
+	result, err := m.MatchDisksWithDSL(ctx, dslExpr, dryRun)
+	if err != nil {
+		return types.DiskAddResponse{ValidationError: err.Error()}
+	}
+
+	// Return validation errors
+	if result.ValidationError != "" {
+		return types.DiskAddResponse{ValidationError: result.ValidationError}
+	}
+
+	// Handle dry-run mode
+	if dryRun {
+		return types.DiskAddResponse{DryRunDevices: result.DryRunDevices}
+	}
+
+	// No devices matched
+	if len(result.MatchedDisks) == 0 {
+		return types.DiskAddResponse{}
+	}
+
+	// Prepare disk parameters for matched devices
+	disks := make([]types.DiskParameter, len(result.MatchedDisks))
+	for i, disk := range result.MatchedDisks {
+		disks[i] = types.DiskParameter{
+			Path:     dsl.GetDevicePath(disk),
+			Encrypt:  encrypt,
+			Wipe:     wipe,
+			LoopSize: 0,
+		}
+	}
+
+	// Add the matched disks (no WAL/DB support with DSL yet)
+	return m.addBulkDisks(ctx, disks, nil, nil)
+}
+
+// extractVendor extracts the vendor name from a model string.
+func extractVendor(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	if idx := strings.IndexAny(model, " \t"); idx > 0 {
+		return model[:idx]
+	}
+	if idx := strings.Index(model, "_"); idx > 0 {
+		return model[:idx]
+	}
+	return model
+}
+
+// formatBytesIEC formats bytes using IEC units (KiB, MiB, GiB, etc.)
+func formatBytesIEC(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// AddDisksWithDSLWrapper is a public wrapper for DSL-based disk addition.
+func AddDisksWithDSL(ctx context.Context, s state.State, dslExpr string, encrypt bool, wipe bool, dryRun bool) types.DiskAddResponse {
+	return NewOSDManager(s).AddDisksWithDSL(ctx, dslExpr, encrypt, wipe, dryRun)
 }
 
 // AddLoopBackOSDs adds OSDs backed by loopback files using a one-off manager.

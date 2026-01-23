@@ -139,6 +139,8 @@ func (s *StorageDeviceTestSuite) TestIsPristineDisk() {
 	fs := afero.NewOsFs()
 
 	// Mock ProcessExec to avoid calling real ceph-bluestore-tool
+	// Note: getBlockDeviceSize uses sysfs for block devices but falls back to stat.Size()
+	// for regular files (like our test files), so no mock needed for size detection.
 	originalProcessExec := ProcessExec
 	defer func() { ProcessExec = originalProcessExec }()
 	mockRunner := &MockRunner{}

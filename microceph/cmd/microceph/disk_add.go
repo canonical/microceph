@@ -28,6 +28,8 @@ type cmdDiskAdd struct {
 	dbEncrypt      bool
 	dbWipe         bool
 	flagAllDevices bool
+	flagOSDMatch   string
+	flagDryRun     bool
 }
 
 func (c *cmdDiskAdd) Command() *cobra.Command {
@@ -45,7 +47,14 @@ size is an integer with M, G, or T suffixes for megabytes, gigabytes, or terabyt
 nr is the number of file-backed loop OSDs to create.
 For instance, a spec of loop,8G,3 will create 3 file-backed loop OSDs of 8GB each.
 
-Note that loop files can't be used with encryption nor WAL/DB devices.`,
+Note that loop files can't be used with encryption nor WAL/DB devices.
+
+Alternatively, use --osd-match with a DSL expression to select devices based on attributes:
+  microceph disk add --osd-match "eq(@type, 'nvme')"
+  microceph disk add --osd-match "and(gt(@size, 100GiB), re('Samsung', @model))"
+
+Available DSL predicates: and(), or(), not(), in(), re(), eq(), ne(), gt(), ge(), lt(), le()
+Available variables: @type, @vendor, @model, @size, @devnode, @host`,
 		RunE: c.Run,
 	}
 
@@ -58,6 +67,8 @@ Note that loop files can't be used with encryption nor WAL/DB devices.`,
 	cmd.PersistentFlags().StringVar(&c.dbDevice, "db-device", "", "The device used for the DB")
 	cmd.PersistentFlags().BoolVar(&c.dbWipe, "db-wipe", false, "Wipe the DB device prior to use")
 	cmd.PersistentFlags().BoolVar(&c.dbEncrypt, "db-encrypt", false, "Encrypt the DB device prior to use")
+	cmd.PersistentFlags().StringVar(&c.flagOSDMatch, "osd-match", "", "DSL expression to match devices for OSD creation")
+	cmd.PersistentFlags().BoolVar(&c.flagDryRun, "dry-run", false, "Show matched devices without adding them (requires --osd-match)")
 
 	return cmd
 }
@@ -65,8 +76,13 @@ Note that loop files can't be used with encryption nor WAL/DB devices.`,
 func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 	var req = types.DisksPost{}
 
-	// No args passed.
-	if len(args) == 0 && !c.flagAllDevices {
+	// Validate flag combinations
+	if err := c.validateFlags(args); err != nil {
+		return err
+	}
+
+	// No args passed and no match expression.
+	if len(args) == 0 && !c.flagAllDevices && c.flagOSDMatch == "" {
 		return cmd.Help()
 	}
 
@@ -85,7 +101,11 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if c.flagAllDevices {
+	if c.flagOSDMatch != "" {
+		// DSL-based device selection
+		req.OSDMatch = c.flagOSDMatch
+		req.DryRun = c.flagDryRun
+	} else if c.flagAllDevices {
 		disks, err := getUnpartitionedDisks(cli)
 		if err != nil {
 			return err
@@ -117,17 +137,65 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 	// required request params.
 	req.Wipe = c.flagWipe
 	req.Encrypt = c.flagEncrypt
-	failures, err := client.AddDisk(context.Background(), cli, &req)
+	response, err := client.AddDisk(context.Background(), cli, &req)
 	if err != nil {
 		return err
 	}
 
-	err = printAddDiskFailures(failures)
+	// Handle dry-run output
+	if c.flagDryRun && len(response.DryRunDevices) > 0 {
+		return c.printDryRunOutput(response)
+	}
+
+	err = printAddDiskFailures(response)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// validateFlags checks for invalid flag combinations.
+func (c *cmdDiskAdd) validateFlags(args []string) error {
+	// --osd-match is mutually exclusive with positional args
+	if c.flagOSDMatch != "" && len(args) > 0 {
+		return fmt.Errorf("--osd-match cannot be used with positional device arguments")
+	}
+
+	// --osd-match is mutually exclusive with --all-available
+	if c.flagOSDMatch != "" && c.flagAllDevices {
+		return fmt.Errorf("--osd-match cannot be used with --all-available")
+	}
+
+	// --dry-run requires --osd-match
+	if c.flagDryRun && c.flagOSDMatch == "" {
+		return fmt.Errorf("--dry-run requires --osd-match")
+	}
+
+	// WAL/DB devices are not yet supported with --osd-match (Phase 2)
+	if c.flagOSDMatch != "" && (c.walDevice != "" || c.dbDevice != "") {
+		return fmt.Errorf("--wal-device and --db-device are not supported with --osd-match in this version")
+	}
+
+	return nil
+}
+
+// printDryRunOutput prints the dry-run results in a tabulated format.
+func (c *cmdDiskAdd) printDryRunOutput(response types.DiskAddResponse) error {
+	if len(response.DryRunDevices) == 0 {
+		fmt.Println("No devices matched the expression")
+		return nil
+	}
+
+	fmt.Println("The following devices would be added as OSDs:")
+	data := make([][]string, len(response.DryRunDevices))
+	for i, dev := range response.DryRunDevices {
+		data[i] = []string{dev.Path, dev.Model, dev.Size, dev.Type}
+	}
+
+	header := []string{"PATH", "MODEL", "SIZE", "TYPE"}
+	sort.Sort(lxdCmd.SortColumnsNaturally(data))
+	return lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, data, data)
 }
 
 func printAddDiskFailures(response types.DiskAddResponse) error {

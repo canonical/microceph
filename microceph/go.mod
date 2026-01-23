@@ -20,6 +20,7 @@ require (
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
 	golang.org/x/crypto v0.28.0
+	golang.org/x/sys v0.27.0
 )
 
 require (
@@ -65,7 +66,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.31.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/sys v0.27.0 // indirect
 	golang.org/x/term v0.25.0 // indirect
 	golang.org/x/text v0.19.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
