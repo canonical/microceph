@@ -20,6 +20,7 @@ function setup_lxd() {
     fi
     sudo snap refresh
     sudo snap set lxd daemon.group=adm
+    sudo getent group lxd | grep -qwF "$USER" || sudo usermod -aG lxd "$USER"
     sudo lxd init --auto
 }
 
