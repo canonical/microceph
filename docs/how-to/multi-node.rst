@@ -2,6 +2,15 @@
 Multi-node install
 ==================
 
+.. The note below is only visible when viewed through MicroCloud's docs site:
+   https://documentation.ubuntu.com/microcloud/latest/microceph/
+.. only:: integrated
+
+   .. admonition:: For MicroCloud users
+      :class: note
+      
+      The MicroCloud setup process handles MicroCeph installation. Thus, you do not need to follow the steps on this page.
+
 This tutorial will show how to install MicroCeph on three machines,
 thereby creating a multi-node cluster. For this tutorial, we will
 utilise physical block devices for storage.

@@ -4,6 +4,15 @@
 Get started
 ===========
 
+.. The note below is only visible when viewed through MicroCloud's docs site:
+   https://documentation.ubuntu.com/microcloud/latest/microceph/
+.. only:: integrated
+
+   .. admonition:: For MicroCloud users
+      :class: note
+      
+      The MicroCloud setup process handles MicroCeph installation and configuration. Thus, you do not need to follow the steps on this page.
+
 This tutorial will guide you through your first steps with MicroCeph. We will deploy a Ceph cluster on a single node using MicroCeph and store a JPEG image in an S3 bucket managed by MicroCeph.
 
 How you'll do It
