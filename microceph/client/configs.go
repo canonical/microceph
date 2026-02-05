@@ -10,11 +10,11 @@ import (
 	microCli "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
-func SetConfig(ctx context.Context, c *microCli.Client, data *types.Config) error {
+func SetConfig(ctx context.Context, c microCli.Client, data *types.Config) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("configs"), data, nil)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("configs").URL, data, nil)
 	if err != nil {
 		return fmt.Errorf("failed setting cluster config: %w, Key: %s, Value: %s", err, data.Key, data.Value)
 	}
@@ -22,11 +22,11 @@ func SetConfig(ctx context.Context, c *microCli.Client, data *types.Config) erro
 	return nil
 }
 
-func ClearConfig(ctx context.Context, c *microCli.Client, data *types.Config) error {
+func ClearConfig(ctx context.Context, c microCli.Client, data *types.Config) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
-	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, api.NewURL().Path("configs"), data, nil)
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("configs").URL, data, nil)
 	if err != nil {
 		return fmt.Errorf("failed clearing cluster config: %w, Key: %s", err, data.Key)
 	}
@@ -34,13 +34,13 @@ func ClearConfig(ctx context.Context, c *microCli.Client, data *types.Config) er
 	return nil
 }
 
-func GetConfig(ctx context.Context, c *microCli.Client, data *types.Config) (types.Configs, error) {
+func GetConfig(ctx context.Context, c microCli.Client, data *types.Config) (types.Configs, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
 	configs := types.Configs{}
 
-	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("configs"), data, &configs)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, &api.NewURL().Path("configs").URL, data, &configs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch cluster config: %w, Key: %s", err, data.Key)
 	}

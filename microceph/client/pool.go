@@ -12,11 +12,11 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
-func PoolSetReplicationFactor(ctx context.Context, c *microCli.Client, data *types.PoolPut) error {
+func PoolSetReplicationFactor(ctx context.Context, c microCli.Client, data *types.PoolPut) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("pools-op"), data, nil)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("pools-op").URL, data, nil)
 	if err != nil {
 		return fmt.Errorf("failed setting replication factor: %w", err)
 	}
@@ -24,12 +24,12 @@ func PoolSetReplicationFactor(ctx context.Context, c *microCli.Client, data *typ
 	return nil
 }
 
-func GetPools(ctx context.Context, c *microCli.Client) ([]types.Pool, error) {
+func GetPools(ctx context.Context, c microCli.Client) ([]types.Pool, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
 	var pools []types.Pool
-	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("pools"), nil, &pools)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, &api.NewURL().Path("pools").URL, nil, &pools)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch OSD pools: %w", err)
 	}

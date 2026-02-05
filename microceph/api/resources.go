@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/canonical/lxd/lxd/resources"
-	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/microcluster/v3/microcluster/rest"
+	"github.com/canonical/microcluster/v3/microcluster/rest/response"
 	"github.com/canonical/microcluster/v3/state"
 )
 

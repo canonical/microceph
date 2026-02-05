@@ -9,31 +9,31 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microcluster/v3/microcluster/db"
 	"github.com/canonical/microcluster/v3/state"
 )
 
 var _ = api.ServerEnvironment{}
 
-var globalClientConfigItemObjects = cluster.RegisterStmt(`
+var globalClientConfigItemObjects = db.RegisterStmt(`
 SELECT client_config.id, client_config.key, client_config.value FROM client_config
   WHERE client_config.member_id IS NULL
   ORDER BY client_config.key
 `)
 
-var globalClientConfigItemObjectByKey = cluster.RegisterStmt(`
+var globalClientConfigItemObjectByKey = db.RegisterStmt(`
 SELECT client_config.id, client_config.key, client_config.value FROM client_config
   WHERE ( client_config.key = ? AND client_config.member_id IS NULL )
 `)
 
-var globalClientConfigItemCreateOrUpdate = cluster.RegisterStmt(`
+var globalClientConfigItemCreateOrUpdate = db.RegisterStmt(`
 INSERT OR REPLACE INTO client_config (member_id, key, value)
   VALUES (NULL, ?, ?)
 `)
 
-var clientConfigItemCreateOrUpdate = cluster.RegisterStmt(`
+var clientConfigItemCreateOrUpdate = db.RegisterStmt(`
 INSERT OR REPLACE INTO client_config (member_id, key, value)
   VALUES ((SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), ?, ?)
 `)
@@ -261,7 +261,7 @@ func createOrUpdateClientConfigItem(_ context.Context, tx *sql.Tx, object Client
 	}
 
 	// Prepared statement to use.
-	stmt, err := cluster.Stmt(tx, stmtIndex)
+	stmt, err := db.Stmt(tx, stmtIndex)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement for %v: %w", object, err)
 	}
@@ -305,7 +305,7 @@ func squashClientConfigs(globalConfigs ClientConfigItems, hostConfigs ClientConf
 
 // getAllGlobalConfigs performs sql query for all global configurations.
 func getAllGlobalConfigs(ctx context.Context, tx *sql.Tx, rowFunc query.Dest) error {
-	queryStr, err := cluster.StmtString(globalClientConfigItemObjects)
+	queryStr, err := db.StmtString(globalClientConfigItemObjects)
 	if err != nil {
 		return fmt.Errorf("failed to parse sql stmt table: %w", err)
 	}
@@ -322,7 +322,7 @@ func getAllGlobalConfigs(ctx context.Context, tx *sql.Tx, rowFunc query.Dest) er
 
 // getOneGlobalConfigByKey performs sql query for a single global configuration using config key.
 func getOneGlobalConfigByKey(ctx context.Context, tx *sql.Tx, rowFunc query.Dest, key string) error {
-	queryStr, err := cluster.StmtString(globalClientConfigItemObjectByKey)
+	queryStr, err := db.StmtString(globalClientConfigItemObjectByKey)
 	if err != nil {
 		return fmt.Errorf("failed to parse sql stmt table: %w", err)
 	}

@@ -41,12 +41,7 @@ func (c *cmdClusterList) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, err := m.LocalClient()
-	if err != nil {
-		return err
-	}
-
-	clusterMembers, err := client.GetClusterMembers(context.Background())
+	clusterMembers, err := m.GetClusterMembers(context.Background())
 	if err != nil {
 		return err
 	}

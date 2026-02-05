@@ -17,34 +17,34 @@ import (
 
 var _ = api.ServerEnvironment{}
 
-var remoteObjects = cluster.RegisterStmt(`
+var remoteObjects = db.RegisterStmt(`
 SELECT remote.id, remote.name, remote.local_name
   FROM remote
   ORDER BY remote.name
 `)
 
-var remoteObjectsByName = cluster.RegisterStmt(`
+var remoteObjectsByName = db.RegisterStmt(`
 SELECT remote.id, remote.name, remote.local_name
   FROM remote
   WHERE ( remote.name = ? )
   ORDER BY remote.name
 `)
 
-var remoteID = cluster.RegisterStmt(`
+var remoteID = db.RegisterStmt(`
 SELECT remote.id FROM remote
   WHERE remote.name = ?
 `)
 
-var remoteCreate = cluster.RegisterStmt(`
+var remoteCreate = db.RegisterStmt(`
 INSERT INTO remote (name, local_name)
   VALUES (?, ?)
 `)
 
-var remoteDeleteByName = cluster.RegisterStmt(`
+var remoteDeleteByName = db.RegisterStmt(`
 DELETE FROM remote WHERE name = ?
 `)
 
-var remoteUpdate = cluster.RegisterStmt(`
+var remoteUpdate = db.RegisterStmt(`
 UPDATE remote
   SET name = ?, local_name = ?
  WHERE id = ?
@@ -118,7 +118,7 @@ func GetRemotes(ctx context.Context, tx *sql.Tx, filters ...RemoteFilter) ([]Rem
 	queryParts := [2]string{}
 
 	if len(filters) == 0 {
-		sqlStmt, err = cluster.Stmt(tx, remoteObjects)
+		sqlStmt, err = db.Stmt(tx, remoteObjects)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get \"remoteObjects\" prepared statement: %w", err)
 		}
@@ -128,7 +128,7 @@ func GetRemotes(ctx context.Context, tx *sql.Tx, filters ...RemoteFilter) ([]Rem
 		if filter.Name != nil {
 			args = append(args, []any{filter.Name}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, remoteObjectsByName)
+				sqlStmt, err = db.Stmt(tx, remoteObjectsByName)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"remoteObjectsByName\" prepared statement: %w", err)
 				}
@@ -136,7 +136,7 @@ func GetRemotes(ctx context.Context, tx *sql.Tx, filters ...RemoteFilter) ([]Rem
 				break
 			}
 
-			query, err := cluster.StmtString(remoteObjectsByName)
+			query, err := db.StmtString(remoteObjectsByName)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"remoteObjects\" prepared statement: %w", err)
 			}
@@ -195,7 +195,7 @@ func GetRemote(ctx context.Context, tx *sql.Tx, name string) (*Remote, error) {
 // GetRemoteID return the ID of the Remote with the given key.
 // generator: Remote ID
 func GetRemoteID(ctx context.Context, tx *sql.Tx, name string) (int64, error) {
-	stmt, err := cluster.Stmt(tx, remoteID)
+	stmt, err := db.Stmt(tx, remoteID)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"remoteID\" prepared statement: %w", err)
 	}
@@ -249,7 +249,7 @@ func CreateRemote(ctx context.Context, tx *sql.Tx, object Remote) (int64, error)
 	args[1] = object.LocalName
 
 	// Prepared statement to use.
-	stmt, err := cluster.Stmt(tx, remoteCreate)
+	stmt, err := db.Stmt(tx, remoteCreate)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"remoteCreate\" prepared statement: %w", err)
 	}
@@ -271,7 +271,7 @@ func CreateRemote(ctx context.Context, tx *sql.Tx, object Remote) (int64, error)
 // DeleteRemote deletes the Remote matching the given key parameters.
 // generator: Remote DeleteOne-by-Name
 func DeleteRemote(ctx context.Context, tx *sql.Tx, name string) error {
-	stmt, err := cluster.Stmt(tx, remoteDeleteByName)
+	stmt, err := db.Stmt(tx, remoteDeleteByName)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"remoteDeleteByName\" prepared statement: %w", err)
 	}
@@ -303,7 +303,7 @@ func UpdateRemote(ctx context.Context, tx *sql.Tx, name string, object Remote) e
 		return err
 	}
 
-	stmt, err := cluster.Stmt(tx, remoteUpdate)
+	stmt, err := db.Stmt(tx, remoteUpdate)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"remoteUpdate\" prepared statement: %w", err)
 	}

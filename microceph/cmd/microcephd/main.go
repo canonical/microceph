@@ -82,10 +82,7 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	h.PreRemove = ceph.PreRemove(m)
 
 	daemonArgs := microcluster.DaemonArgs{
-		Version: version.Version(),
-
-		Verbose:          c.global.flagLogVerbose,
-		Debug:            c.global.flagLogDebug,
+		Version:          version.Version(),
 		ExtensionsSchema: database.SchemaExtensions,
 		APIExtensions:    nil,
 		Hooks:            h,

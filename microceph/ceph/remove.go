@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/canonical/microceph/microceph/logger"
-	microCli "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/canonical/microcluster/v3/microcluster"
+	microCli "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/canonical/microcluster/v3/state"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -51,7 +51,7 @@ func EnsureNonOsdSvcEnough(services types.Services, nodeName string, minMon int,
 	return nil
 }
 
-func removeNode(cli *microCli.Client, node string, force bool) error {
+func removeNode(cli microCli.Client, node string, force bool) error {
 	logger.Debugf("Removing cluster member %v, force: %v", node, force)
 
 	// check prerquisites unless we're forcing
@@ -75,7 +75,7 @@ func removeNode(cli *microCli.Client, node string, force bool) error {
 	return nil
 }
 
-func checkPrerequisites(cli *microCli.Client, name string) error {
+func checkPrerequisites(cli microCli.Client, name string) error {
 	// check if member exists
 	clusterMembers, err := client.MClient.GetClusterMembers(cli)
 	if err != nil {
@@ -122,7 +122,7 @@ func checkPrerequisites(cli *microCli.Client, name string) error {
 	return nil
 }
 
-func deleteNodeServices(cli *microCli.Client, name string) error {
+func deleteNodeServices(cli microCli.Client, name string) error {
 	services, err := client.MClient.GetServices(cli)
 	if err != nil {
 		return err

@@ -1,31 +1,6 @@
 package common
 
-import (
-	"context"
-
-	"github.com/canonical/microceph/microceph/interfaces"
-	"github.com/canonical/microceph/microceph/logger"
-)
-
-func GetClusterMemberNames(ctx context.Context, s interfaces.StateInterface) ([]string, error) {
-	leader, err := s.ClusterState().Database().Leader(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	members, err := leader.GetClusterMembers(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	logger.Infof("Cluster Members are: %v", members)
-
-	memberNames := make([]string, len(members))
-	for i, member := range members {
-		memberNames[i] = member.Name
-	}
-
-	logger.Infof("Cluster Members Names are: %v", memberNames)
-
-	return memberNames, nil
-}
+// This file previously contained GetClusterMemberNames which used the v2
+// microcluster API. In v3, cluster member access is done differently through
+// the microcluster client's GetClusterMembers method or state.Cluster().
+// The function was unused and has been removed during the v2 to v3 migration.

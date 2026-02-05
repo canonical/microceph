@@ -17,48 +17,48 @@ import (
 
 var _ = api.ServerEnvironment{}
 
-var serviceGroupObjects = cluster.RegisterStmt(`
+var serviceGroupObjects = db.RegisterStmt(`
 SELECT service_groups.service, service_groups.group_id, service_groups.config
   FROM service_groups
   ORDER BY service_groups.service, service_groups.group_id
 `)
 
-var serviceGroupObjectsByService = cluster.RegisterStmt(`
+var serviceGroupObjectsByService = db.RegisterStmt(`
 SELECT service_groups.service, service_groups.group_id, service_groups.config
   FROM service_groups
   WHERE ( service_groups.service = ? )
   ORDER BY service_groups.service, service_groups.group_id
 `)
 
-var serviceGroupObjectsByGroupID = cluster.RegisterStmt(`
+var serviceGroupObjectsByGroupID = db.RegisterStmt(`
 SELECT service_groups.service, service_groups.group_id, service_groups.config
   FROM service_groups
   WHERE ( service_groups.group_id = ? )
   ORDER BY service_groups.service, service_groups.group_id
 `)
 
-var serviceGroupObjectsByServiceAndGroupID = cluster.RegisterStmt(`
+var serviceGroupObjectsByServiceAndGroupID = db.RegisterStmt(`
 SELECT service_groups.service, service_groups.group_id, service_groups.config
   FROM service_groups
   WHERE ( service_groups.service = ? AND service_groups.group_id = ? )
   ORDER BY service_groups.service, service_groups.group_id
 `)
 
-var serviceGroupID = cluster.RegisterStmt(`
+var serviceGroupID = db.RegisterStmt(`
 SELECT service_groups.id FROM service_groups
   WHERE service_groups.service = ? AND service_groups.group_id = ?
 `)
 
-var serviceGroupCreate = cluster.RegisterStmt(`
+var serviceGroupCreate = db.RegisterStmt(`
 INSERT INTO service_groups (service, group_id, config)
   VALUES (?, ?, ?)
 `)
 
-var serviceGroupDeleteByServiceAndGroupID = cluster.RegisterStmt(`
+var serviceGroupDeleteByServiceAndGroupID = db.RegisterStmt(`
 DELETE FROM service_groups WHERE service = ? AND group_id = ?
 `)
 
-var serviceGroupUpdate = cluster.RegisterStmt(`
+var serviceGroupUpdate = db.RegisterStmt(`
 UPDATE service_groups
   SET service = ?, group_id = ?, config = ?
  WHERE id = ?
@@ -132,7 +132,7 @@ func GetServiceGroups(ctx context.Context, tx *sql.Tx, filters ...ServiceGroupFi
 	queryParts := [2]string{}
 
 	if len(filters) == 0 {
-		sqlStmt, err = cluster.Stmt(tx, serviceGroupObjects)
+		sqlStmt, err = db.Stmt(tx, serviceGroupObjects)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get \"serviceGroupObjects\" prepared statement: %w", err)
 		}
@@ -142,7 +142,7 @@ func GetServiceGroups(ctx context.Context, tx *sql.Tx, filters ...ServiceGroupFi
 		if filter.Service != nil && filter.GroupID != nil {
 			args = append(args, []any{filter.Service, filter.GroupID}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, serviceGroupObjectsByServiceAndGroupID)
+				sqlStmt, err = db.Stmt(tx, serviceGroupObjectsByServiceAndGroupID)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"serviceGroupObjectsByServiceAndGroupID\" prepared statement: %w", err)
 				}
@@ -150,7 +150,7 @@ func GetServiceGroups(ctx context.Context, tx *sql.Tx, filters ...ServiceGroupFi
 				break
 			}
 
-			query, err := cluster.StmtString(serviceGroupObjectsByServiceAndGroupID)
+			query, err := db.StmtString(serviceGroupObjectsByServiceAndGroupID)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"serviceGroupObjects\" prepared statement: %w", err)
 			}
@@ -166,7 +166,7 @@ func GetServiceGroups(ctx context.Context, tx *sql.Tx, filters ...ServiceGroupFi
 		} else if filter.Service != nil && filter.GroupID == nil {
 			args = append(args, []any{filter.Service}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, serviceGroupObjectsByService)
+				sqlStmt, err = db.Stmt(tx, serviceGroupObjectsByService)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"serviceGroupObjectsByService\" prepared statement: %w", err)
 				}
@@ -174,7 +174,7 @@ func GetServiceGroups(ctx context.Context, tx *sql.Tx, filters ...ServiceGroupFi
 				break
 			}
 
-			query, err := cluster.StmtString(serviceGroupObjectsByService)
+			query, err := db.StmtString(serviceGroupObjectsByService)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"serviceGroupObjects\" prepared statement: %w", err)
 			}
@@ -190,7 +190,7 @@ func GetServiceGroups(ctx context.Context, tx *sql.Tx, filters ...ServiceGroupFi
 		} else if filter.GroupID != nil && filter.Service == nil {
 			args = append(args, []any{filter.GroupID}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, serviceGroupObjectsByGroupID)
+				sqlStmt, err = db.Stmt(tx, serviceGroupObjectsByGroupID)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"serviceGroupObjectsByGroupID\" prepared statement: %w", err)
 				}
@@ -198,7 +198,7 @@ func GetServiceGroups(ctx context.Context, tx *sql.Tx, filters ...ServiceGroupFi
 				break
 			}
 
-			query, err := cluster.StmtString(serviceGroupObjectsByGroupID)
+			query, err := db.StmtString(serviceGroupObjectsByGroupID)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"serviceGroupObjects\" prepared statement: %w", err)
 			}
@@ -258,7 +258,7 @@ func GetServiceGroup(ctx context.Context, tx *sql.Tx, service string, groupID st
 // GetServiceGroupID return the ID of the ServiceGroup with the given key.
 // generator: ServiceGroup ID
 func GetServiceGroupID(ctx context.Context, tx *sql.Tx, service string, groupID string) (int64, error) {
-	stmt, err := cluster.Stmt(tx, serviceGroupID)
+	stmt, err := db.Stmt(tx, serviceGroupID)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"serviceGroupID\" prepared statement: %w", err)
 	}
@@ -313,7 +313,7 @@ func CreateServiceGroup(ctx context.Context, tx *sql.Tx, object ServiceGroup) (i
 	args[2] = object.Config
 
 	// Prepared statement to use.
-	stmt, err := cluster.Stmt(tx, serviceGroupCreate)
+	stmt, err := db.Stmt(tx, serviceGroupCreate)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"serviceGroupCreate\" prepared statement: %w", err)
 	}
@@ -335,7 +335,7 @@ func CreateServiceGroup(ctx context.Context, tx *sql.Tx, object ServiceGroup) (i
 // DeleteServiceGroup deletes the ServiceGroup matching the given key parameters.
 // generator: ServiceGroup DeleteOne-by-Service-and-GroupID
 func DeleteServiceGroup(ctx context.Context, tx *sql.Tx, service string, groupID string) error {
-	stmt, err := cluster.Stmt(tx, serviceGroupDeleteByServiceAndGroupID)
+	stmt, err := db.Stmt(tx, serviceGroupDeleteByServiceAndGroupID)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"serviceGroupDeleteByServiceAndGroupID\" prepared statement: %w", err)
 	}
@@ -367,7 +367,7 @@ func UpdateServiceGroup(ctx context.Context, tx *sql.Tx, service string, groupID
 		return err
 	}
 
-	stmt, err := cluster.Stmt(tx, serviceGroupUpdate)
+	stmt, err := db.Stmt(tx, serviceGroupUpdate)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"serviceGroupUpdate\" prepared statement: %w", err)
 	}

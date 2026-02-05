@@ -7,12 +7,12 @@ import (
 	"fmt"
 
 	"github.com/canonical/lxd/lxd/db/query"
-	"github.com/canonical/lxd/lxd/db/schema"
+	"github.com/canonical/microcluster/v3/microcluster/db"
 )
 
 // SchemaExtensions is a list of schema extensions that can be passed to the MicroCluster daemon.
 // Each entry will increase the database schema version by one, and will be applied after internal schema updates.
-var SchemaExtensions = []schema.Update{
+var SchemaExtensions = []db.Update{
 	schemaUpdate1,
 	schemaUpdate2,
 	schemaUpdate3,

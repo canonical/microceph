@@ -11,7 +11,7 @@ import (
 )
 
 // SendReplicationRequest sends replication request for creating, deleting, getting, and listing remote replication.
-func SendReplicationRequest(ctx context.Context, c *microCli.Client, data types.ReplicationRequest) (string, error) {
+func SendReplicationRequest(ctx context.Context, c microCli.Client, data types.ReplicationRequest) (string, error) {
 	var err error
 	var resp string
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
@@ -22,14 +22,14 @@ func SendReplicationRequest(ctx context.Context, c *microCli.Client, data types.
 		// uses replication/$workload endpoint
 		err = c.Query(
 			queryCtx, data.GetAPIRequestType(), types.ExtendedPathPrefix,
-			api.NewURL().Path("ops", "replication", string(data.GetWorkloadType())),
+			&api.NewURL().Path("ops", "replication", string(data.GetWorkloadType())).URL,
 			data, &resp,
 		)
 	} else {
 		// Other requests use replication/$workload/$resource endpoint
 		err = c.Query(
 			queryCtx, data.GetAPIRequestType(), types.ExtendedPathPrefix,
-			api.NewURL().Path("ops", "replication", string(data.GetWorkloadType()), data.GetAPIObjectID()),
+			&api.NewURL().Path("ops", "replication", string(data.GetWorkloadType()), data.GetAPIObjectID()).URL,
 			data, &resp,
 		)
 	}

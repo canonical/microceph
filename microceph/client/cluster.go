@@ -10,13 +10,13 @@ import (
 	microCli "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
-func GetClusterToken(ctx context.Context, c *microCli.Client, req types.ClusterExportRequest) (string, error) {
+func GetClusterToken(ctx context.Context, c microCli.Client, req types.ClusterExportRequest) (string, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
 	var state string
 
-	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("cluster"), req, &state)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, &api.NewURL().Path("cluster").URL, req, &state)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch cluster state: %w", err)
 	}
