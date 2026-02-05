@@ -3,12 +3,12 @@ package common
 import (
 	"context"
 
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 func GetClusterMemberNames(ctx context.Context, s interfaces.StateInterface) ([]string, error) {
-	leader, err := s.ClusterState().Leader()
+	leader, err := s.ClusterState().Database().Leader(ctx)
 	if err != nil {
 		return nil, err
 	}
