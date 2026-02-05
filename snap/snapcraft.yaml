@@ -1,5 +1,5 @@
 name: microceph
-base: core24
+base: core26
 adopt-info: ceph
 grade: stable
 source-code: https://github.com/canonical/microceph.git
@@ -9,6 +9,10 @@ description: |-
   MicroCeph is snap-deployed Ceph with built-in clustering.
 
 confinement: strict
+
+package-repositories:
+  - type: apt
+    ppa: lmlogiudice/ceph-tentacle-stable
 
 plugs:
   load-rbd:
@@ -34,7 +38,7 @@ slots:
 
 environment:
   LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib/ganesha:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/erasure-code
-  PYTHONPATH: $SNAP/lib/python3/dist-packages:$SNAP/lib/python3.12/site-packages
+  PYTHONPATH: $SNAP/lib/python3/dist-packages:$SNAP/lib/python3.14/site-packages
 
 layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:
@@ -215,7 +219,7 @@ parts:
       craftctl default
       mkdir -p share/ceph/mgr/microceph
       # Force copy to overwrite.
-      cp -rf lib/python3.12/site-packages/microceph share/ceph/mgr/
+      cp -rf lib/python3.14/site-packages/microceph share/ceph/mgr/
 
   ceph:
     plugin: nil
@@ -309,7 +313,7 @@ parts:
       - lib/*/libboost_iostreams.so*
       - lib/*/libboost_locale.so*
       - lib/*/libboost_program_options.so*
-      - lib/*/libboost_python312.so*
+      - lib/*/libboost_python314.so*
       - lib/*/libboost_thread.so*
       - lib/*/libboost_url.so*
       - lib/*/libcephfs.so*
@@ -333,7 +337,7 @@ parts:
       - lib/*/libpmem.so*
       - lib/*/libpmemobj.so*
       - lib/*/libpsl.so*
-      - lib/*/libpython3.12.so*
+      - lib/*/libpython3.14.so*
       - lib/*/librabbitmq.so*
       - lib/*/librados.so*
       - lib/*/libradosgw.so*
