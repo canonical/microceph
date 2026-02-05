@@ -12,8 +12,8 @@ import (
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
-	"github.com/canonical/microcluster/v2/rest"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/microcluster/rest"
+	"github.com/canonical/microcluster/v3/state"
 )
 
 var clusterCmd = rest.Endpoint{

@@ -6,7 +6,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/logger"
 
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/state"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )

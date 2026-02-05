@@ -11,8 +11,8 @@ import (
 	lxdCmd "github.com/canonical/lxd/shared/cmd"
 	"github.com/canonical/lxd/shared/units"
 	"github.com/canonical/microceph/microceph/clilogger"
-	microCli "github.com/canonical/microcluster/v2/client"
-	"github.com/canonical/microcluster/v2/microcluster"
+	microCli "github.com/canonical/microcluster/v3/microcluster/types"
+	"github.com/canonical/microcluster/v3/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"

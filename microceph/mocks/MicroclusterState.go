@@ -3,7 +3,7 @@ package mocks
 import (
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
-	state "github.com/canonical/microcluster/v2/state"
+	state "github.com/canonical/microcluster/v3/state"
 )
 
 // MockState mocks the internal microcluster state.

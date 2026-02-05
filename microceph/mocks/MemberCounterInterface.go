@@ -4,7 +4,7 @@ package mocks
 import (
 	context "context"
 
-	state "github.com/canonical/microcluster/v2/state" // mockery gets confused about import paths here
+	state "github.com/canonical/microcluster/v3/state" // mockery gets confused about import paths here
 	mock "github.com/stretchr/testify/mock"
 )
 

@@ -7,7 +7,7 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/api/types"
-	microCli "github.com/canonical/microcluster/v2/client"
+	microCli "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
 func GetClusterToken(ctx context.Context, c *microCli.Client, req types.ClusterExportRequest) (string, error) {

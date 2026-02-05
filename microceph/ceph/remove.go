@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/canonical/microceph/microceph/logger"
-	microCli "github.com/canonical/microcluster/v2/client"
-	"github.com/canonical/microcluster/v2/microcluster"
-	"github.com/canonical/microcluster/v2/state"
+	microCli "github.com/canonical/microcluster/v3/microcluster/types"
+	"github.com/canonical/microcluster/v3/microcluster"
+	"github.com/canonical/microcluster/v3/state"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"

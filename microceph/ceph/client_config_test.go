@@ -8,7 +8,7 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/tests"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/state"
 
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"

@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/canonical/microceph/microceph/api/types"
 
-	microCli "github.com/canonical/microcluster/v2/client"
+	microCli "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
 // ClientInterface wraps client functions

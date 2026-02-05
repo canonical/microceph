@@ -5,7 +5,7 @@ go 1.25.4
 require (
 	github.com/Rican7/retry v0.3.1
 	github.com/canonical/lxd v0.0.0-20251211093832-ac7a1edf4d94
-	github.com/canonical/microcluster/v2 v2.2.2
+	github.com/canonical/microcluster/v3 v3.0.0-20260204080947-2424a1b22b31
 	github.com/djherbis/times v1.6.0
 	github.com/google/go-cmp v0.7.0
 	github.com/gorilla/mux v1.8.1
@@ -19,12 +19,13 @@ require (
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
 	golang.org/x/crypto v0.46.0
-	golang.org/x/sys v0.39.0
+	golang.org/x/sys v0.40.0
 )
 
 require (
 	github.com/armon/go-proxyproto v0.1.0 // indirect
 	github.com/canonical/go-dqlite/v2 v2.0.1 // indirect
+	github.com/canonical/go-dqlite/v3 v3.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.3.0 // indirect
@@ -46,7 +47,7 @@ require (
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
-	github.com/mattn/go-sqlite3 v1.14.32 // indirect
+	github.com/mattn/go-sqlite3 v1.14.33 // indirect
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pkg/sftp v1.13.10 // indirect

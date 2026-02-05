@@ -11,8 +11,8 @@ import (
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microcluster/v2/cluster"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/microcluster/db"
+	"github.com/canonical/microcluster/v3/state"
 )
 
 var _ = api.ServerEnvironment{}

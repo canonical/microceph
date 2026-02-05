@@ -7,7 +7,7 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/api/types"
-	microCli "github.com/canonical/microcluster/v2/client"
+	microCli "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
 // SendReplicationRequest sends replication request for creating, deleting, getting, and listing remote replication.
