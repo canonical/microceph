@@ -39,7 +39,7 @@ slots:
 
 environment:
   LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib/ganesha:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/erasure-code
-  PYTHONPATH: $SNAP/lib/python3/dist-packages:$SNAP/lib/python3.14/site-packages
+  PYTHONPATH: $SNAP/lib/python3/dist-packages:$SNAP/lib/python3.13/site-packages
 
 layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:
@@ -314,7 +314,7 @@ parts:
       - lib/*/libboost_iostreams.so*
       - lib/*/libboost_locale.so*
       - lib/*/libboost_program_options.so*
-      - lib/*/libboost_python314.so*
+      - lib/*/libboost_python313.so*
       - lib/*/libboost_thread.so*
       - lib/*/libboost_url.so*
       - lib/*/libcephfs.so*
@@ -338,7 +338,7 @@ parts:
       - lib/*/libpmem.so*
       - lib/*/libpmemobj.so*
       - lib/*/libpsl.so*
-      - lib/*/libpython3.14.so*
+      - lib/*/libpython3.13.so*
       - lib/*/librabbitmq.so*
       - lib/*/librados.so*
       - lib/*/libradosgw.so*
