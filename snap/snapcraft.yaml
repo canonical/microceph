@@ -12,7 +12,7 @@ confinement: strict
 
 package-repositories:
   - type: apt
-    ppa: lmlogiudice/ceph-tentacle-stable
+    ppa: lmlogiudice/ceph-tentacle-resolute
 
 plugs:
   load-rbd:
