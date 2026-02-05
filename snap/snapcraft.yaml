@@ -1,7 +1,8 @@
 name: microceph
 base: core26
+build-base: devel
 adopt-info: ceph
-grade: stable
+grade: devel
 source-code: https://github.com/canonical/microceph.git
 license: AGPL-3.0
 summary: Simple clustered Ceph deployment
