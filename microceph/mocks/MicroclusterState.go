@@ -1,8 +1,9 @@
 package mocks
 
 import (
+	"net/url"
+
 	"github.com/canonical/lxd/shared"
-	"github.com/canonical/lxd/shared/api"
 	state "github.com/canonical/microcluster/v3/state"
 )
 
@@ -10,7 +11,7 @@ import (
 type MockState struct {
 	state.State
 
-	URL         *api.URL
+	URL         *url.URL
 	ClusterName string
 }
 
@@ -20,7 +21,7 @@ func (m *MockState) Name() string {
 }
 
 // Address returns the address supplied to MockState.
-func (m *MockState) Address() *api.URL {
+func (m *MockState) Address() *url.URL {
 	return m.URL
 }
 

@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/canonical/lxd/shared/api"
+	"net/url"
+
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/tests"
 
@@ -31,7 +32,7 @@ func (s *servicesSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
 
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
-	u := api.NewURL()
+	u := &url.URL{}
 	state := mocks.MockState{
 		URL:         u,
 		ClusterName: "foohost",

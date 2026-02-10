@@ -4,7 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/canonical/lxd/shared/api"
+	"net/url"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -29,8 +30,7 @@ func (s *hooksSuite) SetupTest() {
 	s.CopyCephConfigs()
 
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
-	u := api.NewURL()
-	u.Host("1.1.1.1")
+	u := &url.URL{Host: "1.1.1.1"}
 	state := &mocks.MockState{
 		URL:         u,
 		ClusterName: "foohost",

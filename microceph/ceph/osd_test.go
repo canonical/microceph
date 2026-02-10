@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"net/url"
+
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/tests"
 	"github.com/spf13/afero"
@@ -258,7 +260,7 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 
 // TestUpdateFailureDomain tests the updateFailureDomain function
 func (s *osdSuite) TestUpdateFailureDomain() {
-	u := api.NewURL()
+	u := &url.URL{}
 	state := &mocks.MockState{
 		URL:         u,
 		ClusterName: "foohost",

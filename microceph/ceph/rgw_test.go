@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/canonical/lxd/shared/api"
+	"net/url"
+
 	"github.com/canonical/microceph/microceph/tests"
 
 	"github.com/canonical/microceph/microceph/mocks"
@@ -39,7 +40,7 @@ func addRGWEnableExpectations(r *mocks.Runner) {
 
 // Expect: run snapctl service stop
 func addStopRGWExpectations(s *rgwSuite, r *mocks.Runner) {
-	u := api.NewURL()
+	u := &url.URL{}
 
 	state := &mocks.MockState{
 		URL:         u,

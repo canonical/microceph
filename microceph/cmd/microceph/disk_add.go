@@ -204,7 +204,7 @@ func printAddDiskFailures(response types.DiskAddResponse) error {
 
 	if len(response.ValidationError) != 0 {
 		fmt.Println("Validation Error found")
-		return fmt.Errorf(response.ValidationError)
+		return fmt.Errorf("%s", response.ValidationError)
 	}
 
 	if len(response.Reports) == 0 {
@@ -233,7 +233,7 @@ func printAddDiskFailures(response types.DiskAddResponse) error {
 
 	if failureCount == 1 {
 		// Print error if only one instance of error is there.
-		return fmt.Errorf(errStr)
+		return fmt.Errorf("%s", errStr)
 	} else if failureCount > 1 {
 		// Print error if only one instance of error is there.
 		return fmt.Errorf("failed adding multiple (%d) disks, please check logs for details", failureCount)
