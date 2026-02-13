@@ -191,7 +191,7 @@ func (m *OSDManager) setupEncryptedOSD(devicePath string, osdDataPath string, os
 	}
 
 	// Encrypt the device
-	encryptDevice(devicePath, key)
+	err = encryptDevice(devicePath, key)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt: %w", err)
 	}
@@ -678,6 +678,11 @@ func (m *OSDManager) addBulkDisks(ctx context.Context, disks []types.DiskParamet
 	ret := types.DiskAddResponse{}
 
 	if len(disks) == 1 {
+		// Validate
+		err := m.validateAddOSDArgs(disks[0], wal, db)
+		if err != nil {
+			return prepareValidationFailureResp(disks, err)
+		}
 		// Add single disk with requested WAL/DB devices.
 		resp := m.addSingleDisk(ctx, disks[0], wal, db)
 		ret.Reports = append(ret.Reports, resp)
@@ -705,7 +710,7 @@ func (m *OSDManager) addBulkDisks(ctx context.Context, disks []types.DiskParamet
 
 // addSingleDisk is a wrapper around AddOSD which logs disk addition failures and returns a formatted response.
 func (m *OSDManager) addSingleDisk(ctx context.Context, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
-	if strings.Contains(disk.Path, constants.LoopSpecId) {
+	if isLoopDevice(disk) {
 		// Add file based OSDs.
 		err := m.addLoopBackOSDs(ctx, disk.Path)
 		if err != nil {
@@ -739,9 +744,20 @@ func (m *OSDManager) addOSD(ctx context.Context, data types.DiskParameter, wal *
 	return m.doAddOSD(ctx, data, wal, db)
 }
 
+// isLoopDevice checks whether a disk parameter refers to a loop device,
+// either via the LoopSize field or a loop spec path.
+func isLoopDevice(disk types.DiskParameter) bool {
+	return disk.LoopSize != 0 || strings.HasPrefix(disk.Path, constants.LoopSpecId)
+}
+
 func (m *OSDManager) validateAddOSDArgs(data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
-	if data.LoopSize != 0 && (wal != nil || db != nil) {
-		return fmt.Errorf("loopback and WAL/DB are mutually exclusive")
+	if isLoopDevice(data) {
+		if wal != nil || db != nil {
+			return fmt.Errorf("loopback and WAL/DB are mutually exclusive")
+		}
+		if data.Encrypt {
+			return fmt.Errorf("encryption is not supported on loop devices")
+		}
 	}
 	return nil
 }

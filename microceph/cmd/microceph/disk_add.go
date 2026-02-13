@@ -119,18 +119,16 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 		// Pass space separated params as disk paths.
 		req.Path = args
 
-		if !strings.HasPrefix(req.Path[0], constants.LoopSpecId) {
-			if c.walDevice != "" {
-				req.WALDev = &c.walDevice
-				req.WALWipe = c.walWipe
-				req.WALEncrypt = c.walEncrypt
-			}
+		if c.walDevice != "" {
+			req.WALDev = &c.walDevice
+			req.WALWipe = c.walWipe
+			req.WALEncrypt = c.walEncrypt
+		}
 
-			if c.dbDevice != "" {
-				req.DBDev = &c.dbDevice
-				req.DBWipe = c.dbWipe
-				req.DBEncrypt = c.dbEncrypt
-			}
+		if c.dbDevice != "" {
+			req.DBDev = &c.dbDevice
+			req.DBWipe = c.dbWipe
+			req.DBEncrypt = c.dbEncrypt
 		}
 	}
 

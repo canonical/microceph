@@ -89,8 +89,14 @@ sudo snap install --dangerous microceph_*.snap
 # Locally built snaps do no auto-connect the available plugs on install, they can be connected manually using;
 sudo snap connect microceph:block-devices
 sudo snap connect microceph:hardware-observe
+sudo snap connect microceph:mount-observe
+sudo snap connect microceph:load-rbd
+sudo snap connect microceph:microceph-support
+sudo snap connect microceph:network-bind
+sudo snap connect microceph:process-control
 sudo snap connect microceph:dm-crypt
 sudo snap restart microceph.daemon
+
 ```
 
 ## 👍 Unit-Testing
@@ -102,6 +108,7 @@ The MicroCeph [Makefile](/microceph/Makefile) has targets for running unit tests
 sudo apt install gcc make shellcheck
 
 # Add libdqlite-dev, required for building microceph
+# you may need a specific version such as libdqlite1.17-dev
 sudo add-apt-repository ppa:dqlite/dev -y
 sudo apt install -y libdqlite-dev
 

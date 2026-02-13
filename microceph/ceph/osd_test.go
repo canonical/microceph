@@ -944,6 +944,11 @@ func (s *osdSuite) TestValidateAddOSDArgs() {
 	err := osdmgr.validateAddOSDArgs(data, nil, nil)
 	assert.NoError(s.T(), err)
 
+	// Test valid loopback
+	loopDataValid := types.DiskParameter{Path: "loop,4G,3"}
+	err = osdmgr.validateAddOSDArgs(loopDataValid, nil, nil)
+	assert.NoError(s.T(), err)
+
 	// Test loopback with WAL, should fail as we req. a real block device
 	loopData := types.DiskParameter{LoopSize: 1024}
 	wal := &types.DiskParameter{Path: "/dev/wal"}
@@ -956,6 +961,12 @@ func (s *osdSuite) TestValidateAddOSDArgs() {
 	err = osdmgr.validateAddOSDArgs(loopData, nil, db)
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "loopback and WAL/DB are mutually exclusive")
+
+	// Test loopback with encryption (should fail)
+	loopDataInvalid := types.DiskParameter{Path: "loop,4G,3", Encrypt: true}
+	err = osdmgr.validateAddOSDArgs(loopDataInvalid, nil, nil)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "encryption is not supported on loop devices")
 }
 
 // TestIsPristineDisk tests pristine disk checking
@@ -986,4 +997,3 @@ func (s *osdSuite) TestIsPristineDisk() {
 	assert.False(s.T(), isPristine)
 	assert.Contains(s.T(), err.Error(), "permission denied")
 }
-
