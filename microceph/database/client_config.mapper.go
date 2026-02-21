@@ -12,19 +12,19 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microcluster/v2/cluster"
+	"github.com/canonical/microcluster/v3/microcluster/db"
 )
 
 var _ = api.ServerEnvironment{}
 
-var clientConfigItemObjects = cluster.RegisterStmt(`
+var clientConfigItemObjects = db.RegisterStmt(`
 SELECT client_config.id, core_cluster_members.name AS host, client_config.key, client_config.value
   FROM client_config
   JOIN core_cluster_members ON client_config.member_id = core_cluster_members.id
   ORDER BY core_cluster_members.id, client_config.key
 `)
 
-var clientConfigItemObjectsByKey = cluster.RegisterStmt(`
+var clientConfigItemObjectsByKey = db.RegisterStmt(`
 SELECT client_config.id, core_cluster_members.name AS host, client_config.key, client_config.value
   FROM client_config
   JOIN core_cluster_members ON client_config.member_id = core_cluster_members.id
@@ -32,7 +32,7 @@ SELECT client_config.id, core_cluster_members.name AS host, client_config.key, c
   ORDER BY core_cluster_members.id, client_config.key
 `)
 
-var clientConfigItemObjectsByHost = cluster.RegisterStmt(`
+var clientConfigItemObjectsByHost = db.RegisterStmt(`
 SELECT client_config.id, core_cluster_members.name AS host, client_config.key, client_config.value
   FROM client_config
   JOIN core_cluster_members ON client_config.member_id = core_cluster_members.id
@@ -40,7 +40,7 @@ SELECT client_config.id, core_cluster_members.name AS host, client_config.key, c
   ORDER BY core_cluster_members.id, client_config.key
 `)
 
-var clientConfigItemObjectsByKeyAndHost = cluster.RegisterStmt(`
+var clientConfigItemObjectsByKeyAndHost = db.RegisterStmt(`
 SELECT client_config.id, core_cluster_members.name AS host, client_config.key, client_config.value
   FROM client_config
   JOIN core_cluster_members ON client_config.member_id = core_cluster_members.id
@@ -48,30 +48,30 @@ SELECT client_config.id, core_cluster_members.name AS host, client_config.key, c
   ORDER BY core_cluster_members.id, client_config.key
 `)
 
-var clientConfigItemID = cluster.RegisterStmt(`
+var clientConfigItemID = db.RegisterStmt(`
 SELECT client_config.id FROM client_config
   JOIN core_cluster_members ON client_config.member_id = core_cluster_members.id
   WHERE core_cluster_members.name = ? AND client_config.key = ?
 `)
 
-var clientConfigItemCreate = cluster.RegisterStmt(`
+var clientConfigItemCreate = db.RegisterStmt(`
 INSERT INTO client_config (member_id, key, value)
   VALUES ((SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), ?, ?)
 `)
 
-var clientConfigItemDeleteByKey = cluster.RegisterStmt(`
+var clientConfigItemDeleteByKey = db.RegisterStmt(`
 DELETE FROM client_config WHERE key = ?
 `)
 
-var clientConfigItemDeleteByHost = cluster.RegisterStmt(`
+var clientConfigItemDeleteByHost = db.RegisterStmt(`
 DELETE FROM client_config WHERE member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?)
 `)
 
-var clientConfigItemDeleteByKeyAndHost = cluster.RegisterStmt(`
+var clientConfigItemDeleteByKeyAndHost = db.RegisterStmt(`
 DELETE FROM client_config WHERE key = ? AND member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?)
 `)
 
-var clientConfigItemUpdate = cluster.RegisterStmt(`
+var clientConfigItemUpdate = db.RegisterStmt(`
 UPDATE client_config
   SET member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), key = ?, value = ?
  WHERE id = ?
@@ -145,7 +145,7 @@ func GetClientConfigItems(ctx context.Context, tx *sql.Tx, filters ...ClientConf
 	queryParts := [2]string{}
 
 	if len(filters) == 0 {
-		sqlStmt, err = cluster.Stmt(tx, clientConfigItemObjects)
+		sqlStmt, err = db.Stmt(tx, clientConfigItemObjects)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get \"clientConfigItemObjects\" prepared statement: %w", err)
 		}
@@ -155,7 +155,7 @@ func GetClientConfigItems(ctx context.Context, tx *sql.Tx, filters ...ClientConf
 		if filter.Key != nil && filter.Host != nil {
 			args = append(args, []any{filter.Key, filter.Host}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, clientConfigItemObjectsByKeyAndHost)
+				sqlStmt, err = db.Stmt(tx, clientConfigItemObjectsByKeyAndHost)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"clientConfigItemObjectsByKeyAndHost\" prepared statement: %w", err)
 				}
@@ -163,7 +163,7 @@ func GetClientConfigItems(ctx context.Context, tx *sql.Tx, filters ...ClientConf
 				break
 			}
 
-			query, err := cluster.StmtString(clientConfigItemObjectsByKeyAndHost)
+			query, err := db.StmtString(clientConfigItemObjectsByKeyAndHost)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"clientConfigItemObjects\" prepared statement: %w", err)
 			}
@@ -179,7 +179,7 @@ func GetClientConfigItems(ctx context.Context, tx *sql.Tx, filters ...ClientConf
 		} else if filter.Key != nil && filter.Host == nil {
 			args = append(args, []any{filter.Key}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, clientConfigItemObjectsByKey)
+				sqlStmt, err = db.Stmt(tx, clientConfigItemObjectsByKey)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"clientConfigItemObjectsByKey\" prepared statement: %w", err)
 				}
@@ -187,7 +187,7 @@ func GetClientConfigItems(ctx context.Context, tx *sql.Tx, filters ...ClientConf
 				break
 			}
 
-			query, err := cluster.StmtString(clientConfigItemObjectsByKey)
+			query, err := db.StmtString(clientConfigItemObjectsByKey)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"clientConfigItemObjects\" prepared statement: %w", err)
 			}
@@ -203,7 +203,7 @@ func GetClientConfigItems(ctx context.Context, tx *sql.Tx, filters ...ClientConf
 		} else if filter.Host != nil && filter.Key == nil {
 			args = append(args, []any{filter.Host}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, clientConfigItemObjectsByHost)
+				sqlStmt, err = db.Stmt(tx, clientConfigItemObjectsByHost)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"clientConfigItemObjectsByHost\" prepared statement: %w", err)
 				}
@@ -211,7 +211,7 @@ func GetClientConfigItems(ctx context.Context, tx *sql.Tx, filters ...ClientConf
 				break
 			}
 
-			query, err := cluster.StmtString(clientConfigItemObjectsByHost)
+			query, err := db.StmtString(clientConfigItemObjectsByHost)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"clientConfigItemObjects\" prepared statement: %w", err)
 			}
@@ -271,7 +271,7 @@ func GetClientConfigItem(ctx context.Context, tx *sql.Tx, host string, key strin
 // GetClientConfigItemID return the ID of the ClientConfigItem with the given key.
 // generator: ClientConfigItem ID
 func GetClientConfigItemID(ctx context.Context, tx *sql.Tx, host string, key string) (int64, error) {
-	stmt, err := cluster.Stmt(tx, clientConfigItemID)
+	stmt, err := db.Stmt(tx, clientConfigItemID)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"clientConfigItemID\" prepared statement: %w", err)
 	}
@@ -326,7 +326,7 @@ func CreateClientConfigItem(ctx context.Context, tx *sql.Tx, object ClientConfig
 	args[2] = object.Value
 
 	// Prepared statement to use.
-	stmt, err := cluster.Stmt(tx, clientConfigItemCreate)
+	stmt, err := db.Stmt(tx, clientConfigItemCreate)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"clientConfigItemCreate\" prepared statement: %w", err)
 	}
@@ -348,7 +348,7 @@ func CreateClientConfigItem(ctx context.Context, tx *sql.Tx, object ClientConfig
 // DeleteClientConfigItem deletes the ClientConfigItem matching the given key parameters.
 // generator: ClientConfigItem DeleteOne-by-Key-and-Host
 func DeleteClientConfigItem(ctx context.Context, tx *sql.Tx, key string, host string) error {
-	stmt, err := cluster.Stmt(tx, clientConfigItemDeleteByKeyAndHost)
+	stmt, err := db.Stmt(tx, clientConfigItemDeleteByKeyAndHost)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"clientConfigItemDeleteByKeyAndHost\" prepared statement: %w", err)
 	}
@@ -375,7 +375,7 @@ func DeleteClientConfigItem(ctx context.Context, tx *sql.Tx, key string, host st
 // DeleteClientConfigItems deletes the ClientConfigItem matching the given key parameters.
 // generator: ClientConfigItem DeleteMany-by-Key
 func DeleteClientConfigItems(ctx context.Context, tx *sql.Tx, key string) error {
-	stmt, err := cluster.Stmt(tx, clientConfigItemDeleteByKey)
+	stmt, err := db.Stmt(tx, clientConfigItemDeleteByKey)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"clientConfigItemDeleteByKey\" prepared statement: %w", err)
 	}
@@ -401,7 +401,7 @@ func UpdateClientConfigItem(ctx context.Context, tx *sql.Tx, host string, key st
 		return err
 	}
 
-	stmt, err := cluster.Stmt(tx, clientConfigItemUpdate)
+	stmt, err := db.Stmt(tx, clientConfigItemUpdate)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"clientConfigItemUpdate\" prepared statement: %w", err)
 	}

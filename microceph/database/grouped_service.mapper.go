@@ -12,12 +12,12 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microcluster/v2/cluster"
+	"github.com/canonical/microcluster/v3/microcluster/db"
 )
 
 var _ = api.ServerEnvironment{}
 
-var groupedServiceObjects = cluster.RegisterStmt(`
+var groupedServiceObjects = db.RegisterStmt(`
 SELECT grouped_services.id, service_groups.service AS service, service_groups.group_id, core_cluster_members.name AS member, grouped_services.info
   FROM grouped_services
   JOIN service_groups ON grouped_services.service_group_id = service_groups.id
@@ -25,7 +25,7 @@ SELECT grouped_services.id, service_groups.service AS service, service_groups.gr
   ORDER BY service_groups.id, service_groups.group_id, core_cluster_members.id
 `)
 
-var groupedServiceObjectsByMember = cluster.RegisterStmt(`
+var groupedServiceObjectsByMember = db.RegisterStmt(`
 SELECT grouped_services.id, service_groups.service AS service, service_groups.group_id, core_cluster_members.name AS member, grouped_services.info
   FROM grouped_services
   JOIN service_groups ON grouped_services.service_group_id = service_groups.id
@@ -34,7 +34,7 @@ SELECT grouped_services.id, service_groups.service AS service, service_groups.gr
   ORDER BY service_groups.id, service_groups.group_id, core_cluster_members.id
 `)
 
-var groupedServiceObjectsByServiceAndGroupID = cluster.RegisterStmt(`
+var groupedServiceObjectsByServiceAndGroupID = db.RegisterStmt(`
 SELECT grouped_services.id, service_groups.service AS service, service_groups.group_id, core_cluster_members.name AS member, grouped_services.info
   FROM grouped_services
   JOIN service_groups ON grouped_services.service_group_id = service_groups.id
@@ -43,7 +43,7 @@ SELECT grouped_services.id, service_groups.service AS service, service_groups.gr
   ORDER BY service_groups.id, service_groups.group_id, core_cluster_members.id
 `)
 
-var groupedServiceObjectsByMemberAndServiceAndGroupID = cluster.RegisterStmt(`
+var groupedServiceObjectsByMemberAndServiceAndGroupID = db.RegisterStmt(`
 SELECT grouped_services.id, service_groups.service AS service, service_groups.group_id, core_cluster_members.name AS member, grouped_services.info
   FROM grouped_services
   JOIN service_groups ON grouped_services.service_group_id = service_groups.id
@@ -52,27 +52,27 @@ SELECT grouped_services.id, service_groups.service AS service, service_groups.gr
   ORDER BY service_groups.id, service_groups.group_id, core_cluster_members.id
 `)
 
-var groupedServiceID = cluster.RegisterStmt(`
+var groupedServiceID = db.RegisterStmt(`
 SELECT grouped_services.id FROM grouped_services
   JOIN service_groups ON grouped_services.service_group_id = service_groups.id
   JOIN core_cluster_members ON grouped_services.member_id = core_cluster_members.id
   WHERE service_groups.service = ? AND service_groups.group_id = ? AND core_cluster_members.name = ?
 `)
 
-var groupedServiceCreate = cluster.RegisterStmt(`
+var groupedServiceCreate = db.RegisterStmt(`
 INSERT INTO grouped_services (service_group_id, member_id, info)
   VALUES ((SELECT service_groups.id FROM service_groups WHERE service_groups.service = ? AND service_groups.group_id = ?), (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), ?)
 `)
 
-var groupedServiceDeleteByMember = cluster.RegisterStmt(`
+var groupedServiceDeleteByMember = db.RegisterStmt(`
 DELETE FROM grouped_services WHERE member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?)
 `)
 
-var groupedServiceDeleteByMemberAndServiceAndGroupID = cluster.RegisterStmt(`
+var groupedServiceDeleteByMemberAndServiceAndGroupID = db.RegisterStmt(`
 DELETE FROM grouped_services WHERE member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?) AND service_group_id = (SELECT service_groups.id FROM service_groups WHERE service_groups.service = ? AND service_groups.group_id = ?)
 `)
 
-var groupedServiceUpdate = cluster.RegisterStmt(`
+var groupedServiceUpdate = db.RegisterStmt(`
 UPDATE grouped_services
   SET service_group_id = (SELECT service_groups.id FROM service_groups WHERE service_groups.service = ? AND service_groups.group_id = ?), member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), info = ?
  WHERE id = ?
@@ -146,7 +146,7 @@ func GetGroupedServices(ctx context.Context, tx *sql.Tx, filters ...GroupedServi
 	queryParts := [2]string{}
 
 	if len(filters) == 0 {
-		sqlStmt, err = cluster.Stmt(tx, groupedServiceObjects)
+		sqlStmt, err = db.Stmt(tx, groupedServiceObjects)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get \"groupedServiceObjects\" prepared statement: %w", err)
 		}
@@ -156,7 +156,7 @@ func GetGroupedServices(ctx context.Context, tx *sql.Tx, filters ...GroupedServi
 		if filter.Member != nil && filter.Service != nil && filter.GroupID != nil {
 			args = append(args, []any{filter.Member, filter.Service, filter.GroupID}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, groupedServiceObjectsByMemberAndServiceAndGroupID)
+				sqlStmt, err = db.Stmt(tx, groupedServiceObjectsByMemberAndServiceAndGroupID)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"groupedServiceObjectsByMemberAndServiceAndGroupID\" prepared statement: %w", err)
 				}
@@ -164,7 +164,7 @@ func GetGroupedServices(ctx context.Context, tx *sql.Tx, filters ...GroupedServi
 				break
 			}
 
-			query, err := cluster.StmtString(groupedServiceObjectsByMemberAndServiceAndGroupID)
+			query, err := db.StmtString(groupedServiceObjectsByMemberAndServiceAndGroupID)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"groupedServiceObjects\" prepared statement: %w", err)
 			}
@@ -180,7 +180,7 @@ func GetGroupedServices(ctx context.Context, tx *sql.Tx, filters ...GroupedServi
 		} else if filter.Service != nil && filter.GroupID != nil && filter.Member == nil {
 			args = append(args, []any{filter.Service, filter.GroupID}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, groupedServiceObjectsByServiceAndGroupID)
+				sqlStmt, err = db.Stmt(tx, groupedServiceObjectsByServiceAndGroupID)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"groupedServiceObjectsByServiceAndGroupID\" prepared statement: %w", err)
 				}
@@ -188,7 +188,7 @@ func GetGroupedServices(ctx context.Context, tx *sql.Tx, filters ...GroupedServi
 				break
 			}
 
-			query, err := cluster.StmtString(groupedServiceObjectsByServiceAndGroupID)
+			query, err := db.StmtString(groupedServiceObjectsByServiceAndGroupID)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"groupedServiceObjects\" prepared statement: %w", err)
 			}
@@ -204,7 +204,7 @@ func GetGroupedServices(ctx context.Context, tx *sql.Tx, filters ...GroupedServi
 		} else if filter.Member != nil && filter.Service == nil && filter.GroupID == nil {
 			args = append(args, []any{filter.Member}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, groupedServiceObjectsByMember)
+				sqlStmt, err = db.Stmt(tx, groupedServiceObjectsByMember)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"groupedServiceObjectsByMember\" prepared statement: %w", err)
 				}
@@ -212,7 +212,7 @@ func GetGroupedServices(ctx context.Context, tx *sql.Tx, filters ...GroupedServi
 				break
 			}
 
-			query, err := cluster.StmtString(groupedServiceObjectsByMember)
+			query, err := db.StmtString(groupedServiceObjectsByMember)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"groupedServiceObjects\" prepared statement: %w", err)
 			}
@@ -273,7 +273,7 @@ func GetGroupedService(ctx context.Context, tx *sql.Tx, service string, groupID 
 // GetGroupedServiceID return the ID of the GroupedService with the given key.
 // generator: GroupedService ID
 func GetGroupedServiceID(ctx context.Context, tx *sql.Tx, service string, groupID string, member string) (int64, error) {
-	stmt, err := cluster.Stmt(tx, groupedServiceID)
+	stmt, err := db.Stmt(tx, groupedServiceID)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"groupedServiceID\" prepared statement: %w", err)
 	}
@@ -329,7 +329,7 @@ func CreateGroupedService(ctx context.Context, tx *sql.Tx, object GroupedService
 	args[3] = object.Info
 
 	// Prepared statement to use.
-	stmt, err := cluster.Stmt(tx, groupedServiceCreate)
+	stmt, err := db.Stmt(tx, groupedServiceCreate)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"groupedServiceCreate\" prepared statement: %w", err)
 	}
@@ -351,7 +351,7 @@ func CreateGroupedService(ctx context.Context, tx *sql.Tx, object GroupedService
 // DeleteGroupedService deletes the GroupedService matching the given key parameters.
 // generator: GroupedService DeleteOne-by-Member-and-Service-and-GroupID
 func DeleteGroupedService(ctx context.Context, tx *sql.Tx, member string, service string, groupID string) error {
-	stmt, err := cluster.Stmt(tx, groupedServiceDeleteByMemberAndServiceAndGroupID)
+	stmt, err := db.Stmt(tx, groupedServiceDeleteByMemberAndServiceAndGroupID)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"groupedServiceDeleteByMemberAndServiceAndGroupID\" prepared statement: %w", err)
 	}
@@ -383,7 +383,7 @@ func UpdateGroupedService(ctx context.Context, tx *sql.Tx, service string, group
 		return err
 	}
 
-	stmt, err := cluster.Stmt(tx, groupedServiceUpdate)
+	stmt, err := db.Stmt(tx, groupedServiceUpdate)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"groupedServiceUpdate\" prepared statement: %w", err)
 	}

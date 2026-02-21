@@ -7,7 +7,7 @@ import (
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/state"
 )
 
 // PreInit is run before the daemon is initialized on bootstrap and join.

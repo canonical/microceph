@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	lxdCmd "github.com/canonical/lxd/shared/cmd"
-	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v3/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -202,7 +202,7 @@ func printAddDiskFailures(response types.DiskAddResponse) error {
 
 	if len(response.ValidationError) != 0 {
 		fmt.Println("Validation Error found")
-		return fmt.Errorf(response.ValidationError)
+		return fmt.Errorf("%s", response.ValidationError)
 	}
 
 	if len(response.Reports) == 0 {
@@ -231,7 +231,7 @@ func printAddDiskFailures(response types.DiskAddResponse) error {
 
 	if failureCount == 1 {
 		// Print error if only one instance of error is there.
-		return fmt.Errorf(errStr)
+		return fmt.Errorf("%s", errStr)
 	} else if failureCount > 1 {
 		// Print error if only one instance of error is there.
 		return fmt.Errorf("failed adding multiple (%d) disks, please check logs for details", failureCount)

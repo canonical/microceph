@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v3/microcluster"
 	"github.com/spf13/cobra"
 )
 
@@ -36,10 +36,5 @@ func (c *cmdClusterRemove) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cli, err := m.LocalClient()
-	if err != nil {
-		return err
-	}
-
-	return cli.DeleteClusterMember(context.Background(), args[0], c.flagForce)
+	return m.RemoveClusterMember(context.Background(), args[0], "", c.flagForce)
 }

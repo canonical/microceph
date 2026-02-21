@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/canonical/lxd/shared/api"
+	"net/url"
+
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -29,8 +30,7 @@ func (s *bootstrapSuite) SetupTest() {
 	s.CopyCephConfigs()
 
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
-	u := api.NewURL()
-	u.Host("1.1.1.1")
+	u := &url.URL{Host: "1.1.1.1"}
 	state := &mocks.MockState{
 		URL:         u,
 		ClusterName: "foohost",

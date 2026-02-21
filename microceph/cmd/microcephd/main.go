@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/canonical/microcluster/v2/microcluster"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/microcluster"
+	"github.com/canonical/microcluster/v3/state"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api"
@@ -82,10 +82,7 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	h.PreRemove = ceph.PreRemove(m)
 
 	daemonArgs := microcluster.DaemonArgs{
-		Version: version.Version(),
-
-		Verbose:          c.global.flagLogVerbose,
-		Debug:            c.global.flagLogDebug,
+		Version:          version.Version(),
 		ExtensionsSchema: database.SchemaExtensions,
 		APIExtensions:    nil,
 		Hooks:            h,

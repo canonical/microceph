@@ -6,9 +6,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/canonical/lxd/shared/api"
+	"net/url"
+
 	"github.com/canonical/microceph/microceph/tests"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/state"
 
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -29,7 +30,7 @@ func (ccs *ClientConfigSuite) SetupTest() {
 	ccs.BaseSuite.SetupTest()
 
 	ccs.TestStateInterface = mocks.NewStateInterface(ccs.T())
-	u := api.NewURL()
+	u := &url.URL{}
 	state := &mocks.MockState{
 		URL:         u,
 		ClusterName: "foohost",

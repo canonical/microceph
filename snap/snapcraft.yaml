@@ -1,7 +1,7 @@
 name: microceph
 base: core24
 adopt-info: ceph
-grade: stable
+grade: devel
 source-code: https://github.com/canonical/microceph.git
 license: AGPL-3.0
 summary: Simple clustered Ceph deployment
@@ -9,6 +9,10 @@ description: |-
   MicroCeph is snap-deployed Ceph with built-in clustering.
 
 confinement: strict
+
+package-repositories:
+  - type: apt
+    ppa: lmlogiudice/ceph-tentacle-noble
 
 plugs:
   load-rbd:
@@ -358,7 +362,7 @@ parts:
     source: https://github.com/canonical/dqlite
     source-type: git
     source-depth: 1
-    source-tag: v1.17.0
+    source-tag: v1.18.5
     plugin: autotools
     autotools-configure-parameters:
       - --prefix=

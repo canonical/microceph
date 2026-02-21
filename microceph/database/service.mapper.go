@@ -12,19 +12,19 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microcluster/v2/cluster"
+	"github.com/canonical/microcluster/v3/microcluster/db"
 )
 
 var _ = api.ServerEnvironment{}
 
-var serviceObjects = cluster.RegisterStmt(`
+var serviceObjects = db.RegisterStmt(`
 SELECT services.id, core_cluster_members.name AS member, services.service
   FROM services
   JOIN core_cluster_members ON services.member_id = core_cluster_members.id
   ORDER BY core_cluster_members.id, services.service
 `)
 
-var serviceObjectsByMember = cluster.RegisterStmt(`
+var serviceObjectsByMember = db.RegisterStmt(`
 SELECT services.id, core_cluster_members.name AS member, services.service
   FROM services
   JOIN core_cluster_members ON services.member_id = core_cluster_members.id
@@ -32,7 +32,7 @@ SELECT services.id, core_cluster_members.name AS member, services.service
   ORDER BY core_cluster_members.id, services.service
 `)
 
-var serviceObjectsByService = cluster.RegisterStmt(`
+var serviceObjectsByService = db.RegisterStmt(`
 SELECT services.id, core_cluster_members.name AS member, services.service
   FROM services
   JOIN core_cluster_members ON services.member_id = core_cluster_members.id
@@ -40,7 +40,7 @@ SELECT services.id, core_cluster_members.name AS member, services.service
   ORDER BY core_cluster_members.id, services.service
 `)
 
-var serviceObjectsByMemberAndService = cluster.RegisterStmt(`
+var serviceObjectsByMemberAndService = db.RegisterStmt(`
 SELECT services.id, core_cluster_members.name AS member, services.service
   FROM services
   JOIN core_cluster_members ON services.member_id = core_cluster_members.id
@@ -48,26 +48,26 @@ SELECT services.id, core_cluster_members.name AS member, services.service
   ORDER BY core_cluster_members.id, services.service
 `)
 
-var serviceID = cluster.RegisterStmt(`
+var serviceID = db.RegisterStmt(`
 SELECT services.id FROM services
   JOIN core_cluster_members ON services.member_id = core_cluster_members.id
   WHERE core_cluster_members.name = ? AND services.service = ?
 `)
 
-var serviceCreate = cluster.RegisterStmt(`
+var serviceCreate = db.RegisterStmt(`
 INSERT INTO services (member_id, service)
   VALUES ((SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), ?)
 `)
 
-var serviceDeleteByMember = cluster.RegisterStmt(`
+var serviceDeleteByMember = db.RegisterStmt(`
 DELETE FROM services WHERE member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?)
 `)
 
-var serviceDeleteByMemberAndService = cluster.RegisterStmt(`
+var serviceDeleteByMemberAndService = db.RegisterStmt(`
 DELETE FROM services WHERE member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?) AND service = ?
 `)
 
-var serviceUpdate = cluster.RegisterStmt(`
+var serviceUpdate = db.RegisterStmt(`
 UPDATE services
   SET member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), service = ?
  WHERE id = ?
@@ -141,7 +141,7 @@ func GetServices(ctx context.Context, tx *sql.Tx, filters ...ServiceFilter) ([]S
 	queryParts := [2]string{}
 
 	if len(filters) == 0 {
-		sqlStmt, err = cluster.Stmt(tx, serviceObjects)
+		sqlStmt, err = db.Stmt(tx, serviceObjects)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get \"serviceObjects\" prepared statement: %w", err)
 		}
@@ -151,7 +151,7 @@ func GetServices(ctx context.Context, tx *sql.Tx, filters ...ServiceFilter) ([]S
 		if filter.Member != nil && filter.Service != nil {
 			args = append(args, []any{filter.Member, filter.Service}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, serviceObjectsByMemberAndService)
+				sqlStmt, err = db.Stmt(tx, serviceObjectsByMemberAndService)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"serviceObjectsByMemberAndService\" prepared statement: %w", err)
 				}
@@ -159,7 +159,7 @@ func GetServices(ctx context.Context, tx *sql.Tx, filters ...ServiceFilter) ([]S
 				break
 			}
 
-			query, err := cluster.StmtString(serviceObjectsByMemberAndService)
+			query, err := db.StmtString(serviceObjectsByMemberAndService)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"serviceObjects\" prepared statement: %w", err)
 			}
@@ -175,7 +175,7 @@ func GetServices(ctx context.Context, tx *sql.Tx, filters ...ServiceFilter) ([]S
 		} else if filter.Service != nil && filter.Member == nil {
 			args = append(args, []any{filter.Service}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, serviceObjectsByService)
+				sqlStmt, err = db.Stmt(tx, serviceObjectsByService)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"serviceObjectsByService\" prepared statement: %w", err)
 				}
@@ -183,7 +183,7 @@ func GetServices(ctx context.Context, tx *sql.Tx, filters ...ServiceFilter) ([]S
 				break
 			}
 
-			query, err := cluster.StmtString(serviceObjectsByService)
+			query, err := db.StmtString(serviceObjectsByService)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"serviceObjects\" prepared statement: %w", err)
 			}
@@ -199,7 +199,7 @@ func GetServices(ctx context.Context, tx *sql.Tx, filters ...ServiceFilter) ([]S
 		} else if filter.Member != nil && filter.Service == nil {
 			args = append(args, []any{filter.Member}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, serviceObjectsByMember)
+				sqlStmt, err = db.Stmt(tx, serviceObjectsByMember)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"serviceObjectsByMember\" prepared statement: %w", err)
 				}
@@ -207,7 +207,7 @@ func GetServices(ctx context.Context, tx *sql.Tx, filters ...ServiceFilter) ([]S
 				break
 			}
 
-			query, err := cluster.StmtString(serviceObjectsByMember)
+			query, err := db.StmtString(serviceObjectsByMember)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"serviceObjects\" prepared statement: %w", err)
 			}
@@ -267,7 +267,7 @@ func GetService(ctx context.Context, tx *sql.Tx, member string, service string) 
 // GetServiceID return the ID of the service with the given key.
 // generator: service ID
 func GetServiceID(ctx context.Context, tx *sql.Tx, member string, service string) (int64, error) {
-	stmt, err := cluster.Stmt(tx, serviceID)
+	stmt, err := db.Stmt(tx, serviceID)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"serviceID\" prepared statement: %w", err)
 	}
@@ -321,7 +321,7 @@ func CreateService(ctx context.Context, tx *sql.Tx, object Service) (int64, erro
 	args[1] = object.Service
 
 	// Prepared statement to use.
-	stmt, err := cluster.Stmt(tx, serviceCreate)
+	stmt, err := db.Stmt(tx, serviceCreate)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"serviceCreate\" prepared statement: %w", err)
 	}
@@ -343,7 +343,7 @@ func CreateService(ctx context.Context, tx *sql.Tx, object Service) (int64, erro
 // DeleteService deletes the service matching the given key parameters.
 // generator: service DeleteOne-by-Member-and-Service
 func DeleteService(ctx context.Context, tx *sql.Tx, member string, service string) error {
-	stmt, err := cluster.Stmt(tx, serviceDeleteByMemberAndService)
+	stmt, err := db.Stmt(tx, serviceDeleteByMemberAndService)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"serviceDeleteByMemberAndService\" prepared statement: %w", err)
 	}
@@ -370,7 +370,7 @@ func DeleteService(ctx context.Context, tx *sql.Tx, member string, service strin
 // DeleteServices deletes the service matching the given key parameters.
 // generator: service DeleteMany-by-Member
 func DeleteServices(ctx context.Context, tx *sql.Tx, member string) error {
-	stmt, err := cluster.Stmt(tx, serviceDeleteByMember)
+	stmt, err := db.Stmt(tx, serviceDeleteByMember)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"serviceDeleteByMember\" prepared statement: %w", err)
 	}
@@ -396,7 +396,7 @@ func UpdateService(ctx context.Context, tx *sql.Tx, member string, service strin
 		return err
 	}
 
-	stmt, err := cluster.Stmt(tx, serviceUpdate)
+	stmt, err := db.Stmt(tx, serviceUpdate)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"serviceUpdate\" prepared statement: %w", err)
 	}

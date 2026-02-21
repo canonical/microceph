@@ -2,7 +2,7 @@
 package interfaces
 
 import (
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/state"
 )
 
 // StateInterface for retrieving cluster state

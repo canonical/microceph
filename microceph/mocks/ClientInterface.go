@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	client "github.com/canonical/microcluster/v2/client"
+	client "github.com/canonical/microcluster/v3/microcluster/types"
 
 	mock "github.com/stretchr/testify/mock"
 
@@ -16,11 +16,11 @@ type ClientInterface struct {
 }
 
 // DeleteClusterMember provides a mock function with given fields: _a0, _a1, _a2
-func (_m *ClientInterface) DeleteClusterMember(_a0 *client.Client, _a1 string, _a2 bool) error {
+func (_m *ClientInterface) DeleteClusterMember(_a0 client.Client, _a1 string, _a2 bool) error {
 	ret := _m.Called(_a0, _a1, _a2)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*client.Client, string, bool) error); ok {
+	if rf, ok := ret.Get(0).(func(client.Client, string, bool) error); ok {
 		r0 = rf(_a0, _a1, _a2)
 	} else {
 		r0 = ret.Error(0)
@@ -30,11 +30,11 @@ func (_m *ClientInterface) DeleteClusterMember(_a0 *client.Client, _a1 string, _
 }
 
 // DeleteService provides a mock function with given fields: _a0, _a1, _a2
-func (_m *ClientInterface) DeleteService(_a0 *client.Client, _a1 string, _a2 string) error {
+func (_m *ClientInterface) DeleteService(_a0 client.Client, _a1 string, _a2 string) error {
 	ret := _m.Called(_a0, _a1, _a2)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*client.Client, string, string) error); ok {
+	if rf, ok := ret.Get(0).(func(client.Client, string, string) error); ok {
 		r0 = rf(_a0, _a1, _a2)
 	} else {
 		r0 = ret.Error(0)
@@ -44,15 +44,15 @@ func (_m *ClientInterface) DeleteService(_a0 *client.Client, _a1 string, _a2 str
 }
 
 // GetClusterMembers provides a mock function with given fields: _a0
-func (_m *ClientInterface) GetClusterMembers(_a0 *client.Client) ([]string, error) {
+func (_m *ClientInterface) GetClusterMembers(_a0 client.Client) ([]string, error) {
 	ret := _m.Called(_a0)
 
 	var r0 []string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(*client.Client) ([]string, error)); ok {
+	if rf, ok := ret.Get(0).(func(client.Client) ([]string, error)); ok {
 		return rf(_a0)
 	}
-	if rf, ok := ret.Get(0).(func(*client.Client) []string); ok {
+	if rf, ok := ret.Get(0).(func(client.Client) []string); ok {
 		r0 = rf(_a0)
 	} else {
 		if ret.Get(0) != nil {
@@ -60,7 +60,7 @@ func (_m *ClientInterface) GetClusterMembers(_a0 *client.Client) ([]string, erro
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(*client.Client) error); ok {
+	if rf, ok := ret.Get(1).(func(client.Client) error); ok {
 		r1 = rf(_a0)
 	} else {
 		r1 = ret.Error(1)
@@ -70,15 +70,15 @@ func (_m *ClientInterface) GetClusterMembers(_a0 *client.Client) ([]string, erro
 }
 
 // GetDisks provides a mock function with given fields: _a0
-func (_m *ClientInterface) GetDisks(_a0 *client.Client) (types.Disks, error) {
+func (_m *ClientInterface) GetDisks(_a0 client.Client) (types.Disks, error) {
 	ret := _m.Called(_a0)
 
 	var r0 types.Disks
 	var r1 error
-	if rf, ok := ret.Get(0).(func(*client.Client) (types.Disks, error)); ok {
+	if rf, ok := ret.Get(0).(func(client.Client) (types.Disks, error)); ok {
 		return rf(_a0)
 	}
-	if rf, ok := ret.Get(0).(func(*client.Client) types.Disks); ok {
+	if rf, ok := ret.Get(0).(func(client.Client) types.Disks); ok {
 		r0 = rf(_a0)
 	} else {
 		if ret.Get(0) != nil {
@@ -86,7 +86,7 @@ func (_m *ClientInterface) GetDisks(_a0 *client.Client) (types.Disks, error) {
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(*client.Client) error); ok {
+	if rf, ok := ret.Get(1).(func(client.Client) error); ok {
 		r1 = rf(_a0)
 	} else {
 		r1 = ret.Error(1)
@@ -96,15 +96,15 @@ func (_m *ClientInterface) GetDisks(_a0 *client.Client) (types.Disks, error) {
 }
 
 // GetServices provides a mock function with given fields: _a0
-func (_m *ClientInterface) GetServices(_a0 *client.Client) (types.Services, error) {
+func (_m *ClientInterface) GetServices(_a0 client.Client) (types.Services, error) {
 	ret := _m.Called(_a0)
 
 	var r0 types.Services
 	var r1 error
-	if rf, ok := ret.Get(0).(func(*client.Client) (types.Services, error)); ok {
+	if rf, ok := ret.Get(0).(func(client.Client) (types.Services, error)); ok {
 		return rf(_a0)
 	}
-	if rf, ok := ret.Get(0).(func(*client.Client) types.Services); ok {
+	if rf, ok := ret.Get(0).(func(client.Client) types.Services); ok {
 		r0 = rf(_a0)
 	} else {
 		if ret.Get(0) != nil {
@@ -112,7 +112,7 @@ func (_m *ClientInterface) GetServices(_a0 *client.Client) (types.Services, erro
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(*client.Client) error); ok {
+	if rf, ok := ret.Get(1).(func(client.Client) error); ok {
 		r1 = rf(_a0)
 	} else {
 		r1 = ret.Error(1)

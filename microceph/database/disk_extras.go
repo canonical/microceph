@@ -9,8 +9,8 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microcluster/v2/cluster"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/microcluster/db"
+	"github.com/canonical/microcluster/v3/state"
 )
 
 // MemberCounterInterface is for counting member nodes. Introduced for mocking.
@@ -30,14 +30,14 @@ type MemberDisk struct {
 
 var _ = api.ServerEnvironment{}
 
-var membersDiskCnt = cluster.RegisterStmt(`
+var membersDiskCnt = db.RegisterStmt(`
 SELECT core_cluster_members.name AS member, count(disks.id) AS num_disks
   FROM disks
   JOIN core_cluster_members ON disks.member_id = core_cluster_members.id
   GROUP BY core_cluster_members.id
 `)
 
-var membersDiskCntExclude = cluster.RegisterStmt(`
+var membersDiskCntExclude = db.RegisterStmt(`
 SELECT core_cluster_members.name AS member, count(disks.id) AS num_disks
 FROM disks
 JOIN core_cluster_members ON disks.member_id = core_cluster_members.id
@@ -63,7 +63,7 @@ func MembersDiskCnt(ctx context.Context, tx *sql.Tx, exclude int64) ([]MemberDis
 	}
 
 	if exclude == -1 {
-		sqlStmt, err = cluster.Stmt(tx, membersDiskCnt)
+		sqlStmt, err = db.Stmt(tx, membersDiskCnt)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get \"membersDiskCnt\" prepared statement: %w", err)
 		}
@@ -73,7 +73,7 @@ func MembersDiskCnt(ctx context.Context, tx *sql.Tx, exclude int64) ([]MemberDis
 			return nil, fmt.Errorf("Failed to get \"membersDiskCnt\" objects: %w", err)
 		}
 	} else {
-		sqlStmt, err = cluster.Stmt(tx, membersDiskCntExclude)
+		sqlStmt, err = db.Stmt(tx, membersDiskCntExclude)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get \"membersDiskCntExclude\" prepared statement: %w", err)
 		}
@@ -136,19 +136,19 @@ type OSDQueryInterface interface {
 
 type OSDQueryImpl struct{}
 
-var haveOsd = cluster.RegisterStmt(`
+var haveOsd = db.RegisterStmt(`
 SELECT count(*)
 FROM disks
 WHERE disks.id = ?
 `)
 
-var osdPath = cluster.RegisterStmt(`
+var osdPath = db.RegisterStmt(`
 SELECT disks.path
 FROM disks
 WHERE disks.id = ?
 `)
 
-var updatePath = cluster.RegisterStmt(`
+var updatePath = db.RegisterStmt(`
 UPDATE disks
 SET path = ?
 WHERE disks.id = ?
@@ -159,7 +159,7 @@ func (o OSDQueryImpl) HaveOSD(ctx context.Context, s state.State, osd int64) (bo
 	var present int
 
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		sqlStmt, err := cluster.Stmt(tx, haveOsd)
+		sqlStmt, err := db.Stmt(tx, haveOsd)
 		if err != nil {
 			return fmt.Errorf("Failed to get \"haveOsd\" prepared statement: %w", err)
 		}
@@ -181,7 +181,7 @@ func (o OSDQueryImpl) Path(ctx context.Context, s state.State, osd int64) (strin
 	var path string
 
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		sqlStmt, err := cluster.Stmt(tx, osdPath)
+		sqlStmt, err := db.Stmt(tx, osdPath)
 		if err != nil {
 			return fmt.Errorf("Failed to get \"osdPath\" prepared statement: %w", err)
 		}
@@ -239,7 +239,7 @@ func (o OSDQueryImpl) List(ctx context.Context, s state.State) (types.Disks, err
 // UpdatePath updates the path of the given OSD
 func (o OSDQueryImpl) UpdatePath(ctx context.Context, s state.State, osd int64, path string) error {
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		sqlStmt, err := cluster.Stmt(tx, updatePath)
+		sqlStmt, err := db.Stmt(tx, updatePath)
 		if err != nil {
 			return fmt.Errorf("failed to get \"updatePath\" prepared statement: %w", err)
 		}

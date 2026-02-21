@@ -12,19 +12,19 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microcluster/v2/cluster"
+	"github.com/canonical/microcluster/v3/microcluster/db"
 )
 
 var _ = api.ServerEnvironment{}
 
-var diskObjects = cluster.RegisterStmt(`
+var diskObjects = db.RegisterStmt(`
 SELECT Disks.id, core_cluster_members.name AS member, Disks.path
   FROM Disks
   JOIN core_cluster_members ON Disks.member_id = core_cluster_members.id
   ORDER BY core_cluster_members.id, Disks.path
 `)
 
-var diskObjectsByMember = cluster.RegisterStmt(`
+var diskObjectsByMember = db.RegisterStmt(`
 SELECT Disks.id, core_cluster_members.name AS member, Disks.path
   FROM Disks
   JOIN core_cluster_members ON Disks.member_id = core_cluster_members.id
@@ -32,7 +32,7 @@ SELECT Disks.id, core_cluster_members.name AS member, Disks.path
   ORDER BY core_cluster_members.id, Disks.path
 `)
 
-var diskObjectsByMemberAndPath = cluster.RegisterStmt(`
+var diskObjectsByMemberAndPath = db.RegisterStmt(`
 SELECT Disks.id, core_cluster_members.name AS member, Disks.path
   FROM Disks
   JOIN core_cluster_members ON Disks.member_id = core_cluster_members.id
@@ -40,26 +40,26 @@ SELECT Disks.id, core_cluster_members.name AS member, Disks.path
   ORDER BY core_cluster_members.id, Disks.path
 `)
 
-var diskID = cluster.RegisterStmt(`
+var diskID = db.RegisterStmt(`
 SELECT Disks.id FROM Disks
   JOIN core_cluster_members ON Disks.member_id = core_cluster_members.id
   WHERE core_cluster_members.name = ? AND Disks.path = ?
 `)
 
-var diskCreate = cluster.RegisterStmt(`
+var diskCreate = db.RegisterStmt(`
 INSERT INTO Disks (member_id, path)
   VALUES ((SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), ?)
 `)
 
-var diskDeleteByMember = cluster.RegisterStmt(`
+var diskDeleteByMember = db.RegisterStmt(`
 DELETE FROM Disks WHERE member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?)
 `)
 
-var diskDeleteByMemberAndPath = cluster.RegisterStmt(`
+var diskDeleteByMemberAndPath = db.RegisterStmt(`
 DELETE FROM Disks WHERE member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?) AND path = ?
 `)
 
-var diskUpdate = cluster.RegisterStmt(`
+var diskUpdate = db.RegisterStmt(`
 UPDATE Disks
   SET member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), path = ?
  WHERE id = ?
@@ -133,7 +133,7 @@ func GetDisks(ctx context.Context, tx *sql.Tx, filters ...DiskFilter) ([]Disk, e
 	queryParts := [2]string{}
 
 	if len(filters) == 0 {
-		sqlStmt, err = cluster.Stmt(tx, diskObjects)
+		sqlStmt, err = db.Stmt(tx, diskObjects)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get \"diskObjects\" prepared statement: %w", err)
 		}
@@ -143,7 +143,7 @@ func GetDisks(ctx context.Context, tx *sql.Tx, filters ...DiskFilter) ([]Disk, e
 		if filter.Member != nil && filter.Path != nil {
 			args = append(args, []any{filter.Member, filter.Path}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, diskObjectsByMemberAndPath)
+				sqlStmt, err = db.Stmt(tx, diskObjectsByMemberAndPath)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"diskObjectsByMemberAndPath\" prepared statement: %w", err)
 				}
@@ -151,7 +151,7 @@ func GetDisks(ctx context.Context, tx *sql.Tx, filters ...DiskFilter) ([]Disk, e
 				break
 			}
 
-			query, err := cluster.StmtString(diskObjectsByMemberAndPath)
+			query, err := db.StmtString(diskObjectsByMemberAndPath)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"diskObjects\" prepared statement: %w", err)
 			}
@@ -167,7 +167,7 @@ func GetDisks(ctx context.Context, tx *sql.Tx, filters ...DiskFilter) ([]Disk, e
 		} else if filter.Member != nil && filter.Path == nil {
 			args = append(args, []any{filter.Member}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, diskObjectsByMember)
+				sqlStmt, err = db.Stmt(tx, diskObjectsByMember)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"diskObjectsByMember\" prepared statement: %w", err)
 				}
@@ -175,7 +175,7 @@ func GetDisks(ctx context.Context, tx *sql.Tx, filters ...DiskFilter) ([]Disk, e
 				break
 			}
 
-			query, err := cluster.StmtString(diskObjectsByMember)
+			query, err := db.StmtString(diskObjectsByMember)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"diskObjects\" prepared statement: %w", err)
 			}
@@ -235,7 +235,7 @@ func GetDisk(ctx context.Context, tx *sql.Tx, member string, path string) (*Disk
 // GetDiskID return the ID of the Disk with the given key.
 // generator: Disk ID
 func GetDiskID(ctx context.Context, tx *sql.Tx, member string, path string) (int64, error) {
-	stmt, err := cluster.Stmt(tx, diskID)
+	stmt, err := db.Stmt(tx, diskID)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"diskID\" prepared statement: %w", err)
 	}
@@ -289,7 +289,7 @@ func CreateDisk(ctx context.Context, tx *sql.Tx, object Disk) (int64, error) {
 	args[1] = object.Path
 
 	// Prepared statement to use.
-	stmt, err := cluster.Stmt(tx, diskCreate)
+	stmt, err := db.Stmt(tx, diskCreate)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"diskCreate\" prepared statement: %w", err)
 	}
@@ -311,7 +311,7 @@ func CreateDisk(ctx context.Context, tx *sql.Tx, object Disk) (int64, error) {
 // DeleteDisk deletes the Disk matching the given key parameters.
 // generator: Disk DeleteOne-by-Member-and-Path
 func DeleteDisk(ctx context.Context, tx *sql.Tx, member string, path string) error {
-	stmt, err := cluster.Stmt(tx, diskDeleteByMemberAndPath)
+	stmt, err := db.Stmt(tx, diskDeleteByMemberAndPath)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"diskDeleteByMemberAndPath\" prepared statement: %w", err)
 	}
@@ -338,7 +338,7 @@ func DeleteDisk(ctx context.Context, tx *sql.Tx, member string, path string) err
 // DeleteDisks deletes the Disk matching the given key parameters.
 // generator: Disk DeleteMany-by-Member
 func DeleteDisks(ctx context.Context, tx *sql.Tx, member string) error {
-	stmt, err := cluster.Stmt(tx, diskDeleteByMember)
+	stmt, err := db.Stmt(tx, diskDeleteByMember)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"diskDeleteByMember\" prepared statement: %w", err)
 	}
@@ -364,7 +364,7 @@ func UpdateDisk(ctx context.Context, tx *sql.Tx, member string, path string, obj
 		return err
 	}
 
-	stmt, err := cluster.Stmt(tx, diskUpdate)
+	stmt, err := db.Stmt(tx, diskUpdate)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"diskUpdate\" prepared statement: %w", err)
 	}

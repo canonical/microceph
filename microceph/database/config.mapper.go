@@ -12,39 +12,39 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microcluster/v2/cluster"
+	"github.com/canonical/microcluster/v3/microcluster/db"
 )
 
 var _ = api.ServerEnvironment{}
 
-var configItemObjects = cluster.RegisterStmt(`
+var configItemObjects = db.RegisterStmt(`
 SELECT config.id, config.key, config.value
   FROM config
   ORDER BY config.key
 `)
 
-var configItemObjectsByKey = cluster.RegisterStmt(`
+var configItemObjectsByKey = db.RegisterStmt(`
 SELECT config.id, config.key, config.value
   FROM config
   WHERE ( config.key = ? )
   ORDER BY config.key
 `)
 
-var configItemID = cluster.RegisterStmt(`
+var configItemID = db.RegisterStmt(`
 SELECT config.id FROM config
   WHERE config.key = ?
 `)
 
-var configItemCreate = cluster.RegisterStmt(`
+var configItemCreate = db.RegisterStmt(`
 INSERT INTO config (key, value)
   VALUES (?, ?)
 `)
 
-var configItemDeleteByKey = cluster.RegisterStmt(`
+var configItemDeleteByKey = db.RegisterStmt(`
 DELETE FROM config WHERE key = ?
 `)
 
-var configItemUpdate = cluster.RegisterStmt(`
+var configItemUpdate = db.RegisterStmt(`
 UPDATE config
   SET key = ?, value = ?
  WHERE id = ?
@@ -118,7 +118,7 @@ func GetConfigItems(ctx context.Context, tx *sql.Tx, filters ...ConfigItemFilter
 	queryParts := [2]string{}
 
 	if len(filters) == 0 {
-		sqlStmt, err = cluster.Stmt(tx, configItemObjects)
+		sqlStmt, err = db.Stmt(tx, configItemObjects)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get \"configItemObjects\" prepared statement: %w", err)
 		}
@@ -128,7 +128,7 @@ func GetConfigItems(ctx context.Context, tx *sql.Tx, filters ...ConfigItemFilter
 		if filter.Key != nil {
 			args = append(args, []any{filter.Key}...)
 			if len(filters) == 1 {
-				sqlStmt, err = cluster.Stmt(tx, configItemObjectsByKey)
+				sqlStmt, err = db.Stmt(tx, configItemObjectsByKey)
 				if err != nil {
 					return nil, fmt.Errorf("Failed to get \"configItemObjectsByKey\" prepared statement: %w", err)
 				}
@@ -136,7 +136,7 @@ func GetConfigItems(ctx context.Context, tx *sql.Tx, filters ...ConfigItemFilter
 				break
 			}
 
-			query, err := cluster.StmtString(configItemObjectsByKey)
+			query, err := db.StmtString(configItemObjectsByKey)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to get \"configItemObjects\" prepared statement: %w", err)
 			}
@@ -195,7 +195,7 @@ func GetConfigItem(ctx context.Context, tx *sql.Tx, key string) (*ConfigItem, er
 // GetConfigItemID return the ID of the ConfigItem with the given key.
 // generator: ConfigItem ID
 func GetConfigItemID(ctx context.Context, tx *sql.Tx, key string) (int64, error) {
-	stmt, err := cluster.Stmt(tx, configItemID)
+	stmt, err := db.Stmt(tx, configItemID)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"configItemID\" prepared statement: %w", err)
 	}
@@ -249,7 +249,7 @@ func CreateConfigItem(ctx context.Context, tx *sql.Tx, object ConfigItem) (int64
 	args[1] = object.Value
 
 	// Prepared statement to use.
-	stmt, err := cluster.Stmt(tx, configItemCreate)
+	stmt, err := db.Stmt(tx, configItemCreate)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to get \"configItemCreate\" prepared statement: %w", err)
 	}
@@ -271,7 +271,7 @@ func CreateConfigItem(ctx context.Context, tx *sql.Tx, object ConfigItem) (int64
 // DeleteConfigItem deletes the ConfigItem matching the given key parameters.
 // generator: ConfigItem DeleteOne-by-Key
 func DeleteConfigItem(ctx context.Context, tx *sql.Tx, key string) error {
-	stmt, err := cluster.Stmt(tx, configItemDeleteByKey)
+	stmt, err := db.Stmt(tx, configItemDeleteByKey)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"configItemDeleteByKey\" prepared statement: %w", err)
 	}
@@ -303,7 +303,7 @@ func UpdateConfigItem(ctx context.Context, tx *sql.Tx, key string, object Config
 		return err
 	}
 
-	stmt, err := cluster.Stmt(tx, configItemUpdate)
+	stmt, err := db.Stmt(tx, configItemUpdate)
 	if err != nil {
 		return fmt.Errorf("Failed to get \"configItemUpdate\" prepared statement: %w", err)
 	}

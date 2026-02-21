@@ -10,7 +10,7 @@ import (
 	lxdCmd "github.com/canonical/lxd/shared/cmd"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
-	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v3/microcluster"
 )
 
 type cmdPool struct {

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/canonical/lxd/shared/api"
+	"net/url"
 
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
@@ -118,7 +118,7 @@ func (s *NFSSuite) TestDisableNFSErrorDB() {
 
 func (s *NFSSuite) TestDisableNFSNotExists() {
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
-	u := api.NewURL()
+	u := &url.URL{}
 	state := &mocks.MockState{
 		URL:         u,
 		ClusterName: "foohost",

@@ -6,7 +6,7 @@ import (
 	context "context"
 
 	database "github.com/canonical/microceph/microceph/database"
-	state "github.com/canonical/microcluster/v2/state"
+	state "github.com/canonical/microcluster/v3/state"
 	mock "github.com/stretchr/testify/mock"
 )
 
