@@ -99,6 +99,8 @@ function add_encrypted_osds() {
 }
 
 function test_encrypted_wal_db_startup() {
+    sudo snap connect microceph:dm-crypt
+    sudo snap restart microceph.daemon
     local expected_osds="${1?missing}"
 
     # Create loop devices for encrypted data, WAL, and DB
@@ -119,7 +121,7 @@ function test_encrypted_wal_db_startup() {
 
     # Find the OSD ID just created
     local osd_id
-    osd_id=$(ls -1 /var/snap/microceph/common/data/osd/ | sort -t- -k2 -n | tail -1 | sed 's/ceph-//')
+    osd_id=$(sudo ls -1 /var/snap/microceph/common/data/osd/ | sort -t- -k2 -n | tail -1 | sed 's/ceph-//')
 
     # Simulate reboot: stop service and close all LUKS volumes
     sudo snap stop microceph.osd

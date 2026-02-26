@@ -14,8 +14,9 @@ maybe_unlock() {
     dev="${1:?missing}"
     osdid="${2:?missing}"
     key="${3:?missing}"
+    suffix="${4:-}"
 
-    luksname="luksosd-${osdid}"
+    luksname="luksosd${suffix}-${osdid}"
 
     [ -b "/dev/mapper/$luksname" ] && return
 
@@ -26,7 +27,8 @@ maybe_unlock() {
 
 get_key() {
     osdid="${1:?missing}"
-    ceph config-key get "microceph:osd.${osdid}/key"
+    suffix="${2:-}"
+    ceph config-key get "microceph:osd${suffix}.${osdid}/key"
 }
 
 is_osd_running() {
@@ -51,6 +53,12 @@ spawn() {
 
         if [ -b "${i}/unencrypted" ] ; then
             maybe_unlock "${i}/unencrypted" "${nr}" "$( get_key "${nr}" )"
+        fi
+        if [ -b "${i}/unencrypted.wal" ] ; then
+            maybe_unlock "${i}/unencrypted.wal" "${nr}" "$( get_key "${nr}" ".wal" )" ".wal"
+        fi
+        if [ -b "${i}/unencrypted.db" ] ; then
+            maybe_unlock "${i}/unencrypted.db" "${nr}" "$( get_key "${nr}" ".db" )" ".db"
         fi
 
         ceph-osd --cluster ceph --id "${nr}"
