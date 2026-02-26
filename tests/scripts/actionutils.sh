@@ -99,6 +99,7 @@ function add_encrypted_osds() {
 }
 
 function test_encrypted_wal_db_startup() {
+    set -eux
     sudo snap connect microceph:dm-crypt
     sudo snap restart microceph.daemon
     local expected_osds="${1?missing}"
