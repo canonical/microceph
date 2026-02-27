@@ -63,6 +63,9 @@ func main() {
 	cmdStatus := cmdStatus{common: &commonCmd}
 	app.AddCommand(cmdStatus.Command())
 
+	cmdWaitready := cmdWaitready{common: &commonCmd}
+	app.AddCommand(cmdWaitready.Command())
+
 	// Nested.
 	cmdCluster := cmdCluster{common: &commonCmd}
 	app.AddCommand(cmdCluster.Command())

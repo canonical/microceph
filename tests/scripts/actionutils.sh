@@ -1583,6 +1583,23 @@ function verify_mount_check() {
     fi
 }
 
+function test_waitready_before_bootstrap() {
+    # waitready should fail before any cluster is bootstrapped.
+    if sudo microceph waitready --timeout 5 2>/dev/null; then
+        echo "ERROR: waitready succeeded before bootstrap, expected failure"
+        exit 1
+    fi
+    echo "waitready correctly failed before bootstrap"
+}
+
+function test_waitready_after_bootstrap() {
+    set -e
+    # After bootstrap, waitready should succeed within the timeout.
+    sudo microceph waitready --timeout 30
+    sudo microceph disk list
+    echo "waitready succeeded after bootstrap"
+}
+
 run="${1}"
 shift
 
