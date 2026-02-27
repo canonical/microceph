@@ -98,6 +98,53 @@ function add_encrypted_osds() {
     fi
 }
 
+function test_encrypted_wal_db_startup() {
+    set -eux
+    sudo snap connect microceph:dm-crypt
+    sudo snap restart microceph.daemon
+    local expected_osds="${1?missing}"
+
+    # Create loop devices for encrypted data, WAL, and DB
+    for l in d e f; do
+        loop_file="$(sudo mktemp -p /mnt XXXX.img)"
+        sudo truncate -s 4G "${loop_file}"
+        loop_dev="$(sudo losetup --show -f "${loop_file}")"
+        minor="${loop_dev##/dev/loop}"
+        sudo mknod -m 0660 "/dev/sdi${l}" b 7 "${minor}"
+    done
+
+    sudo microceph disk add /dev/sdid \
+        --encrypt \
+        --wal-device /dev/sdie --wal-encrypt \
+        --db-device /dev/sdif --db-encrypt
+
+    wait_for_osds "${expected_osds}"
+
+    # Find the OSD ID just created
+    local osd_id
+    osd_id=$(sudo ls -1 /var/snap/microceph/common/data/osd/ | sort -t- -k2 -n | tail -1 | sed 's/ceph-//')
+
+    # Simulate reboot: stop service and close all LUKS volumes
+    sudo snap stop microceph.osd
+    sudo cryptsetup close "luksosd-${osd_id}"
+    sudo cryptsetup close "luksosd.wal-${osd_id}"
+    sudo cryptsetup close "luksosd.db-${osd_id}"
+
+    # Restart OSD service
+    sudo snap start microceph.osd
+    sleep 30
+
+    # Verify all LUKS volumes were reopened
+    for suffix in "" ".wal" ".db"; do
+        if [ ! -e "/dev/mapper/luksosd${suffix}-${osd_id}" ]; then
+            echo "Error: luksosd${suffix}-${osd_id} was not reopened after restart"
+            exit 1
+        fi
+    done
+
+    wait_for_osds "${expected_osds}" || exit 1
+}
+
 function add_lvm_vol() {
     set -x
     create_lvm_vol lvtest

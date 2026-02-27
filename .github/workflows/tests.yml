@@ -643,6 +643,9 @@ jobs:
               fi
           done
 
+      - name: Test encrypted WAL/DB startup
+        run: ~/actionutils.sh test_encrypted_wal_db_startup 5
+
       - name: Enable RGW
         run: ~/actionutils.sh enable_rgw
 
