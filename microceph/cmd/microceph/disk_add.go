@@ -111,6 +111,11 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
+		if len(disks) == 0 {
+			fmt.Println("No available disks found on this system.")
+			return nil
+		}
+
 		// Prepare Batch arguments
 		for _, disk := range disks {
 			req.Path = append(req.Path, disk.Path)

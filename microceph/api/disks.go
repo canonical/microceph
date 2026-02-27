@@ -172,14 +172,20 @@ func parseAndPatchDiskPostParams(rb io.ReadCloser) (types.DisksPost, error) {
 	logger.Debugf("CmdDiskPost Req Body: %v", buf)
 
 	diskPath := gjson.Get(buf, "path")
-	if !diskPath.IsArray() {
+	if diskPath.IsArray() {
+		// use unpatched buffer if client is using Batch Disk params.
+		patchedBody = buf
+	} else if diskPath.Exists() && diskPath.String() != "" {
 		patchedBody, err = sjson.Set(buf, "path", []string{diskPath.String()})
 		if err != nil {
 			return types.DisksPost{}, err
 		}
 	} else {
-		// use unpatched buffer if client is using Batch Disk params.
-		patchedBody = buf
+		// Empty or nonexistent path, return empty
+		patchedBody, err = sjson.Set(buf, "path", []string{})
+		if err != nil {
+			return types.DisksPost{}, err
+		}
 	}
 
 	logger.Debugf("CmdDiskPost Patched Body: %v", patchedBody)
