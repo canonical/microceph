@@ -11,6 +11,7 @@ import (
 	"github.com/canonical/microceph/microceph/tests"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -30,9 +31,9 @@ func (s *monitorSuite) TestWaitForCephReadyRetriesThenSucceeds() {
 	r := mocks.NewRunner(s.T())
 
 	// Fail twice, then succeed.
-	r.On("RunCommand", "ceph", "-s").Return("", errors.New("connection refused")).Once()
-	r.On("RunCommand", "ceph", "-s").Return("", errors.New("connection refused")).Once()
-	r.On("RunCommand", "ceph", "-s").Return("HEALTH_OK", nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "-s").Return("", errors.New("connection refused")).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "-s").Return("", errors.New("connection refused")).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "-s").Return("HEALTH_OK", nil).Once()
 
 	common.ProcessExec = r
 
@@ -48,7 +49,7 @@ func (s *monitorSuite) TestWaitForCephReadyTimeout() {
 	r := mocks.NewRunner(s.T())
 
 	// Always fail.
-	r.On("RunCommand", "ceph", "-s").Return("", errors.New("connection refused"))
+	r.On("RunCommandContext", mock.Anything, "ceph", "-s").Return("", errors.New("connection refused"))
 
 	common.ProcessExec = r
 
@@ -63,7 +64,7 @@ func (s *monitorSuite) TestWaitForCephReadyTimeout() {
 func (s *monitorSuite) TestWaitForCephReadyImmediateSuccess() {
 	r := mocks.NewRunner(s.T())
 
-	r.On("RunCommand", "ceph", "-s").Return("HEALTH_WARN", nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "-s").Return("HEALTH_WARN", nil).Once()
 
 	common.ProcessExec = r
 
