@@ -15,6 +15,9 @@ As we progress, you will also interact with your cluster by checking its health,
 
 By the end of this tutorial, after successfully using MicroCeph to store an image, you will have a foundational understanding of how MicroCeph works, and be ready to explore more advanced use cases.
 
+.. note::
+    RGW stands for RADOS GateWay, while RADOS stands for Reliable Autonomic Distributed Object Store (Ceph's core storage layer)
+
 What you'll need
 ----------------
 
