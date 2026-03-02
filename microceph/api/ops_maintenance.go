@@ -61,9 +61,9 @@ func (r *maintenanceResponse) Render(w http.ResponseWriter, req *http.Request) (
 
 func (r *maintenanceResponse) String() string {
 	if !r.success {
-		return "success"
+		return "failure"
 	}
-	return "failure"
+	return "success"
 }
 
 // /ops/maintenance/{node} endpoint.
