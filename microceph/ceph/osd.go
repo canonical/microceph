@@ -1482,11 +1482,13 @@ func isOsdNooutSet() (bool, error) {
 	logger.Infof("osd dump: %s", output)
 
 	flags := gjson.Get(output, "flags_set")
+	logger.Debugf("osd flags_set: %v", flags)
 	for _, flag := range flags.Array() {
 		if flag.String() == "noout" {
 			return true, nil
 		}
 	}
+	logger.Debugf("noout flag not found in flags_set")
 	return false, nil
 }
 
