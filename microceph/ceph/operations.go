@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/logger"
 
 	"github.com/canonical/microcluster/v2/state"
@@ -117,7 +118,7 @@ type CheckNonOsdSvcEnoughOps struct {
 
 // Run checks if non-osds service in a node are enough.
 func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
-	services, err := ListServices(o.Context, o.State)
+	services, err := database.ServiceQuery.List(o.Context, o.State)
 	if err != nil {
 		return fmt.Errorf("error listing services: %v", err)
 	}
@@ -156,7 +157,7 @@ func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
 	for _, location := range activeMdss {
 		activeServices = append(activeServices, types.Service{Service: "mds", Location: location})
 	}
-	fmt.Println(activeServices)
+	logger.Debugf("active services: %v", activeServices)
 
 	err = EnsureNonOsdSvcEnough(activeServices, name, minMon, minMgr, minMds)
 	if err != nil {

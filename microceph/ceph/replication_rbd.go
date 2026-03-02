@@ -494,7 +494,7 @@ func handleSiteOp(rh *RbdReplicationHandler) error {
 		poolStatus, poolInfo, err := getMirrorPoolMetadata(pool.Name)
 		if err != nil {
 			ne := fmt.Errorf("failed to fetch pool (%s) metadata: %v", pool.Name, err)
-			logger.Errorf(ne.Error())
+			logger.Errorf("%s", ne.Error())
 			return ne
 		}
 

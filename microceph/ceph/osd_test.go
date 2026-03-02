@@ -213,15 +213,15 @@ func addOsdtNooutFlagFailedExpectations(r *mocks.Runner) {
 }
 
 func addIsOsdNooutSetTrueExpections(r *mocks.Runner) {
-	r.On("RunCommand", "ceph", "osd", "dump").Return("flags sortbitwise,noout", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return(`{"flags_set":["sortbitwise","noout"]}`, nil).Once()
 }
 
 func addIsOsdNooutSetFalseExpections(r *mocks.Runner) {
-	r.On("RunCommand", "ceph", "osd", "dump").Return("flags sortbitwise", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return(`{"flags_set":["sortbitwise"]}`, nil).Once()
 }
 
 func addIsOsdNooutSetFailedExpections(r *mocks.Runner) {
-	r.On("RunCommand", "ceph", "osd", "dump").Return("fail", fmt.Errorf("some errors")).Once()
+	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return("fail", fmt.Errorf("some errors")).Once()
 }
 
 func (s *osdSuite) SetupTest() {

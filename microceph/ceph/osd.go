@@ -24,6 +24,7 @@ import (
 	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/spf13/afero"
+	"github.com/tidwall/gjson"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/revert"
@@ -1473,13 +1474,22 @@ func setOsdNooutFlag(set bool) error {
 }
 
 func isOsdNooutSet() (bool, error) {
-	output, err := common.ProcessExec.RunCommand("ceph", "osd", "dump")
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "dump", "-f", "json")
 	if err != nil {
 		logger.Errorf("failed to dump osd info: %v", err)
 		return false, fmt.Errorf("failed to dump osd info: %w", err)
 	}
 	logger.Infof("osd dump: %s", output)
-	return strings.Contains(output, "noout"), nil
+
+	flags := gjson.Get(output, "flags_set")
+	logger.Debugf("osd flags_set: %v", flags)
+	for _, flag := range flags.Array() {
+		if flag.String() == "noout" {
+			return true, nil
+		}
+	}
+	logger.Debugf("noout flag not found in flags_set")
+	return false, nil
 }
 
 func (m *OSDManager) safetyCheckStop(osds []int64) error {

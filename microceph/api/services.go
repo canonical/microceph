@@ -26,7 +26,7 @@ var servicesCmd = rest.Endpoint{
 }
 
 func cmdServicesGet(s state.State, r *http.Request) response.Response {
-	services, err := ceph.ListServices(r.Context(), s)
+	services, err := database.ServiceQuery.List(r.Context(), s)
 	if err != nil {
 		return response.InternalError(err)
 	}
@@ -143,7 +143,7 @@ func cmdRestartServicePost(s state.State, r *http.Request) response.Response {
 		}
 	}
 
-	clusterServices, err := ceph.ListServices(r.Context(), s)
+	clusterServices, err := database.ServiceQuery.List(r.Context(), s)
 	if err != nil {
 		logger.Errorf("failed fetching services from db: %v", err)
 		return response.SyncResponse(false, err)

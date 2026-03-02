@@ -15,7 +15,6 @@ import (
 	"github.com/Rican7/retry/backoff"
 	"github.com/Rican7/retry/strategy"
 	"github.com/canonical/microceph/microceph/logger"
-	"github.com/canonical/microcluster/v2/state"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
@@ -32,7 +31,7 @@ var serviceWorkerTable = map[string](func() (common.Set, error)){
 
 // Restarts (in order) all Ceph Services provided in the input slice on the host.
 func RestartCephServices(ctx context.Context, s interfaces.StateInterface, services []string) error {
-	clusterServices, err := ListServices(ctx, s.ClusterState())
+	clusterServices, err := database.ServiceQuery.List(ctx, s.ClusterState())
 	if err != nil {
 		logger.Errorf("failed fetching services from db: %v", err)
 		return err
@@ -163,35 +162,6 @@ func isServicePlacementOnHost(services types.Services, serviceName string, hostn
 	}
 
 	return false
-}
-
-// ListServices retrieves a list of services from the database
-func ListServices(ctx context.Context, s state.State) (types.Services, error) {
-	services := types.Services{}
-
-	// Get the services from the database.
-	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		records, err := database.GetServices(ctx, tx)
-		if err != nil {
-			return fmt.Errorf("Failed to fetch service: %w", err)
-		}
-
-		for _, service := range records {
-			services = append(services, types.Service{
-				Location: service.Member,
-				Service:  service.Service,
-				Info:     "",
-				GroupID:  "",
-			})
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return services, nil
 }
 
 // cleanService removes conf data for a service from the cluster.
