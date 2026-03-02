@@ -6,60 +6,10 @@ on:
 jobs:
   # a2b upgrade implies a/stable -> b/candidate release upgrade.
   r2r-upgrade-test:
-    name: Test squid/stable to squid/candidate upgrades
-    runs-on: ubuntu-22.04
-    steps:
-
-    - name: Checkout code
-      uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
-
-    - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
-
-    - name: Clear FORWARD firewall rules
-      run: ~/actionutils.sh cleaript
-
-    - name: Free disk
-      run: ~/actionutils.sh free_runner_disk
-
-    - name: Install dependencies
-      run: ~/actionutils.sh setup_lxd
-
-    - name: Create containers with loopback devices
-      run: ~/actionutils.sh create_containers public
-
-    - name: Install quincy stable from store
-      run: ~/actionutils.sh install_store squid/stable
-
-    - name: Bootstrap
-      run: ~/actionutils.sh bootstrap_head
-
-    - name: Setup cluster
-      run: ~/actionutils.sh cluster_nodes
-
-    - name: Add 3 OSDs
-      run: |
-        for c in node-wrk0 node-wrk1 node-wrk2 ; do
-          ~/actionutils.sh add_osd_to_node $c
-        done
-        ~/actionutils.sh headexec wait_for_osds 3
-
-    - name: Enable RGW
-      run: ~/actionutils.sh headexec enable_rgw
-
-    - name: Exercise RGW
-      run: ~/actionutils.sh headexec testrgw
-
-    - name: Upgrade to candidate
-      run: ~/actionutils.sh refresh_snap squid/candidate
-
-    - name: Wait until 3 OSDs are up
-      run:  ~/actionutils.sh headexec wait_for_osds 3
-
-    - name: Verify config
-      run: ~/actionutils.sh test_ceph_conf
-
-    - name: Exercise RGW again
-      run: ~/actionutils.sh headexec testrgw
+    uses: ./.github/workflows/reusable-upgrade-test.yml
+    with:
+      job-name: Test squid/stable to squid/candidate upgrades
+      release-channel: squid/stable
+      upgrade-mode: channel
+      upgrade-channel: squid/candidate
+      verify-config: true
