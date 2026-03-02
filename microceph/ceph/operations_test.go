@@ -124,7 +124,7 @@ func (s *operationsSuite) TestSetNooutOpsFail() {
 
 func (s *operationsSuite) TestAssertNooutFlagSetOpsTrue() {
 	r := mocks.NewRunner(s.T())
-	r.On("RunCommand", "ceph", "osd", "dump").Return("flags noout", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return(`{"flags_set":["sortbitwise","noout"]}`, nil).Once()
 
 	// patch ProcessExec
 	common.ProcessExec = r
@@ -136,7 +136,7 @@ func (s *operationsSuite) TestAssertNooutFlagSetOpsTrue() {
 
 func (s *operationsSuite) TestAssertNooutFlagSetOpsFalse() {
 	r := mocks.NewRunner(s.T())
-	r.On("RunCommand", "ceph", "osd", "dump").Return("flags", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return(`{"flags_set":["sortbitwise"]}`, nil).Once()
 
 	// patch ProcessExec
 	common.ProcessExec = r
@@ -148,7 +148,7 @@ func (s *operationsSuite) TestAssertNooutFlagSetOpsFalse() {
 
 func (s *operationsSuite) TestAssertNooutFlagSetOpsError() {
 	r := mocks.NewRunner(s.T())
-	r.On("RunCommand", "ceph", "osd", "dump").Return("fail", fmt.Errorf("some reasons")).Once()
+	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return("fail", fmt.Errorf("some reasons")).Once()
 
 	// patch ProcessExec
 	common.ProcessExec = r
@@ -160,7 +160,7 @@ func (s *operationsSuite) TestAssertNooutFlagSetOpsError() {
 
 func (s *operationsSuite) TestAssertNooutFlagUnsetOpsTrue() {
 	r := mocks.NewRunner(s.T())
-	r.On("RunCommand", "ceph", "osd", "dump").Return("flags", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return(`{"flags_set":["sortbitwise"]}`, nil).Once()
 
 	// patch ProcessExec
 	common.ProcessExec = r
@@ -172,7 +172,7 @@ func (s *operationsSuite) TestAssertNooutFlagUnsetOpsTrue() {
 
 func (s *operationsSuite) TestAssertNooutFlagUnsetOpsFalse() {
 	r := mocks.NewRunner(s.T())
-	r.On("RunCommand", "ceph", "osd", "dump").Return("flags noout", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return(`{"flags_set":["sortbitwise","noout"]}`, nil).Once()
 
 	// patch ProcessExec
 	common.ProcessExec = r
@@ -184,7 +184,7 @@ func (s *operationsSuite) TestAssertNooutFlagUnsetOpsFalse() {
 
 func (s *operationsSuite) TestAssertNooutFlagUnsetOpsError() {
 	r := mocks.NewRunner(s.T())
-	r.On("RunCommand", "ceph", "osd", "dump").Return("fail", fmt.Errorf("some reasons")).Once()
+	r.On("RunCommand", "ceph", "osd", "dump", "-f", "json").Return("fail", fmt.Errorf("some reasons")).Once()
 
 	// patch ProcessExec
 	common.ProcessExec = r
@@ -266,4 +266,120 @@ func (s *operationsSuite) TestUnSetNooutOpsFail() {
 	ops := UnsetNooutOps{}
 	err := ops.Run("microceph-0")
 	assert.Error(s.T(), err)
+}
+
+// TestCheckNonOsdSvcEnoughOpsPass tests the happy path: 3 MONs registered,
+// all 3 active, target is n0. After removing n0, 2 MONs remain (>= majority 2). Pass.
+func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsPass() {
+	// Mock ServiceQuery: 3 MON services on n0, n1, n2
+	sq := mocks.NewServiceQueryInterface(s.T())
+	sq.On("List", mock.Anything, mock.Anything).Return(
+		types.Services{
+			{Service: "mon", Location: "n0"},
+			{Service: "mon", Location: "n1"},
+			{Service: "mon", Location: "n2"},
+		}, nil).Once()
+	database.ServiceQuery = sq
+
+	// Mock ProcessExec for getActiveMons, getActiveMgrs, getActiveMdss
+	r := mocks.NewRunner(s.T())
+	r.On("RunCommand", "ceph", "-s", "-f", "json").Return(
+		`{"quorum_names":["n0","n1","n2"]}`, nil).Once()
+	r.On("RunCommand", "ceph", "mgr", "dump", "-f", "json").Return(
+		`{"active_name":"n0","standbys":[{"name":"n1"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
+		`{"mdsmap":[{"name":"n0"},{"name":"n1"}]}`, nil).Once()
+	common.ProcessExec = r
+
+	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
+	err := ops.Run("n0")
+	assert.NoError(s.T(), err)
+}
+
+// TestCheckNonOsdSvcEnoughOpsFailMonQuorum tests MON quorum failure: 3 MONs registered,
+// only 2 active (n0, n1), target is n0. After removing n0, 1 MON remains (< majority 2). Fail.
+func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsFailMonQuorum() {
+	sq := mocks.NewServiceQueryInterface(s.T())
+	sq.On("List", mock.Anything, mock.Anything).Return(
+		types.Services{
+			{Service: "mon", Location: "n0"},
+			{Service: "mon", Location: "n1"},
+			{Service: "mon", Location: "n2"},
+		}, nil).Once()
+	database.ServiceQuery = sq
+
+	r := mocks.NewRunner(s.T())
+	// Only 2 active mons
+	r.On("RunCommand", "ceph", "-s", "-f", "json").Return(
+		`{"quorum_names":["n0","n1"]}`, nil).Once()
+	r.On("RunCommand", "ceph", "mgr", "dump", "-f", "json").Return(
+		`{"active_name":"n0","standbys":[{"name":"n1"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
+		`{"mdsmap":[{"name":"n0"},{"name":"n1"}]}`, nil).Once()
+	common.ProcessExec = r
+
+	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
+	err := ops.Run("n0")
+	assert.ErrorContains(s.T(), err, "Insufficient non OSD services")
+}
+
+// TestCheckNonOsdSvcEnoughOpsPassTargetNoMon tests the case where the target node
+// has no MON. All 3 MONs remain active after removing n3. Pass.
+func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsPassTargetNoMon() {
+	sq := mocks.NewServiceQueryInterface(s.T())
+	sq.On("List", mock.Anything, mock.Anything).Return(
+		types.Services{
+			{Service: "mon", Location: "n0"},
+			{Service: "mon", Location: "n1"},
+			{Service: "mon", Location: "n2"},
+		}, nil).Once()
+	database.ServiceQuery = sq
+
+	r := mocks.NewRunner(s.T())
+	r.On("RunCommand", "ceph", "-s", "-f", "json").Return(
+		`{"quorum_names":["n0","n1","n2"]}`, nil).Once()
+	r.On("RunCommand", "ceph", "mgr", "dump", "-f", "json").Return(
+		`{"active_name":"n0","standbys":[{"name":"n1"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
+		`{"mdsmap":[{"name":"n0"},{"name":"n1"}]}`, nil).Once()
+	common.ProcessExec = r
+
+	// Target n3 has no MON, so all 3 active MONs remain
+	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
+	err := ops.Run("n3")
+	assert.NoError(s.T(), err)
+}
+
+// TestCheckNonOsdSvcEnoughOpsErrorServiceQuery tests error from ServiceQuery.List.
+func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsErrorServiceQuery() {
+	sq := mocks.NewServiceQueryInterface(s.T())
+	sq.On("List", mock.Anything, mock.Anything).Return(
+		types.Services(nil), fmt.Errorf("db connection failed")).Once()
+	database.ServiceQuery = sq
+
+	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
+	err := ops.Run("n0")
+	assert.ErrorContains(s.T(), err, "error listing services")
+}
+
+// TestCheckNonOsdSvcEnoughOpsErrorGetActiveMons tests error from getActiveMons.
+func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsErrorGetActiveMons() {
+	sq := mocks.NewServiceQueryInterface(s.T())
+	sq.On("List", mock.Anything, mock.Anything).Return(
+		types.Services{
+			{Service: "mon", Location: "n0"},
+			{Service: "mon", Location: "n1"},
+			{Service: "mon", Location: "n2"},
+		}, nil).Once()
+	database.ServiceQuery = sq
+
+	r := mocks.NewRunner(s.T())
+	// getActiveMons fails
+	r.On("RunCommand", "ceph", "-s", "-f", "json").Return(
+		"", fmt.Errorf("ceph not reachable")).Once()
+	common.ProcessExec = r
+
+	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
+	err := ops.Run("n0")
+	assert.ErrorContains(s.T(), err, "Error getting active mon")
 }
