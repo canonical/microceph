@@ -133,7 +133,7 @@ func getActiveMons() ([]string, error) {
 // It retries every second until success or the context is cancelled/expired.
 func WaitForCephReady(ctx context.Context) error {
 	for {
-		_, err := common.ProcessExec.RunCommand("ceph", "-s")
+		_, err := cephRunContext(ctx, "-s")
 		if err == nil {
 			return nil
 		}
