@@ -80,7 +80,7 @@ func GetRbdMirrorPoolStatus(pool string, cluster string, client string) (RbdRepl
 	response, err := populatePoolStatus(output)
 	if err != nil {
 		ne := fmt.Errorf("cannot unmarshal rbd response: %v", err)
-		logger.Errorf(ne.Error())
+		logger.Errorf("%s", ne.Error())
 		return RbdReplicationPoolStatus{State: StateDisabledReplication}, ne
 	}
 
@@ -118,7 +118,7 @@ func GetRbdMirrorVerbosePoolStatus(pool string, cluster string, client string) (
 	err = json.Unmarshal([]byte(summary.String()), &response.Summary)
 	if err != nil {
 		ne := fmt.Errorf("cannot unmarshal rbd response: %v", err)
-		logger.Errorf(ne.Error())
+		logger.Errorf("%s", ne.Error())
 		return RbdReplicationVerbosePoolStatus{Summary: RbdReplicationPoolStatus{State: StateDisabledReplication}}, ne
 	}
 
@@ -161,7 +161,7 @@ func GetRbdMirrorImageStatus(pool string, image string, cluster string, client s
 	err = json.Unmarshal([]byte(output), &response)
 	if err != nil {
 		ne := fmt.Errorf("cannot unmarshal rbd response: %v", err)
-		logger.Errorf(ne.Error())
+		logger.Errorf("%s", ne.Error())
 		return RbdReplicationImageStatus{State: StateDisabledReplication}, ne
 	}
 

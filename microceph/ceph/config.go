@@ -230,13 +230,13 @@ func setConfigItem(c types.Config) error {
 func canSetConfig(key string) (bool, error) {
 	config, err := getClusterConfigDefinition(key)
 	if err != nil {
-		logger.Warnf(err.Error())
+		logger.Warnf("%s", err.Error())
 		return false, err
 	}
 
 	if config.Permission != ClusterConfigRW {
 		err := fmt.Errorf("requested key %s does not support write operation", key)
-		logger.Warnf(err.Error())
+		logger.Warnf("%s", err.Error())
 		return false, err
 	}
 
@@ -246,7 +246,7 @@ func canSetConfig(key string) (bool, error) {
 func canReadConfig(key string) (bool, error) {
 	_, err := getClusterConfigDefinition(key)
 	if err != nil {
-		logger.Warnf(err.Error())
+		logger.Warnf("%s", err.Error())
 		return false, err
 	}
 
@@ -258,7 +258,7 @@ func getClusterConfigDefinition(key string) (ClusterConfigDefinition, error) {
 	config, ok := configTable[key]
 	if !ok {
 		err := fmt.Errorf("requested key %s is not a MicroCeph supported cluster config", key)
-		logger.Warnf(err.Error())
+		logger.Warnf("%s", err.Error())
 		return config, err
 	}
 
