@@ -13,7 +13,7 @@ import (
 
 type cmdWaitready struct {
 	common      *CmdControl
-	flagTimeout int64
+	flagTimeout uint64
 }
 
 func (c *cmdWaitready) Command() *cobra.Command {
@@ -23,7 +23,10 @@ func (c *cmdWaitready) Command() *cobra.Command {
 		RunE:  c.Run,
 	}
 
-	cmd.Flags().Int64Var(&c.flagTimeout, "timeout", 0, "Number of seconds to wait before giving up (0 = indefinitely)")
+	cmd.Flags().Uint64Var(&c.flagTimeout, "timeout", 0, "Number of seconds to wait before giving up (0 = indefinitely)")
+	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return fmt.Errorf("%w: timeout must be a positive number of seconds", err)
+	})
 
 	return cmd
 }
