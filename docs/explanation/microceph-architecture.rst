@@ -19,7 +19,7 @@ Components
   snap is installed.
 * MicroCeph Snap: The package containing Ceph daemons, microcephd, and
   management logic. It runs with confinement provided by snapd. Also see
-  the `Snap security documentation <https://snapcraft.io/docs/snap-explanation#p-111647-security>`_
+  the `Snap security documentation <https://snapcraft.io/docs/explanation/#security>`_
   for details.  
 * microcephd: The core service (based on Microcluster) responsible for managing the
   MicroCeph cluster state, coordinating actions across nodes (if clustered), and managing
