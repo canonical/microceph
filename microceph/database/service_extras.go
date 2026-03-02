@@ -25,7 +25,7 @@ func (sq ServiceQueryImpl) List(ctx context.Context, s state.State) (types.Servi
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		records, err := GetServices(ctx, tx)
 		if err != nil {
-			return fmt.Errorf("Failed to fetch service: %w", err)
+			return fmt.Errorf("Failed to fetch services: %w", err)
 		}
 
 		for _, service := range records {
