@@ -14,6 +14,7 @@ import (
 type cmdWaitready struct {
 	common      *CmdControl
 	flagTimeout uint64
+	flagStorage bool
 }
 
 func (c *cmdWaitready) Command() *cobra.Command {
@@ -24,6 +25,7 @@ func (c *cmdWaitready) Command() *cobra.Command {
 	}
 
 	cmd.Flags().Uint64Var(&c.flagTimeout, "timeout", 0, "Number of seconds to wait before giving up (0 = indefinitely)")
+	cmd.Flags().BoolVar(&c.flagStorage, "storage", false, "Wait until enough OSDs are up to satisfy pool replication requirements")
 	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return fmt.Errorf("%w: timeout must be a positive number of seconds or zero", err)
 	})
@@ -54,6 +56,14 @@ func (c *cmdWaitready) Run(cmd *cobra.Command, args []string) error {
 	err = ceph.WaitForCephReady(ctx)
 	if err != nil {
 		return fmt.Errorf("ceph not ready: %w", err)
+	}
+
+	// Optionally wait for enough OSDs to satisfy pool replication.
+	if c.flagStorage {
+		err = ceph.WaitForOSDsReady(ctx)
+		if err != nil {
+			return fmt.Errorf("storage not ready: %w", err)
+		}
 	}
 
 	return nil

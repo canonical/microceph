@@ -104,6 +104,9 @@ jobs:
       - name: Test microceph waitready after bootstrap
         run: ~/actionutils.sh test_waitready_after_bootstrap
 
+      - name: Test microceph waitready --storage fails with insufficient OSDs
+        run: ~/actionutils.sh test_waitready_storage_not_enough_osds
+
       - name: Enable MicroCeph Orchestrator module
         run: |
           set -eux
@@ -151,6 +154,9 @@ jobs:
         run: |
           ~/actionutils.sh add_encrypted_osds
           ~/actionutils.sh add_lvm_vol
+
+      - name: Test microceph waitready --storage after OSDs added
+        run: ~/actionutils.sh test_waitready_storage
 
       - name: Enable RGW
         run: ~/actionutils.sh enable_rgw

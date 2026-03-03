@@ -28,7 +28,7 @@ var poolsCmd = rest.Endpoint{
 
 func cmdPoolsGet(s state.State, r *http.Request) response.Response {
 	logger.Debug("cmdPoolGet")
-	pools, err := ceph.GetOSDPools()
+	pools, err := ceph.GetOSDPools(r.Context())
 	if err != nil {
 		return response.SmartError(err)
 	}
