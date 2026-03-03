@@ -25,7 +25,7 @@ func (c *cmdWaitready) Command() *cobra.Command {
 
 	cmd.Flags().Uint64Var(&c.flagTimeout, "timeout", 0, "Number of seconds to wait before giving up (0 = indefinitely)")
 	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
-		return fmt.Errorf("%w: timeout must be a positive number of seconds", err)
+		return fmt.Errorf("%w: timeout must be a positive number of seconds or zero", err)
 	})
 
 	return cmd

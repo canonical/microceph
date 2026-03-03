@@ -248,10 +248,18 @@ jobs:
           ~/actionutils.sh hurl tests/hurl/services-mon.hurl
           ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
 
+      # Note: After this test the cluster is unbootstrapped and non-operational.
       - name: Test microceph waitready not bootstrapped
         run: |
           sudo snap remove microceph --purge
           sudo snap install --dangerous ~/microceph_*.snap
+          sudo snap connect microceph:block-devices
+          sudo snap connect microceph:hardware-observe
+          sudo snap connect microceph:mount-observe
+          sudo snap connect microceph:load-rbd
+          sudo snap connect microceph:microceph-support
+          sudo snap connect microceph:network-bind
+          sudo snap connect microceph:process-control
           ~/actionutils.sh test_waitready_before_bootstrap
 
   multi-node-tests:
