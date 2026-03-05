@@ -145,6 +145,53 @@ func getDefaultCrushRule() (string, error) {
 	return strings.TrimSpace(configs[0].Value), nil
 }
 
+// countAZsWithOSDs returns the number of AZ rack buckets that contain at least one OSD.
+// It queries the CRUSH tree and checks each AZ rack for child hosts that have OSDs.
+// The currentAZ parameter is the AZ of the host currently adding an OSD — it is always
+// counted as active since the OSD may not yet be visible in the CRUSH tree.
+// Note: there is technically a race between this check and the caller switching the
+// CRUSH rule — an OSD could be removed in between. We accept this because the same
+// race exists after the rule is active (an OSD removal can always cause degraded PGs).
+func countAZsWithOSDs(azNames map[string]bool, currentAZ string) (int, error) {
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "tree", "-f", "json")
+	if err != nil {
+		return 0, fmt.Errorf("failed to get osd tree: %w", err)
+	}
+
+	nodes := gjson.Get(output, "nodes")
+	count := 0
+	for az := range azNames {
+		// The current host's AZ is always active — we're adding an OSD to it right now.
+		if az == currentAZ {
+			count++
+			continue
+		}
+		// Find the rack node for this AZ and get its children (host IDs).
+		children := nodes.Get(fmt.Sprintf(`#(name=="%s").children`, az))
+		if !children.Exists() {
+			continue
+		}
+		// Check if any child host has OSDs (children with id >= 0).
+		hasOSD := false
+		for _, hostID := range children.Array() {
+			hostChildren := nodes.Get(fmt.Sprintf(`#(id==%d).children`, hostID.Int()))
+			for _, osdID := range hostChildren.Array() {
+				if osdID.Int() >= 0 {
+					hasOSD = true
+					break
+				}
+			}
+			if hasOSD {
+				break
+			}
+		}
+		if hasOSD {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // ensureCrushRules set up the crush rules for the automatic failure domain handling.
 func ensureCrushRules() error {
 	// Add a microceph default rule with failure domain OSD if it does not exist.
@@ -157,6 +204,13 @@ func ensureCrushRules() error {
 	// Add a microceph default rule with failure domain host if it does not exist.
 	if !haveCrushRule("microceph_auto_host") {
 		err := addCrushRule("microceph_auto_host", "host")
+		if err != nil {
+			return fmt.Errorf("Failed to add microceph default crush rule: %w", err)
+		}
+	}
+	// Add a microceph default rule with failure domain rack if it does not exist.
+	if !haveCrushRule("microceph_auto_rack") {
+		err := addCrushRule("microceph_auto_rack", "rack")
 		if err != nil {
 			return fmt.Errorf("Failed to add microceph default crush rule: %w", err)
 		}
