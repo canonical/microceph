@@ -15,16 +15,16 @@ Available commands:
 
 .. code-block:: none
 
-   add         Generates a token for a new server
-   bootstrap   Sets up a new cluster
-   config      Manage Ceph Cluster configs
-   export      Generates cluster token for given Remote cluster
-   join        Joins an existing cluster
-   list        List servers in the cluster
-   maintenance Enter or exit the maintenance mode.
-   migrate     Migrate automatic services from one node to another
-   remove      Removes a server from the cluster
-   sql         Runs a SQL query against the cluster database
+   add                    Generates a token for a new server
+   bootstrap              Sets up a new cluster
+   config                 Manage Ceph Cluster configs
+   export                 Generates cluster token for given Remote cluster
+   join                   Joins an existing cluster
+   list                   List servers in the cluster
+   maintenance            Enter or exit the maintenance mode.
+   migrate                Migrate automatic services from one node to another
+   remove                 Removes a server from the cluster
+   sql                    Runs a SQL query against the cluster database
 
 
 Global options:
@@ -64,10 +64,11 @@ Flags:
 
 .. code-block:: none
 
-   --microceph-ip    string Network address microceph daemon binds to.
-   --mon-ip          string Public address for bootstrapping ceph mon service.
-   --public-network  string Public network Ceph daemons bind to.
-   --cluster-network string Cluster network Ceph daemons bind to.
+   --availability-zone string Availability zone for failure domain distribution.
+   --microceph-ip      string Network address microceph daemon binds to.
+   --mon-ip            string Public address for bootstrapping ceph mon service.
+   --public-network    string Public network Ceph daemons bind to.
+   --cluster-network   string Cluster network Ceph daemons bind to.
 
 ``config``
 ----------
@@ -186,7 +187,8 @@ Flags:
 
 .. code-block:: none
 
-   --microceph-ip    string Network address microceph daemon binds to.
+   --availability-zone string Availability zone for failure domain distribution.
+   --microceph-ip      string Network address microceph daemon binds to.
 
 
 ``list``
