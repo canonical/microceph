@@ -258,6 +258,9 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 
 // TestUpdateFailureDomain tests the updateFailureDomain function
 func (s *osdSuite) TestUpdateFailureDomain() {
+	// Mock getAZData to return no AZs so the test proceeds to member count check.
+	defer withMockAZData(azData{})()
+
 	u := api.NewURL()
 	state := &mocks.MockState{
 		URL:         u,

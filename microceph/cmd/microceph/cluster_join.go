@@ -10,6 +10,7 @@ import (
 	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 )
 
@@ -17,7 +18,8 @@ type cmdClusterJoin struct {
 	common  *CmdControl
 	cluster *cmdCluster
 
-	flagMicroCephIp string
+	flagMicroCephIp      string
+	flagAvailabilityZone string
 }
 
 func (c *cmdClusterJoin) Command() *cobra.Command {
@@ -28,6 +30,7 @@ func (c *cmdClusterJoin) Command() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&c.flagMicroCephIp, "microceph-ip", "", "Network address microceph daemon binds to.")
+	cmd.Flags().StringVar(&c.flagAvailabilityZone, "availability-zone", "", "Availability zone for failure domain distribution.")
 	return cmd
 }
 
@@ -58,5 +61,9 @@ func (c *cmdClusterJoin) Run(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*5)
 	defer cancel()
 
-	return m.JoinCluster(ctx, hostname, address, token, nil)
+	joinConfig := common.EncodeJoinConfig(common.JoinConfig{
+		AvailabilityZone: c.flagAvailabilityZone,
+	})
+
+	return m.JoinCluster(ctx, hostname, address, token, joinConfig)
 }

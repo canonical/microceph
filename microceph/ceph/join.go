@@ -12,9 +12,9 @@ import (
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 func msgrv2OnlyFile(path string) (bool, error) {
@@ -41,8 +41,32 @@ func msgrv2OnlyCluster() (bool, error) {
 	return msgrv2OnlyFile(confPath)
 }
 
+// Testable DB operation wrappers.
+var (
+	getConfigItems       = database.GetConfigItems
+	joinCreateConfigItem = database.CreateConfigItem
+)
+
+func getAllAZHosts(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	// Read all config items and check for empty AZs.
+	configItems, err := getConfigItems(ctx, tx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get config items: %w", err)
+	}
+
+	azs := make([]string, 0)
+
+	for _, item := range configItems {
+		if strings.HasPrefix(item.Key, "az.host.") {
+			azs = append(azs, item.Key)
+		}
+	}
+
+	return azs, nil
+}
+
 // Join will join an existing Ceph deployment.
-func Join(ctx context.Context, s interfaces.StateInterface) error {
+func Join(ctx context.Context, s interfaces.StateInterface, jc common.JoinConfig) error {
 	pathFileMode := constants.GetPathFileMode()
 	var spt = GetServicePlacementTable()
 
@@ -58,6 +82,14 @@ func Join(ctx context.Context, s interfaces.StateInterface) error {
 	err := UpdateConfig(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to generate the configuration: %w", err)
+	}
+
+	// Record the availability zone for this host.
+	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return validateAndSetJoinAZ(ctx, tx, s.ClusterState().Name(), jc.AvailabilityZone)
+	})
+	if err != nil {
+		return err
 	}
 
 	// check and create service records if needed to be spawned.
@@ -95,6 +127,48 @@ func Join(ctx context.Context, s interfaces.StateInterface) error {
 	err = snapStart("osd", true)
 	if err != nil {
 		return fmt.Errorf("failed to start OSD service: %w", err)
+	}
+
+	return nil
+}
+
+// validateAndSetJoinAZ validates availability zone constraints and records
+// the AZ for the joining node. The constraint is: no mixed empty and set AZs.
+func validateAndSetJoinAZ(ctx context.Context, tx *sql.Tx, hostname string, az string) error {
+	allAZs, err := getAllAZHosts(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	const azErrMsg = "mixed empty availability zones and set availability zones are not supported"
+
+	// Empty but others set
+	if az == "" && len(allAZs) > 0 {
+		return fmt.Errorf(
+			"%s: %d existing availability zones found, but join was called without an associated availability zone",
+			azErrMsg, len(allAZs),
+		)
+	}
+	// Set, but others empty
+	if az != "" && len(allAZs) == 0 {
+		return fmt.Errorf(
+			"%s: existing hosts do not have an availability zone, but join was called with an associated availability zone",
+			azErrMsg,
+		)
+	}
+
+	if az == "" {
+		return nil // Empty AZ, dont add
+	}
+
+	if !IsValidCrushName(az) {
+		return fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", az)
+	}
+
+	key := fmt.Sprintf("az.host.%s", hostname)
+	_, err = joinCreateConfigItem(ctx, tx, database.ConfigItem{Key: key, Value: az})
+	if err != nil {
+		return fmt.Errorf("failed to record availability zone: %w", err)
 	}
 
 	return nil

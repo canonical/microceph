@@ -13,8 +13,9 @@ import (
 // parameters required for bootstrap.
 type BootstrapConfig struct {
 	// Simple Bootstrap Parameters
-	MonIp  string // IP address of the monitor to be created.
-	V2Only bool   // Whether only V2 addresses should be used.
+	MonIp            string // IP address of the monitor to be created.
+	AvailabilityZone string // Availability Zone of the host.
+	V2Only           bool   // Whether only V2 addresses should be used.
 
 	// ### Common Parameters
 	PublicNet  string // Public Network subnet.
@@ -30,13 +31,14 @@ func EncodeBootstrapConfig(data BootstrapConfig) map[string]string {
 	logger.Debugf("encoding bootstrap config: %+v", data)
 
 	return map[string]string{
-		"MonIp":         data.MonIp,
-		"PublicNet":     data.PublicNet,
-		"ClusterNet":    data.ClusterNet,
-		"V2Only":        strconv.FormatBool(data.V2Only),
-		"AdoptFSID":     data.AdoptFSID,
-		"AdoptMonHosts": strings.Join(data.AdoptMonHosts, ","),
-		"AdoptAdminKey": data.AdoptAdminKey,
+		"MonIp":            data.MonIp,
+		"PublicNet":        data.PublicNet,
+		"ClusterNet":       data.ClusterNet,
+		"V2Only":           strconv.FormatBool(data.V2Only),
+		"AdoptFSID":        data.AdoptFSID,
+		"AdoptMonHosts":    strings.Join(data.AdoptMonHosts, ","),
+		"AdoptAdminKey":    data.AdoptAdminKey,
+		"AvailabilityZone": data.AvailabilityZone,
 	}
 }
 
@@ -50,4 +52,5 @@ func DecodeBootstrapConfig(input map[string]string, data *BootstrapConfig) {
 	data.AdoptFSID = input["AdoptFSID"]
 	data.AdoptMonHosts = strings.Split(input["AdoptMonHosts"], ",")
 	data.AdoptAdminKey = input["AdoptAdminKey"]
+	data.AvailabilityZone = input["AvailabilityZone"]
 }

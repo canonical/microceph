@@ -21,11 +21,12 @@ type cmdClusterAdopt struct {
 	common  *CmdControl
 	cluster *cmdCluster
 
-	flagMicrocephIP string
-	flagFSID        string
-	flagMonHosts    []string
-	flagPubNet      string
-	flagClusterNet  string
+	flagMicrocephIP      string
+	flagFSID             string
+	flagMonHosts         []string
+	flagPubNet           string
+	flagClusterNet       string
+	flagAvailabilityZone string
 }
 
 func (c *cmdClusterAdopt) Command() *cobra.Command {
@@ -42,6 +43,7 @@ func (c *cmdClusterAdopt) Command() *cobra.Command {
 	cmd.Flags().StringSliceVar(&c.flagMonHosts, "mon-hosts", []string{}, "Comma separated list of mon addresses")
 	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public network Ceph daemons bind to")
 	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster network Ceph daemons bind to")
+	cmd.Flags().StringVar(&c.flagAvailabilityZone, "availability-zone", "", "Availability zone for failure domain distribution.")
 	return cmd
 }
 
@@ -67,11 +69,12 @@ func (c *cmdClusterAdopt) Run(cmd *cobra.Command, args []string) error {
 
 	// Set parameter data for Ceph bootstrap.
 	data := common.BootstrapConfig{
-		PublicNet:     c.flagPubNet,
-		ClusterNet:    c.flagClusterNet,
-		AdoptFSID:     c.flagFSID,
-		AdoptMonHosts: c.flagMonHosts,
-		AdoptAdminKey: adminKey,
+		PublicNet:        c.flagPubNet,
+		ClusterNet:       c.flagClusterNet,
+		AdoptFSID:        c.flagFSID,
+		AdoptMonHosts:    c.flagMonHosts,
+		AdoptAdminKey:    adminKey,
+		AvailabilityZone: c.flagAvailabilityZone,
 	}
 
 	err = c.preCheckAdoptConfig(data)

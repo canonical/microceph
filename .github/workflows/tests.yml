@@ -374,6 +374,51 @@ jobs:
         run: |
           sudo snap logs microceph -n 1000
 
+  availability-zone-tests:
+    name: Availability zone crush rule testing
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
+
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
+
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
+
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
+
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
+
+      - name: Install local microceph snap
+        run: ~/actionutils.sh install_multinode
+
+      - name: Test AZ crush rule transitions
+        run: ~/actionutils.sh test_az_crush_rule
+
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          for c in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
+            echo "--- $c ---"
+            lxc exec $c -- sh -c "sudo snap logs microceph -n 200" || true
+          done
+
   multi-node-tests-with-custom-microceph-ip:
     name: Multi node testing with custom microceph IP
     runs-on: ubuntu-22.04

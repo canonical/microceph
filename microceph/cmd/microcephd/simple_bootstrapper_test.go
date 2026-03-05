@@ -82,10 +82,10 @@ func addEnableMsgr2Expectations(r *mocks.Runner) {
 }
 
 func addCrushRuleExpectations(r *mocks.Runner) {
-	// crush rule ls
-	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return("ok", nil).Twice()
-	// crush rule create-replicated microceph_auto_osd
-	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Twice()
+	// crush rule ls (osd, host, rack)
+	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return("ok", nil).Times(3)
+	// crush rule create-replicated (osd, host, rack)
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Times(3)
 	// crush rule dump
 	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return("{\"rule_id\": 1}", nil).Once()
 	// crush rule set default
