@@ -18,11 +18,12 @@ type cmdClusterBootstrap struct {
 	common  *CmdControl
 	cluster *cmdCluster
 
-	flagMicroCephIp string
-	flagMonIp       string
-	flagPubNet      string
-	flagClusterNet  string
-	flagV2Only      bool
+	flagMicroCephIp      string
+	flagMonIp            string
+	flagPubNet           string
+	flagClusterNet       string
+	flagAvailabilityZone string
+	flagV2Only           bool
 }
 
 func (c *cmdClusterBootstrap) Command() *cobra.Command {
@@ -33,6 +34,7 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&c.flagMicroCephIp, "microceph-ip", "", "Network address microceph daemon binds to.")
+	cmd.Flags().StringVar(&c.flagAvailabilityZone, "availability-zone", "", "Availability zone for failure domain distribution.")
 	cmd.Flags().StringVar(&c.flagMonIp, "mon-ip", "", "Public address for bootstrapping ceph mon service.")
 	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public network Ceph daemons bind to.")
 	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster network Ceph daemons bind to.")
@@ -65,10 +67,11 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 
 	// Set parameter data for Ceph bootstrap.
 	data := common.BootstrapConfig{
-		MonIp:      c.flagMonIp,
-		PublicNet:  c.flagPubNet,
-		ClusterNet: c.flagClusterNet,
-		V2Only:     c.flagV2Only,
+		MonIp:            c.flagMonIp,
+		PublicNet:        c.flagPubNet,
+		ClusterNet:       c.flagClusterNet,
+		V2Only:           c.flagV2Only,
+		AvailabilityZone: c.flagAvailabilityZone,
 	}
 
 	err = preCheckBootstrapConfig(data)
