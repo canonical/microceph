@@ -161,6 +161,10 @@ func validateAndSetJoinAZ(ctx context.Context, tx *sql.Tx, hostname string, az s
 		return nil // Empty AZ, dont add
 	}
 
+	if !IsValidCrushName(az) {
+		return fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", az)
+	}
+
 	key := fmt.Sprintf("az.host.%s", hostname)
 	_, err = joinCreateConfigItem(ctx, tx, database.ConfigItem{Key: key, Value: az})
 	if err != nil {
