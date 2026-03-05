@@ -101,6 +101,12 @@ jobs:
           sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"
           sudo microceph.ceph osd crush rule ls | grep -F microceph_auto_osd
 
+      - name: Test microceph waitready after bootstrap
+        run: ~/actionutils.sh test_waitready_after_bootstrap
+
+      - name: Test microceph waitready --storage fails with insufficient OSDs
+        run: ~/actionutils.sh test_waitready_storage_not_enough_osds
+
       - name: Enable MicroCeph Orchestrator module
         run: |
           set -eux
@@ -148,6 +154,9 @@ jobs:
         run: |
           ~/actionutils.sh add_encrypted_osds
           ~/actionutils.sh add_lvm_vol
+
+      - name: Test microceph waitready --storage after OSDs added
+        run: ~/actionutils.sh test_waitready_storage
 
       - name: Enable RGW
         run: ~/actionutils.sh enable_rgw
@@ -244,6 +253,20 @@ jobs:
           ~/actionutils.sh install_hurl
           ~/actionutils.sh hurl tests/hurl/services-mon.hurl
           ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
+
+      # Note: After this test the cluster is unbootstrapped and non-operational.
+      - name: Test microceph waitready not bootstrapped
+        run: |
+          sudo snap remove microceph --purge
+          sudo snap install --dangerous ~/microceph_*.snap
+          sudo snap connect microceph:block-devices
+          sudo snap connect microceph:hardware-observe
+          sudo snap connect microceph:mount-observe
+          sudo snap connect microceph:load-rbd
+          sudo snap connect microceph:microceph-support
+          sudo snap connect microceph:network-bind
+          sudo snap connect microceph:process-control
+          ~/actionutils.sh test_waitready_before_bootstrap
 
   multi-node-tests:
     name: Multi node testing

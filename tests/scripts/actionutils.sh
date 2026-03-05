@@ -1630,6 +1630,43 @@ function verify_mount_check() {
     fi
 }
 
+function test_waitready_before_bootstrap() {
+    # waitready should fail before any cluster is bootstrapped.
+    if sudo microceph waitready --timeout 5 2>/dev/null; then
+        echo "ERROR: waitready succeeded before bootstrap, expected failure"
+        exit 1
+    fi
+    echo "waitready correctly failed before bootstrap"
+}
+
+function test_waitready_after_bootstrap() {
+    set -e
+    # After bootstrap, waitready should succeed within the timeout.
+    sudo microceph waitready --timeout 30
+    sudo microceph disk list
+    echo "waitready succeeded after bootstrap"
+}
+
+function test_waitready_storage_not_enough_osds() {
+    # After bootstrap, osd_pool_default_size is 3 but no OSDs have been added.
+    # --storage should time out because 0 OSDs < 3 required.
+    if sudo microceph waitready --storage --timeout 1 2>/dev/null; then
+        echo "ERROR: waitready --storage succeeded with insufficient OSDs, expected failure"
+        exit 1
+    fi
+    echo "waitready --storage correctly failed with insufficient OSDs"
+}
+
+function test_waitready_storage() {
+    set -e
+    # With --storage, waitready should succeed once enough OSDs are up
+    # to satisfy pool replication requirements.
+    # Expects: osd_pool_default_size=1 (set during bootstrap) and at least
+    # 1 OSD added by the preceding "Add OSDs" step.
+    sudo microceph waitready --storage --timeout 30
+    echo "waitready --storage succeeded"
+}
+
 run="${1}"
 shift
 
