@@ -154,15 +154,15 @@ func WaitForCephReady(ctx context.Context) error {
 // requirements. The required count is max(pool.Size) across all pools, falling
 // back to osd_pool_default_size if no pools exist.
 func WaitForOSDsReady(ctx context.Context) error {
-	required, err := getRequiredOSDCount(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to determine required OSD count: %w", err)
-	}
-
 	for {
-		count, err := getUpOSDCount(ctx)
-		if err == nil && count >= required {
-			return nil
+		required, err := getRequiredOSDCount(ctx)
+		if err != nil {
+			logger.Debugf("Failed to determine required OSD count: %v", err)
+		} else {
+			count, err := getUpOSDCount(ctx)
+			if err == nil && count >= required {
+				return nil
+			}
 		}
 
 		select {

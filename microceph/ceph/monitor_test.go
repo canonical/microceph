@@ -121,11 +121,11 @@ func (s *monitorSuite) TestWaitForOSDsReadyImmediateSuccess() {
 func (s *monitorSuite) TestWaitForOSDsReadyRetriesThenSucceeds() {
 	r := mocks.NewRunner(s.T())
 
-	// Pool with size=3.
+	// Pool with size=3 (called each iteration).
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "pool", "ls", "--format", "json").
-		Return(`["rbd"]`, nil).Once()
+		Return(`["rbd"]`, nil)
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "pool", "get", "rbd", "all", "--format", "json").
-		Return(`{"pool":"rbd","pool_id":1,"size":3,"min_size":2,"crush_rule":""}`, nil).Once()
+		Return(`{"pool":"rbd","pool_id":1,"size":3,"min_size":2,"crush_rule":""}`, nil)
 	// First poll: only 2 OSDs up.
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "dump", "-f", "json-pretty").
 		Return(osdDumpJSON(2), nil).Once()
@@ -146,11 +146,11 @@ func (s *monitorSuite) TestWaitForOSDsReadyRetriesThenSucceeds() {
 func (s *monitorSuite) TestWaitForOSDsReadyWithDownOSDs() {
 	r := mocks.NewRunner(s.T())
 
-	// Pool with size=3.
+	// Pool with size=3 (called each iteration).
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "pool", "ls", "--format", "json").
-		Return(`["rbd"]`, nil).Once()
+		Return(`["rbd"]`, nil)
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "pool", "get", "rbd", "all", "--format", "json").
-		Return(`{"pool":"rbd","pool_id":1,"size":3,"min_size":2,"crush_rule":""}`, nil).Once()
+		Return(`{"pool":"rbd","pool_id":1,"size":3,"min_size":2,"crush_rule":""}`, nil)
 	// First poll: 2 up, 2 down — not enough.
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "dump", "-f", "json-pretty").
 		Return(osdDumpJSONMixed(2, 2), nil).Once()
@@ -191,11 +191,11 @@ func (s *monitorSuite) TestWaitForOSDsReadyFallbackToDefault() {
 func (s *monitorSuite) TestWaitForOSDsReadyTimeout() {
 	r := mocks.NewRunner(s.T())
 
-	// 1 pool with size=1.
+	// 1 pool with size=1 (called each iteration).
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "pool", "ls", "--format", "json").
-		Return(`["mypool"]`, nil).Once()
+		Return(`["mypool"]`, nil)
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "pool", "get", "mypool", "all", "--format", "json").
-		Return(`{"pool":"mypool","pool_id":1,"size":1,"min_size":1,"crush_rule":""}`, nil).Once()
+		Return(`{"pool":"mypool","pool_id":1,"size":1,"min_size":1,"crush_rule":""}`, nil)
 	// OSD dump always fails.
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "dump", "-f", "json-pretty").
 		Return("", errors.New("connection refused"))
