@@ -152,8 +152,11 @@ var getServicesAndConfigsforDBUpdation = func(fsid string, hostname string, sb *
 		"public_network":                     sb.PublicNet,
 	}
 
-	// If AZ present, record
+	// If AZ present, validate and record
 	if sb.AvailabilityZone != "" {
+		if !ceph.IsValidCrushName(sb.AvailabilityZone) {
+			return nil, nil, fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", sb.AvailabilityZone)
+		}
 		configs[fmt.Sprintf("az.host.%s", hostname)] = sb.AvailabilityZone
 	}
 

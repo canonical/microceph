@@ -102,3 +102,21 @@ func TestValidateAndSetJoinAZRejectsSetWhenOthersEmpty(t *testing.T) {
 	assert.Contains(t, err.Error(), "mixed empty availability zones")
 	assert.Contains(t, err.Error(), "existing hosts do not have an availability zone")
 }
+
+func TestValidateAndSetJoinAZRejectsInvalidName(t *testing.T) {
+	store := newMockJoinConfigStore(
+		database.ConfigItem{Key: "az.host.node0", Value: "az-0"},
+	)
+	defer withMockJoinStore(store)()
+
+	// Spaces are not valid CRUSH bucket names.
+	err := validateAndSetJoinAZ(context.Background(), nil, "node1", "az 1")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid availability zone name")
+
+	// Slashes are not valid.
+	err = validateAndSetJoinAZ(context.Background(), nil, "node1", "az/1")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid availability zone name")
+}
+
