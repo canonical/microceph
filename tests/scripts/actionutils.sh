@@ -1630,6 +1630,86 @@ function verify_mount_check() {
     fi
 }
 
+# Test that the CRUSH rule only switches to rack once all 3 AZs have OSDs.
+# Expects 4 containers (node-wrk0..3) already created, microceph installed,
+# but NOT yet bootstrapped or joined.
+function test_az_crush_rule() {
+    set -eux
+
+    local nw=$(get_lxd_network public)
+
+    # Bootstrap node-wrk0 in az-a
+    lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --public-network=$nw --availability-zone=az-a"
+    sleep 5
+
+    # Join node-wrk1 in az-a, node-wrk2 in az-b, node-wrk3 in az-c
+    local azs=("az-a" "az-b" "az-c")
+    for i in 1 2 3 ; do
+        tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk${i}")
+        lxc exec "node-wrk${i}" -- sh -c "microceph cluster join $tok --availability-zone=${azs[$((i-1))]}"
+        sleep 3
+    done
+
+    # Wait for all 4 nodes to be visible
+    for i in $(seq 1 8); do
+        local res=$( ( lxc exec node-wrk0 -- sh -c 'microceph status | grep -cE "^- node"' ) || true )
+        if [[ $res -gt 3 ]] ; then
+            break
+        fi
+        sleep 2
+    done
+    lxc exec node-wrk0 -- sh -c "microceph status"
+
+    # Helper: get the default crush rule ID
+    get_default_rule() {
+        lxc exec node-wrk0 -- sh -c "microceph.ceph config get mon osd_pool_default_crush_rule" | tr -d '[:space:]'
+    }
+
+    # Helper: get the crush rule ID for a named rule
+    get_rule_id() {
+        lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule dump $1 -f json" | jq -r '.rule_id'
+    }
+
+    local osd_rule_id=$(get_rule_id microceph_auto_osd)
+
+    # Add OSD to node-wrk0 (az-a) — only 1 AZ has OSDs, should stay on OSD rule
+    lxc exec node-wrk0 -- sh -c "microceph disk add /dev/sdia --wipe"
+    lxc exec node-wrk0 -- sh -c "/mnt/actionutils.sh wait_for_osds 1"
+    sleep 1
+    echo "After OSD in az-a: default rule=$(get_default_rule), expect=${osd_rule_id}"
+    [[ "$(get_default_rule)" == "${osd_rule_id}" ]]
+
+    # Add OSD to node-wrk1 (az-a) — still only 1 AZ has OSDs
+    lxc exec node-wrk1 -- sh -c "microceph disk add /dev/sdia --wipe"
+    lxc exec node-wrk0 -- sh -c "/mnt/actionutils.sh wait_for_osds 2"
+    sleep 1
+    echo "After 2nd OSD in az-a: default rule=$(get_default_rule), expect=${osd_rule_id}"
+    [[ "$(get_default_rule)" == "${osd_rule_id}" ]]
+
+    # Add OSD to node-wrk2 (az-b) — 2 AZs have OSDs, still not enough
+    lxc exec node-wrk2 -- sh -c "microceph disk add /dev/sdia --wipe"
+    lxc exec node-wrk0 -- sh -c "/mnt/actionutils.sh wait_for_osds 3"
+    sleep 1
+    echo "After OSD in az-b: default rule=$(get_default_rule), expect=${osd_rule_id}"
+    [[ "$(get_default_rule)" == "${osd_rule_id}" ]]
+
+    # Add OSD to node-wrk3 (az-c) — 3 AZs now have OSDs, should switch to rack
+    lxc exec node-wrk3 -- sh -c "microceph disk add /dev/sdia --wipe"
+    lxc exec node-wrk0 -- sh -c "/mnt/actionutils.sh wait_for_osds 4"
+    sleep 1
+
+    local rack_rule_id=$(get_rule_id microceph_auto_rack)
+    echo "After OSD in az-c: default rule=$(get_default_rule), expect=${rack_rule_id}"
+    [[ "$(get_default_rule)" == "${rack_rule_id}" ]]
+
+    # Verify the CRUSH tree has rack buckets for each AZ
+    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az-a"
+    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az-b"
+    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az-c"
+
+    echo "PASSED: AZ crush rule test"
+}
+
 run="${1}"
 shift
 
