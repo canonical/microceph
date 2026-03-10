@@ -396,14 +396,16 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 	logger.Infof("Setting up CRUSH topology for host %s in AZ %s", hostname, data.hostAZ)
 
 	// Create the AZ rack bucket and move it under root default.
+	// Prefix AZ names with "az-" to avoid collisions with existing CRUSH bucket names.
 	// Doesn't fail on existing, can repeat safely if failure
-	_, err = cephRunContext(ctx, "osd", "crush", "add-bucket", data.hostAZ, "rack")
+	rackBucket := fmt.Sprintf("az.%s", data.hostAZ)
+	_, err = cephRunContext(ctx, "osd", "crush", "add-bucket", rackBucket, "rack")
 	if err != nil {
-		return fmt.Errorf("failed to create rack bucket %s: %w", data.hostAZ, err)
+		return fmt.Errorf("failed to create rack bucket %s: %w", rackBucket, err)
 	}
-	_, err = cephRunContext(ctx, "osd", "crush", "move", data.hostAZ, "root=default")
+	_, err = cephRunContext(ctx, "osd", "crush", "move", rackBucket, "root=default")
 	if err != nil {
-		return fmt.Errorf("failed to move rack %s under root: %w", data.hostAZ, err)
+		return fmt.Errorf("failed to move rack %s under root: %w", rackBucket, err)
 	}
 
 	// Create the host bucket and move it under the AZ rack.
@@ -411,9 +413,9 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create host bucket %s: %w", hostname, err)
 	}
-	_, err = cephRunContext(ctx, "osd", "crush", "move", hostname, fmt.Sprintf("rack=%s", data.hostAZ))
+	_, err = cephRunContext(ctx, "osd", "crush", "move", hostname, fmt.Sprintf("rack=%s", rackBucket))
 	if err != nil {
-		return fmt.Errorf("failed to move host %s under rack %s: %w", hostname, data.hostAZ, err)
+		return fmt.Errorf("failed to move host %s under rack %s: %w", hostname, rackBucket, err)
 	}
 
 	// If we have 3+ unique AZs with at least one OSD each, switch failure domain to rack.

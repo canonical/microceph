@@ -1839,13 +1839,14 @@ function test_az_crush_rule() {
     echo "After OSD in az-c: default rule=$(get_default_rule), expect=${rack_rule_id}"
     [[ "$(get_default_rule)" == "${rack_rule_id}" ]]
 
-    # Verify the CRUSH tree has rack buckets for each AZ
-    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az-a"
-    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az-b"
-    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az-c"
+    # Verify the CRUSH tree has rack buckets for each AZ (prefixed with "az.")
+    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-a"
+    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-b"
+    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-c"
 
     echo "PASSED: AZ crush rule test"
 }
+
 
 run="${1}"
 shift

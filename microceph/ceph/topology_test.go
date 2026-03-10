@@ -38,11 +38,13 @@ func withMockAZData(data azData) func() {
 
 // addCrushBucketExpectations sets up mock expectations for the 4 CRUSH
 // bucket commands issued by updateTopology (via cephRunContext → RunCommandContext).
+// The az parameter is the user-facing AZ name; the CRUSH bucket uses the "az." prefix.
 func addCrushBucketExpectations(r *mocks.Runner, az string, hostname string) {
-	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "crush", "add-bucket", az, "rack").Return("", nil).Once()
-	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "crush", "move", az, "root=default").Return("", nil).Once()
+	rackBucket := fmt.Sprintf("az.%s", az)
+	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "crush", "add-bucket", rackBucket, "rack").Return("", nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "crush", "move", rackBucket, "root=default").Return("", nil).Once()
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "crush", "add-bucket", hostname, "host").Return("", nil).Once()
-	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "crush", "move", hostname, fmt.Sprintf("rack=%s", az)).Return("", nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "crush", "move", hostname, fmt.Sprintf("rack=%s", rackBucket)).Return("", nil).Once()
 }
 
 // TestUpdateTopologyNoAZ verifies that updateTopology is a no-op when no AZ
@@ -95,7 +97,7 @@ func (s *topologySuite) TestUpdateTopologyAZLessThan3() {
 }
 
 // osdTreeWithOSDs returns a CRUSH tree JSON where each of the given AZs
-// contains a host with one OSD.
+// contains a host with one OSD. Rack bucket names use the "az." prefix.
 func osdTreeWithOSDs(azs []string) string {
 	// root node children: one rack per AZ (IDs -2, -3, ...)
 	nodes := `{"nodes":[{"id":-1,"name":"default","type":"root","children":[`
@@ -111,7 +113,7 @@ func osdTreeWithOSDs(azs []string) string {
 		hostID := -(i + 2 + len(azs))
 		osdID := i
 		nodes += fmt.Sprintf(
-			`,{"id":%d,"name":"%s","type":"rack","children":[%d]}`+
+			`,{"id":%d,"name":"az.%s","type":"rack","children":[%d]}`+
 				`,{"id":%d,"name":"host-%s","type":"host","children":[%d]}`+
 				`,{"id":%d,"name":"osd.%d","type":"osd"}`,
 			rackID, az, hostID,
