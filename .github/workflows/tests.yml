@@ -411,6 +411,29 @@ jobs:
       - name: Test AZ crush rule transitions
         run: ~/actionutils.sh test_az_crush_rule
 
+      # Relies on test_az_crush_rule above (4-node AZ cluster with OSDs).
+      - name: Test AZ node removal and re-join
+        run: |
+          set -eux
+          # Remove osd.3 from node-wrk3
+          lxc exec node-wrk3 -- sh -c "microceph disk remove osd.3 --bypass-safety-checks --confirm-failure-domain-downgrade"
+          sleep 5
+          # Remove node-wrk3 from cluster
+          lxc exec node-wrk0 -- sh -c "microceph cluster remove node-wrk3 --force"
+          sleep 3
+          # Kill any leftover OSD process still holding the device
+          lxc exec node-wrk3 -- sh -c "fuser -k /dev/sdia" 2>/dev/null || true
+          sleep 2
+          # Re-join node-wrk3 with same AZ — fails if az.host.* was not cleaned up
+          tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk3")
+          lxc exec node-wrk3 -- sh -c "microceph cluster join $tok --availability-zone=az-c"
+          sleep 3
+          # Re-add OSD on the same device
+          lxc exec node-wrk3 -- sh -c "microceph disk add /dev/sdia --wipe"
+          sleep 5
+          # Verify node-wrk3 is back under az.az-c rack
+          lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-c"
+
       - name: Print logs for failure
         if: failure()
         run: |

@@ -2,8 +2,12 @@ package ceph
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"net/http"
 
+	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/logger"
 	microCli "github.com/canonical/microcluster/v2/client"
 	"github.com/canonical/microcluster/v2/microcluster"
@@ -23,7 +27,25 @@ func PreRemove(m *microcluster.MicroCluster) func(ctx context.Context, s state.S
 			return err
 		}
 
-		return removeNode(cli, s.Name(), force)
+		err = removeNode(cli, s.Name(), force)
+		if err != nil {
+			return err
+		}
+
+		// Clean up az.host.<name> config entry (ignore not-found).
+		err = s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			azKey := fmt.Sprintf("az.host.%s", s.Name())
+			err := database.DeleteConfigItem(ctx, tx, azKey)
+			if err != nil && !api.StatusErrorCheck(err, http.StatusNotFound) {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			logger.Warnf("Failed to clean up az.host config for %s: %v", s.Name(), err)
+		}
+
+		return nil
 	}
 }
 

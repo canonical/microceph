@@ -177,7 +177,14 @@ func countAZsWithOSDs(azNames map[string]bool, currentAZ string) (int, error) {
 			continue
 		}
 		// Find the rack node for this AZ and get its children (host IDs).
-		children := nodes.Get(fmt.Sprintf(`#(name=="%s").children`, az))
+		// Use the "az." prefix and filter by type=="rack" to avoid matching
+		// a host or other bucket that happens to share the same name.
+		rackBucket := fmt.Sprintf("az.%s", az)
+		rackNode := nodes.Get(fmt.Sprintf(`#(name=="%s")`, rackBucket))
+		if !rackNode.Exists() || rackNode.Get("type").String() != "rack" {
+			continue
+		}
+		children := rackNode.Get("children")
 		if !children.Exists() {
 			continue
 		}
