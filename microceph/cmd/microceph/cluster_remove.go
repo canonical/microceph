@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 
+	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microceph/microceph/clilogger"
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 )
@@ -41,5 +44,23 @@ func (c *cmdClusterRemove) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return cli.DeleteClusterMember(context.Background(), args[0], c.flagForce)
+	err = cli.DeleteClusterMember(context.Background(), args[0], c.flagForce)
+	if err == nil {
+		return nil
+	}
+
+	if c.flagForce && isDatabaseUpgradeWaitingError(err) {
+		// During upgrade-waiting state the normal delete endpoint is blocked before
+		// it reaches member-removal logic. Use the dedicated recovery endpoint.
+		clilogger.Warnf("Standard force removal blocked by upgrade-waiting database, falling back to recovery removal path: %v", err)
+		return client.ForceDeleteClusterMember(context.Background(), cli, args[0])
+	}
+
+	return err
+}
+
+// isDatabaseUpgradeWaitingError is a thin wrapper around common helper to keep
+// command-level logic readable and directly unit-testable.
+func isDatabaseUpgradeWaitingError(err error) bool {
+	return common.IsDatabaseUpgradeWaitingError(err)
 }

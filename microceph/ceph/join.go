@@ -5,16 +5,24 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	lxdApi "github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/logger"
+)
+
+var (
+	getConfigItemOp    = database.GetConfigItem
+	createConfigItemOp = database.CreateConfigItem
+	updateConfigItemOp = database.UpdateConfigItem
 )
 
 func msgrv2OnlyFile(path string) (bool, error) {
@@ -151,7 +159,7 @@ func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx
 	}
 
 	// Fetch public network
-	configItem, err := database.GetConfigItem(ctx, tx, "public_network")
+	configItem, err := getConfigItemOp(ctx, tx, "public_network")
 	if err != nil {
 		return err
 	}
@@ -165,11 +173,30 @@ func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx
 		monHost = "v2:" + monHost + ":3300"
 	}
 
-	key := fmt.Sprintf("mon.host.%s", s.ClusterState().Name())
-	_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: key, Value: monHost})
+	err = upsertMonHostConfigItem(ctx, tx, s.ClusterState().Name(), monHost)
 	if err != nil {
 		return fmt.Errorf("failed to record mon host: %w", err)
 	}
 
 	return nil
+}
+
+func upsertMonHostConfigItem(ctx context.Context, tx *sql.Tx, memberName string, monHost string) error {
+	key := fmt.Sprintf("mon.host.%s", memberName)
+
+	existing, err := getConfigItemOp(ctx, tx, key)
+	if err != nil {
+		if !lxdApi.StatusErrorCheck(err, http.StatusNotFound) {
+			return err
+		}
+
+		_, err = createConfigItemOp(ctx, tx, database.ConfigItem{Key: key, Value: monHost})
+		return err
+	}
+
+	if existing.Value == monHost {
+		return nil
+	}
+
+	return updateConfigItemOp(ctx, tx, key, database.ConfigItem{Key: key, Value: monHost})
 }

@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/canonical/microceph/microceph/constants"
@@ -346,7 +348,7 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	// REF: https://docs.ceph.com/en/quincy/rados/configuration/network-config-ref/#ceph-daemons
 	// The mon host configuration option only needs to be sufficiently up to date such that a
 	// client can reach one monitor that is currently online.
-	monitorAddresses := getMonitorsFromConfig(config)
+	monitorAddresses := getMonitorsForCluster(ctx, s, config)
 
 	// backward compat: if no mon hosts found, get them from the node addresses but don't
 	// insert into db, as the join logic will take care of that.
@@ -443,7 +445,7 @@ func GetMonitorAddresses(ctx context.Context, s interfaces.StateInterface) ([]st
 		return nil, fmt.Errorf("failed to get config db: %w", err)
 	}
 
-	monitorAddresses := getMonitorsFromConfig(config)
+	monitorAddresses := getMonitorsForCluster(ctx, s, config)
 
 	if len(monitorAddresses) == 0 {
 		monitorAddresses, err = backwardCompatMonitors(ctx, s)
@@ -457,15 +459,84 @@ func GetMonitorAddresses(ctx context.Context, s interfaces.StateInterface) ([]st
 	return monitorAddresses, nil
 }
 
+func getMonitorsForCluster(ctx context.Context, s interfaces.StateInterface, config map[string]string) []string {
+	memberNames, err := common.GetClusterMemberNames(ctx, s)
+	if err != nil {
+		logger.Warnf("failed to fetch cluster members while building monitor list, using all mon.host entries: %v", err)
+		return getMonitorsFromConfig(config)
+	}
+
+	return getMonitorsFromConfigForMembers(config, memberNames)
+}
+
 // getMonitorsFromConfig scans a provided config key/value map and returns a list of mon hosts found.
 func getMonitorsFromConfig(configs map[string]string) []string {
 	monHosts := []string{}
 	for k, v := range configs {
-		if strings.Contains(k, "mon.host.") {
+		if strings.HasPrefix(k, "mon.host.") {
 			monHosts = append(monHosts, v)
 		}
 	}
 	return monHosts
+}
+
+// getMonitorsFromConfigForMembers returns monitor addresses from mon.host.* keys that are valid
+// for currently known members, while preserving indexed mon.host.<n> entries used by adopt flows.
+func getMonitorsFromConfigForMembers(configs map[string]string, memberNames []string) []string {
+	memberSet := make(map[string]struct{}, len(memberNames))
+	for _, member := range memberNames {
+		memberSet[member] = struct{}{}
+	}
+
+	monHosts := []string{}
+	for key, value := range configs {
+		if !strings.HasPrefix(key, "mon.host.") {
+			continue
+		}
+
+		suffix := strings.TrimPrefix(key, "mon.host.")
+		if _, err := strconv.Atoi(suffix); err == nil {
+			monHosts = append(monHosts, value)
+			continue
+		}
+
+		if _, ok := memberSet[suffix]; ok {
+			monHosts = append(monHosts, value)
+			continue
+		}
+
+		logger.Debugf("ignoring stale monitor config key %q", key)
+	}
+
+	return monHosts
+}
+
+func staleMonHostKeys(config map[string]string, memberNames []string) []string {
+	memberSet := make(map[string]struct{}, len(memberNames))
+	for _, member := range memberNames {
+		memberSet[member] = struct{}{}
+	}
+
+	keys := []string{}
+	for key := range config {
+		if !strings.HasPrefix(key, "mon.host.") {
+			continue
+		}
+
+		suffix := strings.TrimPrefix(key, "mon.host.")
+		if _, err := strconv.Atoi(suffix); err == nil {
+			continue
+		}
+
+		if _, ok := memberSet[suffix]; ok {
+			continue
+		}
+
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+	return keys
 }
 
 // formatIPv6 returns a slice in which all IPv6 addresses are formatted with square brackets.

@@ -135,7 +135,7 @@ func isRemoteConfigured(remoteName string) bool {
 func renderConfAndKeyringFiles(remoteName string, localName string, configs map[string]string) error {
 	monHosts := []string{}
 	for k, v := range configs {
-		if strings.Contains(k, "mon.host.") {
+		if strings.HasPrefix(k, "mon.host.") {
 			monHosts = append(monHosts, v)
 		}
 	}

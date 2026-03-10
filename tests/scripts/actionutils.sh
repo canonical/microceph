@@ -52,7 +52,7 @@ function install_microceph() {
 
 function install_tools() {
     sudo apt-get update -qq
-    sudo apt-get -qq -y install s3cmd jq
+    sudo apt-get -qq -y install s3cmd jq curl
 }
 
 function create_loop_devices() {
@@ -1563,6 +1563,158 @@ function remote_verify_snapshot_pool_replication_fails() {
     # This function must be called only after the pool has been created (e.g., after bootstrap or before Configure RBD mirror)
     lxc exec node-wrk0 -- sh -c \
         '! microceph replication enable rbd pool_one --type snapshot --remote siteb | grep "Snapshot-based replication is only supported for individual RBD images"'
+}
+
+# Simulate microcluster upgrade-waiting mode by lowering a member's recorded schema
+# version in core_cluster_members and restarting the daemon to force status
+# re-evaluation.
+# Usage: induce_db_waiting <member name>
+function induce_db_waiting() {
+    local member="${1?missing}"
+    set -eux
+
+    out=$(lxc exec node-wrk0 -- sh -c "microceph status 2>&1" || true)
+    if echo "$out" | grep -q "Database is waiting for an upgrade"; then
+        echo "Database is already in waiting state"
+        return
+    fi
+
+    lxc exec node-wrk0 -- sh -c "microceph cluster sql \"UPDATE core_cluster_members SET schema_internal = 0, schema_external = 0 WHERE name='${member}'\""
+    lxc exec node-wrk0 -- sh -c "snap restart microceph.daemon"
+
+    # Wait for the leader to report the waiting state.
+    for i in $(seq 1 30); do
+        out=$(lxc exec node-wrk0 -- sh -c "microceph status 2>&1" || true)
+        echo "$out"
+        if echo "$out" | grep -q "Database is waiting for an upgrade"; then
+            return
+        fi
+
+        sleep 2
+    done
+
+    echo "Failed to induce database waiting state"
+    exit 1
+}
+
+# Verify the dedicated recovery force-remove endpoint is blocked while database is healthy.
+# Usage: verify_recovery_force_endpoint_blocked <existing member>
+function verify_recovery_force_endpoint_blocked() {
+    local target="${1?missing}"
+    set -eux
+
+    response=$(lxc exec node-wrk0 -- sh -c "curl -sS --unix-socket /var/snap/microceph/common/state/control.socket -X DELETE http://localhost/1.0/cluster/members/${target}/force")
+    echo "$response"
+
+    error_code=$(echo "$response" | jq -r '.error_code')
+    if [[ "$error_code" != "400" ]]; then
+        echo "Expected error_code=400, got: $error_code"
+        exit 1
+    fi
+
+    echo "$response" | jq -r '.error' | grep -F "only available while the database is waiting for an upgrade"
+}
+
+# Verify unknown member force-remove does not succeed silently during upgrade-waiting mode.
+# Usage: verify_unknown_force_remove_fails_during_db_waiting <member used to induce waiting> <unknown member>
+function verify_unknown_force_remove_fails_during_db_waiting() {
+    local waiting_member="${1?missing}"
+    local unknown_member="${2?missing}"
+    set -eux
+
+    induce_db_waiting "$waiting_member"
+
+    set +e
+    output=$(lxc exec node-wrk0 -- sh -c "microceph cluster remove ${unknown_member} --force 2>&1")
+    rc=$?
+    set -e
+
+    echo "$output"
+
+    if [[ $rc -eq 0 ]]; then
+        echo "Expected unknown member force-remove to fail"
+        exit 1
+    fi
+
+    echo "$output" | grep -F "falling back to recovery removal path"
+    echo "$output" | grep -F "$unknown_member"
+    echo "$output" | grep -Eiq "not found|no remote exists"
+}
+
+# Verify CLI fallback force-removal path and post-remove cleanup in upgrade-waiting mode.
+# Usage: verify_force_remove_fallback_and_cleanup <target member>
+function verify_force_remove_fallback_and_cleanup() {
+    local target="${1?missing}"
+    set -eux
+
+    induce_db_waiting "$target"
+
+    # Simulate unreachable target so recovery path is exercised for realistic conditions.
+    lxc exec "$target" -- sh -c "snap stop microceph.daemon --disable || true"
+
+    set +e
+    output=$(lxc exec node-wrk0 -- sh -c "microceph cluster remove ${target} --force 2>&1")
+    rc=$?
+    set -e
+
+    echo "$output"
+
+    if [[ $rc -ne 0 ]]; then
+        echo "Expected force remove to succeed via recovery path"
+        exit 1
+    fi
+
+    echo "$output" | grep -F "falling back to recovery removal path"
+
+    # Once recovery cleanup is done, restart the local daemon so database status
+    # settles back to normal before asserting on status/SQL queries.
+    lxc exec node-wrk0 -- sh -c "snap restart microceph.daemon"
+
+    ready="false"
+    for i in $(seq 1 30); do
+        status_out=$(lxc exec node-wrk0 -- sh -c "microceph status 2>&1" || true)
+        echo "$status_out"
+        if echo "$status_out" | grep -q "MicroCeph deployment summary"; then
+            ready="true"
+            break
+        fi
+
+        sleep 2
+    done
+
+    if [[ "$ready" != "true" ]]; then
+        echo "MicroCeph status never became ready after recovery force removal"
+        exit 1
+    fi
+
+    # Member should be absent from both status and core_cluster_members.
+    if lxc exec node-wrk0 -- sh -c "microceph status | grep -q '^- ${target} '"; then
+        echo "Removed member ${target} still present in microceph status"
+        exit 1
+    fi
+
+    if lxc exec node-wrk0 -- sh -c "microceph cluster sql \"SELECT name FROM core_cluster_members WHERE name='${target}'\" | grep -q '${target}'"; then
+        echo "Removed member ${target} still present in core_cluster_members"
+        exit 1
+    fi
+
+    # Named monitor key for the removed member should be gone.
+    if lxc exec node-wrk0 -- sh -c "microceph cluster sql \"SELECT key FROM config WHERE key='mon.host.${target}'\" | grep -q 'mon.host.${target}'"; then
+        echo "Found stale monitor key mon.host.${target}"
+        exit 1
+    fi
+
+    # Trust-store should converge across remaining peers.
+    for node in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
+        if [[ "$node" == "$target" ]]; then
+            continue
+        fi
+
+        if lxc exec "$node" -- sh -c "[ -e /var/snap/microceph/common/state/truststore/${target}.yaml ]"; then
+            echo "Found stale trust-store entry for ${target} on ${node}"
+            exit 1
+        fi
+    done
 }
 
 # Test pristine check
