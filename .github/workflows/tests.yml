@@ -189,6 +189,9 @@ jobs:
           sleep 1
           pgrep ceph-osd || { echo "No ceph-osd process found" ; exit 1; }
 
+      - name: Test snap disable/enable re-enables services
+        run: ~/actionutils.sh test_snap_disable_enable
+
       - name: Exercise RGW
         run: ~/actionutils.sh testrgw
 

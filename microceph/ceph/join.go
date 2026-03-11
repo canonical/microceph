@@ -12,9 +12,9 @@ import (
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
 
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 func msgrv2OnlyFile(path string) (bool, error) {
@@ -82,6 +82,11 @@ func Join(ctx context.Context, s interfaces.StateInterface) error {
 		return err
 	}
 
+	// Hold the lock while starting services to prevent reEnableServices
+	// from racing with us on concurrent snapctl calls.
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+
 	// spawn planned auto services.
 	for _, service := range plannedServices {
 		err := spt[service.Service].ServiceInit(ctx, s)
@@ -102,7 +107,6 @@ func Join(ctx context.Context, s interfaces.StateInterface) error {
 
 // getServicesForHost get services needed to be spawned on this machine.
 func getServicesForHost(ctx context.Context, s interfaces.StateInterface, hostname string) ([]database.Service, error) {
-	hostname = s.ClusterState().Name()
 	var services []database.Service
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error

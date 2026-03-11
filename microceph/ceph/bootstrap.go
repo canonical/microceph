@@ -51,8 +51,8 @@ func BootstrapCephConfigs(cn string, pn string) error {
 	}
 
 	// Default RBD features
-    // The values are documented here and have been stable for the lifetime of Ceph
-    // https://docs.ceph.com/en/latest/rbd/rbd-config-ref/#image-features
+	// The values are documented here and have been stable for the lifetime of Ceph
+	// https://docs.ceph.com/en/latest/rbd/rbd-config-ref/#image-features
 	// 63 = layering + exclusive-lock + object-map + fast-diff + deep-flatten + stripingv2
 	err = SetConfigItem(apiTypes.Config{
 		Key:   "rbd_default_features",
@@ -112,6 +112,9 @@ func CreateKeyrings(confPath string) (string, error) {
 
 // BootstrapCephServices bootstraps the automatic services on simple bootstrap of a ceph cluster.
 func BootstrapCephServices(state interfaces.StateInterface, tempKeyringPath string, fsid string, monIP string) error {
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+
 	pathConsts := constants.GetPathConst()
 
 	err := createMonMap(state, tempKeyringPath, fsid, monIP)
