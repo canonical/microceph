@@ -16,10 +16,11 @@ import (
 
 // SimpleBootstrapper bootstraps microceph with a new ceph cluster.
 type SimpleBootstrapper struct {
-	MonIP      string // IP address of the monitor to be created.
-	PublicNet  string // Public Network subnet.
-	ClusterNet string // Cluster Network subnet.
-	V2Only     bool   // Whether only V2 addresses should be used.
+	MonIP            string // IP address of the monitor to be created.
+	PublicNet        string // Public Network subnet.
+	ClusterNet       string // Cluster Network subnet.
+	AvailabilityZone string // Availability Zone of the host.
+	V2Only           bool   // Whether only V2 addresses should be used.
 }
 
 // ##### Interface Implementations for SimpleBootstrapper #####
@@ -29,6 +30,7 @@ func (sb *SimpleBootstrapper) Prefill(bd common.BootstrapConfig, state interface
 	sb.MonIP = bd.MonIp
 	sb.PublicNet = bd.PublicNet
 	sb.ClusterNet = bd.ClusterNet
+	sb.AvailabilityZone = bd.AvailabilityZone
 	sb.V2Only = bd.V2Only
 
 	err := PopulateDefaultNetworkParams(state, &sb.MonIP, &sb.PublicNet, &sb.ClusterNet)
@@ -67,6 +69,13 @@ func (sb *SimpleBootstrapper) Precheck(ctx context.Context, state interfaces.Sta
 	if err != nil {
 		logger.Errorf("Mon v2 parameter validation failed: %v", err)
 		return err
+	}
+
+	// Validate AZ name early, before any cluster state is modified.
+	if sb.AvailabilityZone != "" {
+		if !ceph.IsValidCrushName(sb.AvailabilityZone) {
+			return fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", sb.AvailabilityZone)
+		}
 	}
 
 	logger.Debugf("Precheck for simple bootstrap successful")
@@ -148,6 +157,11 @@ var getServicesAndConfigsforDBUpdation = func(fsid string, hostname string, sb *
 		constants.AdminKeyringFieldName:      adminKey,
 		fmt.Sprintf("mon.host.%s", hostname): sb.MonIP,
 		"public_network":                     sb.PublicNet,
+	}
+
+	// If AZ present, record it (validation already done in Precheck).
+	if sb.AvailabilityZone != "" {
+		configs[fmt.Sprintf("az.host.%s", hostname)] = sb.AvailabilityZone
 	}
 
 	return services, configs, nil
