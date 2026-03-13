@@ -71,6 +71,13 @@ func (sb *SimpleBootstrapper) Precheck(ctx context.Context, state interfaces.Sta
 		return err
 	}
 
+	// Validate AZ name early, before any cluster state is modified.
+	if sb.AvailabilityZone != "" {
+		if !ceph.IsValidCrushName(sb.AvailabilityZone) {
+			return fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", sb.AvailabilityZone)
+		}
+	}
+
 	logger.Debugf("Precheck for simple bootstrap successful")
 
 	return nil
@@ -152,11 +159,8 @@ var getServicesAndConfigsforDBUpdation = func(fsid string, hostname string, sb *
 		"public_network":                     sb.PublicNet,
 	}
 
-	// If AZ present, validate and record
+	// If AZ present, record it (validation already done in Precheck).
 	if sb.AvailabilityZone != "" {
-		if !ceph.IsValidCrushName(sb.AvailabilityZone) {
-			return nil, nil, fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", sb.AvailabilityZone)
-		}
 		configs[fmt.Sprintf("az.host.%s", hostname)] = sb.AvailabilityZone
 	}
 

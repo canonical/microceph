@@ -1844,6 +1844,10 @@ function test_az_crush_rule() {
     lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-b"
     lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-c"
 
+    # Verify that add-bucket is idempotent — calling it again for an existing
+    # bucket must not fail. This guards against Ceph returning EEXIST in the future.
+    lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush add-bucket az.az-a rack"
+
     echo "PASSED: AZ crush rule test"
 }
 
