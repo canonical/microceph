@@ -85,6 +85,31 @@ func (s *adoptBootstrapSuite) TestAdoptPrefillSetsAZ() {
 	assert.Equal(s.T(), "az-1", bootstrapper.AvailabilityZone)
 }
 
+// TestAdoptPrecheckRejectsInvalidAZ verifies that Precheck fails for invalid AZ names.
+func (s *adoptBootstrapSuite) TestAdoptPrecheckRejectsInvalidAZ() {
+	r := mocks.NewRunner(s.T())
+	nw := mocks.NewNetworkIntf(s.T())
+
+	addNetworkExpectations(nw)
+	addCephConnectivityCheckExpectations(r)
+
+	common.ProcessExec = r
+	common.Network = nw
+
+	bootstrapper := AdoptBootstrapper{
+		FSID:             "abcdefgh",
+		AdminKey:         "AQ",
+		MonHosts:         []string{"1.1.1.12"},
+		PublicNet:        "1.1.1.1/24",
+		ClusterNet:       "1.1.1.1/24",
+		AvailabilityZone: "invalid zone!",
+	}
+
+	err := bootstrapper.Precheck(context.Background(), s.TestStateInterface)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "invalid availability zone name")
+}
+
 // ##### Unit Tests #####
 func (s *adoptBootstrapSuite) TestAdoptBootstrap() {
 	r := mocks.NewRunner(s.T())

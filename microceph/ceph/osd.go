@@ -396,7 +396,7 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 	logger.Infof("Setting up CRUSH topology for host %s in AZ %s", hostname, data.hostAZ)
 
 	// Create the AZ rack bucket and move it under root default.
-	// Prefix AZ names with "az-" to avoid collisions with existing CRUSH bucket names.
+	// Prefix AZ names with "az." to avoid collisions with existing CRUSH bucket names.
 	// Doesn't fail on existing, can repeat safely if failure
 	rackBucket := fmt.Sprintf("az.%s", data.hostAZ)
 	_, err = cephRunContext(ctx, "osd", "crush", "add-bucket", rackBucket, "rack")
@@ -408,7 +408,10 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 		return fmt.Errorf("failed to move rack %s under root: %w", rackBucket, err)
 	}
 
-	// Create the host bucket and move it under the AZ rack.
+	// Create the host bucket explicitly before moving it under the AZ rack.
+	// Although Ceph creates host buckets when an OSD is added, there is a race
+	// between OSD registration and this topology update — the host bucket may
+	// not yet exist in the CRUSH map, causing "crush move" to fail with ENOENT.
 	_, err = cephRunContext(ctx, "osd", "crush", "add-bucket", hostname, "host")
 	if err != nil {
 		return fmt.Errorf("failed to create host bucket %s: %w", hostname, err)

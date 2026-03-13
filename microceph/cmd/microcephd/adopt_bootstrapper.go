@@ -91,6 +91,13 @@ func (ab *AdoptBootstrapper) Precheck(ctx context.Context, state interfaces.Stat
 		return err
 	}
 
+	// Validate AZ name early, before any cluster state is modified.
+	if ab.AvailabilityZone != "" {
+		if !ceph.IsValidCrushName(ab.AvailabilityZone) {
+			return fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", ab.AvailabilityZone)
+		}
+	}
+
 	return nil
 }
 
@@ -185,11 +192,8 @@ var getConfigsforDBUpdation = func(hostname string, ab *AdoptBootstrapper) (map[
 		"public_network":                ab.PublicNet,
 	}
 
-	// If AZ present, validate and record
+	// If AZ present, record it (validation already done in Precheck).
 	if ab.AvailabilityZone != "" {
-		if !ceph.IsValidCrushName(ab.AvailabilityZone) {
-			return nil, fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", ab.AvailabilityZone)
-		}
 		configs[fmt.Sprintf("az.host.%s", hostname)] = ab.AvailabilityZone
 	}
 
