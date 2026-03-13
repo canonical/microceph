@@ -83,7 +83,7 @@ func (c *cmdClusterAdopt) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Bootstrap microcluster.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*5)
 	defer cancel()
 
 	err = m.Ready(ctx)

@@ -59,6 +59,18 @@ function bootstrap_cephadm() {
 
   lxc exec $name -- sh -c "cephadm bootstrap --mon-ip $ip --single-host-defaults --skip-dashboard --skip-monitoring-stack"
   lxc exec $name -- sh -c "cephadm shell -- ceph orch apply osd --all-available-devices"
+
+  # Wait for the cluster to settle before adopt can connect
+  echo "Waiting for ceph cluster to become healthy..."
+  for i in $(seq 1 30); do
+    if lxc exec $name -- sh -c "cephadm shell -- ceph health 2>/dev/null" | grep -q "HEALTH_OK"; then
+      echo "Cluster is healthy"
+      break
+    fi
+    echo "Waiting for cluster health... attempt $i/30"
+    sleep 10s
+  done
+  lxc exec $name -- sh -c "cephadm shell -- ceph -s"
 }
 
 function adopt_cephadm() {
