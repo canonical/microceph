@@ -435,7 +435,7 @@ jobs:
           # Kill any leftover OSD process still holding the device
           lxc exec node-wrk3 -- sh -c "fuser -k /dev/sdia" 2>/dev/null || true
           sleep 2
-          # Re-join node-wrk3 with same AZ — fails if az.host.* was not cleaned up
+          # Re-join node-wrk3 with same AZ - fails if cascade delete did not clean up host_tags for the removed node
           tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk3")
           lxc exec node-wrk3 -- sh -c "microceph cluster join $tok --availability-zone=az-c"
           sleep 3

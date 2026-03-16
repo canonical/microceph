@@ -154,3 +154,15 @@ func bootstrapDBAddConfigItemOp(ctx context.Context, tx *sql.Tx, Key string, Val
 
 	return nil
 }
+
+// bootstrapDBAddHostTagOp adds a host tag to the database within a transaction.
+func bootstrapDBAddHostTagOp(ctx context.Context, tx *sql.Tx, member string, key string, value string) error {
+	_, err := database.CreateHostTag(ctx, tx, database.HostTag{Member: member, Key: key, Value: value})
+	if err != nil {
+		err = fmt.Errorf("failed to record host tag: Member(%s), Key(%s), Value(%s): %w", member, key, value, err)
+		logger.Error(err.Error())
+		return err
+	}
+
+	return nil
+}

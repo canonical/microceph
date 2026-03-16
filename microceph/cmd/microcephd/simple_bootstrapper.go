@@ -108,13 +108,13 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 		return err
 	}
 
-	services, configs, err := getServicesAndConfigsforDBUpdation(fsid, state.ClusterState().Name(), sb)
+	services, configs, hostTags, err := getServicesAndConfigsforDBUpdation(fsid, state.ClusterState().Name(), sb)
 	if err != nil {
 		return err
 	}
 
 	// Update the database as soon as keyrings are available.
-	err = ceph.PopulateBootstrapDatabase(ctx, state, services, configs)
+	err = ceph.PopulateBootstrapDatabase(ctx, state, services, configs, hostTags)
 	if err != nil {
 		return err
 	}
@@ -142,13 +142,13 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 	return nil
 }
 
-var getServicesAndConfigsforDBUpdation = func(fsid string, hostname string, sb *SimpleBootstrapper) ([]string, map[string]string, error) {
+var getServicesAndConfigsforDBUpdation = func(fsid string, hostname string, sb *SimpleBootstrapper) ([]string, map[string]string, []ceph.BootstrapHostTag, error) {
 	pathConsts := constants.GetPathConst()
 	adminKey, err := ceph.ParseKeyring(filepath.Join(pathConsts.ConfPath, "ceph.client.admin.keyring"))
 	if err != nil {
 		err = fmt.Errorf("failed parsing admin keyring: %w", err)
 		logger.Error(err.Error())
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	services := []string{"mon", "mgr", "mds"}
@@ -159,10 +159,11 @@ var getServicesAndConfigsforDBUpdation = func(fsid string, hostname string, sb *
 		"public_network":                     sb.PublicNet,
 	}
 
-	// If AZ present, record it (validation already done in Precheck).
+	var hostTags []ceph.BootstrapHostTag
+	// If AZ present, record it as a host tag (validation already done in Precheck).
 	if sb.AvailabilityZone != "" {
-		configs[fmt.Sprintf("az.host.%s", hostname)] = sb.AvailabilityZone
+		hostTags = append(hostTags, ceph.BootstrapHostTag{Key: "availability-zone", Value: sb.AvailabilityZone})
 	}
 
-	return services, configs, nil
+	return services, configs, hostTags, nil
 }

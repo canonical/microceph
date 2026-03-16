@@ -350,25 +350,23 @@ type azData struct {
 }
 
 // getAZData retrieves the AZ for the given hostname and all unique AZs from
-// the config items. Returns empty azData if no AZ is configured for the host.
+// the host_tags table. Returns empty azData if no AZ is configured for the host.
 // Handles its own DB transaction. Package-level function var for testability.
 var getAZData = func(ctx context.Context, s state.State, hostname string) (azData, error) {
 	var data azData
 
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		configItems, err := getConfigItems(ctx, tx)
+		azKey := "availability-zone"
+		tags, err := getHostTags(ctx, tx, database.HostTagFilter{Key: &azKey})
 		if err != nil {
-			return fmt.Errorf("failed to get config items: %w", err)
+			return fmt.Errorf("failed to get host tags: %w", err)
 		}
 
 		data.uniqueAZs = make(map[string]bool)
-		hostKey := fmt.Sprintf("az.host.%s", hostname)
-		for _, item := range configItems {
-			if strings.HasPrefix(item.Key, "az.host.") {
-				data.uniqueAZs[item.Value] = true
-				if item.Key == hostKey {
-					data.hostAZ = item.Value
-				}
+		for _, tag := range tags {
+			data.uniqueAZs[tag.Value] = true
+			if tag.Member == hostname {
+				data.hostAZ = tag.Value
 			}
 		}
 		return nil

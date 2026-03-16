@@ -125,12 +125,12 @@ func (ab *AdoptBootstrapper) Bootstrap(ctx context.Context, state interfaces.Sta
 		return err
 	}
 
-	configs, err := getConfigsforDBUpdation(state.ClusterState().Name(), ab)
+	configs, hostTags, err := getConfigsforDBUpdation(state.ClusterState().Name(), ab)
 	if err != nil {
 		return err
 	}
 
-	err = ceph.PopulateBootstrapDatabase(ctx, state, []string{}, configs)
+	err = ceph.PopulateBootstrapDatabase(ctx, state, []string{}, configs, hostTags)
 	if err != nil {
 		return err
 	}
@@ -185,23 +185,24 @@ func (ab *AdoptBootstrapper) updateCephClusterConfigs() error {
 	return nil
 }
 
-var getConfigsforDBUpdation = func(hostname string, ab *AdoptBootstrapper) (map[string]string, error) {
+var getConfigsforDBUpdation = func(hostname string, ab *AdoptBootstrapper) (map[string]string, []ceph.BootstrapHostTag, error) {
 	configs := map[string]string{
 		"fsid":                          ab.FSID,
 		constants.AdminKeyringFieldName: ab.AdminKey,
 		"public_network":                ab.PublicNet,
 	}
 
-	// If AZ present, record it (validation already done in Precheck).
+	var hostTags []ceph.BootstrapHostTag
+	// If AZ present, record it as a host tag (validation already done in Precheck).
 	if ab.AvailabilityZone != "" {
-		configs[fmt.Sprintf("az.host.%s", hostname)] = ab.AvailabilityZone
+		hostTags = append(hostTags, ceph.BootstrapHostTag{Key: "availability-zone", Value: ab.AvailabilityZone})
 	}
 
 	for index, monIP := range ab.MonHosts {
 		configs[fmt.Sprintf("mon.host.%d", index+1)] = monIP
 	}
 
-	return configs, nil
+	return configs, hostTags, nil
 }
 
 func (ab *AdoptBootstrapper) generateConfAndKeyring(confFileName string, keyringFileName string) error {

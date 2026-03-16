@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -119,8 +120,8 @@ func (s *simpleBootstrapSuite) TestSimplePrecheckRejectsInvalidAZ() {
 func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 	r := mocks.NewRunner(s.T())
 	nw := mocks.NewNetworkIntf(s.T())
-	getServicesAndConfigsforDBUpdation = func(_ string, _ string, _ *SimpleBootstrapper) ([]string, map[string]string, error) {
-		return []string{}, map[string]string{}, nil
+	getServicesAndConfigsforDBUpdation = func(_ string, _ string, _ *SimpleBootstrapper) ([]string, map[string]string, []ceph.BootstrapHostTag, error) {
+		return []string{}, map[string]string{}, nil, nil
 	}
 
 	addNetworkSimpleBootstrapExpectations(nw)

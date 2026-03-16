@@ -43,26 +43,18 @@ func msgrv2OnlyCluster() (bool, error) {
 
 // Testable DB operation wrappers.
 var (
-	getConfigItems       = database.GetConfigItems
-	joinCreateConfigItem = database.CreateConfigItem
+	getHostTags       = database.GetHostTags
+	joinCreateHostTag = database.CreateHostTag
 )
 
-func getAllAZHosts(ctx context.Context, tx *sql.Tx) ([]string, error) {
-	// Read all config items and check for empty AZs.
-	configItems, err := getConfigItems(ctx, tx)
+func getAllAZHosts(ctx context.Context, tx *sql.Tx) ([]database.HostTag, error) {
+	azKey := "availability-zone"
+	tags, err := getHostTags(ctx, tx, database.HostTagFilter{Key: &azKey})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get config items: %w", err)
+		return nil, fmt.Errorf("failed to get host tags: %w", err)
 	}
 
-	azs := make([]string, 0)
-
-	for _, item := range configItems {
-		if strings.HasPrefix(item.Key, "az.host.") {
-			azs = append(azs, item.Key)
-		}
-	}
-
-	return azs, nil
+	return tags, nil
 }
 
 // Join will join an existing Ceph deployment.
@@ -170,8 +162,7 @@ func validateAndSetJoinAZ(ctx context.Context, tx *sql.Tx, hostname string, az s
 		return fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", az)
 	}
 
-	key := fmt.Sprintf("az.host.%s", hostname)
-	_, err = joinCreateConfigItem(ctx, tx, database.ConfigItem{Key: key, Value: az})
+	_, err = joinCreateHostTag(ctx, tx, database.HostTag{Member: hostname, Key: "availability-zone", Value: az})
 	if err != nil {
 		return fmt.Errorf("failed to record availability zone: %w", err)
 	}
