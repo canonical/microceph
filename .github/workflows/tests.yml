@@ -86,11 +86,13 @@ jobs:
       - name: Free disk
         run: ~/actionutils.sh free_runner_disk
 
-      - name: Install and setup
+      - name: Test waitready (install, pre-bootstrap fail, bootstrap, post-bootstrap pass)
         run: |
           ~/actionutils.sh install_tools
-          ~/actionutils.sh install_microceph
+          ~/actionutils.sh test_waitready
 
+      - name: Verify post-bootstrap state
+        run: |
           set -uex
           # Verify metadata.yaml
           meta=/var/snap/microceph/current/conf/metadata.yaml
@@ -100,9 +102,6 @@ jobs:
           # Verify health and auto crush rule
           sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"
           sudo microceph.ceph osd crush rule ls | grep -F microceph_auto_osd
-
-      - name: Test microceph waitready after bootstrap
-        run: ~/actionutils.sh test_waitready_after_bootstrap
 
       - name: Test microceph waitready --storage fails with insufficient OSDs
         run: ~/actionutils.sh test_waitready_storage_not_enough_osds
@@ -244,7 +243,7 @@ jobs:
           sudo snap remove microceph
           export MON_IP="fd42:7273:f336:a22::1"
           sudo ip -6 addr add dev eth0 "${MON_IP}"
-          ~/actionutils.sh install_microceph "${MON_IP}"
+          ~/actionutils.sh install_and_bootstrap_microceph "${MON_IP}"
           cat /var/snap/microceph/current/conf/ceph.conf
           fgrep -q "[${MON_IP}]" /var/snap/microceph/current/conf/ceph.conf
 
@@ -253,20 +252,6 @@ jobs:
           ~/actionutils.sh install_hurl
           ~/actionutils.sh hurl tests/hurl/services-mon.hurl
           ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
-
-      # Note: After this test the cluster is unbootstrapped and non-operational.
-      - name: Test microceph waitready not bootstrapped
-        run: |
-          sudo snap remove microceph --purge
-          sudo snap install --dangerous ~/microceph_*.snap
-          sudo snap connect microceph:block-devices
-          sudo snap connect microceph:hardware-observe
-          sudo snap connect microceph:mount-observe
-          sudo snap connect microceph:load-rbd
-          sudo snap connect microceph:microceph-support
-          sudo snap connect microceph:network-bind
-          sudo snap connect microceph:process-control
-          ~/actionutils.sh test_waitready_before_bootstrap
 
   multi-node-tests:
     name: Multi node testing
@@ -582,7 +567,7 @@ jobs:
       - name: Install and setup
         run: |
           ~/actionutils.sh install_tools        
-          ~/actionutils.sh install_microceph
+          ~/actionutils.sh install_and_bootstrap_microceph
 
       - name: Add loopback file OSDs
         run: |
@@ -637,7 +622,7 @@ jobs:
       - name: Install and setup
         run: |
           ~/actionutils.sh install_tools        
-          ~/actionutils.sh install_microceph
+          ~/actionutils.sh install_and_bootstrap_microceph
 
       - name: Add loopback file OSDs
         run: |
@@ -853,7 +838,7 @@ jobs:
       - name: Install and setup
         run: |
           ~/actionutils.sh install_tools        
-          ~/actionutils.sh install_microceph
+          ~/actionutils.sh install_and_bootstrap_microceph
 
       - name: Add loopback file OSDs
         run: |
@@ -1046,7 +1031,7 @@ jobs:
         run: ~/actionutils.sh free_runner_disk
 
       - name: Install and setup
-        run: ~/actionutils.sh install_microceph
+        run: ~/actionutils.sh install_and_bootstrap_microceph
 
       - name: Add loopback file OSDs
         run: |

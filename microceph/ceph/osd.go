@@ -24,6 +24,7 @@ import (
 	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/spf13/afero"
+	"github.com/tidwall/gjson"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/revert"
@@ -1646,6 +1647,77 @@ func SetReplicationFactor(pools []string, size int64) error {
 	}
 
 	return nil
+}
+
+// WaitForOSDsReady polls until enough OSDs are up to satisfy pool replication
+// requirements. The required count is max(pool.Size) across all pools, falling
+// back to osd_pool_default_size if no pools exist.
+func WaitForOSDsReady(ctx context.Context) error {
+	for {
+		required, err := getRequiredOSDCount(ctx)
+		if err != nil {
+			logger.Debugf("Failed to determine required OSD count: %v", err)
+		} else {
+			count, err := getUpOSDCount(ctx)
+			if err == nil && count >= required {
+				return nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for OSDs to be ready: %w", ctx.Err())
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// getRequiredOSDCount returns the maximum pool size across all pools, or the
+// default pool size if no pools exist.
+func getRequiredOSDCount(ctx context.Context) (int64, error) {
+	pools, err := GetOSDPools(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get pools: %w", err)
+	}
+
+	if len(pools) == 0 {
+		return getDefaultPoolSize(ctx)
+	}
+
+	var maxSize int64
+	for _, pool := range pools {
+		if pool.Size > maxSize {
+			maxSize = pool.Size
+		}
+	}
+
+	return maxSize, nil
+}
+
+// getDefaultPoolSize reads the osd_pool_default_size configuration value.
+func getDefaultPoolSize(ctx context.Context) (int64, error) {
+	output, err := cephRunContext(ctx, "config", "get", "mon", "osd_pool_default_size")
+	if err != nil {
+		return 0, fmt.Errorf("failed to get osd_pool_default_size: %w", err)
+	}
+
+	size, err := strconv.ParseInt(strings.TrimSpace(output), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse osd_pool_default_size %q: %w", output, err)
+	}
+
+	return size, nil
+}
+
+// getUpOSDCount returns the number of OSDs currently in the up state.
+func getUpOSDCount(ctx context.Context) (int64, error) {
+	output, err := cephRunContext(ctx, "osd", "dump", "-f", "json-pretty")
+	if err != nil {
+		return 0, fmt.Errorf("failed to get OSD dump: %w", err)
+	}
+
+	upOsds := gjson.Get(output, "osds.#(up==1)#.uuid") // select all uuids where the up field equals 1
+	return int64(len(upOsds.Array())), nil
 }
 
 // GetOSDPools returns a list of OSD Pools and their configurations.
