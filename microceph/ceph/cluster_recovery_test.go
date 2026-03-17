@@ -1,8 +1,11 @@
 package ceph
 
 import (
+	"context"
+	"errors"
 	"testing"
 
+	"github.com/canonical/microceph/microceph/interfaces"
 	microCluster "github.com/canonical/microcluster/v2/cluster"
 	"github.com/stretchr/testify/assert"
 )
@@ -128,4 +131,58 @@ func TestEnsureRemovalLeavesCluster(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReconcileAfterForceRemoveContinuesAfterErrors(t *testing.T) {
+	originalSyncTrustStore := syncTrustStoreFromDatabaseOp
+	originalReconcileMonHostEntries := reconcileMonHostEntriesOp
+	originalUpdateConfig := updateConfigOp
+	originalSyncClusterRemotesOnPeers := syncClusterRemotesOnPeersOp
+	defer func() {
+		syncTrustStoreFromDatabaseOp = originalSyncTrustStore
+		reconcileMonHostEntriesOp = originalReconcileMonHostEntries
+		updateConfigOp = originalUpdateConfig
+		syncClusterRemotesOnPeersOp = originalSyncClusterRemotesOnPeers
+	}()
+
+	calls := []string{}
+	syncTrustStoreFromDatabaseOp = func(ctx context.Context, s interfaces.StateInterface) error {
+		calls = append(calls, "sync-trust-store")
+		return errors.New("trust-store unavailable")
+	}
+	reconcileMonHostEntriesOp = func(ctx context.Context, s interfaces.StateInterface) (int, error) {
+		calls = append(calls, "reconcile-mon-host")
+		return 0, errors.New("config database unavailable")
+	}
+	updateConfigOp = func(ctx context.Context, s interfaces.StateInterface) error {
+		calls = append(calls, "update-config")
+		return nil
+	}
+	syncClusterRemotesOnPeersOp = func(ctx context.Context, s interfaces.StateInterface) {
+		calls = append(calls, "sync-peers")
+	}
+
+	err := reconcileAfterForceRemove(context.Background(), nil)
+	assert.Error(t, err)
+	assert.ErrorContains(t, err, "failed to refresh trust-store from database")
+	assert.ErrorContains(t, err, "failed to reconcile monitor host entries")
+	assert.Equal(t, []string{"sync-trust-store", "reconcile-mon-host", "update-config", "sync-peers"}, calls)
+}
+
+func TestWrapForceRemoveOutcomeError(t *testing.T) {
+	t.Run("no errors returns nil", func(t *testing.T) {
+		err := wrapForceRemoveOutcomeError("node2", nil, nil)
+		assert.NoError(t, err)
+	})
+
+	t.Run("partial failures include top-level context and causes", func(t *testing.T) {
+		dqliteErr := errors.New("failed to remove member \"node2\" from dqlite: timeout")
+		reconcileErr := errors.New("failed to refresh trust-store from database: unavailable")
+
+		err := wrapForceRemoveOutcomeError("node2", dqliteErr, reconcileErr)
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "force remove \"node2\" completed with partial failures")
+		assert.ErrorContains(t, err, "from dqlite")
+		assert.ErrorContains(t, err, "refresh trust-store")
+	})
 }

@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -14,6 +15,13 @@ import (
 	"github.com/canonical/microceph/microceph/logger"
 	microCluster "github.com/canonical/microcluster/v2/cluster"
 	microTypes "github.com/canonical/microcluster/v2/rest/types"
+)
+
+var (
+	syncTrustStoreFromDatabaseOp = SyncTrustStoreFromDatabase
+	reconcileMonHostEntriesOp    = reconcileMonHostEntries
+	updateConfigOp               = UpdateConfig
+	syncClusterRemotesOnPeersOp  = syncClusterRemotesOnPeers
 )
 
 // ForceRemoveClusterMember is the recovery-path member removal used when the normal
@@ -112,6 +120,7 @@ func ForceRemoveClusterMember(ctx context.Context, s interfaces.StateInterface, 
 		return fmt.Errorf("failed to remove cluster member %q from database: %w", memberName, err)
 	}
 
+	var dqliteErr error
 	if dqliteTargetAddress != "" {
 		dqliteIndex := -1
 		for i, node := range nodes {
@@ -124,10 +133,10 @@ func ForceRemoveClusterMember(ctx context.Context, s interfaces.StateInterface, 
 		if dqliteIndex >= 0 {
 			err = leader.Remove(ctx, nodes[dqliteIndex].ID)
 			if err != nil {
-				return fmt.Errorf("failed to remove member %q from dqlite: %w", memberName, err)
+				dqliteErr = fmt.Errorf("failed to remove member %q from dqlite: %w", memberName, err)
+			} else {
+				removedDqliteNode = true
 			}
-
-			removedDqliteNode = true
 		} else {
 			logger.Warnf("No dqlite record exists for %q at address %q, continuing with internal cleanup only", memberName, dqliteTargetAddress)
 		}
@@ -138,25 +147,40 @@ func ForceRemoveClusterMember(ctx context.Context, s interfaces.StateInterface, 
 		return lxdApi.StatusErrorf(http.StatusNotFound, "cluster member %q not found", memberName)
 	}
 
+	reconcileErr := reconcileAfterForceRemove(ctx, s)
+	return wrapForceRemoveOutcomeError(memberName, dqliteErr, reconcileErr)
+}
+
+func wrapForceRemoveOutcomeError(memberName string, dqliteErr error, reconcileErr error) error {
+	if dqliteErr == nil && reconcileErr == nil {
+		return nil
+	}
+
+	return fmt.Errorf("force remove %q completed with partial failures: %w", memberName, errors.Join(dqliteErr, reconcileErr))
+}
+
+func reconcileAfterForceRemove(ctx context.Context, s interfaces.StateInterface) error {
+	var reconcileErrors []error
+
 	// Reconcile local files/config from the now-authoritative DB state.
-	err = SyncTrustStoreFromDatabase(ctx, s)
+	err := syncTrustStoreFromDatabaseOp(ctx, s)
 	if err != nil {
-		return err
+		reconcileErrors = append(reconcileErrors, fmt.Errorf("failed to refresh trust-store from database: %w", err))
 	}
 
-	_, err = reconcileMonHostEntries(ctx, s)
+	_, err = reconcileMonHostEntriesOp(ctx, s)
 	if err != nil {
-		return err
+		reconcileErrors = append(reconcileErrors, fmt.Errorf("failed to reconcile monitor host entries: %w", err))
 	}
 
-	err = UpdateConfig(ctx, s)
+	err = updateConfigOp(ctx, s)
 	if err != nil {
 		logger.Warnf("force remove: failed to regenerate ceph.conf locally: %v", err)
 	}
 
-	syncClusterRemotesOnPeers(ctx, s)
+	syncClusterRemotesOnPeersOp(ctx, s)
 
-	return nil
+	return errors.Join(reconcileErrors...)
 }
 
 type recoveryClusterMember struct {
