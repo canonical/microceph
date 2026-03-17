@@ -9,6 +9,7 @@ Wait! No-one's "hacking" anything. The aim of this document is to enable new dev
 3. [📖 References](#📖-references)
 4. [🏭 Build Guide](#🏭-build-guide)
 5. [👍 Unit-Testing](#👍-unit-testing)
+6. [DB Schema Updates](#db-schema-updates)
 
 ## ⚡️ Introduction to snaps
 
@@ -128,3 +129,36 @@ make check-unit
 # Run static checks
 make check-static
 ```
+
+## DB Schema Updates
+
+MicroCeph uses [lxd-generate](https://pkg.go.dev/github.com/canonical/lxd/lxd/db/generate) to auto-generate database mapper code (SQL statements and Go CRUD functions) from struct definitions. When adding a new database entity or modifying `//go:generate` directives, you need to regenerate the corresponding `.mapper.go` file.
+
+### Installing lxd-generate
+
+Install the generator matching the version of `github.com/canonical/lxd` in `go.mod`:
+
+```bash
+# Check the pinned version
+grep 'canonical/lxd ' go.mod
+
+# Install it (replace the version hash as needed)
+go install github.com/canonical/lxd/lxd/db/generate@v0.0.0-20241106165613-4aab50ec18c3
+
+# The binary installs as "generate" — create a symlink with the expected name
+ln -s ~/go/bin/generate ~/go/bin/lxd-generate
+
+# Ensure ~/go/bin is in your PATH
+export PATH="$HOME/go/bin:$PATH"
+```
+
+### Running the generator
+
+Target the specific file:
+
+```bash
+cd microceph
+go generate ./database/host_tag.go
+```
+
+This reads the `//go:generate mapper` directives in the source file and produces the corresponding `.mapper.go` file with SQL statements and Go functions.
