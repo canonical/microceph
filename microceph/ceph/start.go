@@ -225,11 +225,10 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 
 // Start is run on daemon startup.
 func Start(ctx context.Context, s interfaces.StateInterface) error {
-	// flag: are we on the first run?
-	first := true
 	// Start background loop to refresh the config every minute if needed.
 	go func() {
-		oldMonitors := []string{}
+		// nil ensures the first DeepEqual always returns false, triggering an initial update.
+		var oldMonitors []string
 
 		for {
 			// Check that the database is ready.
@@ -270,7 +269,7 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 			}
 
 			// Check if we need to update
-			if !first || reflect.DeepEqual(oldMonitors, monitors) {
+			if reflect.DeepEqual(oldMonitors, monitors) {
 				logger.Debugf("start: monitors unchanged, sleeping: %v", monitors)
 				select {
 				case <-ctx.Done():
@@ -291,7 +290,6 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 				continue
 			}
 			logger.Debug("start: updated config, sleeping")
-			first = false // for subsequent runs
 			oldMonitors = monitors
 			select {
 			case <-ctx.Done():
