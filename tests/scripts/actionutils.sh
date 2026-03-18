@@ -24,7 +24,6 @@ function setup_lxd() {
 }
 
 function install_microceph() {
-    local mon_ip="${1-}"
     # Install locally built microceph snap and connect interfaces
     sudo snap install --dangerous ~/microceph_*.snap
     sudo snap connect microceph:block-devices
@@ -35,6 +34,10 @@ function install_microceph() {
     sudo snap connect microceph:microceph-support
     sudo snap connect microceph:network-bind
     sudo snap connect microceph:process-control
+}
+
+function bootstrap_microceph() {
+    local mon_ip="${1-}"
 
     if [ -n "${mon_ip}" ]; then
         sudo microceph cluster bootstrap --mon-ip "${mon_ip}"
@@ -48,6 +51,12 @@ function install_microceph() {
     sleep 30
     sudo microceph.ceph status
     sudo microceph.ceph health
+}
+
+function install_and_bootstrap_microceph() {
+    local mon_ip="${1-}"
+    install_microceph
+    bootstrap_microceph "${mon_ip}"
 }
 
 function install_tools() {
@@ -1571,7 +1580,7 @@ function verify_pristine_check() {
 
     # Create some dirty disks
     create_loop_devices
-    install_microceph
+    install_and_bootstrap_microceph
     sudo microceph disk add /dev/sdia --wipe
     sudo microceph disk add /dev/sdib --wipe
     sudo microceph disk add /dev/sdic --wipe
@@ -1580,7 +1589,7 @@ function verify_pristine_check() {
     
     # Remove the snap to leave dirty disks then reinstall
     sudo snap remove microceph --purge
-    install_microceph
+    install_and_bootstrap_microceph
 
     # Levels of dirtiness
     # - leave sdia completely dirty
@@ -1628,6 +1637,45 @@ function verify_mount_check() {
         echo "stderr: $stde"
         exit 1
     fi
+}
+
+function test_waitready() {
+    set -eux
+
+    install_microceph
+
+    # Pre-bootstrap: should fail
+    if sudo microceph waitready --timeout 5 2>/dev/null; then
+        echo "ERROR: waitready succeeded before bootstrap"
+        exit 1
+    fi
+    echo "waitready correctly failed before bootstrap"
+
+    bootstrap_microceph
+
+    # Post-bootstrap: should succeed
+    sudo microceph waitready --timeout 30
+    echo "waitready succeeded after bootstrap"
+}
+
+function test_waitready_storage_not_enough_osds() {
+    # After bootstrap, osd_pool_default_size is 3 but no OSDs have been added.
+    # --storage should time out because 0 OSDs < 3 required.
+    if sudo microceph waitready --storage --timeout 1 2>/dev/null; then
+        echo "ERROR: waitready --storage succeeded with insufficient OSDs, expected failure"
+        exit 1
+    fi
+    echo "waitready --storage correctly failed with insufficient OSDs"
+}
+
+function test_waitready_storage() {
+    set -e
+    # With --storage, waitready should succeed once enough OSDs are up
+    # to satisfy pool replication requirements.
+    # Expects: osd_pool_default_size=1 (set during bootstrap) and at least
+    # 1 OSD added by the preceding "Add OSDs" step.
+    sudo microceph waitready --storage --timeout 30
+    echo "waitready --storage succeeded"
 }
 
 run="${1}"
