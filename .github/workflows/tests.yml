@@ -86,11 +86,13 @@ jobs:
       - name: Free disk
         run: ~/actionutils.sh free_runner_disk
 
-      - name: Install and setup
+      - name: Test waitready (install, pre-bootstrap fail, bootstrap, post-bootstrap pass)
         run: |
           ~/actionutils.sh install_tools
-          ~/actionutils.sh install_microceph
+          ~/actionutils.sh test_waitready
 
+      - name: Verify post-bootstrap state
+        run: |
           set -uex
           # Verify metadata.yaml
           meta=/var/snap/microceph/current/conf/metadata.yaml
@@ -100,6 +102,9 @@ jobs:
           # Verify health and auto crush rule
           sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"
           sudo microceph.ceph osd crush rule ls | grep -F microceph_auto_osd
+
+      - name: Test microceph waitready --storage fails with insufficient OSDs
+        run: ~/actionutils.sh test_waitready_storage_not_enough_osds
 
       - name: Enable MicroCeph Orchestrator module
         run: |
@@ -148,6 +153,9 @@ jobs:
         run: |
           ~/actionutils.sh add_encrypted_osds
           ~/actionutils.sh add_lvm_vol
+
+      - name: Test microceph waitready --storage after OSDs added
+        run: ~/actionutils.sh test_waitready_storage
 
       - name: Enable RGW
         run: ~/actionutils.sh enable_rgw
@@ -238,7 +246,7 @@ jobs:
           sudo snap remove microceph
           export MON_IP="fd42:7273:f336:a22::1"
           sudo ip -6 addr add dev eth0 "${MON_IP}"
-          ~/actionutils.sh install_microceph "${MON_IP}"
+          ~/actionutils.sh install_and_bootstrap_microceph "${MON_IP}"
           cat /var/snap/microceph/current/conf/ceph.conf
           fgrep -q "[${MON_IP}]" /var/snap/microceph/current/conf/ceph.conf
 
@@ -562,7 +570,7 @@ jobs:
       - name: Install and setup
         run: |
           ~/actionutils.sh install_tools        
-          ~/actionutils.sh install_microceph
+          ~/actionutils.sh install_and_bootstrap_microceph
 
       - name: Add loopback file OSDs
         run: |
@@ -617,7 +625,7 @@ jobs:
       - name: Install and setup
         run: |
           ~/actionutils.sh install_tools        
-          ~/actionutils.sh install_microceph
+          ~/actionutils.sh install_and_bootstrap_microceph
 
       - name: Add loopback file OSDs
         run: |
@@ -836,7 +844,7 @@ jobs:
       - name: Install and setup
         run: |
           ~/actionutils.sh install_tools        
-          ~/actionutils.sh install_microceph
+          ~/actionutils.sh install_and_bootstrap_microceph
 
       - name: Add loopback file OSDs
         run: |
@@ -1029,7 +1037,7 @@ jobs:
         run: ~/actionutils.sh free_runner_disk
 
       - name: Install and setup
-        run: ~/actionutils.sh install_microceph
+        run: ~/actionutils.sh install_and_bootstrap_microceph
 
       - name: Add loopback file OSDs
         run: |
