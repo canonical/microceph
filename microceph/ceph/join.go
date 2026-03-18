@@ -106,7 +106,7 @@ func Join(ctx context.Context, s interfaces.StateInterface) error {
 }
 
 // getServicesForHost get services needed to be spawned on this machine.
-func getServicesForHost(ctx context.Context, s interfaces.StateInterface, hostname string) ([]database.Service, error) {
+var getServicesForHost = func(ctx context.Context, s interfaces.StateInterface, hostname string) ([]database.Service, error) {
 	var services []database.Service
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error

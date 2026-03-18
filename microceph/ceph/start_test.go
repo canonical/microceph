@@ -1,15 +1,19 @@
 package ceph
 
 import (
+	"context"
 	"errors"
-	"github.com/canonical/microceph/microceph/common"
 	"testing"
 	"time"
 
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -183,4 +187,87 @@ func (s *startSuite) TestCephVersionCommandFails() {
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "version check failed")
 	r.AssertExpectations(s.T())
+}
+
+// --- reEnableServices tests ---
+
+// setupReEnable wires the common mocks for reEnableServices tests:
+// a Runner for snapctl calls, a function-variable override for
+// getServicesForHost, and a mock for GroupedServicesQuery.
+func (s *startSuite) setupReEnable(
+	services []database.Service,
+	grouped []database.GroupedService,
+) *mocks.Runner {
+	orig := getServicesForHost
+	s.T().Cleanup(func() { getServicesForHost = orig })
+	getServicesForHost = func(_ context.Context, _ interfaces.StateInterface, _ string) ([]database.Service, error) {
+		return services, nil
+	}
+
+	origGS := database.GroupedServicesQuery
+	s.T().Cleanup(func() { database.GroupedServicesQuery = origGS })
+	gsDb := mocks.NewGroupedServiceQueryIntf(s.T())
+	gsDb.On("GetGroupedServicesOnHost", mock.Anything, mock.Anything).Return(grouped, nil).Maybe()
+	database.GroupedServicesQuery = gsDb
+
+	r := mocks.NewRunner(s.T())
+	common.ProcessExec = r
+
+	return r
+}
+
+func (s *startSuite) newState() *mocks.StateInterface {
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(&mocks.MockState{ClusterName: "node1"}).Maybe()
+	return si
+}
+
+func (s *startSuite) TestReEnableNoServicesSkips() {
+	// No services registered → early return, no snapctl calls at all.
+	s.setupReEnable(nil, nil)
+	reEnableServices(context.Background(), s.newState())
+}
+
+func (s *startSuite) TestReEnableInactiveServiceRestarted() {
+	r := s.setupReEnable(
+		[]database.Service{{Service: "mon", Member: "node1"}},
+		nil,
+	)
+	// mon is inactive → gets restarted.
+	r.On("RunCommand", "snapctl", "services", "microceph.mon").Return("inactive", nil).Once()
+	r.On("RunCommand", "snapctl", "start", "microceph.mon", "--enable").Return("ok", nil).Once()
+	// OSD active.
+	r.On("RunCommand", "snapctl", "services", "microceph.osd").Return("active", nil).Once()
+
+	reEnableServices(context.Background(), s.newState())
+}
+
+func (s *startSuite) TestReEnableOSDRestarted() {
+	r := s.setupReEnable(
+		[]database.Service{{Service: "mon", Member: "node1"}},
+		nil,
+	)
+	r.On("RunCommand", "snapctl", "services", "microceph.mon").Return("active", nil).Once()
+	// OSD is inactive → gets restarted.
+	r.On("RunCommand", "snapctl", "services", "microceph.osd").Return("inactive", nil).Once()
+	r.On("RunCommand", "snapctl", "start", "microceph.osd", "--enable").Return("ok", nil).Once()
+
+	reEnableServices(context.Background(), s.newState())
+}
+
+func (s *startSuite) TestReEnableGroupedServiceRestarted() {
+	r := s.setupReEnable(
+		[]database.Service{{Service: "mon", Member: "node1"}},
+		[]database.GroupedService{
+			{Service: "nfs", GroupID: "g1", Member: "node1"},
+			{Service: "nfs", GroupID: "g2", Member: "node1"}, // duplicate — should be skipped
+		},
+	)
+	r.On("RunCommand", "snapctl", "services", "microceph.mon").Return("active", nil).Once()
+	r.On("RunCommand", "snapctl", "services", "microceph.osd").Return("active", nil).Once()
+	// nfs checked once (deduplicated), inactive → restarted.
+	r.On("RunCommand", "snapctl", "services", "microceph.nfs").Return("inactive", nil).Once()
+	r.On("RunCommand", "snapctl", "start", "microceph.nfs", "--enable").Return("ok", nil).Once()
+
+	reEnableServices(context.Background(), s.newState())
 }
