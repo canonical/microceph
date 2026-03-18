@@ -1653,7 +1653,7 @@ function test_snap_disable_enable() {
     local services_before
     services_before=$(snap services microceph | awk '$2 == "enabled" && $3 == "active" {print $1}')
     local count_before
-    count_before=$(echo "$services_before" | wc -l)
+    count_before=$(printf '%s' "$services_before" | grep -c . || true)
     echo "Enabled+active services ($count_before):"
     echo "$services_before"
 
