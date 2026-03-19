@@ -1639,6 +1639,66 @@ function verify_mount_check() {
     fi
 }
 
+# Test that snap disable/enable microceph re-enables all services.
+# Usage: test_snap_disable_enable
+function test_snap_disable_enable() {
+    set -eux
+
+    echo "--- snap services before disable ---"
+    snap services microceph
+
+    # Record which services are both enabled and active before disable.
+    # Only these should come back — transiently started services (active
+    # but Startup=disabled) are not DB-registered and won't be restored.
+    local services_before
+    services_before=$(snap services microceph | awk '$2 == "enabled" && $3 == "active" {print $1}')
+    local count_before
+    count_before=$(printf '%s' "$services_before" | grep -c . || true)
+    echo "Enabled+active services ($count_before):"
+    echo "$services_before"
+
+    # Disable and re-enable the snap.
+    sudo snap disable microceph
+
+    echo "--- snap services after disable ---"
+    snap services microceph
+
+    sudo snap enable microceph
+
+    # Wait for the services to come back.
+    echo "Waiting for services to be re-enabled..."
+    local active_count
+    for i in $(seq 1 30); do
+        active_count=$(snap services microceph | awk '$2 == "enabled" && $3 == "active"' | wc -l)
+        if [ "$active_count" -ge "$count_before" ]; then
+            echo "All $count_before services are enabled+active again after ${i}s"
+            break
+        fi
+        if [ "$i" -eq 30 ]; then
+            echo "FAIL: not all services re-enabled after 30s"
+            echo "Expected $count_before, got $active_count"
+            snap services microceph
+            sudo snap logs microceph.daemon -n 50 || true
+            exit 1
+        fi
+        sleep 1
+    done
+
+    echo "--- snap services after enable ---"
+    snap services microceph
+
+    # Verify each previously enabled+active service is back.
+    for svc in $services_before; do
+        local name="${svc#microceph.}"
+        check_snap_service_active_enabled "$name"
+    done
+
+    echo "PASS: all services re-enabled after snap disable/enable cycle"
+
+    # Verify the cluster is healthy.
+    verify_health
+}
+
 function test_waitready() {
     set -eux
 

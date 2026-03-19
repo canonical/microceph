@@ -5,15 +5,22 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/microceph/microceph/common"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/canonical/microceph/microceph/logger"
+	"github.com/canonical/microceph/microceph/common"
+
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/logger"
 )
+
+// serviceStartMu is held by bootstrap/join while they start services, and by
+// reEnableServices when it re-enables services after a snap disable/enable
+// cycle. This prevents concurrent snapctl service-control calls.
+var serviceStartMu sync.Mutex
 
 type cephVersionElem map[string]int32
 
@@ -150,6 +157,72 @@ func PostRefresh() error {
 	return nil
 }
 
+// reEnableServices checks which services are registered in the database for
+// the current host and re-enables any that are not currently active. This
+// handles the case where "snap disable/enable microceph" leaves the secondary
+// services (mon, mgr, mds, osd, rgw, rbd-mirror, etc.) disabled.
+// serviceStartMu lock ensures this does not race with bootstrap/join
+// which also start services.
+func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+
+	hostname := s.ClusterState().Name()
+
+	services, err := getServicesForHost(ctx, s, hostname)
+	if err != nil {
+		logger.Warnf("start: failed to query services for re-enablement: %v", err)
+		return
+	}
+
+	// If no services are registered, the node hasn't been bootstrapped or
+	// joined yet — nothing to re-enable.
+	if len(services) == 0 {
+		logger.Debug("start: no services registered, skipping re-enablement")
+		return
+	}
+
+	for _, service := range services {
+		if err := snapCheckActive(service.Service); err != nil {
+			logger.Infof("start: re-enabling inactive service %q", service.Service)
+			if err := snapStart(service.Service, true); err != nil {
+				logger.Warnf("start: failed to re-enable service %q: %v", service.Service, err)
+			}
+		}
+	}
+
+	// OSD is not tracked in the services table but is always enabled at
+	// bootstrap, so re-enable it if inactive.
+	if err := snapCheckActive("osd"); err != nil {
+		logger.Infof("start: re-enabling inactive OSD service")
+		if err := snapStart("osd", true); err != nil {
+			logger.Warnf("start: failed to re-enable OSD service: %v", err)
+		}
+	}
+
+	// Grouped services (e.g. NFS) are tracked in a separate table.
+	groupedServices, err := database.GroupedServicesQuery.GetGroupedServicesOnHost(ctx, s)
+	if err != nil {
+		logger.Warnf("start: failed to query grouped services for re-enablement: %v", err)
+		return
+	}
+
+	// De-duplicate by service name since there may be multiple groups.
+	seen := map[string]bool{}
+	for _, gs := range groupedServices {
+		if seen[gs.Service] {
+			continue
+		}
+		seen[gs.Service] = true
+		if err := snapCheckActive(gs.Service); err != nil {
+			logger.Infof("start: re-enabling inactive grouped service %q", gs.Service)
+			if err := snapStart(gs.Service, true); err != nil {
+				logger.Warnf("start: failed to re-enable grouped service %q: %v", gs.Service, err)
+			}
+		}
+	}
+}
+
 // Start is run on daemon startup.
 func Start(ctx context.Context, s interfaces.StateInterface) error {
 	// flag: are we on the first run?
@@ -160,10 +233,14 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 
 		for {
 			// Check that the database is ready.
-			err := s.ClusterState().Database().IsOpen(context.Background())
+			err := s.ClusterState().Database().IsOpen(ctx)
 			if err != nil {
 				logger.Debug("start: database not ready, waiting...")
-				time.Sleep(10 * time.Second)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(10 * time.Second):
+				}
 				continue
 			}
 
@@ -184,32 +261,70 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 			})
 			if err != nil {
 				logger.Warnf("start: failed to fetch monitors, retrying: %v", err)
-				time.Sleep(10 * time.Second)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(10 * time.Second):
+				}
 				continue
 			}
 
 			// Check if we need to update
 			if !first || reflect.DeepEqual(oldMonitors, monitors) {
 				logger.Debugf("start: monitors unchanged, sleeping: %v", monitors)
-				time.Sleep(time.Minute)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Minute):
+				}
 				continue
 			}
 
 			err = UpdateConfig(ctx, s)
 			if err != nil {
 				logger.Errorf("start: failed to update config, retrying: %v", err)
-				time.Sleep(10 * time.Second)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(10 * time.Second):
+				}
 				continue
 			}
 			logger.Debug("start: updated config, sleeping")
 			first = false // for subsequent runs
 			oldMonitors = monitors
-			time.Sleep(time.Minute)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Minute):
+			}
 		}
 	}()
 
+	// Re-enable services that should be running on this host but may have
+	// been left disabled after a snap disable/enable cycle.
 	go func() {
-		time.Sleep(10 * time.Second) // wait for the mons to converge
+		// Wait for the database to become ready.
+		for {
+			err := s.ClusterState().Database().IsOpen(ctx)
+			if err == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(10 * time.Second):
+			}
+		}
+		reEnableServices(ctx, s)
+	}()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Second): // wait for the mons to converge
+		}
 		err := PostRefresh()
 		if err != nil {
 			logger.Errorf("PostRefresh failed: %v", err)
