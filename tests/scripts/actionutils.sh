@@ -724,8 +724,37 @@ function remote_failover_to_siteb() {
     fi
 }
 
+function remote_wait_for_rbd_mirror_health() {
+    set -eux
+    local node="${1:-node-wrk2}"
+    local pools="${2:-pool_one pool_two}"
+    local max_attempts=60
+
+    for pool in $pools; do
+        echo "Waiting for RBD mirror health OK on $node pool $pool..."
+        for i in $(seq 1 $max_attempts); do
+            health=$(lxc exec "$node" -- sh -c \
+                "sudo microceph.rbd mirror pool status $pool --format json 2>/dev/null" \
+                | grep -o '"health"[[:space:]]*:[[:space:]]*"[^"]*"' \
+                | head -1 | sed 's/.*"\([^"]*\)"$/\1/') || health="UNKNOWN"
+            echo "  attempt #$i: $pool health=$health"
+            if [[ "$health" == "OK" ]]; then
+                break
+            fi
+            if [[ "$i" -eq "$max_attempts" ]]; then
+                echo "Timed out waiting for $pool mirror health to be OK"
+                exit 1
+            fi
+            sleep 5
+        done
+    done
+}
+
 function remote_disable_rbd_mirroring() {
     set -eux
+    # Wait for replication health to be OK before attempting disable operations.
+    remote_wait_for_rbd_mirror_health node-wrk2 "pool_one pool_two"
+
     # check disables fail for image mirroring pools with images currently being mirrored
     lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_two 2>&1 || true"  | grep "in Image mirroring mode"
     # disable both images in pool_two and then disable pool_two
