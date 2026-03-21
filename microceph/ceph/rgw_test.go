@@ -2,15 +2,15 @@ package ceph
 
 import (
 	"context"
-	"github.com/canonical/microceph/microceph/common"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/tests"
-
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/mocks"
+	"github.com/canonical/microceph/microceph/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -85,7 +85,7 @@ func (s *rgwSuite) TestEnableRGWWithInvalidSSLCertificate() {
 	err := EnableRGW(s.TestStateInterface, 80, 443, "invalid-certificate", validSSLPrivateKey, []string{"10.1.1.1", "10.2.2.2"})
 
 	// we expect an illegal base64 data error
-	assert.EqualError(s.T(), err, "illegal base64 data at input byte 7")
+	assert.EqualError(s.T(), err, "failed to decode SSL certificate: illegal base64 data at input byte 7")
 
 	// check that the radosgw.conf file contains expected values
 	conf := s.ReadCephConfig("radosgw.conf")
@@ -101,7 +101,7 @@ func (s *rgwSuite) TestEnableRGWWithInvalidSSLPrivateKey() {
 	err := EnableRGW(s.TestStateInterface, 80, 443, validSSLCertificate, "invalid-private-key", []string{"10.1.1.1", "10.2.2.2"})
 
 	// we expect an illegal base64 data error
-	assert.EqualError(s.T(), err, "illegal base64 data at input byte 7")
+	assert.EqualError(s.T(), err, "failed to decode SSL private key: illegal base64 data at input byte 7")
 
 	// check that the radosgw.conf file contains expected values
 	conf := s.ReadCephConfig("radosgw.conf")
@@ -159,6 +159,125 @@ func (s *rgwSuite) TestEnableRGWWithSSL() {
 	sslCertificatePath := filepath.Join(s.Tmp, "SNAP_COMMON", "server.crt")
 	sslPrivateKeyPath := filepath.Join(s.Tmp, "SNAP_COMMON", "server.key")
 	assert.Contains(s.T(), conf, "rgw frontends = beast port=8081 ssl_port=443 ssl_certificate="+sslCertificatePath+" ssl_private_key="+sslPrivateKeyPath+"\n")
+}
+
+func (s *rgwSuite) TestUpdateRGWCertificates() {
+	r := mocks.NewRunner(s.T())
+
+	// snapCheckActive expects: snapctl services microceph.rgw
+	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
+
+	common.ProcessExec = r
+
+	// Seed a radosgw.conf with SSL so the SSL-configured check passes.
+	confPath := filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf")
+	err := os.WriteFile(confPath, []byte("rgw frontends = beast ssl_port=443 ssl_certificate=/tmp/server.crt ssl_private_key=/tmp/server.key\n"), 0644)
+	assert.NoError(s.T(), err)
+
+	err = UpdateRGWCertificates(s.TestStateInterface, validSSLCertificate, validSSLPrivateKey)
+	assert.NoError(s.T(), err)
+
+	// Verify cert file was written
+	certPath := filepath.Join(s.Tmp, "SNAP_COMMON", "server.crt")
+	certData, err := os.ReadFile(certPath)
+	assert.NoError(s.T(), err)
+	assert.Contains(s.T(), string(certData), "BEGIN CERTIFICATE")
+
+	// Verify key file was written
+	keyPath := filepath.Join(s.Tmp, "SNAP_COMMON", "server.key")
+	keyData, err := os.ReadFile(keyPath)
+	assert.NoError(s.T(), err)
+	assert.Contains(s.T(), string(keyData), "BEGIN PRIVATE KEY")
+
+	// Verify file permissions are 0600
+	certInfo, _ := os.Stat(certPath)
+	assert.Equal(s.T(), os.FileMode(0600), certInfo.Mode().Perm())
+	keyInfo, _ := os.Stat(keyPath)
+	assert.Equal(s.T(), os.FileMode(0600), keyInfo.Mode().Perm())
+}
+
+func (s *rgwSuite) TestUpdateRGWCertificatesWhenRGWNotActive() {
+	r := mocks.NewRunner(s.T())
+
+	// snapCheckActive returns inactive
+	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  disabled  inactive", nil).Once()
+
+	common.ProcessExec = r
+
+	err := UpdateRGWCertificates(s.TestStateInterface, validSSLCertificate, validSSLPrivateKey)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "RGW service is not running")
+}
+
+func (s *rgwSuite) TestUpdateRGWCertificatesSSLNotConfigured() {
+	r := mocks.NewRunner(s.T())
+
+	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
+
+	common.ProcessExec = r
+
+	// Seed a radosgw.conf without SSL — RGW was enabled without certificates.
+	confPath := filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf")
+	_ = os.WriteFile(confPath, []byte("rgw frontends = beast port=80\n"), 0644)
+
+	err := UpdateRGWCertificates(s.TestStateInterface, validSSLCertificate, validSSLPrivateKey)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "RGW is not configured with SSL")
+}
+
+func (s *rgwSuite) TestUpdateRGWCertificatesInvalidCertificate() {
+	r := mocks.NewRunner(s.T())
+
+	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
+
+	common.ProcessExec = r
+
+	// Seed a radosgw.conf with SSL so the SSL-configured check passes.
+	confPath := filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf")
+	_ = os.WriteFile(confPath, []byte("rgw frontends = beast ssl_port=443 ssl_certificate=/tmp/server.crt ssl_private_key=/tmp/server.key\n"), 0644)
+
+	err := UpdateRGWCertificates(s.TestStateInterface, "invalid-base64!", validSSLPrivateKey)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "failed to decode SSL certificate")
+}
+
+func (s *rgwSuite) TestUpdateRGWCertificatesInvalidPrivateKey() {
+	r := mocks.NewRunner(s.T())
+
+	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
+
+	common.ProcessExec = r
+
+	// Seed a radosgw.conf with SSL so the SSL-configured check passes.
+	confPath := filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf")
+	_ = os.WriteFile(confPath, []byte("rgw frontends = beast ssl_port=443 ssl_certificate=/tmp/server.crt ssl_private_key=/tmp/server.key\n"), 0644)
+
+	err := UpdateRGWCertificates(s.TestStateInterface, validSSLCertificate, "invalid-base64!")
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "failed to decode SSL private key")
+}
+
+func (s *rgwSuite) TestRestartRGW() {
+	r := mocks.NewRunner(s.T())
+
+	r.On("RunCommand", "snapctl", "restart", "microceph.rgw").Return("ok", nil).Once()
+
+	common.ProcessExec = r
+
+	err := RestartRGW()
+	assert.NoError(s.T(), err)
+}
+
+func (s *rgwSuite) TestRestartRGWFailure() {
+	r := mocks.NewRunner(s.T())
+
+	r.On("RunCommand", "snapctl", "restart", "microceph.rgw").Return("", fmt.Errorf("service not found")).Once()
+
+	common.ProcessExec = r
+
+	err := RestartRGW()
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "failed to restart RGW service")
 }
 
 func (s *rgwSuite) TestDisableRGW() {
