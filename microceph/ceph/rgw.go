@@ -14,6 +14,32 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 )
 
+// writeSSLFiles decodes base64-encoded SSL certificate and key, and writes them to disk.
+// Returns the paths to the written certificate and key files.
+func writeSSLFiles(sslFilesPath string, sslCertificate string, sslPrivateKey string) (certPath string, keyPath string, err error) {
+	decodedCert, err := base64.StdEncoding.DecodeString(sslCertificate)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to decode SSL certificate: %w", err)
+	}
+
+	decodedKey, err := base64.StdEncoding.DecodeString(sslPrivateKey)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to decode SSL private key: %w", err)
+	}
+
+	certPath = filepath.Join(sslFilesPath, "server.crt")
+	if err := os.WriteFile(certPath, decodedCert, 0600); err != nil {
+		return "", "", fmt.Errorf("failed to write SSL certificate: %w", err)
+	}
+
+	keyPath = filepath.Join(sslFilesPath, "server.key")
+	if err := os.WriteFile(keyPath, decodedKey, 0600); err != nil {
+		return "", "", fmt.Errorf("failed to write SSL private key: %w", err)
+	}
+
+	return certPath, keyPath, nil
+}
+
 // EnableRGW enables the RGW service on the cluster and adds initial configuration given a service port number.
 func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificate string, sslPrivateKey string, monitors []string) error {
 	pathConsts := constants.GetPathConst()
@@ -21,21 +47,8 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 	sslCertificatePath := ""
 	sslPrivateKeyPath := ""
 	if sslCertificate != "" && sslPrivateKey != "" {
-		sslCertificatePath = filepath.Join(pathConsts.SSLFilesPath, "server.crt")
-		decodedSSLCertificate, err := base64.StdEncoding.DecodeString(sslCertificate)
-		if err != nil {
-			return err
-		}
-		err = os.WriteFile(sslCertificatePath, decodedSSLCertificate, 0600)
-		if err != nil {
-			return err
-		}
-		sslPrivateKeyPath = filepath.Join(pathConsts.SSLFilesPath, "server.key")
-		decodedSSLPrivateKey, err := base64.StdEncoding.DecodeString(sslPrivateKey)
-		if err != nil {
-			return err
-		}
-		err = os.WriteFile(sslPrivateKeyPath, decodedSSLPrivateKey, 0600)
+		var err error
+		sslCertificatePath, sslPrivateKeyPath, err = writeSSLFiles(pathConsts.SSLFilesPath, sslCertificate, sslPrivateKey)
 		if err != nil {
 			return err
 		}
@@ -76,6 +89,37 @@ func EnableRGW(s interfaces.StateInterface, port int, sslPort int, sslCertificat
 		return err
 	}
 
+	return nil
+}
+
+// UpdateRGWCertificates decodes base64 SSL certificate and key, and writes them to disk.
+// RGW must be active for this operation.
+func UpdateRGWCertificates(s interfaces.StateInterface, sslCertificate string, sslPrivateKey string) error {
+	if err := snapCheckActive("rgw"); err != nil {
+		return fmt.Errorf("RGW service is not running: %w", err)
+	}
+
+	pathConsts := constants.GetPathConst()
+
+	// Verify that RGW was configured with SSL by checking the config file.
+	confPath := filepath.Join(pathConsts.ConfPath, "radosgw.conf")
+	confData, err := os.ReadFile(confPath)
+	if err != nil {
+		return fmt.Errorf("failed to read RGW configuration: %w", err)
+	}
+	if !strings.Contains(string(confData), "ssl_certificate=") {
+		return fmt.Errorf("RGW is not configured with SSL; enable RGW with --ssl-certificate and --ssl-private-key first")
+	}
+
+	_, _, err = writeSSLFiles(pathConsts.SSLFilesPath, sslCertificate, sslPrivateKey)
+	return err
+}
+
+// RestartRGW restarts the RGW service for immediate certificate pickup.
+func RestartRGW() error {
+	if err := snapRestart("rgw", false); err != nil {
+		return fmt.Errorf("failed to restart RGW service: %w", err)
+	}
 	return nil
 }
 
