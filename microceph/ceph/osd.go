@@ -421,10 +421,11 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 
 	// If we have 3+ unique AZs with at least one OSD each, switch failure domain to rack.
 	if len(data.uniqueAZs) >= 3 {
-		activeAZs, err := countAZsWithOSDs(data.uniqueAZs, data.hostAZ)
+		nodes, err := getOSDTreeNodes(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to count AZs with OSDs: %w", err)
 		}
+		activeAZs := countAZsWithOSDs(nodes, data.uniqueAZs, data.hostAZ)
 		if activeAZs < 3 {
 			logger.Infof("Have %d unique AZs but only %d with OSDs, skipping rack switch", len(data.uniqueAZs), activeAZs)
 			return nil
@@ -1315,6 +1316,81 @@ func IsDowngradeNeeded(ctx context.Context, s interfaces.StateInterface, osd int
 	if numNodes < 3 { // need to scale down
 		return true, nil
 	}
+	return false, nil
+}
+
+// getOSDHostAZ returns the availability zone for the host that owns the given OSD.
+// Returns empty string if the host has no AZ configured.
+func getOSDHostAZ(ctx context.Context, s interfaces.StateInterface, osd int64) (string, error) {
+	disks, err := database.OSDQuery.List(ctx, s.ClusterState())
+	if err != nil {
+		return "", fmt.Errorf("failed to list disks: %w", err)
+	}
+
+	var hostname string
+	for _, disk := range disks {
+		if disk.OSD == osd {
+			hostname = disk.Location
+			break
+		}
+	}
+	if hostname == "" {
+		return "", fmt.Errorf("osd.%d not found in database", osd)
+	}
+
+	data, err := getAZData(ctx, s.ClusterState(), hostname)
+	if err != nil {
+		return "", err
+	}
+	return data.hostAZ, nil
+}
+
+// IsRackDegradeBlocked checks if removing the given OSD would drop the number of
+// AZs with OSDs below 3 while the cluster uses rack-level failure domain.
+// Unlike host->osd downgrade, rack degradation is not supported — the removal is blocked.
+func IsRackDegradeBlocked(ctx context.Context, s interfaces.StateInterface, osd int64) (bool, error) {
+	onRack, err := IsOnRackRule()
+	if err != nil {
+		return false, err
+	}
+	if !onRack {
+		return false, nil
+	}
+
+	// We're on rack failure domain. Find which AZ this OSD belongs to.
+	osdAZ, err := getOSDHostAZ(ctx, s, osd)
+	if err != nil {
+		return false, err
+	}
+	if osdAZ == "" {
+		return false, nil
+	}
+
+	// Get all unique AZs from host_tags (only uniqueAZs is used here).
+	data, err := getAZData(ctx, s.ClusterState(), "")
+	if err != nil {
+		return false, err
+	}
+
+	// Fetch the CRUSH tree once for both AZ counting and per-rack OSD counting.
+	nodes, err := getOSDTreeNodes(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	// Count how many AZs currently have OSDs.
+	activeAZs := countAZsWithOSDs(nodes, data.uniqueAZs, "")
+
+	// If more than 3 AZs have OSDs, losing one still leaves enough.
+	if activeAZs > 3 {
+		return false, nil
+	}
+
+	// 3 or fewer AZs have OSDs. Check if this OSD is the last one in its AZ rack.
+	if countOSDsInAZRack(nodes, osdAZ) <= 1 {
+		return true, nil
+	}
+
 	return false, nil
 }
 

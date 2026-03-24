@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -154,20 +155,36 @@ func getDefaultCrushRule() (string, error) {
 	return strings.TrimSpace(configs[0].Value), nil
 }
 
+// IsOnRackRule returns true if the cluster's default crush rule is microceph_auto_rack.
+func IsOnRackRule() (bool, error) {
+	currentRule, err := getDefaultCrushRule()
+	if err != nil {
+		return false, fmt.Errorf("failed to get default crush rule: %w", err)
+	}
+	rackRule, err := getCrushRuleID("microceph_auto_rack")
+	if err != nil {
+		return false, fmt.Errorf("failed to get rack crush rule ID: %w", err)
+	}
+	return currentRule == rackRule, nil
+}
+
+// getOSDTreeNodes fetches and returns the parsed CRUSH tree nodes.
+func getOSDTreeNodes(ctx context.Context) (gjson.Result, error) {
+	output, err := cephRunContext(ctx, "osd", "tree", "-f", "json")
+	if err != nil {
+		return gjson.Result{}, fmt.Errorf("failed to get osd tree: %w", err)
+	}
+	return gjson.Get(output, "nodes"), nil
+}
+
 // countAZsWithOSDs returns the number of AZ rack buckets that contain at least one OSD.
-// It queries the CRUSH tree and checks each AZ rack for child hosts that have OSDs.
+// It checks each AZ rack in the given CRUSH tree nodes for child hosts that have OSDs.
 // The currentAZ parameter is the AZ of the host currently adding an OSD — it is always
 // counted as active since the OSD may not yet be visible in the CRUSH tree.
 // Note: there is technically a race between this check and the caller switching the
 // CRUSH rule — an OSD could be removed in between. We accept this because the same
 // race exists after the rule is active (an OSD removal can always cause degraded PGs).
-func countAZsWithOSDs(azNames map[string]bool, currentAZ string) (int, error) {
-	output, err := common.ProcessExec.RunCommand("ceph", "osd", "tree", "-f", "json")
-	if err != nil {
-		return 0, fmt.Errorf("failed to get osd tree: %w", err)
-	}
-
-	nodes := gjson.Get(output, "nodes")
+func countAZsWithOSDs(nodes gjson.Result, azNames map[string]bool, currentAZ string) int {
 	count := 0
 	for az := range azNames {
 		// The current host's AZ is always active — we're adding an OSD to it right now.
@@ -175,37 +192,36 @@ func countAZsWithOSDs(azNames map[string]bool, currentAZ string) (int, error) {
 			count++
 			continue
 		}
-		// Find the rack node for this AZ and get its children (host IDs).
-		// Use the "az." prefix and filter by type=="rack" to avoid matching
-		// a host or other bucket that happens to share the same name.
-		rackBucket := fmt.Sprintf("az.%s", az)
-		rackNode := nodes.Get(fmt.Sprintf(`#(name=="%s")`, rackBucket))
-		if !rackNode.Exists() || rackNode.Get("type").String() != "rack" {
-			continue
-		}
-		children := rackNode.Get("children")
-		if !children.Exists() {
-			continue
-		}
-		// Check if any child host has OSDs (children with id >= 0).
-		hasOSD := false
-		for _, hostID := range children.Array() {
-			hostChildren := nodes.Get(fmt.Sprintf(`#(id==%d).children`, hostID.Int()))
-			for _, osdID := range hostChildren.Array() {
-				if osdID.Int() >= 0 {
-					hasOSD = true
-					break
-				}
-			}
-			if hasOSD {
-				break
-			}
-		}
-		if hasOSD {
+		if countOSDsInAZRack(nodes, az) > 0 {
 			count++
 		}
 	}
-	return count, nil
+	return count
+}
+
+// countOSDsInAZRack returns the number of OSDs in the given AZ's rack bucket
+// from the given CRUSH tree nodes.
+func countOSDsInAZRack(nodes gjson.Result, az string) int {
+	rackBucket := fmt.Sprintf("az.%s", az)
+	rackNode := nodes.Get(fmt.Sprintf(`#(name=="%s")`, rackBucket))
+	if !rackNode.Exists() || rackNode.Get("type").String() != "rack" {
+		return 0
+	}
+	children := rackNode.Get("children")
+	if !children.Exists() {
+		return 0
+	}
+
+	osdCount := 0
+	for _, hostID := range children.Array() {
+		hostChildren := nodes.Get(fmt.Sprintf(`#(id==%d).children`, hostID.Int()))
+		for _, osdID := range hostChildren.Array() {
+			if osdID.Int() >= 0 {
+				osdCount++
+			}
+		}
+	}
+	return osdCount
 }
 
 // ensureCrushRules set up the crush rules for the automatic failure domain handling.

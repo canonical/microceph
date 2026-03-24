@@ -153,7 +153,7 @@ func (s *topologySuite) TestUpdateTopologyAZ3OrMore() {
 	addCrushBucketExpectations(r, "az-1", "node1")
 
 	// osd tree for countAZsWithOSDs — all 3 AZs have OSDs.
-	r.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(
+	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "tree", "-f", "json").Return(
 		osdTreeWithOSDs([]string{"az-1", "az-2", "az-3"}), nil).Maybe()
 
 	// haveCrushRule + switchFailureDomain internals are tested separately
@@ -200,7 +200,7 @@ func (s *topologySuite) TestUpdateTopologyAZ3NoOSDs() {
 	addCrushBucketExpectations(r, "az-1", "node1")
 
 	// osd tree for countAZsWithOSDs — no AZs have OSDs.
-	r.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(osdTreeEmpty(), nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "tree", "-f", "json").Return(osdTreeEmpty(), nil).Once()
 
 	// No switchFailureDomain expectations — should not be called.
 	common.ProcessExec = r
