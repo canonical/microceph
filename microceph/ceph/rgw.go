@@ -28,13 +28,32 @@ func writeSSLFiles(sslFilesPath string, sslCertificate string, sslPrivateKey str
 	}
 
 	certPath = filepath.Join(sslFilesPath, "server.crt")
-	if err := os.WriteFile(certPath, decodedCert, 0600); err != nil {
+	keyPath = filepath.Join(sslFilesPath, "server.key")
+
+	// Write to temporary files first so that a partial failure doesn't
+	// leave inconsistent state on disk.
+	certTmpPath := certPath + ".tmp"
+	keyTmpPath := keyPath + ".tmp"
+
+	if err := os.WriteFile(certTmpPath, decodedCert, 0600); err != nil {
 		return "", "", fmt.Errorf("failed to write SSL certificate: %w", err)
 	}
 
-	keyPath = filepath.Join(sslFilesPath, "server.key")
-	if err := os.WriteFile(keyPath, decodedKey, 0600); err != nil {
+	if err := os.WriteFile(keyTmpPath, decodedKey, 0600); err != nil {
+		os.Remove(certTmpPath)
 		return "", "", fmt.Errorf("failed to write SSL private key: %w", err)
+	}
+
+	// Both files written successfully — move them into place.
+	if err := os.Rename(certTmpPath, certPath); err != nil {
+		os.Remove(certTmpPath)
+		os.Remove(keyTmpPath)
+		return "", "", fmt.Errorf("failed to install SSL certificate: %w", err)
+	}
+
+	if err := os.Rename(keyTmpPath, keyPath); err != nil {
+		os.Remove(keyTmpPath)
+		return "", "", fmt.Errorf("failed to install SSL private key: %w", err)
 	}
 
 	return certPath, keyPath, nil

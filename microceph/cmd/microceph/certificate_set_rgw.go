@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 
 	"github.com/canonical/microcluster/v2/microcluster"
@@ -52,6 +53,14 @@ func (c *cmdCertificateSetRGW) Run(cmd *cobra.Command, args []string) error {
 	cli, err := m.LocalClient()
 	if err != nil {
 		return err
+	}
+
+	// Validate that inputs are valid base64 before sending to the server.
+	if _, err := base64.StdEncoding.DecodeString(c.flagSSLCertificate); err != nil {
+		return fmt.Errorf("failed to decode SSL certificate: %w", err)
+	}
+	if _, err := base64.StdEncoding.DecodeString(c.flagSSLPrivateKey); err != nil {
+		return fmt.Errorf("failed to decode SSL private key: %w", err)
 	}
 
 	req := types.CertificateSetRequest{

@@ -257,6 +257,48 @@ func (s *rgwSuite) TestUpdateRGWCertificatesInvalidPrivateKey() {
 	assert.Contains(s.T(), err.Error(), "failed to decode SSL private key")
 }
 
+func (s *rgwSuite) TestWriteSSLFilesAtomicCleanup() {
+	sslDir := filepath.Join(s.Tmp, "SNAP_COMMON")
+
+	// Call with valid cert but invalid key to trigger failure after cert .tmp is written.
+	_, _, err := writeSSLFiles(sslDir, validSSLCertificate, "invalid-base64!")
+	assert.Error(s.T(), err)
+
+	// Verify no .tmp files are left behind.
+	_, err = os.Stat(filepath.Join(sslDir, "server.crt.tmp"))
+	assert.True(s.T(), os.IsNotExist(err), "server.crt.tmp should be cleaned up")
+	_, err = os.Stat(filepath.Join(sslDir, "server.key.tmp"))
+	assert.True(s.T(), os.IsNotExist(err), "server.key.tmp should be cleaned up")
+
+	// Verify no final files were written either.
+	_, err = os.Stat(filepath.Join(sslDir, "server.crt"))
+	assert.True(s.T(), os.IsNotExist(err), "server.crt should not exist after failure")
+	_, err = os.Stat(filepath.Join(sslDir, "server.key"))
+	assert.True(s.T(), os.IsNotExist(err), "server.key should not exist after failure")
+}
+
+func (s *rgwSuite) TestWriteSSLFilesAtomicSuccess() {
+	sslDir := filepath.Join(s.Tmp, "SNAP_COMMON")
+
+	certPath, keyPath, err := writeSSLFiles(sslDir, validSSLCertificate, validSSLPrivateKey)
+	assert.NoError(s.T(), err)
+
+	// Verify final files exist.
+	certData, err := os.ReadFile(certPath)
+	assert.NoError(s.T(), err)
+	assert.Contains(s.T(), string(certData), "BEGIN CERTIFICATE")
+
+	keyData, err := os.ReadFile(keyPath)
+	assert.NoError(s.T(), err)
+	assert.Contains(s.T(), string(keyData), "BEGIN PRIVATE KEY")
+
+	// Verify no .tmp files are left behind.
+	_, err = os.Stat(certPath + ".tmp")
+	assert.True(s.T(), os.IsNotExist(err), "server.crt.tmp should not exist after success")
+	_, err = os.Stat(keyPath + ".tmp")
+	assert.True(s.T(), os.IsNotExist(err), "server.key.tmp should not exist after success")
+}
+
 func (s *rgwSuite) TestRestartRGW() {
 	r := mocks.NewRunner(s.T())
 
