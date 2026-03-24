@@ -76,9 +76,12 @@ func Join(ctx context.Context, s interfaces.StateInterface, jc common.JoinConfig
 		return fmt.Errorf("failed to generate the configuration: %w", err)
 	}
 
-	// Record the availability zone for this host.
+	// Validate and record the availability zone for this host.
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		return validateAndSetJoinAZ(ctx, tx, s.ClusterState().Name(), jc.AvailabilityZone)
+		if err := validateJoinAZ(ctx, tx, jc.AvailabilityZone); err != nil {
+			return err
+		}
+		return setJoinAZ(ctx, tx, s.ClusterState().Name(), jc.AvailabilityZone)
 	})
 	if err != nil {
 		return err
@@ -129,9 +132,13 @@ func Join(ctx context.Context, s interfaces.StateInterface, jc common.JoinConfig
 	return nil
 }
 
-// validateAndSetJoinAZ validates availability zone constraints and records
-// the AZ for the joining node. The constraint is: no mixed empty and set AZs.
-func validateAndSetJoinAZ(ctx context.Context, tx *sql.Tx, hostname string, az string) error {
+// validateJoinAZ validates availability zone constraints for a joining node.
+// The constraint is: no mixed empty and set AZs.
+func validateJoinAZ(ctx context.Context, tx *sql.Tx, az string) error {
+	if az != "" && !IsValidCrushName(az) {
+		return fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", az)
+	}
+
 	allAZs, err := getAllAZHosts(ctx, tx)
 	if err != nil {
 		return err
@@ -154,15 +161,17 @@ func validateAndSetJoinAZ(ctx context.Context, tx *sql.Tx, hostname string, az s
 		)
 	}
 
+	return nil
+}
+
+// setJoinAZ records the availability zone for a joining node.
+// Should be called after validateJoinAZ.
+func setJoinAZ(ctx context.Context, tx *sql.Tx, hostname string, az string) error {
 	if az == "" {
-		return nil // Empty AZ, dont add
+		return nil
 	}
 
-	if !IsValidCrushName(az) {
-		return fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", az)
-	}
-
-	_, err = joinCreateHostTag(ctx, tx, database.HostTag{Member: hostname, Key: "availability-zone", Value: az})
+	_, err := joinCreateHostTag(ctx, tx, database.HostTag{Member: hostname, Key: "availability-zone", Value: az})
 	if err != nil {
 		return fmt.Errorf("failed to record availability zone: %w", err)
 	}
