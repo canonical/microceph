@@ -7,9 +7,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/tests"
 	"github.com/spf13/afero"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -179,4 +183,35 @@ func (s *StorageDeviceTestSuite) TestIsPristineDisk() {
 	isPristine, err = IsPristineDiskWithFs(labelDevicePath, fs)
 	s.NoError(err)
 	s.False(isPristine, "Device with existing labels should not be pristine")
+}
+
+func TestFilterAvailableDisksExcludesReadOnly(t *testing.T) {
+	storage := &api.ResourcesStorage{
+		Disks: []api.ResourcesStorageDisk{
+			{
+				ID:         "vda",
+				DevicePath: "virtio-pci-0000:06:00.0",
+				Size:       8 * 1024 * 1024 * 1024,
+				Type:       "virtio",
+				ReadOnly:   true,
+				Partitions: []api.ResourcesStorageDiskPartition{},
+			},
+			{
+				ID:         "vdb",
+				DevicePath: "virtio-pci-0000:07:00.0",
+				Size:       8 * 1024 * 1024 * 1024,
+				Type:       "virtio",
+				ReadOnly:   false,
+				Partitions: []api.ResourcesStorageDiskPartition{},
+			},
+		},
+	}
+
+	available, err := FilterAvailableDisks(storage, types.Disks{}, &DiskFilterConfig{
+		IsMountedFunc:    func(string) (bool, error) { return false, nil },
+		IsCephDeviceFunc: func(string) (bool, error) { return false, nil },
+	})
+	require.NoError(t, err)
+	require.Len(t, available, 1)
+	assert.Equal(t, "vdb", available[0].ID)
 }

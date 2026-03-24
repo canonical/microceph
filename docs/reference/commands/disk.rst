@@ -66,12 +66,16 @@ Flags:
    --all-available         add all available devices as OSDs
    --db-device string      The device used for the DB
    --db-encrypt            Encrypt the DB device prior to use
+   --db-match string       DSL expression to match backing devices for DB partitions
+   --db-size string        Requested DB partition size for --db-match
    --db-wipe               Wipe the DB device prior to use
    --dry-run               Show matched devices without adding them (requires --osd-match)
    --encrypt               Encrypt the disk prior to use (only block devices)
    --osd-match string      DSL expression to match devices for OSD creation
    --wal-device string     The device used for WAL
    --wal-encrypt           Encrypt the WAL device prior to use
+   --wal-match string      DSL expression to match backing devices for WAL partitions
+   --wal-size string       Requested WAL partition size for --wal-match
    --wal-wipe              Wipe the WAL device prior to use
    --wipe                  Wipe the disk prior to use
 
@@ -111,6 +115,11 @@ Example expressions:
    # Preview matches without adding
    microceph disk add --osd-match "eq(@type, 'sata')" --dry-run
 
+   # Select WAL/DB carriers separately and control their wipe/encryption independently
+   microceph disk add --osd-match "eq(@type, 'ssd')" --encrypt \
+     --wal-match "eq(@type, 'nvme')" --wal-size 1GiB --wal-encrypt --wal-wipe \
+     --db-match "eq(@type, 'nvme')" --db-size 4GiB --db-encrypt --db-wipe
+
 Available predicates:
 
 - ``and(a, b, ...)`` - Logical AND (variadic)
@@ -137,6 +146,8 @@ Numbers and units must be written without any space between them (e.g., ``100GiB
 Limitations:
 
 - ``--osd-match`` cannot be used together with ``--wal-device`` or ``--db-device``.
+- ``--wal-encrypt`` and ``--wal-wipe`` require ``--wal-match`` when using DSL-based selection.
+- ``--db-encrypt`` and ``--db-wipe`` require ``--db-match`` when using DSL-based selection.
 
 
 ``list``

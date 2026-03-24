@@ -152,6 +152,34 @@ func TestFilterLocalDisks(t *testing.T) {
 			description:   "Should filter out partitioned disks",
 		},
 		{
+			name: "filter out read-only disks",
+			resources: &api.ResourcesStorage{
+				Disks: []api.ResourcesStorageDisk{
+					{
+						ID:         "vde",
+						DeviceID:   "",
+						DevicePath: "virtio-pci-0000:08:00.0",
+						Size:       16 * 1024 * 1024 * 1024,
+						Type:       "virtio",
+						ReadOnly:   true,
+						Partitions: []api.ResourcesStorageDiskPartition{},
+					},
+					{
+						ID:         "vdf",
+						DeviceID:   "",
+						DevicePath: "virtio-pci-0000:09:00.0",
+						Size:       16 * 1024 * 1024 * 1024,
+						Type:       "virtio",
+						Partitions: []api.ResourcesStorageDiskPartition{},
+					},
+				},
+			},
+			disks:         types.Disks{},
+			expectedCount: 1,
+			expectedPaths: []string{"/dev/disk/by-path/virtio-pci-0000:09:00.0"},
+			description:   "Should filter out read-only disks",
+		},
+		{
 			name: "filter out small disks",
 			resources: &api.ResourcesStorage{
 				Disks: []api.ResourcesStorageDisk{

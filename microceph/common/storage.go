@@ -322,6 +322,12 @@ func FilterAvailableDisks(storage *api.ResourcesStorage, configuredDisks types.D
 	for _, disk := range storage.Disks {
 		logger.Debugf("FilterAvailableDisks: checking disk %s, size %d, type %s", disk.ID, disk.Size, disk.Type)
 
+		// Skip read-only disks.
+		if disk.ReadOnly {
+			logger.Infof("FilterAvailableDisks: ignoring device %s, it is read-only", disk.ID)
+			continue
+		}
+
 		// Skip disks with partitions
 		if len(disk.Partitions) > 0 {
 			logger.Infof("FilterAvailableDisks: ignoring device %s, it has partitions", disk.ID)

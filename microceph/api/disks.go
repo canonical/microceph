@@ -101,9 +101,9 @@ func cmdDisksPost(s state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, resp)
 }
 
-// handleDSLDiskAdd handles DSL-based device selection for OSD creation.
+// handleDSLDiskAdd handles DSL-based device selection for OSD creation and dry-run planning.
 func handleDSLDiskAdd(r *http.Request, s state.State, req types.DisksPost) response.Response {
-	resp := ceph.AddDisksWithDSL(r.Context(), s, req.OSDMatch, req.Encrypt, req.Wipe, req.DryRun)
+	resp := ceph.AddDisksWithDSLRequest(r.Context(), s, req)
 	return response.SyncResponse(true, resp)
 }
 

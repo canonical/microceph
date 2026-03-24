@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -64,6 +65,19 @@ func (m SharedMountChecker) IsMounted(device string) (bool, error) {
 	return common.IsMounted(device)
 }
 
+// CephDeviceChecker provides an interface for checking whether a device is already used by Ceph.
+type CephDeviceChecker interface {
+	IsCephDevice(device string) (bool, error)
+}
+
+// SharedCephDeviceChecker is the production implementation using common.IsCephDevice.
+type SharedCephDeviceChecker struct{}
+
+// IsCephDevice checks if the given device is used by Ceph.
+func (c SharedCephDeviceChecker) IsCephDevice(device string) (bool, error) {
+	return common.IsCephDevice(device)
+}
+
 // FileStater provides an interface for getting file statistics - introduced for mocking in tests.
 type FileStater interface {
 	GetFileStat(path string) (uid int, gid int, major uint32, minor uint32, inode uint64, nlink int, err error)
@@ -92,27 +106,29 @@ func (p SharedPristineChecker) IsPristineDisk(devicePath string) (bool, error) {
 
 // OSDManager handles OSD operations. It holds the state, a runner for executing commands and a filesystem interface.
 type OSDManager struct {
-	state           state.State
-	runner          common.Runner
-	fs              afero.Fs
-	storage         interfaces.StorageInterface
-	validator       PathValidator
-	mountChecker    MountChecker
-	fileStater      FileStater
-	pristineChecker PristineChecker
+	state             state.State
+	runner            common.Runner
+	fs                afero.Fs
+	storage           interfaces.StorageInterface
+	validator         PathValidator
+	mountChecker      MountChecker
+	cephDeviceChecker CephDeviceChecker
+	fileStater        FileStater
+	pristineChecker   PristineChecker
 }
 
 // NewOSDManager returns a new OSD manager instance.
 func NewOSDManager(s state.State) *OSDManager {
 	return &OSDManager{
-		state:           s,
-		runner:          common.ProcessExec,
-		fs:              afero.NewOsFs(),
-		storage:         StorageImpl{},
-		validator:       SharedPathValidator{},
-		mountChecker:    SharedMountChecker{},
-		fileStater:      SharedFileStater{},
-		pristineChecker: SharedPristineChecker{},
+		state:             s,
+		runner:            common.ProcessExec,
+		fs:                afero.NewOsFs(),
+		storage:           StorageImpl{},
+		validator:         SharedPathValidator{},
+		mountChecker:      SharedMountChecker{},
+		cephDeviceChecker: SharedCephDeviceChecker{},
+		fileStater:        SharedFileStater{},
+		pristineChecker:   SharedPristineChecker{},
 	}
 }
 
@@ -524,6 +540,12 @@ func (m *OSDManager) setStablePath(storage *api.ResourcesStorage, param *types.D
 		// Check if partition.
 		for _, part := range disk.Partitions {
 			if part.Device == dev {
+				rawPartitionPath := fmt.Sprintf("/dev/%s", part.ID)
+				if param.Path == rawPartitionPath {
+					logger.Infof("Keeping raw partition path for %s", param.Path)
+					return nil
+				}
+
 				candidate := fmt.Sprintf("/dev/disk/by-id/%s-part%d", disk.DeviceID, part.Partition)
 				if exists, _ := afero.Exists(m.fs, candidate); exists {
 					param.Path = candidate
@@ -988,18 +1010,34 @@ func (m *OSDManager) generateOSDFiles(osdDataPath string, nr int64) error {
 func (m *OSDManager) spawnOSD(nr int64) error {
 	logger.Infof("Spawning OSD %d", nr)
 	err := snapRestart("osd", true)
+	if err == nil {
+		return nil
+	}
+
+	logger.Warnf("Initial OSD service restart failed for osd.%d, retrying after cooldown: %v", nr, err)
+	time.Sleep(15 * time.Second)
+
+	err = snapStart("osd", true)
 	if err != nil {
 		return fmt.Errorf("failed to start osd.%d: %w", nr, err)
 	}
 	return nil
 }
 
-// doAddOSD is the internal implementation for adding an OSD to the cluster.
-func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
-	storage, err := m.stabilizeDevicePath(&data)
-	if err != nil {
-		logger.Errorf("failed to stabilize device path for %s: %v", data.Path, err)
-		return err
+func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter, storage *api.ResourcesStorage, generatedAux *generatedAuxDevicesManifest) error {
+	var err error
+	if storage == nil {
+		storage, err = m.stabilizeDevicePath(&data)
+		if err != nil {
+			logger.Errorf("failed to stabilize device path for %s: %v", data.Path, err)
+			return err
+		}
+	} else {
+		err = m.setStablePath(storage, &data)
+		if err != nil {
+			logger.Errorf("failed to set stable path for %s: %v", data.Path, err)
+			return fmt.Errorf("failed to set stable disk path: %w", err)
+		}
 	}
 
 	nr, err := m.createDiskRecord(ctx, &data)
@@ -1047,6 +1085,14 @@ func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal
 		return err
 	}
 
+	if generatedAux != nil {
+		err = m.writeGeneratedAuxManifest(osdDataPath, generatedAux)
+		if err != nil {
+			logger.Errorf("failed to write generated aux manifest for osd.%d: %v", nr, err)
+			return err
+		}
+	}
+
 	err = m.bootstrapOSD(osdDataPath, nr, wal, db, storage)
 	if err != nil {
 		logger.Errorf("failed to bootstrap OSD %d: %v", nr, err)
@@ -1076,14 +1122,27 @@ func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal
 	return nil
 }
 
+// doAddOSD is the internal implementation for adding an OSD to the cluster.
+func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
+	return m.doAddOSDWithStorage(ctx, data, wal, db, nil, nil)
+}
+
 // DSLMatchResult contains the result of DSL-based device matching.
 type DSLMatchResult struct {
-	// MatchedDisks contains the disks that matched the DSL expression
+	// MatchedDisks contains the disks that matched the DSL expression.
 	MatchedDisks []api.ResourcesStorageDisk
-	// DryRunDevices contains device info for dry-run mode
+	// DryRunDevices contains device info for OSD-only dry-run mode.
 	DryRunDevices []types.DryRunDevice
-	// ValidationError contains any validation error message
+	// ValidationError contains any validation error message.
 	ValidationError string
+}
+
+type plannedCarrierState struct {
+	Path          string
+	Disk          api.ResourcesStorageDisk
+	PartitionNo   uint64
+	PartitionCnt  int
+	RemainingSize uint64
 }
 
 // MatchDisksWithDSL matches available disks using a DSL expression.
@@ -1091,64 +1150,19 @@ type DSLMatchResult struct {
 func (m *OSDManager) MatchDisksWithDSL(ctx context.Context, dslExpr string, dryRun bool) (*DSLMatchResult, error) {
 	result := &DSLMatchResult{}
 
-	// Parse the DSL expression
-	expr, err := dsl.Parse(dslExpr)
+	matchedDisks, err := m.matchOSDDisksWithDSL(ctx, dslExpr)
 	if err != nil {
-		result.ValidationError = fmt.Sprintf("invalid DSL expression: %v", err)
+		return nil, err
+	}
+	if result.ValidationError != "" {
 		return result, nil
 	}
+	result.MatchedDisks = matchedDisks.MatchedDisks
+	result.ValidationError = matchedDisks.ValidationError
 
-	// Validate the expression
-	err = dsl.Validate(expr)
-	if err != nil {
-		result.ValidationError = fmt.Sprintf("DSL validation error: %v", err)
-		return result, nil
-	}
-
-	// Get available storage resources
-	storage, err := m.storage.GetStorage()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get storage resources: %w", err)
-	}
-
-	// Get configured disks to filter them out
-	configuredDisks, err := database.OSDQuery.List(ctx, m.state)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list configured disks: %w", err)
-	}
-
-	// Filter available disks using the shared function
-	cfg := &common.DiskFilterConfig{
-		IsMountedFunc: m.mountChecker.IsMounted,
-	}
-	availableDisks, err := common.FilterAvailableDisks(storage, configuredDisks, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to filter available disks: %w", err)
-	}
-
-	// Get hostname for DSL evaluation
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = ""
-	}
-	// Use short hostname
-	if idx := strings.Index(hostname, "."); idx > 0 {
-		hostname = hostname[:idx]
-	}
-
-	// Apply DSL filter to match devices
-	matchedDisks, err := dsl.MatchDevices(expr, availableDisks, hostname)
-	if err != nil {
-		result.ValidationError = fmt.Sprintf("DSL evaluation error: %v", err)
-		return result, nil
-	}
-
-	result.MatchedDisks = matchedDisks
-
-	// Build dry-run device info if requested
 	if dryRun {
-		result.DryRunDevices = make([]types.DryRunDevice, len(matchedDisks))
-		for i, disk := range matchedDisks {
+		result.DryRunDevices = make([]types.DryRunDevice, len(result.MatchedDisks))
+		for i, disk := range result.MatchedDisks {
 			result.DryRunDevices[i] = types.DryRunDevice{
 				Path:   dsl.GetDevicePath(disk),
 				Model:  disk.Model,
@@ -1162,41 +1176,305 @@ func (m *OSDManager) MatchDisksWithDSL(ctx context.Context, dslExpr string, dryR
 	return result, nil
 }
 
-// AddDisksWithDSL adds disks matching a DSL expression as OSDs.
-// If dryRun is true, returns matched devices without adding them.
-func (m *OSDManager) AddDisksWithDSL(ctx context.Context, dslExpr string, encrypt bool, wipe bool, dryRun bool) types.DiskAddResponse {
-	result, err := m.MatchDisksWithDSL(ctx, dslExpr, dryRun)
+func shortHostname() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	if idx := strings.Index(hostname, "."); idx > 0 {
+		return hostname[:idx]
+	}
+	return hostname
+}
+
+func validateDSLExpression(input string) (dsl.Expression, error) {
+	expr, err := dsl.Parse(input)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DSL expression: %w", err)
+	}
+	if err := dsl.Validate(expr); err != nil {
+		return nil, fmt.Errorf("DSL validation error: %w", err)
+	}
+	return expr, nil
+}
+
+func sortDisksByStablePath(disks []api.ResourcesStorageDisk) {
+	sort.Slice(disks, func(i, j int) bool {
+		return dsl.GetDevicePath(disks[i]) < dsl.GetDevicePath(disks[j])
+	})
+}
+
+func configuredOSDPathSet(configured types.Disks) map[string]struct{} {
+	paths := make(map[string]struct{}, len(configured))
+	for _, disk := range configured {
+		paths[disk.Path] = struct{}{}
+	}
+	return paths
+}
+
+func buildPathSet(disks []api.ResourcesStorageDisk) map[string]struct{} {
+	paths := make(map[string]struct{}, len(disks))
+	for _, disk := range disks {
+		paths[dsl.GetDevicePath(disk)] = struct{}{}
+	}
+	return paths
+}
+
+func pathSetOverlaps(a map[string]struct{}, b map[string]struct{}) bool {
+	for path := range a {
+		if _, ok := b[path]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func pathSetToSlice(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for path := range m {
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (m *OSDManager) getStorageAndConfiguredDisks(ctx context.Context) (*api.ResourcesStorage, types.Disks, error) {
+	storage, err := m.storage.GetStorage()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get storage resources: %w", err)
+	}
+	configuredDisks, err := database.OSDQuery.List(ctx, m.state)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to list configured disks: %w", err)
+	}
+	return storage, configuredDisks, nil
+}
+
+func (m *OSDManager) matchOSDDisksWithDSL(ctx context.Context, dslExpr string) (*DSLMatchResult, error) {
+	result := &DSLMatchResult{}
+	if dslExpr == "" {
+		return result, nil
+	}
+
+	expr, err := validateDSLExpression(dslExpr)
+	if err != nil {
+		result.ValidationError = err.Error()
+		return result, nil
+	}
+
+	storage, configuredDisks, err := m.getStorageAndConfiguredDisks(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	availableDisks, err := common.FilterAvailableDisks(storage, configuredDisks, &common.DiskFilterConfig{
+		IsMountedFunc:    m.mountChecker.IsMounted,
+		IsCephDeviceFunc: m.cephDeviceChecker.IsCephDevice,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to filter available disks: %w", err)
+	}
+
+	matchedDisks, err := dsl.MatchDevices(expr, availableDisks, shortHostname())
+	if err != nil {
+		result.ValidationError = fmt.Sprintf("DSL evaluation error: %v", err)
+		return result, nil
+	}
+	sortDisksByStablePath(matchedDisks)
+	result.MatchedDisks = matchedDisks
+	return result, nil
+}
+
+func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr string, excludePaths map[string]struct{}) ([]api.ResourcesStorageDisk, error) {
+	if dslExpr == "" {
+		return nil, nil
+	}
+	expr, err := validateDSLExpression(dslExpr)
+	if err != nil {
+		return nil, err
+	}
+
+	storage, configuredDisks, err := m.getStorageAndConfiguredDisks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	configuredPathSet := configuredOSDPathSet(configuredDisks)
+	_ = excludePaths
+	localUsage, err := m.collectLocalAuxDiskUsage(storage)
+	if err != nil {
+		return nil, err
+	}
+
+	candidates := make([]api.ResourcesStorageDisk, 0, len(storage.Disks))
+	for _, disk := range storage.Disks {
+		if disk.ReadOnly {
+			continue
+		}
+		path := common.GetDevicePath(&disk)
+		if _, ok := configuredPathSet[path]; ok {
+			continue
+		}
+		mounted, err := m.diskOrAnyPartitionMounted(disk)
+		if err != nil || mounted {
+			continue
+		}
+		if len(disk.Partitions) > 0 {
+			usage := localUsage[path]
+			if usage.HasData || !usage.HasAux {
+				continue
+			}
+		}
+		candidates = append(candidates, disk)
+	}
+
+	matchedDisks, err := dsl.MatchDevices(expr, candidates, shortHostname())
+	if err != nil {
+		return nil, fmt.Errorf("DSL evaluation error: %w", err)
+	}
+	sortDisksByStablePath(matchedDisks)
+	return matchedDisks, nil
+}
+
+func diskUsedBytes(disk api.ResourcesStorageDisk) uint64 {
+	var used uint64
+	for _, part := range disk.Partitions {
+		used += part.Size
+	}
+	if used > disk.Size {
+		return disk.Size
+	}
+	return used
+}
+
+func nextPartitionNumber(disk api.ResourcesStorageDisk) uint64 {
+	var maxPart uint64
+	for _, part := range disk.Partitions {
+		if part.Partition > maxPart {
+			maxPart = part.Partition
+		}
+	}
+	return maxPart + 1
+}
+
+func planAuxiliaryPartitions(osdPaths []string, carriers []api.ResourcesStorageDisk, sizeBytes uint64, kind string) ([]*types.DryRunPartitionPlan, error) {
+	if len(osdPaths) == 0 || len(carriers) == 0 {
+		return make([]*types.DryRunPartitionPlan, len(osdPaths)), nil
+	}
+
+	states := make([]plannedCarrierState, len(carriers))
+	for i, disk := range carriers {
+		used := diskUsedBytes(disk)
+		remaining := uint64(0)
+		if disk.Size > used {
+			remaining = disk.Size - used
+		}
+		states[i] = plannedCarrierState{
+			Path:          dsl.GetDevicePath(disk),
+			Disk:          disk,
+			PartitionNo:   nextPartitionNumber(disk),
+			PartitionCnt:  len(disk.Partitions),
+			RemainingSize: remaining,
+		}
+	}
+
+	out := make([]*types.DryRunPartitionPlan, len(osdPaths))
+	for i := range osdPaths {
+		choice := -1
+		for idx := range states {
+			if states[idx].RemainingSize < sizeBytes {
+				continue
+			}
+			if choice == -1 || states[idx].PartitionCnt < states[choice].PartitionCnt ||
+				(states[idx].PartitionCnt == states[choice].PartitionCnt && states[idx].Path < states[choice].Path) {
+				choice = idx
+			}
+		}
+		if choice == -1 {
+			return nil, fmt.Errorf("insufficient capacity for %s partitions of size %s", strings.ToUpper(kind), formatBytesIEC(int64(sizeBytes)))
+		}
+		out[i] = &types.DryRunPartitionPlan{
+			Kind:       kind,
+			ParentPath: states[choice].Path,
+			Partition:  states[choice].PartitionNo,
+			Size:       formatBytesIEC(int64(sizeBytes)),
+		}
+		states[choice].RemainingSize -= sizeBytes
+		states[choice].PartitionCnt++
+		states[choice].PartitionNo++
+	}
+
+	return out, nil
+}
+
+func (m *OSDManager) buildDSLDryRunPlan(ctx context.Context, req types.DisksPost) types.DiskAddResponse {
+	plan, err := m.buildDSLProvisionPlan(ctx, req)
 	if err != nil {
 		return types.DiskAddResponse{ValidationError: err.Error()}
 	}
+	return dryRunResponseFromProvisionPlan(plan)
+}
 
-	// Return validation errors
+func buildDryRunDevices(matchedDisks []api.ResourcesStorageDisk) []types.DryRunDevice {
+	result := make([]types.DryRunDevice, len(matchedDisks))
+	for i, disk := range matchedDisks {
+		result[i] = types.DryRunDevice{
+			Path:   dsl.GetDevicePath(disk),
+			Model:  disk.Model,
+			Size:   formatBytesIEC(int64(disk.Size)),
+			Type:   disk.Type,
+			Vendor: extractVendor(disk.Model),
+		}
+	}
+	return result
+}
+
+// AddDisksWithDSL adds disks matching a DSL expression as OSDs.
+// If dryRun is true, returns matched devices without adding them.
+func (m *OSDManager) AddDisksWithDSL(ctx context.Context, dslExpr string, encrypt bool, wipe bool, dryRun bool) types.DiskAddResponse {
+	return m.AddDisksWithDSLRequest(ctx, types.DisksPost{
+		OSDMatch: dslExpr,
+		Encrypt:  encrypt,
+		Wipe:     wipe,
+		DryRun:   dryRun,
+	})
+}
+
+// AddDisksWithDSLRequest handles OSD DSL execution and WAL/DB dry-run planning.
+func (m *OSDManager) AddDisksWithDSLRequest(ctx context.Context, req types.DisksPost) types.DiskAddResponse {
+	if req.WALMatch != "" || req.DBMatch != "" {
+		if req.DryRun {
+			return m.buildDSLDryRunPlan(ctx, req)
+		}
+		plan, err := m.buildDSLProvisionPlan(ctx, req)
+		if err != nil {
+			return types.DiskAddResponse{ValidationError: err.Error()}
+		}
+		return m.executeDSLProvisionPlan(ctx, plan, req)
+	}
+
+	result, err := m.MatchDisksWithDSL(ctx, req.OSDMatch, req.DryRun)
+	if err != nil {
+		return types.DiskAddResponse{ValidationError: err.Error()}
+	}
 	if result.ValidationError != "" {
 		return types.DiskAddResponse{ValidationError: result.ValidationError}
 	}
-
-	// Handle dry-run mode
-	if dryRun {
+	if req.DryRun {
 		return types.DiskAddResponse{DryRunDevices: result.DryRunDevices}
 	}
-
-	// No devices matched
 	if len(result.MatchedDisks) == 0 {
 		return types.DiskAddResponse{}
 	}
 
-	// Prepare disk parameters for matched devices
 	disks := make([]types.DiskParameter, len(result.MatchedDisks))
 	for i, disk := range result.MatchedDisks {
 		disks[i] = types.DiskParameter{
 			Path:     dsl.GetDevicePath(disk),
-			Encrypt:  encrypt,
-			Wipe:     wipe,
+			Encrypt:  req.Encrypt,
+			Wipe:     req.Wipe,
 			LoopSize: 0,
 		}
 	}
-
-	// Add the matched disks (no WAL/DB support with DSL yet)
 	return m.addBulkDisks(ctx, disks, nil, nil)
 }
 
@@ -1232,6 +1510,11 @@ func formatBytesIEC(bytes int64) string {
 // AddDisksWithDSLWrapper is a public wrapper for DSL-based disk addition.
 func AddDisksWithDSL(ctx context.Context, s state.State, dslExpr string, encrypt bool, wipe bool, dryRun bool) types.DiskAddResponse {
 	return NewOSDManager(s).AddDisksWithDSL(ctx, dslExpr, encrypt, wipe, dryRun)
+}
+
+// AddDisksWithDSLRequest is a public wrapper for DSL-based dry-run planning and execution.
+func AddDisksWithDSLRequest(ctx context.Context, s state.State, req types.DisksPost) types.DiskAddResponse {
+	return NewOSDManager(s).AddDisksWithDSLRequest(ctx, req)
 }
 
 // AddLoopBackOSDs adds OSDs backed by loopback files using a one-off manager.
@@ -1579,10 +1862,15 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 		}
 	}
 
-	err = m.clearStorage(ctx, s, osd)
+	err = m.clearPrimaryStorage(ctx, s, osd)
 	if err != nil {
 		// log error but don't fail, we still want to remove the OSD from the cluster
-		logger.Errorf("Failed to clear storage for osd.%d: %v", osd, err)
+		logger.Errorf("Failed to clear primary storage for osd.%d: %v", osd, err)
+	}
+
+	err = m.cleanupGeneratedAuxDevices(ctx, getOSDDataPath(osd), osd)
+	if err != nil {
+		return fmt.Errorf("failed to clean generated WAL/DB partitions for osd.%d: %w", osd, err)
 	}
 
 	// Remove osd config
@@ -1599,7 +1887,7 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	return nil
 }
 
-func (m *OSDManager) clearStorage(ctx context.Context, s interfaces.StateInterface, osd int64) error {
+func (m *OSDManager) clearPrimaryStorage(ctx context.Context, s interfaces.StateInterface, osd int64) error {
 	path, err := database.OSDQuery.Path(ctx, s.ClusterState(), osd)
 	if err != nil {
 		return err
