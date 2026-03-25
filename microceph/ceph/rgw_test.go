@@ -257,6 +257,25 @@ func (s *rgwSuite) TestUpdateRGWCertificatesInvalidPrivateKey() {
 	assert.Contains(s.T(), err.Error(), "failed to decode SSL private key")
 }
 
+func (s *rgwSuite) TestWriteSSLFilesRejectsEmpty() {
+	sslDir := filepath.Join(s.Tmp, "SNAP_COMMON")
+
+	// Empty certificate should be rejected.
+	_, _, err := writeSSLFiles(sslDir, "", validSSLPrivateKey)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "SSL certificate cannot be empty")
+
+	// Empty key should be rejected.
+	_, _, err = writeSSLFiles(sslDir, validSSLCertificate, "")
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "SSL private key cannot be empty")
+
+	// Both empty should be rejected.
+	_, _, err = writeSSLFiles(sslDir, "", "")
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "SSL certificate cannot be empty")
+}
+
 func (s *rgwSuite) TestWriteSSLFilesAtomicCleanup() {
 	sslDir := filepath.Join(s.Tmp, "SNAP_COMMON")
 

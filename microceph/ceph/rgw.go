@@ -17,6 +17,13 @@ import (
 // writeSSLFiles decodes base64-encoded SSL certificate and key, and writes them to disk.
 // Returns the paths to the written certificate and key files.
 func writeSSLFiles(sslFilesPath string, sslCertificate string, sslPrivateKey string) (certPath string, keyPath string, err error) {
+	if sslCertificate == "" {
+		return "", "", fmt.Errorf("SSL certificate cannot be empty")
+	}
+	if sslPrivateKey == "" {
+		return "", "", fmt.Errorf("SSL private key cannot be empty")
+	}
+
 	decodedCert, err := base64.StdEncoding.DecodeString(sslCertificate)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to decode SSL certificate: %w", err)

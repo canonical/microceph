@@ -44,7 +44,28 @@ manually for the change to take effect.`,
 	return cmd
 }
 
+// validateSSLInputs checks that the SSL certificate and key are non-empty and valid base64.
+func (c *cmdCertificateSetRGW) validateSSLInputs() error {
+	if c.flagSSLCertificate == "" {
+		return fmt.Errorf("SSL certificate cannot be empty")
+	}
+	if c.flagSSLPrivateKey == "" {
+		return fmt.Errorf("SSL private key cannot be empty")
+	}
+	if _, err := base64.StdEncoding.DecodeString(c.flagSSLCertificate); err != nil {
+		return fmt.Errorf("failed to decode SSL certificate: %w", err)
+	}
+	if _, err := base64.StdEncoding.DecodeString(c.flagSSLPrivateKey); err != nil {
+		return fmt.Errorf("failed to decode SSL private key: %w", err)
+	}
+	return nil
+}
+
 func (c *cmdCertificateSetRGW) Run(cmd *cobra.Command, args []string) error {
+	if err := c.validateSSLInputs(); err != nil {
+		return err
+	}
+
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
@@ -53,14 +74,6 @@ func (c *cmdCertificateSetRGW) Run(cmd *cobra.Command, args []string) error {
 	cli, err := m.LocalClient()
 	if err != nil {
 		return err
-	}
-
-	// Validate that inputs are valid base64 before sending to the server.
-	if _, err := base64.StdEncoding.DecodeString(c.flagSSLCertificate); err != nil {
-		return fmt.Errorf("failed to decode SSL certificate: %w", err)
-	}
-	if _, err := base64.StdEncoding.DecodeString(c.flagSSLPrivateKey); err != nil {
-		return fmt.Errorf("failed to decode SSL private key: %w", err)
 	}
 
 	req := types.CertificateSetRequest{
