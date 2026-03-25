@@ -45,6 +45,8 @@ var Servers = map[string]rest.Server{
 					opsReplicationResourceCmd,
 					// Maintenance APIs
 					opsMaintenanceNodeCmd,
+					// Certificate APIs
+					certificatesRGWCmd,
 				},
 			},
 		},

@@ -47,6 +47,7 @@ migrate services and more.
    migrate-auto-services
    remove-disk
    perform-cluster-maintenance
+   rotate-rgw-tls-certificate
    Enable full disk encryption <enable-fde>
 
 Managing a remote cluster

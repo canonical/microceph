@@ -212,6 +212,18 @@ jobs:
       - name: Exercise RGW with SSL enabled
         run: ~/actionutils.sh testrgw_ssl
 
+      - name: Test RGW certificate rotation
+        run: ~/actionutils.sh test_certificate_set_rgw
+
+      - name: Test RGW certificate rotation with --target (self)
+        run: ~/actionutils.sh test_certificate_set_rgw_target "$(hostname)"
+
+      - name: Test RGW certificate set when not running
+        run: ~/actionutils.sh test_certificate_set_rgw_not_running
+
+      - name: Re-enable RGW with SSL for subsequent tests
+        run: ~/actionutils.sh enable_rgw_ssl
+
       - name: Test Cluster Config
         run: ~/actionutils.sh verify_config
 
@@ -379,6 +391,16 @@ jobs:
 
       - name: Test client configurations
         run: ~/actionutils.sh check_client_configs
+
+      - name: Enable RGW with SSL for certificate target test
+        run: |
+          set -uex
+          ~/actionutils.sh headexec enable_rgw_ssl
+          lxc exec node-wrk0 -- sh -c "sudo microceph enable rgw --target node-wrk1 --ssl-certificate=\"\$(sudo base64 -w0 /tmp/server.crt)\" --ssl-private-key=\"\$(sudo base64 -w0 /tmp/server.key)\""
+          ~/actionutils.sh headexec wait_for_rgw 2
+
+      - name: Test RGW certificate rotation with --target (cross-node)
+        run: ~/actionutils.sh headexec test_certificate_set_rgw_target node-wrk1
 
       - name: Print logs for failure
         if: failure()

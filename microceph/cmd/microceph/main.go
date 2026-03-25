@@ -86,6 +86,9 @@ func main() {
 	cmdPool := cmdPool{common: &commonCmd}
 	app.AddCommand(cmdPool.Command())
 
+	cmdCert := cmdCertificate{common: &commonCmd}
+	app.AddCommand(cmdCert.Command())
+
 	cmdLog := cmdLog{common: &commonCmd}
 	app.AddCommand(cmdLog.Command())
 

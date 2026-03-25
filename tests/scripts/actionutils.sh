@@ -292,6 +292,156 @@ function enable_rgw_ssl() {
     wait_for_rgw 1
 }
 
+function generate_rgw_ssl_cert() {
+    # Signs a new cert with the CA created by enable_rgw_ssl (/tmp/ca.{crt,key}).
+    local label="${1?missing}"
+    set -x
+    sudo openssl genrsa -out "/tmp/${label}.key" 2048
+    sudo openssl req -new -key "/tmp/${label}.key" -out "/tmp/${label}.csr" -subj "/CN=${label}"
+    echo "subjectAltName = DNS:localhost" > "/tmp/${label}-ext.cnf"
+    sudo openssl x509 -req -in "/tmp/${label}.csr" -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -out "/tmp/${label}.crt" -days 365 -extfile "/tmp/${label}-ext.cnf"
+}
+
+function wait_for_rgw_ssl_port() {
+    local host="${1:-localhost}"
+    local port="${2:-443}"
+    for i in $(seq 1 60); do
+        if echo | openssl s_client -connect "${host}:${port}" 2>/dev/null | grep -q "BEGIN CERTIFICATE"; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "RGW never started listening on SSL port ${port} at ${host}"
+    return 1
+}
+
+function get_rgw_ssl_cn() {
+    local host="${1:-localhost}"
+    local port="${2:-443}"
+    echo | openssl s_client -connect "${host}:${port}" 2>/dev/null \
+        | openssl x509 -noout -subject 2>/dev/null \
+        | sed -n 's/.*CN *= *//p'
+}
+
+function test_certificate_set_rgw() {
+    set -eux
+
+    # Generate a new certificate for rotation
+    generate_rgw_ssl_cert "rotated-cert"
+
+    # Test 1: Rotate with --restart and verify immediate pickup
+    echo "Test: certificate set rgw --restart"
+    sudo microceph certificate set rgw \
+        --ssl-certificate="$(sudo base64 -w0 /tmp/rotated-cert.crt)" \
+        --ssl-private-key="$(sudo base64 -w0 /tmp/rotated-cert.key)" \
+        --restart
+    wait_for_rgw 1
+    wait_for_rgw_ssl_port
+
+    served_cn=$(get_rgw_ssl_cn)
+    if [[ "${served_cn}" != "rotated-cert" ]]; then
+        echo "FAIL: Expected CN=rotated-cert after --restart, got CN=${served_cn}"
+        return 1
+    fi
+    echo "PASS: rotated-cert is served after --restart"
+
+    # Test 2: Rotate without --restart, verify old cert still served
+    echo "Test: certificate set rgw without --restart"
+    generate_rgw_ssl_cert "rotated-cert-2"
+    sudo microceph certificate set rgw \
+        --ssl-certificate="$(sudo base64 -w0 /tmp/rotated-cert-2.crt)" \
+        --ssl-private-key="$(sudo base64 -w0 /tmp/rotated-cert-2.key)"
+
+    sleep 3
+    served_cn=$(get_rgw_ssl_cn)
+    if [[ "${served_cn}" != "rotated-cert" ]]; then
+        echo "FAIL: Expected CN=rotated-cert still served (no restart), got CN=${served_cn}"
+        return 1
+    fi
+    echo "PASS: old cert still served without restart"
+
+    # Test 3: Manual restart picks up the cert written without --restart
+    echo "Test: manual restart picks up new cert"
+    sudo snap restart microceph.rgw
+    wait_for_rgw 1
+    wait_for_rgw_ssl_port
+
+    served_cn=$(get_rgw_ssl_cn)
+    if [[ "${served_cn}" != "rotated-cert-2" ]]; then
+        echo "FAIL: Expected CN=rotated-cert-2 after manual restart, got CN=${served_cn}"
+        return 1
+    fi
+    echo "PASS: rotated-cert-2 served after manual restart"
+
+    # Restore original cert so subsequent tests (testrgw_ssl) still work
+    sudo microceph certificate set rgw \
+        --ssl-certificate="$(sudo base64 -w0 /tmp/server.crt)" \
+        --ssl-private-key="$(sudo base64 -w0 /tmp/server.key)" \
+        --restart
+    wait_for_rgw 1
+    wait_for_rgw_ssl_port
+    echo "PASS: original cert restored"
+}
+
+function test_certificate_set_rgw_not_running() {
+    set -eux
+    echo "Test: certificate set rgw fails when RGW is not running"
+
+    sudo microceph disable rgw
+    sleep 3
+
+    if sudo microceph certificate set rgw \
+        --ssl-certificate="$(sudo base64 -w0 /tmp/server.crt)" \
+        --ssl-private-key="$(sudo base64 -w0 /tmp/server.key)" 2>&1; then
+        echo "FAIL: Expected failure when RGW is not running"
+        return 1
+    fi
+    echo "PASS: command failed as expected when RGW is not running"
+}
+
+function test_certificate_set_rgw_target() {
+    local target="${1?missing}"
+    set -eux
+
+    echo "Test: certificate set rgw --target ${target}"
+
+    # RGW must already be enabled with SSL (via enable_rgw_ssl)
+    # Generate a new cert for the target node
+    generate_rgw_ssl_cert "target-cert"
+
+    # Rotate on the target node from the head node
+    # Resolve the target's address from the cluster
+    # microceph status format: "- node-wrk1 (10.x.x.x)"
+    target_addr=$(sudo microceph status | grep -F "${target}" | grep -oP '\(\K[^)]+')
+
+    sudo microceph certificate set rgw \
+        --ssl-certificate="$(sudo base64 -w0 /tmp/target-cert.crt)" \
+        --ssl-private-key="$(sudo base64 -w0 /tmp/target-cert.key)" \
+        --target "${target}" \
+        --restart
+    wait_for_rgw 1
+    wait_for_rgw_ssl_port "${target_addr}"
+
+    # Verify the target node is serving the new cert
+    served_cn=$(get_rgw_ssl_cn "${target_addr}")
+
+    if [[ "${served_cn}" != "target-cert" ]]; then
+        echo "FAIL: Expected CN=target-cert on ${target}, got CN=${served_cn}"
+        return 1
+    fi
+    echo "PASS: target-cert is served on ${target} (${target_addr})"
+
+    # Restore original cert on the target
+    sudo microceph certificate set rgw \
+        --ssl-certificate="$(sudo base64 -w0 /tmp/server.crt)" \
+        --ssl-private-key="$(sudo base64 -w0 /tmp/server.key)" \
+        --target "${target}" \
+        --restart
+    wait_for_rgw 1
+    wait_for_rgw_ssl_port "${target_addr}"
+    echo "PASS: original cert restored on ${target}"
+}
+
 function get_lxd_network() {
     local nw_name="${1?missing}"
     nw=$(lxc network list --format=csv | grep "${nw_name}" | cut -d, -f4)
