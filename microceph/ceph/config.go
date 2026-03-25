@@ -192,7 +192,9 @@ func ListConfigs() (types.Configs, error) {
 		return configs, err
 	}
 
-	json.Unmarshal([]byte(output), &dump)
+	if err := json.Unmarshal([]byte(output), &dump); err != nil {
+		return configs, err
+	}
 	// Only take configs permitted in config table.
 	for _, configItem := range dump {
 		if configTable.isKeyPresent(configItem.Name) {

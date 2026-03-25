@@ -25,7 +25,7 @@ func (c *cmdReplicationEnableRbd) Command() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&c.remoteName, "remote", "", "remote MicroCeph cluster name")
-	cmd.MarkFlagRequired("remote")
+	_ = cmd.MarkFlagRequired("remote")
 	cmd.Flags().BoolVar(&c.skipAutoEnable, "skip-auto-enable", false, "do not auto enable rbd mirroring for all images in the pool.")
 	cmd.Flags().StringVar(&c.repType, "type", "journal", "'journal' or 'snapshot', defaults to journal")
 	cmd.Flags().StringVar(&c.schedule, "schedule", "", "snapshot schedule in days, hours, or minutes using d, h, m suffix respectively")

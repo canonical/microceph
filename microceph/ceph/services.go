@@ -73,7 +73,11 @@ func RestartCephService(clusterServices types.Services, service string, hostname
 	}
 
 	// Restart the service.
-	snapRestart(service, false)
+	err = snapRestart(service, false)
+	if err != nil {
+		logger.Errorf("failed to restart service %s: %v", service, err)
+		return err
+	}
 
 	// Check all the daemons available before Restart are up.
 	err = retry.Retry(func(i uint) error {

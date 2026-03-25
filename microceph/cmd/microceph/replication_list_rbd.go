@@ -12,7 +12,7 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 type cmdReplicationListRbd struct {
@@ -95,7 +95,7 @@ func printReplicationList(response string) error {
 			t.AppendRow(table.Row{pool.Name, image.Name, image.IsPrimary, image.LastLocalUpdate}, rowConfigAutoMerge)
 		}
 	}
-	if terminal.IsTerminal(0) && terminal.IsTerminal(1) {
+	if term.IsTerminal(0) && term.IsTerminal(1) {
 		// Set style if interactive shell.
 		t.SetStyle(table.StyleColoredBright)
 	}

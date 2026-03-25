@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -236,7 +237,7 @@ func printAddDiskFailures(response types.DiskAddResponse) error {
 
 	if failureCount == 1 {
 		// Print error if only one instance of error is there.
-		return fmt.Errorf(errStr)
+		return errors.New(errStr)
 	} else if failureCount > 1 {
 		// Print error if only one instance of error is there.
 		return fmt.Errorf("failed adding multiple (%d) disks, please check logs for details", failureCount)

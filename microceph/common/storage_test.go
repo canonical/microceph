@@ -67,13 +67,13 @@ func (s *StorageDeviceTestSuite) SetupTest() {
 	s.CopyCephConfigs()
 
 	osdDir := filepath.Join(s.Tmp, "SNAP_COMMON", "data", "osd", "ceph-0")
-	os.MkdirAll(osdDir, 0775)
+	_ = os.MkdirAll(osdDir, 0775)
 	// create a temp file to use as a device
 	s.devicePath = filepath.Join(s.Tmp, "device")
-	os.Create(s.devicePath)
-	os.MkdirAll(filepath.Join(s.Tmp, "dev"), 0775)
-	os.Create(filepath.Join(s.Tmp, "dev", "sdb"))
-	os.Create(filepath.Join(s.Tmp, "dev", "sdc"))
+	_, _ = os.Create(s.devicePath)
+	_ = os.MkdirAll(filepath.Join(s.Tmp, "dev"), 0775)
+	_, _ = os.Create(filepath.Join(s.Tmp, "dev", "sdb"))
+	_, _ = os.Create(filepath.Join(s.Tmp, "dev", "sdc"))
 }
 
 func (s *StorageDeviceTestSuite) TestIsCephDeviceNotADevice() {
@@ -84,7 +84,7 @@ func (s *StorageDeviceTestSuite) TestIsCephDeviceNotADevice() {
 
 func (s *StorageDeviceTestSuite) TestIsCephDeviceHaveDevice() {
 	// create a symlink to the device file
-	os.Symlink(s.devicePath, filepath.Join(s.Tmp, "SNAP_COMMON", "data", "osd", "ceph-0", "block"))
+	_ = os.Symlink(s.devicePath, filepath.Join(s.Tmp, "SNAP_COMMON", "data", "osd", "ceph-0", "block"))
 	isCeph, err := IsCephDevice(s.devicePath)
 	s.NoError(err, "There should not be an error when checking a device that is used by Ceph")
 	s.True(isCeph, "The device should be identified as a Ceph device")

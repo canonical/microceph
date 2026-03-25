@@ -2,7 +2,6 @@ package ceph
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"github.com/canonical/microceph/microceph/constants"
@@ -10,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/canonical/microceph/microceph/database"
 )
 
 // writeSSLFiles decodes base64-encoded SSL certificate and key, and writes them to disk.
@@ -194,23 +191,6 @@ func DisableRGW(ctx context.Context, s interfaces.StateInterface) error {
 	return nil
 }
 
-// rgwCreateServiceDatabase creates a rgw service record in the database.
-func rgwCreateServiceDatabase(ctx context.Context, s interfaces.StateInterface) error {
-	if s.ClusterState().ServerCert() == nil {
-		return fmt.Errorf("no server certificate")
-	}
-
-	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		// Create the service.
-		_, err := database.CreateService(ctx, tx, database.Service{Member: s.ClusterState().Name(), Service: "rgw"})
-		if err != nil {
-			return fmt.Errorf("Failed to record role: %w", err)
-		}
-
-		return nil
-	})
-	return err
-}
 
 // startRGW starts the RGW service.
 func startRGW() error {

@@ -24,7 +24,7 @@ func (c *cmdReplicationDemote) Command() *cobra.Command {
 
 	cmd.Flags().StringVar(&c.remoteName, "remote", "", "remote MicroCeph cluster name")
 	cmd.Flags().BoolVar(&c.isForce, "yes-i-really-mean-it", false, "demote cluster irrespective of data loss")
-	cmd.MarkFlagRequired("remote")
+	_ = cmd.MarkFlagRequired("remote")
 	return cmd
 }
 

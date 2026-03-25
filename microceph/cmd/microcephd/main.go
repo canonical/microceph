@@ -4,10 +4,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/canonical/microcluster/v2/state"
@@ -93,10 +91,6 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	return m.Start(context.Background(), daemonArgs)
-}
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
 }
 
 func main() {

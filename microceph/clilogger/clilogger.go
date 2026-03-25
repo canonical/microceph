@@ -1,6 +1,7 @@
 package clilogger
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -57,25 +58,25 @@ func Error(msg string, args ...any) {
 }
 
 func Debugf(format string, args ...any) {
-	if Logger != nil && Logger.Enabled(nil, slog.LevelDebug) {
+	if Logger != nil && Logger.Enabled(context.TODO(), slog.LevelDebug) {
 		Logger.Debug(fmt.Sprintf(format, args...))
 	}
 }
 
 func Infof(format string, args ...any) {
-	if Logger != nil && Logger.Enabled(nil, slog.LevelInfo) {
+	if Logger != nil && Logger.Enabled(context.TODO(), slog.LevelInfo) {
 		Logger.Info(fmt.Sprintf(format, args...))
 	}
 }
 
 func Warnf(format string, args ...any) {
-	if Logger != nil && Logger.Enabled(nil, slog.LevelWarn) {
+	if Logger != nil && Logger.Enabled(context.TODO(), slog.LevelWarn) {
 		Logger.Warn(fmt.Sprintf(format, args...))
 	}
 }
 
 func Errorf(format string, args ...any) {
-	if Logger != nil && Logger.Enabled(nil, slog.LevelError) {
+	if Logger != nil && Logger.Enabled(context.TODO(), slog.LevelError) {
 		Logger.Error(fmt.Sprintf(format, args...))
 	}
 }

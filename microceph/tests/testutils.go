@@ -62,7 +62,7 @@ func (s *BaseSuite) ReadCephConfig(conf string) string {
 func (s *BaseSuite) SetupTest() {
 	s.CreateTmp()
 	os.Setenv("TEST_ROOT_PATH", s.Tmp)
-	os.MkdirAll(filepath.Join(s.Tmp, "proc"), 0775)
+	_ = os.MkdirAll(filepath.Join(s.Tmp, "proc"), 0775)
 }
 
 func (s *BaseSuite) TearDownTest() {
