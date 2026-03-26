@@ -464,6 +464,52 @@ jobs:
         run: |
           sudo snap logs microceph -n 1000
 
+  test-sequential-mon-host-refresh:
+    name: Regression test for sequential join mon host refresh (issue #556)
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
+
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
+
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
+
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
+
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
+
+      - name: Install local microceph snap
+        run: ~/actionutils.sh install_multinode
+
+      - name: Test sequential join mon host refresh
+        run: ~/actionutils.sh test_sequential_join_mon_hosts
+
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          for node in node-wrk0 node-wrk1 ; do
+            echo "=== $node ==="
+            lxc exec $node -- sh -c "snap logs microceph -n 500" || true
+            lxc exec $node -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf" || true
+          done
+
   test-maintenance-modes:
     name: Test maintenance mode
     runs-on: ubuntu-22.04
