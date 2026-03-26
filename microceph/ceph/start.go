@@ -227,7 +227,7 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 // calling UpdateConfig this iteration. It skips when it is not the first run
 // and the monitor list is unchanged.
 func shouldSkipMonitorRefresh(first bool, oldMonitors, monitors []string) bool {
-	return !first || reflect.DeepEqual(oldMonitors, monitors)
+	return !first && reflect.DeepEqual(oldMonitors, monitors)
 }
 
 // Start is run on daemon startup.
