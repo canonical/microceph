@@ -14,9 +14,11 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
+const diskAddTimeout = 900 * time.Second
+
 // AddDisk requests Ceph sets up a new OSD.
 func AddDisk(ctx context.Context, c *microCli.Client, data *types.DisksPost) (types.DiskAddResponse, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	queryCtx, cancel := context.WithTimeout(ctx, diskAddTimeout)
 	defer cancel()
 
 	errors := types.DiskAddResponse{}
