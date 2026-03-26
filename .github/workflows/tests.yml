@@ -28,7 +28,15 @@ jobs:
           sudo snap install snapcraft --classic
           snap list
 
+      - name: Cache snap artifact
+        id: snap-cache
+        uses: actions/cache@v4
+        with:
+          path: "*.snap"
+          key: snap-${{ hashFiles('snap/**', 'microceph/**', 'microceph-orch/**', 'snapcraft/**', 'patches/**') }}
+
       - name: Build snaps
+        if: steps.snap-cache.outputs.cache-hit != 'true'
         run: snapcraft
 
       - name: Upload snap artifact
