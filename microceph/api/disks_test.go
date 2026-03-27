@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -121,4 +122,106 @@ func TestParseAndPatchDiskPostParams(t *testing.T) {
 			assert.Equal(t, tt.expectedDBEncrypt, result.DBEncrypt, tt.description)
 		})
 	}
+}
+
+func TestValidateDiskPostRequest(t *testing.T) {
+	tests := []struct {
+		name        string
+		req         types.DisksPost
+		errorSubstr string
+	}{
+		{
+			name:        "wal-match requires osd-match",
+			req:         types.DisksPost{WALMatch: "eq(@type,'nvme')", WALSize: "1GiB"},
+			errorSubstr: "--wal-match requires --osd-match",
+		},
+		{
+			name:        "db-match requires osd-match",
+			req:         types.DisksPost{DBMatch: "eq(@type,'nvme')", DBSize: "4GiB"},
+			errorSubstr: "--db-match requires --osd-match",
+		},
+		{
+			name:        "dry-run requires osd-match",
+			req:         types.DisksPost{DryRun: true},
+			errorSubstr: "--dry-run requires --osd-match",
+		},
+		{
+			name:        "wal-match requires wal-size",
+			req:         types.DisksPost{OSDMatch: "eq(@type,'ssd')", WALMatch: "eq(@type,'nvme')"},
+			errorSubstr: "--wal-match requires --wal-size",
+		},
+		{
+			name:        "db-match requires db-size",
+			req:         types.DisksPost{OSDMatch: "eq(@type,'ssd')", DBMatch: "eq(@type,'nvme')"},
+			errorSubstr: "--db-match requires --db-size",
+		},
+		{
+			name:        "wal-size requires wal-match",
+			req:         types.DisksPost{WALSize: "1GiB"},
+			errorSubstr: "--wal-size requires --wal-match",
+		},
+		{
+			name:        "db-size requires db-match",
+			req:         types.DisksPost{DBSize: "4GiB"},
+			errorSubstr: "--db-size requires --db-match",
+		},
+		{
+			name:        "dsl and path are exclusive",
+			req:         types.DisksPost{OSDMatch: "eq(@type,'ssd')", Path: []string{"/dev/sdb"}},
+			errorSubstr: "cannot be used with positional device arguments",
+		},
+		{
+			name:        "dsl and waldev are exclusive",
+			req:         types.DisksPost{OSDMatch: "eq(@type,'ssd')", WALDev: stringPtr("/dev/sdc")},
+			errorSubstr: "--wal-device and --db-device are not supported with DSL matching",
+		},
+		{
+			name:        "wal-encrypt requires wal-match or wal-device",
+			req:         types.DisksPost{OSDMatch: "eq(@type,'ssd')", WALEncrypt: true},
+			errorSubstr: "--wal-encrypt requires --wal-match or --wal-device",
+		},
+		{
+			name:        "db-wipe requires db-match or db-device",
+			req:         types.DisksPost{OSDMatch: "eq(@type,'ssd')", DBWipe: true},
+			errorSubstr: "--db-wipe requires --db-match or --db-device",
+		},
+		{
+			name:        "wal-size must be positive",
+			req:         types.DisksPost{OSDMatch: "eq(@type,'ssd')", WALMatch: "eq(@type,'nvme')", WALSize: "0B"},
+			errorSubstr: "--wal-size must be greater than 0",
+		},
+		{
+			name:        "db-size must be positive",
+			req:         types.DisksPost{OSDMatch: "eq(@type,'ssd')", DBMatch: "eq(@type,'nvme')", DBSize: "0B"},
+			errorSubstr: "--db-size must be greater than 0",
+		},
+		{
+			name: "legacy waldev with walencrypt remains valid",
+			req:  types.DisksPost{Path: []string{"/dev/sdb"}, WALDev: stringPtr("/dev/sdc"), WALEncrypt: true},
+		},
+		{
+			name: "legacy dbdev with dbwipe remains valid",
+			req:  types.DisksPost{Path: []string{"/dev/sdb"}, DBDev: stringPtr("/dev/sdd"), DBWipe: true},
+		},
+		{
+			name: "plain osd-match dry-run remains valid",
+			req:  types.DisksPost{OSDMatch: "eq(@type,'ssd')", DryRun: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDiskPostRequest(tt.req)
+			if tt.errorSubstr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.Error(t, err)
+			assert.ErrorContains(t, err, tt.errorSubstr)
+		})
+	}
+}
+
+func stringPtr(v string) *string {
+	return &v
 }

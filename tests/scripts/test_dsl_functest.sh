@@ -965,6 +965,42 @@ function test_dsl_partitioned_non_ceph_aux_disk_is_rejected() {
     assert_path_missing_in_vm "$wal_link"
 }
 
+function test_dsl_whole_disk_ceph_aux_device_is_rejected() {
+    log "Test: whole-disk Ceph WAL device is rejected as a DSL WAL carrier"
+    local osd1_path osd2_path wal_parent first_output second_output first_osd_id second_osd_id
+    local before_parts after_first_parts after_second_parts first_wal_link second_wal_link
+
+    osd1_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="10.00GiB"))')
+    osd2_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="11.00GiB"))')
+    wal_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="20.00GiB"))')
+    before_parts=$(get_partition_count "$wal_parent")
+
+    first_output=$(vm_exec microceph disk add "$osd1_path" --wal-device "$wal_parent" 2>&1 || true)
+    echo "$first_output"
+    wait_for_configured_disk_count_ge 1 180
+
+    first_osd_id=$(get_osd_id_for_path "$osd1_path")
+    [[ -n "$first_osd_id" ]] || fail "Could not resolve OSD id for $osd1_path"
+    first_wal_link="$(get_osd_data_dir "$first_osd_id")/block.wal"
+    assert_path_exists_in_vm "$first_wal_link"
+
+    after_first_parts=$(get_partition_count "$wal_parent")
+    assert_eq "$after_first_parts" "$before_parts" "whole-disk WAL setup must not create partitions on the WAL carrier"
+
+    second_output=$(vm_exec microceph disk add --osd-match "eq(@size, 11GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
+    echo "$second_output"
+    assert_output_contains "$second_output" 'Warning: WAL match expression resolved to no devices' "expected warning for Ceph-owned whole-disk WAL carrier"
+    wait_for_configured_disk_count_ge 2 180
+
+    after_second_parts=$(get_partition_count "$wal_parent")
+    assert_eq "$after_second_parts" "$after_first_parts" "Ceph-owned whole-disk WAL carrier must not receive a DSL WAL partition"
+
+    second_osd_id=$(get_osd_id_for_path "$osd2_path")
+    [[ -n "$second_osd_id" ]] || fail "Could not resolve OSD id for $osd2_path"
+    second_wal_link="$(get_osd_data_dir "$second_osd_id")/block.wal"
+    assert_path_missing_in_vm "$second_wal_link"
+}
+
 function test_dsl_remove_osd_cleans_generated_aux_partitions() {
     log "Test: removing an OSD cleans generated WAL/DB partitions"
     local osd_path output osd_id osd_dir wal_target db_target manifest_path
@@ -1243,6 +1279,7 @@ EOF
             cat <<'EOF'
 t1 test_dsl_snap_contains_partition_tools
 p1 test_dsl_partitioned_non_ceph_aux_disk_is_rejected
+w1 test_dsl_whole_disk_ceph_aux_device_is_rejected
 m1 test_dsl_end_to_end_matrix_from_local_snap
 c1 test_dsl_dryrun_and_execute_consistency
 EOF
@@ -1256,6 +1293,15 @@ function run_requested_single_test() {
         fail "REQUESTED_FUNCTION is not set"
     fi
     "$REQUESTED_FUNCTION"
+}
+
+function run_dsl_single_test() {
+    trap cleanup_dsl_test EXIT
+
+    setup_dsl_test
+    install_microceph_in_vm
+    run_requested_single_test
+    show_dsl_final_status
 }
 
 function run_dsl_shared_suite() {
@@ -1298,7 +1344,7 @@ function run_dsl_case() {
         cmd+=("--no-cleanup")
     fi
     cmd+=("$test_function")
-    "${cmd[@]}"
+    "${cmd[@]}" </dev/null
 }
 
 function run_dsl_isolated_suite() {
@@ -1463,7 +1509,7 @@ EOF
 
     if [[ "$requested" == test_dsl_* ]]; then
         REQUESTED_FUNCTION="$requested"
-        run_dsl_suite run_requested_single_test
+        run_dsl_single_test
     else
         "$requested" "$@"
     fi

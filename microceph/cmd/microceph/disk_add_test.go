@@ -101,6 +101,22 @@ func TestCmdDiskAddValidateFlags(t *testing.T) {
 			cmd:  cmdDiskAdd{flagOSDMatch: "eq(@size, 10GiB)", flagDBMatch: "eq(@size, 30GiB)", flagDBSize: "4GiB", dbEncrypt: true, dbWipe: true, flagDryRun: true},
 		},
 		{
+			name: "legacy wal-device with wal-encrypt remains valid",
+			cmd:  cmdDiskAdd{walDevice: "/dev/sdb", walEncrypt: true},
+		},
+		{
+			name: "legacy wal-device with wal-wipe remains valid",
+			cmd:  cmdDiskAdd{walDevice: "/dev/sdb", walWipe: true},
+		},
+		{
+			name: "legacy db-device with db-encrypt remains valid",
+			cmd:  cmdDiskAdd{dbDevice: "/dev/sdc", dbEncrypt: true},
+		},
+		{
+			name: "legacy db-device with db-wipe remains valid",
+			cmd:  cmdDiskAdd{dbDevice: "/dev/sdc", dbWipe: true},
+		},
+		{
 			name: "plain osd-match remains valid",
 			cmd:  cmdDiskAdd{flagOSDMatch: "eq(@size, 10GiB)", flagDryRun: true},
 		},

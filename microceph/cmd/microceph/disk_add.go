@@ -227,17 +227,17 @@ func (c *cmdDiskAdd) validateFlags(args []string) error {
 	if c.flagDBSize != "" && c.flagDBMatch == "" {
 		return fmt.Errorf("--db-size requires --db-match")
 	}
-	if c.walEncrypt && c.flagWALMatch == "" {
-		return fmt.Errorf("--wal-encrypt requires --wal-match")
+	if c.walEncrypt && c.flagWALMatch == "" && c.walDevice == "" {
+		return fmt.Errorf("--wal-encrypt requires --wal-match or --wal-device")
 	}
-	if c.walWipe && c.flagWALMatch == "" {
-		return fmt.Errorf("--wal-wipe requires --wal-match")
+	if c.walWipe && c.flagWALMatch == "" && c.walDevice == "" {
+		return fmt.Errorf("--wal-wipe requires --wal-match or --wal-device")
 	}
-	if c.dbEncrypt && c.flagDBMatch == "" {
-		return fmt.Errorf("--db-encrypt requires --db-match")
+	if c.dbEncrypt && c.flagDBMatch == "" && c.dbDevice == "" {
+		return fmt.Errorf("--db-encrypt requires --db-match or --db-device")
 	}
-	if c.dbWipe && c.flagDBMatch == "" {
-		return fmt.Errorf("--db-wipe requires --db-match")
+	if c.dbWipe && c.flagDBMatch == "" && c.dbDevice == "" {
+		return fmt.Errorf("--db-wipe requires --db-match or --db-device")
 	}
 
 	return nil

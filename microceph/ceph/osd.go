@@ -1204,9 +1204,12 @@ func sortDisksByStablePath(disks []api.ResourcesStorageDisk) {
 	})
 }
 
-func configuredOSDPathSet(configured types.Disks) map[string]struct{} {
+func configuredOSDPathSetForHost(configured types.Disks, hostname string) map[string]struct{} {
 	paths := make(map[string]struct{}, len(configured))
 	for _, disk := range configured {
+		if disk.Location != hostname {
+			continue
+		}
 		paths[disk.Path] = struct{}{}
 	}
 	return paths
@@ -1298,7 +1301,11 @@ func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr str
 	if err != nil {
 		return nil, err
 	}
-	configuredPathSet := configuredOSDPathSet(configuredDisks)
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get hostname: %w", err)
+	}
+	configuredPathSet := configuredOSDPathSetForHost(configuredDisks, hostname)
 	_ = excludePaths
 	localUsage, err := m.collectLocalAuxDiskUsage(storage)
 	if err != nil {
@@ -1318,12 +1325,20 @@ func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr str
 		if err != nil || mounted {
 			continue
 		}
-		if len(disk.Partitions) > 0 {
-			usage := localUsage[path]
-			if usage.HasData || !usage.HasAux {
+
+		usage := localUsage[path]
+		if usage.HasData {
+			continue
+		}
+
+		if len(disk.Partitions) == 0 {
+			if usage.HasAux {
 				continue
 			}
+		} else if !usage.HasAux {
+			continue
 		}
+
 		candidates = append(candidates, disk)
 	}
 

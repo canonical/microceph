@@ -2,6 +2,9 @@ package ceph
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
@@ -59,7 +62,7 @@ func makeTestDiskWithPartition(id, path string, sizeGiB uint64, partID string, p
 	return disk
 }
 
-func newDryRunManager(t *testing.T, storage *api.ResourcesStorage) (*OSDManager, *mocks.OSDQueryInterface) {
+func newDryRunManagerWithConfiguredDisks(t *testing.T, storage *api.ResourcesStorage, configuredDisks types.Disks) (*OSDManager, *mocks.OSDQueryInterface) {
 	t.Helper()
 	var st state.State
 	mgr := NewOSDManager(st)
@@ -68,7 +71,7 @@ func newDryRunManager(t *testing.T, storage *api.ResourcesStorage) (*OSDManager,
 	mgr.cephDeviceChecker = staticCephDeviceChecker{}
 
 	osdQuery := mocks.NewOSDQueryInterface(t)
-	osdQuery.On("List", mock.Anything, mock.Anything).Return(types.Disks{}, nil).Maybe()
+	osdQuery.On("List", mock.Anything, mock.Anything).Return(configuredDisks, nil).Maybe()
 
 	original := database.OSDQuery
 	database.OSDQuery = osdQuery
@@ -77,6 +80,10 @@ func newDryRunManager(t *testing.T, storage *api.ResourcesStorage) (*OSDManager,
 	})
 
 	return mgr, osdQuery
+}
+
+func newDryRunManager(t *testing.T, storage *api.ResourcesStorage) (*OSDManager, *mocks.OSDQueryInterface) {
+	return newDryRunManagerWithConfiguredDisks(t, storage, types.Disks{})
 }
 
 func TestAddDisksWithDSLRequestDryRunPlan(t *testing.T) {
@@ -163,6 +170,71 @@ func TestAddDisksWithDSLRequestDryRunRejectsPartitionedNonCephAuxDisk(t *testing
 	require.NotEmpty(t, resp.Warnings)
 	assert.Contains(t, resp.Warnings[0], "WAL match expression resolved to no devices")
 	assert.Nil(t, resp.DryRunPlan[0].WAL)
+}
+
+func TestAddDisksWithDSLRequestDryRunRejectsWholeDiskCephAuxDevice(t *testing.T) {
+	snapCommon := t.TempDir()
+	t.Setenv("SNAP_COMMON", snapCommon)
+
+	usedWholeDiskPath := filepath.Join(t.TempDir(), "used-whole-wal-disk")
+	require.NoError(t, os.WriteFile(usedWholeDiskPath, []byte("wal"), 0644))
+
+	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
+		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),
+		{
+			ID:         filepath.ToSlash(filepath.Join("..", "..", strings.TrimPrefix(usedWholeDiskPath, "/"))),
+			Size:       20 * 1024 * 1024 * 1024,
+			Type:       "virtio",
+			Model:      "QEMU HARDDISK",
+			Partitions: []api.ResourcesStorageDiskPartition{},
+		},
+	}}
+	mgr, _ := newDryRunManager(t, storage)
+
+	osdDir := filepath.Join(snapCommon, "data", "osd", "ceph-0")
+	require.NoError(t, os.MkdirAll(osdDir, 0755))
+	require.NoError(t, os.Symlink(usedWholeDiskPath, filepath.Join(osdDir, "block.wal")))
+
+	resp := mgr.AddDisksWithDSLRequest(context.Background(), types.DisksPost{
+		OSDMatch: "eq(@size, 10GiB)",
+		WALMatch: "eq(@size, 20GiB)",
+		WALSize:  "1GiB",
+		DryRun:   true,
+	})
+
+	require.Empty(t, resp.ValidationError)
+	require.Len(t, resp.DryRunPlan, 1)
+	require.NotEmpty(t, resp.Warnings)
+	assert.Contains(t, resp.Warnings[0], "WAL match expression resolved to no devices")
+	assert.Nil(t, resp.DryRunPlan[0].WAL)
+}
+
+func TestAddDisksWithDSLRequestDryRunIgnoresConfiguredDiskOnOtherHost(t *testing.T) {
+	hostname, err := os.Hostname()
+	require.NoError(t, err)
+
+	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
+		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),
+		makeTestDisk("wal1", "virtio-pci-0000:03:00.0", 20),
+	}}
+	remoteConfigured := types.Disks{{
+		Path:     "/dev/disk/by-path/virtio-pci-0000:03:00.0",
+		Location: hostname + "-other",
+	}}
+	mgr, _ := newDryRunManagerWithConfiguredDisks(t, storage, remoteConfigured)
+
+	resp := mgr.AddDisksWithDSLRequest(context.Background(), types.DisksPost{
+		OSDMatch: "eq(@size, 10GiB)",
+		WALMatch: "eq(@size, 20GiB)",
+		WALSize:  "1GiB",
+		DryRun:   true,
+	})
+
+	require.Empty(t, resp.ValidationError)
+	require.Len(t, resp.DryRunPlan, 1)
+	require.Empty(t, resp.Warnings)
+	require.NotNil(t, resp.DryRunPlan[0].WAL)
+	assert.Equal(t, "/dev/disk/by-path/virtio-pci-0000:03:00.0", resp.DryRunPlan[0].WAL.ParentPath)
 }
 
 func TestAddDisksWithDSLRequestDryRunOverlapRejected(t *testing.T) {
