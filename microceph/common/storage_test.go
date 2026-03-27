@@ -94,6 +94,13 @@ func (s *StorageDeviceTestSuite) TestIsCephDeviceHaveDevice() {
 	s.True(isCeph, "The device should be identified as a Ceph device")
 }
 
+func (s *StorageDeviceTestSuite) TestIsCephDeviceHaveEncryptedAuxDevice() {
+	os.Symlink(s.devicePath, filepath.Join(s.Tmp, "SNAP_COMMON", "data", "osd", "ceph-0", "unencrypted.wal"))
+	isCeph, err := IsCephDevice(s.devicePath)
+	s.NoError(err, "There should not be an error when checking a raw aux device tracked through unencrypted.wal")
+	s.True(isCeph, "The raw aux device should be identified as a Ceph device")
+}
+
 func (s *StorageDeviceTestSuite) TestIsMounted() {
 	// Test with a device that doesn't exist in the real filesystem
 	// This should return an error from EvalSymlinks since the path doesn't exist

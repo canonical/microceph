@@ -120,6 +120,29 @@ Example expressions:
      --wal-match "eq(@type, 'nvme')" --wal-size 1GiB --wal-encrypt --wal-wipe \
      --db-match "eq(@type, 'nvme')" --db-size 4GiB --db-encrypt --db-wipe
 
+Dry-run planning output
+^^^^^^^^^^^^^^^^^^^^^^^
+
+When ``--dry-run`` is used with ``--osd-match`` only, MicroCeph prints the
+OSD devices that would be added.
+
+When ``--dry-run`` is used together with WAL and/or DB matching, MicroCeph
+prints a provisioning plan table with the selected OSDs, the WAL/DB carrier
+paths, the planned partition numbers and sizes, and two additional columns:
+``WAL ACTION`` and ``DB ACTION``.
+
+The action column values mean:
+
+- ``new``: create the first auxiliary partition on a clean carrier
+- ``append``: add another partition on a carrier already used by the current cluster
+- ``reset``: wipe/reset the carrier before creating the planned partition(s)
+
+A ``reset`` action is shown when ``--wal-wipe`` or ``--db-wipe`` allows a
+matched carrier to be reclaimed before partitioning, for example when the disk
+already contains foreign data or a foreign partition table. In these cases,
+``--dry-run`` also emits an explicit warning naming each carrier that would be
+wiped/reset before partitioning.
+
 Available predicates:
 
 - ``and(a, b, ...)`` - Logical AND (variadic)

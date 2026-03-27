@@ -60,10 +60,11 @@ type DryRunDevice struct {
 
 // DryRunPartitionPlan represents one planned WAL or DB partition during dry-run.
 type DryRunPartitionPlan struct {
-	Kind       string `json:"kind" yaml:"kind"`
-	ParentPath string `json:"parent_path" yaml:"parent_path"`
-	Partition  uint64 `json:"partition" yaml:"partition"`
-	Size       string `json:"size" yaml:"size"`
+	Kind           string `json:"kind" yaml:"kind"`
+	ParentPath     string `json:"parent_path" yaml:"parent_path"`
+	Partition      uint64 `json:"partition" yaml:"partition"`
+	Size           string `json:"size" yaml:"size"`
+	ResetBeforeUse bool   `json:"reset_before_use,omitempty" yaml:"reset_before_use,omitempty"`
 }
 
 // DryRunOSDPlan represents one planned OSD provision during dry-run.
@@ -93,8 +94,9 @@ type Disk struct {
 }
 
 type DiskParameter struct {
-	Path     string
-	Encrypt  bool
-	Wipe     bool
-	LoopSize uint64
+	Path              string
+	Encrypt           bool
+	Wipe              bool
+	LoopSize          uint64
+	SkipPristineCheck bool
 }

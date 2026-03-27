@@ -1,10 +1,32 @@
 package main
 
 import (
+	"io"
+	"os"
+	"strings"
 	"testing"
 
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	fn()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
 
 func TestCmdDiskAddValidateFlags(t *testing.T) {
 	tests := []struct {
@@ -133,4 +155,36 @@ func TestCmdDiskAddValidateFlags(t *testing.T) {
 			assert.ErrorContains(t, err, tt.errorSubstr)
 		})
 	}
+}
+
+func TestPrintDryRunOutputShowsResetActions(t *testing.T) {
+	cmd := cmdDiskAdd{}
+	resp := types.DiskAddResponse{
+		Warnings: []string{"WAL carrier /dev/disk/by-path/pci-0000:00:03.0 will be wiped/reset before partitioning"},
+		DryRunPlan: []types.DryRunOSDPlan{{
+			OSDPath: "/dev/disk/by-path/pci-0000:00:01.0",
+			WAL: &types.DryRunPartitionPlan{
+				ParentPath:     "/dev/disk/by-path/pci-0000:00:03.0",
+				Partition:      1,
+				Size:           "1.00 GiB",
+				ResetBeforeUse: true,
+			},
+			DB: &types.DryRunPartitionPlan{
+				ParentPath: "/dev/disk/by-path/pci-0000:00:04.0",
+				Partition:  2,
+				Size:       "2.00 GiB",
+			},
+		}},
+	}
+
+	output := captureStdout(t, func() {
+		err := cmd.printDryRunOutput(resp)
+		require.NoError(t, err)
+	})
+
+	assert.True(t, strings.Contains(output, "wiped/reset before partitioning"))
+	assert.True(t, strings.Contains(output, "WAL ACTION"))
+	assert.True(t, strings.Contains(output, "DB ACTION"))
+	assert.True(t, strings.Contains(output, "reset"))
+	assert.True(t, strings.Contains(output, "append"))
 }

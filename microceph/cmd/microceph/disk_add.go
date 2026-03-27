@@ -244,6 +244,19 @@ func (c *cmdDiskAdd) validateFlags(args []string) error {
 }
 
 // printDryRunOutput prints the dry-run results in a tabulated format.
+func dryRunPartitionAction(plan *types.DryRunPartitionPlan) string {
+	if plan == nil {
+		return ""
+	}
+	if plan.ResetBeforeUse {
+		return "reset"
+	}
+	if plan.Partition > 1 {
+		return "append"
+	}
+	return "new"
+}
+
 func (c *cmdDiskAdd) printDryRunOutput(response types.DiskAddResponse) error {
 	if response.ValidationError != "" {
 		return fmt.Errorf(response.ValidationError)
@@ -257,22 +270,24 @@ func (c *cmdDiskAdd) printDryRunOutput(response types.DiskAddResponse) error {
 		fmt.Println("Planned OSD/WAL/DB provisioning:")
 		data := make([][]string, len(response.DryRunPlan))
 		for i, plan := range response.DryRunPlan {
-			walParent, walPart, walSize := "", "", ""
+			walParent, walPart, walSize, walAction := "", "", "", ""
 			if plan.WAL != nil {
 				walParent = plan.WAL.ParentPath
 				walPart = fmt.Sprintf("%d", plan.WAL.Partition)
 				walSize = plan.WAL.Size
+				walAction = dryRunPartitionAction(plan.WAL)
 			}
-			dbParent, dbPart, dbSize := "", "", ""
+			dbParent, dbPart, dbSize, dbAction := "", "", "", ""
 			if plan.DB != nil {
 				dbParent = plan.DB.ParentPath
 				dbPart = fmt.Sprintf("%d", plan.DB.Partition)
 				dbSize = plan.DB.Size
+				dbAction = dryRunPartitionAction(plan.DB)
 			}
-			data[i] = []string{plan.OSDPath, walParent, walPart, walSize, dbParent, dbPart, dbSize}
+			data[i] = []string{plan.OSDPath, walParent, walPart, walSize, dbParent, dbPart, dbSize, walAction, dbAction}
 		}
 
-		header := []string{"OSD", "WAL PARENT", "WAL PART#", "WAL SIZE", "DB PARENT", "DB PART#", "DB SIZE"}
+		header := []string{"OSD", "WAL PARENT", "WAL PART#", "WAL SIZE", "DB PARENT", "DB PART#", "DB SIZE", "WAL ACTION", "DB ACTION"}
 		sort.Sort(lxdCmd.SortColumnsNaturally(data))
 		return lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, data, data)
 	}

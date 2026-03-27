@@ -550,6 +550,11 @@ function create_partition_on_disk() {
     vm_shell "printf 'label: gpt\n,+${size_mib}MiB\n' | sfdisk '$path' >/dev/null && partx -u '$path' >/dev/null 2>&1 || true"
 }
 
+function mark_disk_non_pristine() {
+    local path="$1"
+    vm_shell "printf 'dirty' | dd of='$path' bs=1 conv=notrunc status=none && sync"
+}
+
 function partition_number_from_path() {
     local path="$1"
 
@@ -563,6 +568,30 @@ function partition_number_from_path() {
 function get_symlink_target() {
     local path="$1"
     vm_shell "readlink -f '$path'"
+}
+
+function get_symlink_value() {
+    local path="$1"
+    vm_shell "readlink '$path'"
+}
+
+function ensure_dm_crypt_ready() {
+    log "Ensuring dm-crypt support is enabled in VM"
+    vm_exec snap connect microceph:dm-crypt || true
+
+    if ! vm_shell "snap connections microceph | awk '\$2 == \"microceph:dm-crypt\" && \$3 != \"-\" { found=1 } END { exit found ? 0 : 1 }'"; then
+        skip_test "dm-crypt interface is not connected in the test VM"
+        return 1
+    fi
+
+    if ! vm_shell "test -e /dev/mapper/control"; then
+        skip_test "/dev/mapper/control is unavailable in the test VM"
+        return 1
+    fi
+
+    vm_exec snap restart microceph.daemon || true
+    sleep 5
+    return 0
 }
 
 function disk_add_help() {
@@ -1196,6 +1225,84 @@ function test_dsl_partitioned_non_ceph_aux_disk_is_rejected() {
     assert_path_missing_in_vm "$wal_link"
 }
 
+function test_dsl_non_pristine_whole_aux_device_requires_wipe() {
+    log "Test: non-pristine whole WAL carrier is rejected without --wal-wipe"
+    local osd_path wal_parent before_parts after_parts output osd_id wal_link
+
+    osd_path=$(get_available_disk_path_by_size "10GiB")
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
+    before_parts=$(get_partition_count "$wal_parent")
+    mark_disk_non_pristine "$wal_parent"
+
+    output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
+    echo "$output"
+    assert_output_contains "$output" 'Warning: WAL match expression resolved to no devices' "expected warning for non-pristine WAL carrier without wipe"
+    wait_for_configured_disk_count_ge 1 180
+
+    after_parts=$(get_partition_count "$wal_parent")
+    assert_eq "$after_parts" "$before_parts" "non-pristine WAL carrier without wipe must not receive a partition"
+    osd_id=$(get_osd_id_for_path "$osd_path")
+    [[ -n "$osd_id" ]] || fail "Could not resolve OSD id for $osd_path"
+    wal_link="$(get_osd_data_dir "$osd_id")/block.wal"
+    assert_path_missing_in_vm "$wal_link"
+}
+
+function test_dsl_non_pristine_whole_aux_device_with_wipe_is_allowed() {
+    log "Test: non-pristine whole WAL carrier is allowed with --wal-wipe"
+    local osd_path wal_parent before_parts after_parts output osd_id wal_link wal_target
+
+    osd_path=$(get_available_disk_path_by_size "10GiB")
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
+    before_parts=$(get_partition_count "$wal_parent")
+    mark_disk_non_pristine "$wal_parent"
+
+    output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-wipe 2>&1 || true)
+    echo "$output"
+    assert_output_not_contains "$output" 'Warning: WAL match expression resolved to no devices' "non-pristine WAL carrier with wipe should remain eligible"
+    wait_for_configured_disk_count_ge 1 180
+
+    after_parts=$(get_partition_count "$wal_parent")
+    assert_eq "$after_parts" "$((before_parts + 1))" "non-pristine WAL carrier with wipe should gain one partition"
+    osd_id=$(get_osd_id_for_path "$osd_path")
+    [[ -n "$osd_id" ]] || fail "Could not resolve OSD id for $osd_path"
+    wal_link="$(get_osd_data_dir "$osd_id")/block.wal"
+    assert_path_exists_in_vm "$wal_link"
+    wal_target=$(get_symlink_target "$wal_link")
+    assert_output_contains "$wal_target" '/dev/' "WAL symlink should resolve to a device"
+}
+
+function test_dsl_partitioned_foreign_aux_disk_with_wipe_is_reclaimed() {
+    log "Test: partitioned foreign WAL carrier is reclaimed with --wal-wipe"
+    local osd_path wal_parent before_parts setup_parts after_parts dry_run_output output osd_id wal_link wal_target
+
+    osd_path=$(get_available_disk_path_by_size "10GiB")
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
+    before_parts=$(get_partition_count "$wal_parent")
+    create_partition_on_disk "$wal_parent" 512
+    setup_parts=$(get_partition_count "$wal_parent")
+    assert_eq "$setup_parts" "$((before_parts + 1))" "setup should create one foreign partition on WAL disk"
+
+    dry_run_output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-wipe --dry-run 2>&1 || true)
+    echo "$dry_run_output"
+    assert_output_contains "$dry_run_output" 'wiped/reset before partitioning' "dry-run should make carrier reset intent explicit"
+    assert_output_contains "$dry_run_output" 'WAL ACTION' "dry-run should include WAL action column"
+    assert_output_contains "$dry_run_output" 'reset' "dry-run should label reclaimed WAL carrier as reset"
+
+    output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-wipe 2>&1 || true)
+    echo "$output"
+    assert_output_not_contains "$output" 'Warning: WAL match expression resolved to no devices' "partitioned foreign WAL carrier with wipe should remain eligible"
+    wait_for_configured_disk_count_ge 1 180
+
+    after_parts=$(get_partition_count "$wal_parent")
+    assert_eq "$after_parts" "$((before_parts + 1))" "reclaimed WAL carrier should be reset and end with one fresh partition"
+    osd_id=$(get_osd_id_for_path "$osd_path")
+    [[ -n "$osd_id" ]] || fail "Could not resolve OSD id for $osd_path"
+    wal_link="$(get_osd_data_dir "$osd_id")/block.wal"
+    assert_path_exists_in_vm "$wal_link"
+    wal_target=$(get_symlink_target "$wal_link")
+    assert_output_contains "$wal_target" '/dev/' "WAL symlink should resolve to a device"
+}
+
 function test_dsl_whole_disk_ceph_aux_device_is_rejected() {
     log "Test: whole-disk Ceph WAL device is rejected as a DSL WAL carrier"
     local osd1_path osd2_path wal_parent first_output second_output first_osd_id second_osd_id
@@ -1225,6 +1332,130 @@ function test_dsl_whole_disk_ceph_aux_device_is_rejected() {
 
     after_second_parts=$(get_partition_count "$wal_parent")
     assert_eq "$after_second_parts" "$after_first_parts" "Ceph-owned whole-disk WAL carrier must not receive a DSL WAL partition"
+
+    second_osd_id=$(get_osd_id_for_path "$osd2_path")
+    [[ -n "$second_osd_id" ]] || fail "Could not resolve OSD id for $osd2_path"
+    second_wal_link="$(get_osd_data_dir "$second_osd_id")/block.wal"
+    assert_path_missing_in_vm "$second_wal_link"
+}
+
+function test_dsl_encrypted_aux_carrier_is_reused_for_additional_partitions() {
+    log "Test: encrypted WAL/DB carriers are reused for additional partitions"
+    if ! ensure_dm_crypt_ready; then
+        return 0
+    fi
+
+    local osd1_path osd2_path wal_parent db_parent first_output second_output
+    local before_wal before_db after_first_wal after_first_db after_second_wal after_second_db
+    local osd1_id osd2_id osd1_dir osd2_dir
+    local osd1_wal_mapper osd1_db_mapper osd2_wal_mapper osd2_db_mapper
+    local osd1_wal_raw osd1_db_raw osd2_wal_raw osd2_db_raw
+    local osd1_wal_part osd1_db_part osd2_wal_part osd2_db_part
+
+    osd1_path=$(get_available_disk_path_by_size "10GiB")
+    osd2_path=$(get_available_disk_path_by_size "11GiB")
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
+    db_parent=$(get_available_disk_path_by_size "30GiB")
+    before_wal=$(get_partition_count "$wal_parent")
+    before_db=$(get_partition_count "$db_parent")
+
+    first_output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-encrypt --db-match "eq(@size, 30GiB)" --db-size 2GiB --db-encrypt 2>&1 || true)
+    echo "$first_output"
+    wait_for_configured_disk_count_ge 1 180
+    after_first_wal=$(get_partition_count "$wal_parent")
+    after_first_db=$(get_partition_count "$db_parent")
+    assert_eq "$after_first_wal" "$((before_wal + 1))" "first encrypted run should create one WAL partition"
+    assert_eq "$after_first_db" "$((before_db + 1))" "first encrypted run should create one DB partition"
+
+    osd1_id=$(get_osd_id_for_path "$osd1_path")
+    [[ -n "$osd1_id" ]] || fail "Could not resolve OSD id for $osd1_path"
+    osd1_dir=$(get_osd_data_dir "$osd1_id")
+    assert_path_exists_in_vm "$osd1_dir/block.wal"
+    assert_path_exists_in_vm "$osd1_dir/block.db"
+    assert_path_exists_in_vm "$osd1_dir/unencrypted.wal"
+    assert_path_exists_in_vm "$osd1_dir/unencrypted.db"
+
+    osd1_wal_mapper=$(get_symlink_value "$osd1_dir/block.wal")
+    osd1_db_mapper=$(get_symlink_value "$osd1_dir/block.db")
+    assert_output_contains "$osd1_wal_mapper" "luksosd\\.wal-${osd1_id}" "encrypted WAL link should point at the WAL mapper"
+    assert_output_contains "$osd1_db_mapper" "luksosd\\.db-${osd1_id}" "encrypted DB link should point at the DB mapper"
+
+    osd1_wal_raw=$(get_symlink_target "$osd1_dir/unencrypted.wal")
+    osd1_db_raw=$(get_symlink_target "$osd1_dir/unencrypted.db")
+    osd1_wal_part=$(partition_number_from_path "$osd1_wal_raw")
+    osd1_db_part=$(partition_number_from_path "$osd1_db_raw")
+    assert_eq "$osd1_wal_part" "1" "first encrypted WAL partition should be partition 1"
+    assert_eq "$osd1_db_part" "1" "first encrypted DB partition should be partition 1"
+
+    second_output=$(vm_exec microceph disk add --osd-match "eq(@size, 11GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-encrypt --db-match "eq(@size, 30GiB)" --db-size 2GiB --db-encrypt 2>&1 || true)
+    echo "$second_output"
+    assert_output_not_contains "$second_output" 'Warning: WAL match expression resolved to no devices' "encrypted WAL carrier should remain reusable"
+    assert_output_not_contains "$second_output" 'Warning: DB match expression resolved to no devices' "encrypted DB carrier should remain reusable"
+    wait_for_configured_disk_count_ge 2 180
+    after_second_wal=$(get_partition_count "$wal_parent")
+    after_second_db=$(get_partition_count "$db_parent")
+    assert_eq "$after_second_wal" "$((before_wal + 2))" "second encrypted run should create a second WAL partition"
+    assert_eq "$after_second_db" "$((before_db + 2))" "second encrypted run should create a second DB partition"
+
+    osd2_id=$(get_osd_id_for_path "$osd2_path")
+    [[ -n "$osd2_id" ]] || fail "Could not resolve OSD id for $osd2_path"
+    osd2_dir=$(get_osd_data_dir "$osd2_id")
+    assert_path_exists_in_vm "$osd2_dir/block.wal"
+    assert_path_exists_in_vm "$osd2_dir/block.db"
+    assert_path_exists_in_vm "$osd2_dir/unencrypted.wal"
+    assert_path_exists_in_vm "$osd2_dir/unencrypted.db"
+
+    osd2_wal_mapper=$(get_symlink_value "$osd2_dir/block.wal")
+    osd2_db_mapper=$(get_symlink_value "$osd2_dir/block.db")
+    assert_output_contains "$osd2_wal_mapper" "luksosd\\.wal-${osd2_id}" "second encrypted WAL link should point at the WAL mapper"
+    assert_output_contains "$osd2_db_mapper" "luksosd\\.db-${osd2_id}" "second encrypted DB link should point at the DB mapper"
+
+    osd2_wal_raw=$(get_symlink_target "$osd2_dir/unencrypted.wal")
+    osd2_db_raw=$(get_symlink_target "$osd2_dir/unencrypted.db")
+    osd2_wal_part=$(partition_number_from_path "$osd2_wal_raw")
+    osd2_db_part=$(partition_number_from_path "$osd2_db_raw")
+    assert_eq "$osd2_wal_part" "2" "second encrypted WAL partition should be partition 2"
+    assert_eq "$osd2_db_part" "2" "second encrypted DB partition should be partition 2"
+}
+
+function test_dsl_encrypted_whole_disk_aux_device_is_rejected() {
+    log "Test: encrypted whole-disk WAL device is rejected as a DSL WAL carrier"
+    if ! ensure_dm_crypt_ready; then
+        return 0
+    fi
+
+    local osd1_path osd2_path wal_parent first_output second_output first_osd_id second_osd_id
+    local before_parts after_first_parts after_second_parts first_osd_dir first_wal_link second_wal_link first_wal_raw
+
+    osd1_path=$(get_available_disk_path_by_size "10GiB")
+    osd2_path=$(get_available_disk_path_by_size "11GiB")
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
+    before_parts=$(get_partition_count "$wal_parent")
+
+    first_output=$(vm_exec microceph disk add "$osd1_path" --wal-device "$wal_parent" --wal-encrypt 2>&1 || true)
+    echo "$first_output"
+    wait_for_configured_disk_count_ge 1 180
+
+    first_osd_id=$(get_osd_id_for_path "$osd1_path")
+    [[ -n "$first_osd_id" ]] || fail "Could not resolve OSD id for $osd1_path"
+    first_osd_dir=$(get_osd_data_dir "$first_osd_id")
+    first_wal_link="$first_osd_dir/block.wal"
+    assert_path_exists_in_vm "$first_wal_link"
+    assert_path_exists_in_vm "$first_osd_dir/unencrypted.wal"
+    assert_output_contains "$(get_symlink_value "$first_wal_link")" "luksosd\\.wal-${first_osd_id}" "encrypted whole-disk WAL link should point at the WAL mapper"
+    first_wal_raw=$(get_symlink_target "$first_osd_dir/unencrypted.wal")
+    assert_eq "$first_wal_raw" "$wal_parent" "unencrypted whole-disk WAL link should resolve to the carrier disk"
+
+    after_first_parts=$(get_partition_count "$wal_parent")
+    assert_eq "$after_first_parts" "$before_parts" "encrypted whole-disk WAL setup must not create partitions on the WAL carrier"
+
+    second_output=$(vm_exec microceph disk add --osd-match "eq(@size, 11GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
+    echo "$second_output"
+    assert_output_contains "$second_output" 'Warning: WAL match expression resolved to no devices' "expected warning for encrypted Ceph-owned whole-disk WAL carrier"
+    wait_for_configured_disk_count_ge 2 180
+
+    after_second_parts=$(get_partition_count "$wal_parent")
+    assert_eq "$after_second_parts" "$after_first_parts" "encrypted whole-disk WAL carrier must not receive a DSL WAL partition"
 
     second_osd_id=$(get_osd_id_for_path "$osd2_path")
     [[ -n "$second_osd_id" ]] || fail "Could not resolve OSD id for $osd2_path"
@@ -1514,7 +1745,12 @@ EOF
             cat <<'EOF'
 t1 test_dsl_snap_contains_partition_tools
 p1 test_dsl_partitioned_non_ceph_aux_disk_is_rejected
+np1 test_dsl_non_pristine_whole_aux_device_requires_wipe
+np2 test_dsl_non_pristine_whole_aux_device_with_wipe_is_allowed
+pf1 test_dsl_partitioned_foreign_aux_disk_with_wipe_is_reclaimed
 w1 test_dsl_whole_disk_ceph_aux_device_is_rejected
+ew1 test_dsl_encrypted_whole_disk_aux_device_is_rejected
+er1 test_dsl_encrypted_aux_carrier_is_reused_for_additional_partitions
 m1 test_dsl_end_to_end_matrix_from_local_snap
 c1 test_dsl_dryrun_and_execute_consistency
 EOF

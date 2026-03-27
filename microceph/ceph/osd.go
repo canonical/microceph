@@ -699,6 +699,9 @@ func (m *OSDManager) checkPartitionsOnDevice(disk *types.DiskParameter, storage 
 
 // checkPristineDevice checks if a device is pristine and returns an error if it's not (unless wipe is enabled)
 func (m *OSDManager) checkPristineDevice(disk *types.DiskParameter, deviceType string) error {
+	if disk.SkipPristineCheck {
+		return nil
+	}
 	if !disk.Wipe {
 		isPristine, err := m.pristineChecker.IsPristineDisk(disk.Path)
 		if err != nil {
@@ -1138,11 +1141,12 @@ type DSLMatchResult struct {
 }
 
 type plannedCarrierState struct {
-	Path          string
-	Disk          api.ResourcesStorageDisk
-	PartitionNo   uint64
-	PartitionCnt  int
-	RemainingSize uint64
+	Path           string
+	Disk           api.ResourcesStorageDisk
+	PartitionNo    uint64
+	PartitionCnt   int
+	RemainingSize  uint64
+	ResetBeforeUse bool
 }
 
 // MatchDisksWithDSL matches available disks using a DSL expression.
@@ -1284,27 +1288,58 @@ func (m *OSDManager) matchOSDDisksWithDSL(ctx context.Context, dslExpr string) (
 	return result, nil
 }
 
-func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr string) ([]api.ResourcesStorageDisk, error) {
+func (m *OSDManager) auxiliaryDiskCandidateDisposition(path string, disk api.ResourcesStorageDisk, usage localAuxDiskUsage, wipe bool) (bool, bool, error) {
+	if usage.HasData {
+		return false, false, nil
+	}
+
+	if len(disk.Partitions) == 0 {
+		if usage.HasAux {
+			return false, false, nil
+		}
+		if wipe {
+			return true, true, nil
+		}
+
+		isPristine, err := m.pristineChecker.IsPristineDisk(path)
+		if err != nil {
+			return false, false, fmt.Errorf("failed to check if auxiliary device %s is pristine: %w", path, err)
+		}
+		return isPristine, false, nil
+	}
+
+	if usage.HasAux {
+		return true, false, nil
+	}
+
+	if wipe {
+		return true, true, nil
+	}
+
+	return false, false, nil
+}
+
+func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr string, wipe bool) ([]api.ResourcesStorageDisk, map[string]bool, error) {
 	if dslExpr == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	expr, err := validateDSLExpression(dslExpr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	storage, configuredDisks, err := m.getStorageAndConfiguredDisks(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	hostname, err := os.Hostname()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get hostname: %w", err)
+		return nil, nil, fmt.Errorf("failed to get hostname: %w", err)
 	}
 	configuredPathSet := configuredOSDPathSetForHost(configuredDisks, hostname)
 	localUsage, err := m.collectLocalAuxDiskUsage(storage)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	candidates := make([]api.ResourcesStorageDisk, 0, len(storage.Disks))
@@ -1321,28 +1356,34 @@ func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr str
 			continue
 		}
 
-		usage := localUsage[path]
-		if usage.HasData {
-			continue
-		}
-
-		if len(disk.Partitions) == 0 {
-			if usage.HasAux {
-				continue
-			}
-		} else if !usage.HasAux {
-			continue
-		}
-
 		candidates = append(candidates, disk)
 	}
 
 	matchedDisks, err := dsl.MatchDevices(expr, candidates, shortHostname())
 	if err != nil {
-		return nil, fmt.Errorf("DSL evaluation error: %w", err)
+		return nil, nil, fmt.Errorf("DSL evaluation error: %w", err)
 	}
-	sortDisksByStablePath(matchedDisks)
-	return matchedDisks, nil
+
+	filteredMatches := make([]api.ResourcesStorageDisk, 0, len(matchedDisks))
+	resetBeforeUse := map[string]bool{}
+	for _, disk := range matchedDisks {
+		path := common.GetDevicePath(&disk)
+		usage := localUsage[path]
+		eligible, reset, err := m.auxiliaryDiskCandidateDisposition(path, disk, usage, wipe)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !eligible {
+			continue
+		}
+		filteredMatches = append(filteredMatches, disk)
+		if reset {
+			resetBeforeUse[path] = true
+		}
+	}
+
+	sortDisksByStablePath(filteredMatches)
+	return filteredMatches, resetBeforeUse, nil
 }
 
 func diskUsedBytes(disk api.ResourcesStorageDisk) uint64 {

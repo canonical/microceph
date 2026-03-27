@@ -32,6 +32,7 @@ func (s staticStorage) GetStorage() (*api.ResourcesStorage, error) {
 
 type staticMountChecker struct{}
 type staticCephDeviceChecker struct{}
+type staticPristineChecker struct{}
 
 func (staticMountChecker) IsMounted(string) (bool, error) {
 	return false, nil
@@ -39,6 +40,10 @@ func (staticMountChecker) IsMounted(string) (bool, error) {
 
 func (staticCephDeviceChecker) IsCephDevice(string) (bool, error) {
 	return false, nil
+}
+
+func (staticPristineChecker) IsPristineDisk(string) (bool, error) {
+	return true, nil
 }
 
 func makeTestDisk(id, path string, sizeGiB uint64) api.ResourcesStorageDisk {
@@ -69,6 +74,7 @@ func newDryRunManagerWithConfiguredDisks(t *testing.T, storage *api.ResourcesSto
 	mgr.storage = staticStorage{storage: storage}
 	mgr.mountChecker = staticMountChecker{}
 	mgr.cephDeviceChecker = staticCephDeviceChecker{}
+	mgr.pristineChecker = staticPristineChecker{}
 
 	osdQuery := mocks.NewOSDQueryInterface(t)
 	osdQuery.On("List", mock.Anything, mock.Anything).Return(configuredDisks, nil).Maybe()
@@ -151,6 +157,86 @@ func TestAddDisksWithDSLRequestDryRunWarnings(t *testing.T) {
 	require.NotNil(t, resp.DryRunPlan[0].DB)
 }
 
+func TestAddDisksWithDSLRequestDryRunRejectsNonPristineWholeAuxDiskWithoutWipe(t *testing.T) {
+	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
+		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),
+		makeTestDisk("wal1", "virtio-pci-0000:03:00.0", 20),
+	}}
+	mgr, _ := newDryRunManager(t, storage)
+	mockPristineChecker := &MockPristineChecker{}
+	mgr.pristineChecker = mockPristineChecker
+	mockPristineChecker.On("IsPristineDisk", "/dev/disk/by-path/virtio-pci-0000:03:00.0").Return(false, nil).Once()
+
+	resp := mgr.AddDisksWithDSLRequest(context.Background(), types.DisksPost{
+		OSDMatch: "eq(@size, 10GiB)",
+		WALMatch: "eq(@size, 20GiB)",
+		WALSize:  "1GiB",
+		DryRun:   true,
+	})
+
+	require.Empty(t, resp.ValidationError)
+	require.Len(t, resp.DryRunPlan, 1)
+	require.NotEmpty(t, resp.Warnings)
+	assert.Contains(t, resp.Warnings[0], "WAL match expression resolved to no devices")
+	assert.Nil(t, resp.DryRunPlan[0].WAL)
+	mockPristineChecker.AssertExpectations(t)
+}
+
+func TestAddDisksWithDSLRequestDryRunAllowsNonPristineWholeAuxDiskWithWipe(t *testing.T) {
+	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
+		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),
+		makeTestDisk("wal1", "virtio-pci-0000:03:00.0", 20),
+	}}
+	mgr, _ := newDryRunManager(t, storage)
+	mockPristineChecker := &MockPristineChecker{}
+	mgr.pristineChecker = mockPristineChecker
+
+	resp := mgr.AddDisksWithDSLRequest(context.Background(), types.DisksPost{
+		OSDMatch: "eq(@size, 10GiB)",
+		WALMatch: "eq(@size, 20GiB)",
+		WALSize:  "1GiB",
+		WALWipe:  true,
+		DryRun:   true,
+	})
+
+	require.Empty(t, resp.ValidationError)
+	require.Len(t, resp.DryRunPlan, 1)
+	require.NotEmpty(t, resp.Warnings)
+	assert.Contains(t, resp.Warnings[0], "WAL carrier /dev/disk/by-path/virtio-pci-0000:03:00.0 will be wiped/reset before partitioning")
+	require.NotNil(t, resp.DryRunPlan[0].WAL)
+	assert.Equal(t, uint64(1), resp.DryRunPlan[0].WAL.Partition)
+	assert.True(t, resp.DryRunPlan[0].WAL.ResetBeforeUse)
+	mockPristineChecker.AssertNotCalled(t, "IsPristineDisk", "/dev/disk/by-path/virtio-pci-0000:03:00.0")
+}
+
+func TestAddDisksWithDSLRequestDryRunAllowsPartitionedForeignAuxDiskWithWipe(t *testing.T) {
+	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
+		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),
+		makeTestDiskWithPartition("wal1", "virtio-pci-0000:03:00.0", 20, "vdc1", 1, 1),
+	}}
+	mgr, _ := newDryRunManager(t, storage)
+	mockPristineChecker := &MockPristineChecker{}
+	mgr.pristineChecker = mockPristineChecker
+
+	resp := mgr.AddDisksWithDSLRequest(context.Background(), types.DisksPost{
+		OSDMatch: "eq(@size, 10GiB)",
+		WALMatch: "eq(@size, 20GiB)",
+		WALSize:  "1GiB",
+		WALWipe:  true,
+		DryRun:   true,
+	})
+
+	require.Empty(t, resp.ValidationError)
+	require.Len(t, resp.DryRunPlan, 1)
+	require.NotEmpty(t, resp.Warnings)
+	assert.Contains(t, resp.Warnings[0], "WAL carrier /dev/disk/by-path/virtio-pci-0000:03:00.0 will be wiped/reset before partitioning")
+	require.NotNil(t, resp.DryRunPlan[0].WAL)
+	assert.Equal(t, "/dev/disk/by-path/virtio-pci-0000:03:00.0", resp.DryRunPlan[0].WAL.ParentPath)
+	assert.Equal(t, uint64(1), resp.DryRunPlan[0].WAL.Partition)
+	assert.True(t, resp.DryRunPlan[0].WAL.ResetBeforeUse)
+	mockPristineChecker.AssertNotCalled(t, "IsPristineDisk", "/dev/disk/by-path/virtio-pci-0000:03:00.0")
+}
+
 func TestAddDisksWithDSLRequestDryRunRejectsPartitionedNonCephAuxDisk(t *testing.T) {
 	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
 		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),
@@ -207,6 +293,87 @@ func TestAddDisksWithDSLRequestDryRunRejectsWholeDiskCephAuxDevice(t *testing.T)
 	require.NotEmpty(t, resp.Warnings)
 	assert.Contains(t, resp.Warnings[0], "WAL match expression resolved to no devices")
 	assert.Nil(t, resp.DryRunPlan[0].WAL)
+}
+
+func TestAddDisksWithDSLRequestDryRunRejectsEncryptedWholeDiskCephAuxDevice(t *testing.T) {
+	snapCommon := t.TempDir()
+	t.Setenv("SNAP_COMMON", snapCommon)
+
+	usedWholeDiskPath := filepath.Join(t.TempDir(), "used-encrypted-whole-wal-disk")
+	require.NoError(t, os.WriteFile(usedWholeDiskPath, []byte("wal"), 0644))
+
+	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
+		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),
+		{
+			ID:         filepath.ToSlash(filepath.Join("..", "..", strings.TrimPrefix(usedWholeDiskPath, "/"))),
+			Size:       20 * 1024 * 1024 * 1024,
+			Type:       "virtio",
+			Model:      "QEMU HARDDISK",
+			Partitions: []api.ResourcesStorageDiskPartition{},
+		},
+	}}
+	mgr, _ := newDryRunManager(t, storage)
+
+	osdDir := filepath.Join(snapCommon, "data", "osd", "ceph-0")
+	require.NoError(t, os.MkdirAll(osdDir, 0755))
+	require.NoError(t, os.Symlink(usedWholeDiskPath, filepath.Join(osdDir, "unencrypted.wal")))
+
+	resp := mgr.AddDisksWithDSLRequest(context.Background(), types.DisksPost{
+		OSDMatch: "eq(@size, 10GiB)",
+		WALMatch: "eq(@size, 20GiB)",
+		WALSize:  "1GiB",
+		DryRun:   true,
+	})
+
+	require.Empty(t, resp.ValidationError)
+	require.Len(t, resp.DryRunPlan, 1)
+	require.NotEmpty(t, resp.Warnings)
+	assert.Contains(t, resp.Warnings[0], "WAL match expression resolved to no devices")
+	assert.Nil(t, resp.DryRunPlan[0].WAL)
+}
+
+func TestAddDisksWithDSLRequestDryRunAllowsPartitionedEncryptedCurrentClusterAuxCarrier(t *testing.T) {
+	snapCommon := t.TempDir()
+	t.Setenv("SNAP_COMMON", snapCommon)
+
+	usedPartitionPath := filepath.Join(t.TempDir(), "used-encrypted-wal-partition")
+	require.NoError(t, os.WriteFile(usedPartitionPath, []byte("wal-partition"), 0644))
+	partitionID := filepath.ToSlash(filepath.Join("..", "..", strings.TrimPrefix(usedPartitionPath, "/")))
+
+	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
+		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),
+		{
+			ID:         "wal1",
+			DevicePath: "virtio-pci-0000:03:00.0",
+			Size:       20 * 1024 * 1024 * 1024,
+			Type:       "virtio",
+			Model:      "QEMU HARDDISK",
+			Partitions: []api.ResourcesStorageDiskPartition{{
+				ID:        partitionID,
+				Partition: 1,
+				Size:      1 * 1024 * 1024 * 1024,
+			}},
+		},
+	}}
+	mgr, _ := newDryRunManager(t, storage)
+
+	osdDir := filepath.Join(snapCommon, "data", "osd", "ceph-0")
+	require.NoError(t, os.MkdirAll(osdDir, 0755))
+	require.NoError(t, os.Symlink(usedPartitionPath, filepath.Join(osdDir, "unencrypted.wal")))
+
+	resp := mgr.AddDisksWithDSLRequest(context.Background(), types.DisksPost{
+		OSDMatch: "eq(@size, 10GiB)",
+		WALMatch: "eq(@size, 20GiB)",
+		WALSize:  "1GiB",
+		DryRun:   true,
+	})
+
+	require.Empty(t, resp.ValidationError)
+	require.Len(t, resp.DryRunPlan, 1)
+	require.Empty(t, resp.Warnings)
+	require.NotNil(t, resp.DryRunPlan[0].WAL)
+	assert.Equal(t, "/dev/disk/by-path/virtio-pci-0000:03:00.0", resp.DryRunPlan[0].WAL.ParentPath)
+	assert.Equal(t, uint64(2), resp.DryRunPlan[0].WAL.Partition)
 }
 
 func TestAddDisksWithDSLRequestDryRunIgnoresConfiguredDiskOnOtherHost(t *testing.T) {
@@ -336,11 +503,13 @@ func TestAddDisksWithDSLRequestNonDryRunUsesIndependentAuxFlags(t *testing.T) {
 	assert.Equal(t, "/dev/mock-wal1", capturedWAL.Path)
 	assert.True(t, capturedWAL.Encrypt)
 	assert.True(t, capturedWAL.Wipe)
+	assert.True(t, capturedWAL.SkipPristineCheck)
 
 	require.NotNil(t, capturedDB)
 	assert.Equal(t, "/dev/mock-db1", capturedDB.Path)
 	assert.False(t, capturedDB.Encrypt)
 	assert.True(t, capturedDB.Wipe)
+	assert.True(t, capturedDB.SkipPristineCheck)
 
 	require.NotNil(t, capturedManifest)
 	require.NotNil(t, capturedManifest.WAL)
@@ -406,6 +575,27 @@ func TestCleanupGeneratedAuxDevicesMissingManifest(t *testing.T) {
 
 	err := mgr.cleanupGeneratedAuxDevices(context.Background(), "/var/snap/microceph/common/data/osd/ceph-9", 9)
 	require.NoError(t, err)
+}
+
+func TestCreatePlannedAuxPartitionResetBeforeUseWipesCarrierFirst(t *testing.T) {
+	var st state.State
+	mgr := NewOSDManager(st)
+	mgr.fs = afero.NewMemMapFs()
+	runner := mocks.NewRunner(t)
+	mgr.runner = runner
+
+	require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sde1", []byte("part"), 0644))
+
+	plan := &plannedAuxPartition{Kind: "wal", ParentPath: "/dev/sde", Partition: 1, SizeBytes: 1024 * 1024 * 1024, ResetBeforeUse: true}
+	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sde", "--yes-i-really-really-mean-it").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-u", "/dev/sde").Return("", nil).Twice()
+	runner.On("RunCommand", "sh", "-c", "printf 'label: gpt\n' | sfdisk \"/dev/sde\"").Return("", nil).Once()
+	runner.On("RunCommand", "sh", "-c", "printf ',+1024MiB\n' | sfdisk --append \"/dev/sde\"").Return("", nil).Once()
+
+	path, err := mgr.createPlannedAuxPartition(plan)
+	require.NoError(t, err)
+	assert.Equal(t, "/dev/sde1", path)
 }
 
 func TestCleanupGeneratedAuxDevicesDeletesGeneratedPartitions(t *testing.T) {

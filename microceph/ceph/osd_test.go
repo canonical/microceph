@@ -1004,6 +1004,17 @@ func (s *osdSuite) TestIsPristineDisk() {
 	assert.Contains(s.T(), err.Error(), "permission denied")
 }
 
+func (s *osdSuite) TestCheckPristineDeviceSkip() {
+	osdmgr := &OSDManager{
+		pristineChecker: &MockPristineChecker{},
+	}
+
+	disk := &types.DiskParameter{Path: "/dev/generated-aux1", SkipPristineCheck: true}
+	err := osdmgr.checkPristineDevice(disk, "WAL")
+	assert.NoError(s.T(), err)
+	osdmgr.pristineChecker.(*MockPristineChecker).AssertNotCalled(s.T(), "IsPristineDisk", "/dev/generated-aux1")
+}
+
 // osdDumpJSON generates a JSON OSD dump with the given number of up OSDs.
 func osdDumpJSON(upCount int) string {
 	return osdDumpJSONMixed(upCount, 0)

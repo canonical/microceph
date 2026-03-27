@@ -21,10 +21,11 @@ import (
 )
 
 type plannedAuxPartition struct {
-	Kind       string
-	ParentPath string
-	Partition  uint64
-	SizeBytes  uint64
+	Kind           string
+	ParentPath     string
+	Partition      uint64
+	SizeBytes      uint64
+	ResetBeforeUse bool
 }
 
 type plannedOSDProvision struct {
@@ -74,24 +75,53 @@ func intersectPathSets(a map[string]struct{}, b map[string]struct{}) []string {
 	return out
 }
 
-func planAuxiliaryPartitionsDetailed(osdPaths []string, carriers []api.ResourcesStorageDisk, sizeBytes uint64, kind string) ([]*plannedAuxPartition, error) {
+func buildResetBeforeUseWarnings(kind string, resetBeforeUse map[string]bool) []string {
+	if len(resetBeforeUse) == 0 {
+		return nil
+	}
+
+	paths := make([]string, 0, len(resetBeforeUse))
+	for path, reset := range resetBeforeUse {
+		if reset {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+
+	warnings := make([]string, 0, len(paths))
+	for _, path := range paths {
+		warnings = append(warnings, fmt.Sprintf("%s carrier %s will be wiped/reset before partitioning", kind, path))
+	}
+	return warnings
+}
+
+func planAuxiliaryPartitionsDetailed(osdPaths []string, carriers []api.ResourcesStorageDisk, resetBeforeUse map[string]bool, sizeBytes uint64, kind string) ([]*plannedAuxPartition, error) {
 	if len(osdPaths) == 0 || len(carriers) == 0 {
 		return make([]*plannedAuxPartition, len(osdPaths)), nil
 	}
 
 	states := make([]plannedCarrierState, len(carriers))
 	for i, disk := range carriers {
+		path := dsl.GetDevicePath(disk)
 		used := diskUsedBytes(disk)
 		remaining := uint64(0)
-		if disk.Size > used {
+		partitionNo := nextPartitionNumber(disk)
+		partitionCnt := len(disk.Partitions)
+		reset := resetBeforeUse[path]
+		if reset {
+			remaining = disk.Size
+			partitionNo = 1
+			partitionCnt = 0
+		} else if disk.Size > used {
 			remaining = disk.Size - used
 		}
 		states[i] = plannedCarrierState{
-			Path:          dsl.GetDevicePath(disk),
-			Disk:          disk,
-			PartitionNo:   nextPartitionNumber(disk),
-			PartitionCnt:  len(disk.Partitions),
-			RemainingSize: remaining,
+			Path:           path,
+			Disk:           disk,
+			PartitionNo:    partitionNo,
+			PartitionCnt:   partitionCnt,
+			RemainingSize:  remaining,
+			ResetBeforeUse: reset,
 		}
 	}
 
@@ -111,14 +141,16 @@ func planAuxiliaryPartitionsDetailed(osdPaths []string, carriers []api.Resources
 			return nil, fmt.Errorf("insufficient capacity for %s partitions of size %s", strings.ToUpper(kind), formatBytesIEC(int64(sizeBytes)))
 		}
 		out[i] = &plannedAuxPartition{
-			Kind:       kind,
-			ParentPath: states[choice].Path,
-			Partition:  states[choice].PartitionNo,
-			SizeBytes:  sizeBytes,
+			Kind:           kind,
+			ParentPath:     states[choice].Path,
+			Partition:      states[choice].PartitionNo,
+			SizeBytes:      sizeBytes,
+			ResetBeforeUse: states[choice].ResetBeforeUse,
 		}
 		states[choice].RemainingSize -= sizeBytes
 		states[choice].PartitionCnt++
 		states[choice].PartitionNo++
+		states[choice].ResetBeforeUse = false
 	}
 
 	return out, nil
@@ -149,22 +181,28 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 	osdPathSet := buildPathSet(osdResult.MatchedDisks)
 
 	var walMatches, dbMatches []api.ResourcesStorageDisk
+	walResetBeforeUse := map[string]bool{}
+	dbResetBeforeUse := map[string]bool{}
 	if req.WALMatch != "" {
-		walMatches, err = m.matchAuxiliaryDisksWithDSL(ctx, req.WALMatch)
+		walMatches, walResetBeforeUse, err = m.matchAuxiliaryDisksWithDSL(ctx, req.WALMatch, req.WALWipe)
 		if err != nil {
 			return nil, err
 		}
 		if len(walMatches) == 0 {
 			plan.Warnings = append(plan.Warnings, "WAL match expression resolved to no devices; proceeding without WAL")
+		} else {
+			plan.Warnings = append(plan.Warnings, buildResetBeforeUseWarnings("WAL", walResetBeforeUse)...)
 		}
 	}
 	if req.DBMatch != "" {
-		dbMatches, err = m.matchAuxiliaryDisksWithDSL(ctx, req.DBMatch)
+		dbMatches, dbResetBeforeUse, err = m.matchAuxiliaryDisksWithDSL(ctx, req.DBMatch, req.DBWipe)
 		if err != nil {
 			return nil, err
 		}
 		if len(dbMatches) == 0 {
 			plan.Warnings = append(plan.Warnings, "DB match expression resolved to no devices; proceeding without DB")
+		} else {
+			plan.Warnings = append(plan.Warnings, buildResetBeforeUseWarnings("DB", dbResetBeforeUse)...)
 		}
 	}
 
@@ -185,7 +223,7 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 		if err != nil {
 			return nil, fmt.Errorf("invalid WAL size: %v", err)
 		}
-		walPlan, err := planAuxiliaryPartitionsDetailed(osdPaths, walMatches, uint64(sizeBytes), "wal")
+		walPlan, err := planAuxiliaryPartitionsDetailed(osdPaths, walMatches, walResetBeforeUse, uint64(sizeBytes), "wal")
 		if err != nil {
 			return nil, err
 		}
@@ -199,7 +237,7 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 		if err != nil {
 			return nil, fmt.Errorf("invalid DB size: %v", err)
 		}
-		dbPlan, err := planAuxiliaryPartitionsDetailed(osdPaths, dbMatches, uint64(sizeBytes), "db")
+		dbPlan, err := planAuxiliaryPartitionsDetailed(osdPaths, dbMatches, dbResetBeforeUse, uint64(sizeBytes), "db")
 		if err != nil {
 			return nil, err
 		}
@@ -218,18 +256,20 @@ func dryRunResponseFromProvisionPlan(plan *dslProvisionPlan) types.DiskAddRespon
 		resp.DryRunPlan[i].OSDPath = osd.OSDPath
 		if osd.WAL != nil {
 			resp.DryRunPlan[i].WAL = &types.DryRunPartitionPlan{
-				Kind:       osd.WAL.Kind,
-				ParentPath: osd.WAL.ParentPath,
-				Partition:  osd.WAL.Partition,
-				Size:       formatBytesIEC(int64(osd.WAL.SizeBytes)),
+				Kind:           osd.WAL.Kind,
+				ParentPath:     osd.WAL.ParentPath,
+				Partition:      osd.WAL.Partition,
+				Size:           formatBytesIEC(int64(osd.WAL.SizeBytes)),
+				ResetBeforeUse: osd.WAL.ResetBeforeUse,
 			}
 		}
 		if osd.DB != nil {
 			resp.DryRunPlan[i].DB = &types.DryRunPartitionPlan{
-				Kind:       osd.DB.Kind,
-				ParentPath: osd.DB.ParentPath,
-				Partition:  osd.DB.Partition,
-				Size:       formatBytesIEC(int64(osd.DB.SizeBytes)),
+				Kind:           osd.DB.Kind,
+				ParentPath:     osd.DB.ParentPath,
+				Partition:      osd.DB.Partition,
+				Size:           formatBytesIEC(int64(osd.DB.SizeBytes)),
+				ResetBeforeUse: osd.DB.ResetBeforeUse,
 			}
 		}
 	}
@@ -360,18 +400,18 @@ func (m *OSDManager) collectLocalAuxDiskUsage(storage *api.ResourcesStorage) (ma
 		if !osdDir.IsDir() || !strings.HasPrefix(osdDir.Name(), "ceph-") {
 			continue
 		}
-		for _, symlinkName := range []string{"block", "block.wal", "block.db"} {
-			targetPath := filepath.Join(baseDir, osdDir.Name(), symlinkName)
+		for _, link := range common.CephOSDDeviceLinks() {
+			targetPath := filepath.Join(baseDir, osdDir.Name(), link.Name)
 			resolved := resolvePathBestEffort(targetPath)
 			parent, ok := lookup[resolved]
 			if !ok {
 				continue
 			}
 			entry := usage[parent]
-			if symlinkName == "block" {
-				entry.HasData = true
-			} else {
+			if link.Auxiliary {
 				entry.HasAux = true
+			} else {
+				entry.HasData = true
 			}
 			usage[parent] = entry
 		}
@@ -528,7 +568,13 @@ func (m *OSDManager) createPlannedAuxPartition(plan *plannedAuxPartition) (strin
 	if plan == nil {
 		return "", nil
 	}
-	if plan.Partition == 1 {
+	if plan.ResetBeforeUse {
+		if err := m.timeoutWipe(plan.ParentPath); err != nil {
+			return "", fmt.Errorf("failed to wipe %s carrier %s: %w", strings.ToUpper(plan.Kind), plan.ParentPath, err)
+		}
+		m.refreshPartitionTable(plan.ParentPath)
+	}
+	if plan.ResetBeforeUse || plan.Partition == 1 {
 		if err := m.initializeGPT(plan.ParentPath); err != nil {
 			return "", err
 		}
@@ -554,7 +600,7 @@ func buildGeneratedAuxDiskParameter(plan *plannedAuxPartition, path string, encr
 		return nil, nil
 	}
 
-	return &types.DiskParameter{Path: path, Encrypt: encrypt, Wipe: wipe}, &generatedAuxDevice{
+	return &types.DiskParameter{Path: path, Encrypt: encrypt, Wipe: wipe, SkipPristineCheck: true}, &generatedAuxDevice{
 		ParentPath:    plan.ParentPath,
 		Partition:     plan.Partition,
 		PartitionPath: path,
