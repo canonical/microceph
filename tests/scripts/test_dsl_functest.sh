@@ -251,33 +251,78 @@ function get_disk_list_json() {
     vm_exec microceph disk list --json
 }
 
+function normalize_disk_size_display() {
+    local size_spec="$1"
+    local compact="${size_spec// /}"
+
+    if [[ "$compact" =~ ^[0-9]+GiB$ ]]; then
+        human_gib_string "$compact"
+        return 0
+    fi
+
+    echo "$compact"
+}
+
 function get_available_disks_json() {
-    get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(json.dumps(obj.get("AvailableDisks", [])))'
+    get_disk_list_json | jq -c '.AvailableDisks // []'
 }
 
 function get_configured_disks_json() {
-    get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(json.dumps(obj.get("ConfiguredDisks", [])))'
+    get_disk_list_json | jq -c '.ConfiguredDisks // []'
 }
 
 function json_available_count() {
-    get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(len(obj.get("AvailableDisks", [])))'
+    get_disk_list_json | jq -r '(.AvailableDisks // []) | length'
 }
 
 function json_configured_count() {
-    get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(len(obj.get("ConfiguredDisks", [])))'
+    get_disk_list_json | jq -r '(.ConfiguredDisks // []) | length'
 }
 
 function json_first_available_path() {
-    get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); items=obj.get("AvailableDisks", []); print(items[0]["Path"] if items else "")'
+    get_disk_list_json | jq -r '[.AvailableDisks[]? | .Path][0] // ""'
 }
 
 function json_first_available_type() {
-    get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); items=obj.get("AvailableDisks", []); print(items[0]["Type"] if items else "")'
+    get_disk_list_json | jq -r '[.AvailableDisks[]? | .Type][0] // ""'
 }
 
 function json_available_count_for_display_size() {
-    local size_display="$1"
-    get_disk_list_json | python3 -c 'import json,sys; size=sys.argv[1].replace(" ", ""); obj=json.load(sys.stdin); print(sum(1 for item in obj.get("AvailableDisks", []) if item.get("Size", "").replace(" ", "") == size))' "$size_display"
+    local size_display
+    size_display=$(normalize_disk_size_display "$1")
+
+    get_disk_list_json | jq -r --arg size "$size_display" '
+        [.AvailableDisks[]? | select(((.Size // "") | gsub(" "; "")) == $size)] | length
+    '
+}
+
+function find_available_disk_record_by_size() {
+    local size_display
+    size_display=$(normalize_disk_size_display "$1")
+
+    get_disk_list_json | jq -r --arg size "$size_display" '
+        [
+            .AvailableDisks[]?
+            | select(((.Size // "") | gsub(" "; "")) == $size)
+            | [.Path, (.Type // "unknown"), (.Size // "unknown")]
+            | @tsv
+        ][0] // ""
+    '
+}
+
+function get_available_disk_path_by_size() {
+    local size_display match path dtype actual_size
+    size_display=$(normalize_disk_size_display "$1")
+    match=$(find_available_disk_record_by_size "$size_display")
+
+    if [[ -z "$match" ]]; then
+        log "Resolved available disk match size=$size_display -> <none>" >&2
+        fail "Could not resolve available disk with size $size_display"
+    fi
+
+    IFS=$'\t' read -r path dtype actual_size <<<"$match"
+    log "Resolved available disk match size=$size_display -> $path (type=$dtype, size=$actual_size)" >&2
+    echo "$path"
 }
 
 function wait_for_configured_disk_count_ge() {
@@ -318,7 +363,9 @@ function wait_for_configured_disk_count_eq() {
 
 function get_osd_id_for_path() {
     local path="$1"
-    get_disk_list_json | python3 -c 'import json,sys; target=sys.argv[1]; obj=json.load(sys.stdin); print(next((str(item["osd"]) for item in obj.get("ConfiguredDisks", []) if item.get("path") == target), ""))' "$path"
+    get_disk_list_json | jq -r --arg path "$path" '
+        [.ConfiguredDisks[]? | select(.path == $path) | (.osd | tostring)][0] // ""
+    '
 }
 
 function get_osd_data_dir() {
@@ -368,7 +415,12 @@ function create_partition_on_disk() {
 
 function partition_number_from_path() {
     local path="$1"
-    python3 -c 'import re,sys; m=re.search(r"(?:-part|p)?([0-9]+)$", sys.argv[1]); print(m.group(1) if m else "")' "$path"
+
+    if [[ "$path" =~ (-part|p)?([0-9]+)$ ]]; then
+        echo "${BASH_REMATCH[2]}"
+    else
+        echo ""
+    fi
 }
 
 function get_symlink_target() {
@@ -401,7 +453,7 @@ function setup_dsl_test() {
     create_dsl_volumes
 
     log "Launching VM '$VM_NAME'..."
-    lxc launch ubuntu:24.04 "$VM_NAME" \
+    lxc --quiet launch ubuntu:24.04 "$VM_NAME" \
         -p "$PROFILE" \
         -c limits.cpu="$CORES" \
         -c limits.memory="$MEM" \
@@ -443,7 +495,7 @@ function install_microceph_in_vm() {
 
     if [[ -n "$snap_file" && -f "$snap_file" ]]; then
         log "Installing from local snap: $snap_file"
-        lxc file push "$snap_file" "$VM_NAME/tmp/microceph.snap"
+        lxc --quiet file push "$snap_file" "$VM_NAME/tmp/microceph.snap"
 
         local attempt=1
         until vm_exec snap install /tmp/microceph.snap --dangerous; do
@@ -817,8 +869,8 @@ function test_dsl_dryrun_no_new_osd_warning() {
 function test_dsl_add_wal_only() {
     log "Test: add OSD with WAL only"
     local osd_path wal_parent before_parts after_parts output osd_id wal_link target
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="10.00GiB"))')
-    wal_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="20.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "10GiB")
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
     before_parts=$(get_partition_count "$wal_parent")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
     echo "$output"
@@ -836,8 +888,8 @@ function test_dsl_add_wal_only() {
 function test_dsl_add_db_only() {
     log "Test: add OSD with DB only"
     local osd_path db_parent before_parts after_parts output osd_id db_link target
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="11.00GiB"))')
-    db_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="30.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "11GiB")
+    db_parent=$(get_available_disk_path_by_size "30GiB")
     before_parts=$(get_partition_count "$db_parent")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 11GiB)" --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
     echo "$output"
@@ -855,9 +907,9 @@ function test_dsl_add_db_only() {
 function test_dsl_add_waldb() {
     log "Test: add OSD with WAL and DB"
     local osd_path wal_parent db_parent before_wal before_db after_wal after_db output osd_id wal_link db_link
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="12.00GiB"))')
-    wal_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="20.00GiB"))')
-    db_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="30.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "12GiB")
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
+    db_parent=$(get_available_disk_path_by_size "30GiB")
     before_wal=$(get_partition_count "$wal_parent")
     before_db=$(get_partition_count "$db_parent")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
@@ -878,7 +930,7 @@ function test_dsl_add_waldb() {
 function test_dsl_empty_wal_match_warns_and_adds_data_only() {
     log "Test: empty WAL match warns and adds data-only OSD"
     local osd_path output osd_id wal_link
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="10.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "10GiB")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 999GiB)" --wal-size 1GiB 2>&1 || true)
     echo "$output"
     assert_output_contains "$output" 'Warning: WAL match expression resolved to no devices' "expected WAL warning"
@@ -892,7 +944,7 @@ function test_dsl_empty_wal_match_warns_and_adds_data_only() {
 function test_dsl_empty_db_match_warns_and_adds_data_only() {
     log "Test: empty DB match warns and adds data-only OSD"
     local osd_path output osd_id db_link
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="10.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "10GiB")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --db-match "eq(@size, 999GiB)" --db-size 2GiB 2>&1 || true)
     echo "$output"
     assert_output_contains "$output" 'Warning: DB match expression resolved to no devices' "expected DB warning"
@@ -906,8 +958,8 @@ function test_dsl_empty_db_match_warns_and_adds_data_only() {
 function test_dsl_waldb_idempotent_rerun() {
     log "Test: WAL/DB DSL rerun does not create new partitions without new OSDs"
     local wal_parent db_parent before_wal before_db mid_wal mid_db after_wal after_db first second
-    wal_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="20.00GiB"))')
-    db_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="30.00GiB"))')
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
+    db_parent=$(get_available_disk_path_by_size "30GiB")
     before_wal=$(get_partition_count "$wal_parent")
     before_db=$(get_partition_count "$db_parent")
     first=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
@@ -929,8 +981,8 @@ function test_dsl_waldb_idempotent_rerun() {
 function test_dsl_waldb_distribution_across_multiple_aux_disks() {
     log "Test: WAL partitions distribute across multiple aux disks"
     local wal1 wal2 before1 before2 after1 after2 output
-    wal1=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="20.00GiB"))')
-    wal2=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="21.00GiB"))')
+    wal1=$(get_available_disk_path_by_size "20GiB")
+    wal2=$(get_available_disk_path_by_size "21GiB")
     before1=$(get_partition_count "$wal1")
     before2=$(get_partition_count "$wal2")
     output=$(vm_exec microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "or(eq(@size, 20GiB), eq(@size, 21GiB))" --wal-size 1GiB 2>&1 || true)
@@ -945,8 +997,8 @@ function test_dsl_waldb_distribution_across_multiple_aux_disks() {
 function test_dsl_partitioned_non_ceph_aux_disk_is_rejected() {
     log "Test: partitioned non-Ceph aux disk is rejected as WAL carrier"
     local osd_path wal_parent before_parts after_partition_setup after_parts output osd_id wal_link
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="10.00GiB"))')
-    wal_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="20.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "10GiB")
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
     before_parts=$(get_partition_count "$wal_parent")
     create_partition_on_disk "$wal_parent" 512
     after_partition_setup=$(get_partition_count "$wal_parent")
@@ -970,9 +1022,9 @@ function test_dsl_whole_disk_ceph_aux_device_is_rejected() {
     local osd1_path osd2_path wal_parent first_output second_output first_osd_id second_osd_id
     local before_parts after_first_parts after_second_parts first_wal_link second_wal_link
 
-    osd1_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="10.00GiB"))')
-    osd2_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="11.00GiB"))')
-    wal_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="20.00GiB"))')
+    osd1_path=$(get_available_disk_path_by_size "10GiB")
+    osd2_path=$(get_available_disk_path_by_size "11GiB")
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
     before_parts=$(get_partition_count "$wal_parent")
 
     first_output=$(vm_exec microceph disk add "$osd1_path" --wal-device "$wal_parent" 2>&1 || true)
@@ -1004,7 +1056,7 @@ function test_dsl_whole_disk_ceph_aux_device_is_rejected() {
 function test_dsl_remove_osd_cleans_generated_aux_partitions() {
     log "Test: removing an OSD cleans generated WAL/DB partitions"
     local osd_path output osd_id osd_dir wal_target db_target manifest_path
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="12.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "12GiB")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
     echo "$output"
     wait_for_configured_disk_count_ge 1 180
@@ -1031,8 +1083,8 @@ function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     local output osd1_path osd2_path osd1_id osd2_id osd1_dir osd2_dir
     local osd1_wal osd1_db osd2_wal osd2_db
 
-    osd1_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="10.00GiB"))')
-    osd2_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="11.00GiB"))')
+    osd1_path=$(get_available_disk_path_by_size "10GiB")
+    osd2_path=$(get_available_disk_path_by_size "11GiB")
     output=$(vm_exec microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
     echo "$output"
     wait_for_configured_disk_count_ge 2 180
@@ -1080,13 +1132,13 @@ function test_dsl_end_to_end_matrix_from_local_snap() {
     log "Test: compact add/remove matrix using local snap"
     local wal1 db1 wal2 db2 before before_wal after_wal osd_path osd_id output
 
-    wal1=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="20.00GiB"))')
-    db1=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="30.00GiB"))')
-    wal2=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="21.00GiB"))')
-    db2=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="31.00GiB"))')
+    wal1=$(get_available_disk_path_by_size "20GiB")
+    db1=$(get_available_disk_path_by_size "30GiB")
+    wal2=$(get_available_disk_path_by_size "21GiB")
+    db2=$(get_available_disk_path_by_size "31GiB")
 
     # WAL-only add/remove.
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="10.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "10GiB")
     before_wal=$(get_partition_count "$wal1")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
     echo "$output"
@@ -1097,7 +1149,7 @@ function test_dsl_end_to_end_matrix_from_local_snap() {
     assert_eq "$(get_partition_count "$wal1")" "$before_wal" "WAL-only remove should restore WAL carrier partition count"
 
     # DB-only add/remove.
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="11.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "11GiB")
     before=$(get_partition_count "$db1")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 11GiB)" --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
     echo "$output"
@@ -1108,7 +1160,7 @@ function test_dsl_end_to_end_matrix_from_local_snap() {
     assert_eq "$(get_partition_count "$db1")" "$before" "DB-only remove should restore DB carrier partition count"
 
     # WAL+DB add/remove.
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="12.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "12GiB")
     before_wal=$(get_partition_count "$wal2")
     before=$(get_partition_count "$db2")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 21GiB)" --wal-size 1GiB --db-match "eq(@size, 31GiB)" --db-size 2GiB 2>&1 || true)
@@ -1127,9 +1179,9 @@ function test_dsl_dryrun_and_execute_consistency() {
     local osd_path wal_parent db_parent output execute_output osd_id osd_dir wal_target db_target
     local planned_wal_part planned_db_part actual_wal_part actual_db_part before_wal before_db after_wal after_db
 
-    osd_path=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="12.00GiB"))')
-    wal_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="20.00GiB"))')
-    db_parent=$(get_disk_list_json | python3 -c 'import json,sys; obj=json.load(sys.stdin); print(next(item["Path"] for item in obj["AvailableDisks"] if item["Size"]=="30.00GiB"))')
+    osd_path=$(get_available_disk_path_by_size "12GiB")
+    wal_parent=$(get_available_disk_path_by_size "20GiB")
+    db_parent=$(get_available_disk_path_by_size "30GiB")
     before_wal=$(get_partition_count "$wal_parent")
     before_db=$(get_partition_count "$db_parent")
 

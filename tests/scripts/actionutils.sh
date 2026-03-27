@@ -459,7 +459,7 @@ function create_vms() {
   count=$((count - 1))
   for i in $(seq 0 $count) ; do
     vm_name="node-wrk${i}" # node name
-    lxc launch ubuntu:24.04 $vm_name --vm -c limits.cpu=4 -c limits.memory=8GiB -d root,size=30GB
+    lxc --quiet launch ubuntu:24.04 $vm_name --vm -c limits.cpu=4 -c limits.memory=8GiB -d root,size=30GB
   done
 
   # wait for VMs to be up.
@@ -480,7 +480,7 @@ function create_vms() {
   for i in $(seq 0 $count) ; do
     vm_name="node-wrk${i}" # node name
     hn=$(lxc exec $vm_name -- sh -c "hostname") || true
-    lxc file push /home/runner/microceph_*.snap $vm_name/mnt/
+    lxc --quiet file push /home/runner/microceph_*.snap $vm_name/mnt/
     lxc exec $vm_name -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
     lxc exec $vm_name -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
   done
