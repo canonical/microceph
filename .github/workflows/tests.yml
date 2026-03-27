@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-22.04
     needs: build-microceph
     env:
-      DSL_FUNCTEST_SUITE: run_dsl_pr5_tests
+      DSL_FUNCTEST_SUITE: run_dsl_full_tests
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4

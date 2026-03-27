@@ -325,6 +325,143 @@ function get_available_disk_path_by_size() {
     echo "$path"
 }
 
+function format_tsv_table() {
+    awk -F'\t' '
+        {
+            rows[NR] = $0
+            if (NF > max_nf) {
+                max_nf = NF
+            }
+            for (i = 1; i <= NF; i++) {
+                if (length($i) > widths[i]) {
+                    widths[i] = length($i)
+                }
+            }
+        }
+        END {
+            for (row = 1; row <= NR; row++) {
+                split(rows[row], fields, FS)
+                line = ""
+                for (i = 1; i <= max_nf; i++) {
+                    field = fields[i]
+                    if (i < max_nf) {
+                        line = line sprintf("%-*s  ", widths[i], field)
+                    } else {
+                        line = line field
+                    }
+                }
+                print line
+
+                if (row == 1 && NR > 1) {
+                    separator = ""
+                    for (i = 1; i <= max_nf; i++) {
+                        dashes = sprintf("%*s", widths[i], "")
+                        gsub(/ /, "-", dashes)
+                        if (i < max_nf) {
+                            separator = separator dashes "  "
+                        } else {
+                            separator = separator dashes
+                        }
+                    }
+                    print separator
+                }
+            }
+        }
+    '
+}
+
+function log_tsv_table() {
+    local title="$1"
+    local table_tsv="${2:-}"
+    local formatted
+
+    log "$title:"
+
+    if [[ -z "$table_tsv" ]]; then
+        log "  <none>"
+        return 0
+    fi
+
+    formatted=$(format_tsv_table <<<"$table_tsv")
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        log "  $line"
+    done <<<"$formatted"
+}
+
+function log_available_disks_snapshot() {
+    local table
+    table=$(get_disk_list_json | jq -r '
+        if (.AvailableDisks // [] | length) == 0 then
+            empty
+        else
+            (["PATH", "TYPE", "SIZE"] | @tsv),
+            (.AvailableDisks[]? | [(.Path // "unknown"), (.Type // "unknown"), (.Size // "unknown")] | @tsv)
+        end
+    ')
+
+    log_tsv_table "Current available disks" "$table"
+}
+
+function log_configured_disks_snapshot() {
+    local table
+    table=$(get_disk_list_json | jq -r '
+        if (.ConfiguredDisks // [] | length) == 0 then
+            empty
+        else
+            (["OSD", "PATH"] | @tsv),
+            (.ConfiguredDisks[]? | [((.osd // "unknown") | tostring), (.path // "unknown")] | @tsv)
+        end
+    ')
+
+    log_tsv_table "Current configured disks" "$table"
+}
+
+function log_available_disk_matches_by_sizes() {
+    local label="$1"
+    shift
+
+    local disk_list_json size_spec size_display table
+    disk_list_json=$(get_disk_list_json)
+
+    for size_spec in "$@"; do
+        size_display=$(normalize_disk_size_display "$size_spec")
+        table=$(jq -r --arg size "$size_display" '
+            if ([.AvailableDisks[]? | select(((.Size // "") | gsub(" "; "")) == $size)] | length) == 0 then
+                empty
+            else
+                (["PATH", "TYPE", "SIZE"] | @tsv),
+                (.AvailableDisks[]?
+                 | select(((.Size // "") | gsub(" "; "")) == $size)
+                 | [(.Path // "unknown"), (.Type // "unknown"), (.Size // "unknown")]
+                 | @tsv)
+            end
+        ' <<<"$disk_list_json")
+
+        log_tsv_table "$label matches for size=$size_display" "$table"
+    done
+}
+
+function log_available_disk_matches_by_type() {
+    local label="$1"
+    local dtype="$2"
+    local table
+
+    table=$(get_disk_list_json | jq -r --arg dtype "$dtype" '
+        if ([.AvailableDisks[]? | select((.Type // "") == $dtype)] | length) == 0 then
+            empty
+        else
+            (["PATH", "TYPE", "SIZE"] | @tsv),
+            (.AvailableDisks[]?
+             | select((.Type // "") == $dtype)
+             | [(.Path // "unknown"), (.Type // "unknown"), (.Size // "unknown")]
+             | @tsv)
+        end
+    ')
+
+    log_tsv_table "$label matches for type=$dtype" "$table"
+}
+
 function wait_for_configured_disk_count_ge() {
     local expected=$1
     local timeout=${2:-120}
@@ -565,6 +702,8 @@ function test_dsl_type_match() {
     dtype=$(get_test_disk_type)
 
     log "Test: DSL dry-run with eq(@type, '$dtype')"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_type "OSD candidate" "$dtype"
     dsl_output=$(vm_exec microceph disk add --osd-match "eq(@type, '$dtype')" --dry-run 2>&1 || true)
     echo "$dsl_output"
 
@@ -577,6 +716,7 @@ function test_dsl_type_match() {
 
 function test_dsl_size_comparison() {
     log "Test: DSL dry-run with size comparison gt(@size, 5GiB)"
+    log_available_disks_snapshot
     local dsl_size_output
     dsl_size_output=$(vm_exec microceph disk add --osd-match "gt(@size, 5GiB)" --dry-run 2>&1 || true)
     echo "$dsl_size_output"
@@ -588,6 +728,8 @@ function test_dsl_combined_conditions() {
     dtype=$(get_test_disk_type)
 
     log "Test: DSL dry-run with combined conditions"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_type "OSD candidate" "$dtype"
     dsl_combined=$(vm_exec microceph disk add --osd-match "and(eq(@type, '$dtype'), gt(@size, 5GiB))" --dry-run 2>&1 || true)
     echo "$dsl_combined"
     assert_output_contains "$dsl_combined" 'PATH|would be added|No devices matched the expression' "combined dry-run should produce output"
@@ -595,6 +737,7 @@ function test_dsl_combined_conditions() {
 
 function test_dsl_no_match() {
     log "Test: DSL dry-run with impossible size gt(@size, 100TiB)"
+    log_available_disks_snapshot
     local dsl_nomatch
     dsl_nomatch=$(vm_exec microceph disk add --osd-match "gt(@size, 100TiB)" --dry-run 2>&1 || true)
     echo "$dsl_nomatch"
@@ -603,6 +746,7 @@ function test_dsl_no_match() {
 
 function test_dsl_invalid_expression() {
     log "Test: invalid DSL expression"
+    log_available_disks_snapshot
     local dsl_invalid
     dsl_invalid=$(vm_exec microceph disk add --osd-match "invalid(" --dry-run 2>&1 || true)
     echo "$dsl_invalid"
@@ -611,6 +755,7 @@ function test_dsl_invalid_expression() {
 
 function test_dsl_mutual_exclusivity() {
     log "Test: positional args and --osd-match are mutually exclusive"
+    log_available_disks_snapshot
     local mutual_excl
     mutual_excl=$(vm_exec microceph disk add --osd-match "gt(@size, 5GiB)" /dev/sdb 2>&1 || true)
     echo "$mutual_excl"
@@ -632,6 +777,8 @@ function test_dsl_add_disk() {
 
 function test_dsl_idempotency() {
     log "Test: DSL should not re-match already-used disks"
+    log_configured_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "10GiB"
     local dsl_after_add
     dsl_after_add=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --dry-run 2>&1 || true)
     echo "$dsl_after_add"
@@ -696,6 +843,8 @@ function test_dsl_readonly_disk_excluded() {
     display_size=$(human_gib_string "$RO1_SIZE")
     count=$(json_available_count_for_display_size "$display_size")
     assert_eq "$count" "0" "read-only disk should not appear in available disks"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "$RO1_SIZE"
 
     output=$(vm_exec microceph disk add --osd-match "eq(@size, ${RO1_SIZE})" --dry-run 2>&1 || true)
     echo "$output"
@@ -743,6 +892,9 @@ function test_dsl_dryrun_wal_only_plan() {
     fi
 
     log "Test: WAL-only dry-run plan"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "10GiB" "11GiB"
+    log_available_disk_matches_by_sizes "WAL candidate" "20GiB" "21GiB"
     local output
     output=$(vm_exec microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "or(eq(@size, 20GiB), eq(@size, 21GiB))" --wal-size 1GiB --dry-run 2>&1 || true)
     echo "$output"
@@ -758,6 +910,9 @@ function test_dsl_dryrun_db_only_plan() {
     fi
 
     log "Test: DB-only dry-run plan"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "10GiB"
+    log_available_disk_matches_by_sizes "DB candidate" "30GiB"
     local output
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --db-match "eq(@size, 30GiB)" --db-size 2GiB --dry-run 2>&1 || true)
     echo "$output"
@@ -772,6 +927,10 @@ function test_dsl_dryrun_waldb_plan() {
     fi
 
     log "Test: WAL+DB dry-run plan"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "10GiB" "11GiB"
+    log_available_disk_matches_by_sizes "WAL candidate" "20GiB" "21GiB"
+    log_available_disk_matches_by_sizes "DB candidate" "30GiB"
     local output
     output=$(vm_exec microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "or(eq(@size, 20GiB), eq(@size, 21GiB))" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB --dry-run 2>&1 || true)
     echo "$output"
@@ -787,6 +946,10 @@ function test_dsl_dryrun_deterministic_order() {
     fi
 
     log "Test: dry-run output order is deterministic"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "10GiB" "11GiB"
+    log_available_disk_matches_by_sizes "WAL candidate" "20GiB" "21GiB"
+    log_available_disk_matches_by_sizes "DB candidate" "30GiB"
     local cmd out1 out2
     cmd='microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "or(eq(@size, 20GiB), eq(@size, 21GiB))" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB --dry-run'
     out1=$(vm_shell "$cmd" 2>&1 || true)
@@ -802,6 +965,8 @@ function test_dsl_dryrun_overlap_error() {
     fi
 
     log "Test: overlap between OSD and WAL match sets is rejected"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_sizes "Overlapping OSD/WAL candidate" "10GiB"
     local output
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 10GiB)" --wal-size 1GiB --dry-run 2>&1 || true)
     echo "$output"
@@ -815,6 +980,9 @@ function test_dsl_dryrun_capacity_error() {
     fi
 
     log "Test: impossible WAL capacity is rejected during dry-run"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "10GiB" "11GiB"
+    log_available_disk_matches_by_sizes "WAL candidate" "20GiB"
     local output
     output=$(vm_exec microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "eq(@size, 20GiB)" --wal-size 100GiB --dry-run 2>&1 || true)
     echo "$output"
@@ -828,6 +996,9 @@ function test_dsl_dryrun_empty_wal_warning() {
     fi
 
     log "Test: empty WAL match emits warning but succeeds"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "10GiB"
+    log_available_disk_matches_by_sizes "WAL candidate" "999GiB"
     local output
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 999GiB)" --wal-size 1GiB --dry-run 2>&1 || true)
     echo "$output"
@@ -842,6 +1013,9 @@ function test_dsl_dryrun_empty_db_warning() {
     fi
 
     log "Test: empty DB match emits warning but succeeds"
+    log_available_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "10GiB"
+    log_available_disk_matches_by_sizes "DB candidate" "999GiB"
     local output
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --db-match "eq(@size, 999GiB)" --db-size 2GiB --dry-run 2>&1 || true)
     echo "$output"
@@ -860,6 +1034,11 @@ function test_dsl_dryrun_no_new_osd_warning() {
     add_output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" 2>&1 || true)
     echo "$add_output"
     wait_for_configured_disk_count_ge 1 180
+    log_available_disks_snapshot
+    log_configured_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "12GiB"
+    log_available_disk_matches_by_sizes "WAL candidate" "20GiB"
+    log_available_disk_matches_by_sizes "DB candidate" "30GiB"
 
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB --dry-run 2>&1 || true)
     echo "$output"
@@ -1184,6 +1363,10 @@ function test_dsl_dryrun_and_execute_consistency() {
     db_parent=$(get_available_disk_path_by_size "30GiB")
     before_wal=$(get_partition_count "$wal_parent")
     before_db=$(get_partition_count "$db_parent")
+    log_available_disks_snapshot
+    log_available_disk_matches_by_sizes "OSD candidate" "12GiB"
+    log_available_disk_matches_by_sizes "WAL candidate" "20GiB"
+    log_available_disk_matches_by_sizes "DB candidate" "30GiB"
 
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB --dry-run 2>&1 || true)
     echo "$output"
@@ -1475,8 +1658,12 @@ function run_dsl_pr5_tests() {
 }
 
 function run_dsl_full_tests() {
-    # For now, the stable CI entrypoint is the baseline suite.
     run_dsl_baseline_tests
+    run_dsl_waldb_validation_tests
+    run_dsl_waldb_dryrun_tests
+    run_dsl_waldb_provision_tests
+    run_dsl_waldb_cleanup_tests
+    run_dsl_waldb_consistency_tests
 }
 
 function run_dsl_functest() {
@@ -1536,7 +1723,7 @@ Primary suites:
   run_dsl_waldb_provision_tests    Run WAL/DB provisioning DSL tests
   run_dsl_waldb_cleanup_tests      Run WAL/DB cleanup DSL tests
   run_dsl_waldb_consistency_tests  Run WAL/DB consistency DSL tests
-  run_dsl_full_tests               Alias to the baseline DSL suite
+  run_dsl_full_tests               Run the full DSL functest matrix
 
 Legacy aliases:
   run_dsl_phase1_tests
