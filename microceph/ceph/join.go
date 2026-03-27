@@ -45,6 +45,7 @@ func msgrv2OnlyCluster() (bool, error) {
 var (
 	getHostTags       = database.GetHostTags
 	joinCreateHostTag = database.CreateHostTag
+	joinHostTagExists = database.HostTagExists
 )
 
 func getAllAZHosts(ctx context.Context, tx *sql.Tx) ([]database.HostTag, error) {
@@ -165,13 +166,22 @@ func validateJoinAZ(ctx context.Context, tx *sql.Tx, az string) error {
 }
 
 // setJoinAZ records the availability zone for a joining node.
-// Should be called after validateJoinAZ.
+// Should be called after validateJoinAZ. If the tag already exists (e.g. a
+// retry after a partial join failure), the call is a no-op.
 func setJoinAZ(ctx context.Context, tx *sql.Tx, hostname string, az string) error {
 	if az == "" {
 		return nil
 	}
 
-	_, err := joinCreateHostTag(ctx, tx, database.HostTag{Member: hostname, Key: "availability-zone", Value: az})
+	exists, err := joinHostTagExists(ctx, tx, hostname, "availability-zone")
+	if err != nil {
+		return fmt.Errorf("failed to check existing availability zone: %w", err)
+	}
+	if exists {
+		return nil
+	}
+
+	_, err = joinCreateHostTag(ctx, tx, database.HostTag{Member: hostname, Key: "availability-zone", Value: az})
 	if err != nil {
 		return fmt.Errorf("failed to record availability zone: %w", err)
 	}

@@ -33,16 +33,28 @@ func (m *mockJoinHostTagStore) create(_ context.Context, _ *sql.Tx, object datab
 	return int64(len(m.tags)), nil
 }
 
+func (m *mockJoinHostTagStore) exists(_ context.Context, _ *sql.Tx, member string, key string) (bool, error) {
+	for _, tag := range m.tags {
+		if tag.Member == member && tag.Key == key {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // withMockJoinStore swaps the package-level DB functions for mock versions,
 // returning a restore function.
 func withMockJoinStore(store *mockJoinHostTagStore) func() {
 	origGetAll := getHostTags
 	origCreate := joinCreateHostTag
+	origExists := joinHostTagExists
 	getHostTags = store.getAll
 	joinCreateHostTag = store.create
+	joinHostTagExists = store.exists
 	return func() {
 		getHostTags = origGetAll
 		joinCreateHostTag = origCreate
+		joinHostTagExists = origExists
 	}
 }
 
@@ -124,16 +136,16 @@ func TestSetJoinAZCreatesTag(t *testing.T) {
 	assert.True(t, found, "expected availability-zone host tag for node1 to be created")
 }
 
-func TestSetJoinAZErrorWraps(t *testing.T) {
+func TestSetJoinAZRetryIsNoop(t *testing.T) {
+	// Pre-populate to simulate a retry after a partial join failure.
 	store := newMockJoinHostTagStore(
-		// Pre-populate so the duplicate key check triggers.
 		database.HostTag{Member: "node1", Key: "availability-zone", Value: "az-1"},
 	)
 	defer withMockJoinStore(store)()
 
 	err := setJoinAZ(context.Background(), nil, "node1", "az-1")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to record availability zone")
+	assert.NoError(t, err)
+	assert.Len(t, store.tags, 1, "no duplicate tag should be created")
 }
 
 func TestSetJoinAZEmptyIsNoop(t *testing.T) {
