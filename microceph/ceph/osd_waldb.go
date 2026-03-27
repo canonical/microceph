@@ -150,7 +150,7 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 
 	var walMatches, dbMatches []api.ResourcesStorageDisk
 	if req.WALMatch != "" {
-		walMatches, err = m.matchAuxiliaryDisksWithDSL(ctx, req.WALMatch, osdPathSet)
+		walMatches, err = m.matchAuxiliaryDisksWithDSL(ctx, req.WALMatch)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +159,7 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 		}
 	}
 	if req.DBMatch != "" {
-		dbMatches, err = m.matchAuxiliaryDisksWithDSL(ctx, req.DBMatch, osdPathSet)
+		dbMatches, err = m.matchAuxiliaryDisksWithDSL(ctx, req.DBMatch)
 		if err != nil {
 			return nil, err
 		}

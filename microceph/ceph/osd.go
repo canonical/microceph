@@ -1148,17 +1148,13 @@ type plannedCarrierState struct {
 // MatchDisksWithDSL matches available disks using a DSL expression.
 // Returns matched disks or an error. If dryRun is true, returns device info without adding.
 func (m *OSDManager) MatchDisksWithDSL(ctx context.Context, dslExpr string, dryRun bool) (*DSLMatchResult, error) {
-	result := &DSLMatchResult{}
-
-	matchedDisks, err := m.matchOSDDisksWithDSL(ctx, dslExpr)
+	result, err := m.matchOSDDisksWithDSL(ctx, dslExpr)
 	if err != nil {
 		return nil, err
 	}
 	if result.ValidationError != "" {
 		return result, nil
 	}
-	result.MatchedDisks = matchedDisks.MatchedDisks
-	result.ValidationError = matchedDisks.ValidationError
 
 	if dryRun {
 		result.DryRunDevices = make([]types.DryRunDevice, len(result.MatchedDisks))
@@ -1288,7 +1284,7 @@ func (m *OSDManager) matchOSDDisksWithDSL(ctx context.Context, dslExpr string) (
 	return result, nil
 }
 
-func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr string, excludePaths map[string]struct{}) ([]api.ResourcesStorageDisk, error) {
+func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr string) ([]api.ResourcesStorageDisk, error) {
 	if dslExpr == "" {
 		return nil, nil
 	}
@@ -1306,7 +1302,6 @@ func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr str
 		return nil, fmt.Errorf("failed to get hostname: %w", err)
 	}
 	configuredPathSet := configuredOSDPathSetForHost(configuredDisks, hostname)
-	_ = excludePaths
 	localUsage, err := m.collectLocalAuxDiskUsage(storage)
 	if err != nil {
 		return nil, err

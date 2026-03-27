@@ -95,7 +95,7 @@ function assert_ge() {
 
 function human_gib_string() {
     local gib="${1%GiB}"
-    printf "%s.00 GiB" "$gib"
+    printf "%s.00GiB" "$gib"
 }
 
 function dsl_volume_names() {
@@ -277,7 +277,7 @@ function json_first_available_type() {
 
 function json_available_count_for_display_size() {
     local size_display="$1"
-    get_disk_list_json | python3 -c 'import json,sys; size=sys.argv[1]; obj=json.load(sys.stdin); print(sum(1 for item in obj.get("AvailableDisks", []) if item.get("Size") == size))' "$size_display"
+    get_disk_list_json | python3 -c 'import json,sys; size=sys.argv[1].replace(" ", ""); obj=json.load(sys.stdin); print(sum(1 for item in obj.get("AvailableDisks", []) if item.get("Size", "").replace(" ", "") == size))' "$size_display"
 }
 
 function wait_for_configured_disk_count_ge() {
