@@ -1094,12 +1094,13 @@ function test_sequential_join_mon_hosts() {
     # Wait for node-wrk0's background monitor refresh loop to complete its first
     # iteration (advancing past first=true) before joining node-wrk1. The first
     # successful UpdateConfig will write node0_ip into ceph.conf.
+    # 24 attempts * 5s = 2 minutes
     local max_attempts=24
     echo "Waiting for node-wrk0 first monitor refresh..."
     for i in $(seq 1 $max_attempts); do
         if lxc exec node-wrk0 -- sh -c \
-                "grep -c '${node0_ip}' /var/snap/microceph/current/conf/ceph.conf" \
-                2>/dev/null | grep -q "^[1-9]"; then
+                "grep -q '${node0_ip}' /var/snap/microceph/current/conf/ceph.conf" \
+                2>/dev/null; then
             echo "  node-wrk0 completed first monitor refresh (attempt #${i})"
             break
         fi
@@ -1116,13 +1117,13 @@ function test_sequential_join_mon_hosts() {
 
     # Wait for both nodes' background refresh loop to pick up the new monitor and
     # update ceph.conf. Poll until each node's conf contains node-wrk1's address,
-    # or time out after 10 minutes (120 attempts * 5s).
+    # or time out after 2 minutes (24 attempts * 5s).
     for node in node-wrk0 node-wrk1; do
         echo "Waiting for ${node} to update ceph.conf with ${node1_ip}..."
         for i in $(seq 1 $max_attempts); do
             if lxc exec "${node}" -- sh -c \
-                    "grep -c '${node1_ip}' /var/snap/microceph/current/conf/ceph.conf" \
-                    2>/dev/null | grep -q "^[1-9]"; then
+                    "grep -q '${node1_ip}' /var/snap/microceph/current/conf/ceph.conf" \
+                    2>/dev/null; then
                 echo "  ${node} ceph.conf updated (attempt #${i})"
                 break
             fi
