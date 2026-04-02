@@ -73,12 +73,6 @@ UPDATE host_tags
  WHERE id = ?
 `)
 
-// hostTagColumns returns a string of column names to be used with a SELECT statement for the entity.
-// Use this function when building statements to retrieve database entries matching the HostTag entity.
-func hostTagColumns() string {
-	return "hosts_tags.id, core_cluster_members.name AS member, hosts_tags.key, hosts_tags.value"
-}
-
 // getHostTags can be used to run handwritten sql.Stmts to return a slice of objects.
 func getHostTags(ctx context.Context, stmt *sql.Stmt, args ...any) ([]HostTag, error) {
 	objects := make([]HostTag, 0)

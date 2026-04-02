@@ -17,9 +17,10 @@ import (
 // IsValidCrushName checks whether a name is a valid CRUSH bucket name.
 // Matches the validation in Ceph's CrushWrapper::is_valid_crush_name.
 // https://github.com/ceph/ceph/blob/main/src/crush/CrushWrapper.cc
+var crushNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
+
 func IsValidCrushName(name string) bool {
-	const pattern = `^[a-zA-Z0-9_.\-]+$`
-	return regexp.MustCompile(pattern).MatchString(name)
+	return crushNameRe.MatchString(name)
 }
 
 // ##### Public Methods #####
