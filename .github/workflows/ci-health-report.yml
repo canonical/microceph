@@ -3,10 +3,10 @@ name: CI Health Report
 on:
   push:
     paths:
-      - .github/scripts/ci_health_report.py
+      - .github/scripts/ci_health_report/**
   pull_request:
     paths:
-      - .github/scripts/ci_health_report.py
+      - .github/scripts/ci_health_report/**
   schedule:
     - cron: "0 9 * * 1" # Every Monday at 09:00 UTC
   workflow_dispatch:
@@ -38,8 +38,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test CI health report script
-        run: python3 -m unittest ci_health_report -v
-        working-directory: .github/scripts
+        run: python3 -m unittest test_ci_health_report -v
+        working-directory: .github/scripts/ci_health_report
 
   report:
     needs: test
@@ -60,4 +60,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PYTHONUNBUFFERED: "1"
-        run: python3 .github/scripts/ci_health_report.py
+        run: python3 .github/scripts/ci_health_report/ci_health_report.py
