@@ -27,21 +27,13 @@ In this documentation
 
 ..  grid:: 1 2 1 2
 
-   ..  grid-item:: :doc:`Tutorial <tutorial/get-started>`
+   ..  grid-item:: :doc:`Deploy from Snap package <snap/index>`
 
-      **A hands-on introduction** to MicroCeph for new users
+      **Install and manage MicroCeph** directly using the snap package
 
-   ..  grid-item:: :doc:`How-to guides <how-to/index>`
+   ..  grid-item:: :doc:`Deploy with Juju <charm/index>`
 
-      **Step-by-step guides** covering key operations and common tasks
-
-   .. grid-item:: :doc:`Reference <reference/index>`
-
-      **Technical information** - specifications, APIs, architecture
-
-   .. grid-item:: :doc:`Explanation <explanation/index>`
-
-      **Discussion and clarification** of key topics
+      **Deploy and operate MicroCeph** as a charmed application with Juju
 
 ---------
 
@@ -63,17 +55,10 @@ constructive feedback.
 
 .. toctree::
    :hidden:
-   :maxdepth: 1
+   :titlesonly:
 
-   tutorial/get-started
-
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   how-to/index
-   reference/index
-   explanation/index
+   Deploy from Snap package <snap/index>
+   Deploy with Juju <charm/index>
    Contribute to our docs <contributing/index>
 
 .. LINKS
