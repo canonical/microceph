@@ -1893,18 +1893,30 @@ function test_az_lifecycle() {
     echo "node-wrk3 has osd.${wrk3_osd}"
 
     # Removing the last OSD in az-c should be blocked (would break rack failure domain)
-    if lxc exec node-wrk3 -- sh -c "microceph disk remove osd.${wrk3_osd}" 2>&1 ; then
+    local remove_out remove_rc
+    remove_out=$(lxc exec node-wrk3 -- sh -c "microceph disk remove osd.${wrk3_osd}" 2>&1) && remove_rc=0 || remove_rc=$?
+    if echo "${remove_out}" | grep -q "rack-level failure domain" ; then
+        echo "Confirmed: disk remove blocked as expected (rack failure domain protection)"
+    elif [[ $remove_rc -eq 0 ]] ; then
         echo "FAIL: expected disk remove to be blocked but it succeeded"
         return 1
-    fi
-    echo "Confirmed: disk remove blocked as expected (rack failure domain protection)"
-
-    # Verify --confirm-failure-domain-downgrade is also a no-op on rack topology
-    if lxc exec node-wrk3 -- sh -c "microceph disk remove osd.${wrk3_osd} --confirm-failure-domain-downgrade" 2>&1 ; then
-        echo "FAIL: expected disk remove to be blocked even with --confirm-failure-domain-downgrade"
+    else
+        echo "FAIL: disk remove failed with unexpected error: ${remove_out}"
         return 1
     fi
-    echo "Confirmed: --confirm-failure-domain-downgrade does not bypass rack protection"
+
+    # Verify --confirm-failure-domain-downgrade is also a no-op on rack topology
+    local downgrade_out downgrade_rc
+    downgrade_out=$(lxc exec node-wrk3 -- sh -c "microceph disk remove osd.${wrk3_osd} --confirm-failure-domain-downgrade" 2>&1) && downgrade_rc=0 || downgrade_rc=$?
+    if echo "${downgrade_out}" | grep -q "rack-level failure domain" ; then
+        echo "Confirmed: --confirm-failure-domain-downgrade does not bypass rack protection"
+    elif [[ $downgrade_rc -eq 0 ]] ; then
+        echo "FAIL: expected disk remove to be blocked even with --confirm-failure-domain-downgrade but it succeeded"
+        return 1
+    else
+        echo "FAIL: disk remove failed with unexpected error: ${downgrade_out}"
+        return 1
+    fi
 
     # Force removal with --bypass-safety-checks
     lxc exec node-wrk3 -- sh -c "microceph disk remove osd.${wrk3_osd} --bypass-safety-checks"
