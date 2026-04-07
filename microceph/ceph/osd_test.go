@@ -871,11 +871,16 @@ func (s *osdSuite) TestKillOSD() {
 	assert.NoError(s.T(), err)
 	osdKillGracePeriod = 20 * time.Millisecond
 
-	// Test failed kill.
-	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 1$").Return("", fmt.Errorf("process not found")).Once()
+	// Test already-stopped OSD.
+	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 1$").Return("", createExitError(s.T(), 1)).Once()
 	err = osdmgr.killOSD(1)
+	assert.NoError(s.T(), err)
+
+	// Test failed kill.
+	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 3$").Return("", fmt.Errorf("pkill failed")).Once()
+	err = osdmgr.killOSD(3)
 	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "failed to kill osd.1")
+	assert.Contains(s.T(), err.Error(), "failed to kill osd.3")
 }
 
 // TestOutDownOSD tests taking OSD out and down

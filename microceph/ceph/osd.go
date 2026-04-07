@@ -1953,6 +1953,9 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	if err != nil {
 		return fmt.Errorf("failed to check if osd.%d is present in Ceph: %w", osd, err)
 	}
+	if !isPresent {
+		logger.Infof("osd.%d is not yet present in Ceph tree; removal will stop local state first and re-check", osd)
+	}
 	// reweight/drain data
 	if isPresent {
 		m.reweightOSD(ctx, osd, 0)
@@ -1971,9 +1974,29 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 			return err
 		}
 	}
-	// stop the OSD service, but don't fail if it's not running
-	if isPresent {
-		_ = m.killOSD(osd)
+	// stop the OSD process before touching local storage, even if the OSD is not yet visible in Ceph.
+	if err := m.killOSD(osd); err != nil {
+		logger.Warnf("Failed to stop local osd.%d process prior to storage cleanup: %v", osd, err)
+	}
+	if !isPresent {
+		isPresent, err = m.waitForOSDPresence(osd, osdPresenceRetryWindow)
+		if err != nil {
+			return fmt.Errorf("failed to re-check if osd.%d is present in Ceph after local stop: %w", osd, err)
+		}
+		if isPresent {
+			logger.Infof("osd.%d appeared in Ceph tree during removal; proceeding with cluster removal steps", osd)
+			m.reweightOSD(ctx, osd, 0)
+			if !bypassSafety {
+				err = m.safetyCheckStop([]int64{osd})
+				if err != nil {
+					return err
+				}
+			}
+			err = m.outDownOSD(osd)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	// perform safety check for destroying
 	if isPresent && !bypassSafety {
@@ -2222,15 +2245,21 @@ var (
 	osdKillGracePeriod      = 10 * time.Second
 	osdKillForceGracePeriod = 5 * time.Second
 	osdKillPollInterval     = 250 * time.Millisecond
+	osdPresenceRetryWindow  = 5 * time.Second
+	osdPresencePollInterval = 250 * time.Millisecond
 )
+
+func isExitCode(err error, code int) bool {
+	var exitError *exec.ExitError
+	return errors.As(err, &exitError) && exitError.ExitCode() == code
+}
 
 func (m *OSDManager) waitForOSDExit(cmdline string, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	for {
 		_, err := m.runner.RunCommand("pgrep", "-f", cmdline)
 		if err != nil {
-			var exitError *exec.ExitError
-			if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
+			if isExitCode(err, 1) {
 				return true, nil
 			}
 			return false, fmt.Errorf("failed to query OSD process state for %q: %w", cmdline, err)
@@ -2244,11 +2273,32 @@ func (m *OSDManager) waitForOSDExit(cmdline string, timeout time.Duration) (bool
 	}
 }
 
+func (m *OSDManager) waitForOSDPresence(osd int64, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		present, err := m.haveOSDInCeph(osd)
+		if err != nil {
+			return false, err
+		}
+		if present {
+			return true, nil
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		time.Sleep(osdPresencePollInterval)
+	}
+}
+
 // killOSD terminates the osd process for an osd.id.
 func (m *OSDManager) killOSD(osd int64) error {
 	cmdline := fmt.Sprintf("ceph-osd .* --id %d$", osd)
 	_, err := m.runner.RunCommand("pkill", "-f", cmdline)
 	if err != nil {
+		if isExitCode(err, 1) {
+			logger.Infof("osd.%d process is already stopped", osd)
+			return nil
+		}
 		logger.Errorf("Failed to kill osd.%d: %v", osd, err)
 		return fmt.Errorf("failed to kill osd.%d: %w", osd, err)
 	}
