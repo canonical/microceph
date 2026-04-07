@@ -17,6 +17,7 @@ import (
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/dsl"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/spf13/afero"
 )
 
@@ -441,6 +442,18 @@ func (m *OSDManager) writeGeneratedAuxManifest(osdDataPath string, manifest *gen
 	return nil
 }
 
+func (m *OSDManager) persistGeneratedAuxManifest(osdDataPath string, manifest *generatedAuxDevicesManifest) error {
+	if manifest == nil || (manifest.WAL == nil && manifest.DB == nil) {
+		err := m.fs.Remove(generatedAuxManifestPath(osdDataPath))
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove generated aux manifest: %w", err)
+		}
+		return nil
+	}
+
+	return m.writeGeneratedAuxManifest(osdDataPath, manifest)
+}
+
 func (m *OSDManager) readGeneratedAuxManifest(osdDataPath string) (*generatedAuxDevicesManifest, error) {
 	data, err := afero.ReadFile(m.fs, generatedAuxManifestPath(osdDataPath))
 	if err != nil {
@@ -480,8 +493,17 @@ func (m *OSDManager) closeEncryptedAuxDevice(kind string, osdID int64) error {
 }
 
 func (m *OSDManager) deletePartition(parentPath string, partition uint64) error {
+	if _, err := m.resolvePartitionStablePath(parentPath, partition); err != nil {
+		logger.Infof("Partition %d on %s is already absent, skipping delete", partition, parentPath)
+		return nil
+	}
+
 	_, err := m.runner.RunCommand("sfdisk", "--delete", parentPath, strconv.FormatUint(partition, 10))
 	if err != nil {
+		if _, resolveErr := m.resolvePartitionStablePath(parentPath, partition); resolveErr != nil {
+			logger.Infof("Partition %d on %s disappeared despite delete error, treating as cleaned", partition, parentPath)
+			return nil
+		}
 		return fmt.Errorf("failed to delete partition %d on %s: %w", partition, parentPath, err)
 	}
 	return nil
@@ -516,6 +538,19 @@ func (m *OSDManager) cleanupGeneratedAuxDevice(ctx context.Context, kind string,
 	return nil
 }
 
+func (m *OSDManager) cleanupGeneratedAuxEntries(ctx context.Context, manifest *generatedAuxDevicesManifest, osdID int64) error {
+	if manifest == nil {
+		return nil
+	}
+	if err := m.cleanupGeneratedAuxDevice(ctx, "wal", manifest.WAL, osdID); err != nil {
+		return err
+	}
+	if err := m.cleanupGeneratedAuxDevice(ctx, "db", manifest.DB, osdID); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (m *OSDManager) cleanupGeneratedAuxDevices(ctx context.Context, osdDataPath string, osdID int64) error {
 	manifest, err := m.readGeneratedAuxManifest(osdDataPath)
 	if err != nil {
@@ -525,12 +560,26 @@ func (m *OSDManager) cleanupGeneratedAuxDevices(ctx context.Context, osdDataPath
 		return nil
 	}
 
-	if err := m.cleanupGeneratedAuxDevice(ctx, "wal", manifest.WAL, osdID); err != nil {
-		return err
+	if manifest.WAL != nil {
+		if err := m.cleanupGeneratedAuxDevice(ctx, "wal", manifest.WAL, osdID); err != nil {
+			return err
+		}
+		manifest.WAL = nil
+		if err := m.persistGeneratedAuxManifest(osdDataPath, manifest); err != nil {
+			return err
+		}
 	}
-	if err := m.cleanupGeneratedAuxDevice(ctx, "db", manifest.DB, osdID); err != nil {
-		return err
+
+	if manifest.DB != nil {
+		if err := m.cleanupGeneratedAuxDevice(ctx, "db", manifest.DB, osdID); err != nil {
+			return err
+		}
+		manifest.DB = nil
+		if err := m.persistGeneratedAuxManifest(osdDataPath, manifest); err != nil {
+			return err
+		}
 	}
+
 	return nil
 }
 
@@ -629,8 +678,14 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 		if planned.WAL != nil {
 			path, err := createPlannedAuxPartitionFn(m, planned.WAL)
 			if err != nil {
-				resp.Reports = append(resp.Reports, types.DiskAddReport{Path: planned.OSDPath, Report: "Failure", Error: err.Error()})
-				resp.Warnings = append(resp.Warnings, "Partial failure occurred; generated WAL/DB partitions may need manual cleanup")
+				reportErr := err.Error()
+				if createdAux {
+					if cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, 0); cleanupErr != nil {
+						reportErr = fmt.Sprintf("%s (automatic cleanup also failed: %v)", reportErr, cleanupErr)
+						resp.Warnings = append(resp.Warnings, "Automatic cleanup of generated WAL/DB partitions failed; manual cleanup may be required")
+					}
+				}
+				resp.Reports = append(resp.Reports, types.DiskAddReport{Path: planned.OSDPath, Report: "Failure", Error: reportErr})
 				break
 			}
 			createdAux = true
@@ -645,8 +700,14 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 		if planned.DB != nil {
 			path, err := createPlannedAuxPartitionFn(m, planned.DB)
 			if err != nil {
-				resp.Reports = append(resp.Reports, types.DiskAddReport{Path: planned.OSDPath, Report: "Failure", Error: err.Error()})
-				resp.Warnings = append(resp.Warnings, "Partial failure occurred; generated WAL/DB partitions may need manual cleanup")
+				reportErr := err.Error()
+				if createdAux {
+					if cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, 0); cleanupErr != nil {
+						reportErr = fmt.Sprintf("%s (automatic cleanup also failed: %v)", reportErr, cleanupErr)
+						resp.Warnings = append(resp.Warnings, "Automatic cleanup of generated WAL/DB partitions failed; manual cleanup may be required")
+					}
+				}
+				resp.Reports = append(resp.Reports, types.DiskAddReport{Path: planned.OSDPath, Report: "Failure", Error: reportErr})
 				break
 			}
 			createdAux = true
@@ -662,9 +723,6 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 		if err != nil {
 			report := types.DiskAddReport{Path: planned.OSDPath, Report: "Failure", Error: err.Error()}
 			resp.Reports = append(resp.Reports, report)
-			if createdAux {
-				resp.Warnings = append(resp.Warnings, "Partial failure occurred; generated WAL/DB partitions may need manual cleanup")
-			}
 			break
 		}
 

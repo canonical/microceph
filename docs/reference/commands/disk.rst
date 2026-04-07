@@ -118,7 +118,7 @@ Example expressions:
    # Select WAL/DB carriers separately and control their wipe/encryption independently
    microceph disk add --osd-match "eq(@type, 'ssd')" --encrypt \
      --wal-match "eq(@type, 'nvme')" --wal-size 1GiB --wal-encrypt --wal-wipe \
-     --db-match "eq(@type, 'nvme')" --db-size 4GiB --db-encrypt --db-wipe
+     --db-match "eq(@type, 'sata')" --db-size 4GiB --db-encrypt --db-wipe
 
 Dry-run planning output
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -171,6 +171,7 @@ Limitations:
 - ``--osd-match`` cannot be used together with ``--wal-device`` or ``--db-device``.
 - ``--wal-encrypt`` and ``--wal-wipe`` require ``--wal-match`` when using DSL-based selection.
 - ``--db-encrypt`` and ``--db-wipe`` require ``--db-match`` when using DSL-based selection.
+- ``--wal-match`` and ``--db-match`` must resolve to disjoint device sets.
 
 
 ``list``

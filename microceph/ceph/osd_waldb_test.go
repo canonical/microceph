@@ -565,6 +565,18 @@ func TestWriteAndReadGeneratedAuxManifest(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, loaded)
 	assert.Equal(t, manifest, loaded)
+
+	require.NoError(t, mgr.persistGeneratedAuxManifest(osdDataPath, &generatedAuxDevicesManifest{DB: manifest.DB}))
+	loaded, err = mgr.readGeneratedAuxManifest(osdDataPath)
+	require.NoError(t, err)
+	require.NotNil(t, loaded)
+	assert.Nil(t, loaded.WAL)
+	assert.Equal(t, manifest.DB, loaded.DB)
+
+	require.NoError(t, mgr.persistGeneratedAuxManifest(osdDataPath, &generatedAuxDevicesManifest{}))
+	loaded, err = mgr.readGeneratedAuxManifest(osdDataPath)
+	require.NoError(t, err)
+	assert.Nil(t, loaded)
 }
 
 func TestCleanupGeneratedAuxDevicesMissingManifest(t *testing.T) {
@@ -608,9 +620,12 @@ func TestCleanupGeneratedAuxDevicesDeletesGeneratedPartitions(t *testing.T) {
 	osdDataPath := "/var/snap/microceph/common/data/osd/ceph-3"
 	require.NoError(t, mgr.fs.MkdirAll(osdDataPath, 0755))
 	require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
+	require.NoError(t, mgr.fs.MkdirAll("/dev/disk/by-id", 0755))
 	require.NoError(t, mgr.fs.MkdirAll("/dev/mapper", 0755))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sde1", []byte("wal"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sdf2", []byte("db"), 0644))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/wal-part1", []byte("wal-part"), 0644))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/db-part2", []byte("db-part"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/mapper/luksosd.db-3", []byte("mapper"), 0644))
 
 	manifest := &generatedAuxDevicesManifest{
@@ -629,6 +644,9 @@ func TestCleanupGeneratedAuxDevicesDeletesGeneratedPartitions(t *testing.T) {
 
 	err := mgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 3)
 	require.NoError(t, err)
+	exists, statErr := afero.Exists(mgr.fs, generatedAuxManifestPath(osdDataPath))
+	require.NoError(t, statErr)
+	assert.False(t, exists)
 }
 
 func TestCleanupGeneratedAuxDevicesFailurePreservesManifest(t *testing.T) {
@@ -641,7 +659,9 @@ func TestCleanupGeneratedAuxDevicesFailurePreservesManifest(t *testing.T) {
 	osdDataPath := "/var/snap/microceph/common/data/osd/ceph-4"
 	require.NoError(t, mgr.fs.MkdirAll(osdDataPath, 0755))
 	require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
+	require.NoError(t, mgr.fs.MkdirAll("/dev/disk/by-id", 0755))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sde1", []byte("wal"), 0644))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/wal-part1", []byte("wal-part"), 0644))
 
 	manifest := &generatedAuxDevicesManifest{
 		WAL: &generatedAuxDevice{ParentPath: "/dev/disk/by-id/wal", Partition: 1, PartitionPath: "/dev/sde1", Encrypted: false},
@@ -656,6 +676,104 @@ func TestCleanupGeneratedAuxDevicesFailurePreservesManifest(t *testing.T) {
 	exists, statErr := afero.Exists(mgr.fs, generatedAuxManifestPath(osdDataPath))
 	require.NoError(t, statErr)
 	assert.True(t, exists)
+	loaded, readErr := mgr.readGeneratedAuxManifest(osdDataPath)
+	require.NoError(t, readErr)
+	require.NotNil(t, loaded)
+	assert.NotNil(t, loaded.WAL)
+}
+
+func TestCleanupGeneratedAuxDevicesRetryResumesFromRemainingEntry(t *testing.T) {
+	var st state.State
+	mgr := NewOSDManager(st)
+	mgr.fs = afero.NewMemMapFs()
+	runner := mocks.NewRunner(t)
+	mgr.runner = runner
+
+	osdDataPath := "/var/snap/microceph/common/data/osd/ceph-5"
+	require.NoError(t, mgr.fs.MkdirAll(osdDataPath, 0755))
+	require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
+	require.NoError(t, mgr.fs.MkdirAll("/dev/disk/by-id", 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sde1", []byte("wal"), 0644))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sdf2", []byte("db"), 0644))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/wal-part1", []byte("wal-part"), 0644))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/db-part2", []byte("db-part"), 0644))
+
+	manifest := &generatedAuxDevicesManifest{
+		WAL: &generatedAuxDevice{ParentPath: "/dev/disk/by-id/wal", Partition: 1, PartitionPath: "/dev/sde1", Encrypted: false},
+		DB:  &generatedAuxDevice{ParentPath: "/dev/disk/by-id/db", Partition: 2, PartitionPath: "/dev/sdf2", Encrypted: false},
+	}
+	require.NoError(t, mgr.writeGeneratedAuxManifest(osdDataPath, manifest))
+
+	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sde1", "--yes-i-really-really-mean-it").Return("", nil).Once()
+	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-id/wal", "1").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-u", "/dev/disk/by-id/wal").Return("", nil).Once()
+	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sdf2", "--yes-i-really-really-mean-it").Return("", nil).Once()
+	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-id/db", "2").Return("", assert.AnError).Once()
+
+	err := mgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 5)
+	require.Error(t, err)
+	loaded, readErr := mgr.readGeneratedAuxManifest(osdDataPath)
+	require.NoError(t, readErr)
+	require.NotNil(t, loaded)
+	assert.Nil(t, loaded.WAL)
+	require.NotNil(t, loaded.DB)
+
+	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sdf2", "--yes-i-really-really-mean-it").Return("", nil).Once()
+	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-id/db", "2").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-u", "/dev/disk/by-id/db").Return("", nil).Once()
+
+	err = mgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 5)
+	require.NoError(t, err)
+	exists, statErr := afero.Exists(mgr.fs, generatedAuxManifestPath(osdDataPath))
+	require.NoError(t, statErr)
+	assert.False(t, exists)
+}
+
+func TestExecuteDSLProvisionPlanCleansCreatedAuxOnPartitionCreationFailure(t *testing.T) {
+	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
+		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),
+		makeTestDisk("wal1", "virtio-pci-0000:03:00.0", 20),
+		makeTestDisk("db1", "virtio-pci-0000:05:00.0", 30),
+	}}
+	mgr, _ := newDryRunManager(t, storage)
+	mgr.fs = afero.NewMemMapFs()
+	runner := mocks.NewRunner(t)
+	mgr.runner = runner
+
+	originalCreatePlannedAuxPartitionFn := createPlannedAuxPartitionFn
+	t.Cleanup(func() {
+		createPlannedAuxPartitionFn = originalCreatePlannedAuxPartitionFn
+	})
+
+	require.NoError(t, mgr.fs.MkdirAll("/dev/disk/by-path", 0755))
+	walPartitionPath := "/dev/disk/by-path/virtio-pci-0000:03:00.0-part1"
+	require.NoError(t, afero.WriteFile(mgr.fs, walPartitionPath, []byte("wal"), 0644))
+
+	createCalls := 0
+	createPlannedAuxPartitionFn = func(m *OSDManager, plan *plannedAuxPartition) (string, error) {
+		createCalls++
+		if createCalls == 1 {
+			return walPartitionPath, nil
+		}
+		return "", assert.AnError
+	}
+
+	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", walPartitionPath, "--yes-i-really-really-mean-it").Return("", nil).Once()
+	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-path/virtio-pci-0000:03:00.0", "1").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-u", "/dev/disk/by-path/virtio-pci-0000:03:00.0").Return("", nil).Once()
+
+	resp := mgr.AddDisksWithDSLRequest(context.Background(), types.DisksPost{
+		OSDMatch: "eq(@size, 10GiB)",
+		WALMatch: "eq(@size, 20GiB)",
+		WALSize:  "1GiB",
+		DBMatch:  "eq(@size, 30GiB)",
+		DBSize:   "2GiB",
+	})
+
+	require.Len(t, resp.Reports, 1)
+	assert.Equal(t, "Failure", resp.Reports[0].Report)
+	assert.Contains(t, resp.Reports[0].Error, assert.AnError.Error())
+	assert.Empty(t, resp.Warnings)
 }
 
 func TestResolvePartitionStablePathFallsBackToRawDeviceWhenStorageUnavailable(t *testing.T) {

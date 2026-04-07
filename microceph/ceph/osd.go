@@ -1027,8 +1027,26 @@ func (m *OSDManager) spawnOSD(nr int64) error {
 	return nil
 }
 
-func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter, storage *api.ResourcesStorage, generatedAux *generatedAuxDevicesManifest) error {
+func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter, storage *api.ResourcesStorage, generatedAux *generatedAuxDevicesManifest) (retErr error) {
 	var err error
+	nr := int64(-1)
+	defer func() {
+		if retErr == nil || generatedAux == nil {
+			return
+		}
+
+		cleanupOSDID := nr
+		if cleanupOSDID < 0 {
+			cleanupOSDID = 0
+		}
+
+		cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, cleanupOSDID)
+		if cleanupErr != nil {
+			logger.Errorf("failed to clean generated WAL/DB partitions after add failure: %v", cleanupErr)
+			retErr = fmt.Errorf("%w (automatic cleanup of generated WAL/DB partitions also failed: %v)", retErr, cleanupErr)
+		}
+	}()
+
 	if storage == nil {
 		storage, err = m.stabilizeDevicePath(&data)
 		if err != nil {
@@ -1043,7 +1061,7 @@ func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskPar
 		}
 	}
 
-	nr, err := m.createDiskRecord(ctx, &data)
+	nr, err = m.createDiskRecord(ctx, &data)
 	if err != nil {
 		logger.Errorf("failed to create disk record for %s: %v", data.Path, err)
 		return err
