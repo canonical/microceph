@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -64,6 +65,16 @@ type MockPristineChecker struct {
 func (m *MockPristineChecker) IsPristineDisk(devicePath string) (bool, error) {
 	args := m.Called(devicePath)
 	return args.Bool(0), args.Error(1)
+}
+
+func createExitError(t *testing.T, code int) error {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code))
+	err := cmd.Run()
+	if err == nil {
+		t.Fatalf("expected command to fail with exit code %d", code)
+	}
+	return err
 }
 
 // osdSuite is the test suite for adding OSDs.
@@ -826,18 +837,41 @@ func (s *osdSuite) TestWipeDevice() {
 	osdmgr.wipeDevice(context.Background(), "/dev/sdb")
 }
 
-// TestKillOSD tests OSD process termination
+// TestKillOSD tests OSD process termination.
 func (s *osdSuite) TestKillOSD() {
 	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
 	osdmgr.runner = r
 
-	// Test successful kill
+	originalGrace := osdKillGracePeriod
+	originalForceGrace := osdKillForceGracePeriod
+	originalPoll := osdKillPollInterval
+	osdKillGracePeriod = 20 * time.Millisecond
+	osdKillForceGracePeriod = 20 * time.Millisecond
+	osdKillPollInterval = 5 * time.Millisecond
+	s.T().Cleanup(func() {
+		osdKillGracePeriod = originalGrace
+		osdKillForceGracePeriod = originalForceGrace
+		osdKillPollInterval = originalPoll
+	})
+
+	// Test successful kill with graceful exit.
 	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 0$").Return("", nil).Once()
+	r.On("RunCommand", "pgrep", "-f", "ceph-osd .* --id 0$").Return("", createExitError(s.T(), 1)).Once()
 	err := osdmgr.killOSD(0)
 	assert.NoError(s.T(), err)
 
-	// Test failed kill
+	// Test escalation to SIGKILL when SIGTERM does not stop the process.
+	osdKillGracePeriod = 0
+	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 2$").Return("", nil).Once()
+	r.On("RunCommand", "pgrep", "-f", "ceph-osd .* --id 2$").Return("1234", nil).Once()
+	r.On("RunCommand", "pkill", "-9", "-f", "ceph-osd .* --id 2$").Return("", nil).Once()
+	r.On("RunCommand", "pgrep", "-f", "ceph-osd .* --id 2$").Return("", createExitError(s.T(), 1)).Once()
+	err = osdmgr.killOSD(2)
+	assert.NoError(s.T(), err)
+	osdKillGracePeriod = 20 * time.Millisecond
+
+	// Test failed kill.
 	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 1$").Return("", fmt.Errorf("process not found")).Once()
 	err = osdmgr.killOSD(1)
 	assert.Error(s.T(), err)

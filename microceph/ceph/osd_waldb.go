@@ -562,6 +562,13 @@ func (m *OSDManager) deletePartition(parentPath string, partition uint64) error 
 		}
 		return fmt.Errorf("failed to delete partition %d on %s: %w", partition, parentPath, err)
 	}
+
+	partitionRange := fmt.Sprintf("%d:%d", partition, partition)
+	_, err = m.runner.RunCommand("partx", "-d", "--nr", partitionRange, parentPath)
+	if err != nil {
+		return fmt.Errorf("failed to remove kernel partition entry %d on %s: %w", partition, parentPath, err)
+	}
+
 	return nil
 }
 
@@ -593,7 +600,6 @@ func (m *OSDManager) cleanupGeneratedAuxDevice(ctx context.Context, kind string,
 	if err := m.deletePartition(entry.ParentPath, entry.Partition); err != nil {
 		return err
 	}
-	m.refreshPartitionTable(entry.ParentPath)
 	logger.Infof("Cleaned generated %s partition %d on %s for osd.%d", strings.ToUpper(kind), entry.Partition, entry.ParentPath, osdID)
 	return nil
 }

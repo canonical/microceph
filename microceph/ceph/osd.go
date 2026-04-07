@@ -2218,7 +2218,33 @@ func (m *OSDManager) haveOSDInCeph(osd int64) (bool, error) {
 	return false, nil
 }
 
-// killOSD terminates the osd process for an osd.id
+var (
+	osdKillGracePeriod      = 10 * time.Second
+	osdKillForceGracePeriod = 5 * time.Second
+	osdKillPollInterval     = 250 * time.Millisecond
+)
+
+func (m *OSDManager) waitForOSDExit(cmdline string, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		_, err := m.runner.RunCommand("pgrep", "-f", cmdline)
+		if err != nil {
+			var exitError *exec.ExitError
+			if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
+				return true, nil
+			}
+			return false, fmt.Errorf("failed to query OSD process state for %q: %w", cmdline, err)
+		}
+
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+
+		time.Sleep(osdKillPollInterval)
+	}
+}
+
+// killOSD terminates the osd process for an osd.id.
 func (m *OSDManager) killOSD(osd int64) error {
 	cmdline := fmt.Sprintf("ceph-osd .* --id %d$", osd)
 	_, err := m.runner.RunCommand("pkill", "-f", cmdline)
@@ -2226,6 +2252,30 @@ func (m *OSDManager) killOSD(osd int64) error {
 		logger.Errorf("Failed to kill osd.%d: %v", osd, err)
 		return fmt.Errorf("failed to kill osd.%d: %w", osd, err)
 	}
+
+	exited, err := m.waitForOSDExit(cmdline, osdKillGracePeriod)
+	if err != nil {
+		return err
+	}
+	if exited {
+		return nil
+	}
+
+	logger.Warnf("osd.%d did not exit after SIGTERM, sending SIGKILL", osd)
+	_, err = m.runner.RunCommand("pkill", "-9", "-f", cmdline)
+	if err != nil {
+		logger.Errorf("Failed to force kill osd.%d: %v", osd, err)
+		return fmt.Errorf("failed to force kill osd.%d: %w", osd, err)
+	}
+
+	exited, err = m.waitForOSDExit(cmdline, osdKillForceGracePeriod)
+	if err != nil {
+		return err
+	}
+	if !exited {
+		return fmt.Errorf("timed out waiting for osd.%d to exit after SIGKILL", osd)
+	}
+
 	return nil
 }
 

@@ -56,14 +56,14 @@ function run_and_capture() {
     local __outputvar="$2"
     shift 2
 
-    local status output
+    local __captured_status __captured_output
     set +e
-    output=$("$@" 2>&1)
-    status=$?
+    __captured_output=$("$@" 2>&1)
+    __captured_status=$?
     set -e
 
-    printf -v "$__statusvar" '%s' "$status"
-    printf -v "$__outputvar" '%s' "$output"
+    printf -v "$__statusvar" '%s' "$__captured_status"
+    printf -v "$__outputvar" '%s' "$__captured_output"
 }
 
 function expect_command_status() {
@@ -776,12 +776,16 @@ function install_microceph_in_vm() {
         done
 
         # Dangerous installs do not auto-connect interfaces.
+        # Keep this list aligned with the other test harnesses in tests/scripts/.
         log "Connecting snap interfaces for dangerous install..."
         vm_exec snap connect microceph:block-devices || true
         vm_exec snap connect microceph:hardware-observe || true
         vm_exec snap connect microceph:mount-observe || true
         vm_exec snap connect microceph:dm-crypt || true
+        vm_exec snap connect microceph:load-rbd || true
         vm_exec snap connect microceph:microceph-support || true
+        vm_exec snap connect microceph:network-bind || true
+        vm_exec snap connect microceph:process-control || true
     else
         if [[ -n "$SNAP_PATH" ]]; then
             log "Warning: no snap file found matching '$SNAP_PATH', falling back to snap store"

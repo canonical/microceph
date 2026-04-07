@@ -636,11 +636,11 @@ func TestCleanupGeneratedAuxDevicesDeletesGeneratedPartitions(t *testing.T) {
 
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sde1", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-id/wal", "1").Return("", nil).Once()
-	runner.On("RunCommand", "partx", "-u", "/dev/disk/by-id/wal").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-d", "--nr", "1:1", "/dev/disk/by-id/wal").Return("", nil).Once()
 	runner.On("RunCommand", "cryptsetup", "close", "luksosd.db-3").Return("", nil).Once()
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sdf2", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-id/db", "2").Return("", nil).Once()
-	runner.On("RunCommand", "partx", "-u", "/dev/disk/by-id/db").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-d", "--nr", "2:2", "/dev/disk/by-id/db").Return("", nil).Once()
 
 	err := mgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 3)
 	require.NoError(t, err)
@@ -670,7 +670,7 @@ func TestCleanupGeneratedAuxDevicesAfterRestartUsesPersistedManifest(t *testing.
 
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/disk/by-id/wal-part1", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-id/wal", "1").Return("", nil).Once()
-	runner.On("RunCommand", "partx", "-u", "/dev/disk/by-id/wal").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-d", "--nr", "1:1", "/dev/disk/by-id/wal").Return("", nil).Once()
 
 	err := restartedMgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 33)
 	require.NoError(t, err)
@@ -736,7 +736,7 @@ func TestCleanupGeneratedAuxDevicesRetryResumesFromRemainingEntry(t *testing.T) 
 
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sde1", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-id/wal", "1").Return("", nil).Once()
-	runner.On("RunCommand", "partx", "-u", "/dev/disk/by-id/wal").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-d", "--nr", "1:1", "/dev/disk/by-id/wal").Return("", nil).Once()
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sdf2", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-id/db", "2").Return("", assert.AnError).Once()
 
@@ -750,7 +750,7 @@ func TestCleanupGeneratedAuxDevicesRetryResumesFromRemainingEntry(t *testing.T) 
 
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sdf2", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-id/db", "2").Return("", nil).Once()
-	runner.On("RunCommand", "partx", "-u", "/dev/disk/by-id/db").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-d", "--nr", "2:2", "/dev/disk/by-id/db").Return("", nil).Once()
 
 	err = mgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 5)
 	require.NoError(t, err)
@@ -790,7 +790,7 @@ func TestExecuteDSLProvisionPlanCleansCreatedAuxOnPartitionCreationFailure(t *te
 
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", walPartitionPath, "--yes-i-really-really-mean-it").Return("", nil).Once()
 	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-path/virtio-pci-0000:03:00.0", "1").Return("", nil).Once()
-	runner.On("RunCommand", "partx", "-u", "/dev/disk/by-path/virtio-pci-0000:03:00.0").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-d", "--nr", "1:1", "/dev/disk/by-path/virtio-pci-0000:03:00.0").Return("", nil).Once()
 
 	resp := mgr.AddDisksWithDSLRequest(context.Background(), types.DisksPost{
 		OSDMatch: "eq(@size, 10GiB)",
