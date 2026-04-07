@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/canonical/microceph/microceph/constants"
@@ -374,8 +372,9 @@ func backwardCompatMonitors(ctx context.Context, s interfaces.StateInterface) ([
 
 // UpdateConfig updates the ceph.conf file with the current configuration.
 func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
-	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf")
-	runPath := filepath.Join(filepath.Dir(os.Getenv("SNAP_DATA")), "current", "run")
+	pathConsts := constants.GetPathConst()
+	confPath := pathConsts.ConfPath
+	runPath := pathConsts.RunPath
 
 	err := backwardCompatPubnet(ctx, s)
 	if err != nil {

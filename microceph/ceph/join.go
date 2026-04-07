@@ -37,7 +37,7 @@ func msgrv2OnlyFile(path string) (bool, error) {
 }
 
 func msgrv2OnlyCluster() (bool, error) {
-	confPath := filepath.Join(os.Getenv("SNAP_DATA"), "conf", constants.CephConfFileName)
+	confPath := filepath.Join(constants.GetPathConst().ConfPath, constants.CephConfFileName)
 	return msgrv2OnlyFile(confPath)
 }
 
