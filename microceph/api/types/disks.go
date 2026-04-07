@@ -15,13 +15,13 @@ type DisksPost struct {
 	// OSDMatch is a DSL expression for matching devices to use as OSDs.
 	// When set, Path is ignored and devices are selected based on the expression.
 	OSDMatch string `json:"osd_match,omitempty" yaml:"osd_match,omitempty"`
-	// WALMatch is a DSL expression for matching backing devices for WAL partitions.
-	// This is additive request plumbing for Phase 2 support.
+	// WALMatch is a DSL expression for selecting backing devices that will be
+	// partitioned for WAL use.
 	WALMatch string `json:"wal_match,omitempty" yaml:"wal_match,omitempty"`
 	// WALSize is the requested WAL partition size.
 	WALSize string `json:"wal_size,omitempty" yaml:"wal_size,omitempty"`
-	// DBMatch is a DSL expression for matching backing devices for DB partitions.
-	// This is additive request plumbing for Phase 2 support.
+	// DBMatch is a DSL expression for selecting backing devices that will be
+	// partitioned for DB use.
 	DBMatch string `json:"db_match,omitempty" yaml:"db_match,omitempty"`
 	// DBSize is the requested DB partition size.
 	DBSize string `json:"db_size,omitempty" yaml:"db_size,omitempty"`

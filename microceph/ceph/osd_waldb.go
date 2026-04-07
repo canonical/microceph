@@ -96,6 +96,32 @@ func buildResetBeforeUseWarnings(kind string, resetBeforeUse map[string]bool) []
 	return warnings
 }
 
+func plannedAuxPartitionSummary(plan *plannedAuxPartition) string {
+	if plan == nil {
+		return "none"
+	}
+
+	action := "new"
+	if plan.ResetBeforeUse {
+		action = "reset"
+	} else if plan.Partition > 1 {
+		action = "append"
+	}
+
+	return fmt.Sprintf("%s parent=%s part=%d size=%s action=%s", strings.ToUpper(plan.Kind), plan.ParentPath, plan.Partition, formatBytesIEC(int64(plan.SizeBytes)), action)
+}
+
+func plannedOSDProvisionSummary(planned plannedOSDProvision) string {
+	return fmt.Sprintf("osd=%s wal=[%s] db=[%s]", planned.OSDPath, plannedAuxPartitionSummary(planned.WAL), plannedAuxPartitionSummary(planned.DB))
+}
+
+// planAuxiliaryPartitionsDetailed spreads WAL/DB partitions across the eligible
+// carrier set in a deterministic way.
+//
+// It prefers carriers with fewer existing partitions first, then uses the stable
+// device path as a tie-breaker. If a carrier must be reset before reuse, only the
+// first partition planned on that carrier keeps ResetBeforeUse=true; subsequent
+// partitions on the same carrier append to the freshly recreated partition table.
 func planAuxiliaryPartitionsDetailed(osdPaths []string, carriers []api.ResourcesStorageDisk, resetBeforeUse map[string]bool, sizeBytes uint64, kind string) ([]*plannedAuxPartition, error) {
 	if len(osdPaths) == 0 || len(carriers) == 0 {
 		return make([]*plannedAuxPartition, len(osdPaths)), nil
@@ -148,6 +174,7 @@ func planAuxiliaryPartitionsDetailed(osdPaths []string, carriers []api.Resources
 			SizeBytes:      sizeBytes,
 			ResetBeforeUse: states[choice].ResetBeforeUse,
 		}
+		logger.Debugf("Planned %s partition for OSD %s: %s", strings.ToUpper(kind), osdPaths[i], plannedAuxPartitionSummary(out[i]))
 		states[choice].RemainingSize -= sizeBytes
 		states[choice].PartitionCnt++
 		states[choice].PartitionNo++
@@ -158,6 +185,8 @@ func planAuxiliaryPartitionsDetailed(osdPaths []string, carriers []api.Resources
 }
 
 func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksPost) (*dslProvisionPlan, error) {
+	logger.Infof("Building DSL provision plan for osd_match=%q wal_match=%q db_match=%q", req.OSDMatch, req.WALMatch, req.DBMatch)
+
 	osdResult, err := m.matchOSDDisksWithDSL(ctx, req.OSDMatch)
 	if err != nil {
 		return nil, err
@@ -168,6 +197,7 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 
 	plan := &dslProvisionPlan{}
 	if len(osdResult.MatchedDisks) == 0 {
+		logger.Infof("DSL provision plan has no OSD matches for expression %q", req.OSDMatch)
 		plan.Warnings = append(plan.Warnings, "WAL/DB settings ignored because no new OSDs are being added")
 		return plan, nil
 	}
@@ -179,6 +209,7 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 		osdPaths[i] = path
 		plan.OSDs[i] = plannedOSDProvision{OSDPath: path}
 	}
+	logger.Infof("DSL provision plan matched %d OSD device(s): %s", len(osdPaths), strings.Join(osdPaths, ", "))
 	osdPathSet := buildPathSet(osdResult.MatchedDisks)
 
 	var walMatches, dbMatches []api.ResourcesStorageDisk
@@ -190,6 +221,7 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 			return nil, err
 		}
 		if len(walMatches) == 0 {
+			logger.Infof("WAL DSL expression %q resolved to no eligible carriers", req.WALMatch)
 			plan.Warnings = append(plan.Warnings, "WAL match expression resolved to no devices; proceeding without WAL")
 		} else {
 			plan.Warnings = append(plan.Warnings, buildResetBeforeUseWarnings("WAL", walResetBeforeUse)...)
@@ -201,6 +233,7 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 			return nil, err
 		}
 		if len(dbMatches) == 0 {
+			logger.Infof("DB DSL expression %q resolved to no eligible carriers", req.DBMatch)
 			plan.Warnings = append(plan.Warnings, "DB match expression resolved to no devices; proceeding without DB")
 		} else {
 			plan.Warnings = append(plan.Warnings, buildResetBeforeUseWarnings("DB", dbResetBeforeUse)...)
@@ -209,13 +242,28 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 
 	walPathSet := buildPathSet(walMatches)
 	dbPathSet := buildPathSet(dbMatches)
+	if len(walPathSet) > 0 {
+		logger.Infof("Eligible WAL carriers: %s", strings.Join(pathSetToSlice(walPathSet), ", "))
+	}
+	if resetPaths := trueBoolMapKeys(walResetBeforeUse); len(resetPaths) > 0 {
+		logger.Infof("WAL carriers requiring reset before use: %s", strings.Join(resetPaths, ", "))
+	}
+	if len(dbPathSet) > 0 {
+		logger.Infof("Eligible DB carriers: %s", strings.Join(pathSetToSlice(dbPathSet), ", "))
+	}
+	if resetPaths := trueBoolMapKeys(dbResetBeforeUse); len(resetPaths) > 0 {
+		logger.Infof("DB carriers requiring reset before use: %s", strings.Join(resetPaths, ", "))
+	}
 	if overlap := intersectPathSets(osdPathSet, walPathSet); len(overlap) > 0 {
+		logger.Warnf("Refusing DSL provision plan because OSD and WAL match sets overlap: %s", strings.Join(overlap, ", "))
 		return nil, fmt.Errorf("OSD and WAL match sets overlap: %s", strings.Join(overlap, ", "))
 	}
 	if overlap := intersectPathSets(osdPathSet, dbPathSet); len(overlap) > 0 {
+		logger.Warnf("Refusing DSL provision plan because OSD and DB match sets overlap: %s", strings.Join(overlap, ", "))
 		return nil, fmt.Errorf("OSD and DB match sets overlap: %s", strings.Join(overlap, ", "))
 	}
 	if overlap := intersectPathSets(walPathSet, dbPathSet); len(overlap) > 0 {
+		logger.Warnf("Refusing DSL provision plan because WAL and DB match sets overlap: %s", strings.Join(overlap, ", "))
 		return nil, fmt.Errorf("WAL and DB match sets overlap: %s", strings.Join(overlap, ", "))
 	}
 
@@ -247,6 +295,10 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 		}
 	}
 
+	for _, planned := range plan.OSDs {
+		logger.Debugf("Built DSL provision plan row: %s", plannedOSDProvisionSummary(planned))
+	}
+	logger.Infof("Built DSL provision plan for %d OSD(s)", len(plan.OSDs))
 	return plan, nil
 }
 
@@ -435,10 +487,12 @@ func (m *OSDManager) writeGeneratedAuxManifest(osdDataPath string, manifest *gen
 		return fmt.Errorf("failed to marshal generated aux manifest: %w", err)
 	}
 
-	if err := afero.WriteFile(m.fs, generatedAuxManifestPath(osdDataPath), data, 0600); err != nil {
+	manifestPath := generatedAuxManifestPath(osdDataPath)
+	if err := afero.WriteFile(m.fs, manifestPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write generated aux manifest: %w", err)
 	}
 
+	logger.Infof("Persisted generated auxiliary-device manifest at %s", manifestPath)
 	return nil
 }
 
@@ -455,7 +509,8 @@ func (m *OSDManager) persistGeneratedAuxManifest(osdDataPath string, manifest *g
 }
 
 func (m *OSDManager) readGeneratedAuxManifest(osdDataPath string) (*generatedAuxDevicesManifest, error) {
-	data, err := afero.ReadFile(m.fs, generatedAuxManifestPath(osdDataPath))
+	manifestPath := generatedAuxManifestPath(osdDataPath)
+	data, err := afero.ReadFile(m.fs, manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -467,6 +522,7 @@ func (m *OSDManager) readGeneratedAuxManifest(osdDataPath string) (*generatedAux
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, fmt.Errorf("failed to parse generated aux manifest: %w", err)
 	}
+	logger.Debugf("Loaded generated auxiliary-device manifest from %s", manifestPath)
 	return &manifest, nil
 }
 
@@ -514,19 +570,22 @@ func (m *OSDManager) cleanupGeneratedAuxDevice(ctx context.Context, kind string,
 		return nil
 	}
 
+	partitionPath := entry.PartitionPath
+	if partitionPath == "" {
+		partitionPath = partitionPathFromParentPath(entry.ParentPath, entry.Partition)
+	}
+	logger.Infof("Cleaning generated %s device for osd.%d: parent=%s partition=%d path=%s encrypted=%t", strings.ToUpper(kind), osdID, entry.ParentPath, entry.Partition, partitionPath, entry.Encrypted)
+
 	if entry.Encrypted {
+		logger.Infof("Closing encrypted %s mapper for osd.%d before partition cleanup", strings.ToUpper(kind), osdID)
 		if err := m.closeEncryptedAuxDevice(kind, osdID); err != nil {
 			return err
 		}
 	}
 
-	partitionPath := entry.PartitionPath
-	if partitionPath == "" {
-		partitionPath = partitionPathFromParentPath(entry.ParentPath, entry.Partition)
-	}
-
 	if partitionPath != "" {
 		if _, err := m.fs.Stat(partitionPath); err == nil {
+			logger.Infof("Wiping generated %s partition %s before delete", strings.ToUpper(kind), partitionPath)
 			m.wipeDevice(ctx, partitionPath)
 		}
 	}
@@ -535,6 +594,7 @@ func (m *OSDManager) cleanupGeneratedAuxDevice(ctx context.Context, kind string,
 		return err
 	}
 	m.refreshPartitionTable(entry.ParentPath)
+	logger.Infof("Cleaned generated %s partition %d on %s for osd.%d", strings.ToUpper(kind), entry.Partition, entry.ParentPath, osdID)
 	return nil
 }
 
@@ -617,17 +677,22 @@ func (m *OSDManager) createPlannedAuxPartition(plan *plannedAuxPartition) (strin
 	if plan == nil {
 		return "", nil
 	}
+
+	logger.Infof("Creating planned auxiliary partition: %s", plannedAuxPartitionSummary(plan))
 	if plan.ResetBeforeUse {
+		logger.Infof("Resetting %s carrier %s before repartitioning", strings.ToUpper(plan.Kind), plan.ParentPath)
 		if err := m.timeoutWipe(plan.ParentPath); err != nil {
 			return "", fmt.Errorf("failed to wipe %s carrier %s: %w", strings.ToUpper(plan.Kind), plan.ParentPath, err)
 		}
 		m.refreshPartitionTable(plan.ParentPath)
 	}
 	if plan.ResetBeforeUse || plan.Partition == 1 {
+		logger.Infof("Initializing GPT on %s for %s provisioning", plan.ParentPath, strings.ToUpper(plan.Kind))
 		if err := m.initializeGPT(plan.ParentPath); err != nil {
 			return "", err
 		}
 	}
+	logger.Infof("Creating %s partition %d on %s with size %s", strings.ToUpper(plan.Kind), plan.Partition, plan.ParentPath, formatBytesIEC(int64(plan.SizeBytes)))
 	if err := m.createPartition(plan.ParentPath, plan.SizeBytes); err != nil {
 		return "", err
 	}
@@ -637,6 +702,7 @@ func (m *OSDManager) createPlannedAuxPartition(plan *plannedAuxPartition) (strin
 	for time.Now().Before(deadline) {
 		path, err := m.resolvePartitionStablePath(plan.ParentPath, plan.Partition)
 		if err == nil {
+			logger.Infof("Created %s partition %s for parent %s", strings.ToUpper(plan.Kind), path, plan.ParentPath)
 			return path, nil
 		}
 		time.Sleep(1 * time.Second)
@@ -663,7 +729,10 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 		return resp
 	}
 
+	logger.Infof("Executing DSL provision plan for %d OSD(s)", len(plan.OSDs))
 	for _, planned := range plan.OSDs {
+		logger.Infof("Executing DSL provision plan row: %s", plannedOSDProvisionSummary(planned))
+
 		var walParam *types.DiskParameter
 		var dbParam *types.DiskParameter
 		var generatedAux *generatedAuxDevicesManifest
@@ -671,6 +740,7 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 
 		dataStorage, err := m.storage.GetStorage()
 		if err != nil {
+			logger.Errorf("Unable to list system disks before adding OSD %s: %v", planned.OSDPath, err)
 			resp.Reports = append(resp.Reports, types.DiskAddReport{Path: planned.OSDPath, Report: "Failure", Error: fmt.Sprintf("unable to list system disks: %v", err)})
 			break
 		}
@@ -678,9 +748,11 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 		if planned.WAL != nil {
 			path, err := createPlannedAuxPartitionFn(m, planned.WAL)
 			if err != nil {
+				logger.Errorf("Failed creating planned WAL partition for OSD %s: %v", planned.OSDPath, err)
 				reportErr := err.Error()
 				if createdAux {
 					if cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, 0); cleanupErr != nil {
+						logger.Warnf("Automatic cleanup after WAL partition creation failure for OSD %s also failed: %v", planned.OSDPath, cleanupErr)
 						reportErr = fmt.Sprintf("%s (automatic cleanup also failed: %v)", reportErr, cleanupErr)
 						resp.Warnings = append(resp.Warnings, "Automatic cleanup of generated WAL/DB partitions failed; manual cleanup may be required")
 					}
@@ -691,6 +763,7 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 			createdAux = true
 			var generatedWAL *generatedAuxDevice
 			walParam, generatedWAL = buildGeneratedAuxDiskParameter(planned.WAL, path, req.WALEncrypt, req.WALWipe)
+			logger.Infof("Prepared WAL partition %s for OSD %s (encrypt=%t wipe=%t)", path, planned.OSDPath, req.WALEncrypt, req.WALWipe)
 			if generatedAux == nil {
 				generatedAux = &generatedAuxDevicesManifest{}
 			}
@@ -700,9 +773,11 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 		if planned.DB != nil {
 			path, err := createPlannedAuxPartitionFn(m, planned.DB)
 			if err != nil {
+				logger.Errorf("Failed creating planned DB partition for OSD %s: %v", planned.OSDPath, err)
 				reportErr := err.Error()
 				if createdAux {
 					if cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, 0); cleanupErr != nil {
+						logger.Warnf("Automatic cleanup after DB partition creation failure for OSD %s also failed: %v", planned.OSDPath, cleanupErr)
 						reportErr = fmt.Sprintf("%s (automatic cleanup also failed: %v)", reportErr, cleanupErr)
 						resp.Warnings = append(resp.Warnings, "Automatic cleanup of generated WAL/DB partitions failed; manual cleanup may be required")
 					}
@@ -713,19 +788,23 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 			createdAux = true
 			var generatedDB *generatedAuxDevice
 			dbParam, generatedDB = buildGeneratedAuxDiskParameter(planned.DB, path, req.DBEncrypt, req.DBWipe)
+			logger.Infof("Prepared DB partition %s for OSD %s (encrypt=%t wipe=%t)", path, planned.OSDPath, req.DBEncrypt, req.DBWipe)
 			if generatedAux == nil {
 				generatedAux = &generatedAuxDevicesManifest{}
 			}
 			generatedAux.DB = generatedDB
 		}
 
+		logger.Infof("Adding OSD %s with planned auxiliary devices", planned.OSDPath)
 		err = doAddOSDWithStorageFn(m, ctx, types.DiskParameter{Path: planned.OSDPath, Encrypt: req.Encrypt, Wipe: req.Wipe}, walParam, dbParam, dataStorage, generatedAux)
 		if err != nil {
+			logger.Errorf("Failed to add OSD %s using DSL provision plan: %v", planned.OSDPath, err)
 			report := types.DiskAddReport{Path: planned.OSDPath, Report: "Failure", Error: err.Error()}
 			resp.Reports = append(resp.Reports, report)
 			break
 		}
 
+		logger.Infof("Successfully added OSD %s using DSL provision plan", planned.OSDPath)
 		report := types.DiskAddReport{Path: planned.OSDPath, Report: "Success", Error: ""}
 		resp.Reports = append(resp.Reports, report)
 	}

@@ -1259,6 +1259,17 @@ func pathSetToSlice(m map[string]struct{}) []string {
 	return out
 }
 
+func trueBoolMapKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for path, enabled := range m {
+		if enabled {
+			out = append(out, path)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (m *OSDManager) getStorageAndConfiguredDisks(ctx context.Context) (*api.ResourcesStorage, types.Disks, error) {
 	storage, err := m.storage.GetStorage()
 	if err != nil {
@@ -1303,19 +1314,34 @@ func (m *OSDManager) matchOSDDisksWithDSL(ctx context.Context, dslExpr string) (
 	}
 	sortDisksByStablePath(matchedDisks)
 	result.MatchedDisks = matchedDisks
+	if len(result.MatchedDisks) == 0 {
+		logger.Infof("OSD DSL expression matched no devices")
+		return result, nil
+	}
+
+	logger.Infof("OSD DSL expression matched %d device(s): %s", len(result.MatchedDisks), strings.Join(pathSetToSlice(buildPathSet(result.MatchedDisks)), ", "))
 	return result, nil
 }
 
+// auxiliaryDiskCandidateDisposition applies the WAL/DB carrier eligibility policy.
+//
+// Whole-disk carriers are only accepted if they are pristine, unless --wal-wipe/
+// --db-wipe explicitly allows resetting them first. Carriers that already host
+// MicroCeph-generated auxiliary partitions can be extended in-place, but devices
+// already used for OSD data are never reused as auxiliary carriers.
 func (m *OSDManager) auxiliaryDiskCandidateDisposition(path string, disk api.ResourcesStorageDisk, usage localAuxDiskUsage, wipe bool) (bool, bool, error) {
 	if usage.HasData {
+		logger.Debugf("Rejecting auxiliary carrier %s: device already backs OSD data", path)
 		return false, false, nil
 	}
 
 	if len(disk.Partitions) == 0 {
 		if usage.HasAux {
+			logger.Debugf("Rejecting auxiliary carrier %s: whole-disk reuse would conflict with existing auxiliary usage", path)
 			return false, false, nil
 		}
 		if wipe {
+			logger.Debugf("Accepting auxiliary carrier %s by resetting whole disk before partitioning", path)
 			return true, true, nil
 		}
 
@@ -1323,17 +1349,26 @@ func (m *OSDManager) auxiliaryDiskCandidateDisposition(path string, disk api.Res
 		if err != nil {
 			return false, false, fmt.Errorf("failed to check if auxiliary device %s is pristine: %w", path, err)
 		}
-		return isPristine, false, nil
+		if isPristine {
+			logger.Debugf("Accepting auxiliary carrier %s: pristine whole disk", path)
+			return true, false, nil
+		}
+
+		logger.Debugf("Rejecting auxiliary carrier %s: whole disk is not pristine and wipe is disabled", path)
+		return false, false, nil
 	}
 
 	if usage.HasAux {
+		logger.Debugf("Accepting auxiliary carrier %s by appending to existing MicroCeph auxiliary partitions", path)
 		return true, false, nil
 	}
 
 	if wipe {
+		logger.Debugf("Accepting auxiliary carrier %s by resetting existing partition table before reuse", path)
 		return true, true, nil
 	}
 
+	logger.Debugf("Rejecting auxiliary carrier %s: device has partitions and wipe is disabled", path)
 	return false, false, nil
 }
 
@@ -1341,6 +1376,8 @@ func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr str
 	if dslExpr == "" {
 		return nil, nil, nil
 	}
+	logger.Infof("Evaluating auxiliary DSL expression %q (wipe=%t)", dslExpr, wipe)
+
 	expr, err := validateDSLExpression(dslExpr)
 	if err != nil {
 		return nil, nil, err
@@ -1362,24 +1399,37 @@ func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr str
 
 	candidates := make([]api.ResourcesStorageDisk, 0, len(storage.Disks))
 	for _, disk := range storage.Disks {
+		path := common.GetDevicePath(&disk)
 		if disk.ReadOnly {
+			logger.Debugf("Skipping auxiliary carrier %s: device is read-only", path)
 			continue
 		}
-		path := common.GetDevicePath(&disk)
 		if _, ok := configuredPathSet[path]; ok {
+			logger.Debugf("Skipping auxiliary carrier %s: device already backs a configured OSD on this host", path)
 			continue
 		}
 		mounted, err := m.diskOrAnyPartitionMounted(disk)
-		if err != nil || mounted {
+		if err != nil {
+			logger.Debugf("Skipping auxiliary carrier %s: mount check failed: %v", path, err)
+			continue
+		}
+		if mounted {
+			logger.Debugf("Skipping auxiliary carrier %s: disk or one of its partitions is mounted", path)
 			continue
 		}
 
 		candidates = append(candidates, disk)
 	}
+	logger.Debugf("Auxiliary DSL expression %q has %d prefiltered candidate(s)", dslExpr, len(candidates))
 
 	matchedDisks, err := dsl.MatchDevices(expr, candidates, shortHostname())
 	if err != nil {
 		return nil, nil, fmt.Errorf("DSL evaluation error: %w", err)
+	}
+	if len(matchedDisks) == 0 {
+		logger.Infof("Auxiliary DSL expression %q matched no candidate carriers before eligibility checks", dslExpr)
+	} else {
+		logger.Infof("Auxiliary DSL expression %q matched %d candidate carrier(s): %s", dslExpr, len(matchedDisks), strings.Join(pathSetToSlice(buildPathSet(matchedDisks)), ", "))
 	}
 
 	filteredMatches := make([]api.ResourcesStorageDisk, 0, len(matchedDisks))
@@ -1401,6 +1451,15 @@ func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr str
 	}
 
 	sortDisksByStablePath(filteredMatches)
+	if len(filteredMatches) == 0 {
+		logger.Infof("Auxiliary DSL expression %q produced no eligible carriers after filtering", dslExpr)
+		return filteredMatches, resetBeforeUse, nil
+	}
+
+	logger.Infof("Auxiliary DSL expression %q produced %d eligible carrier(s): %s", dslExpr, len(filteredMatches), strings.Join(pathSetToSlice(buildPathSet(filteredMatches)), ", "))
+	if resetPaths := trueBoolMapKeys(resetBeforeUse); len(resetPaths) > 0 {
+		logger.Infof("Auxiliary DSL expression %q will reset carriers before use: %s", dslExpr, strings.Join(resetPaths, ", "))
+	}
 	return filteredMatches, resetBeforeUse, nil
 }
 
