@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -85,6 +86,11 @@ func TestCmdDiskAddValidateFlags(t *testing.T) {
 			name:        "dry-run requires osd-match",
 			cmd:         cmdDiskAdd{flagDryRun: true},
 			errorSubstr: "--dry-run requires --osd-match",
+		},
+		{
+			name:        "json requires dry-run",
+			cmd:         cmdDiskAdd{flagJSON: true, flagOSDMatch: "eq(@size, 10GiB)"},
+			errorSubstr: "--json requires --dry-run",
 		},
 		{
 			name:        "wal-encrypt requires wal-match",
@@ -187,4 +193,49 @@ func TestPrintDryRunOutputShowsResetActions(t *testing.T) {
 	assert.True(t, strings.Contains(output, "DB ACTION"))
 	assert.True(t, strings.Contains(output, "reset"))
 	assert.True(t, strings.Contains(output, "append"))
+}
+
+func TestPrintDryRunOutputJSON(t *testing.T) {
+	cmd := cmdDiskAdd{flagJSON: true}
+	resp := types.DiskAddResponse{
+		Warnings: []string{"dry-run warning"},
+		DryRunPlan: []types.DryRunOSDPlan{{
+			OSDPath: "/dev/disk/by-path/osd0",
+			WAL: &types.DryRunPartitionPlan{
+				Kind:           "wal",
+				ParentPath:     "/dev/disk/by-path/wal0",
+				Partition:      1,
+				Size:           "1.00 GiB",
+				ResetBeforeUse: true,
+			},
+		}},
+	}
+
+	output := captureStdout(t, func() {
+		err := cmd.printDryRunOutput(resp)
+		require.NoError(t, err)
+	})
+
+	var decoded types.DiskAddResponse
+	require.NoError(t, json.Unmarshal([]byte(output), &decoded))
+	assert.Equal(t, resp, decoded)
+}
+
+func TestPrintDryRunOutputJSONValidationErrorReturnsError(t *testing.T) {
+	cmd := cmdDiskAdd{flagJSON: true}
+	resp := types.DiskAddResponse{
+		ValidationError: "--wal-size must be greater than 0",
+	}
+
+	var gotErr error
+	output := captureStdout(t, func() {
+		gotErr = cmd.printDryRunOutput(resp)
+	})
+
+	require.Error(t, gotErr)
+	assert.EqualError(t, gotErr, resp.ValidationError)
+
+	var decoded types.DiskAddResponse
+	require.NoError(t, json.Unmarshal([]byte(output), &decoded))
+	assert.Equal(t, resp, decoded)
 }

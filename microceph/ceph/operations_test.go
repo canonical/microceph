@@ -383,3 +383,98 @@ func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsErrorGetActiveMons() {
 	err := ops.Run("n0")
 	assert.ErrorContains(s.T(), err, "Error getting active mon")
 }
+
+func (s *operationsSuite) TestMaintenanceEnterDryRunActionPlanVariants() {
+	originalOSDQuery := database.OSDQuery
+	defer func() {
+		database.OSDQuery = originalOSDQuery
+	}()
+
+	osdQuery := mocks.NewOSDQueryInterface(s.T())
+	osdQuery.On("List", mock.Anything, mock.Anything).Return(types.Disks{{OSD: 1, Location: "node-a"}}, nil).Maybe()
+	database.OSDQuery = osdQuery
+
+	maintenance := Maintenance{Node: "node-a", ClusterOps: ClusterOps{State: nil, Context: context.Background()}}
+	tests := []struct {
+		name    string
+		req     types.MaintenanceRequest
+		actions []string
+	}{
+		{
+			name: "checks only",
+			req: types.MaintenanceRequest{
+				CommonMaintenanceFlags: types.CommonMaintenanceFlags{DryRun: true},
+				EnterMaintenanceFlags:  types.EnterMaintenanceFlags{SetNoout: false, StopOsds: false},
+			},
+			actions: []string{
+				"Check if osds.[1] in node 'node-a' are ok-to-stop.",
+				"Check if there are at least a majority of mon services, 1 mds service, and 1 mgr service in the cluster besides those in node 'node-a'",
+			},
+		},
+		{
+			name: "set noout only",
+			req: types.MaintenanceRequest{
+				CommonMaintenanceFlags: types.CommonMaintenanceFlags{DryRun: true},
+				EnterMaintenanceFlags:  types.EnterMaintenanceFlags{SetNoout: true, StopOsds: false},
+			},
+			actions: []string{
+				"Check if osds.[1] in node 'node-a' are ok-to-stop.",
+				"Check if there are at least a majority of mon services, 1 mds service, and 1 mgr service in the cluster besides those in node 'node-a'",
+				"Run `ceph osd set noout`.",
+				"Assert osd has 'noout' flag set.",
+			},
+		},
+		{
+			name: "stop osds only",
+			req: types.MaintenanceRequest{
+				CommonMaintenanceFlags: types.CommonMaintenanceFlags{DryRun: true},
+				EnterMaintenanceFlags:  types.EnterMaintenanceFlags{SetNoout: false, StopOsds: true},
+			},
+			actions: []string{
+				"Check if osds.[1] in node 'node-a' are ok-to-stop.",
+				"Check if there are at least a majority of mon services, 1 mds service, and 1 mgr service in the cluster besides those in node 'node-a'",
+				"Stop osd service in node 'node-a'.",
+			},
+		},
+		{
+			name: "set noout and stop osds",
+			req: types.MaintenanceRequest{
+				CommonMaintenanceFlags: types.CommonMaintenanceFlags{DryRun: true},
+				EnterMaintenanceFlags:  types.EnterMaintenanceFlags{SetNoout: true, StopOsds: true},
+			},
+			actions: []string{
+				"Check if osds.[1] in node 'node-a' are ok-to-stop.",
+				"Check if there are at least a majority of mon services, 1 mds service, and 1 mgr service in the cluster besides those in node 'node-a'",
+				"Run `ceph osd set noout`.",
+				"Assert osd has 'noout' flag set.",
+				"Stop osd service in node 'node-a'.",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		s.T().Run(tt.name, func(t *testing.T) {
+			results, err := maintenance.Enter(tt.req)
+			assert.NoError(t, err)
+			assert.Len(t, results, len(tt.actions))
+			for i, action := range tt.actions {
+				assert.Equal(t, action, results[i].Action)
+				assert.Empty(t, results[i].Error)
+			}
+		})
+	}
+}
+
+func (s *operationsSuite) TestMaintenanceExitDryRunActionPlan() {
+	maintenance := Maintenance{Node: "node-a", ClusterOps: ClusterOps{State: nil, Context: context.Background()}}
+
+	results, err := maintenance.Exit(types.MaintenanceRequest{CommonMaintenanceFlags: types.CommonMaintenanceFlags{DryRun: true}})
+	assert.NoError(s.T(), err)
+	assert.Len(s.T(), results, 3)
+	assert.Equal(s.T(), "Run `ceph osd unset noout`.", results[0].Action)
+	assert.Equal(s.T(), "Assert osd has 'noout' flag unset.", results[1].Action)
+	assert.Equal(s.T(), "Start osd service in node 'node-a'.", results[2].Action)
+	for _, result := range results {
+		assert.Empty(s.T(), result.Error)
+	}
+}

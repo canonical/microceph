@@ -328,11 +328,6 @@ jobs:
           output=$(sudo microceph log get-level)
           if [[ "$output" != "3" ]] ; then echo "incorrect log level: $output"; exit 1; fi
 
-      - name: Print logs for failure
-        if: failure()
-        run: |
-          sudo snap logs microceph -n 1000
-
       - name: Test square brackets around IPv6
         run: |
           sudo snap remove microceph
@@ -345,8 +340,17 @@ jobs:
       - name: API Testing
         run: |
           ~/actionutils.sh install_hurl
+          ~/actionutils.sh prepare_disk_api_hurl_fixtures
           ~/actionutils.sh hurl tests/hurl/services-mon.hurl
           ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
+          ~/actionutils.sh hurl tests/hurl/disks-list.hurl
+          ~/actionutils.sh hurl tests/hurl/disks-post-dryrun.hurl
+          ~/actionutils.sh hurl tests/hurl/disks-delete.hurl
+
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          ~/actionutils.sh dump_microceph_debug
 
   multi-node-tests:
     name: Multi node testing

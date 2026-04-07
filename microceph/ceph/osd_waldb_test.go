@@ -649,6 +649,36 @@ func TestCleanupGeneratedAuxDevicesDeletesGeneratedPartitions(t *testing.T) {
 	assert.False(t, exists)
 }
 
+func TestCleanupGeneratedAuxDevicesAfterRestartUsesPersistedManifest(t *testing.T) {
+	var st state.State
+	fs := afero.NewMemMapFs()
+	mgr := NewOSDManager(st)
+	mgr.fs = fs
+
+	osdDataPath := "/var/snap/microceph/common/data/osd/ceph-33"
+	require.NoError(t, fs.MkdirAll(osdDataPath, 0755))
+	require.NoError(t, fs.MkdirAll("/dev/disk/by-id", 0755))
+	require.NoError(t, afero.WriteFile(fs, "/dev/disk/by-id/wal-part1", []byte("wal-part"), 0644))
+	require.NoError(t, mgr.writeGeneratedAuxManifest(osdDataPath, &generatedAuxDevicesManifest{
+		WAL: &generatedAuxDevice{ParentPath: "/dev/disk/by-id/wal", Partition: 1, Encrypted: false},
+	}))
+
+	restartedMgr := NewOSDManager(st)
+	restartedMgr.fs = fs
+	runner := mocks.NewRunner(t)
+	restartedMgr.runner = runner
+
+	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/disk/by-id/wal-part1", "--yes-i-really-really-mean-it").Return("", nil).Once()
+	runner.On("RunCommand", "sfdisk", "--delete", "/dev/disk/by-id/wal", "1").Return("", nil).Once()
+	runner.On("RunCommand", "partx", "-u", "/dev/disk/by-id/wal").Return("", nil).Once()
+
+	err := restartedMgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 33)
+	require.NoError(t, err)
+	exists, statErr := afero.Exists(fs, generatedAuxManifestPath(osdDataPath))
+	require.NoError(t, statErr)
+	assert.False(t, exists)
+}
+
 func TestCleanupGeneratedAuxDevicesFailurePreservesManifest(t *testing.T) {
 	var st state.State
 	mgr := NewOSDManager(st)

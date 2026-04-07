@@ -71,6 +71,7 @@ Flags:
    --db-wipe               Wipe the DB device prior to use
    --dry-run               Show matched devices without adding them (requires --osd-match)
    --encrypt               Encrypt the disk prior to use (only block devices)
+   --json                  Provide dry-run output as a JSON-encoded DiskAddResponse
    --osd-match string      DSL expression to match devices for OSD creation
    --wal-device string     The device used for WAL
    --wal-encrypt           Encrypt the WAL device prior to use
@@ -130,6 +131,15 @@ When ``--dry-run`` is used together with WAL and/or DB matching, MicroCeph
 prints a provisioning plan table with the selected OSDs, the WAL/DB carrier
 paths, the planned partition numbers and sizes, and two additional columns:
 ``WAL ACTION`` and ``DB ACTION``.
+
+When ``--dry-run --json`` is used, MicroCeph prints the underlying
+``DiskAddResponse`` document directly instead of a human-formatted table. This
+machine-readable output is intended for shell automation and behavior tests.
+The JSON payload keeps the same fields used by the API under ``metadata``:
+``validation_error``, ``warnings``, ``dry_run_devices``, and ``dry_run_plan``.
+Each ``dry_run_plan`` entry contains the selected ``osd_path`` and optional
+nested ``wal``/``db`` objects with ``kind``, ``parent_path``, ``partition``,
+``size``, and ``reset_before_use``.
 
 The action column values mean:
 

@@ -51,6 +51,56 @@ function fail() {
     exit 1
 }
 
+function run_and_capture() {
+    local __statusvar="$1"
+    local __outputvar="$2"
+    shift 2
+
+    local status output
+    set +e
+    output=$("$@" 2>&1)
+    status=$?
+    set -e
+
+    printf -v "$__statusvar" '%s' "$status"
+    printf -v "$__outputvar" '%s' "$output"
+}
+
+function expect_command_status() {
+    local expected_status="$1"
+    local description="$2"
+    shift 2
+
+    local status output
+    run_and_capture status output "$@"
+    echo "$output" >&2
+
+    if [[ "$status" != "$expected_status" ]]; then
+        fail "$description (expected exit $expected_status, got $status)"
+    fi
+
+    printf '%s\n' "$output"
+}
+
+function vm_exec_expect_success() {
+    local description="$1"
+    shift
+    expect_command_status 0 "$description" vm_exec "$@"
+}
+
+function vm_exec_expect_failure() {
+    local description="$1"
+    shift
+
+    local status output
+    run_and_capture status output vm_exec "$@"
+    echo "$output" >&2
+    if [[ "$status" == "0" ]]; then
+        fail "$description (expected non-zero exit status)"
+    fi
+    printf '%s\n' "$output"
+}
+
 function assert_output_contains() {
     local output="$1"
     local pattern="$2"
@@ -201,29 +251,51 @@ function show_vm_debug_on_failure() {
     log "Collecting failure diagnostics from VM '$VM_NAME'"
     vm_exec microceph disk list --json || true
     vm_exec microceph status || true
-    vm_exec lsblk -o NAME,PATH,TYPE,SIZE,RO || true
+    vm_exec microceph.ceph -s || true
+    vm_exec microceph.ceph osd status || true
+    vm_exec lsblk -o NAME,PATH,PKNAME,TYPE,SIZE,FSTYPE,RO,MOUNTPOINTS || true
+    vm_shell '
+        disk_json=$(microceph disk list --json 2>/dev/null || printf "{}")
+        printf "%s\n" "$disk_json"
+        printf "%s\n" "$disk_json" \
+          | jq -r "[((.ConfiguredDisks // [])[]? | .path), ((.AvailableDisks // [])[]? | .Path)] | unique[]?" 2>/dev/null \
+          | while read -r path; do
+                [ -n "$path" ] || continue
+                echo "=== debug for $path ==="
+                resolved=$(readlink -f "$path" 2>/dev/null || printf "%s" "$path")
+                echo "resolved=$resolved"
+                lsblk -o NAME,PATH,PKNAME,TYPE,SIZE,FSTYPE,RO,MOUNTPOINTS "$resolved" 2>/dev/null || true
+                sfdisk -d "$resolved" 2>/dev/null || true
+            done
+    ' || true
     vm_exec snap logs microceph -n 300 || true
+}
+
+function wait_for_vm_command() {
+    local description="$1"
+    local timeout="$2"
+    shift 2
+
+    local elapsed=0
+    while [[ $elapsed -lt $timeout ]]; do
+        if "$@" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+
+    fail "Timed out waiting for ${description}"
 }
 
 # Wait for VM to be ready
 function wait_for_dsl_vm() {
     local name=$1
     local timeout=${2:-300}
-    local elapsed=0
 
     log "Waiting for VM '$name' to be ready (timeout: ${timeout}s)..."
-
-    while [[ $elapsed -lt $timeout ]]; do
-        if lxc exec "$name" -- cloud-init status --wait 2>/dev/null | grep -q "done"; then
-            log "VM '$name' is ready"
-            return 0
-        fi
-        sleep 5
-        elapsed=$((elapsed + 5))
-        echo -n "."
-    done
-    echo ""
-    fail "Timeout waiting for VM '$name' to be ready"
+    wait_for_vm_command "VM '$name' to be ready" "$timeout" bash -lc "lxc exec '$name' -- cloud-init status 2>/dev/null | grep -q done"
+    log "VM '$name' is ready"
 }
 
 # Run command in VM and return output
@@ -236,15 +308,26 @@ function vm_shell() {
     lxc exec "$VM_NAME" -- sh -lc "$*"
 }
 
+function wait_for_vm_disk_count_ge() {
+    local expected="$1"
+    local timeout="${2:-120}"
+
+    wait_for_vm_command "at least ${expected} visible block disks in the VM" "$timeout" vm_shell "[ \$(lsblk -dn -o TYPE | grep -c '^disk$') -ge ${expected} ]"
+}
+
+function wait_for_microceph_ready() {
+    local timeout="${1:-180}"
+
+    wait_for_vm_command "MicroCeph daemon readiness" "$timeout" vm_shell "microceph status >/dev/null 2>&1 && microceph disk list --json >/dev/null 2>&1"
+}
+
 # Run command in VM and check exit code
 function vm_exec_check() {
     local description=$1
     shift
 
     log "Running in VM: $*"
-    if ! vm_exec "$@"; then
-        fail "$description"
-    fi
+    vm_exec_expect_success "$description" "$@" >/dev/null
 }
 
 function get_disk_list_json() {
@@ -285,6 +368,11 @@ function json_first_available_path() {
 
 function json_first_available_type() {
     get_disk_list_json | jq -r '[.AvailableDisks[]? | .Type][0] // ""'
+}
+
+function json_first_available_path_for_type() {
+    local dtype="$1"
+    get_disk_list_json | jq -r --arg dtype "$dtype" '[.AvailableDisks[]? | select((.Type // "") == $dtype) | .Path][0] // ""'
 }
 
 function json_available_count_for_display_size() {
@@ -523,6 +611,13 @@ function assert_path_missing_in_vm() {
     fail "Expected path to be absent in VM: $path"
 }
 
+function wait_for_path_exists_in_vm() {
+    local path="$1"
+    local timeout=${2:-120}
+
+    wait_for_vm_command "path to appear in VM: $path" "$timeout" vm_shell "test -e '$path'"
+}
+
 function wait_for_path_missing_in_vm() {
     local path="$1"
     local timeout=${2:-120}
@@ -590,7 +685,7 @@ function ensure_dm_crypt_ready() {
     fi
 
     vm_exec snap restart microceph.daemon || true
-    sleep 5
+    wait_for_microceph_ready 180
     return 0
 }
 
@@ -601,6 +696,15 @@ function disk_add_help() {
 function disk_add_supports_flag() {
     local flag="$1"
     disk_add_help | grep -q -- "$flag"
+}
+
+function disk_add_dry_run_json() {
+    if ! disk_add_supports_flag '--json'; then
+        skip_test "--json not available yet"
+        return 1
+    fi
+
+    vm_exec_expect_success "dry-run json command should succeed" microceph disk add "$@" --dry-run --json
 }
 
 # Setup DSL test environment
@@ -629,9 +733,7 @@ function setup_dsl_test() {
     attach_readonly_volume
 
     wait_for_dsl_vm "$VM_NAME"
-
-    # Give the guest time to detect the additional block devices.
-    sleep 10
+    wait_for_vm_disk_count_ge 9 180
 }
 
 # Resolve snap path glob pattern to actual file
@@ -688,12 +790,9 @@ function install_microceph_in_vm() {
         vm_exec snap install microceph --channel="$SNAP_CHANNEL"
     fi
 
-    sleep 3
-
     log "Bootstrapping MicroCeph cluster..."
     vm_exec_check "microceph cluster bootstrap" microceph cluster bootstrap
-
-    sleep 5
+    wait_for_microceph_ready 180
 }
 
 function get_test_disk_type() {
@@ -727,41 +826,42 @@ function test_dsl_available_disks() {
 }
 
 function test_dsl_type_match() {
-    local dtype dsl_output
+    local dtype expected_path dsl_output
     dtype=$(get_test_disk_type)
+    expected_path=$(json_first_available_path_for_type "$dtype")
+    [[ -n "$expected_path" ]] || fail "Could not resolve an available disk path for type '$dtype'"
 
     log "Test: DSL dry-run with eq(@type, '$dtype')"
     log_available_disks_snapshot
     log_available_disk_matches_by_type "OSD candidate" "$dtype"
-    dsl_output=$(vm_exec microceph disk add --osd-match "eq(@type, '$dtype')" --dry-run 2>&1 || true)
-    echo "$dsl_output"
-
-    if grep -Eqi "would be added|dry_run_devices|PATH|No devices matched the expression" <<<"$dsl_output"; then
-        log "PASS: DSL dry-run returned expected output"
-    else
-        fail "Unexpected DSL dry-run output"
-    fi
+    dsl_output=$(vm_exec_expect_success "type-match dry-run should succeed" microceph disk add --osd-match "eq(@type, '$dtype')" --dry-run)
+    assert_output_not_contains "$dsl_output" 'No devices matched the expression|No devices matched' "type-match dry-run unexpectedly matched no devices"
+    assert_output_contains "$dsl_output" "$expected_path" "type-match dry-run should list at least one matching device"
 }
 
 function test_dsl_size_comparison() {
     log "Test: DSL dry-run with size comparison gt(@size, 5GiB)"
     log_available_disks_snapshot
-    local dsl_size_output
-    dsl_size_output=$(vm_exec microceph disk add --osd-match "gt(@size, 5GiB)" --dry-run 2>&1 || true)
-    echo "$dsl_size_output"
-    assert_output_contains "$dsl_size_output" 'PATH|would be added|No devices matched the expression' "size dry-run should produce table or no-match output"
+    local expected_path dsl_size_output
+    expected_path=$(json_first_available_path)
+    [[ -n "$expected_path" ]] || fail "Could not resolve an available disk path for size-comparison test"
+    dsl_size_output=$(vm_exec_expect_success "size-comparison dry-run should succeed" microceph disk add --osd-match "gt(@size, 5GiB)" --dry-run)
+    assert_output_not_contains "$dsl_size_output" 'No devices matched the expression|No devices matched' "size-comparison dry-run unexpectedly matched no devices"
+    assert_output_contains "$dsl_size_output" "$expected_path" "size-comparison dry-run should include at least one matching device"
 }
 
 function test_dsl_combined_conditions() {
-    local dtype dsl_combined
+    local dtype expected_path dsl_combined
     dtype=$(get_test_disk_type)
+    expected_path=$(json_first_available_path_for_type "$dtype")
+    [[ -n "$expected_path" ]] || fail "Could not resolve an available disk path for combined-condition test"
 
     log "Test: DSL dry-run with combined conditions"
     log_available_disks_snapshot
     log_available_disk_matches_by_type "OSD candidate" "$dtype"
-    dsl_combined=$(vm_exec microceph disk add --osd-match "and(eq(@type, '$dtype'), gt(@size, 5GiB))" --dry-run 2>&1 || true)
-    echo "$dsl_combined"
-    assert_output_contains "$dsl_combined" 'PATH|would be added|No devices matched the expression' "combined dry-run should produce output"
+    dsl_combined=$(vm_exec_expect_success "combined-condition dry-run should succeed" microceph disk add --osd-match "and(eq(@type, '$dtype'), gt(@size, 5GiB))" --dry-run)
+    assert_output_not_contains "$dsl_combined" 'No devices matched the expression|No devices matched' "combined-condition dry-run unexpectedly matched no devices"
+    assert_output_contains "$dsl_combined" "$expected_path" "combined-condition dry-run should include at least one matching device"
 }
 
 function test_dsl_no_match() {
@@ -794,10 +894,11 @@ function test_dsl_mutual_exclusivity() {
 function test_dsl_add_disk() {
     log "Test: add a single disk using DSL expression"
 
-    local configured_before configured_after add_result
+    local configured_before configured_after add_result expected_path
     configured_before=$(json_configured_count)
-    add_result=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" 2>&1 || true)
-    echo "$add_result"
+    expected_path=$(get_available_disk_path_by_size "10GiB")
+    add_result=$(vm_exec_expect_success "dsl add should succeed" microceph disk add --osd-match "eq(@size, 10GiB)")
+    assert_output_contains "$add_result" "$expected_path|Success" "dsl add output should mention the added disk or success"
 
     wait_for_configured_disk_count_ge $((configured_before + 1)) 180
     configured_after=$(json_configured_count)
@@ -1282,14 +1383,13 @@ function test_dsl_partitioned_foreign_aux_disk_with_wipe_is_reclaimed() {
     setup_parts=$(get_partition_count "$wal_parent")
     assert_eq "$setup_parts" "$((before_parts + 1))" "setup should create one foreign partition on WAL disk"
 
-    dry_run_output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-wipe --dry-run 2>&1 || true)
-    echo "$dry_run_output"
-    assert_output_contains "$dry_run_output" 'wiped/reset before partitioning' "dry-run should make carrier reset intent explicit"
-    assert_output_contains "$dry_run_output" 'WAL ACTION' "dry-run should include WAL action column"
-    assert_output_contains "$dry_run_output" 'reset' "dry-run should label reclaimed WAL carrier as reset"
+    dry_run_output=$(disk_add_dry_run_json --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-wipe)
+    assert_output_contains "$dry_run_output" '"warnings"' "dry-run json should include warnings field"
+    assert_eq "$(jq -r '.warnings[0]' <<<"$dry_run_output")" "WAL carrier ${wal_parent} will be wiped/reset before partitioning" "dry-run json should name the reclaimed WAL carrier"
+    assert_eq "$(jq -r '.dry_run_plan[0].wal.parent_path' <<<"$dry_run_output")" "$wal_parent" "dry-run json should report the reclaimed WAL parent"
+    assert_eq "$(jq -r '.dry_run_plan[0].wal.reset_before_use' <<<"$dry_run_output")" "true" "dry-run json should mark the WAL carrier for reset"
 
-    output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-wipe 2>&1 || true)
-    echo "$output"
+    output=$(vm_exec_expect_success "partitioned foreign WAL carrier with wipe should succeed" microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-wipe)
     assert_output_not_contains "$output" 'Warning: WAL match expression resolved to no devices' "partitioned foreign WAL carrier with wipe should remain eligible"
     wait_for_configured_disk_count_ge 1 180
 
@@ -1465,25 +1565,52 @@ function test_dsl_encrypted_whole_disk_aux_device_is_rejected() {
 
 function test_dsl_remove_osd_cleans_generated_aux_partitions() {
     log "Test: removing an OSD cleans generated WAL/DB partitions"
-    local osd_path output osd_id osd_dir wal_target db_target manifest_path
+    local osd_path output osd_id osd_dir wal_target db_target manifest_path remove_output
     osd_path=$(get_available_disk_path_by_size "12GiB")
-    output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
-    echo "$output"
+    output=$(vm_exec_expect_success "dsl WAL+DB add should succeed before remove" microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB)
     wait_for_configured_disk_count_ge 1 180
 
     osd_id=$(get_osd_id_for_path "$osd_path")
     [[ -n "$osd_id" ]] || fail "Could not resolve OSD id for $osd_path"
     osd_dir=$(get_osd_data_dir "$osd_id")
+    manifest_path="$osd_dir/generated-aux-devices.json"
+    wait_for_path_exists_in_vm "$manifest_path" 120
     wal_target=$(get_symlink_target "$osd_dir/block.wal")
     db_target=$(get_symlink_target "$osd_dir/block.db")
-    manifest_path="$osd_dir/generated-aux-devices.json"
 
-    assert_path_exists_in_vm "$manifest_path"
     assert_path_exists_in_vm "$wal_target"
     assert_path_exists_in_vm "$db_target"
 
-    vm_exec microceph disk remove "$osd_id" --bypass-safety-checks
+    remove_output=$(vm_exec_expect_success "dsl OSD remove should succeed" microceph disk remove "$osd_id" --bypass-safety-checks)
+    assert_output_contains "$remove_output" "Removing osd\.${osd_id}" "remove output should mention the OSD being removed"
     wait_for_configured_disk_count_eq 0 180
+    wait_for_path_missing_in_vm "$manifest_path" 120
+    wait_for_path_missing_in_vm "$wal_target" 120
+    wait_for_path_missing_in_vm "$db_target" 120
+}
+
+function test_dsl_remove_osd_cleanup_survives_daemon_restart() {
+    log "Test: generated WAL/DB cleanup survives a daemon restart"
+    local osd_path output osd_id osd_dir wal_target db_target manifest_path
+
+    osd_path=$(get_available_disk_path_by_size "12GiB")
+    output=$(vm_exec_expect_success "dsl WAL+DB add should succeed before restart" microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB)
+    wait_for_configured_disk_count_ge 1 180
+
+    osd_id=$(get_osd_id_for_path "$osd_path")
+    [[ -n "$osd_id" ]] || fail "Could not resolve OSD id for $osd_path"
+    osd_dir=$(get_osd_data_dir "$osd_id")
+    manifest_path="$osd_dir/generated-aux-devices.json"
+    wait_for_path_exists_in_vm "$manifest_path" 120
+    wal_target=$(get_symlink_target "$osd_dir/block.wal")
+    db_target=$(get_symlink_target "$osd_dir/block.db")
+
+    vm_exec_expect_success "microceph daemon restart should succeed" snap restart microceph.daemon >/dev/null
+    wait_for_microceph_ready 180
+
+    vm_exec_expect_success "dsl OSD remove after restart should succeed" microceph disk remove "$osd_id" --bypass-safety-checks >/dev/null
+    wait_for_configured_disk_count_eq 0 180
+    wait_for_path_missing_in_vm "$manifest_path" 120
     wait_for_path_missing_in_vm "$wal_target" 120
     wait_for_path_missing_in_vm "$db_target" 120
 }
@@ -1495,8 +1622,7 @@ function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
 
     osd1_path=$(get_available_disk_path_by_size "10GiB")
     osd2_path=$(get_available_disk_path_by_size "11GiB")
-    output=$(vm_exec microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
-    echo "$output"
+    output=$(vm_exec_expect_success "two-OSD WAL+DB add should succeed" microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB)
     wait_for_configured_disk_count_ge 2 180
 
     osd1_id=$(get_osd_id_for_path "$osd1_path")
@@ -1516,7 +1642,7 @@ function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     assert_path_exists_in_vm "$osd2_wal"
     assert_path_exists_in_vm "$osd2_db"
 
-    vm_exec microceph disk remove "$osd1_id" --bypass-safety-checks
+    vm_exec_expect_success "first OSD remove should succeed" microceph disk remove "$osd1_id" --bypass-safety-checks >/dev/null
     wait_for_configured_disk_count_eq 1 180
     wait_for_path_missing_in_vm "$osd1_wal" 120
     wait_for_path_missing_in_vm "$osd1_db" 120
@@ -1599,18 +1725,16 @@ function test_dsl_dryrun_and_execute_consistency() {
     log_available_disk_matches_by_sizes "WAL candidate" "20GiB"
     log_available_disk_matches_by_sizes "DB candidate" "30GiB"
 
-    output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB --dry-run 2>&1 || true)
-    echo "$output"
-    assert_output_contains "$output" "$osd_path" "dry-run should include planned OSD path"
-    assert_output_contains "$output" "$wal_parent" "dry-run should include WAL parent path"
-    assert_output_contains "$output" "$db_parent" "dry-run should include DB parent path"
-    planned_wal_part=$(echo "$output" | awk -F'|' -v osd="$osd_path" '$2 ~ /^[[:space:]]*[^-]/ && $2 ~ osd {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $4); print $4; exit}')
-    planned_db_part=$(echo "$output" | awk -F'|' -v osd="$osd_path" '$2 ~ /^[[:space:]]*[^-]/ && $2 ~ osd {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $7); print $7; exit}')
-    [[ -n "$planned_wal_part" ]] || fail "Could not parse planned WAL partition number"
-    [[ -n "$planned_db_part" ]] || fail "Could not parse planned DB partition number"
+    output=$(disk_add_dry_run_json --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB)
+    assert_eq "$(jq -r '.dry_run_plan[0].osd_path' <<<"$output")" "$osd_path" "dry-run json should include planned OSD path"
+    assert_eq "$(jq -r '.dry_run_plan[0].wal.parent_path' <<<"$output")" "$wal_parent" "dry-run json should include WAL parent path"
+    assert_eq "$(jq -r '.dry_run_plan[0].db.parent_path' <<<"$output")" "$db_parent" "dry-run json should include DB parent path"
+    planned_wal_part=$(jq -r '.dry_run_plan[0].wal.partition' <<<"$output")
+    planned_db_part=$(jq -r '.dry_run_plan[0].db.partition' <<<"$output")
+    [[ -n "$planned_wal_part" && "$planned_wal_part" != "null" ]] || fail "Could not parse planned WAL partition number from json dry-run"
+    [[ -n "$planned_db_part" && "$planned_db_part" != "null" ]] || fail "Could not parse planned DB partition number from json dry-run"
 
-    execute_output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
-    echo "$execute_output"
+    execute_output=$(vm_exec_expect_success "dsl add should match dry-run plan" microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB)
     wait_for_configured_disk_count_ge 1 180
     after_wal=$(get_partition_count "$wal_parent")
     after_db=$(get_partition_count "$db_parent")
@@ -1738,6 +1862,7 @@ EOF
         waldb_cleanup)
             cat <<'EOF'
 rm1 test_dsl_remove_osd_cleans_generated_aux_partitions
+rmr test_dsl_remove_osd_cleanup_survives_daemon_restart
 rm2 test_dsl_remove_one_of_two_osds_only_cleans_its_partitions
 EOF
             ;;

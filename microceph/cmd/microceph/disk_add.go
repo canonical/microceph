@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -35,6 +36,7 @@ type cmdDiskAdd struct {
 	flagDBMatch    string
 	flagDBSize     string
 	flagDryRun     bool
+	flagJSON       bool
 }
 
 func (c *cmdDiskAdd) Command() *cobra.Command {
@@ -83,6 +85,7 @@ Available variables: @type, @vendor, @model, @size, @devnode, @host`,
 	cmd.PersistentFlags().StringVar(&c.flagDBMatch, "db-match", "", "DSL expression to match backing devices for DB partitions")
 	cmd.PersistentFlags().StringVar(&c.flagDBSize, "db-size", "", "Requested DB partition size for --db-match")
 	cmd.PersistentFlags().BoolVar(&c.flagDryRun, "dry-run", false, "Show matched devices without adding them (requires --osd-match)")
+	cmd.PersistentFlags().BoolVar(&c.flagJSON, "json", false, "Provide dry-run output as a JSON-encoded DiskAddResponse.")
 
 	return cmd
 }
@@ -202,13 +205,16 @@ func (c *cmdDiskAdd) validateFlags(args []string) error {
 	if c.flagDryRun && c.flagOSDMatch == "" {
 		return fmt.Errorf("--dry-run requires --osd-match")
 	}
+	if c.flagJSON && !c.flagDryRun {
+		return fmt.Errorf("--json requires --dry-run")
+	}
 
 	// Legacy WAL/DB device flags remain unsupported with DSL mode.
 	if usesDSL && (c.walDevice != "" || c.dbDevice != "") {
 		return fmt.Errorf("--wal-device and --db-device are not supported with DSL matching in this version")
 	}
 
-	// Phase 2 flag-shape validation.
+	// Validate the WAL/DB matcher flag dependencies before sending the request.
 	if c.flagWALMatch != "" && c.flagOSDMatch == "" {
 		return fmt.Errorf("--wal-match requires --osd-match")
 	}
@@ -258,6 +264,16 @@ func dryRunPartitionAction(plan *types.DryRunPartitionPlan) string {
 }
 
 func (c *cmdDiskAdd) printDryRunOutput(response types.DiskAddResponse) error {
+	if c.flagJSON {
+		if err := printDryRunJSON(response); err != nil {
+			return err
+		}
+		if response.ValidationError != "" {
+			return fmt.Errorf(response.ValidationError)
+		}
+		return nil
+	}
+
 	if response.ValidationError != "" {
 		return fmt.Errorf(response.ValidationError)
 	}
@@ -306,6 +322,16 @@ func (c *cmdDiskAdd) printDryRunOutput(response types.DiskAddResponse) error {
 	header := []string{"PATH", "MODEL", "SIZE", "TYPE"}
 	sort.Sort(lxdCmd.SortColumnsNaturally(data))
 	return lxdCmd.RenderTable(lxdCmd.TableFormatTable, header, data, data)
+}
+
+func printDryRunJSON(response types.DiskAddResponse) error {
+	output, err := json.Marshal(response)
+	if err != nil {
+		return fmt.Errorf("internal error: unable to encode dry-run json output: %w", err)
+	}
+
+	fmt.Printf("%s\n", output)
+	return nil
 }
 
 func printAddDiskFailures(response types.DiskAddResponse) error {
