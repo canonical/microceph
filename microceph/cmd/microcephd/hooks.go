@@ -50,7 +50,11 @@ func PostBootstrap(ctx context.Context, s state.State, initConfig map[string]str
 func PostJoin(ctx context.Context, s state.State, initConfig map[string]string) error {
 	logger.Infof("Executing Hook: PostJoin with %+v", initConfig)
 	interf := interfaces.CephState{State: s}
-	return ceph.Join(ctx, interf)
+
+	jc := common.JoinConfig{}
+	common.DecodeJoinConfig(initConfig, &jc)
+
+	return ceph.Join(ctx, interf, jc)
 }
 
 func OnStart(ctx context.Context, s state.State) error {

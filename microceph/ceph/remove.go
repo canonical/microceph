@@ -23,7 +23,12 @@ func PreRemove(m *microcluster.MicroCluster) func(ctx context.Context, s state.S
 			return err
 		}
 
-		return removeNode(cli, s.Name(), force)
+		err = removeNode(cli, s.Name(), force)
+		if err != nil {
+			return err
+		}
+
+		return nil
 	}
 }
 

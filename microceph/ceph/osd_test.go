@@ -11,6 +11,7 @@ import (
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/tests"
+	"github.com/canonical/microcluster/v2/state"
 	"github.com/spf13/afero"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -260,6 +261,9 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 
 // TestUpdateFailureDomain tests the updateFailureDomain function
 func (s *osdSuite) TestUpdateFailureDomain() {
+	// Mock getAZData to return no AZs so the test proceeds to member count check.
+	defer withMockAZData(azData{})()
+
 	u := api.NewURL()
 	state := &mocks.MockState{
 		URL:         u,
@@ -1134,4 +1138,184 @@ func (s *osdSuite) TestWaitForOSDsReadyTimeout() {
 	err := WaitForOSDsReady(ctx)
 	assert.Error(s.T(), err)
 	assert.ErrorIs(s.T(), err, context.DeadlineExceeded)
+}
+
+// rackDegradeTestSetup configures mocks for IsRackDegradeBlocked tests.
+// It sets up ProcessExec (ceph commands), OSDQuery (disk list), and getAZData.
+// Returns a restore function.
+func rackDegradeTestSetup(t *testing.T, opts rackDegradeOpts) func() {
+	origProcessExec := common.ProcessExec
+	origOSDQuery := database.OSDQuery
+	origGetAZData := getAZData
+
+	r := mocks.NewRunner(t)
+
+	// getDefaultCrushRule -> ceph config get mon osd_pool_default_crush_rule
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
+		Return(opts.defaultRuleID+"\n", nil).Maybe()
+
+	// getCrushRuleID("microceph_auto_rack")
+	if opts.rackRuleErr != nil {
+		r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
+			Return("", opts.rackRuleErr).Maybe()
+	} else {
+		r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
+			Return(fmt.Sprintf(`{"rule_id": %s}`, opts.rackRuleID), nil).Maybe()
+	}
+
+	// getOSDTreeNodes -> ceph osd tree (via cephRunContext -> RunCommandContext)
+	if opts.osdTree != "" {
+		r.On("RunCommandContext", mock.Anything, "ceph", "osd", "tree", "-f", "json").
+			Return(opts.osdTree, nil).Maybe()
+	}
+
+	common.ProcessExec = r
+
+	// Mock OSDQuery.List
+	m := mocks.NewOSDQueryInterface(t)
+	m.On("List", mock.Anything, mock.Anything).Return(opts.disks, nil).Maybe()
+	database.OSDQuery = m
+
+	// Mock getAZData
+	getAZData = func(_ context.Context, _ state.State, hostname string) (azData, error) {
+		if d, ok := opts.azDataByHost[hostname]; ok {
+			return d, nil
+		}
+		return opts.azDataDefault, nil
+	}
+
+	return func() {
+		common.ProcessExec = origProcessExec
+		database.OSDQuery = origOSDQuery
+		getAZData = origGetAZData
+	}
+}
+
+type rackDegradeOpts struct {
+	defaultRuleID string
+	rackRuleID    string
+	rackRuleErr   error
+	osdTree       string
+	disks         types.Disks
+	azDataByHost  map[string]azData // keyed by hostname
+	azDataDefault azData            // fallback for unmatched hosts
+}
+
+func (s *osdSuite) TestIsRackDegradeBlockedNotOnRack() {
+	defer rackDegradeTestSetup(s.T(), rackDegradeOpts{
+		defaultRuleID: "2", // host rule
+		rackRuleID:    "3", // rack rule — different, so not on rack
+	})()
+
+	si := mocks.NewStateInterface(s.T())
+
+	blocked, err := IsRackDegradeBlocked(context.Background(), si, 0)
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), blocked)
+}
+
+func (s *osdSuite) TestIsRackDegradeBlockedLastOSDInAZ() {
+	// On rack rule, osd.2 is the only OSD in az-c — should block
+	defer rackDegradeTestSetup(s.T(), rackDegradeOpts{
+		defaultRuleID: "3",
+		rackRuleID:    "3",
+		osdTree:       osdTreeWithOSDs([]string{"az-a", "az-b", "az-c"}),
+		disks: types.Disks{
+			{OSD: 0, Location: "host-az-a"},
+			{OSD: 1, Location: "host-az-b"},
+			{OSD: 2, Location: "host-az-c"},
+		},
+		azDataByHost: map[string]azData{
+			"host-az-c": {hostAZ: "az-c", uniqueAZs: map[string]bool{"az-a": true, "az-b": true, "az-c": true}},
+		},
+		azDataDefault: azData{
+			hostAZ:    "az-a",
+			uniqueAZs: map[string]bool{"az-a": true, "az-b": true, "az-c": true},
+		},
+	})()
+
+	u := api.NewURL()
+	st := &mocks.MockState{URL: u, ClusterName: "host-az-a"}
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(st).Maybe()
+
+	blocked, err := IsRackDegradeBlocked(context.Background(), si, 2)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), blocked)
+}
+
+func (s *osdSuite) TestIsRackDegradeBlockedNotLastOSD() {
+	// On rack rule, az-c has 2 OSDs — removing one still leaves az-c active
+	treeWith2InAZC := `{"nodes":[
+		{"id":-1,"name":"default","type":"root","children":[-2,-3,-4]},
+		{"id":-2,"name":"az.az-a","type":"rack","children":[-5]},
+		{"id":-5,"name":"host-az-a","type":"host","children":[0]},
+		{"id":0,"name":"osd.0","type":"osd"},
+		{"id":-3,"name":"az.az-b","type":"rack","children":[-6]},
+		{"id":-6,"name":"host-az-b","type":"host","children":[1]},
+		{"id":1,"name":"osd.1","type":"osd"},
+		{"id":-4,"name":"az.az-c","type":"rack","children":[-7]},
+		{"id":-7,"name":"host-az-c","type":"host","children":[2,3]},
+		{"id":2,"name":"osd.2","type":"osd"},
+		{"id":3,"name":"osd.3","type":"osd"}
+	]}`
+
+	defer rackDegradeTestSetup(s.T(), rackDegradeOpts{
+		defaultRuleID: "3",
+		rackRuleID:    "3",
+		osdTree:       treeWith2InAZC,
+		disks: types.Disks{
+			{OSD: 0, Location: "host-az-a"},
+			{OSD: 1, Location: "host-az-b"},
+			{OSD: 2, Location: "host-az-c"},
+			{OSD: 3, Location: "host-az-c"},
+		},
+		azDataByHost: map[string]azData{
+			"host-az-c": {hostAZ: "az-c", uniqueAZs: map[string]bool{"az-a": true, "az-b": true, "az-c": true}},
+		},
+		azDataDefault: azData{
+			hostAZ:    "az-a",
+			uniqueAZs: map[string]bool{"az-a": true, "az-b": true, "az-c": true},
+		},
+	})()
+
+	u := api.NewURL()
+	st := &mocks.MockState{URL: u, ClusterName: "host-az-a"}
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(st).Maybe()
+
+	blocked, err := IsRackDegradeBlocked(context.Background(), si, 2)
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), blocked)
+}
+
+func (s *osdSuite) TestIsRackDegradeBlockedMoreThan3AZs() {
+	// On rack rule with 4 AZs — losing one still leaves 3
+	defer rackDegradeTestSetup(s.T(), rackDegradeOpts{
+		defaultRuleID: "3",
+		rackRuleID:    "3",
+		osdTree:       osdTreeWithOSDs([]string{"az-a", "az-b", "az-c", "az-d"}),
+		disks: types.Disks{
+			{OSD: 0, Location: "host-az-a"},
+			{OSD: 1, Location: "host-az-b"},
+			{OSD: 2, Location: "host-az-c"},
+			{OSD: 3, Location: "host-az-d"},
+		},
+		azDataByHost: map[string]azData{
+			"host-az-d": {hostAZ: "az-d", uniqueAZs: map[string]bool{"az-a": true, "az-b": true, "az-c": true, "az-d": true}},
+		},
+		azDataDefault: azData{
+			hostAZ:    "az-a",
+			uniqueAZs: map[string]bool{"az-a": true, "az-b": true, "az-c": true, "az-d": true},
+		},
+	})()
+
+	u := api.NewURL()
+	st := &mocks.MockState{URL: u, ClusterName: "host-az-a"}
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(st).Maybe()
+
+	blocked, err := IsRackDegradeBlocked(context.Background(), si, 3)
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), blocked)
 }

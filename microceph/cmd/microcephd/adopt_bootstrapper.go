@@ -15,11 +15,12 @@ import (
 
 // AdoptBootstrapper bootstraps microceph with an adopted/existing ceph cluster.
 type AdoptBootstrapper struct {
-	FSID       string   // fsid of the existing ceph cluster.
-	MonHosts   []string // slice of exisiting monitor addresses.
-	AdminKey   string   // Admin key for providing microceph with privileges.
-	PublicNet  string   // Public Network subnet.
-	ClusterNet string   // Cluster Network subnet.
+	FSID             string   // fsid of the existing ceph cluster.
+	MonHosts         []string // slice of exisiting monitor addresses.
+	AdminKey         string   // Admin key for providing microceph with privileges.
+	PublicNet        string   // Public Network subnet.
+	ClusterNet       string   // Cluster Network subnet.
+	AvailabilityZone string   // Availability Zone of the host.
 }
 
 // Prefill prepares the bootstrap payload using BootstrapConfig.
@@ -27,6 +28,7 @@ func (ab *AdoptBootstrapper) Prefill(bd common.BootstrapConfig, state interfaces
 	// populate common parameters
 	ab.PublicNet = bd.PublicNet
 	ab.ClusterNet = bd.ClusterNet
+	ab.AvailabilityZone = bd.AvailabilityZone
 
 	// populate adopt specific parameters
 	ab.MonHosts = bd.AdoptMonHosts
@@ -89,6 +91,13 @@ func (ab *AdoptBootstrapper) Precheck(ctx context.Context, state interfaces.Stat
 		return err
 	}
 
+	// Validate AZ name early, before any cluster state is modified.
+	if ab.AvailabilityZone != "" {
+		if !ceph.IsValidCrushName(ab.AvailabilityZone) {
+			return fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", ab.AvailabilityZone)
+		}
+	}
+
 	return nil
 }
 
@@ -116,12 +125,12 @@ func (ab *AdoptBootstrapper) Bootstrap(ctx context.Context, state interfaces.Sta
 		return err
 	}
 
-	configs, err := getConfigsforDBUpdation(ab)
+	configs, hostTags, err := getConfigsforDBUpdation(state.ClusterState().Name(), ab)
 	if err != nil {
 		return err
 	}
 
-	err = ceph.PopulateBootstrapDatabase(ctx, state, []string{}, configs)
+	err = ceph.PopulateBootstrapDatabase(ctx, state, []string{}, configs, hostTags)
 	if err != nil {
 		return err
 	}
@@ -176,18 +185,24 @@ func (ab *AdoptBootstrapper) updateCephClusterConfigs() error {
 	return nil
 }
 
-var getConfigsforDBUpdation = func(ab *AdoptBootstrapper) (map[string]string, error) {
+var getConfigsforDBUpdation = func(hostname string, ab *AdoptBootstrapper) (map[string]string, []ceph.BootstrapHostTag, error) {
 	configs := map[string]string{
 		"fsid":                          ab.FSID,
 		constants.AdminKeyringFieldName: ab.AdminKey,
 		"public_network":                ab.PublicNet,
 	}
 
+	var hostTags []ceph.BootstrapHostTag
+	// If AZ present, record it as a host tag (validation already done in Precheck).
+	if ab.AvailabilityZone != "" {
+		hostTags = append(hostTags, ceph.BootstrapHostTag{Key: "availability-zone", Value: ab.AvailabilityZone})
+	}
+
 	for index, monIP := range ab.MonHosts {
 		configs[fmt.Sprintf("mon.host.%d", index+1)] = monIP
 	}
 
-	return configs, nil
+	return configs, hostTags, nil
 }
 
 func (ab *AdoptBootstrapper) generateConfAndKeyring(confFileName string, keyringFileName string) error {

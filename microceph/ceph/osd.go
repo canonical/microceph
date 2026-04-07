@@ -342,11 +342,132 @@ func (m *OSDManager) switchFailureDomain(old string, new string) error {
 	return nil
 }
 
+// azData holds availability zone information for a host.
+// uniqueAZs facilitates getting a count of unique AZs, and not just number of hosts using an AZ
+type azData struct {
+	hostAZ    string
+	uniqueAZs map[string]bool
+}
+
+// getAZData retrieves the AZ for the given hostname and all unique AZs from
+// the host_tags table. Returns empty azData if no AZ is configured for the host.
+// Handles its own DB transaction. Package-level function var for testability.
+var getAZData = func(ctx context.Context, s state.State, hostname string) (azData, error) {
+	var data azData
+
+	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		azKey := "availability-zone"
+		tags, err := getHostTags(ctx, tx, database.HostTagFilter{Key: &azKey})
+		if err != nil {
+			return fmt.Errorf("failed to get host tags: %w", err)
+		}
+
+		data.uniqueAZs = make(map[string]bool)
+		for _, tag := range tags {
+			data.uniqueAZs[tag.Value] = true
+			if tag.Member == hostname {
+				data.hostAZ = tag.Value
+			}
+		}
+		return nil
+	})
+
+	return data, err
+}
+
+// updateTopology sets up CRUSH rack topology when availability zones are configured.
+// Each AZ becomes a rack bucket, and hosts are moved under their AZ rack. When there
+// are 3 or more unique AZs, the failure domain is switched to rack.
+func (m *OSDManager) updateTopology(ctx context.Context) error {
+	hostname := m.state.Name()
+
+	data, err := getAZData(ctx, m.state, hostname)
+	if err != nil {
+		return err
+	}
+
+	// No AZ for this host — non-AZ cluster.
+	if data.hostAZ == "" {
+		return nil
+	}
+
+	logger.Infof("Setting up CRUSH topology for host %s in AZ %s", hostname, data.hostAZ)
+
+	// Create the AZ rack bucket and move it under root default.
+	// Prefix AZ names with "az." to avoid collisions with existing CRUSH bucket names.
+	// Doesn't fail on existing, can repeat safely if failure
+	rackBucket := fmt.Sprintf("az.%s", data.hostAZ)
+	_, err = cephRunContext(ctx, "osd", "crush", "add-bucket", rackBucket, "rack")
+	if err != nil {
+		return fmt.Errorf("failed to create rack bucket %s: %w", rackBucket, err)
+	}
+	_, err = cephRunContext(ctx, "osd", "crush", "move", rackBucket, "root=default")
+	if err != nil {
+		return fmt.Errorf("failed to move rack %s under root: %w", rackBucket, err)
+	}
+
+	// Create the host bucket explicitly before moving it under the AZ rack.
+	// Although Ceph creates host buckets when an OSD is added, there is a race
+	// between OSD registration and this topology update — the host bucket may
+	// not yet exist in the CRUSH map, causing "crush move" to fail with ENOENT.
+	_, err = cephRunContext(ctx, "osd", "crush", "add-bucket", hostname, "host")
+	if err != nil {
+		return fmt.Errorf("failed to create host bucket %s: %w", hostname, err)
+	}
+	_, err = cephRunContext(ctx, "osd", "crush", "move", hostname, fmt.Sprintf("rack=%s", rackBucket))
+	if err != nil {
+		return fmt.Errorf("failed to move host %s under rack %s: %w", hostname, rackBucket, err)
+	}
+
+	// If we have 3+ unique AZs with at least one OSD each, switch failure domain to rack.
+	if len(data.uniqueAZs) >= 3 {
+		nodes, err := getOSDTreeNodes(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to count AZs with OSDs: %w", err)
+		}
+		activeAZs := countAZsWithOSDs(nodes, data.uniqueAZs, data.hostAZ)
+		if activeAZs < 3 {
+			logger.Infof("Have %d unique AZs but only %d with OSDs, skipping rack switch", len(data.uniqueAZs), activeAZs)
+			return nil
+		}
+		logger.Infof("Have %d AZs with OSDs, switching failure domain to rack", activeAZs)
+		if !haveCrushRule("microceph_auto_rack") {
+			err = addCrushRule("microceph_auto_rack", "rack")
+			if err != nil {
+				return fmt.Errorf("failed to add rack crush rule: %w", err)
+			}
+		}
+		err = m.switchFailureDomain("osd", "rack")
+		if err != nil {
+			return fmt.Errorf("failed to switch to rack failure domain: %w", err)
+		}
+		// Also switch any pools that were on host domain to rack.
+		err = m.switchFailureDomain("host", "rack")
+		if err != nil {
+			return fmt.Errorf("failed to switch host pools to rack failure domain: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // updateFailureDomain checks if we need to update the crush rules failure domain.
 // Once we have at least 3 nodes with at least 1 OSD each, we set the failure domain to host.
 // Currently this function only handles scale-up scenarios, i.e. adding a new node.
+// When availability zones are configured, this is a no-op as topology is handled by updateTopology.
 func (m *OSDManager) updateFailureDomain(ctx context.Context, s state.State) error {
 	logger.Infof("Checking if we need to update failure domain for OSDs")
+
+	// When AZs are configured, topology is handled by updateTopology — skip.
+	data, err := getAZData(ctx, m.state, m.state.Name())
+	if err != nil {
+		return fmt.Errorf("failed to check for AZs: %w", err)
+	}
+	if len(data.uniqueAZs) > 0 {
+		logger.Infof("Availability zones configured, skipping default failure domain update")
+		return nil
+	}
+
 	numNodes, err := database.MemberCounter.Count(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to count members: %w", err)
@@ -938,6 +1059,12 @@ func (m *OSDManager) doAddOSD(ctx context.Context, data types.DiskParameter, wal
 		return err
 	}
 
+	err = m.updateTopology(ctx)
+	if err != nil {
+		logger.Errorf("failed to update topology after adding OSD %d: %v", nr, err)
+		return err
+	}
+
 	err = m.updateFailureDomain(ctx, m.state)
 	if err != nil {
 		logger.Errorf("failed to update failure domain after adding OSD %d: %v", nr, err)
@@ -1189,6 +1316,81 @@ func IsDowngradeNeeded(ctx context.Context, s interfaces.StateInterface, osd int
 	if numNodes < 3 { // need to scale down
 		return true, nil
 	}
+	return false, nil
+}
+
+// getOSDHostAZ returns the availability zone for the host that owns the given OSD.
+// Returns empty string if the host has no AZ configured.
+func getOSDHostAZ(ctx context.Context, s interfaces.StateInterface, osd int64) (string, error) {
+	disks, err := database.OSDQuery.List(ctx, s.ClusterState())
+	if err != nil {
+		return "", fmt.Errorf("failed to list disks: %w", err)
+	}
+
+	var hostname string
+	for _, disk := range disks {
+		if disk.OSD == osd {
+			hostname = disk.Location
+			break
+		}
+	}
+	if hostname == "" {
+		return "", fmt.Errorf("osd.%d not found in database", osd)
+	}
+
+	data, err := getAZData(ctx, s.ClusterState(), hostname)
+	if err != nil {
+		return "", err
+	}
+	return data.hostAZ, nil
+}
+
+// IsRackDegradeBlocked checks if removing the given OSD would drop the number of
+// AZs with OSDs below 3 while the cluster uses rack-level failure domain.
+// Unlike host->osd downgrade, rack degradation is not supported — the removal is blocked.
+func IsRackDegradeBlocked(ctx context.Context, s interfaces.StateInterface, osd int64) (bool, error) {
+	onRack, err := IsOnRackRule()
+	if err != nil {
+		return false, err
+	}
+	if !onRack {
+		return false, nil
+	}
+
+	// We're on rack failure domain. Find which AZ this OSD belongs to.
+	osdAZ, err := getOSDHostAZ(ctx, s, osd)
+	if err != nil {
+		return false, err
+	}
+	if osdAZ == "" {
+		return false, nil
+	}
+
+	// Get all unique AZs from host_tags (only uniqueAZs is used here).
+	data, err := getAZData(ctx, s.ClusterState(), "")
+	if err != nil {
+		return false, err
+	}
+
+	// Fetch the CRUSH tree once for both AZ counting and per-rack OSD counting.
+	nodes, err := getOSDTreeNodes(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	// Count how many AZs currently have OSDs.
+	activeAZs := countAZsWithOSDs(nodes, data.uniqueAZs, "")
+
+	// If more than 3 AZs have OSDs, losing one still leaves enough.
+	if activeAZs > 3 {
+		return false, nil
+	}
+
+	// 3 or fewer AZs have OSDs. Check if this OSD is the last one in its AZ rack.
+	if countOSDsInAZRack(nodes, osdAZ) <= 1 {
+		return true, nil
+	}
+
 	return false, nil
 }
 

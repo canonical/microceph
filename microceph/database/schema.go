@@ -19,6 +19,7 @@ var SchemaExtensions = []schema.Update{
 	schemaUpdate4,
 	schemaUpdate5,
 	schemaUpdate6,
+	schemaUpdate7,
 }
 
 // getClusterTableName returns the name of the table that holds the record of cluster members from sqlite_master.
@@ -206,6 +207,24 @@ CREATE TABLE grouped_services (
   info                          BLOB,
   FOREIGN KEY (service_group_id) REFERENCES "service_groups" (id) ON DELETE CASCADE,
   FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE
+);
+  `
+	_, err := tx.ExecContext(ctx, stmt)
+
+	return err
+}
+
+// schemaUpdate7 adds the host_tags table for per-host key/value metadata (e.g. availability zones).
+// Tags are cascade-deleted when the associated cluster member is removed.
+func schemaUpdate7(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE host_tags (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  member_id  INTEGER NOT NULL,
+  key        TEXT    NOT NULL,
+  value      TEXT    NOT NULL,
+  FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE,
+  UNIQUE(member_id, key)
 );
   `
 	_, err := tx.ExecContext(ctx, stmt)

@@ -150,11 +150,17 @@ func BootstrapCephServices(state interfaces.StateInterface, tempKeyringPath stri
 	return nil
 }
 
+// BootstrapHostTag holds optional per-host tag data to record during bootstrap.
+type BootstrapHostTag struct {
+	Key   string
+	Value string
+}
+
 // PopulateBootstrapDatabase injects the bootstrap entries to the internal database.
 // The function is defined as a var for ease of mocking in tests.
-func PopulateBootstrapDatabase(ctx context.Context, s interfaces.StateInterface, services []string, configs map[string]string) error {
-	if len(services) == 0 && len(configs) == 0 {
-		logger.Debug("No services or configs to populate in the database")
+func PopulateBootstrapDatabase(ctx context.Context, s interfaces.StateInterface, services []string, configs map[string]string, hostTags []BootstrapHostTag) error {
+	if len(services) == 0 && len(configs) == 0 && len(hostTags) == 0 {
+		logger.Debug("No services, configs, or host tags to populate in the database")
 		return nil
 	}
 
@@ -174,6 +180,14 @@ func PopulateBootstrapDatabase(ctx context.Context, s interfaces.StateInterface,
 		// Record the configuration.
 		for key, value := range configs {
 			err := bootstrapDBAddConfigItemOp(ctx, tx, key, value)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Record host tags.
+		for _, tag := range hostTags {
+			err := bootstrapDBAddHostTagOp(ctx, tx, s.ClusterState().Name(), tag.Key, tag.Value)
 			if err != nil {
 				return err
 			}

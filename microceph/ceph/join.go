@@ -41,8 +41,25 @@ func msgrv2OnlyCluster() (bool, error) {
 	return msgrv2OnlyFile(confPath)
 }
 
+// Testable DB operation wrappers.
+var (
+	getHostTags       = database.GetHostTags
+	joinCreateHostTag = database.CreateHostTag
+	joinHostTagExists = database.HostTagExists
+)
+
+func getAllAZHosts(ctx context.Context, tx *sql.Tx) ([]database.HostTag, error) {
+	azKey := "availability-zone"
+	tags, err := getHostTags(ctx, tx, database.HostTagFilter{Key: &azKey})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get host tags: %w", err)
+	}
+
+	return tags, nil
+}
+
 // Join will join an existing Ceph deployment.
-func Join(ctx context.Context, s interfaces.StateInterface) error {
+func Join(ctx context.Context, s interfaces.StateInterface, jc common.JoinConfig) error {
 	pathFileMode := constants.GetPathFileMode()
 	var spt = GetServicePlacementTable()
 
@@ -58,6 +75,17 @@ func Join(ctx context.Context, s interfaces.StateInterface) error {
 	err := UpdateConfig(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to generate the configuration: %w", err)
+	}
+
+	// Validate and record the availability zone for this host.
+	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if err := validateJoinAZ(ctx, tx, jc.AvailabilityZone); err != nil {
+			return err
+		}
+		return setJoinAZ(ctx, tx, s.ClusterState().Name(), jc.AvailabilityZone)
+	})
+	if err != nil {
+		return err
 	}
 
 	// check and create service records if needed to be spawned.
@@ -100,6 +128,62 @@ func Join(ctx context.Context, s interfaces.StateInterface) error {
 	err = snapStart("osd", true)
 	if err != nil {
 		return fmt.Errorf("failed to start OSD service: %w", err)
+	}
+
+	return nil
+}
+
+// validateJoinAZ validates availability zone constraints for a joining node.
+// The constraint is: no mixed empty and set AZs.
+func validateJoinAZ(ctx context.Context, tx *sql.Tx, az string) error {
+	if az != "" && !IsValidCrushName(az) {
+		return fmt.Errorf("invalid availability zone name %q: must match [a-zA-Z0-9_.-]+", az)
+	}
+
+	allAZs, err := getAllAZHosts(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	const azErrMsg = "mixed empty availability zones and set availability zones are not supported"
+
+	// Empty but others set
+	if az == "" && len(allAZs) > 0 {
+		return fmt.Errorf(
+			"%s: %d existing availability zones found, but join was called without an associated availability zone",
+			azErrMsg, len(allAZs),
+		)
+	}
+	// Set, but others empty
+	if az != "" && len(allAZs) == 0 {
+		return fmt.Errorf(
+			"%s: existing hosts do not have an availability zone, but join was called with an associated availability zone",
+			azErrMsg,
+		)
+	}
+
+	return nil
+}
+
+// setJoinAZ records the availability zone for a joining node.
+// Should be called after validateJoinAZ. If the tag already exists (e.g. a
+// retry after a partial join failure), the call is a no-op.
+func setJoinAZ(ctx context.Context, tx *sql.Tx, hostname string, az string) error {
+	if az == "" {
+		return nil
+	}
+
+	exists, err := joinHostTagExists(ctx, tx, hostname, "availability-zone")
+	if err != nil {
+		return fmt.Errorf("failed to check existing availability zone: %w", err)
+	}
+	if exists {
+		return nil
+	}
+
+	_, err = joinCreateHostTag(ctx, tx, database.HostTag{Member: hostname, Key: "availability-zone", Value: az})
+	if err != nil {
+		return fmt.Errorf("failed to record availability zone: %w", err)
 	}
 
 	return nil

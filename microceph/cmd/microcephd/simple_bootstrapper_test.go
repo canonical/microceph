@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
+	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -82,10 +83,10 @@ func addEnableMsgr2Expectations(r *mocks.Runner) {
 }
 
 func addCrushRuleExpectations(r *mocks.Runner) {
-	// crush rule ls
-	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return("ok", nil).Twice()
-	// crush rule create-replicated microceph_auto_osd
-	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Twice()
+	// crush rule ls (osd, host, rack)
+	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return("ok", nil).Times(3)
+	// crush rule create-replicated (osd, host, rack)
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Times(3)
 	// crush rule dump
 	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return("{\"rule_id\": 1}", nil).Once()
 	// crush rule set default
@@ -97,12 +98,30 @@ func addConfigExpectations(r *mocks.Runner) {
 	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Times(3)
 }
 
+// TestSimplePrecheckRejectsInvalidAZ verifies that Precheck fails for invalid AZ names.
+func (s *simpleBootstrapSuite) TestSimplePrecheckRejectsInvalidAZ() {
+	nw := mocks.NewNetworkIntf(s.T())
+	addNetworkSimpleBootstrapExpectations(nw)
+	common.Network = nw
+
+	bootstrapper := SimpleBootstrapper{
+		MonIP:            "1.1.1.1",
+		PublicNet:        "1.1.1.1/24",
+		ClusterNet:       "1.1.1.1/24",
+		AvailabilityZone: "invalid zone!",
+	}
+
+	err := bootstrapper.Precheck(context.Background(), s.TestStateInterface)
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "invalid availability zone name")
+}
+
 // ##### Unit Tests #####
 func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 	r := mocks.NewRunner(s.T())
 	nw := mocks.NewNetworkIntf(s.T())
-	getServicesAndConfigsforDBUpdation = func(_ string, _ string, _ *SimpleBootstrapper) ([]string, map[string]string, error) {
-		return []string{}, map[string]string{}, nil
+	getServicesAndConfigsforDBUpdation = func(_ string, _ string, _ *SimpleBootstrapper) ([]string, map[string]string, []ceph.BootstrapHostTag, error) {
+		return []string{}, map[string]string{}, nil, nil
 	}
 
 	addNetworkSimpleBootstrapExpectations(nw)
