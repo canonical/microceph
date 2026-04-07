@@ -74,6 +74,8 @@ func (s *rgwSuite) TestEnableRGW() {
 	conf := s.ReadCephConfig("radosgw.conf")
 	assert.Contains(s.T(), conf, "rgw frontends = beast port=8081\n")
 	assert.Contains(s.T(), conf, "mon host = 10.1.1.1,10.2.2.2")
+	// run dir must use the stable 'current' symlink, not a revision-specific path
+	assert.Contains(s.T(), conf, "run dir = "+filepath.Join(s.Tmp, "current", "run"))
 }
 
 // Test enabling RGW
@@ -87,9 +89,9 @@ func (s *rgwSuite) TestEnableRGWWithInvalidSSLCertificate() {
 	// we expect an illegal base64 data error
 	assert.EqualError(s.T(), err, "failed to decode SSL certificate: illegal base64 data at input byte 7")
 
-	// check that the radosgw.conf file contains expected values
-	conf := s.ReadCephConfig("radosgw.conf")
-	assert.Equal(s.T(), conf, "")
+	// radosgw.conf must not have been created when enable fails early
+	_, statErr := os.Stat(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf"))
+	assert.True(s.T(), os.IsNotExist(statErr))
 }
 
 // Test enabling RGW
@@ -103,9 +105,9 @@ func (s *rgwSuite) TestEnableRGWWithInvalidSSLPrivateKey() {
 	// we expect an illegal base64 data error
 	assert.EqualError(s.T(), err, "failed to decode SSL private key: illegal base64 data at input byte 7")
 
-	// check that the radosgw.conf file contains expected values
-	conf := s.ReadCephConfig("radosgw.conf")
-	assert.Equal(s.T(), conf, "")
+	// radosgw.conf must not have been created when enable fails early
+	_, statErr := os.Stat(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf"))
+	assert.True(s.T(), os.IsNotExist(statErr))
 }
 
 // Test enabling RGW

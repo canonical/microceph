@@ -2202,6 +2202,71 @@ function test_az_lifecycle() {
 }
 
 
+# test_rgw_stale_run_dir_migration verifies that migrateStaleRunDir repairs a
+# radosgw.conf containing a revision-specific run dir path on daemon startup.
+function test_rgw_stale_run_dir_migration() {
+    set -eux
+
+    local conf="/var/snap/microceph/current/conf/radosgw.conf"
+    local stale_path="/var/snap/microceph/1/run"
+
+    # Inject a stale revision-specific run dir, simulating what a pre-fix snap
+    # would have written when RGW was first enabled.
+    sudo sed -i "s|run dir = .*|run dir = ${stale_path}|" "$conf"
+    grep "run dir" "$conf"
+
+    # Restart the daemon so migrateStaleRunDir fires before reEnableServices.
+    sudo snap stop microceph
+    sudo snap start microceph
+
+    # RGW must come back up successfully.
+    wait_for_rgw 1
+
+    # Confirm the config was repaired to use the stable 'current' symlink.
+    grep -q "run dir = /var/snap/microceph/current/run" "$conf"
+    echo "RGW stale run dir migration: PASS"
+}
+
+# test_nfs_stale_run_dir_migration verifies that migrateStaleRunDir repairs a
+# ganesha.conf containing a revision-specific CCacheDir path on daemon startup.
+function test_nfs_stale_run_dir_migration() {
+    set -eux
+
+    local conf="/var/snap/microceph/current/conf/ganesha/ganesha.conf"
+    local stale_path="/var/snap/microceph/1/run"
+
+    # Inject a stale revision-specific CCacheDir, simulating what a pre-fix snap
+    # would have written when NFS was first enabled.
+    sudo sed -i "s|CCacheDir = \".*\";|CCacheDir = \"${stale_path}/ganesha\";|" "$conf"
+    grep "CCacheDir" "$conf"
+
+    # Restart the daemon so migrateStaleRunDir fires before reEnableServices.
+    sudo snap stop microceph
+    sudo snap start microceph
+
+    # The migration runs inside a goroutine that waits for the database to
+    # become ready before firing. microceph.nfs becomes active almost
+    # immediately via systemd, well before migration has run, so we must wait
+    # for the daemon to log that it repaired the file rather than just checking
+    # service state.
+    for i in $(seq 1 30); do
+        if sudo snap logs microceph.daemon -n 100 | grep -q "fixed stale run dir"; then
+            echo "daemon logged migration complete"
+            break
+        fi
+        if [[ $i -eq 30 ]]; then
+            echo "FAIL: daemon did not log migration after 30s"
+            sudo snap logs microceph.daemon -n 100 || true
+            exit 1
+        fi
+        sleep 1
+    done
+
+    # Confirm the config was repaired to use the stable 'current' symlink.
+    grep -q "CCacheDir = \"/var/snap/microceph/current/run/ganesha\"" "$conf"
+    echo "NFS stale run dir migration: PASS"
+}
+
 run="${1}"
 shift
 

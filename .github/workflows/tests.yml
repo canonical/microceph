@@ -236,6 +236,9 @@ jobs:
       - name: Exercise RGW
         run: ~/actionutils.sh testrgw
 
+      - name: Test stale run dir migration (RGW)
+        run: ~/actionutils.sh test_rgw_stale_run_dir_migration
+
       - name: Disable RGW
         run: ~/actionutils.sh disable_rgw
 
@@ -1222,6 +1225,9 @@ jobs:
           cat /mnt/nfs/general.kenobi
 
           sudo umount /mnt/nfs
+
+      - name: Test stale run dir migration (NFS)
+        run: ~/actionutils.sh test_nfs_stale_run_dir_migration
 
       - name: Disable NFS
         run: ~/actionutils.sh disable_nfs foo
