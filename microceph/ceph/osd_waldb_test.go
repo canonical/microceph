@@ -603,7 +603,7 @@ func TestCreatePlannedAuxPartitionResetBeforeUseWipesCarrierFirst(t *testing.T) 
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sde", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	runner.On("RunCommand", "partx", "-u", "/dev/sde").Return("", nil).Twice()
 	runner.On("RunCommand", "sh", "-c", "printf 'label: gpt\n' | sfdisk \"/dev/sde\"").Return("", nil).Once()
-	runner.On("RunCommand", "sh", "-c", "printf ',+1024MiB\n' | sfdisk --append \"/dev/sde\"").Return("", nil).Once()
+	runner.On("RunCommand", "sh", "-c", "printf ',+1024MiB\n' | sfdisk --append --force --no-reread \"/dev/sde\"").Return("", nil).Once()
 
 	path, err := mgr.createPlannedAuxPartition(plan)
 	require.NoError(t, err)

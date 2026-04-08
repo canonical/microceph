@@ -947,8 +947,81 @@ func (m *OSDManager) createDiskRecord(ctx context.Context, data *types.DiskParam
 	return nr, nil
 }
 
+const (
+	osdReadyMarkerFile           = "ready"
+	osdReadyMarkerSuppressedFile = "ready.removing"
+)
+
 func getOSDDataPath(nr int64) string {
 	return filepath.Join(constants.GetPathConst().DataPath, "osd", fmt.Sprintf("ceph-%d", nr))
+}
+
+func osdReadyMarkerPath(osdDataPath string) string {
+	return filepath.Join(osdDataPath, osdReadyMarkerFile)
+}
+
+func osdSuppressedReadyMarkerPath(osdDataPath string) string {
+	return filepath.Join(osdDataPath, osdReadyMarkerSuppressedFile)
+}
+
+func (m *OSDManager) suppressOSDAutostart(osd int64) (func() error, bool, error) {
+	osdDataPath := getOSDDataPath(osd)
+	readyPath := osdReadyMarkerPath(osdDataPath)
+	suppressedPath := osdSuppressedReadyMarkerPath(osdDataPath)
+
+	if _, err := m.fs.Stat(readyPath); err != nil {
+		if os.IsNotExist(err) {
+			if _, suppressedErr := m.fs.Stat(suppressedPath); suppressedErr == nil {
+				logger.Infof("osd.%d autostart marker is already suppressed at %s", osd, suppressedPath)
+				return func() error { return m.restoreOSDAutostart(osd) }, true, nil
+			} else if !os.IsNotExist(suppressedErr) {
+				return nil, false, fmt.Errorf("failed to inspect suppressed autostart marker for osd.%d: %w", osd, suppressedErr)
+			}
+			return func() error { return nil }, false, nil
+		}
+		return nil, false, fmt.Errorf("failed to inspect autostart marker for osd.%d: %w", osd, err)
+	}
+
+	if _, err := m.fs.Stat(suppressedPath); err == nil {
+		if removeErr := m.fs.Remove(suppressedPath); removeErr != nil {
+			return nil, false, fmt.Errorf("failed to clear stale suppressed autostart marker for osd.%d: %w", osd, removeErr)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, false, fmt.Errorf("failed to inspect stale suppressed autostart marker for osd.%d: %w", osd, err)
+	}
+
+	if err := m.fs.Rename(readyPath, suppressedPath); err != nil {
+		return nil, false, fmt.Errorf("failed to suppress autostart marker for osd.%d: %w", osd, err)
+	}
+
+	logger.Infof("Temporarily suppressed autostart for osd.%d by renaming %s to %s", osd, readyPath, suppressedPath)
+	return func() error { return m.restoreOSDAutostart(osd) }, true, nil
+}
+
+func (m *OSDManager) restoreOSDAutostart(osd int64) error {
+	osdDataPath := getOSDDataPath(osd)
+	readyPath := osdReadyMarkerPath(osdDataPath)
+	suppressedPath := osdSuppressedReadyMarkerPath(osdDataPath)
+
+	if _, err := m.fs.Stat(suppressedPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect suppressed autostart marker for osd.%d: %w", osd, err)
+	}
+
+	if _, err := m.fs.Stat(readyPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to inspect autostart marker for osd.%d: %w", osd, err)
+	}
+
+	if err := m.fs.Rename(suppressedPath, readyPath); err != nil {
+		return fmt.Errorf("failed to restore autostart marker for osd.%d: %w", osd, err)
+	}
+
+	logger.Infof("Restored autostart for osd.%d by renaming %s to %s", osd, suppressedPath, readyPath)
+	return nil
 }
 
 func (m *OSDManager) setupRevert(ctx context.Context, data *types.DiskParameter, osdDataPath string) *revert.Reverter {
@@ -1925,7 +1998,7 @@ func (m *OSDManager) timeoutWipe(path string) error {
 	return err
 }
 
-func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, bypassSafety bool) error {
+func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, bypassSafety bool) (retErr error) {
 	var err error
 	m := NewOSDManager(s.ClusterState())
 
@@ -1974,6 +2047,23 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 			return err
 		}
 	}
+	// Stop-gap until we have per-OSD systemd units: suppress the per-OSD ready marker before
+	// stopping the shared microceph.osd service so systemd restarts cannot immediately respawn
+	// the OSD we are trying to remove.
+	restoreAutostart, autostartSuppressed, err := m.suppressOSDAutostart(osd)
+	if err != nil {
+		return fmt.Errorf("failed to suppress autostart for osd.%d before removal: %w", osd, err)
+	}
+	restoreAutostartOnError := true
+	defer func() {
+		if !autostartSuppressed || !restoreAutostartOnError || retErr == nil {
+			return
+		}
+		if err := restoreAutostart(); err != nil {
+			logger.Warnf("Failed to restore autostart marker for osd.%d after removal failure: %v", osd, err)
+		}
+	}()
+
 	// stop the OSD process before touching local storage, even if the OSD is not yet visible in Ceph.
 	if err := m.killOSD(osd); err != nil {
 		logger.Warnf("Failed to stop local osd.%d process prior to storage cleanup: %v", osd, err)
@@ -1998,6 +2088,10 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 			}
 		}
 	}
+	// From this point onward we are committed to local teardown. Keep autostart suppressed on any
+	// later failure so the shared OSD service cannot race the cleanup by respawning this OSD.
+	restoreAutostartOnError = false
+
 	// perform safety check for destroying
 	if isPresent && !bypassSafety {
 		err = m.safetyCheckDestroy(osd)

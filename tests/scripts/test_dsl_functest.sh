@@ -1529,7 +1529,7 @@ function test_dsl_encrypted_whole_disk_aux_device_is_rejected() {
     fi
 
     local osd1_path osd2_path wal_parent first_output second_output first_osd_id second_osd_id
-    local before_parts after_first_parts after_second_parts first_osd_dir first_wal_link second_wal_link first_wal_raw
+    local before_parts after_first_parts after_second_parts first_osd_dir first_wal_link second_wal_link first_wal_value
 
     osd1_path=$(get_available_disk_path_by_size "10GiB")
     osd2_path=$(get_available_disk_path_by_size "11GiB")
@@ -1547,8 +1547,8 @@ function test_dsl_encrypted_whole_disk_aux_device_is_rejected() {
     assert_path_exists_in_vm "$first_wal_link"
     assert_path_exists_in_vm "$first_osd_dir/unencrypted.wal"
     assert_output_contains "$(get_symlink_value "$first_wal_link")" "luksosd\\.wal-${first_osd_id}" "encrypted whole-disk WAL link should point at the WAL mapper"
-    first_wal_raw=$(get_symlink_target "$first_osd_dir/unencrypted.wal")
-    assert_eq "$first_wal_raw" "$wal_parent" "unencrypted whole-disk WAL link should resolve to the carrier disk"
+    first_wal_value=$(get_symlink_value "$first_osd_dir/unencrypted.wal")
+    assert_eq "$first_wal_value" "$wal_parent" "unencrypted whole-disk WAL link should retain the stable carrier path"
 
     after_first_parts=$(get_partition_count "$wal_parent")
     assert_eq "$after_first_parts" "$before_parts" "encrypted whole-disk WAL setup must not create partitions on the WAL carrier"

@@ -345,7 +345,11 @@ func (m *OSDManager) initializeGPT(parentPath string) error {
 
 func (m *OSDManager) createPartition(parentPath string, sizeBytes uint64) error {
 	sizeMiB := partitionSizeMiB(sizeBytes)
-	cmd := fmt.Sprintf("printf ',+%dMiB\n' | sfdisk --append %q", sizeMiB, parentPath)
+	// Appending a new partition to a carrier that already has an in-use WAL/DB
+	// partition is an expected DSL workflow. sfdisk refuses that by default, so
+	// bypass its in-use preflight and let partx refresh the kernel view
+	// afterwards.
+	cmd := fmt.Sprintf("printf ',+%dMiB\n' | sfdisk --append --force --no-reread %q", sizeMiB, parentPath)
 	_, err := m.runner.RunCommand("sh", "-c", cmd)
 	if err != nil {
 		return fmt.Errorf("failed to create partition on %s: %w", parentPath, err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -881,6 +883,39 @@ func (s *osdSuite) TestKillOSD() {
 	err = osdmgr.killOSD(3)
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "failed to kill osd.3")
+}
+
+func (s *osdSuite) TestSuppressAndRestoreOSDAutostart() {
+	osdmgr := NewOSDManager(nil)
+	osdmgr.fs = afero.NewMemMapFs()
+
+	osdDataPath := getOSDDataPath(7)
+	require.NoError(s.T(), osdmgr.fs.MkdirAll(osdDataPath, 0700))
+	require.NoError(s.T(), afero.WriteFile(osdmgr.fs, osdReadyMarkerPath(osdDataPath), []byte(""), 0600))
+
+	restore, suppressed, err := osdmgr.suppressOSDAutostart(7)
+	require.NoError(s.T(), err)
+	assert.True(s.T(), suppressed)
+	_, err = osdmgr.fs.Stat(osdReadyMarkerPath(osdDataPath))
+	assert.True(s.T(), os.IsNotExist(err))
+	_, err = osdmgr.fs.Stat(osdSuppressedReadyMarkerPath(osdDataPath))
+	assert.NoError(s.T(), err)
+
+	require.NoError(s.T(), restore())
+	_, err = osdmgr.fs.Stat(osdReadyMarkerPath(osdDataPath))
+	assert.NoError(s.T(), err)
+	_, err = osdmgr.fs.Stat(osdSuppressedReadyMarkerPath(osdDataPath))
+	assert.True(s.T(), os.IsNotExist(err))
+}
+
+func (s *osdSuite) TestSuppressOSDAutostartWithoutReadyMarker() {
+	osdmgr := NewOSDManager(nil)
+	osdmgr.fs = afero.NewMemMapFs()
+
+	restore, suppressed, err := osdmgr.suppressOSDAutostart(8)
+	require.NoError(s.T(), err)
+	assert.False(s.T(), suppressed)
+	require.NoError(s.T(), restore())
 }
 
 // TestOutDownOSD tests taking OSD out and down
