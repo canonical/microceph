@@ -131,12 +131,12 @@ func (s *configSuite) TestListConfig() {
 
 // --- backwardCompatPubnet gate tests ---
 
-// overrideGetMonitorCount replaces getMonitorCount for the duration of a test
+// overrideGetMonitorCount replaces getMonitorCountFunc for the duration of a test
 // and restores the original on cleanup.
 func (s *configSuite) overrideGetMonitorCount(count int, err error) {
-	orig := getMonitorCount
-	s.T().Cleanup(func() { getMonitorCount = orig })
-	getMonitorCount = func(_ context.Context, _ interfaces.StateInterface) (int, error) {
+	orig := getMonitorCountFunc
+	s.T().Cleanup(func() { getMonitorCountFunc = orig })
+	getMonitorCountFunc = func(_ context.Context, _ interfaces.StateInterface) (int, error) {
 		return count, err
 	}
 }

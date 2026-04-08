@@ -265,9 +265,9 @@ func getClusterConfigDefinition(key string) (ClusterConfigDefinition, error) {
 	return config, nil
 }
 
-// getMonitorCount returns the number of registered mon services in the database.
+// getMonitorCountFunc returns the number of registered mon services in the database.
 // Extracted as a variable to allow overriding in tests.
-var getMonitorCount = func(ctx context.Context, s interfaces.StateInterface) (int, error) {
+var getMonitorCountFunc = func(ctx context.Context, s interfaces.StateInterface) (int, error) {
 	var count int
 	serviceName := "mon"
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -307,7 +307,7 @@ var insertPubnetRecord = func(ctx context.Context, s interfaces.StateInterface, 
 func backwardCompatPubnet(ctx context.Context, s interfaces.StateInterface) error {
 	// Gate: only proceed if the cluster has been bootstrapped, which we
 	// detect by the presence of at least one registered monitor service.
-	monitorCount, err := getMonitorCount(ctx, s)
+	monitorCount, err := getMonitorCountFunc(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to check for registered monitors: %w", err)
 	}
