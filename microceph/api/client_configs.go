@@ -130,7 +130,8 @@ func clientConfigsKeyPut(s state.State, r *http.Request) response.Response {
 	}
 
 	// Trigger /conf file update across cluster.
-	if err := clientConfigUpdate(r.Context(), s, req.Wait); err != nil {
+	err = clientConfigUpdate(r.Context(), s, req.Wait)
+	if err != nil {
 		return response.InternalError(err)
 	}
 
@@ -156,7 +157,8 @@ func clientConfigsKeyDelete(s state.State, r *http.Request) response.Response {
 	}
 
 	// Trigger /conf file update across cluster.
-	if err := clientConfigUpdate(r.Context(), s, req.Wait); err != nil {
+	err = clientConfigUpdate(r.Context(), s, req.Wait)
+	if err != nil {
 		return response.InternalError(err)
 	}
 
@@ -179,10 +181,12 @@ func clientConfigUpdate(ctx context.Context, s state.State, wait bool) error {
 		}
 	} else { // Execute update asynchronously
 		go func() {
-			if err := client.SendUpdateClientConfRequestToClusterMembers(context.Background(), interfaces.CephState{State: s}); err != nil {
+			err := client.SendUpdateClientConfRequestToClusterMembers(context.Background(), interfaces.CephState{State: s})
+			if err != nil {
 				logger.Errorf("failed to send client conf update to cluster members: %v", err)
 			}
-			if err := ceph.UpdateConfig(context.Background(), interfaces.CephState{State: s}); err != nil {
+			err = ceph.UpdateConfig(context.Background(), interfaces.CephState{State: s})
+			if err != nil {
 				logger.Errorf("failed to update config on current host: %v", err)
 			}
 		}()

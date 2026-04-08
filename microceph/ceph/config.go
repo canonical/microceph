@@ -192,7 +192,8 @@ func ListConfigs() (types.Configs, error) {
 		return configs, err
 	}
 
-	if err := json.Unmarshal([]byte(output), &dump); err != nil {
+	err = json.Unmarshal([]byte(output), &dump)
+	if err != nil {
 		return configs, err
 	}
 	// Only take configs permitted in config table.

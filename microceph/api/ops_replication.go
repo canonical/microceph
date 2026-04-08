@@ -102,7 +102,8 @@ func cmdOpsReplication(s state.State, r *http.Request, overwriteType types.Repli
 		}
 
 		// carry RbdReplicationRequest in interface object.
-		if err := data.SetAPIObjectID(resource); err != nil {
+		err = data.SetAPIObjectID(resource)
+		if err != nil {
 			return response.InternalError(err)
 		}
 		// If the request is not WorkloadReplicationRequest, set the request type.

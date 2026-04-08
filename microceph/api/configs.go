@@ -66,7 +66,8 @@ func cmdConfigsPut(s state.State, r *http.Request) response.Response {
 
 	if !req.SkipRestart {
 		services := configTable[req.Key].Daemons
-		if err := configChangeRefresh(r.Context(), s, services, req.Wait); err != nil {
+		err = configChangeRefresh(r.Context(), s, services, req.Wait)
+		if err != nil {
 			return response.InternalError(err)
 		}
 	}
@@ -91,7 +92,8 @@ func cmdConfigsDelete(s state.State, r *http.Request) response.Response {
 
 	if !req.SkipRestart {
 		services := configTable[req.Key].Daemons
-		if err := configChangeRefresh(r.Context(), s, services, req.Wait); err != nil {
+		err = configChangeRefresh(r.Context(), s, services, req.Wait)
+		if err != nil {
 			return response.InternalError(err)
 		}
 	}
@@ -115,10 +117,12 @@ func configChangeRefresh(ctx context.Context, s state.State, services []string, 
 		}
 	} else { // Execute restart asynchronously
 		go func() {
-			if err := client.SendRestartRequestToClusterMembers(context.Background(), s, services); err != nil {
+			err := client.SendRestartRequestToClusterMembers(context.Background(), s, services)
+			if err != nil {
 				logger.Errorf("failed to send restart request to cluster members: %v", err)
 			}
-			if err := ceph.RestartCephServices(context.Background(), interfaces.CephState{State: s}, services); err != nil {
+			err = ceph.RestartCephServices(context.Background(), interfaces.CephState{State: s}, services)
+			if err != nil {
 				logger.Errorf("failed to restart ceph services on current host: %v", err)
 			}
 		}()
