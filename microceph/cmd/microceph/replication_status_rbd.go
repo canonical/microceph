@@ -13,7 +13,7 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 type cmdReplicationStatusRbd struct {
@@ -102,7 +102,7 @@ func printReplicationStatusTable(ResourceType types.RbdResourceType, response st
 		t_summary.AppendRow(table.Row{"Name", resp.Name, "Replication", resp.HealthReplication}, rowConfigAutoMerge)
 		t_summary.AppendRow(table.Row{"Mode", resp.Type, "Daemon", resp.HealthDaemon}, rowConfigAutoMerge)
 		t_summary.AppendRow(table.Row{"Image Count", resp.ImageCount, "Image", resp.HealthImages}, rowConfigAutoMerge)
-		if terminal.IsTerminal(0) && terminal.IsTerminal(1) {
+		if term.IsTerminal(0) && term.IsTerminal(1) {
 			// Set style if interactive shell.
 			t_summary.SetStyle(table.StyleColoredBright)
 		}
@@ -116,7 +116,7 @@ func printReplicationStatusTable(ResourceType types.RbdResourceType, response st
 		for _, remote := range resp.Remotes {
 			t_remotes.AppendRow(table.Row{remote.Name, remote.Direction, remote.UUID})
 		}
-		if terminal.IsTerminal(0) && terminal.IsTerminal(1) {
+		if term.IsTerminal(0) && term.IsTerminal(1) {
 			// Set style if interactive shell.
 			t_remotes.SetStyle(table.StyleColoredBright)
 		}
@@ -158,7 +158,7 @@ func printReplicationStatusTable(ResourceType types.RbdResourceType, response st
 			}
 			t_images.AppendRow(table.Row{remote.Name, status, remote.LastRemoteUpdate})
 		}
-		if terminal.IsTerminal(0) && terminal.IsTerminal(1) {
+		if term.IsTerminal(0) && term.IsTerminal(1) {
 			// Set style if interactive shell.
 			t_images.SetStyle(table.StyleColoredBright)
 		}

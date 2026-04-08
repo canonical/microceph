@@ -56,10 +56,6 @@ func (s *servicePlacementNFSSuite) TestInvalidPayload() {
 	payload.Payload = "{\"cluster_id\":\"foo\",\"v4_min_version\":10}"
 
 	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
-
-	payload.Payload = "{\"cluster_id\":\"foo\",\"v4_min_version\":10}"
-
-	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
 	assert.ErrorContains(s.T(), err, "expected v4_min_version '10' to be in the interval")
 
 	payload.Payload = "{\"cluster_id\":\"foo\",\"bind_address\":\"10.20.30\"}"

@@ -27,15 +27,6 @@ func cephFSSnapshotMirrorEnableVolume(volume string) error {
 	return err
 }
 
-// cephFSSnapshotMirrorDisableVolume disables mirroring for a specific CephFS volume
-func cephFSSnapshotMirrorDisableVolume(volume string) error {
-	_, err := cephRun(cephFSSnapshotMirrorCmd([]string{
-		"disable", volume,
-	})...)
-
-	return err
-}
-
 // cephFSSnapshotMirrorAddPath enables mirroring for a specific path in a CephFS volume
 func cephFSSnapshotMirrorAddPath(ctx context.Context, volume string, path string) error {
 	_, err := cephRunContext(ctx, cephFSSnapshotMirrorCmd([]string{

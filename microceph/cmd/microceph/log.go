@@ -18,7 +18,6 @@ type cmdLog struct {
 type cmdLogSetLevel struct {
 	common      *CmdControl
 	logSetLevel *cmdLog
-	logLevel    string
 }
 
 type cmdLogGetLevel struct {

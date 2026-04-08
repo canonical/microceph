@@ -92,7 +92,7 @@ func GetCephFsAllVolumeMirrorMap(ctx context.Context) (MirrorPathMap, error) {
 
 	mirroredResources := MirrorPathMap{}
 	for _, volume := range volumes {
-		paths, err := GetCephFSVolumeMirrorList(ctx, fmt.Sprintf("%s", volume))
+		paths, err := GetCephFSVolumeMirrorList(ctx, string(volume))
 		if err != nil {
 			return mirroredResources, fmt.Errorf("failed to capture cephfs mirror list for %v: %w", volumes, err)
 		}

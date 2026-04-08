@@ -5,9 +5,7 @@ import (
 )
 
 type cmdReplicationList struct {
-	common   *CmdControl
-	poolName string
-	json     bool
+	common *CmdControl
 }
 
 func (c *cmdReplicationList) Command() *cobra.Command {

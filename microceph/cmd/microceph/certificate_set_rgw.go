@@ -38,8 +38,8 @@ manually for the change to take effect.`,
 	cmd.Flags().StringVar(&c.flagTarget, "target", "", "Server hostname (default: this server)")
 	cmd.Flags().BoolVar(&c.flagRestart, "restart", false, "Restart the RGW service for immediate certificate pickup")
 
-	cmd.MarkFlagRequired("ssl-certificate")
-	cmd.MarkFlagRequired("ssl-private-key")
+	_ = cmd.MarkFlagRequired("ssl-certificate")
+	_ = cmd.MarkFlagRequired("ssl-private-key")
 
 	return cmd
 }

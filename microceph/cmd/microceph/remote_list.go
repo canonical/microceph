@@ -11,7 +11,7 @@ import (
 	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 type cmdRemoteList struct {
@@ -75,7 +75,7 @@ func printRemoteTable(remotes []types.RemoteRecord) error {
 	for _, remote := range remotes {
 		t.AppendRow(table.Row{remote.ID, remote.Name, remote.LocalName})
 	}
-	if terminal.IsTerminal(0) && terminal.IsTerminal(1) {
+	if term.IsTerminal(0) && term.IsTerminal(1) {
 		// Set style if interactive shell.
 		t.SetStyle(table.StyleColoredBright)
 	}

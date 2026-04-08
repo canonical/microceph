@@ -33,8 +33,8 @@ func (c *cmdReplicationEnableCephFS) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.subvolume, "subvolume", "", "CephFS Subvolume")
 	cmd.Flags().StringVar(&c.dirpath, "dir-path", "", "Directory path relative to file system")
 
-	cmd.MarkFlagRequired("remote")
-	cmd.MarkFlagRequired("volume")
+	_ = cmd.MarkFlagRequired("remote")
+	_ = cmd.MarkFlagRequired("volume")
 	cmd.MarkFlagsOneRequired("dir-path", "subvolume")
 
 	cmd.MarkFlagsMutuallyExclusive("dir-path", "subvolumegroup")
@@ -45,7 +45,7 @@ func (c *cmdReplicationEnableCephFS) Command() *cobra.Command {
 func (c *cmdReplicationEnableCephFS) PreRun(cmd *cobra.Command, args []string) error {
 	subvolumegroup, _ := cmd.Flags().GetString("subvolumegroup")
 	if len(subvolumegroup) != 0 {
-		cmd.MarkFlagRequired("subvolume")
+		_ = cmd.MarkFlagRequired("subvolume")
 	}
 	return nil
 }

@@ -385,24 +385,6 @@ func verifyEnableRequestData(ctx context.Context, s interfaces.CephState, reques
 	return nil
 }
 
-func enableCephFSMgrModules(ctx context.Context, remote string, local string) error {
-	err := EnableMgrModule(ctx, constants.MgrModuleMirroring, "", "")
-	if err != nil {
-		err := fmt.Errorf("failed to enable mgr module %s on local cluster: %w", constants.MgrModuleMirroring, err)
-		logger.Error(err.Error())
-		return err
-	}
-
-	err = EnableMgrModule(ctx, constants.MgrModuleMirroring, remote, local)
-	if err != nil {
-		err := fmt.Errorf("failed to enable mgr module %s on remote cluster %s: %w", constants.MgrModuleMirroring, remote, err)
-		logger.Error(err.Error())
-		return err
-	}
-
-	return nil
-}
-
 func verifyRemoteCephFSVolumeExists(vol string, remote string, local string) error {
 	volumes, err := ListRemoteCephFSVolumes(remote, local)
 	if err != nil {

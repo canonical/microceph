@@ -99,7 +99,7 @@ func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 func (s *servicesSuite) TestCleanService() {
 	s.CopyCephConfigs()
 	svcPath := filepath.Join(s.Tmp, "SNAP_COMMON", "data", "mon", "ceph-foo-host")
-	os.MkdirAll(svcPath, 0770)
-	cleanService("foo-host", "mon")
+	_ = os.MkdirAll(svcPath, 0770)
+	_ = cleanService("foo-host", "mon")
 	assert.NoDirExists(s.T(), svcPath)
 }

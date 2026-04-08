@@ -24,7 +24,7 @@ func (c *cmdReplicationPromote) Command() *cobra.Command {
 
 	cmd.Flags().StringVar(&c.remoteName, "remote", "", "remote MicroCeph cluster name")
 	cmd.Flags().BoolVar(&c.isForce, "yes-i-really-mean-it", false, "forcefully promote site to primary")
-	cmd.MarkFlagRequired("remote")
+	_ = cmd.MarkFlagRequired("remote")
 	return cmd
 }
 

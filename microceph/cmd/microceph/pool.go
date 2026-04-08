@@ -36,7 +36,7 @@ func (c *cmdPoolSetRF) Command() *cobra.Command {
 	}
 
 	cmd.Flags().Int64Var(&c.poolSize, "size", 3, "Pool size")
-	cmd.MarkFlagRequired("size")
+	_ = cmd.MarkFlagRequired("size")
 
 	return cmd
 }

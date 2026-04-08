@@ -35,7 +35,7 @@ func (c *cmdReplicationDisableCephFS) Command() *cobra.Command {
 
 	cmd.Flags().BoolVar(&c.flagForce, "force", false, "forcefully disable replication for resource")
 
-	cmd.MarkFlagRequired("volume")
+	_ = cmd.MarkFlagRequired("volume")
 	cmd.MarkFlagsMutuallyExclusive("dir-path", "subvolumegroup")
 	cmd.MarkFlagsMutuallyExclusive("dir-path", "subvolume")
 
@@ -45,7 +45,7 @@ func (c *cmdReplicationDisableCephFS) Command() *cobra.Command {
 func (c *cmdReplicationDisableCephFS) PreRun(cmd *cobra.Command, args []string) error {
 	subvolumegroup, _ := cmd.Flags().GetString("subvolumegroup")
 	if len(subvolumegroup) != 0 {
-		cmd.MarkFlagRequired("subvolume")
+		_ = cmd.MarkFlagRequired("subvolume")
 	}
 	return nil
 }

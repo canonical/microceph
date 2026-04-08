@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -283,25 +284,25 @@ func StringToLevel(s string) (slog.Level, error) {
 
 // MicroCephDaemonLogger methods
 func (l *MicroCephDaemonLogger) Debugf(format string, args ...interface{}) {
-	if l.logger.Enabled(nil, slog.LevelDebug) {
+	if l.logger.Enabled(context.TODO(), slog.LevelDebug) {
 		l.logger.Debug(fmt.Sprintf(format, args...))
 	}
 }
 
 func (l *MicroCephDaemonLogger) Infof(format string, args ...interface{}) {
-	if l.logger.Enabled(nil, slog.LevelInfo) {
+	if l.logger.Enabled(context.TODO(), slog.LevelInfo) {
 		l.logger.Info(fmt.Sprintf(format, args...))
 	}
 }
 
 func (l *MicroCephDaemonLogger) Warnf(format string, args ...interface{}) {
-	if l.logger.Enabled(nil, slog.LevelWarn) {
+	if l.logger.Enabled(context.TODO(), slog.LevelWarn) {
 		l.logger.Warn(fmt.Sprintf(format, args...))
 	}
 }
 
 func (l *MicroCephDaemonLogger) Errorf(format string, args ...interface{}) {
-	if l.logger.Enabled(nil, slog.LevelError) {
+	if l.logger.Enabled(context.TODO(), slog.LevelError) {
 		l.logger.Error(fmt.Sprintf(format, args...))
 	}
 }

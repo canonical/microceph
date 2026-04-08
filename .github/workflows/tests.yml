@@ -47,6 +47,31 @@ jobs:
           path: "*.snap"
           retention-days: 5
 
+  static-checks:
+    name: Run static checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo add-apt-repository ppa:dqlite/dev -y --no-update
+          sudo apt-get update
+          sudo apt-get install -y libdqlite1.17-dev
+
+      - name: Install Go (1.22)
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+
+      - name: Run static checks
+        run: |
+          cd microceph
+          make check-static
+
   unit-tests:
     name: Run Unit tests
     runs-on: ubuntu-24.04
