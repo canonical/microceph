@@ -1,5 +1,5 @@
 .. meta::
-   :description: How to add virtual OSDs for test clusters using charm-microceph.
+   :description: How to add virtual OSDs for test clusters using the MicroCeph charm.
 
 Add virtual OSDs for test clusters
 ===================================

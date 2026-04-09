@@ -1,10 +1,10 @@
 .. meta::
-   :description: How to install charm-microceph using Juju.
+   :description: How to install MicroCeph using Juju.
 
-Install charm-microceph
-=======================
+Install MicroCeph with Juju
+===========================
 
-This guide shows how to perform a general install of charm-microceph.
+This guide shows how to perform a general install of MicroCeph.
 
 What you will need
 ------------------

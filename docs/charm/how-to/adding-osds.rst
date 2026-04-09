@@ -1,5 +1,5 @@
 .. meta::
-   :description: How to add physical disk OSDs to a charm-microceph cluster.
+   :description: How to add physical disk OSDs to a MicroCeph charm cluster.
 
 Add physical disk OSDs
 ======================

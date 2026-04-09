@@ -1,10 +1,10 @@
 .. meta::
-   :description: Deploy a three-node charm-microceph cluster in an LXD environment using Juju.
+   :description: Deploy a three-node MicroCeph cluster in an LXD environment using Juju.
 
-Deploy MicroCeph via charm-microceph
-=====================================
+Deploy MicroCeph via charm
+==========================
 
-In this tutorial we will deploy a three-node charm-microceph cluster in an LXD
+In this tutorial we will deploy a three-node MicroCeph cluster in an LXD
 environment using Juju. We will set up LXD on a single physical machine and use
 simulated storage to keep hardware requirements at a minimum. This works great
 for learning and testing purposes; in a production environment you would

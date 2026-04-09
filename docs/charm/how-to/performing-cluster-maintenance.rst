@@ -1,5 +1,5 @@
 .. meta::
-   :description: How to perform cluster maintenance with charm-microceph.
+   :description: How to perform cluster maintenance with MicroCeph charm. This includes entering and exiting maintenance mode for a unit, which involves stopping OSD services and setting the noout flag to prevent data rebalancing during maintenance.
 
 Perform cluster maintenance
 ============================
