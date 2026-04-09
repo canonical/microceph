@@ -4,13 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -154,6 +158,95 @@ func PostRefresh() error {
 	}
 
 	logger.Infof("successfully updated OSD release version: %s", currentVersion)
+	return nil
+}
+
+// migrateStaleRunDir rewrites radosgw.conf and ganesha.conf when they contain
+// a revision-specific run directory path.  When a service is first enabled,
+// the run dir is baked into the config file as $SNAP_DATA/run (e.g.
+// /var/snap/microceph/1630/run).  After a snap refresh snapd may garbage-
+// collect old revision directories, leaving the path dangling.  This function
+// replaces any such stale path with the stable 'current' symlink so that
+// services can be re-enabled successfully.
+func migrateStaleRunDir() {
+	pathConsts := constants.GetPathConst()
+	err := fixRadosGWRunDir(filepath.Join(pathConsts.ConfPath, "radosgw.conf"), pathConsts.RunPath)
+	if err != nil {
+		logger.Warnf("migration: failed to update run dir in radosgw.conf: %v", err)
+	}
+	err = fixGaneshaRunDir(filepath.Join(pathConsts.ConfPath, "ganesha", "ganesha.conf"), pathConsts.RunPath)
+	if err != nil {
+		logger.Warnf("migration: failed to update run dir in ganesha.conf: %v", err)
+	}
+}
+
+// fixRadosGWRunDir updates the 'run dir' line in radosgw.conf to correctRunDir.
+func fixRadosGWRunDir(confFile, correctRunDir string) error {
+	return fixConfigLine(confFile, func(line string) (string, bool) {
+		if strings.HasPrefix(strings.TrimSpace(line), "run dir = ") {
+			correct := "run dir = " + correctRunDir
+			if line == correct {
+				return line, false
+			}
+			return correct, true
+		}
+		return line, false
+	})
+}
+
+// fixGaneshaRunDir updates the CCacheDir line in ganesha.conf to use correctRunDir.
+func fixGaneshaRunDir(confFile, correctRunDir string) error {
+	return fixConfigLine(confFile, func(line string) (string, bool) {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, `CCacheDir = "`) && strings.HasSuffix(trimmed, `/ganesha";`) {
+			trimLeft := strings.TrimLeft(line, "\t ")
+			leading := line[:len(line)-len(trimLeft)]
+			correct := leading + `CCacheDir = "` + correctRunDir + `/ganesha";`
+			if line == correct {
+				return line, false
+			}
+			return correct, true
+		}
+		return line, false
+	})
+}
+
+// fixConfigLine reads confFile, applies fn to every line, and atomically
+// rewrites the file if any line changed.  Returns nil if the file does not exist.
+func fixConfigLine(confFile string, fn func(string) (string, bool)) error {
+	data, err := os.ReadFile(confFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	changed := false
+	for i, line := range lines {
+		newLine, updated := fn(line)
+		if updated {
+			lines[i] = newLine
+			changed = true
+		}
+	}
+
+	if !changed {
+		return nil
+	}
+
+	tmpFile := confFile + ".tmp"
+	err = os.WriteFile(tmpFile, []byte(strings.Join(lines, "\n")), constants.PermissionUserRwWorldRAccess)
+	if err != nil {
+		return fmt.Errorf("failed to write %s: %w", tmpFile, err)
+	}
+	err = os.Rename(tmpFile, confFile)
+	if err != nil {
+		os.Remove(tmpFile)
+		return fmt.Errorf("failed to replace %s: %w", confFile, err)
+	}
+	logger.Infof("migration: fixed stale run dir in %s", confFile)
 	return nil
 }
 
@@ -323,6 +416,7 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 			case <-time.After(10 * time.Second):
 			}
 		}
+		migrateStaleRunDir()
 		reEnableServices(ctx, s)
 	}()
 

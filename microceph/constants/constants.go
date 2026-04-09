@@ -58,8 +58,8 @@ type PathFileMode map[string]os.FileMode
 
 var GetPathConst = func() PathConst {
 	return PathConst{
-		ConfPath:     filepath.Join(os.Getenv("SNAP_DATA"), "conf"),
-		RunPath:      filepath.Join(os.Getenv("SNAP_DATA"), "run"),
+		ConfPath:     filepath.Join(filepath.Dir(os.Getenv("SNAP_DATA")), "current", "conf"),
+		RunPath:      filepath.Join(filepath.Dir(os.Getenv("SNAP_DATA")), "current", "run"),
 		DataPath:     filepath.Join(os.Getenv("SNAP_COMMON"), "data"),
 		LogPath:      filepath.Join(os.Getenv("SNAP_COMMON"), "logs"),
 		RootFs:       filepath.Join(os.Getenv("TEST_ROOT_PATH"), "/"),

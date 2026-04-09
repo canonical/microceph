@@ -44,6 +44,14 @@ func (s *BaseSuite) CopyCephConfigs() {
 		}
 	}
 
+	// Create a 'current' symlink pointing at SNAP_DATA, mirroring the snapd
+	// convention where current -> active revision directory.  GetPathConst()
+	// derives ConfPath and RunPath via this symlink so tests must have it.
+	err = os.Symlink(filepath.Join(s.Tmp, "SNAP_DATA"), filepath.Join(s.Tmp, "current"))
+	if err != nil {
+		s.T().Fatal("error creating current symlink:", err)
+	}
+
 	for _, f := range []string{"ceph.client.admin.keyring", "ceph.conf"} {
 		err = CopyTestConf(s.Tmp, f)
 		if err != nil {
@@ -52,10 +60,12 @@ func (s *BaseSuite) CopyCephConfigs() {
 	}
 }
 
-// readCephConfig reads a config file from the test directory
+// ReadCephConfig reads a config file from the test directory.
 func (s *BaseSuite) ReadCephConfig(conf string) string {
-	// Read the config file
-	data, _ := os.ReadFile(filepath.Join(s.Tmp, "SNAP_DATA", "conf", conf))
+	data, err := os.ReadFile(filepath.Join(s.Tmp, "SNAP_DATA", "conf", conf))
+	if err != nil {
+		s.T().Fatal("error reading config:", err)
+	}
 	return string(data)
 }
 
