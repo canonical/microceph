@@ -67,10 +67,16 @@ jobs:
         with:
           go-version: 1.22.x
 
-      - name: Run unit-tests
+      - name: Run Go unit-tests
         run: |
           cd microceph
           make check-unit
+
+      - name: Run orchestrator Python unit-tests
+        run: |
+          pip install pytest
+          cd microceph-orch
+          PYTHONPATH=src:tests python3 -m pytest tests/ -v
 
   single-system-tests:
     name: Single node with encryption
@@ -121,7 +127,7 @@ jobs:
           sudo microceph.ceph mgr module enable microceph
           sudo microceph.ceph orch set backend microceph
 
-      - name: Verify Orch module
+      - name: Verify Orch module (basic)
         run: |
           set -eux
           hn=$(hostname)
@@ -213,6 +219,11 @@ jobs:
 
       - name: Disable RGW
         run: ~/actionutils.sh disable_rgw
+
+      - name: Run orchestrator integration tests
+        run: |
+          set -eux
+          bash tests/scripts/test-orch.sh microceph.ceph
 
       - name: Enable RGW with SSL enabled
         run: ~/actionutils.sh enable_rgw_ssl
@@ -409,6 +420,16 @@ jobs:
 
       - name: Test RGW certificate rotation with --target (cross-node)
         run: ~/actionutils.sh headexec test_certificate_set_rgw_target node-wrk1
+
+      - name: Enable orchestrator and run integration tests
+        run: |
+          set -eux
+          lxc exec node-wrk0 -- sh -c "microceph.ceph mgr module enable microceph"
+          lxc exec node-wrk0 -- sh -c "microceph.ceph orch set backend microceph"
+          sleep 10
+          lxc exec node-wrk0 -- sh -c "microceph.ceph orch status"
+          lxc file push tests/scripts/test-orch.sh node-wrk0/tmp/test-orch.sh
+          lxc exec node-wrk0 -- bash /tmp/test-orch.sh microceph.ceph
 
       - name: Print logs for failure
         if: failure()
