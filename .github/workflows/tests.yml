@@ -91,6 +91,46 @@ jobs:
           lxc storage list || true
           lxc storage volume list default || true
 
+  api-tests:
+    name: API tests
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
+
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
+
+      - name: Bootstrap MicroCeph
+        run: ~/actionutils.sh install_and_bootstrap_microceph
+
+      - name: API Testing
+        run: |
+          ~/actionutils.sh install_hurl
+          ~/actionutils.sh prepare_disk_api_hurl_fixtures
+          ~/actionutils.sh hurl tests/hurl/services-mon.hurl
+          ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
+          ~/actionutils.sh hurl tests/hurl/disks-list.hurl
+          ~/actionutils.sh hurl tests/hurl/disks-post-dryrun.hurl
+          ~/actionutils.sh hurl tests/hurl/disks-delete.hurl
+
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          ~/actionutils.sh dump_microceph_debug
+
   static-checks:
     name: Run static checks
     runs-on: ubuntu-24.04
@@ -336,16 +376,6 @@ jobs:
           ~/actionutils.sh install_and_bootstrap_microceph "${MON_IP}"
           cat /var/snap/microceph/current/conf/ceph.conf
           fgrep -q "[${MON_IP}]" /var/snap/microceph/current/conf/ceph.conf
-
-      - name: API Testing
-        run: |
-          ~/actionutils.sh install_hurl
-          ~/actionutils.sh prepare_disk_api_hurl_fixtures
-          ~/actionutils.sh hurl tests/hurl/services-mon.hurl
-          ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
-          ~/actionutils.sh hurl tests/hurl/disks-list.hurl
-          ~/actionutils.sh hurl tests/hurl/disks-post-dryrun.hurl
-          ~/actionutils.sh hurl tests/hurl/disks-delete.hurl
 
       - name: Print logs for failure
         if: failure()
