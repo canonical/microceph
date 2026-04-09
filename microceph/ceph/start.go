@@ -170,10 +170,12 @@ func PostRefresh() error {
 // services can be re-enabled successfully.
 func migrateStaleRunDir() {
 	pathConsts := constants.GetPathConst()
-	if err := fixRadosGWRunDir(filepath.Join(pathConsts.ConfPath, "radosgw.conf"), pathConsts.RunPath); err != nil {
+	err := fixRadosGWRunDir(filepath.Join(pathConsts.ConfPath, "radosgw.conf"), pathConsts.RunPath)
+	if err != nil {
 		logger.Warnf("migration: failed to update run dir in radosgw.conf: %v", err)
 	}
-	if err := fixGaneshaRunDir(filepath.Join(pathConsts.ConfPath, "ganesha", "ganesha.conf"), pathConsts.RunPath); err != nil {
+	err = fixGaneshaRunDir(filepath.Join(pathConsts.ConfPath, "ganesha", "ganesha.conf"), pathConsts.RunPath)
+	if err != nil {
 		logger.Warnf("migration: failed to update run dir in ganesha.conf: %v", err)
 	}
 }
@@ -235,10 +237,12 @@ func fixConfigLine(confFile string, fn func(string) (string, bool)) error {
 	}
 
 	tmpFile := confFile + ".tmp"
-	if err := os.WriteFile(tmpFile, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+	err = os.WriteFile(tmpFile, []byte(strings.Join(lines, "\n")), constants.PermissionUserRwWorldRAccess)
+	if err != nil {
 		return fmt.Errorf("failed to write %s: %w", tmpFile, err)
 	}
-	if err := os.Rename(tmpFile, confFile); err != nil {
+	err = os.Rename(tmpFile, confFile)
+	if err != nil {
 		os.Remove(tmpFile)
 		return fmt.Errorf("failed to replace %s: %w", confFile, err)
 	}
