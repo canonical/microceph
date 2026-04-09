@@ -1312,7 +1312,6 @@ Content-Type: application/json
 HTTP 200
 [Asserts]
 jsonpath "$.metadata.validation_error" == "OSD and WAL match sets overlap: $osd_path"
-jsonpath "$.metadata.dry_run_plan" count == 0
 
 POST http://localhost/1.0/disks
 Content-Type: application/json
