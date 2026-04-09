@@ -1490,14 +1490,24 @@ function nodeexec() {
     local run="${2?missing}"
     shift 2
     set -x
-    lxc exec $node -- sh -c "/mnt/actionutils.sh $run $@"
+
+    if [[ $# -gt 0 ]]; then
+        lxc exec "$node" -- /mnt/actionutils.sh "$run" "$@"
+    else
+        lxc exec "$node" -- sh -c "/mnt/actionutils.sh $run"
+    fi
 }
 
 function headexec() {
     local run="${1?missing}"
     shift
     set -x
-    lxc exec node-wrk0 -- sh -c "/mnt/actionutils.sh $run $@"
+
+    if [[ $# -gt 0 ]]; then
+        lxc exec node-wrk0 -- /mnt/actionutils.sh "$run" "$@"
+    else
+        lxc exec node-wrk0 -- sh -c "/mnt/actionutils.sh $run"
+    fi
 }
 
 function bombard_rgw_configs() {
