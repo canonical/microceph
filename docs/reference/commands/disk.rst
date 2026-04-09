@@ -134,7 +134,7 @@ paths, the planned partition numbers and sizes, and two additional columns:
 
 When ``--dry-run --json`` is used, MicroCeph prints the underlying
 ``DiskAddResponse`` document directly instead of a human-formatted table. This
-machine-readable output is intended for shell automation and behavior tests.
+machine-readable output is intended for shell automation and behaviour tests.
 The JSON payload keeps the same fields used by the API under ``metadata``:
 ``validation_error``, ``warnings``, ``dry_run_devices``, and ``dry_run_plan``.
 Each ``dry_run_plan`` entry contains the selected ``osd_path`` and optional
