@@ -17,6 +17,7 @@ MEM="${MEM:-4GiB}"
 STORAGE_POOL="${STORAGE_POOL:-default}"
 SNAP_PATH="${SNAP_PATH:-}"  # Path to local snap file, empty means use store
 SNAP_CHANNEL="${SNAP_CHANNEL:-latest/edge}"
+LXD_VM_IMAGE="${LXD_VM_IMAGE:-}"
 NO_CLEANUP="${NO_CLEANUP:-0}"
 REQUESTED_FUNCTION="${REQUESTED_FUNCTION:-}"
 
@@ -38,15 +39,288 @@ DB2_SIZE="${DB2_SIZE:-31GiB}"
 RO1_NAME="${RO1_NAME:-${VM_NAME}-ro1}"
 RO1_SIZE="${RO1_SIZE:-9GiB}"
 
+# Test/result tracking.
+DSL_RESULT_FILE="${DSL_RESULT_FILE:-}"
+DSL_SUPPRESS_TEST_SUMMARY="${DSL_SUPPRESS_TEST_SUMMARY:-0}"
+CURRENT_SUITE_NAME=""
+CURRENT_TEST_KEY=""
+CURRENT_TEST_LABEL=""
+CURRENT_TEST_SKIP_REASON=""
+declare -a DSL_PLANNED_TEST_KEYS=()
+declare -a DSL_PLANNED_TEST_LABELS=()
+declare -a DSL_RESULT_KEYS=()
+declare -a DSL_RESULT_LABELS=()
+declare -a DSL_RESULT_STATUSES=()
+declare -a DSL_RESULT_DETAILS=()
+
 function log() {
     echo "[dsl-functest] $*"
 }
 
+function dsl_reset_test_tracking() {
+    CURRENT_SUITE_NAME=""
+    CURRENT_TEST_KEY=""
+    CURRENT_TEST_LABEL=""
+    CURRENT_TEST_SKIP_REASON=""
+    DSL_PLANNED_TEST_KEYS=()
+    DSL_PLANNED_TEST_LABELS=()
+    DSL_RESULT_KEYS=()
+    DSL_RESULT_LABELS=()
+    DSL_RESULT_STATUSES=()
+    DSL_RESULT_DETAILS=()
+}
+
+function dsl_set_suite_context() {
+    CURRENT_SUITE_NAME="$1"
+}
+
+function dsl_plan_test() {
+    local key="$1"
+    local label="${2:-$1}"
+
+    DSL_PLANNED_TEST_KEYS+=("$key")
+    DSL_PLANNED_TEST_LABELS+=("$label")
+}
+
+function dsl_sanitize_detail() {
+    local detail="${1:-}"
+    detail="${detail//$'\n'/ }"
+    detail="${detail//$'\t'/ }"
+    printf '%s' "$detail"
+}
+
+function dsl_result_index_for_key() {
+    local key="$1"
+    local i
+
+    for i in "${!DSL_RESULT_KEYS[@]}"; do
+        if [[ "${DSL_RESULT_KEYS[$i]}" == "$key" ]]; then
+            echo "$i"
+            return 0
+        fi
+    done
+
+    echo "-1"
+}
+
+function dsl_add_test_result() {
+    local key="$1"
+    local label="$2"
+    local status="$3"
+    local detail
+    local index
+
+    detail=$(dsl_sanitize_detail "${4:-}")
+    index=$(dsl_result_index_for_key "$key")
+
+    if [[ "$index" != "-1" ]]; then
+        DSL_RESULT_LABELS[$index]="$label"
+        DSL_RESULT_STATUSES[$index]="$status"
+        DSL_RESULT_DETAILS[$index]="$detail"
+        return 0
+    fi
+
+    DSL_RESULT_KEYS+=("$key")
+    DSL_RESULT_LABELS+=("$label")
+    DSL_RESULT_STATUSES+=("$status")
+    DSL_RESULT_DETAILS+=("$detail")
+}
+
+function dsl_emit_test_result() {
+    local status="$1"
+    local label="$2"
+    local detail
+
+    detail=$(dsl_sanitize_detail "${3:-}")
+
+    if [[ -n "$detail" ]]; then
+        log "RESULT: $status $label -- $detail"
+    else
+        log "RESULT: $status $label"
+    fi
+
+    if [[ -n "$DSL_RESULT_FILE" && -n "$CURRENT_TEST_KEY" ]]; then
+        printf '%s\t%s\t%s\t%s\n' "$status" "$CURRENT_TEST_KEY" "$label" "$detail" >> "$DSL_RESULT_FILE"
+    fi
+}
+
+function dsl_record_test_result() {
+    local key="$1"
+    local label="$2"
+    local status="$3"
+    local detail="${4:-}"
+
+    dsl_add_test_result "$key" "$label" "$status" "$detail"
+    dsl_emit_test_result "$status" "$label" "$detail"
+
+    if [[ "$CURRENT_TEST_KEY" == "$key" ]]; then
+        CURRENT_TEST_KEY=""
+        CURRENT_TEST_LABEL=""
+        CURRENT_TEST_SKIP_REASON=""
+    fi
+}
+
+function dsl_start_test() {
+    CURRENT_TEST_KEY="$1"
+    CURRENT_TEST_LABEL="${2:-$1}"
+    CURRENT_TEST_SKIP_REASON=""
+    log "=== BEGIN TEST: $CURRENT_TEST_LABEL ==="
+}
+
+function dsl_note_skip() {
+    if [[ -n "$CURRENT_TEST_KEY" ]]; then
+        CURRENT_TEST_SKIP_REASON=$(dsl_sanitize_detail "$1")
+    fi
+}
+
+function dsl_finish_current_test_success() {
+    local status="PASS"
+    local detail=""
+
+    if [[ -n "$CURRENT_TEST_SKIP_REASON" ]]; then
+        status="SKIP"
+        detail="$CURRENT_TEST_SKIP_REASON"
+    fi
+
+    if [[ -n "$CURRENT_TEST_KEY" ]]; then
+        dsl_record_test_result "$CURRENT_TEST_KEY" "$CURRENT_TEST_LABEL" "$status" "$detail"
+    fi
+}
+
+function dsl_record_current_failure() {
+    local detail
+    detail=$(dsl_sanitize_detail "${1:-unknown failure}")
+
+    if [[ -n "$CURRENT_TEST_KEY" ]]; then
+        dsl_record_test_result "$CURRENT_TEST_KEY" "$CURRENT_TEST_LABEL" "FAIL" "$detail"
+        return 0
+    fi
+
+    dsl_add_test_result "__harness__" "harness" "FAIL" "$detail"
+    if [[ -n "$detail" ]]; then
+        log "RESULT: FAIL harness -- $detail"
+    else
+        log "RESULT: FAIL harness"
+    fi
+}
+
+function dsl_count_results_by_status() {
+    local wanted_status="$1"
+    local count=0
+    local i
+
+    for i in "${!DSL_RESULT_STATUSES[@]}"; do
+        if [[ "${DSL_RESULT_STATUSES[$i]}" == "$wanted_status" ]]; then
+            count=$((count + 1))
+        fi
+    done
+
+    echo "$count"
+}
+
+function dsl_key_recorded() {
+    local key="$1"
+    local i
+
+    for i in "${!DSL_RESULT_KEYS[@]}"; do
+        if [[ "${DSL_RESULT_KEYS[$i]}" == "$key" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+function dsl_count_not_run_tests() {
+    local count=0
+    local i
+
+    for i in "${!DSL_PLANNED_TEST_KEYS[@]}"; do
+        if ! dsl_key_recorded "${DSL_PLANNED_TEST_KEYS[$i]}"; then
+            count=$((count + 1))
+        fi
+    done
+
+    echo "$count"
+}
+
+function dsl_print_results_group() {
+    local status="$1"
+    local i
+    local printed=0
+
+    for i in "${!DSL_RESULT_STATUSES[@]}"; do
+        if [[ "${DSL_RESULT_STATUSES[$i]}" != "$status" ]]; then
+            continue
+        fi
+
+        if [[ $printed -eq 0 ]]; then
+            log "$status:"
+            printed=1
+        fi
+
+        if [[ -n "${DSL_RESULT_DETAILS[$i]}" ]]; then
+            log "  - ${DSL_RESULT_LABELS[$i]} -- ${DSL_RESULT_DETAILS[$i]}"
+        else
+            log "  - ${DSL_RESULT_LABELS[$i]}"
+        fi
+    done
+}
+
+function dsl_print_not_run_group() {
+    local i
+    local printed=0
+
+    for i in "${!DSL_PLANNED_TEST_KEYS[@]}"; do
+        if dsl_key_recorded "${DSL_PLANNED_TEST_KEYS[$i]}"; then
+            continue
+        fi
+
+        if [[ $printed -eq 0 ]]; then
+            log "NOT RUN:"
+            printed=1
+        fi
+
+        log "  - ${DSL_PLANNED_TEST_LABELS[$i]}"
+    done
+}
+
+function dsl_print_test_summary() {
+    local pass_count skip_count fail_count not_run_count
+
+    pass_count=$(dsl_count_results_by_status "PASS")
+    skip_count=$(dsl_count_results_by_status "SKIP")
+    fail_count=$(dsl_count_results_by_status "FAIL")
+    not_run_count=$(dsl_count_not_run_tests)
+
+    log "=== Test Summary ==="
+    if [[ -n "$CURRENT_SUITE_NAME" ]]; then
+        log "Context: $CURRENT_SUITE_NAME"
+    fi
+    log "Passed: $pass_count  Skipped: $skip_count  Failed: $fail_count  Not run: $not_run_count"
+
+    dsl_print_results_group "PASS"
+    dsl_print_results_group "SKIP"
+    dsl_print_results_group "FAIL"
+    dsl_print_not_run_group
+}
+
+function dsl_run_test() {
+    local test_function="$1"
+    local test_label="${2:-$1}"
+
+    dsl_start_test "$test_function" "$test_label"
+    "$test_function"
+    dsl_finish_current_test_success
+}
+
 function skip_test() {
+    dsl_note_skip "$*"
     log "SKIP: $*"
 }
 
 function fail() {
+    dsl_record_current_failure "$*"
     echo "[dsl-functest] FAIL: $*" >&2
     exit 1
 }
@@ -220,19 +494,22 @@ function cleanup_dsl_test() {
 
     if [[ "$NO_CLEANUP" == "1" ]]; then
         log "NO_CLEANUP=1, keeping VM and storage volumes"
-        exit $exit_code
+    else
+        log "Cleaning up DSL test resources..."
+
+        lxc stop "$VM_NAME" --force 2>/dev/null || true
+        lxc delete "$VM_NAME" --force 2>/dev/null || true
+
+        local volume
+        while read -r volume; do
+            [[ -n "$volume" ]] || continue
+            lxc storage volume delete "$STORAGE_POOL" "$volume" </dev/null 2>/dev/null || true
+        done < <(dsl_volume_names)
     fi
 
-    log "Cleaning up DSL test resources..."
-
-    lxc stop "$VM_NAME" --force 2>/dev/null || true
-    lxc delete "$VM_NAME" --force 2>/dev/null || true
-
-    local volume
-    while read -r volume; do
-        [[ -n "$volume" ]] || continue
-        lxc storage volume delete "$STORAGE_POOL" "$volume" </dev/null 2>/dev/null || true
-    done < <(dsl_volume_names)
+    if [[ "$DSL_SUPPRESS_TEST_SUMMARY" != "1" ]]; then
+        dsl_print_test_summary
+    fi
 
     if [[ $exit_code -eq 0 ]]; then
         log "Test completed successfully"
@@ -315,10 +592,67 @@ function wait_for_vm_disk_count_ge() {
     wait_for_vm_command "at least ${expected} visible block disks in the VM" "$timeout" vm_shell "[ \$(lsblk -dn -o TYPE | grep -c '^disk$') -ge ${expected} ]"
 }
 
+function microceph_ready() {
+    vm_shell "microceph status >/dev/null 2>&1 && microceph disk list --json >/dev/null 2>&1"
+}
+
 function wait_for_microceph_ready() {
     local timeout="${1:-180}"
 
-    wait_for_vm_command "MicroCeph daemon readiness" "$timeout" vm_shell "microceph status >/dev/null 2>&1 && microceph disk list --json >/dev/null 2>&1"
+    wait_for_vm_command "MicroCeph daemon readiness" "$timeout" microceph_ready
+}
+
+function wait_for_microceph_ready_nonfatal() {
+    local timeout="${1:-180}"
+    local elapsed=0
+
+    while [[ $elapsed -lt $timeout ]]; do
+        if microceph_ready >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+
+    return 1
+}
+
+function bootstrap_microceph_cluster_in_vm() {
+    local attempt=1
+    local max_attempts=3
+    local status output
+
+    while (( attempt <= max_attempts )); do
+        log "Bootstrapping MicroCeph cluster (attempt ${attempt}/${max_attempts})..."
+        log "Running in VM: microceph cluster bootstrap"
+
+        run_and_capture status output vm_exec microceph cluster bootstrap
+        echo "$output" >&2
+
+        if [[ "$status" == "0" ]]; then
+            wait_for_microceph_ready 180
+            return 0
+        fi
+
+        if grep -Eq 'Database is online|cluster already exists|already bootstrapped' <<<"$output"; then
+            log "Bootstrap reported an already-initialized cluster; continuing"
+            wait_for_microceph_ready 180
+            return 0
+        fi
+
+        if wait_for_microceph_ready_nonfatal 90; then
+            log "Bootstrap command exited with status $status, but the cluster became ready; continuing"
+            return 0
+        fi
+
+        if (( attempt >= max_attempts )); then
+            fail "microceph cluster bootstrap (expected exit 0, got $status)"
+        fi
+
+        log "Bootstrap attempt ${attempt} exited with status $status; retrying after 10s..."
+        sleep 10
+        attempt=$((attempt + 1))
+    done
 }
 
 # Run command in VM and check exit code
@@ -707,6 +1041,57 @@ function disk_add_dry_run_json() {
     vm_exec_expect_success "dry-run json command should succeed" microceph disk add "$@" --dry-run --json
 }
 
+function resolve_lxd_vm_image() {
+    if [[ -n "$LXD_VM_IMAGE" ]]; then
+        echo "$LXD_VM_IMAGE"
+        return 0
+    fi
+
+    local fingerprint
+    fingerprint=$(lxc image list --format csv -c fptd | awk -F, '$2 == "no" && $3 == "VIRTUAL-MACHINE" && $4 ~ /^ubuntu 24\.04 LTS amd64/ { print $1; exit }')
+    if [[ -n "$fingerprint" ]]; then
+        echo "$fingerprint"
+        return 0
+    fi
+
+    echo "ubuntu:24.04"
+}
+
+function launch_dsl_vm() {
+    local attempt=1
+    local max_attempts=3
+    local status output image
+    image=$(resolve_lxd_vm_image)
+
+    log "Using LXD VM image '$image'"
+
+    while (( attempt <= max_attempts )); do
+        log "Launching VM '$VM_NAME' (attempt ${attempt}/${max_attempts})..."
+
+        run_and_capture status output \
+            lxc --quiet launch "$image" "$VM_NAME" \
+                -p "$PROFILE" \
+                -c limits.cpu="$CORES" \
+                -c limits.memory="$MEM" \
+                --vm
+        echo "$output" >&2
+
+        if [[ "$status" == "0" ]]; then
+            return 0
+        fi
+
+        lxc delete "$VM_NAME" --force 2>/dev/null || true
+
+        if (( attempt >= max_attempts )); then
+            fail "failed to launch VM '$VM_NAME' after ${attempt} attempts"
+        fi
+
+        log "Launch attempt ${attempt} failed (status $status); retrying after 10s..."
+        sleep 10
+        attempt=$((attempt + 1))
+    done
+}
+
 # Setup DSL test environment
 function setup_dsl_test() {
     log "=== MicroCeph DSL Functional Test ==="
@@ -721,13 +1106,7 @@ function setup_dsl_test() {
     fi
 
     create_dsl_volumes
-
-    log "Launching VM '$VM_NAME'..."
-    lxc --quiet launch ubuntu:24.04 "$VM_NAME" \
-        -p "$PROFILE" \
-        -c limits.cpu="$CORES" \
-        -c limits.memory="$MEM" \
-        --vm
+    launch_dsl_vm
 
     attach_dsl_volumes
     attach_readonly_volume
@@ -794,9 +1173,7 @@ function install_microceph_in_vm() {
         vm_exec snap install microceph --channel="$SNAP_CHANNEL"
     fi
 
-    log "Bootstrapping MicroCeph cluster..."
-    vm_exec_check "microceph cluster bootstrap" microceph cluster bootstrap
-    wait_for_microceph_ready 180
+    bootstrap_microceph_cluster_in_vm
 }
 
 function get_test_disk_type() {
@@ -1892,16 +2269,22 @@ function run_requested_single_test() {
     if [[ -z "$REQUESTED_FUNCTION" ]]; then
         fail "REQUESTED_FUNCTION is not set"
     fi
-    "$REQUESTED_FUNCTION"
+    dsl_run_test "$REQUESTED_FUNCTION"
 }
 
 function run_dsl_single_test() {
-    trap cleanup_dsl_test EXIT
+    (
+        trap cleanup_dsl_test EXIT
 
-    setup_dsl_test
-    install_microceph_in_vm
-    run_requested_single_test
-    show_dsl_final_status
+        dsl_reset_test_tracking
+        dsl_set_suite_context "single test: $REQUESTED_FUNCTION"
+        dsl_plan_test "$REQUESTED_FUNCTION"
+
+        setup_dsl_test
+        install_microceph_in_vm
+        run_requested_single_test
+        show_dsl_final_status
+    )
 }
 
 function run_dsl_shared_suite() {
@@ -1909,32 +2292,41 @@ function run_dsl_shared_suite() {
     local title
     title=$(dsl_suite_title "$suite_name")
 
-    trap cleanup_dsl_test EXIT
+    (
+        trap cleanup_dsl_test EXIT
 
-    setup_dsl_test
-    install_microceph_in_vm
+        dsl_reset_test_tracking
+        dsl_set_suite_context "suite: $suite_name"
+        while read -r test_function; do
+            [[ -n "$test_function" ]] || continue
+            dsl_plan_test "$test_function"
+        done < <(dsl_suite_shared_tests "$suite_name")
 
-    log "=== Running $title ==="
-    while read -r test_function; do
-        [[ -n "$test_function" ]] || continue
-        "$test_function"
-    done < <(dsl_suite_shared_tests "$suite_name")
+        setup_dsl_test
+        install_microceph_in_vm
 
-    show_dsl_final_status
+        log "=== Running $title ==="
+        while read -r test_function; do
+            [[ -n "$test_function" ]] || continue
+            dsl_run_test "$test_function"
+        done < <(dsl_suite_shared_tests "$suite_name")
 
-    log "=== Test Summary ==="
-    log "Suite '$suite_name' completed"
+        show_dsl_final_status
+    )
 }
 
 function run_dsl_case() {
     local case_name="$1"
     local test_function="$2"
-    local script_path
+    local result_file="${3:-}"
+    local script_path case_vm_name
     script_path=$(readlink -f "${BASH_SOURCE[0]}")
+    case_vm_name="${VM_NAME}-${case_name}x"
 
     log "=== Running isolated case '$case_name' ($test_function) ==="
+    log "Isolated case VM name: $case_vm_name"
 
-    local cmd=("$script_path" "--vm-name" "${VM_NAME}-${case_name}" "--storage-pool" "$STORAGE_POOL")
+    local cmd=("$script_path" "--vm-name" "$case_vm_name" "--storage-pool" "$STORAGE_POOL")
     if [[ -n "$SNAP_PATH" ]]; then
         cmd+=("--snap-path" "$SNAP_PATH")
     else
@@ -1944,19 +2336,75 @@ function run_dsl_case() {
         cmd+=("--no-cleanup")
     fi
     cmd+=("$test_function")
-    "${cmd[@]}" </dev/null
+
+    if [[ -n "$result_file" ]]; then
+        env DSL_RESULT_FILE="$result_file" DSL_SUPPRESS_TEST_SUMMARY=1 "${cmd[@]}" </dev/null
+    else
+        "${cmd[@]}" </dev/null
+    fi
 }
 
 function run_dsl_isolated_suite() {
     local suite_name="$1"
     local title
+    local failures=0
     title=$(dsl_suite_title "$suite_name")
+
+    dsl_reset_test_tracking
+    dsl_set_suite_context "suite: $suite_name"
+    while read -r case_name test_function; do
+        [[ -n "$case_name" ]] || continue
+        dsl_plan_test "$case_name" "$case_name: $test_function"
+    done < <(dsl_suite_isolated_cases "$suite_name")
 
     log "=== Running $title ==="
     while read -r case_name test_function; do
+        local status output result_file child_status child_key child_label child_detail summary_label
+
         [[ -n "$case_name" ]] || continue
-        run_dsl_case "$case_name" "$test_function"
+        summary_label="$case_name: $test_function"
+        result_file=$(mktemp)
+
+        run_and_capture status output run_dsl_case "$case_name" "$test_function" "$result_file"
+        if [[ -n "$output" ]]; then
+            echo "$output"
+        fi
+
+        child_status=""
+        child_key="$case_name"
+        child_label="$summary_label"
+        child_detail=""
+        if [[ -s "$result_file" ]]; then
+            IFS=$'\t' read -r child_status child_key child_label child_detail < "$result_file"
+        fi
+        rm -f "$result_file"
+
+        if [[ -z "$child_status" ]]; then
+            if [[ "$status" == "0" ]]; then
+                child_status="PASS"
+            else
+                child_status="FAIL"
+                child_detail="case exited with status $status before reporting a result"
+            fi
+        fi
+
+        dsl_add_test_result "$case_name" "$summary_label" "$child_status" "$child_detail"
+        if [[ -n "$child_detail" ]]; then
+            log "CASE RESULT: $child_status $summary_label -- $child_detail"
+        else
+            log "CASE RESULT: $child_status $summary_label"
+        fi
+
+        if [[ "$child_status" == "FAIL" || "$status" != "0" ]]; then
+            failures=$((failures + 1))
+        fi
     done < <(dsl_suite_isolated_cases "$suite_name")
+
+    dsl_print_test_summary
+
+    if (( failures > 0 )); then
+        return 1
+    fi
 }
 
 function run_dsl_suite_by_name() {
@@ -2080,6 +2528,9 @@ Options:
   --storage-pool POOL  LXD storage pool to use (default: default)
   --no-cleanup         Keep VM and volumes on exit
   --help               Show this help message
+
+Environment overrides:
+  LXD_VM_IMAGE         Local image fingerprint/alias to use for VM launch
 
 Primary suites:
   run_dsl_baseline_tests           Run the baseline DSL functest suite
