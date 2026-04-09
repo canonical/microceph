@@ -1314,15 +1314,6 @@ func buildPathSet(disks []api.ResourcesStorageDisk) map[string]struct{} {
 	return paths
 }
 
-func pathSetOverlaps(a map[string]struct{}, b map[string]struct{}) bool {
-	for path := range a {
-		if _, ok := b[path]; ok {
-			return true
-		}
-	}
-	return false
-}
-
 func pathSetToSlice(m map[string]struct{}) []string {
 	out := make([]string, 0, len(m))
 	for path := range m {
@@ -1557,76 +1548,12 @@ func nextPartitionNumber(disk api.ResourcesStorageDisk) uint64 {
 	return maxPart + 1
 }
 
-func planAuxiliaryPartitions(osdPaths []string, carriers []api.ResourcesStorageDisk, sizeBytes uint64, kind string) ([]*types.DryRunPartitionPlan, error) {
-	if len(osdPaths) == 0 || len(carriers) == 0 {
-		return make([]*types.DryRunPartitionPlan, len(osdPaths)), nil
-	}
-
-	states := make([]plannedCarrierState, len(carriers))
-	for i, disk := range carriers {
-		used := diskUsedBytes(disk)
-		remaining := uint64(0)
-		if disk.Size > used {
-			remaining = disk.Size - used
-		}
-		states[i] = plannedCarrierState{
-			Path:          dsl.GetDevicePath(disk),
-			Disk:          disk,
-			PartitionNo:   nextPartitionNumber(disk),
-			PartitionCnt:  len(disk.Partitions),
-			RemainingSize: remaining,
-		}
-	}
-
-	out := make([]*types.DryRunPartitionPlan, len(osdPaths))
-	for i := range osdPaths {
-		choice := -1
-		for idx := range states {
-			if states[idx].RemainingSize < sizeBytes {
-				continue
-			}
-			if choice == -1 || states[idx].PartitionCnt < states[choice].PartitionCnt ||
-				(states[idx].PartitionCnt == states[choice].PartitionCnt && states[idx].Path < states[choice].Path) {
-				choice = idx
-			}
-		}
-		if choice == -1 {
-			return nil, fmt.Errorf("insufficient capacity for %s partitions of size %s", strings.ToUpper(kind), formatBytesIEC(int64(sizeBytes)))
-		}
-		out[i] = &types.DryRunPartitionPlan{
-			Kind:       kind,
-			ParentPath: states[choice].Path,
-			Partition:  states[choice].PartitionNo,
-			Size:       formatBytesIEC(int64(sizeBytes)),
-		}
-		states[choice].RemainingSize -= sizeBytes
-		states[choice].PartitionCnt++
-		states[choice].PartitionNo++
-	}
-
-	return out, nil
-}
-
 func (m *OSDManager) buildDSLDryRunPlan(ctx context.Context, req types.DisksPost) types.DiskAddResponse {
 	plan, err := m.buildDSLProvisionPlan(ctx, req)
 	if err != nil {
 		return types.DiskAddResponse{ValidationError: err.Error()}
 	}
 	return dryRunResponseFromProvisionPlan(plan)
-}
-
-func buildDryRunDevices(matchedDisks []api.ResourcesStorageDisk) []types.DryRunDevice {
-	result := make([]types.DryRunDevice, len(matchedDisks))
-	for i, disk := range matchedDisks {
-		result[i] = types.DryRunDevice{
-			Path:   dsl.GetDevicePath(disk),
-			Model:  disk.Model,
-			Size:   formatBytesIEC(int64(disk.Size)),
-			Type:   disk.Type,
-			Vendor: extractVendor(disk.Model),
-		}
-	}
-	return result
 }
 
 // AddDisksWithDSL adds disks matching a DSL expression as OSDs.

@@ -95,7 +95,8 @@ func (s *StorageDeviceTestSuite) TestIsCephDeviceHaveDevice() {
 }
 
 func (s *StorageDeviceTestSuite) TestIsCephDeviceHaveEncryptedAuxDevice() {
-	os.Symlink(s.devicePath, filepath.Join(s.Tmp, "SNAP_COMMON", "data", "osd", "ceph-0", "unencrypted.wal"))
+	err := os.Symlink(s.devicePath, filepath.Join(s.Tmp, "SNAP_COMMON", "data", "osd", "ceph-0", "unencrypted.wal"))
+	s.NoError(err)
 	isCeph, err := IsCephDevice(s.devicePath)
 	s.NoError(err, "There should not be an error when checking a raw aux device tracked through unencrypted.wal")
 	s.True(isCeph, "The raw aux device should be identified as a Ceph device")
