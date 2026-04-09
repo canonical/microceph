@@ -280,6 +280,7 @@ parts:
       - python3-packaging
       - libatomic1
       - python3-ceph-common # used by microceph-orch
+      - python3-openssl # used by ceph-mgr-dashboard for SSL
 
     organize:
       sbin/: bin/
