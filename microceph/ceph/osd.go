@@ -969,12 +969,15 @@ func (m *OSDManager) suppressOSDAutostart(osd int64) (func() error, bool, error)
 	readyPath := osdReadyMarkerPath(osdDataPath)
 	suppressedPath := osdSuppressedReadyMarkerPath(osdDataPath)
 
-	if _, err := m.fs.Stat(readyPath); err != nil {
+	_, err := m.fs.Stat(readyPath)
+	if err != nil {
 		if os.IsNotExist(err) {
-			if _, suppressedErr := m.fs.Stat(suppressedPath); suppressedErr == nil {
+			_, suppressedErr := m.fs.Stat(suppressedPath)
+			if suppressedErr == nil {
 				logger.Infof("osd.%d autostart marker is already suppressed at %s", osd, suppressedPath)
 				return func() error { return m.restoreOSDAutostart(osd) }, true, nil
-			} else if !os.IsNotExist(suppressedErr) {
+			}
+			if !os.IsNotExist(suppressedErr) {
 				return nil, false, fmt.Errorf("failed to inspect suppressed autostart marker for osd.%d: %w", osd, suppressedErr)
 			}
 			return func() error { return nil }, false, nil
@@ -982,15 +985,18 @@ func (m *OSDManager) suppressOSDAutostart(osd int64) (func() error, bool, error)
 		return nil, false, fmt.Errorf("failed to inspect autostart marker for osd.%d: %w", osd, err)
 	}
 
-	if _, err := m.fs.Stat(suppressedPath); err == nil {
-		if removeErr := m.fs.Remove(suppressedPath); removeErr != nil {
+	_, err = m.fs.Stat(suppressedPath)
+	if err == nil {
+		removeErr := m.fs.Remove(suppressedPath)
+		if removeErr != nil {
 			return nil, false, fmt.Errorf("failed to clear stale suppressed autostart marker for osd.%d: %w", osd, removeErr)
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, false, fmt.Errorf("failed to inspect stale suppressed autostart marker for osd.%d: %w", osd, err)
 	}
 
-	if err := m.fs.Rename(readyPath, suppressedPath); err != nil {
+	err = m.fs.Rename(readyPath, suppressedPath)
+	if err != nil {
 		return nil, false, fmt.Errorf("failed to suppress autostart marker for osd.%d: %w", osd, err)
 	}
 
@@ -1003,20 +1009,24 @@ func (m *OSDManager) restoreOSDAutostart(osd int64) error {
 	readyPath := osdReadyMarkerPath(osdDataPath)
 	suppressedPath := osdSuppressedReadyMarkerPath(osdDataPath)
 
-	if _, err := m.fs.Stat(suppressedPath); err != nil {
+	_, err := m.fs.Stat(suppressedPath)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to inspect suppressed autostart marker for osd.%d: %w", osd, err)
 	}
 
-	if _, err := m.fs.Stat(readyPath); err == nil {
+	_, err = m.fs.Stat(readyPath)
+	if err == nil {
 		return nil
-	} else if !os.IsNotExist(err) {
+	}
+	if !os.IsNotExist(err) {
 		return fmt.Errorf("failed to inspect autostart marker for osd.%d: %w", osd, err)
 	}
 
-	if err := m.fs.Rename(suppressedPath, readyPath); err != nil {
+	err = m.fs.Rename(suppressedPath, readyPath)
+	if err != nil {
 		return fmt.Errorf("failed to restore autostart marker for osd.%d: %w", osd, err)
 	}
 
@@ -1272,8 +1282,9 @@ func shortHostname() string {
 	if err != nil {
 		return ""
 	}
-	if idx := strings.Index(hostname, "."); idx > 0 {
-		return hostname[:idx]
+	dotIdx := strings.Index(hostname, ".")
+	if dotIdx > 0 {
+		return hostname[:dotIdx]
 	}
 	return hostname
 }
@@ -1283,7 +1294,8 @@ func validateDSLExpression(input string) (dsl.Expression, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid DSL expression: %w", err)
 	}
-	if err := dsl.Validate(expr); err != nil {
+	err = dsl.Validate(expr)
+	if err != nil {
 		return nil, fmt.Errorf("DSL validation error: %w", err)
 	}
 	return expr, nil
@@ -1468,7 +1480,8 @@ func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr str
 			logger.Debugf("Skipping auxiliary carrier %s: device is read-only", path)
 			continue
 		}
-		if _, ok := configuredPathSet[path]; ok {
+		_, ok := configuredPathSet[path]
+		if ok {
 			logger.Debugf("Skipping auxiliary carrier %s: device already backs a configured OSD on this host", path)
 			continue
 		}
@@ -1521,7 +1534,8 @@ func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr str
 	}
 
 	logger.Infof("Auxiliary DSL expression %q produced %d eligible carrier(s): %s", dslExpr, len(filteredMatches), strings.Join(pathSetToSlice(buildPathSet(filteredMatches)), ", "))
-	if resetPaths := trueBoolMapKeys(resetBeforeUse); len(resetPaths) > 0 {
+	resetPaths := trueBoolMapKeys(resetBeforeUse)
+	if len(resetPaths) > 0 {
 		logger.Infof("Auxiliary DSL expression %q will reset carriers before use: %s", dslExpr, strings.Join(resetPaths, ", "))
 	}
 	return filteredMatches, resetBeforeUse, nil
@@ -1986,13 +2000,15 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 		if !autostartSuppressed || !restoreAutostartOnError || retErr == nil {
 			return
 		}
-		if err := restoreAutostart(); err != nil {
+		err := restoreAutostart()
+		if err != nil {
 			logger.Warnf("Failed to restore autostart marker for osd.%d after removal failure: %v", osd, err)
 		}
 	}()
 
 	// stop the OSD process before touching local storage, even if the OSD is not yet visible in Ceph.
-	if err := m.killOSD(osd); err != nil {
+	err = m.killOSD(osd)
+	if err != nil {
 		logger.Warnf("Failed to stop local osd.%d process prior to storage cleanup: %v", osd, err)
 	}
 	if !isPresent {

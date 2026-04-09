@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -265,7 +265,8 @@ func dryRunPartitionAction(plan *types.DryRunPartitionPlan) string {
 
 func (c *cmdDiskAdd) printDryRunOutput(response types.DiskAddResponse) error {
 	if c.flagJSON {
-		if err := printDryRunJSON(response); err != nil {
+		err := printDryRunJSON(response)
+		if err != nil {
 			return err
 		}
 		if response.ValidationError != "" {

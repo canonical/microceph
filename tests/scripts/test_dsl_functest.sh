@@ -1176,6 +1176,29 @@ function install_microceph_in_vm() {
     bootstrap_microceph_cluster_in_vm
 }
 
+function install_hurl_in_vm() {
+    log "Installing hurl in VM..."
+
+    vm_shell '
+        if command -v hurl >/dev/null 2>&1; then
+            exit 0
+        fi
+
+        if ! command -v curl >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y curl
+        fi
+
+        VERSION=5.0.1
+        DEB="/tmp/hurl_${VERSION}_amd64.deb"
+        URL="https://github.com/Orange-OpenSource/hurl/releases/download/${VERSION}/hurl_${VERSION}_amd64.deb"
+
+        curl --location --silent --show-error --output "$DEB" "$URL"
+        sudo apt-get update -qq
+        sudo apt-get install -y "$DEB"
+    '
+}
+
 function get_test_disk_type() {
     local dtype
     dtype=$(json_first_available_type)
@@ -1183,6 +1206,215 @@ function get_test_disk_type() {
         fail "Could not determine test disk type from available disks"
     fi
     echo "$dtype"
+}
+
+function test_dsl_api_disk_hurl() {
+    local osd_path wal_path db_path
+    local osd_devnode wal_devnode db_devnode
+    local hurl_file
+    local missing_devnode="/dev/nonexistent-dsl-test"
+
+    osd_path=$(get_available_disk_path_by_size "10GiB")
+    wal_path=$(get_available_disk_path_by_size "20GiB")
+    db_path=$(get_available_disk_path_by_size "30GiB")
+
+    osd_devnode=$(get_symlink_target "$osd_path")
+    wal_devnode=$(get_symlink_target "$wal_path")
+    db_devnode=$(get_symlink_target "$db_path")
+
+    [[ -n "$osd_devnode" ]] || fail "Could not resolve kernel devnode for OSD path '$osd_path'"
+    [[ -n "$wal_devnode" ]] || fail "Could not resolve kernel devnode for WAL path '$wal_path'"
+    [[ -n "$db_devnode" ]] || fail "Could not resolve kernel devnode for DB path '$db_path'"
+
+    install_hurl_in_vm
+
+    hurl_file=$(mktemp)
+    cat > "$hurl_file" <<EOF
+GET http://localhost/1.0/disks
+HTTP 200
+[Asserts]
+jsonpath "$.metadata" count == 0
+
+POST http://localhost/1.0/disks
+Content-Type: application/json
+{
+  "osd_match": "eq(@devnode, '$osd_devnode')",
+  "dry_run": true
+}
+HTTP 200
+[Asserts]
+jsonpath "$.metadata.validation_error" == ""
+jsonpath "$.metadata.dry_run_devices" count == 1
+jsonpath "$.metadata.dry_run_devices[0].path" == "$osd_path"
+
+POST http://localhost/1.0/disks
+Content-Type: application/json
+{
+  "osd_match": "eq(@devnode, '$osd_devnode')",
+  "wal_match": "eq(@devnode, '$wal_devnode')",
+  "wal_size": "1GiB",
+  "dry_run": true
+}
+HTTP 200
+[Asserts]
+jsonpath "$.metadata.validation_error" == ""
+jsonpath "$.metadata.dry_run_plan" count == 1
+jsonpath "$.metadata.dry_run_plan[0].osd_path" == "$osd_path"
+jsonpath "$.metadata.dry_run_plan[0].wal.kind" == "wal"
+jsonpath "$.metadata.dry_run_plan[0].wal.parent_path" == "$wal_path"
+jsonpath "$.metadata.dry_run_plan[0].wal.partition" == 1
+jsonpath "$.metadata.dry_run_plan[0].wal.size" == "1.00 GiB"
+
+POST http://localhost/1.0/disks
+Content-Type: application/json
+{
+  "osd_match": "eq(@devnode, '$osd_devnode')",
+  "db_match": "eq(@devnode, '$db_devnode')",
+  "db_size": "2GiB",
+  "dry_run": true
+}
+HTTP 200
+[Asserts]
+jsonpath "$.metadata.validation_error" == ""
+jsonpath "$.metadata.dry_run_plan" count == 1
+jsonpath "$.metadata.dry_run_plan[0].osd_path" == "$osd_path"
+jsonpath "$.metadata.dry_run_plan[0].db.kind" == "db"
+jsonpath "$.metadata.dry_run_plan[0].db.parent_path" == "$db_path"
+jsonpath "$.metadata.dry_run_plan[0].db.partition" == 1
+jsonpath "$.metadata.dry_run_plan[0].db.size" == "2.00 GiB"
+
+POST http://localhost/1.0/disks
+Content-Type: application/json
+{
+  "osd_match": "eq(@devnode, '$osd_devnode')",
+  "wal_match": "eq(@devnode, '$wal_devnode')",
+  "wal_size": "1GiB",
+  "db_match": "eq(@devnode, '$db_devnode')",
+  "db_size": "2GiB",
+  "dry_run": true
+}
+HTTP 200
+[Asserts]
+jsonpath "$.metadata.validation_error" == ""
+jsonpath "$.metadata.dry_run_plan" count == 1
+jsonpath "$.metadata.dry_run_plan[0].osd_path" == "$osd_path"
+jsonpath "$.metadata.dry_run_plan[0].wal.parent_path" == "$wal_path"
+jsonpath "$.metadata.dry_run_plan[0].db.parent_path" == "$db_path"
+
+POST http://localhost/1.0/disks
+Content-Type: application/json
+{
+  "osd_match": "eq(@devnode, '$osd_devnode')",
+  "wal_match": "eq(@devnode, '$osd_devnode')",
+  "wal_size": "1GiB",
+  "dry_run": true
+}
+HTTP 200
+[Asserts]
+jsonpath "$.metadata.validation_error" == "OSD and WAL match sets overlap: $osd_path"
+jsonpath "$.metadata.dry_run_plan" count == 0
+
+POST http://localhost/1.0/disks
+Content-Type: application/json
+{
+  "osd_match": "eq(@devnode, '$osd_devnode')",
+  "wal_match": "eq(@devnode, '$wal_devnode')",
+  "wal_size": "0B",
+  "dry_run": true
+}
+HTTP 200
+[Asserts]
+jsonpath "$.metadata.validation_error" == "--wal-size must be greater than 0"
+jsonpath "$.metadata.dry_run_plan" count == 0
+
+POST http://localhost/1.0/disks
+Content-Type: application/json
+{
+  "osd_match": "eq(@devnode, '$osd_devnode')",
+  "wal_match": "eq(@devnode, '$missing_devnode')",
+  "wal_size": "1GiB",
+  "dry_run": true
+}
+HTTP 200
+[Asserts]
+jsonpath "$.metadata.validation_error" == ""
+jsonpath "$.metadata.warnings" count == 1
+jsonpath "$.metadata.warnings[0]" == "WAL match expression resolved to no devices; proceeding without WAL"
+jsonpath "$.metadata.dry_run_plan" count == 1
+jsonpath "$.metadata.dry_run_plan[0].osd_path" == "$osd_path"
+
+POST http://localhost/1.0/disks
+Content-Type: application/json
+{
+  "osd_match": "eq(@devnode, '$osd_devnode')",
+  "db_match": "eq(@devnode, '$missing_devnode')",
+  "db_size": "1GiB",
+  "dry_run": true
+}
+HTTP 200
+[Asserts]
+jsonpath "$.metadata.validation_error" == ""
+jsonpath "$.metadata.warnings" count == 1
+jsonpath "$.metadata.warnings[0]" == "DB match expression resolved to no devices; proceeding without DB"
+jsonpath "$.metadata.dry_run_plan" count == 1
+jsonpath "$.metadata.dry_run_plan[0].osd_path" == "$osd_path"
+
+POST http://localhost/1.0/disks
+Content-Type: application/json
+{
+  "path": ["$osd_path"]
+}
+HTTP 200
+[Asserts]
+jsonpath "$.metadata.report" count == 1
+jsonpath "$.metadata.report[0].report" == "Success"
+jsonpath "$.metadata.report[0].path" == "$osd_path"
+
+GET http://localhost/1.0/disks
+HTTP 200
+[Captures]
+osd_id: jsonpath "$.metadata[0].osd"
+[Asserts]
+jsonpath "$.metadata" count == 1
+jsonpath "$.metadata[0].path" == "$osd_path"
+
+DELETE http://localhost/1.0/disks/not-an-int
+HTTP 400
+[Asserts]
+jsonpath "$.error_code" == 400
+
+DELETE http://localhost/1.0/disks/9999
+Content-Type: application/json
+{
+  "osdid": 9999,
+  "bypass_safety": true,
+  "timeout": 60
+}
+HTTP 404
+[Asserts]
+jsonpath "$.error_code" == 404
+
+DELETE http://localhost/1.0/disks/{{osd_id}}
+Content-Type: application/json
+{
+  "osdid": {{osd_id}},
+  "bypass_safety": true,
+  "timeout": 300
+}
+HTTP 200
+
+GET http://localhost/1.0/disks
+HTTP 200
+[Asserts]
+jsonpath "$.metadata" count == 0
+EOF
+
+    lxc --quiet file push "$hurl_file" "$VM_NAME/tmp/api-disks.hurl"
+    rm -f "$hurl_file"
+
+    vm_exec_expect_success "API disk hurl tests should succeed" \
+        sudo hurl --unix-socket /var/snap/microceph/common/state/control.socket \
+        --test /tmp/api-disks.hurl
 }
 
 # Baseline OSD DSL tests ----------------------------------------------------

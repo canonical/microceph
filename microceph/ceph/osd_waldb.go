@@ -68,7 +68,8 @@ var doAddOSDWithStorageFn = func(m *OSDManager, ctx context.Context, data types.
 func intersectPathSets(a map[string]struct{}, b map[string]struct{}) []string {
 	var out []string
 	for path := range a {
-		if _, ok := b[path]; ok {
+		_, ok := b[path]
+		if ok {
 			out = append(out, path)
 		}
 	}
@@ -245,24 +246,29 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 	if len(walPathSet) > 0 {
 		logger.Infof("Eligible WAL carriers: %s", strings.Join(pathSetToSlice(walPathSet), ", "))
 	}
-	if resetPaths := trueBoolMapKeys(walResetBeforeUse); len(resetPaths) > 0 {
+	resetPaths := trueBoolMapKeys(walResetBeforeUse)
+	if len(resetPaths) > 0 {
 		logger.Infof("WAL carriers requiring reset before use: %s", strings.Join(resetPaths, ", "))
 	}
 	if len(dbPathSet) > 0 {
 		logger.Infof("Eligible DB carriers: %s", strings.Join(pathSetToSlice(dbPathSet), ", "))
 	}
-	if resetPaths := trueBoolMapKeys(dbResetBeforeUse); len(resetPaths) > 0 {
+	resetPaths = trueBoolMapKeys(dbResetBeforeUse)
+	if len(resetPaths) > 0 {
 		logger.Infof("DB carriers requiring reset before use: %s", strings.Join(resetPaths, ", "))
 	}
-	if overlap := intersectPathSets(osdPathSet, walPathSet); len(overlap) > 0 {
+	overlap := intersectPathSets(osdPathSet, walPathSet)
+	if len(overlap) > 0 {
 		logger.Warnf("Refusing DSL provision plan because OSD and WAL match sets overlap: %s", strings.Join(overlap, ", "))
 		return nil, fmt.Errorf("OSD and WAL match sets overlap: %s", strings.Join(overlap, ", "))
 	}
-	if overlap := intersectPathSets(osdPathSet, dbPathSet); len(overlap) > 0 {
+	overlap = intersectPathSets(osdPathSet, dbPathSet)
+	if len(overlap) > 0 {
 		logger.Warnf("Refusing DSL provision plan because OSD and DB match sets overlap: %s", strings.Join(overlap, ", "))
 		return nil, fmt.Errorf("OSD and DB match sets overlap: %s", strings.Join(overlap, ", "))
 	}
-	if overlap := intersectPathSets(walPathSet, dbPathSet); len(overlap) > 0 {
+	overlap = intersectPathSets(walPathSet, dbPathSet)
+	if len(overlap) > 0 {
 		logger.Warnf("Refusing DSL provision plan because WAL and DB match sets overlap: %s", strings.Join(overlap, ", "))
 		return nil, fmt.Errorf("WAL and DB match sets overlap: %s", strings.Join(overlap, ", "))
 	}
@@ -384,7 +390,8 @@ func partitionPathCandidates(parentPath string, partition uint64) []string {
 			continue
 		}
 		candidate := partitionPathFromParentPath(parent, partition)
-		if _, ok := seen[candidate]; ok {
+		_, ok := seen[candidate]
+		if ok {
 			continue
 		}
 		seen[candidate] = struct{}{}
@@ -492,7 +499,8 @@ func (m *OSDManager) writeGeneratedAuxManifest(osdDataPath string, manifest *gen
 	}
 
 	manifestPath := generatedAuxManifestPath(osdDataPath)
-	if err := afero.WriteFile(m.fs, manifestPath, data, 0600); err != nil {
+	err = afero.WriteFile(m.fs, manifestPath, data, 0600)
+	if err != nil {
 		return fmt.Errorf("failed to write generated aux manifest: %w", err)
 	}
 
@@ -523,7 +531,8 @@ func (m *OSDManager) readGeneratedAuxManifest(osdDataPath string) (*generatedAux
 	}
 
 	var manifest generatedAuxDevicesManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	err = json.Unmarshal(data, &manifest)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse generated aux manifest: %w", err)
 	}
 	logger.Debugf("Loaded generated auxiliary-device manifest from %s", manifestPath)
@@ -538,14 +547,15 @@ func auxDeviceMapperName(kind string, osdID int64) string {
 func (m *OSDManager) closeEncryptedAuxDevice(kind string, osdID int64) error {
 	mapperName := auxDeviceMapperName(kind, osdID)
 	mapperPath := filepath.Join("/dev/mapper", mapperName)
-	if _, err := m.fs.Stat(mapperPath); err != nil {
+	_, err := m.fs.Stat(mapperPath)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to inspect encrypted aux device %s: %w", mapperPath, err)
 	}
 
-	_, err := m.runner.RunCommand("cryptsetup", "close", mapperName)
+	_, err = m.runner.RunCommand("cryptsetup", "close", mapperName)
 	if err != nil {
 		return fmt.Errorf("failed to close encrypted %s device %s: %w", kind, mapperName, err)
 	}
@@ -553,14 +563,16 @@ func (m *OSDManager) closeEncryptedAuxDevice(kind string, osdID int64) error {
 }
 
 func (m *OSDManager) deletePartition(parentPath string, partition uint64) error {
-	if _, err := m.resolvePartitionStablePath(parentPath, partition); err != nil {
+	_, err := m.resolvePartitionStablePath(parentPath, partition)
+	if err != nil {
 		logger.Infof("Partition %d on %s is already absent, skipping delete", partition, parentPath)
 		return nil
 	}
 
-	_, err := m.runner.RunCommand("sfdisk", "--delete", parentPath, strconv.FormatUint(partition, 10))
+	_, err = m.runner.RunCommand("sfdisk", "--delete", parentPath, strconv.FormatUint(partition, 10))
 	if err != nil {
-		if _, resolveErr := m.resolvePartitionStablePath(parentPath, partition); resolveErr != nil {
+		_, resolveErr := m.resolvePartitionStablePath(parentPath, partition)
+		if resolveErr != nil {
 			logger.Infof("Partition %d on %s disappeared despite delete error, treating as cleaned", partition, parentPath)
 			return nil
 		}
@@ -589,19 +601,22 @@ func (m *OSDManager) cleanupGeneratedAuxDevice(ctx context.Context, kind string,
 
 	if entry.Encrypted {
 		logger.Infof("Closing encrypted %s mapper for osd.%d before partition cleanup", strings.ToUpper(kind), osdID)
-		if err := m.closeEncryptedAuxDevice(kind, osdID); err != nil {
+		err := m.closeEncryptedAuxDevice(kind, osdID)
+		if err != nil {
 			return err
 		}
 	}
 
 	if partitionPath != "" {
-		if _, err := m.fs.Stat(partitionPath); err == nil {
+		_, err := m.fs.Stat(partitionPath)
+		if err == nil {
 			logger.Infof("Wiping generated %s partition %s before delete", strings.ToUpper(kind), partitionPath)
 			m.wipeDevice(ctx, partitionPath)
 		}
 	}
 
-	if err := m.deletePartition(entry.ParentPath, entry.Partition); err != nil {
+	err := m.deletePartition(entry.ParentPath, entry.Partition)
+	if err != nil {
 		return err
 	}
 	logger.Infof("Cleaned generated %s partition %d on %s for osd.%d", strings.ToUpper(kind), entry.Partition, entry.ParentPath, osdID)
@@ -612,10 +627,12 @@ func (m *OSDManager) cleanupGeneratedAuxEntries(ctx context.Context, manifest *g
 	if manifest == nil {
 		return nil
 	}
-	if err := m.cleanupGeneratedAuxDevice(ctx, "wal", manifest.WAL, osdID); err != nil {
+	err := m.cleanupGeneratedAuxDevice(ctx, "wal", manifest.WAL, osdID)
+	if err != nil {
 		return err
 	}
-	if err := m.cleanupGeneratedAuxDevice(ctx, "db", manifest.DB, osdID); err != nil {
+	err = m.cleanupGeneratedAuxDevice(ctx, "db", manifest.DB, osdID)
+	if err != nil {
 		return err
 	}
 	return nil
@@ -631,21 +648,25 @@ func (m *OSDManager) cleanupGeneratedAuxDevices(ctx context.Context, osdDataPath
 	}
 
 	if manifest.WAL != nil {
-		if err := m.cleanupGeneratedAuxDevice(ctx, "wal", manifest.WAL, osdID); err != nil {
+		err := m.cleanupGeneratedAuxDevice(ctx, "wal", manifest.WAL, osdID)
+		if err != nil {
 			return err
 		}
 		manifest.WAL = nil
-		if err := m.persistGeneratedAuxManifest(osdDataPath, manifest); err != nil {
+		err = m.persistGeneratedAuxManifest(osdDataPath, manifest)
+		if err != nil {
 			return err
 		}
 	}
 
 	if manifest.DB != nil {
-		if err := m.cleanupGeneratedAuxDevice(ctx, "db", manifest.DB, osdID); err != nil {
+		err := m.cleanupGeneratedAuxDevice(ctx, "db", manifest.DB, osdID)
+		if err != nil {
 			return err
 		}
 		manifest.DB = nil
-		if err := m.persistGeneratedAuxManifest(osdDataPath, manifest); err != nil {
+		err = m.persistGeneratedAuxManifest(osdDataPath, manifest)
+		if err != nil {
 			return err
 		}
 	}
@@ -691,19 +712,22 @@ func (m *OSDManager) createPlannedAuxPartition(plan *plannedAuxPartition) (strin
 	logger.Infof("Creating planned auxiliary partition: %s", plannedAuxPartitionSummary(plan))
 	if plan.ResetBeforeUse {
 		logger.Infof("Resetting %s carrier %s before repartitioning", strings.ToUpper(plan.Kind), plan.ParentPath)
-		if err := m.timeoutWipe(plan.ParentPath); err != nil {
+		err := m.timeoutWipe(plan.ParentPath)
+		if err != nil {
 			return "", fmt.Errorf("failed to wipe %s carrier %s: %w", strings.ToUpper(plan.Kind), plan.ParentPath, err)
 		}
 		m.refreshPartitionTable(plan.ParentPath)
 	}
 	if plan.ResetBeforeUse || plan.Partition == 1 {
 		logger.Infof("Initializing GPT on %s for %s provisioning", plan.ParentPath, strings.ToUpper(plan.Kind))
-		if err := m.initializeGPT(plan.ParentPath); err != nil {
+		err := m.initializeGPT(plan.ParentPath)
+		if err != nil {
 			return "", err
 		}
 	}
 	logger.Infof("Creating %s partition %d on %s with size %s", strings.ToUpper(plan.Kind), plan.Partition, plan.ParentPath, formatBytesIEC(int64(plan.SizeBytes)))
-	if err := m.createPartition(plan.ParentPath, plan.SizeBytes); err != nil {
+	err := m.createPartition(plan.ParentPath, plan.SizeBytes)
+	if err != nil {
 		return "", err
 	}
 	m.refreshPartitionTable(plan.ParentPath)
@@ -761,7 +785,8 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 				logger.Errorf("Failed creating planned WAL partition for OSD %s: %v", planned.OSDPath, err)
 				reportErr := err.Error()
 				if createdAux {
-					if cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, 0); cleanupErr != nil {
+					cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, 0)
+					if cleanupErr != nil {
 						logger.Warnf("Automatic cleanup after WAL partition creation failure for OSD %s also failed: %v", planned.OSDPath, cleanupErr)
 						reportErr = fmt.Sprintf("%s (automatic cleanup also failed: %v)", reportErr, cleanupErr)
 						resp.Warnings = append(resp.Warnings, "Automatic cleanup of generated WAL/DB partitions failed; manual cleanup may be required")
@@ -786,7 +811,8 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 				logger.Errorf("Failed creating planned DB partition for OSD %s: %v", planned.OSDPath, err)
 				reportErr := err.Error()
 				if createdAux {
-					if cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, 0); cleanupErr != nil {
+					cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, 0)
+					if cleanupErr != nil {
 						logger.Warnf("Automatic cleanup after DB partition creation failure for OSD %s also failed: %v", planned.OSDPath, cleanupErr)
 						reportErr = fmt.Sprintf("%s (automatic cleanup also failed: %v)", reportErr, cleanupErr)
 						resp.Warnings = append(resp.Warnings, "Automatic cleanup of generated WAL/DB partitions failed; manual cleanup may be required")

@@ -123,8 +123,15 @@ jobs:
           ~/actionutils.sh hurl tests/hurl/services-mon.hurl
           ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
           ~/actionutils.sh hurl tests/hurl/disks-list.hurl
-          ~/actionutils.sh hurl tests/hurl/disks-post-dryrun.hurl
-          ~/actionutils.sh hurl tests/hurl/disks-delete.hurl
+
+      - name: API disk Hurl testing with discoverable devices
+        run: |
+          ~/actionutils.sh cleaript
+          ~/actionutils.sh setup_lxd
+          chmod +x tests/scripts/test_dsl_functest.sh
+          ./tests/scripts/test_dsl_functest.sh \
+            --snap-path '/home/runner/*.snap' \
+            test_dsl_api_disk_hurl
 
       - name: Print logs for failure
         if: failure()

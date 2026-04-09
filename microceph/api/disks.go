@@ -168,12 +168,14 @@ func validateDiskPostRequest(req types.DisksPost) error {
 		return fmt.Errorf("--db-wipe requires --db-match or --db-device")
 	}
 	if req.WALMatch != "" {
-		if err := validatePositiveByteSizeString(req.WALSize, "--wal-size"); err != nil {
+		err := validatePositiveByteSizeString(req.WALSize, "--wal-size")
+		if err != nil {
 			return err
 		}
 	}
 	if req.DBMatch != "" {
-		if err := validatePositiveByteSizeString(req.DBSize, "--db-size"); err != nil {
+		err := validatePositiveByteSizeString(req.DBSize, "--db-size")
+		if err != nil {
 			return err
 		}
 	}
@@ -233,11 +235,12 @@ func cmdDisksDelete(s state.State, r *http.Request) response.Response {
 	// the flag has no effect in this case. Errors are non-fatal here since
 	// this is only an advisory warning.
 	if req.ConfirmDowngrade {
-		if onRack, err := ceph.IsOnRackRule(); err != nil {
+		onRack, err := ceph.IsOnRackRule()
+		if err != nil {
 			logger.Warnf("Could not determine crush rule type: %v", err)
 		} else if onRack {
 			logger.Warnf(
-				"--confirm-failure-domain-downgrade has no effect: cluster uses rack-level "+
+				"--confirm-failure-domain-downgrade has no effect: cluster uses rack-level " +
 					"failure domain (availability zones). Downgrade from rack is not supported.",
 			)
 		}
