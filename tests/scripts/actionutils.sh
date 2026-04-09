@@ -1074,6 +1074,72 @@ function verify_bootstrap_configs() {
     fi
 }
 
+# test_sequential_join_mon_hosts is a regression test for issue #556.
+# It verifies that after nodes are added one at a time to an existing cluster,
+# all nodes' ceph.conf is updated with the full monitor list.
+function test_sequential_join_mon_hosts() {
+    set -eux
+
+    local nw
+    nw=$(get_lxd_network public)
+    local gw
+    gw=$(echo "$nw" | cut -d/ -f1)
+
+    local node0_ip="${gw}0"
+    local node1_ip="${gw}1"
+
+    # Bootstrap node-wrk0.
+    lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --public-network=${nw}"
+
+    # Wait for node-wrk0's background monitor refresh loop to complete its first
+    # iteration (advancing past first=true) before joining node-wrk1. The first
+    # successful UpdateConfig will write node0_ip into ceph.conf.
+    # 24 attempts * 5s = 2 minutes
+    local max_attempts=24
+    echo "Waiting for node-wrk0 first monitor refresh..."
+    for i in $(seq 1 $max_attempts); do
+        if lxc exec node-wrk0 -- sh -c \
+                "grep -q '${node0_ip}' /var/snap/microceph/current/conf/ceph.conf" \
+                2>/dev/null; then
+            echo "  node-wrk0 completed first monitor refresh (attempt #${i})"
+            break
+        fi
+        if [[ "$i" -eq "$max_attempts" ]]; then
+            echo "Timed out waiting for node-wrk0 first monitor refresh"
+            exit 1
+        fi
+        sleep 5
+    done
+
+    # Join node-wrk1 sequentially (one at a time), reproducing the issue #556 scenario.
+    tok=$(lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk1")
+    lxc exec node-wrk1 -- sh -c "microceph cluster join ${tok}"
+
+    # Wait for both nodes' background refresh loop to pick up the new monitor and
+    # update ceph.conf. Poll until each node's conf contains node-wrk1's address,
+    # or time out after 2 minutes (24 attempts * 5s).
+    for node in node-wrk0 node-wrk1; do
+        echo "Waiting for ${node} to update ceph.conf with ${node1_ip}..."
+        for i in $(seq 1 $max_attempts); do
+            if lxc exec "${node}" -- sh -c \
+                    "grep -q '${node1_ip}' /var/snap/microceph/current/conf/ceph.conf" \
+                    2>/dev/null; then
+                echo "  ${node} ceph.conf updated (attempt #${i})"
+                break
+            fi
+            if [[ "$i" -eq "$max_attempts" ]]; then
+                echo "Timed out waiting for ${node} to update ceph.conf"
+                exit 1
+            fi
+            sleep 5
+        done
+    done
+
+    # Both nodes must report all monitor addresses in ceph.conf.
+    verify_bootstrap_configs node-wrk0 "${nw}" "${node0_ip}" "${node1_ip}"
+    verify_bootstrap_configs node-wrk1 "${nw}" "${node0_ip}" "${node1_ip}"
+}
+
 function verify_health() {
     for i in {0..100}; do
         if [ "$( sudo microceph.ceph health )" = "HEALTH_OK" ] ; then

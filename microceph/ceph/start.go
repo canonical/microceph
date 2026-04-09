@@ -223,6 +223,13 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 	}
 }
 
+// shouldSkipMonitorRefresh returns true if the background loop should skip
+// calling UpdateConfig this iteration. It skips when it is not the first run
+// and the monitor list is unchanged.
+func shouldSkipMonitorRefresh(first bool, oldMonitors, monitors []string) bool {
+	return !first && reflect.DeepEqual(oldMonitors, monitors)
+}
+
 // Start is run on daemon startup.
 func Start(ctx context.Context, s interfaces.StateInterface) error {
 	// flag: are we on the first run?
@@ -270,7 +277,7 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 			}
 
 			// Check if we need to update
-			if !first || reflect.DeepEqual(oldMonitors, monitors) {
+			if shouldSkipMonitorRefresh(first, oldMonitors, monitors) {
 				logger.Debugf("start: monitors unchanged, sleeping: %v", monitors)
 				select {
 				case <-ctx.Done():

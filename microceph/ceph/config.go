@@ -268,11 +268,58 @@ func getClusterConfigDefinition(key string) (ClusterConfigDefinition, error) {
 	return config, nil
 }
 
-// backwardCompatPubnet ensures that the public_network is set in the database
-// this is a backward-compat shim to accomodate older versions of microceph
-// which will ensure that the public_network is set in the database
+// getMonitorCountFunc returns the number of registered mon services in the database.
+// Extracted as a variable to allow overriding in tests.
+var getMonitorCountFunc = func(ctx context.Context, s interfaces.StateInterface) (int, error) {
+	var count int
+	serviceName := "mon"
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		monitors, err := database.GetServices(ctx, tx, database.ServiceFilter{Service: &serviceName})
+		if err != nil {
+			return err
+		}
+		count = len(monitors)
+		return nil
+	})
+	return count, err
+}
+
+// fetchConfigDb fetches the full config map from the database.
+// Extracted as a variable to allow overriding in tests.
+var fetchConfigDb = GetConfigDb
+
+// insertPubnetRecord writes the detected public_network value to the database.
+// Extracted as a variable to allow overriding in tests.
+var insertPubnetRecord = func(ctx context.Context, s interfaces.StateInterface, pubNet string) error {
+	return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "public_network", Value: pubNet})
+		if err != nil {
+			return fmt.Errorf("failed to record public_network: %w", err)
+		}
+		return nil
+	})
+}
+
+// backwardCompatPubnet ensures that the public_network is set in the database.
+// This is a backward-compat shim to accommodate older versions of microceph
+// that did not set public_network during bootstrap.
+//
+// The shim is gated on at least one monitor being registered: if no monitors
+// exist the cluster has not been bootstrapped yet and bootstrap will write
+// public_network itself, so there is nothing for the shim to do.
 func backwardCompatPubnet(ctx context.Context, s interfaces.StateInterface) error {
-	config, err := GetConfigDb(ctx, s)
+	// Gate: only proceed if the cluster has been bootstrapped, which we
+	// detect by the presence of at least one registered monitor service.
+	monitorCount, err := getMonitorCountFunc(ctx, s)
+	if err != nil {
+		return fmt.Errorf("failed to check for registered monitors: %w", err)
+	}
+	if monitorCount == 0 {
+		logger.Debug("backwardCompatPubnet: no monitors registered, skipping (pre-bootstrap)")
+		return nil
+	}
+
+	config, err := fetchConfigDb(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to get config from db: %w", err)
 	}
@@ -282,23 +329,17 @@ func backwardCompatPubnet(ctx context.Context, s interfaces.StateInterface) erro
 	// and subsequently fail the net.ParseCIDR check
 	pubNet := config["public_network"]
 	_, _, err = net.ParseCIDR(pubNet)
-	if err != nil {
-		// get public network from default address
-		pubNet, err = common.Network.FindNetworkAddress(s.ClusterState().Address().Hostname())
-		if err != nil {
-			return fmt.Errorf("failed to locate public network: %w", err)
-		}
-		// update the database
-		err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: "public_network", Value: pubNet})
-			if err != nil {
-				return fmt.Errorf("failed to record public_network: %w", err)
-			}
-			return nil
-		})
+	if err == nil {
+		return nil
 	}
 
-	return nil
+	// public_network is absent or invalid — detect from the node's address.
+	pubNet, err = common.Network.FindNetworkAddress(s.ClusterState().Address().Hostname())
+	if err != nil {
+		return fmt.Errorf("failed to locate public network: %w", err)
+	}
+
+	return insertPubnetRecord(ctx, s, pubNet)
 }
 
 // backwardCompatMonitors retrieves monitor addresses from the node list and returns that

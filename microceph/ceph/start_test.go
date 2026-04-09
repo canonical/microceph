@@ -271,3 +271,15 @@ func (s *startSuite) TestReEnableGroupedServiceRestarted() {
 
 	reEnableServices(context.Background(), s.newState())
 }
+
+// TestShouldSkipMonitorRefresh is a regression test for issue #556.
+func (s *startSuite) TestShouldSkipMonitorRefresh() {
+	// First run should always trigger UpdateConfig.
+	assert.False(s.T(), shouldSkipMonitorRefresh(true, nil, []string{"node1"}))
+
+	// Unchanged monitor list should not trigger UpdateConfig.
+	assert.True(s.T(), shouldSkipMonitorRefresh(false, []string{"node1"}, []string{"node1"}))
+
+	// New monitor added should trigger UpdateConfig.
+	assert.False(s.T(), shouldSkipMonitorRefresh(false, []string{"node1"}, []string{"node1", "node2"}))
+}
