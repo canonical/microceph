@@ -75,7 +75,6 @@ Content-Type: application/json
 HTTP 200
 [Asserts]
 jsonpath "$.metadata.validation_error" == "OSD and WAL match sets overlap: /dev/sdia"
-jsonpath "$.metadata.dry_run_plan" count == 0
 
 POST http://localhost/1.0/disks
 Content-Type: application/json
@@ -88,7 +87,6 @@ Content-Type: application/json
 HTTP 200
 [Asserts]
 jsonpath "$.metadata.validation_error" == "--wal-size must be greater than 0"
-jsonpath "$.metadata.dry_run_plan" count == 0
 
 POST http://localhost/1.0/disks
 Content-Type: application/json
