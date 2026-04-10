@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1711,7 +1712,7 @@ func sanityCheck(ctx context.Context, s interfaces.StateInterface, osd int64) er
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("osd.%d not found", osd)
+		return api.StatusErrorf(http.StatusNotFound, "osd.%d not found", osd)
 	}
 	return nil
 }

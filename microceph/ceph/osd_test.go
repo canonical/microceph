@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,6 +123,25 @@ func (s *osdSuite) createMockDeviceEnvironment(fs afero.Fs, tempDir string, devi
 
 func TestOSD(t *testing.T) {
 	suite.Run(t, new(osdSuite))
+}
+
+func (s *osdSuite) TestSanityCheckMissingOSDReturnsNotFound() {
+	origOSDQuery := database.OSDQuery
+	mockOSDQuery := mocks.NewOSDQueryInterface(s.T())
+	database.OSDQuery = mockOSDQuery
+	defer func() {
+		database.OSDQuery = origOSDQuery
+	}()
+
+	var st state.State
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(st).Maybe()
+	mockOSDQuery.On("HaveOSD", mock.Anything, mock.Anything, int64(9999)).Return(false, nil).Once()
+
+	err := sanityCheck(context.Background(), si, 9999)
+	require.Error(s.T(), err)
+	assert.True(s.T(), api.StatusErrorCheck(err, http.StatusNotFound))
+	assert.EqualError(s.T(), err, "osd.9999 not found")
 }
 
 // Expect: run ceph osd crush rule ls
