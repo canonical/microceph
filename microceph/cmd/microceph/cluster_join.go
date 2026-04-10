@@ -50,14 +50,26 @@ func (c *cmdClusterJoin) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to retrieve system hostname: %w", err)
 	}
 
+	token := args[0]
+
 	address := c.flagMicroCephIp
 	if address == "" {
-		// Get system address for microcluster join.
-		address = util.NetworkInterfaceAddress()
+		// Pick a local address on the same subnet as a cluster peer,
+		// rather than trusting the first global unicast address on the
+		// host (canonical/microceph#476).
+		var peers []string
+		peers, err = common.JoinTokenPeers(token)
+		if err != nil {
+			return fmt.Errorf("invalid join token: %w", err)
+		}
+
+		address, err = common.Network.FindIpForPeers(peers)
+		if err != nil {
+			return fmt.Errorf("could not auto-detect a local address reachable from cluster peers %v: %w. Pass --microceph-ip explicitly", peers, err)
+		}
 	}
 	address = util.CanonicalNetworkAddress(address, constants.BootstrapPortConst)
 
-	token := args[0]
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*5)
 	defer cancel()
 
