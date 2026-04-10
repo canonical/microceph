@@ -10,7 +10,7 @@ function create_cephadm_vm() {
     name=$input
   fi
 
-  lxc launch ubuntu:24.04 --vm $name -c limits.cpu=4 -c limits.memory=4GB
+  lxc --quiet launch ubuntu:24.04 --vm $name -c limits.cpu=4 -c limits.memory=4GB
 
   lxc storage volume create default $name-1 --type=block size=10GB
   lxc storage volume create default $name-2 --type=block size=10GB
@@ -89,7 +89,7 @@ function adopt_cephadm() {
   # Admin Key
   key=$(lxc exec $name -- sh -c "cat /etc/ceph/ceph.client.admin.keyring" | grep key | cut -d " " -f 3)
 
-  lxc file push /home/runner/*.snap $name/root/
+  lxc --quiet file push /home/runner/*.snap $name/root/
 
   # install microceph snap
   lxc exec $name -- sh -c "sudo snap install --dangerous /root/microceph_*.snap"

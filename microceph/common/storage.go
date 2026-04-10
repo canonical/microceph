@@ -52,6 +52,24 @@ func IsMountedWithFs(device string, fs afero.Fs) (bool, error) {
 	return true, nil
 }
 
+// OSDDeviceLink describes one OSD data or auxiliary device symlink inside an OSD data dir.
+type OSDDeviceLink struct {
+	Name      string
+	Auxiliary bool
+}
+
+// CephOSDDeviceLinks returns the symlink names MicroCeph uses to track raw and encrypted OSD devices.
+func CephOSDDeviceLinks() []OSDDeviceLink {
+	return []OSDDeviceLink{
+		{Name: "block", Auxiliary: false},
+		{Name: "block.wal", Auxiliary: true},
+		{Name: "block.db", Auxiliary: true},
+		{Name: "unencrypted", Auxiliary: false},
+		{Name: "unencrypted.wal", Auxiliary: true},
+		{Name: "unencrypted.db", Auxiliary: true},
+	}
+}
+
 // IsCephDevice checks if a given device is used as either a WAL or DB block device in any Ceph OSD.
 func IsCephDevice(device string) (bool, error) {
 	return IsCephDeviceWithFs(device, afero.NewOsFs())
@@ -73,19 +91,19 @@ func IsCephDeviceWithFs(device string, fs afero.Fs) (bool, error) {
 		logger.Debugf("couldn't read osd data dir %s: %v", baseDir, err)
 		return false, nil
 	}
-	// Do we have a block{,.wal,.db} symlink pointing to the given device? if yes
-	// it's already being used as a ceph device
+	// Do we have a block{,.wal,.db} or unencrypted{,.wal,.db} symlink pointing to the given
+	// device? If yes it's already being used as a ceph device.
 	for _, osdDir := range osdDirs {
 		if osdDir.IsDir() {
 			if !strings.HasPrefix(osdDir.Name(), "ceph-") {
 				continue
 			}
-			for _, symlinkName := range []string{"block", "block.wal", "block.db"} {
-				symlinkPath := filepath.Join(baseDir, osdDir.Name(), symlinkName)
+			for _, link := range CephOSDDeviceLinks() {
+				symlinkPath := filepath.Join(baseDir, osdDir.Name(), link.Name)
 				resolvedPath, err := filepath.EvalSymlinks(symlinkPath)
 				if err == nil {
 					if resolvedPath == resolved {
-						logger.Debugf("device %s is used as %s for OSD %s", device, symlinkName, osdDir.Name())
+						logger.Debugf("device %s is used as %s for OSD %s", device, link.Name, osdDir.Name())
 						return true, nil
 					}
 				} else if !os.IsNotExist(err) {
@@ -321,6 +339,12 @@ func FilterAvailableDisks(storage *api.ResourcesStorage, configuredDisks types.D
 
 	for _, disk := range storage.Disks {
 		logger.Debugf("FilterAvailableDisks: checking disk %s, size %d, type %s", disk.ID, disk.Size, disk.Type)
+
+		// Skip read-only disks.
+		if disk.ReadOnly {
+			logger.Infof("FilterAvailableDisks: ignoring device %s, it is read-only", disk.ID)
+			continue
+		}
 
 		// Skip disks with partitions
 		if len(disk.Partitions) > 0 {

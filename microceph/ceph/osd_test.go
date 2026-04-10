@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,6 +22,7 @@ import (
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -66,6 +70,16 @@ func (m *MockPristineChecker) IsPristineDisk(devicePath string) (bool, error) {
 	return args.Bool(0), args.Error(1)
 }
 
+func createExitError(t *testing.T, code int) error {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code))
+	err := cmd.Run()
+	if err == nil {
+		t.Fatalf("expected command to fail with exit code %d", code)
+	}
+	return err
+}
+
 // osdSuite is the test suite for adding OSDs.
 type osdSuite struct {
 	tests.BaseSuite
@@ -109,6 +123,25 @@ func (s *osdSuite) createMockDeviceEnvironment(fs afero.Fs, tempDir string, devi
 
 func TestOSD(t *testing.T) {
 	suite.Run(t, new(osdSuite))
+}
+
+func (s *osdSuite) TestSanityCheckMissingOSDReturnsNotFound() {
+	origOSDQuery := database.OSDQuery
+	mockOSDQuery := mocks.NewOSDQueryInterface(s.T())
+	database.OSDQuery = mockOSDQuery
+	defer func() {
+		database.OSDQuery = origOSDQuery
+	}()
+
+	var st state.State
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(st).Maybe()
+	mockOSDQuery.On("HaveOSD", mock.Anything, mock.Anything, int64(9999)).Return(false, nil).Once()
+
+	err := sanityCheck(context.Background(), si, 9999)
+	require.Error(s.T(), err)
+	assert.True(s.T(), api.StatusErrorCheck(err, http.StatusNotFound))
+	assert.EqualError(s.T(), err, "osd.9999 not found")
 }
 
 // Expect: run ceph osd crush rule ls
@@ -826,22 +859,83 @@ func (s *osdSuite) TestWipeDevice() {
 	osdmgr.wipeDevice(context.Background(), "/dev/sdb")
 }
 
-// TestKillOSD tests OSD process termination
+// TestKillOSD tests OSD process termination.
 func (s *osdSuite) TestKillOSD() {
 	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
 	osdmgr.runner = r
 
-	// Test successful kill
+	originalGrace := osdKillGracePeriod
+	originalForceGrace := osdKillForceGracePeriod
+	originalPoll := osdKillPollInterval
+	osdKillGracePeriod = 20 * time.Millisecond
+	osdKillForceGracePeriod = 20 * time.Millisecond
+	osdKillPollInterval = 5 * time.Millisecond
+	s.T().Cleanup(func() {
+		osdKillGracePeriod = originalGrace
+		osdKillForceGracePeriod = originalForceGrace
+		osdKillPollInterval = originalPoll
+	})
+
+	// Test successful kill with graceful exit.
 	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 0$").Return("", nil).Once()
+	r.On("RunCommand", "pgrep", "-f", "ceph-osd .* --id 0$").Return("", createExitError(s.T(), 1)).Once()
 	err := osdmgr.killOSD(0)
 	assert.NoError(s.T(), err)
 
-	// Test failed kill
-	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 1$").Return("", fmt.Errorf("process not found")).Once()
+	// Test escalation to SIGKILL when SIGTERM does not stop the process.
+	osdKillGracePeriod = 0
+	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 2$").Return("", nil).Once()
+	r.On("RunCommand", "pgrep", "-f", "ceph-osd .* --id 2$").Return("1234", nil).Once()
+	r.On("RunCommand", "pkill", "-9", "-f", "ceph-osd .* --id 2$").Return("", nil).Once()
+	r.On("RunCommand", "pgrep", "-f", "ceph-osd .* --id 2$").Return("", createExitError(s.T(), 1)).Once()
+	err = osdmgr.killOSD(2)
+	assert.NoError(s.T(), err)
+	osdKillGracePeriod = 20 * time.Millisecond
+
+	// Test already-stopped OSD.
+	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 1$").Return("", createExitError(s.T(), 1)).Once()
 	err = osdmgr.killOSD(1)
+	assert.NoError(s.T(), err)
+
+	// Test failed kill.
+	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 3$").Return("", fmt.Errorf("pkill failed")).Once()
+	err = osdmgr.killOSD(3)
 	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "failed to kill osd.1")
+	assert.Contains(s.T(), err.Error(), "failed to kill osd.3")
+}
+
+func (s *osdSuite) TestSuppressAndRestoreOSDAutostart() {
+	osdmgr := NewOSDManager(nil)
+	osdmgr.fs = afero.NewMemMapFs()
+
+	osdDataPath := getOSDDataPath(7)
+	require.NoError(s.T(), osdmgr.fs.MkdirAll(osdDataPath, 0700))
+	require.NoError(s.T(), afero.WriteFile(osdmgr.fs, osdReadyMarkerPath(osdDataPath), []byte(""), 0600))
+
+	restore, suppressed, err := osdmgr.suppressOSDAutostart(7)
+	require.NoError(s.T(), err)
+	assert.True(s.T(), suppressed)
+	_, err = osdmgr.fs.Stat(osdReadyMarkerPath(osdDataPath))
+	assert.True(s.T(), os.IsNotExist(err))
+	_, err = osdmgr.fs.Stat(osdSuppressedReadyMarkerPath(osdDataPath))
+	assert.NoError(s.T(), err)
+
+	require.NoError(s.T(), restore())
+	_, err = osdmgr.fs.Stat(osdReadyMarkerPath(osdDataPath))
+	assert.NoError(s.T(), err)
+	_, err = osdmgr.fs.Stat(osdSuppressedReadyMarkerPath(osdDataPath))
+	assert.True(s.T(), os.IsNotExist(err))
+}
+
+func (s *osdSuite) TestSuppressOSDAutostartWithoutReadyMarker() {
+	osdmgr := NewOSDManager(nil)
+	osdmgr.fs = afero.NewMemMapFs()
+
+	restore, suppressed, err := osdmgr.suppressOSDAutostart(8)
+	require.NoError(s.T(), err)
+	assert.False(s.T(), suppressed)
+	require.NoError(s.T(), restore())
 }
 
 // TestOutDownOSD tests taking OSD out and down
@@ -1002,6 +1096,17 @@ func (s *osdSuite) TestIsPristineDisk() {
 	assert.Error(s.T(), err)
 	assert.False(s.T(), isPristine)
 	assert.Contains(s.T(), err.Error(), "permission denied")
+}
+
+func (s *osdSuite) TestCheckPristineDeviceSkip() {
+	osdmgr := &OSDManager{
+		pristineChecker: &MockPristineChecker{},
+	}
+
+	disk := &types.DiskParameter{Path: "/dev/generated-aux1", SkipPristineCheck: true}
+	err := osdmgr.checkPristineDevice(disk, "WAL")
+	assert.NoError(s.T(), err)
+	osdmgr.pristineChecker.(*MockPristineChecker).AssertNotCalled(s.T(), "IsPristineDisk", "/dev/generated-aux1")
 }
 
 // osdDumpJSON generates a JSON OSD dump with the given number of up OSDs.

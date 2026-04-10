@@ -47,6 +47,97 @@ jobs:
           path: "*.snap"
           retention-days: 5
 
+  dsl-functional-tests:
+    name: DSL functional tests
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    env:
+      DSL_FUNCTEST_SUITE: run_dsl_full_tests
+    steps:
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
+
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
+
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
+
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
+
+      - name: Run DSL functional test suite
+        run: |
+          chmod +x tests/scripts/test_dsl_functest.sh
+          ./tests/scripts/test_dsl_functest.sh \
+            --snap-path '/home/runner/*.snap' \
+            "$DSL_FUNCTEST_SUITE"
+
+      - name: Print LXD state for failure
+        if: failure()
+        run: |
+          lxc list || true
+          lxc storage list || true
+          lxc storage volume list default || true
+
+  api-tests:
+    name: API tests
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
+
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
+
+      - name: Bootstrap MicroCeph
+        run: ~/actionutils.sh install_and_bootstrap_microceph
+
+      - name: API Testing
+        run: |
+          ~/actionutils.sh install_hurl
+          ~/actionutils.sh prepare_disk_api_hurl_fixtures
+          ~/actionutils.sh hurl tests/hurl/services-mon.hurl
+          ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
+          ~/actionutils.sh hurl tests/hurl/disks-list.hurl
+
+      - name: API disk Hurl testing with discoverable devices
+        run: |
+          ~/actionutils.sh cleaript
+          ~/actionutils.sh setup_lxd
+          chmod +x tests/scripts/test_dsl_functest.sh
+          ./tests/scripts/test_dsl_functest.sh \
+            --snap-path '/home/runner/*.snap' \
+            test_dsl_api_disk_hurl
+
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          ~/actionutils.sh dump_microceph_debug
+
   static-checks:
     name: Run static checks
     runs-on: ubuntu-24.04
@@ -284,11 +375,6 @@ jobs:
           output=$(sudo microceph log get-level)
           if [[ "$output" != "3" ]] ; then echo "incorrect log level: $output"; exit 1; fi
 
-      - name: Print logs for failure
-        if: failure()
-        run: |
-          sudo snap logs microceph -n 1000
-
       - name: Test square brackets around IPv6
         run: |
           sudo snap remove microceph
@@ -298,11 +384,10 @@ jobs:
           cat /var/snap/microceph/current/conf/ceph.conf
           fgrep -q "[${MON_IP}]" /var/snap/microceph/current/conf/ceph.conf
 
-      - name: API Testing
+      - name: Print logs for failure
+        if: failure()
         run: |
-          ~/actionutils.sh install_hurl
-          ~/actionutils.sh hurl tests/hurl/services-mon.hurl
-          ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
+          ~/actionutils.sh dump_microceph_debug
 
   multi-node-tests:
     name: Multi node testing

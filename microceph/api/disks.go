@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/canonical/lxd/shared/units"
 	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/microceph/microceph/logger"
@@ -61,11 +62,16 @@ func cmdDisksPost(s state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
+	err = validateDiskPostRequest(req)
+	if err != nil {
+		return response.SyncResponse(true, types.DiskAddResponse{ValidationError: err.Error()})
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Handle DSL-based device selection
-	if req.OSDMatch != "" {
+	// Handle DSL-based device selection.
+	if usesDSLDiskAddRequest(req) {
 		return handleDSLDiskAdd(r, s, req)
 	}
 
@@ -101,9 +107,85 @@ func cmdDisksPost(s state.State, r *http.Request) response.Response {
 	return response.SyncResponse(true, resp)
 }
 
-// handleDSLDiskAdd handles DSL-based device selection for OSD creation.
+func usesDSLDiskAddRequest(req types.DisksPost) bool {
+	return req.OSDMatch != "" || req.WALMatch != "" || req.DBMatch != "" || req.DryRun || req.WALSize != "" || req.DBSize != ""
+}
+
+func validatePositiveByteSizeString(value string, flagName string) error {
+	sizeBytes, err := units.ParseByteSizeString(value)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", flagName, err)
+	}
+	if sizeBytes <= 0 {
+		return fmt.Errorf("%s must be greater than 0", flagName)
+	}
+	return nil
+}
+
+func validateDiskPostRequest(req types.DisksPost) error {
+	usesDSL := usesDSLDiskAddRequest(req)
+
+	if usesDSL && len(req.Path) > 0 {
+		return fmt.Errorf("--osd-match/--wal-match/--db-match cannot be used with positional device arguments")
+	}
+
+	if req.DryRun && req.OSDMatch == "" {
+		return fmt.Errorf("--dry-run requires --osd-match")
+	}
+
+	if usesDSL && (req.WALDev != nil || req.DBDev != nil) {
+		return fmt.Errorf("--wal-device and --db-device are not supported with DSL matching in this version")
+	}
+
+	if req.WALMatch != "" && req.OSDMatch == "" {
+		return fmt.Errorf("--wal-match requires --osd-match")
+	}
+	if req.DBMatch != "" && req.OSDMatch == "" {
+		return fmt.Errorf("--db-match requires --osd-match")
+	}
+	if req.WALMatch != "" && req.WALSize == "" {
+		return fmt.Errorf("--wal-match requires --wal-size")
+	}
+	if req.DBMatch != "" && req.DBSize == "" {
+		return fmt.Errorf("--db-match requires --db-size")
+	}
+	if req.WALSize != "" && req.WALMatch == "" {
+		return fmt.Errorf("--wal-size requires --wal-match")
+	}
+	if req.DBSize != "" && req.DBMatch == "" {
+		return fmt.Errorf("--db-size requires --db-match")
+	}
+	if req.WALEncrypt && req.WALMatch == "" && req.WALDev == nil {
+		return fmt.Errorf("--wal-encrypt requires --wal-match or --wal-device")
+	}
+	if req.WALWipe && req.WALMatch == "" && req.WALDev == nil {
+		return fmt.Errorf("--wal-wipe requires --wal-match or --wal-device")
+	}
+	if req.DBEncrypt && req.DBMatch == "" && req.DBDev == nil {
+		return fmt.Errorf("--db-encrypt requires --db-match or --db-device")
+	}
+	if req.DBWipe && req.DBMatch == "" && req.DBDev == nil {
+		return fmt.Errorf("--db-wipe requires --db-match or --db-device")
+	}
+	if req.WALMatch != "" {
+		err := validatePositiveByteSizeString(req.WALSize, "--wal-size")
+		if err != nil {
+			return err
+		}
+	}
+	if req.DBMatch != "" {
+		err := validatePositiveByteSizeString(req.DBSize, "--db-size")
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// handleDSLDiskAdd handles DSL-based device selection for OSD creation and dry-run planning.
 func handleDSLDiskAdd(r *http.Request, s state.State, req types.DisksPost) response.Response {
-	resp := ceph.AddDisksWithDSL(r.Context(), s, req.OSDMatch, req.Encrypt, req.Wipe, req.DryRun)
+	resp := ceph.AddDisksWithDSLRequest(r.Context(), s, req)
 	return response.SyncResponse(true, resp)
 }
 
@@ -153,11 +235,12 @@ func cmdDisksDelete(s state.State, r *http.Request) response.Response {
 	// the flag has no effect in this case. Errors are non-fatal here since
 	// this is only an advisory warning.
 	if req.ConfirmDowngrade {
-		if onRack, err := ceph.IsOnRackRule(); err != nil {
+		onRack, err := ceph.IsOnRackRule()
+		if err != nil {
 			logger.Warnf("Could not determine crush rule type: %v", err)
 		} else if onRack {
 			logger.Warnf(
-				"--confirm-failure-domain-downgrade has no effect: cluster uses rack-level "+
+				"--confirm-failure-domain-downgrade has no effect: cluster uses rack-level " +
 					"failure domain (availability zones). Downgrade from rack is not supported.",
 			)
 		}

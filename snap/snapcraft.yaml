@@ -270,6 +270,7 @@ parts:
       # Utilities
       - coreutils
       - util-linux
+      - fdisk
       - uuid-runtime
       - python3-setuptools
       - python3-packaging
@@ -277,6 +278,7 @@ parts:
       - python3-ceph-common # used by microceph-orch
 
     organize:
+      sbin/: bin/
       usr/bin/: bin/
       usr/sbin/: bin/
       usr/lib/: lib/
@@ -300,6 +302,9 @@ parts:
       - bin/truncate
       - bin/uuidgen
       - bin/findmnt
+      - bin/sfdisk
+      - bin/partx
+      - bin/blockdev
       - lib/*/ceph
       - lib/*/libaio.so*
       - lib/*/libasn1.so*
