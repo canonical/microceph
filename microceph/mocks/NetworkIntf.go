@@ -57,6 +57,30 @@ func (_m *NetworkIntf) FindNetworkAddress(address string) (string, error) {
 	return r0, r1
 }
 
+// FindIpForPeers provides a mock function with given fields: peers
+func (_m *NetworkIntf) FindIpForPeers(peers []string) (string, error) {
+	ret := _m.Called(peers)
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func([]string) (string, error)); ok {
+		return rf(peers)
+	}
+	if rf, ok := ret.Get(0).(func([]string) string); ok {
+		r0 = rf(peers)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func([]string) error); ok {
+		r1 = rf(peers)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // IsIpOnSubnet provides a mock function with given fields: address, subnet
 func (_m *NetworkIntf) IsIpOnSubnet(address string, subnet string) bool {
 	ret := _m.Called(address, subnet)
