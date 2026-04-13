@@ -50,23 +50,22 @@ func cmdRemotePut(state mcTypes.State, r *http.Request) mcTypes.Response {
 	}
 
 	if !req.RenderOnly {
+		// Persist sync so read-your-writes holds across the cluster via dqlite.
+		err = database.PersistRemoteDb(r.Context(), interfaces.CephState{State: state}, req)
+		if err != nil {
+			return mcTypes.InternalError(fmt.Errorf("failed to persist remote: %w", err))
+		}
+
 		logger.Infof("REM: Sending remote(%s) info to cluster members.", req.Name)
 
-		// Asynchronously persist this on db and send request to other cluster members.
+		forwardReq := req
+		forwardReq.RenderOnly = true
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
 			defer cancel()
 
-			// Send render only request to remaining cluster members.
-			req.RenderOnly = true
-			err = client.SendRemoteImportToClusterMembers(ctx, state, req)
-			if err != nil {
+			if err := client.SendRemoteImportToClusterMembers(ctx, state, forwardReq); err != nil {
 				logger.Errorf("REM: failed to forward request to cluster: %s", err.Error())
-			}
-
-			err := database.PersistRemoteDb(ctx, interfaces.CephState{State: state}, req)
-			if err != nil {
-				logger.Errorf("REM: failed to persiste remote: %s", err.Error())
 			}
 		}()
 	}
