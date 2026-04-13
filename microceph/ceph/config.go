@@ -359,7 +359,7 @@ func backwardCompatMonitors(ctx context.Context, s interfaces.StateInterface) ([
 	}
 
 	monitorAddresses := make([]string, len(monitors))
-	remotes := s.ClusterState().Remotes().RemotesByName()
+	remotes := s.ClusterState().Truststore().RemotesByName()
 	for i, monitor := range monitors {
 		remote, ok := remotes[monitor.Member]
 		if !ok {

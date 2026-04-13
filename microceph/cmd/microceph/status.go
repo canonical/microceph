@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v3/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/client"
@@ -53,12 +53,12 @@ func (c *cmdStatus) Run(cmd *cobra.Command, args []string) error {
 	clilogger.Debugf("Services: %+v", services)
 
 	// Get cluster members.
-	clusterMembers, err := cli.GetClusterMembers(context.Background())
+	clusterMembers, err := m.GetClusterMembers(context.Background())
 	if err != nil {
 		return err
 	}
 	clilogger.Debugf("Members: %+v", clusterMembers)
-	
+
 	fmt.Println("MicroCeph deployment summary:")
 
 	for _, server := range clusterMembers {

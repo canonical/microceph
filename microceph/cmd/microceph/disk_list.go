@@ -11,8 +11,8 @@ import (
 	lxdCmd "github.com/canonical/lxd/shared/cmd"
 	"github.com/canonical/lxd/shared/units"
 	"github.com/canonical/microceph/microceph/clilogger"
-	microCli "github.com/canonical/microcluster/v2/client"
-	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v3/microcluster"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -161,7 +161,7 @@ func outputJson(configuredDisks types.Disks, availableDisks []Disk) error {
 }
 
 // getUnpartitionedDisks fetches the list of available resources
-func getUnpartitionedDisks(cli *microCli.Client) ([]Disk, error) {
+func getUnpartitionedDisks(cli mcTypes.Client) ([]Disk, error) {
 	// List configured disks.
 	disks, err := client.GetDisks(context.Background(), cli)
 	if err != nil {

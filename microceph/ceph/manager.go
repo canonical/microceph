@@ -66,4 +66,3 @@ func EnableMgrModule(ctx context.Context, module string, remote string, local st
 
 	return nil
 }
-

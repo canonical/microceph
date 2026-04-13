@@ -11,7 +11,7 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -69,7 +69,7 @@ func makeTestDiskWithPartition(id, path string, sizeGiB uint64, partID string, p
 
 func newDryRunManagerWithConfiguredDisks(t *testing.T, storage *api.ResourcesStorage, configuredDisks types.Disks) (*OSDManager, *mocks.OSDQueryInterface) {
 	t.Helper()
-	var st state.State
+	var st mcTypes.State
 	mgr := NewOSDManager(st)
 	mgr.storage = staticStorage{storage: storage}
 	mgr.mountChecker = staticMountChecker{}
@@ -547,7 +547,7 @@ func TestBuildGeneratedAuxDiskParameter(t *testing.T) {
 }
 
 func TestWriteAndReadGeneratedAuxManifest(t *testing.T) {
-	var st state.State
+	var st mcTypes.State
 	mgr := NewOSDManager(st)
 	mgr.fs = afero.NewMemMapFs()
 
@@ -580,7 +580,7 @@ func TestWriteAndReadGeneratedAuxManifest(t *testing.T) {
 }
 
 func TestCleanupGeneratedAuxDevicesMissingManifest(t *testing.T) {
-	var st state.State
+	var st mcTypes.State
 	mgr := NewOSDManager(st)
 	mgr.fs = afero.NewMemMapFs()
 	require.NoError(t, mgr.fs.MkdirAll("/var/snap/microceph/common/data/osd/ceph-9", 0755))
@@ -590,7 +590,7 @@ func TestCleanupGeneratedAuxDevicesMissingManifest(t *testing.T) {
 }
 
 func TestCreatePlannedAuxPartitionResetBeforeUseWipesCarrierFirst(t *testing.T) {
-	var st state.State
+	var st mcTypes.State
 	mgr := NewOSDManager(st)
 	mgr.fs = afero.NewMemMapFs()
 	runner := mocks.NewRunner(t)
@@ -611,7 +611,7 @@ func TestCreatePlannedAuxPartitionResetBeforeUseWipesCarrierFirst(t *testing.T) 
 }
 
 func TestCleanupGeneratedAuxDevicesDeletesGeneratedPartitions(t *testing.T) {
-	var st state.State
+	var st mcTypes.State
 	mgr := NewOSDManager(st)
 	mgr.fs = afero.NewMemMapFs()
 	runner := mocks.NewRunner(t)
@@ -650,7 +650,7 @@ func TestCleanupGeneratedAuxDevicesDeletesGeneratedPartitions(t *testing.T) {
 }
 
 func TestCleanupGeneratedAuxDevicesAfterRestartUsesPersistedManifest(t *testing.T) {
-	var st state.State
+	var st mcTypes.State
 	fs := afero.NewMemMapFs()
 	mgr := NewOSDManager(st)
 	mgr.fs = fs
@@ -680,7 +680,7 @@ func TestCleanupGeneratedAuxDevicesAfterRestartUsesPersistedManifest(t *testing.
 }
 
 func TestCleanupGeneratedAuxDevicesFailurePreservesManifest(t *testing.T) {
-	var st state.State
+	var st mcTypes.State
 	mgr := NewOSDManager(st)
 	mgr.fs = afero.NewMemMapFs()
 	runner := mocks.NewRunner(t)
@@ -713,7 +713,7 @@ func TestCleanupGeneratedAuxDevicesFailurePreservesManifest(t *testing.T) {
 }
 
 func TestCleanupGeneratedAuxDevicesRetryResumesFromRemainingEntry(t *testing.T) {
-	var st state.State
+	var st mcTypes.State
 	mgr := NewOSDManager(st)
 	mgr.fs = afero.NewMemMapFs()
 	runner := mocks.NewRunner(t)
@@ -807,7 +807,7 @@ func TestExecuteDSLProvisionPlanCleansCreatedAuxOnPartitionCreationFailure(t *te
 }
 
 func TestResolvePartitionStablePathFallsBackToRawDeviceWhenStorageUnavailable(t *testing.T) {
-	var st state.State
+	var st mcTypes.State
 	mgr := NewOSDManager(st)
 	mgr.fs = afero.NewMemMapFs()
 	mgr.storage = staticStorage{err: assert.AnError}

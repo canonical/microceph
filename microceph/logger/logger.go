@@ -429,7 +429,7 @@ func convertCtxToKV(args ...lxdlogger.Ctx) []interface{} {
 	if len(args) == 0 {
 		return nil
 	}
-	
+
 	kvPairs := make([]interface{}, 0, len(args)*2)
 	for _, ctx := range args {
 		for k, v := range ctx {

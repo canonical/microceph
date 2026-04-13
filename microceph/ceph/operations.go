@@ -7,7 +7,7 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/logger"
 
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )
@@ -60,7 +60,7 @@ type Result struct {
 
 // ClusterOps is the base struct for all operations.
 type ClusterOps struct {
-	State   state.State
+	State   mcTypes.State
 	Context context.Context
 }
 

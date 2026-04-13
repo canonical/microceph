@@ -8,7 +8,7 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/tests"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -38,7 +38,7 @@ func (ccs *ClientConfigSuite) SetupTest() {
 	ccs.TestStateInterface.On("ClusterState").Return(state)
 }
 
-func addGetHostConfigsExpectation(mci *mocks.ClientConfigQueryIntf, cs state.State, hostname string) {
+func addGetHostConfigsExpectation(mci *mocks.ClientConfigQueryIntf, cs mcTypes.State, hostname string) {
 	output := database.ClientConfigItems{}
 	count := 0
 	for configKey, field := range GetClientConfigSet() {

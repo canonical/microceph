@@ -6,8 +6,8 @@ import (
 
 	"github.com/canonical/microceph/microceph/interfaces"
 
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 // PlacementIntf is the interface used for running various services in a MicroCeph cluster.

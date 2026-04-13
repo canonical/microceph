@@ -6,7 +6,7 @@ import (
 	context "context"
 
 	database "github.com/canonical/microceph/microceph/database"
-	state "github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -16,11 +16,11 @@ type ClientConfigQueryIntf struct {
 }
 
 // AddNew provides a mock function with given fields: s, key, value, host
-func (_m *ClientConfigQueryIntf) AddNew(ctx context.Context, s state.State, key string, value string, host string) error {
+func (_m *ClientConfigQueryIntf) AddNew(ctx context.Context, s mcTypes.State, key string, value string, host string) error {
 	ret := _m.Called(s, key, value, host)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, string, string, string) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, string, string, string) error); ok {
 		r0 = rf(ctx, s, key, value, host)
 	} else {
 		r0 = ret.Error(0)
@@ -30,15 +30,15 @@ func (_m *ClientConfigQueryIntf) AddNew(ctx context.Context, s state.State, key 
 }
 
 // GetAll provides a mock function with given fields: s
-func (_m *ClientConfigQueryIntf) GetAll(ctx context.Context, s state.State) (database.ClientConfigItems, error) {
+func (_m *ClientConfigQueryIntf) GetAll(ctx context.Context, s mcTypes.State) (database.ClientConfigItems, error) {
 	ret := _m.Called(s)
 
 	var r0 database.ClientConfigItems
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State) (database.ClientConfigItems, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State) (database.ClientConfigItems, error)); ok {
 		return rf(ctx, s)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, state.State) database.ClientConfigItems); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State) database.ClientConfigItems); ok {
 		r0 = rf(ctx, s)
 	} else {
 		if ret.Get(0) != nil {
@@ -46,7 +46,7 @@ func (_m *ClientConfigQueryIntf) GetAll(ctx context.Context, s state.State) (dat
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, state.State) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, mcTypes.State) error); ok {
 		r1 = rf(ctx, s)
 	} else {
 		r1 = ret.Error(1)
@@ -56,15 +56,15 @@ func (_m *ClientConfigQueryIntf) GetAll(ctx context.Context, s state.State) (dat
 }
 
 // GetAllForHost provides a mock function with given fields: s, host
-func (_m *ClientConfigQueryIntf) GetAllForHost(ctx context.Context, s state.State, host string) (database.ClientConfigItems, error) {
+func (_m *ClientConfigQueryIntf) GetAllForHost(ctx context.Context, s mcTypes.State, host string) (database.ClientConfigItems, error) {
 	ret := _m.Called(s, host)
 
 	var r0 database.ClientConfigItems
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, string) (database.ClientConfigItems, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, string) (database.ClientConfigItems, error)); ok {
 		return rf(ctx, s, host)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, string) database.ClientConfigItems); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, string) database.ClientConfigItems); ok {
 		r0 = rf(ctx, s, host)
 	} else {
 		if ret.Get(0) != nil {
@@ -72,7 +72,7 @@ func (_m *ClientConfigQueryIntf) GetAllForHost(ctx context.Context, s state.Stat
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, state.State, string) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, mcTypes.State, string) error); ok {
 		r1 = rf(ctx, s, host)
 	} else {
 		r1 = ret.Error(1)
@@ -82,15 +82,15 @@ func (_m *ClientConfigQueryIntf) GetAllForHost(ctx context.Context, s state.Stat
 }
 
 // GetAllForKey provides a mock function with given fields: s, key
-func (_m *ClientConfigQueryIntf) GetAllForKey(ctx context.Context, s state.State, key string) (database.ClientConfigItems, error) {
+func (_m *ClientConfigQueryIntf) GetAllForKey(ctx context.Context, s mcTypes.State, key string) (database.ClientConfigItems, error) {
 	ret := _m.Called(s, key)
 
 	var r0 database.ClientConfigItems
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, string) (database.ClientConfigItems, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, string) (database.ClientConfigItems, error)); ok {
 		return rf(ctx, s, key)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, string) database.ClientConfigItems); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, string) database.ClientConfigItems); ok {
 		r0 = rf(ctx, s, key)
 	} else {
 		if ret.Get(0) != nil {
@@ -98,7 +98,7 @@ func (_m *ClientConfigQueryIntf) GetAllForKey(ctx context.Context, s state.State
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, state.State, string) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, mcTypes.State, string) error); ok {
 		r1 = rf(ctx, s, key)
 	} else {
 		r1 = ret.Error(1)
@@ -108,15 +108,15 @@ func (_m *ClientConfigQueryIntf) GetAllForKey(ctx context.Context, s state.State
 }
 
 // GetAllForKeyAndHost provides a mock function with given fields: s, key, host
-func (_m *ClientConfigQueryIntf) GetAllForKeyAndHost(ctx context.Context, s state.State, key string, host string) (database.ClientConfigItems, error) {
+func (_m *ClientConfigQueryIntf) GetAllForKeyAndHost(ctx context.Context, s mcTypes.State, key string, host string) (database.ClientConfigItems, error) {
 	ret := _m.Called(s, key, host)
 
 	var r0 database.ClientConfigItems
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, string, string) (database.ClientConfigItems, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, string, string) (database.ClientConfigItems, error)); ok {
 		return rf(ctx, s, key, host)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, string, string) database.ClientConfigItems); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, string, string) database.ClientConfigItems); ok {
 		r0 = rf(ctx, s, key, host)
 	} else {
 		if ret.Get(0) != nil {
@@ -124,7 +124,7 @@ func (_m *ClientConfigQueryIntf) GetAllForKeyAndHost(ctx context.Context, s stat
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, state.State, string, string) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, mcTypes.State, string, string) error); ok {
 		r1 = rf(ctx, s, key, host)
 	} else {
 		r1 = ret.Error(1)
@@ -134,11 +134,11 @@ func (_m *ClientConfigQueryIntf) GetAllForKeyAndHost(ctx context.Context, s stat
 }
 
 // RemoveAllForKey provides a mock function with given fields: s, key
-func (_m *ClientConfigQueryIntf) RemoveAllForKey(ctx context.Context, s state.State, key string) error {
+func (_m *ClientConfigQueryIntf) RemoveAllForKey(ctx context.Context, s mcTypes.State, key string) error {
 	ret := _m.Called(s, key)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, string) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, string) error); ok {
 		r0 = rf(ctx, s, key)
 	} else {
 		r0 = ret.Error(0)
@@ -148,11 +148,11 @@ func (_m *ClientConfigQueryIntf) RemoveAllForKey(ctx context.Context, s state.St
 }
 
 // RemoveOneForKeyAndHost provides a mock function with given fields: s, key, host
-func (_m *ClientConfigQueryIntf) RemoveOneForKeyAndHost(ctx context.Context, s state.State, key string, host string) error {
+func (_m *ClientConfigQueryIntf) RemoveOneForKeyAndHost(ctx context.Context, s mcTypes.State, key string, host string) error {
 	ret := _m.Called(s, key, host)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, string, string) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, string, string) error); ok {
 		r0 = rf(ctx, s, key, host)
 	} else {
 		r0 = ret.Error(0)

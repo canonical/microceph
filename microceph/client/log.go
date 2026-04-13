@@ -6,16 +6,16 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
-	microCli "github.com/canonical/microcluster/v2/client"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
-func LogLevelSet(ctx context.Context, c *microCli.Client, data *types.LogLevelPut) error {
+func LogLevelSet(ctx context.Context, c mcTypes.Client, data *types.LogLevelPut) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("microceph", "configs", "log-level"), data, nil)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("microceph", "configs", "log-level").URL, data, nil)
 	if err != nil {
 		return fmt.Errorf("failed setting log level: %w", err)
 	}
@@ -23,13 +23,13 @@ func LogLevelSet(ctx context.Context, c *microCli.Client, data *types.LogLevelPu
 	return nil
 }
 
-func LogLevelGet(ctx context.Context, c *microCli.Client) (uint32, error) {
+func LogLevelGet(ctx context.Context, c mcTypes.Client) (uint32, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
 	level := uint32(0)
 
-	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, api.NewURL().Path("microceph", "configs", "log-level"), nil, &level)
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, &api.NewURL().Path("microceph", "configs", "log-level").URL, nil, &level)
 	if err != nil {
 		return 0, fmt.Errorf("failed getting log level: %w", err)
 	}

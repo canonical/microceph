@@ -5,35 +5,33 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/logger"
-	"github.com/canonical/microcluster/v2/rest"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
 // top level microceph API
-var microcephCmd = rest.Endpoint{
+var microcephCmd = mcTypes.Endpoint{
 	Path: "microceph",
 }
 
 // microceph configs API
-var microcephConfigsCmd = rest.Endpoint{
+var microcephConfigsCmd = mcTypes.Endpoint{
 	Path: "microceph/configs",
 }
 
-var logLevelCmd = rest.Endpoint{
+var logLevelCmd = mcTypes.Endpoint{
 	Path: "microceph/configs/log-level",
-	Put:  rest.EndpointAction{Handler: logLevelPut, ProxyTarget: true},
-	Get:  rest.EndpointAction{Handler: logLevelGet, ProxyTarget: true},
+	Put:  mcTypes.EndpointAction{Handler: logLevelPut, ProxyTarget: true},
+	Get:  mcTypes.EndpointAction{Handler: logLevelGet, ProxyTarget: true},
 }
 
-func logLevelPut(s state.State, r *http.Request) response.Response {
+func logLevelPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var req types.LogLevelPut
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
 	logger.Debugf("cmdLogLevelPut: %v", req)
@@ -41,24 +39,24 @@ func logLevelPut(s state.State, r *http.Request) response.Response {
 	ls := strings.ToLower(req.Level)
 	i, err := logger.ParseLegacyLevels(ls) // validate
 	if err != nil {
-		return response.BadRequest(err)
+		return mcTypes.BadRequest(err)
 	}
 
 	err = logger.SetLevel(logger.ParseLegacyLevelsInt(i))
 	if err != nil {
-		return response.SmartError(err)
+		return mcTypes.SmartError(err)
 	}
 
 	logger.Debugf("cmdLogLevelPut done: %v", req)
-	return response.EmptySyncResponse
+	return mcTypes.EmptySyncResponse
 }
 
-func logLevelGet(s state.State, r *http.Request) response.Response {
+func logLevelGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 	currentLevel := logger.GetLevel()
 	i, err := logger.ParseLegacyLevels(currentLevel)
 	if err != nil {
 		logger.Errorf("cmdLogLevelGet: failed to parse current log level %q: %v", currentLevel, err)
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
-	return response.SyncResponse(true, i)
+	return mcTypes.SyncResponse(true, i)
 }

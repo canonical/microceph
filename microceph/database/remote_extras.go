@@ -10,7 +10,7 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
 // PersistRemoteDb adds the remote record to dqlite.
@@ -32,7 +32,7 @@ var PersistRemoteDb = func(ctx context.Context, s interfaces.StateInterface, rem
 }
 
 // GetRemoteDb fetches a single or all remotes (when name == "") from DB.
-var GetRemoteDb = func(ctx context.Context, s state.State, name string) (types.RemoteRecords, error) {
+var GetRemoteDb = func(ctx context.Context, s mcTypes.State, name string) (types.RemoteRecords, error) {
 	var remotes []Remote
 	var err error
 
@@ -68,7 +68,7 @@ var GetRemoteDb = func(ctx context.Context, s state.State, name string) (types.R
 	return response, nil
 }
 
-var DeleteRemoteDb = func(ctx context.Context, s state.State, remoteName string) error {
+var DeleteRemoteDb = func(ctx context.Context, s mcTypes.State, remoteName string) error {
 	pathConst := constants.GetPathConst()
 
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {

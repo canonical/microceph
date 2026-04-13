@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v3/microcluster"
 	"github.com/spf13/cobra"
 )
 
@@ -36,10 +37,16 @@ func (c *cmdClusterRemove) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cli, err := m.LocalClient()
+	members, err := m.GetClusterMembers(context.Background())
 	if err != nil {
 		return err
 	}
 
-	return cli.DeleteClusterMember(context.Background(), args[0], c.flagForce)
+	for _, member := range members {
+		if member.Name == args[0] {
+			return m.RemoveClusterMember(context.Background(), member.Name, member.Address.String(), c.flagForce)
+		}
+	}
+
+	return fmt.Errorf("cluster member %q not found", args[0])
 }

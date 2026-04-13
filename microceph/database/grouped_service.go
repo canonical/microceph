@@ -3,23 +3,23 @@ package database
 //go:generate -command mapper lxd-generate db mapper -t grouped_service.mapper.go
 //go:generate mapper reset
 //
-//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e GroupedService objects table=grouped_services
-//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e GroupedService objects-by-Member table=grouped_services
-//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e GroupedService objects-by-Service-and-GroupID table=grouped_services
-//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e GroupedService objects-by-Member-and-Service-and-GroupID table=grouped_services
-//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e GroupedService id table=grouped_services
-//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e GroupedService create table=grouped_services
-//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e GroupedService delete-by-Member table=grouped_services
-//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e GroupedService delete-by-Member-and-Service-and-GroupID table=grouped_services
-//go:generate mapper stmt -d github.com/canonical/microcluster/v2/cluster -e GroupedService update table=grouped_services
+//go:generate mapper stmt -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService objects table=grouped_services
+//go:generate mapper stmt -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService objects-by-Member table=grouped_services
+//go:generate mapper stmt -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService objects-by-Service-and-GroupID table=grouped_services
+//go:generate mapper stmt -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService objects-by-Member-and-Service-and-GroupID table=grouped_services
+//go:generate mapper stmt -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService id table=grouped_services
+//go:generate mapper stmt -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService create table=grouped_services
+//go:generate mapper stmt -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService delete-by-Member table=grouped_services
+//go:generate mapper stmt -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService delete-by-Member-and-Service-and-GroupID table=grouped_services
+//go:generate mapper stmt -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService update table=grouped_services
 //
-//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e GroupedService GetMany table=grouped_services
-//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e GroupedService GetOne table=grouped_services
-//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e GroupedService ID table=grouped_services
-//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e GroupedService Exists table=grouped_services
-//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e GroupedService Create table=grouped_services
-//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e GroupedService DeleteOne-by-Member-and-Service-and-GroupID table=grouped_services
-//go:generate mapper method -i -d github.com/canonical/microcluster/v2/cluster -e GroupedService Update table=grouped_services
+//go:generate mapper method -i -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService GetMany table=grouped_services
+//go:generate mapper method -i -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService GetOne table=grouped_services
+//go:generate mapper method -i -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService ID table=grouped_services
+//go:generate mapper method -i -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService Exists table=grouped_services
+//go:generate mapper method -i -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService Create table=grouped_services
+//go:generate mapper method -i -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService DeleteOne-by-Member-and-Service-and-GroupID table=grouped_services
+//go:generate mapper method -i -d github.com/canonical/microcluster/v3/microcluster/db -e GroupedService Update table=grouped_services
 
 // GroupedService is used to track clustered services running on a particular server.
 type GroupedService struct {

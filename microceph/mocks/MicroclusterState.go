@@ -1,14 +1,16 @@
 package mocks
 
 import (
+	"net/url"
+
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
-	state "github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
 // MockState mocks the internal microcluster state.
 type MockState struct {
-	state.State
+	mcTypes.State
 
 	URL         *api.URL
 	ClusterName string
@@ -20,8 +22,11 @@ func (m *MockState) Name() string {
 }
 
 // Address returns the address supplied to MockState.
-func (m *MockState) Address() *api.URL {
-	return m.URL
+func (m *MockState) Address() *url.URL {
+	if m.URL == nil {
+		return nil
+	}
+	return &m.URL.URL
 }
 
 // ServerCert is set to always return nil to prematurely return before making database actions.

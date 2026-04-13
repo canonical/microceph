@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
@@ -17,38 +16,37 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
-	"github.com/canonical/microcluster/v2/rest"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/gorilla/mux"
 )
 
 // remoteCmd is the top level remote endpoint.
-var remoteCmd = rest.Endpoint{
+var remoteCmd = mcTypes.Endpoint{
 	Path: "client/remotes",
-	Get:  rest.EndpointAction{Handler: cmdRemoteGet, ProxyTarget: false},
+	Get:  mcTypes.EndpointAction{Handler: cmdRemoteGet, ProxyTarget: false},
 }
 
 // remoteNameCmd endpoint is for operations on specific remotes.
-var remoteNameCmd = rest.Endpoint{
+var remoteNameCmd = mcTypes.Endpoint{
 	Path:   "client/remotes/{name}",
-	Put:    rest.EndpointAction{Handler: cmdRemotePut, ProxyTarget: false},
-	Get:    rest.EndpointAction{Handler: cmdRemoteGet, ProxyTarget: false},
-	Delete: rest.EndpointAction{Handler: cmdRemoteDelete, ProxyTarget: false},
+	Put:    mcTypes.EndpointAction{Handler: cmdRemotePut, ProxyTarget: false},
+	Get:    mcTypes.EndpointAction{Handler: cmdRemoteGet, ProxyTarget: false},
+	Delete: mcTypes.EndpointAction{Handler: cmdRemoteDelete, ProxyTarget: false},
 }
 
 // cmdRemotePut is handler for adding remote records to MicroCeph.
 // This also triggers the $cluster file generation for all MicroCeph hosts.
-func cmdRemotePut(state state.State, r *http.Request) response.Response {
+func cmdRemotePut(state mcTypes.State, r *http.Request) mcTypes.Response {
 	var req types.RemoteImportRequest
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
 	err = renderConfAndKeyringFiles(req.Name, req.LocalName, req.Config)
 	if err != nil {
-		return response.InternalError(fmt.Errorf("couldn't render files: %w", err))
+		return mcTypes.InternalError(fmt.Errorf("couldn't render files: %w", err))
 	}
 
 	if !req.RenderOnly {
@@ -73,55 +71,55 @@ func cmdRemotePut(state state.State, r *http.Request) response.Response {
 		}()
 	}
 
-	return response.EmptySyncResponse
+	return mcTypes.EmptySyncResponse
 }
 
 // cmdRemoteGet is handler for fetching Remote records from MicroCeph internal db.
-func cmdRemoteGet(state state.State, r *http.Request) response.Response {
+func cmdRemoteGet(state mcTypes.State, r *http.Request) mcTypes.Response {
 	// PathUnescape will NOT fail if no name is provided in API request.
 	// Additionally, remoteName in that case is initialised to "".
 	remoteName, err := url.PathUnescape(mux.Vars(r)["name"])
 	if err != nil {
 		logger.Errorf("REM: %v", err.Error())
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
 	remotes, err := database.GetRemoteDb(r.Context(), state, remoteName)
 	if err != nil {
-		return response.SmartError(err)
+		return mcTypes.SmartError(err)
 	}
 
 	if len(remotes) == 0 {
-		return response.SmartError(fmt.Errorf("no remotes configured"))
+		return mcTypes.SmartError(fmt.Errorf("no remotes configured"))
 	}
 
-	return response.SyncResponse(true, remotes)
+	return mcTypes.SyncResponse(true, remotes)
 }
 
 // cmdRemoteDelete is handler for removing Remote records from MicroCeph internal db.
-func cmdRemoteDelete(state state.State, r *http.Request) response.Response {
+func cmdRemoteDelete(state mcTypes.State, r *http.Request) mcTypes.Response {
 	remoteName, err := url.PathUnescape(mux.Vars(r)["name"])
 	if err != nil {
-		return response.BadRequest(err)
+		return mcTypes.BadRequest(err)
 	}
 
 	if isRemoteConfigured(remoteName) {
-		return response.SmartError(fmt.Errorf("cannot remote remote(%s), disable RBD mirroring", remoteName))
+		return mcTypes.SmartError(fmt.Errorf("cannot remote remote(%s), disable RBD mirroring", remoteName))
 	}
 
 	// Remove remote record.
 	err = database.DeleteRemoteDb(r.Context(), state, remoteName)
 	if err != nil {
-		return response.SmartError(err)
+		return mcTypes.SmartError(err)
 	}
 
 	// Distrust the remote ceph user, and remove key.
 	err = ceph.DeleteClientKey(remoteName)
 	if err != nil {
-		return response.SmartError(err)
+		return mcTypes.SmartError(err)
 	}
 
-	return response.EmptySyncResponse
+	return mcTypes.EmptySyncResponse
 }
 
 /*****************HELPER FUNCTIONS**************************/

@@ -9,8 +9,8 @@ import (
 
 	"github.com/canonical/lxd/lxd/util"
 	"github.com/canonical/lxd/shared/api"
-	microCli "github.com/canonical/microcluster/v2/client"
-	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v3/microcluster"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -44,7 +44,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if already initialized.
-	_, err = lc.GetClusterMembers(context.Background())
+	_, err = m.GetClusterMembers(context.Background())
 	isUninitialized := err != nil && api.StatusErrorCheck(err, http.StatusServiceUnavailable)
 	if err != nil && !isUninitialized {
 		return err
@@ -187,7 +187,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func printLocalDisks(cli *microCli.Client) error {
+func printLocalDisks(cli mcTypes.Client) error {
 	// List unpartitioned disks.
 	availableDisks, err := getUnpartitionedDisks(cli)
 	if err != nil {

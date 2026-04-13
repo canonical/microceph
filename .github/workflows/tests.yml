@@ -153,10 +153,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdqlite1.17-dev
 
-      - name: Install Go (1.22)
+      - name: Install Go (1.25)
         uses: actions/setup-go@v5
         with:
-          go-version: 1.22.x
+          go-version: 1.25.x
 
       - name: Run static checks
         run: |
@@ -178,10 +178,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdqlite1.17-dev
 
-      - name: Install Go (1.22)
+      - name: Install Go (1.25)
         uses: actions/setup-go@v5
         with:
-          go-version: 1.22.x
+          go-version: 1.25.x
 
       - name: Run unit-tests
         run: |

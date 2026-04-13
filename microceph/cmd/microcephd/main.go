@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/canonical/microcluster/v2/microcluster"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/microcluster"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api"
@@ -72,7 +72,7 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	h := &state.Hooks{}
+	h := &mcTypes.Hooks{}
 	h.PreInit = PreInit
 	h.PostBootstrap = PostBootstrap
 	h.PostJoin = PostJoin
@@ -82,8 +82,6 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	daemonArgs := microcluster.DaemonArgs{
 		Version: version.Version(),
 
-		Verbose:          c.global.flagLogVerbose,
-		Debug:            c.global.flagLogDebug,
 		ExtensionsSchema: database.SchemaExtensions,
 		APIExtensions:    nil,
 		Hooks:            h,

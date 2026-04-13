@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	lxdCmd "github.com/canonical/lxd/shared/cmd"
-	"github.com/canonical/microcluster/v2/microcluster"
+	"github.com/canonical/microcluster/v3/microcluster"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -270,13 +270,13 @@ func (c *cmdDiskAdd) printDryRunOutput(response types.DiskAddResponse) error {
 			return err
 		}
 		if response.ValidationError != "" {
-			return fmt.Errorf(response.ValidationError)
+			return fmt.Errorf("%s", response.ValidationError)
 		}
 		return nil
 	}
 
 	if response.ValidationError != "" {
-		return fmt.Errorf(response.ValidationError)
+		return fmt.Errorf("%s", response.ValidationError)
 	}
 
 	for _, warning := range response.Warnings {
@@ -341,7 +341,7 @@ func printAddDiskFailures(response types.DiskAddResponse) error {
 
 	if len(response.ValidationError) != 0 {
 		fmt.Println("Validation Error found")
-		return fmt.Errorf(response.ValidationError)
+		return fmt.Errorf("%s", response.ValidationError)
 	}
 
 	if len(response.Reports) == 0 {

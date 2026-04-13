@@ -191,7 +191,6 @@ func DisableRGW(ctx context.Context, s interfaces.StateInterface) error {
 	return nil
 }
 
-
 // startRGW starts the RGW service.
 func startRGW() error {
 	err := snapStart("rgw", true)

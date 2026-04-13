@@ -4,7 +4,7 @@ package mocks
 import (
 	context "context"
 
-	state "github.com/canonical/microcluster/v2/state" // mockery gets confused about import paths here
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types" // mockery gets confused about import paths here
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -14,21 +14,21 @@ type MemberCounterInterface struct {
 }
 
 // Count provides a mock function with given fields: s
-func (_m *MemberCounterInterface) Count(ctx context.Context, s state.State) (int, error) {
+func (_m *MemberCounterInterface) Count(ctx context.Context, s mcTypes.State) (int, error) {
 	ret := _m.Called(s)
 
 	var r0 int
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State) (int, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State) (int, error)); ok {
 		return rf(ctx, s)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, state.State) int); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State) int); ok {
 		r0 = rf(ctx, s)
 	} else {
 		r0 = ret.Get(0).(int)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, state.State) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, mcTypes.State) error); ok {
 		r1 = rf(ctx, s)
 	} else {
 		r1 = ret.Error(1)
@@ -38,21 +38,21 @@ func (_m *MemberCounterInterface) Count(ctx context.Context, s state.State) (int
 }
 
 // CountExclude provides a mock function with given fields: s, exclude
-func (_m *MemberCounterInterface) CountExclude(ctx context.Context, s state.State, exclude int64) (int, error) {
+func (_m *MemberCounterInterface) CountExclude(ctx context.Context, s mcTypes.State, exclude int64) (int, error) {
 	ret := _m.Called(s, exclude)
 
 	var r0 int
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, int64) (int, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, int64) (int, error)); ok {
 		return rf(ctx, s, exclude)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, int64) int); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, int64) int); ok {
 		r0 = rf(ctx, s, exclude)
 	} else {
 		r0 = ret.Get(0).(int)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, state.State, int64) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, mcTypes.State, int64) error); ok {
 		r1 = rf(ctx, s, exclude)
 	} else {
 		r1 = ret.Error(1)

@@ -6,29 +6,27 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
-	"github.com/canonical/microcluster/v2/rest"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microceph/microceph/logger"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
-var clusterCmd = rest.Endpoint{
+var clusterCmd = mcTypes.Endpoint{
 	Path: "cluster",
-	Get:  rest.EndpointAction{Handler: cmdClusterGet, ProxyTarget: false},
+	Get:  mcTypes.EndpointAction{Handler: cmdClusterGet, ProxyTarget: false},
 }
 
 // cmdClusterGet returns a json dump of microceph configs suitable for connecting from a remote cluster
 // This also creates a new key based on the remote name with admin privs.
-func cmdClusterGet(s state.State, r *http.Request) response.Response {
+func cmdClusterGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 	// Fetch request params.
 	var req types.ClusterExportRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
 	// Check that the cluster name is conformant.
@@ -36,7 +34,7 @@ func cmdClusterGet(s state.State, r *http.Request) response.Response {
 	if err != nil || !isOk {
 		err := fmt.Errorf("cluster names can only have [a-z] or [0-9] characters: %w", err)
 		logger.Error(err.Error())
-		return response.BadRequest(err)
+		return mcTypes.BadRequest(err)
 	}
 
 	// fetch the cluster configurations from dqlite
@@ -44,7 +42,7 @@ func cmdClusterGet(s state.State, r *http.Request) response.Response {
 	if err != nil {
 		err := fmt.Errorf("failed to get config db: %w", err)
 		logger.Error(err.Error())
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
 	// generate client keys
@@ -56,7 +54,7 @@ func cmdClusterGet(s state.State, r *http.Request) response.Response {
 		[]string{"mgr", "allow *"},
 	)
 	if err != nil {
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
 	// replace admin key with remote client key.
@@ -67,8 +65,8 @@ func cmdClusterGet(s state.State, r *http.Request) response.Response {
 	if err != nil {
 		err := fmt.Errorf("failed to marshal response data: %w", err)
 		logger.Error(err.Error())
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
-	return response.SyncResponse(true, data)
+	return mcTypes.SyncResponse(true, data)
 }

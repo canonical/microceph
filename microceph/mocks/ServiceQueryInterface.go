@@ -7,7 +7,7 @@ import (
 
 	mock "github.com/stretchr/testify/mock"
 
-	state "github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	types "github.com/canonical/microceph/microceph/api/types"
 )
@@ -18,7 +18,7 @@ type ServiceQueryInterface struct {
 }
 
 // List provides a mock function with given fields: ctx, s
-func (_m *ServiceQueryInterface) List(ctx context.Context, s state.State) (types.Services, error) {
+func (_m *ServiceQueryInterface) List(ctx context.Context, s mcTypes.State) (types.Services, error) {
 	ret := _m.Called(ctx, s)
 
 	if len(ret) == 0 {
@@ -27,10 +27,10 @@ func (_m *ServiceQueryInterface) List(ctx context.Context, s state.State) (types
 
 	var r0 types.Services
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State) (types.Services, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State) (types.Services, error)); ok {
 		return rf(ctx, s)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, state.State) types.Services); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State) types.Services); ok {
 		r0 = rf(ctx, s)
 	} else {
 		if ret.Get(0) != nil {
@@ -38,7 +38,7 @@ func (_m *ServiceQueryInterface) List(ctx context.Context, s state.State) (types
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, state.State) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, mcTypes.State) error); ok {
 		r1 = rf(ctx, s)
 	} else {
 		r1 = ret.Error(1)
