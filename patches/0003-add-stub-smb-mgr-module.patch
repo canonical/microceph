@@ -71,7 +71,7 @@ new file mode 100644
 index 0000000..f8e1d2c
 --- /dev/null
 +++ b/share/ceph/mgr/smb/resources.py
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,19 @@
 +"""Stub resource types for the smb mgr module."""
 +
 +from typing import Any, Dict
