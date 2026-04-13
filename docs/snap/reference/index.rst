@@ -31,3 +31,18 @@ The release notes section provides details on major MicroCeph releases.
    :maxdepth: 1
 
    release-notes
+
+
+Canonical Ceph hardware recommendations
+-----------------------------------------
+
+Our hardware recommendations section contains hardware specification
+recommendations for Canonical Ceph clusters, basing these specifications on
+cluster service placement strategy. It also includes recommendations for
+infrastructure node requirements depending on the method of deployment, i.e.
+via charms or snap.
+
+.. toctree::
+   :maxdepth: 1
+
+   Canonical Ceph hardware recommendations <canonical-ceph-hardware-recommendations/index>

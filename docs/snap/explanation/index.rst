@@ -59,3 +59,17 @@ cryptographic technology used in MicroCeph.
 If you have a specific goal, but are already familiar with MicroCeph, our :doc:`how-to guides <../how-to/index>` have more in-depth detail and instructions.
 
 Take a look at our :doc:`reference <../reference/index>` section when you need to know which MicroCeph commands to use.
+
+Canonical Ceph reference architecture
+--------------------------------------
+
+Find detailed guidelines for optimising your Ceph architecture. Learn about the
+different deployment options; what to consider when designing a Canonical Ceph
+cluster; hardware and software specifications and recommendations, and
+information on Ubuntu certified hardware.
+
+.. toctree::
+   :maxdepth: 2
+
+   Canonical Ceph reference architecture <canonical-ceph-reference-architecture/index>
+
