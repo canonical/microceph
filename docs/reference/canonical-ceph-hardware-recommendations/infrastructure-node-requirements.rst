@@ -7,7 +7,7 @@ Infrastructure node requirements
 =================================
 
 For either hyperconverged or disaggregated scenarios, refer to the
-:ref:`infrastructure node requirements <infrastructure-node-requirements>` outlined in the
+:ref:`cluster service placement strategies <cluster-service-placement>` outlined in the
 explanation section of our reference architecture. The nodes should have the following
 specifications:
 

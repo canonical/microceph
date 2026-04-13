@@ -1,6 +1,8 @@
 .. meta::
    :description: MicroCeph reference information, including CLI commands and release notes. 
 
+.. _reference:
+
 Reference
 =========
 
@@ -32,6 +34,7 @@ The release notes section provides details on major MicroCeph releases.
 
    release-notes
 
+.. _ref-arch-reference-section:
 
 Canonical Ceph hardware recommendations
 -----------------------------------------

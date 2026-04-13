@@ -10,8 +10,8 @@ In the context of disaggregated nodes, **a minimum of nine nodes** is required
 to be eligible for Ubuntu Pro Managed Solutions and Delivery services with
 Canonical.
 
-The initial configuration suggestion would be 3 nodes for the control plane
-(MON, RadosGW, MDS), and 6 nodes for dedicated OSDs. However, the distribution
+The initial configuration suggestion would be three nodes for the control plane
+(MON, RadosGW, MDS), and six nodes for dedicated OSDs. However, the distribution
 needs to be adapted to your requirements, and allows for several combinations:
 
 Dedicated control plane nodes

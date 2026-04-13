@@ -16,8 +16,7 @@ and various hardware and software specifications, e.g. Random Access Memory
 Infrastructure node requirements
 ---------------------------------
 
-Management infrastructure requirements vary by `deployment option
-<deployment-options>`_. The `Juju <https://canonical.com/juju/docs>`_-based
+Management infrastructure requirements vary by :ref:`deployment option <deployment-options>`. The `Juju <https://canonical.com/juju/docs>`_-based
 options, i.e., Charmed Ceph and charm-microceph, require a Juju controller
 environment, typically deployed alongside `Metal as a Service (MAAS)
 <https://canonical.com/maas>`_ for bare-metal provisioning. Canonical
@@ -35,6 +34,8 @@ management/patching, we recommend using `Landscape
 <https://ubuntu.com/landscape>`_. These typically require another three-node
 cluster, which can be colocated with the Juju/MAAS infrastructure nodes where
 applicable, reducing the total infrastructure footprint.
+
+.. _cluster-service-placement:
 
 Cluster service placement
 --------------------------
@@ -55,7 +56,7 @@ capacity planning and replacement strategy.
 Hyperconverged architecture
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The hyperconverged approach to cluster placement is characterised by a setup
+The :ref:`hyperconverged approach <hw-rec-hyperconverged-architecture>` to cluster placement is characterised by a setup
 where every node in the cloud is hosting the control plane services.
 
 The hyperconverged architecture enables standardisation on a single hardware
@@ -76,7 +77,7 @@ in the context of an OpenStack deployment.
 Disaggregated architecture
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The disaggregated approach, on the other hand, features dedicated nodes for
+The :ref:`disaggregated approach <hw-rec-disaggregated-architecture>`, on the other hand, features dedicated nodes for
 each type of service, e.g. OSDs, RGW and MDS (control plane services).
 
 This architecture is suitable in specific scenarios, for example, where

@@ -15,7 +15,7 @@ Our reference architecture provides detailed guidelines for optimizing your Ceph
 architecture. It starts by detailing the different deployment options and their
 architectures, then highlights the factors to consider when designing a
 Canonical Ceph cluster, and then outlines hardware specifications, including
-compute, storage, memory and networking requirements. The reference section
+compute, storage, memory and networking requirements. The :ref:`reference section of the reference architecture <ref-arch-reference-section>`
 includes Canonical's recommendations regarding hardware and software
 configurations, to further inform your architectural choices.
 

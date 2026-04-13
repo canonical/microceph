@@ -31,11 +31,9 @@ via snap or charms. It also outlines memory and processor requirements, and
 provides software recommendations.
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
    
-   Deployment strategies
-   hyperconverged-architecture
-   disaggregated-architecture
+   deployment-strategies
    infrastructure-node-requirements
    memory-requirements
    software-requirements

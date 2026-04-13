@@ -1,5 +1,5 @@
 .. meta::
-   :description: Deployment strategies for Canonical Ceph clusters, covering the available approaches to cluster service placement.
+   :description: Parent navigation page for nesting hyperconverged and disaggregated architecture topics.
 
 .. _hw-rec-deployment-strategies:
 
