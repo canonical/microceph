@@ -1,0 +1,47 @@
+From 6966e1bf7ed9bb93d6855282eb127649391e44c2 Mon Sep 17 00:00:00 2001
+From: Utkarsh Bhatt <utkarsh.bhatt@canonical.com>
+Date: Thu, 20 Mar 2026 00:00:00 +0000
+Subject: [PATCH 2/2] mgr/prometheus: Handle empty JSON from orch
+ get-security-config
+
+Fix TypeError in prometheus module caused by incorrect string
+formatting in exception logging. The f-string with a trailing
+newline was being misinterpreted by Python's logging system.
+
+Upstream fix: https://github.com/ceph/ceph/pull/65033
+Tracker: https://tracker.ceph.com/issues/72380
+
+Signed-off-by: Utkarsh Bhatt <utkarsh.bhatt@canonical.com>
+---
+ share/ceph/mgr/prometheus/module.py | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/share/ceph/mgr/prometheus/module.py b/share/ceph/mgr/prometheus/module.py
+index abcdef1..1234567 100644
+--- a/share/ceph/mgr/prometheus/module.py
++++ b/share/ceph/mgr/prometheus/module.py
+@@ -1834,15 +1834,19 @@
+     def configure(self, server_addr: str, server_port: int) -> None:
+         cmd = {'prefix': 'orch get-security-config'}
+         ret, out, _ = self.mon_command(cmd)
++
+         if ret == 0 and out is not None:
+             try:
+                 security_config = json.loads(out)
+                 if security_config.get('security_enabled', False):
+                     self.setup_tls_config(server_addr, server_port)
+                     return
+             except Exception as e:
+-                self.log.exception(f'Failed to setup cephadm based secure monitoring stack: {e}\n',
+-                                   'Falling back to default configuration')
++                self.log.exception(
++                    'Failed to setup cephadm based secure monitoring stack: %s\n'
++                    'Falling back to default configuration',
++                    e
++                )
+
+         # In any error fallback to plain http mode
+         self.setup_default_config(server_addr, server_port)
+--
+2.43.0
+

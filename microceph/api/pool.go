@@ -6,52 +6,50 @@ import (
 
 	"github.com/canonical/microceph/microceph/logger"
 
-	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/microcluster/v2/rest"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 )
 
 // /1.0/pools-op endpoint.
-var poolsOpCmd = rest.Endpoint{
+var poolsOpCmd = mcTypes.Endpoint{
 	Path: "pools-op",
-	Put:  rest.EndpointAction{Handler: cmdPoolsPut, ProxyTarget: true},
+	Put:  mcTypes.EndpointAction{Handler: cmdPoolsPut, ProxyTarget: true},
 }
 
 // /1.0/pools endpoint.
-var poolsCmd = rest.Endpoint{
+var poolsCmd = mcTypes.Endpoint{
 	Path: "pools",
-	Get:  rest.EndpointAction{Handler: cmdPoolsGet, ProxyTarget: true},
+	Get:  mcTypes.EndpointAction{Handler: cmdPoolsGet, ProxyTarget: true},
 }
 
-func cmdPoolsGet(s state.State, r *http.Request) response.Response {
+func cmdPoolsGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 	logger.Debug("cmdPoolGet")
 	pools, err := ceph.GetOSDPools(r.Context())
 	if err != nil {
-		return response.SmartError(err)
+		return mcTypes.SmartError(err)
 	}
 
 	logger.Debug("cmdPoolGet done")
 
-	return response.SyncResponse(true, pools)
+	return mcTypes.SyncResponse(true, pools)
 }
 
-func cmdPoolsPut(s state.State, r *http.Request) response.Response {
+func cmdPoolsPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var req types.PoolPut
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
 	logger.Debugf("cmdPoolPut: %v", req)
 	err = ceph.SetReplicationFactor(req.Pools, req.Size)
 	if err != nil {
-		return response.SmartError(err)
+		return mcTypes.SmartError(err)
 	}
 
 	logger.Debugf("cmdPoolPut done: %v", req)
-	return response.EmptySyncResponse
+	return mcTypes.EmptySyncResponse
 }

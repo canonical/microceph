@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Utkarsh Bhatt <utkarsh.bhatt@canonical.com>
+Date: Wed, 9 Apr 2026 14:00:00 +0530
+Subject: [PATCH] Add stub smb mgr module for dashboard compatibility
+
+The ceph-mgr-smb package is not available in the Ubuntu distribution.
+The Ceph tentacle dashboard imports from the smb mgr module
+unconditionally (controllers/smb.py), causing the dashboard to fail
+to load without it.
+
+This adds a minimal stub that satisfies the dashboard's imports
+(Intent, Simplified, Cluster, JoinAuth, Share, UsersAndGroups)
+without providing actual SMB functionality. The dashboard's SMB
+status endpoint will report SMB as unavailable.
+
+Signed-off-by: Utkarsh Bhatt <utkarsh.bhatt@canonical.com>
+---
+ share/ceph/mgr/smb/__init__.py  |  1 +
+ share/ceph/mgr/smb/enums.py     | 17 +++++++++++++++++
+ share/ceph/mgr/smb/proto.py     |  5 +++++
+ share/ceph/mgr/smb/resources.py | 20 ++++++++++++++++++++
+ 4 files changed, 43 insertions(+)
+ create mode 100644 share/ceph/mgr/smb/__init__.py
+ create mode 100644 share/ceph/mgr/smb/enums.py
+ create mode 100644 share/ceph/mgr/smb/proto.py
+ create mode 100644 share/ceph/mgr/smb/resources.py
+
+diff --git a/share/ceph/mgr/smb/__init__.py b/share/ceph/mgr/smb/__init__.py
+new file mode 100644
+index 0000000..b357543
+--- /dev/null
++++ b/share/ceph/mgr/smb/__init__.py
+@@ -0,0 +1 @@
++# Stub smb mgr module — ceph-mgr-smb is not available in the distribution.
+diff --git a/share/ceph/mgr/smb/enums.py b/share/ceph/mgr/smb/enums.py
+new file mode 100644
+index 0000000..a1c2e3f
+--- /dev/null
++++ b/share/ceph/mgr/smb/enums.py
+@@ -0,0 +1,17 @@
++"""Stub enums for the smb mgr module."""
++
++import sys
++
++if sys.version_info >= (3, 11):
++    from enum import StrEnum as _StrEnum
++else:
++    import enum
++
++    class _StrEnum(str, enum.Enum):
++        def __str__(self) -> str:
++            return self.value
++
++
++class Intent(_StrEnum):
++    PRESENT = 'present'
++    REMOVED = 'removed'
+diff --git a/share/ceph/mgr/smb/proto.py b/share/ceph/mgr/smb/proto.py
+new file mode 100644
+index 0000000..d3c5a7e
+--- /dev/null
++++ b/share/ceph/mgr/smb/proto.py
+@@ -0,0 +1,5 @@
++"""Stub proto types for the smb mgr module."""
++
++from typing import Any, Dict
++
++Simplified = Dict[str, Any]
+diff --git a/share/ceph/mgr/smb/resources.py b/share/ceph/mgr/smb/resources.py
+new file mode 100644
+index 0000000..f8e1d2c
+--- /dev/null
++++ b/share/ceph/mgr/smb/resources.py
+@@ -0,0 +1,19 @@
++"""Stub resource types for the smb mgr module."""
++
++from typing import Any, Dict
++
++
++class Cluster(Dict[str, Any]):
++    pass
++
++
++class JoinAuth(Dict[str, Any]):
++    pass
++
++
++class Share(Dict[str, Any]):
++    pass
++
++
++class UsersAndGroups(Dict[str, Any]):
++    pass
+-- 
+2.43.0

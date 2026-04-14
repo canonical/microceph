@@ -1,19 +1,19 @@
 package api
 
 import (
-	"github.com/canonical/microcluster/v2/rest"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
-var Servers = map[string]rest.Server{
+var Servers = map[string]mcTypes.Server{
 	"microceph": {
 		CoreAPI:   true,
 		ServeUnix: true,
-		Resources: []rest.Resources{
+		Resources: []mcTypes.Resources{
 			{
 				PathPrefix: types.ExtendedPathPrefix,
-				Endpoints: []rest.Endpoint{
+				Endpoints: []mcTypes.Endpoint{
 					disksCmd,
 					disksDelCmd,
 					resourcesCmd,

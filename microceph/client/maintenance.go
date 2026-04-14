@@ -8,14 +8,14 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/clilogger"
-	"github.com/canonical/microcluster/v2/client"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
 // ExitMaintenance sends the request to '/ops/maintenance/{node}' endpoint to bring a node out of
 // maintenance mode.
-func ExitMaintenance(ctx context.Context, c *client.Client, node string, dryRun, checkOnly, ignoreCheck bool) (types.MaintenanceResults, error) {
+func ExitMaintenance(ctx context.Context, c mcTypes.Client, node string, dryRun, checkOnly, ignoreCheck bool) (types.MaintenanceResults, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
@@ -27,7 +27,7 @@ func ExitMaintenance(ctx context.Context, c *client.Client, node string, dryRun,
 
 	// still need to useTarget because some ops need to run on target node
 	c = c.UseTarget(node)
-	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("ops", "maintenance", node), data, &results)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("ops", "maintenance", node).URL, data, &results)
 	if err != nil {
 		clilogger.Errorf("error bringing node '%s' out of maintenance: %v", node, err)
 		return types.MaintenanceResults{}, fmt.Errorf("error bringing node '%s' out of maintenance: %v", node, err)
@@ -37,7 +37,7 @@ func ExitMaintenance(ctx context.Context, c *client.Client, node string, dryRun,
 
 // EnterMaintenance sends the request to '/ops/maintenance/{node}' endpoint to bring a node into
 // maintenance mode.
-func EnterMaintenance(ctx context.Context, c *client.Client, node string, force, dryRun, setNoout, stopOsds, checkOnly, ignoreCheck bool) (types.MaintenanceResults, error) {
+func EnterMaintenance(ctx context.Context, c mcTypes.Client, node string, force, dryRun, setNoout, stopOsds, checkOnly, ignoreCheck bool) (types.MaintenanceResults, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 	defer cancel()
 
@@ -50,7 +50,7 @@ func EnterMaintenance(ctx context.Context, c *client.Client, node string, force,
 
 	// still need to useTarget because some ops need to run on target node
 	c = c.UseTarget(node)
-	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, api.NewURL().Path("ops", "maintenance", node), data, &results)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("ops", "maintenance", node).URL, data, &results)
 	if err != nil {
 		clilogger.Errorf("error bringing node '%s' into maintenance: %v", node, err)
 		return types.MaintenanceResults{}, fmt.Errorf("error bringing node '%s' into maintenance: %v", node, err)

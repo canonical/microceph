@@ -17,41 +17,39 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
-	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/microcluster/v2/rest"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 )
 
 // /1.0/disks endpoint.
-var disksCmd = rest.Endpoint{
+var disksCmd = mcTypes.Endpoint{
 	Path: "disks",
 
-	Get:  rest.EndpointAction{Handler: cmdDisksGet, ProxyTarget: true},
-	Post: rest.EndpointAction{Handler: cmdDisksPost, ProxyTarget: true},
+	Get:  mcTypes.EndpointAction{Handler: cmdDisksGet, ProxyTarget: true},
+	Post: mcTypes.EndpointAction{Handler: cmdDisksPost, ProxyTarget: true},
 }
 
 // /1.0/disks/{osdid} endpoint.
-var disksDelCmd = rest.Endpoint{
+var disksDelCmd = mcTypes.Endpoint{
 	Path: "disks/{osdid}",
 
-	Delete: rest.EndpointAction{Handler: cmdDisksDelete, ProxyTarget: true},
+	Delete: mcTypes.EndpointAction{Handler: cmdDisksDelete, ProxyTarget: true},
 }
 
 var mu sync.Mutex
 
-func cmdDisksGet(s state.State, r *http.Request) response.Response {
+func cmdDisksGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 	disks, err := ceph.ListOSD(r.Context(), s)
 	if err != nil {
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
-	return response.SyncResponse(true, disks)
+	return mcTypes.SyncResponse(true, disks)
 }
 
-func cmdDisksPost(s state.State, r *http.Request) response.Response {
+func cmdDisksPost(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var req types.DisksPost
 	var wal *types.DiskParameter
 	var db *types.DiskParameter
@@ -59,12 +57,12 @@ func cmdDisksPost(s state.State, r *http.Request) response.Response {
 
 	req, err := parseAndPatchDiskPostParams(r.Body)
 	if err != nil {
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
 	err = validateDiskPostRequest(req)
 	if err != nil {
-		return response.SyncResponse(true, types.DiskAddResponse{ValidationError: err.Error()})
+		return mcTypes.SyncResponse(true, types.DiskAddResponse{ValidationError: err.Error()})
 	}
 
 	mu.Lock()
@@ -77,7 +75,7 @@ func cmdDisksPost(s state.State, r *http.Request) response.Response {
 
 	// No usable diskpath were provided.
 	if len(req.Path) == 0 {
-		return response.SyncResponse(true, types.DiskAddResponse{})
+		return mcTypes.SyncResponse(true, types.DiskAddResponse{})
 	}
 
 	// prepare a slice of disk parameters for requested disks or loop spec.
@@ -101,10 +99,10 @@ func cmdDisksPost(s state.State, r *http.Request) response.Response {
 
 	resp := ceph.AddBulkDisks(r.Context(), s, disks, wal, db)
 	if len(resp.ValidationError) == 0 {
-		response.SyncResponse(false, resp)
+		mcTypes.SyncResponse(false, resp)
 	}
 
-	return response.SyncResponse(true, resp)
+	return mcTypes.SyncResponse(true, resp)
 }
 
 func usesDSLDiskAddRequest(req types.DisksPost) bool {
@@ -184,28 +182,28 @@ func validateDiskPostRequest(req types.DisksPost) error {
 }
 
 // handleDSLDiskAdd handles DSL-based device selection for OSD creation and dry-run planning.
-func handleDSLDiskAdd(r *http.Request, s state.State, req types.DisksPost) response.Response {
+func handleDSLDiskAdd(r *http.Request, s mcTypes.State, req types.DisksPost) mcTypes.Response {
 	resp := ceph.AddDisksWithDSLRequest(r.Context(), s, req)
-	return response.SyncResponse(true, resp)
+	return mcTypes.SyncResponse(true, resp)
 }
 
 // cmdDisksDelete is the handler for DELETE /1.0/disks/{osdid}.
-func cmdDisksDelete(s state.State, r *http.Request) response.Response {
+func cmdDisksDelete(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var osd string
 	osd, err := url.PathUnescape(mux.Vars(r)["osdid"])
 	if err != nil {
-		return response.BadRequest(err)
+		return mcTypes.BadRequest(err)
 	}
 
 	var req types.DisksDelete
 	osdid, err := strconv.ParseInt(osd, 10, 64)
 
 	if err != nil {
-		return response.BadRequest(err)
+		return mcTypes.BadRequest(err)
 	}
 	err = json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		return response.BadRequest(err)
+		return mcTypes.BadRequest(err)
 	}
 
 	mu.Lock()
@@ -217,7 +215,7 @@ func cmdDisksDelete(s state.State, r *http.Request) response.Response {
 	if !req.ProhibitCrushScaledown {
 		needDowngrade, err := ceph.IsDowngradeNeeded(r.Context(), cs, osdid)
 		if err != nil {
-			return response.InternalError(err)
+			return mcTypes.InternalError(err)
 		}
 		if needDowngrade && !req.ConfirmDowngrade {
 			errorMsg := fmt.Errorf(
@@ -226,7 +224,7 @@ func cmdDisksDelete(s state.State, r *http.Request) response.Response {
 					"'--confirm-failure-domain-downgrade' flag to true",
 				osd,
 			)
-			return response.BadRequest(errorMsg)
+			return mcTypes.BadRequest(errorMsg)
 		}
 	}
 
@@ -250,10 +248,10 @@ func cmdDisksDelete(s state.State, r *http.Request) response.Response {
 	if !req.BypassSafety {
 		blocked, err := ceph.IsRackDegradeBlocked(r.Context(), cs, osdid)
 		if err != nil {
-			return response.InternalError(err)
+			return mcTypes.InternalError(err)
 		}
 		if blocked {
-			return response.BadRequest(fmt.Errorf(
+			return mcTypes.BadRequest(fmt.Errorf(
 				"removing osd.%s would leave fewer than 3 availability zones with OSDs "+
 					"while the cluster uses rack-level failure domain, which would make "+
 					"data placement unsatisfiable. Use --bypass-safety-checks to override",
@@ -264,10 +262,10 @@ func cmdDisksDelete(s state.State, r *http.Request) response.Response {
 
 	err = ceph.RemoveOSD(r.Context(), cs, osdid, req.BypassSafety, req.Timeout)
 	if err != nil {
-		return response.SmartError(err)
+		return mcTypes.SmartError(err)
 	}
 
-	return response.EmptySyncResponse
+	return mcTypes.EmptySyncResponse
 }
 
 // parseAndPatchDiskPostParams parses/patches Disk add command parameters

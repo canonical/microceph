@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
@@ -30,7 +30,7 @@ func TestTopology(t *testing.T) {
 // the given azData, returning a restore function.
 func withMockAZData(data azData) func() {
 	orig := getAZData
-	getAZData = func(_ context.Context, _ state.State, _ string) (azData, error) {
+	getAZData = func(_ context.Context, _ mcTypes.State, _ string) (azData, error) {
 		return data, nil
 	}
 	return func() { getAZData = orig }

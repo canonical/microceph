@@ -14,7 +14,7 @@ import (
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/tests"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/spf13/afero"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -133,7 +133,7 @@ func (s *osdSuite) TestSanityCheckMissingOSDReturnsNotFound() {
 		database.OSDQuery = origOSDQuery
 	}()
 
-	var st state.State
+	var st mcTypes.State
 	si := mocks.NewStateInterface(s.T())
 	si.On("ClusterState").Return(st).Maybe()
 	mockOSDQuery.On("HaveOSD", mock.Anything, mock.Anything, int64(9999)).Return(false, nil).Once()
@@ -1282,7 +1282,7 @@ func rackDegradeTestSetup(t *testing.T, opts rackDegradeOpts) func() {
 	database.OSDQuery = m
 
 	// Mock getAZData
-	getAZData = func(_ context.Context, _ state.State, hostname string) (azData, error) {
+	getAZData = func(_ context.Context, _ mcTypes.State, hostname string) (azData, error) {
 		if d, ok := opts.azDataByHost[hostname]; ok {
 			return d, nil
 		}

@@ -9,16 +9,16 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microcluster/v2/cluster"
-	"github.com/canonical/microcluster/v2/state"
+	cluster "github.com/canonical/microcluster/v3/microcluster/db"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
 // MemberCounterInterface is for counting member nodes. Introduced for mocking.
 //
 //go:generate mockery --name MemberCounterInterface
 type MemberCounterInterface interface {
-	Count(ctx context.Context, s state.State) (int, error)
-	CountExclude(ctx context.Context, s state.State, exclude int64) (int, error)
+	Count(ctx context.Context, s mcTypes.State) (int, error)
+	CountExclude(ctx context.Context, s mcTypes.State, exclude int64) (int, error)
 }
 
 type MemberCounterImpl struct{}
@@ -87,7 +87,7 @@ func MembersDiskCnt(ctx context.Context, tx *sql.Tx, exclude int64) ([]MemberDis
 }
 
 // Count returns the number of nodes in the cluster with at least one disk
-func (m MemberCounterImpl) Count(ctx context.Context, s state.State) (int, error) {
+func (m MemberCounterImpl) Count(ctx context.Context, s mcTypes.State) (int, error) {
 	var numNodes int
 
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -105,7 +105,7 @@ func (m MemberCounterImpl) Count(ctx context.Context, s state.State) (int, error
 }
 
 // CountExclude returns the number of nodes in the cluster with at least one disk, excluding the given OSD
-func (m MemberCounterImpl) CountExclude(ctx context.Context, s state.State, exclude int64) (int, error) {
+func (m MemberCounterImpl) CountExclude(ctx context.Context, s mcTypes.State, exclude int64) (int, error) {
 	var numNodes int
 
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -127,11 +127,11 @@ var MemberCounter MemberCounterInterface = MemberCounterImpl{}
 
 // OSDQueryInterface is for querying OSDs. Introduced for mocking.
 type OSDQueryInterface interface {
-	HaveOSD(ctx context.Context, s state.State, osd int64) (bool, error)
-	Path(ctx context.Context, s state.State, osd int64) (string, error)
-	Delete(ctx context.Context, s state.State, osd int64) error
-	List(ctx context.Context, s state.State) (types.Disks, error)
-	UpdatePath(ctx context.Context, s state.State, osd int64, path string) error
+	HaveOSD(ctx context.Context, s mcTypes.State, osd int64) (bool, error)
+	Path(ctx context.Context, s mcTypes.State, osd int64) (string, error)
+	Delete(ctx context.Context, s mcTypes.State, osd int64) error
+	List(ctx context.Context, s mcTypes.State) (types.Disks, error)
+	UpdatePath(ctx context.Context, s mcTypes.State, osd int64, path string) error
 }
 
 type OSDQueryImpl struct{}
@@ -155,7 +155,7 @@ WHERE disks.id = ?
 `)
 
 // HaveOSD returns either false or true depending on whether the given OSD is present in the cluster
-func (o OSDQueryImpl) HaveOSD(ctx context.Context, s state.State, osd int64) (bool, error) {
+func (o OSDQueryImpl) HaveOSD(ctx context.Context, s mcTypes.State, osd int64) (bool, error) {
 	var present int
 
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -177,7 +177,7 @@ func (o OSDQueryImpl) HaveOSD(ctx context.Context, s state.State, osd int64) (bo
 }
 
 // Path returns the path of the given OSD
-func (o OSDQueryImpl) Path(ctx context.Context, s state.State, osd int64) (string, error) {
+func (o OSDQueryImpl) Path(ctx context.Context, s mcTypes.State, osd int64) (string, error) {
 	var path string
 
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -199,7 +199,7 @@ func (o OSDQueryImpl) Path(ctx context.Context, s state.State, osd int64) (strin
 }
 
 // Delete OSD records for the given OSD
-func (o OSDQueryImpl) Delete(ctx context.Context, s state.State, osd int64) error {
+func (o OSDQueryImpl) Delete(ctx context.Context, s mcTypes.State, osd int64) error {
 	path, err := o.Path(ctx, s, osd)
 	if err != nil {
 		return err
@@ -211,7 +211,7 @@ func (o OSDQueryImpl) Delete(ctx context.Context, s state.State, osd int64) erro
 }
 
 // List OSD records
-func (o OSDQueryImpl) List(ctx context.Context, s state.State) (types.Disks, error) {
+func (o OSDQueryImpl) List(ctx context.Context, s mcTypes.State) (types.Disks, error) {
 	disks := types.Disks{}
 	// Get the OSDs from the database.
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -237,7 +237,7 @@ func (o OSDQueryImpl) List(ctx context.Context, s state.State) (types.Disks, err
 }
 
 // UpdatePath updates the path of the given OSD
-func (o OSDQueryImpl) UpdatePath(ctx context.Context, s state.State, osd int64, path string) error {
+func (o OSDQueryImpl) UpdatePath(ctx context.Context, s mcTypes.State, osd int64, path string) error {
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		sqlStmt, err := cluster.Stmt(tx, updatePath)
 		if err != nil {

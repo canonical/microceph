@@ -153,10 +153,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdqlite1.17-dev
 
-      - name: Install Go (1.22)
+      - name: Install Go (1.25)
         uses: actions/setup-go@v5
         with:
-          go-version: 1.22.x
+          go-version: 1.25.x
 
       - name: Run static checks
         run: |
@@ -178,10 +178,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdqlite1.17-dev
 
-      - name: Install Go (1.22)
+      - name: Install Go (1.25)
         uses: actions/setup-go@v5
         with:
-          go-version: 1.22.x
+          go-version: 1.25.x
 
       - name: Run unit-tests
         run: |
@@ -905,78 +905,6 @@ jobs:
         if: failure()
         run: |
           sudo snap logs microceph -n 1000
-
-  upgrade-quincy-tests:
-    name: Test quincy upgrades
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
-
-      - name: Clear FORWARD firewall rules
-        run: ~/actionutils.sh cleaript
-
-      - name: Free disk
-        run: ~/actionutils.sh free_runner_disk
-
-      - name: Install dependencies
-        run: |
-          ~/actionutils.sh install_tools
-          ~/actionutils.sh setup_lxd
-
-      - name: Create containers with loopback devices
-        run: ~/actionutils.sh create_containers public
-
-      - name: Install quincy stable from store
-        run: ~/actionutils.sh install_store quincy/stable
-
-      - name: Bootstrap
-        run: ~/actionutils.sh bootstrap_head
-
-      - name: Setup cluster
-        run: ~/actionutils.sh cluster_nodes
-
-      - name: Add 3 OSDs
-        run: |
-          for c in node-wrk0 node-wrk1 node-wrk2 ; do
-            ~/actionutils.sh add_osd_to_node $c
-          done
-          ~/actionutils.sh headexec wait_for_osds 3
-
-      - name: Enable RGW
-        run: ~/actionutils.sh headexec enable_rgw
-
-      - name: Exercise RGW
-        run: ~/actionutils.sh headexec testrgw
-
-      - name: Install local build
-        run: ~/actionutils.sh upgrade_multinode
-
-      - name: Wait until 3 OSDs are up
-        run: ~/actionutils.sh headexec wait_for_osds 3
-
-      - name: Verify health
-        run: ~/actionutils.sh headexec verify_health
-
-      - name: Exercise RGW again
-        run: ~/actionutils.sh headexec testrgw
-
-      - name: Exercise microceph status
-        run: |
-          set -uex
-          lxc exec node-wrk0 -- sh -c "sudo microceph status"
 
   upgrade-reef-tests:
     name: Test reef upgrades

@@ -5,18 +5,17 @@ import (
 	"fmt"
 
 	"github.com/canonical/microceph/microceph/logger"
-	microCli "github.com/canonical/microcluster/v2/client"
-	"github.com/canonical/microcluster/v2/microcluster"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microcluster/v3/microcluster"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 )
 
 // PreRemove cleans up the underlying ceph services before the node is removed from the dqlite cluster.
-func PreRemove(m *microcluster.MicroCluster) func(ctx context.Context, s state.State, force bool) error {
+func PreRemove(m *microcluster.MicroCluster) func(ctx context.Context, s mcTypes.State, force bool) error {
 	logger.Debug("Setting up PreRemove hook")
-	return func(ctx context.Context, s state.State, force bool) error {
+	return func(ctx context.Context, s mcTypes.State, force bool) error {
 		logger.Infof("Executing PreRemove hook for node %s (force=%v)", s.Name(), force)
 		cli, err := m.LocalClient()
 		if err != nil {
@@ -56,7 +55,7 @@ func EnsureNonOsdSvcEnough(services types.Services, nodeName string, minMon int,
 	return nil
 }
 
-func removeNode(cli *microCli.Client, node string, force bool) error {
+func removeNode(cli mcTypes.Client, node string, force bool) error {
 	logger.Debugf("Removing cluster member %v, force: %v", node, force)
 
 	// check prerquisites unless we're forcing
@@ -80,7 +79,7 @@ func removeNode(cli *microCli.Client, node string, force bool) error {
 	return nil
 }
 
-func checkPrerequisites(cli *microCli.Client, name string) error {
+func checkPrerequisites(cli mcTypes.Client, name string) error {
 	// check if member exists
 	clusterMembers, err := client.MClient.GetClusterMembers(cli)
 	if err != nil {
@@ -127,7 +126,7 @@ func checkPrerequisites(cli *microCli.Client, name string) error {
 	return nil
 }
 
-func deleteNodeServices(cli *microCli.Client, name string) error {
+func deleteNodeServices(cli mcTypes.Client, name string) error {
 	services, err := client.MClient.GetServices(cli)
 	if err != nil {
 		return err

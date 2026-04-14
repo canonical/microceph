@@ -68,10 +68,10 @@ type Token struct {
 // Lexer tokenizes DSL input.
 type Lexer struct {
 	input  string
-	pos    int  // current position in input
-	line   int  // current line number (1-based)
-	column int  // current column number (1-based)
-	start  int  // start position of current token
+	pos    int // current position in input
+	line   int // current line number (1-based)
+	column int // current column number (1-based)
+	start  int // start position of current token
 }
 
 // NewLexer creates a new Lexer for the given input.
@@ -257,7 +257,7 @@ func (l *Lexer) scanNumber() Token {
 }
 
 // scanRawString scans a single-quoted raw string.
-// In raw strings, '' is used to represent a literal single quote.
+// In raw strings, ” is used to represent a literal single quote.
 func (l *Lexer) scanRawString() Token {
 	startPos := l.currentPos()
 	l.advance() // consume opening quote

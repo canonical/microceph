@@ -4,23 +4,21 @@ import (
 	"net/http"
 
 	"github.com/canonical/lxd/lxd/resources"
-	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/microcluster/v2/rest"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
 // /1.0/resources endpoint.
-var resourcesCmd = rest.Endpoint{
+var resourcesCmd = mcTypes.Endpoint{
 	Path: "resources",
 
-	Get: rest.EndpointAction{Handler: cmdResourcesGet, ProxyTarget: true},
+	Get: mcTypes.EndpointAction{Handler: cmdResourcesGet, ProxyTarget: true},
 }
 
-func cmdResourcesGet(s state.State, r *http.Request) response.Response {
+func cmdResourcesGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 	storage, err := resources.GetStorage()
 	if err != nil {
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
-	return response.SyncResponse(true, storage)
+	return mcTypes.SyncResponse(true, storage)
 }

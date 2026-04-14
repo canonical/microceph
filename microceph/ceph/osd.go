@@ -32,7 +32,7 @@ import (
 	"github.com/canonical/lxd/shared/revert"
 
 	"github.com/canonical/lxd/shared"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/pborman/uuid"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -107,7 +107,7 @@ func (p SharedPristineChecker) IsPristineDisk(devicePath string) (bool, error) {
 
 // OSDManager handles OSD operations. It holds the state, a runner for executing commands and a filesystem interface.
 type OSDManager struct {
-	state             state.State
+	state             mcTypes.State
 	runner            common.Runner
 	fs                afero.Fs
 	storage           interfaces.StorageInterface
@@ -119,7 +119,7 @@ type OSDManager struct {
 }
 
 // NewOSDManager returns a new OSD manager instance.
-func NewOSDManager(s state.State) *OSDManager {
+func NewOSDManager(s mcTypes.State) *OSDManager {
 	return &OSDManager{
 		state:             s,
 		runner:            common.ProcessExec,
@@ -369,7 +369,7 @@ type azData struct {
 // getAZData retrieves the AZ for the given hostname and all unique AZs from
 // the host_tags table. Returns empty azData if no AZ is configured for the host.
 // Handles its own DB transaction. Package-level function var for testability.
-var getAZData = func(ctx context.Context, s state.State, hostname string) (azData, error) {
+var getAZData = func(ctx context.Context, s mcTypes.State, hostname string) (azData, error) {
 	var data azData
 
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -472,7 +472,7 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 // Once we have at least 3 nodes with at least 1 OSD each, we set the failure domain to host.
 // Currently this function only handles scale-up scenarios, i.e. adding a new node.
 // When availability zones are configured, this is a no-op as topology is handled by updateTopology.
-func (m *OSDManager) updateFailureDomain(ctx context.Context, s state.State) error {
+func (m *OSDManager) updateFailureDomain(ctx context.Context, s mcTypes.State) error {
 	logger.Infof("Checking if we need to update failure domain for OSDs")
 
 	// When AZs are configured, topology is handled by updateTopology — skip.
@@ -1651,37 +1651,37 @@ func formatBytesIEC(bytes int64) string {
 }
 
 // AddDisksWithDSLWrapper is a public wrapper for DSL-based disk addition.
-func AddDisksWithDSL(ctx context.Context, s state.State, dslExpr string, encrypt bool, wipe bool, dryRun bool) types.DiskAddResponse {
+func AddDisksWithDSL(ctx context.Context, s mcTypes.State, dslExpr string, encrypt bool, wipe bool, dryRun bool) types.DiskAddResponse {
 	return NewOSDManager(s).AddDisksWithDSL(ctx, dslExpr, encrypt, wipe, dryRun)
 }
 
 // AddDisksWithDSLRequest is a public wrapper for DSL-based dry-run planning and execution.
-func AddDisksWithDSLRequest(ctx context.Context, s state.State, req types.DisksPost) types.DiskAddResponse {
+func AddDisksWithDSLRequest(ctx context.Context, s mcTypes.State, req types.DisksPost) types.DiskAddResponse {
 	return NewOSDManager(s).AddDisksWithDSLRequest(ctx, req)
 }
 
 // AddLoopBackOSDs adds OSDs backed by loopback files using a one-off manager.
-func AddLoopBackOSDs(ctx context.Context, s state.State, spec string) error {
+func AddLoopBackOSDs(ctx context.Context, s mcTypes.State, spec string) error {
 	return NewOSDManager(s).addLoopBackOSDs(ctx, spec)
 }
 
 // AddBulkDisks adds multiple disks using a one-off manager.
-func AddBulkDisks(ctx context.Context, s state.State, disks []types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddResponse {
+func AddBulkDisks(ctx context.Context, s mcTypes.State, disks []types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddResponse {
 	return NewOSDManager(s).addBulkDisks(ctx, disks, wal, db)
 }
 
 // AddSingleDisk adds a single disk using a one-off manager.
-func AddSingleDisk(ctx context.Context, s state.State, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
+func AddSingleDisk(ctx context.Context, s mcTypes.State, disk types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) types.DiskAddReport {
 	return NewOSDManager(s).addSingleDisk(ctx, disk, wal, db)
 }
 
 // AddOSD adds an OSD using a one-off manager.
-func AddOSD(ctx context.Context, s state.State, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
+func AddOSD(ctx context.Context, s mcTypes.State, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter) error {
 	return NewOSDManager(s).addOSD(ctx, data, wal, db)
 }
 
 // ListOSD lists current OSD disks
-func ListOSD(ctx context.Context, s state.State) (types.Disks, error) {
+func ListOSD(ctx context.Context, s mcTypes.State) (types.Disks, error) {
 	return database.OSDQuery.List(ctx, s)
 }
 

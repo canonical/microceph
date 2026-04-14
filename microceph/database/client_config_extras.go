@@ -9,10 +9,10 @@ import (
 
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microcluster/v2/cluster"
-	"github.com/canonical/microcluster/v2/state"
+	"github.com/canonical/microceph/microceph/logger"
+	cluster "github.com/canonical/microcluster/v3/microcluster/db"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
 var _ = api.ServerEnvironment{}
@@ -65,23 +65,23 @@ func (cci ClientConfigItems) GetClientConfigSlice() types.ClientConfigs {
 type ClientConfigQueryIntf interface {
 
 	// Add Method
-	AddNew(ctx context.Context, s state.State, key string, value string, host string) error
+	AddNew(ctx context.Context, s mcTypes.State, key string, value string, host string) error
 
 	// Fetch Methods
-	GetAll(ctx context.Context, s state.State) (ClientConfigItems, error)
-	GetAllForKey(ctx context.Context, s state.State, key string) (ClientConfigItems, error)
-	GetAllForHost(ctx context.Context, s state.State, host string) (ClientConfigItems, error)
-	GetAllForKeyAndHost(ctx context.Context, s state.State, key string, host string) (ClientConfigItems, error)
+	GetAll(ctx context.Context, s mcTypes.State) (ClientConfigItems, error)
+	GetAllForKey(ctx context.Context, s mcTypes.State, key string) (ClientConfigItems, error)
+	GetAllForHost(ctx context.Context, s mcTypes.State, host string) (ClientConfigItems, error)
+	GetAllForKeyAndHost(ctx context.Context, s mcTypes.State, key string, host string) (ClientConfigItems, error)
 
 	// Delete Methods
-	RemoveAllForKey(ctx context.Context, s state.State, key string) error
-	RemoveOneForKeyAndHost(ctx context.Context, s state.State, key string, host string) error
+	RemoveAllForKey(ctx context.Context, s mcTypes.State, key string) error
+	RemoveOneForKeyAndHost(ctx context.Context, s mcTypes.State, key string, host string) error
 }
 
 type ClientConfigQueryImpl struct{}
 
 // Add Method
-func (ccq ClientConfigQueryImpl) AddNew(ctx context.Context, s state.State, key string, value string, host string) error {
+func (ccq ClientConfigQueryImpl) AddNew(ctx context.Context, s mcTypes.State, key string, value string, host string) error {
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		data := ClientConfigItem{
 			Key:   key,
@@ -103,7 +103,7 @@ func (ccq ClientConfigQueryImpl) AddNew(ctx context.Context, s state.State, key 
 }
 
 // Fetch Methods
-func (ccq ClientConfigQueryImpl) GetAll(ctx context.Context, s state.State) (ClientConfigItems, error) {
+func (ccq ClientConfigQueryImpl) GetAll(ctx context.Context, s mcTypes.State) (ClientConfigItems, error) {
 	globalConfigs, err := ccq.GetGlobalConfigs(ctx, s, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch global client configs: %w", err)
@@ -121,7 +121,7 @@ func (ccq ClientConfigQueryImpl) GetAll(ctx context.Context, s state.State) (Cli
 	return append(globalConfigs, hostConfigs...), nil
 }
 
-func (ccq ClientConfigQueryImpl) GetAllForKey(ctx context.Context, s state.State, key string) (ClientConfigItems, error) {
+func (ccq ClientConfigQueryImpl) GetAllForKey(ctx context.Context, s mcTypes.State, key string) (ClientConfigItems, error) {
 	globalConfigs, err := ccq.GetGlobalConfigs(ctx, s, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch global client configs, key %s: %w", key, err)
@@ -139,7 +139,7 @@ func (ccq ClientConfigQueryImpl) GetAllForKey(ctx context.Context, s state.State
 	return append(globalConfigs, hostConfigs...), nil
 }
 
-func (ccq ClientConfigQueryImpl) GetAllForHost(ctx context.Context, s state.State, host string) (ClientConfigItems, error) {
+func (ccq ClientConfigQueryImpl) GetAllForHost(ctx context.Context, s mcTypes.State, host string) (ClientConfigItems, error) {
 	globalConfigs, err := ccq.GetGlobalConfigs(ctx, s, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch global client configs, host %s: %w", host, err)
@@ -157,11 +157,11 @@ func (ccq ClientConfigQueryImpl) GetAllForHost(ctx context.Context, s state.Stat
 	return squashClientConfigs(globalConfigs, hostConfigs), nil
 }
 
-func (ccq ClientConfigQueryImpl) GetAllForKeyAndHost(ctx context.Context, s state.State, key string, host string) (ClientConfigItems, error) {
+func (ccq ClientConfigQueryImpl) GetAllForKeyAndHost(ctx context.Context, s mcTypes.State, key string, host string) (ClientConfigItems, error) {
 	return ccq.GetAllForFilter(ctx, s, ClientConfigItemFilter{Host: &host, Key: &key})
 }
 
-func (ccq ClientConfigQueryImpl) GetAllForFilter(ctx context.Context, s state.State, filters ...ClientConfigItemFilter) (ClientConfigItems, error) {
+func (ccq ClientConfigQueryImpl) GetAllForFilter(ctx context.Context, s mcTypes.State, filters ...ClientConfigItemFilter) (ClientConfigItems, error) {
 	var err error
 	var retval []ClientConfigItem
 
@@ -179,7 +179,7 @@ func (ccq ClientConfigQueryImpl) GetAllForFilter(ctx context.Context, s state.St
 }
 
 // Fetch client configs using registered sql stmt and args
-func (ccq ClientConfigQueryImpl) GetGlobalConfigs(ctx context.Context, s state.State, key string) ([]ClientConfigItem, error) {
+func (ccq ClientConfigQueryImpl) GetGlobalConfigs(ctx context.Context, s mcTypes.State, key string) ([]ClientConfigItem, error) {
 	var err error
 	objects := make([]ClientConfigItem, 0)
 
@@ -212,7 +212,7 @@ func (ccq ClientConfigQueryImpl) GetGlobalConfigs(ctx context.Context, s state.S
 }
 
 // Delete Methods
-func (ccq ClientConfigQueryImpl) RemoveAllForKey(ctx context.Context, s state.State, key string) error {
+func (ccq ClientConfigQueryImpl) RemoveAllForKey(ctx context.Context, s mcTypes.State, key string) error {
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		err := DeleteClientConfigItems(ctx, tx, key)
 		if err != nil {
@@ -227,7 +227,7 @@ func (ccq ClientConfigQueryImpl) RemoveAllForKey(ctx context.Context, s state.St
 	return nil
 }
 
-func (ccq ClientConfigQueryImpl) RemoveOneForKeyAndHost(ctx context.Context, s state.State, key string, host string) error {
+func (ccq ClientConfigQueryImpl) RemoveOneForKeyAndHost(ctx context.Context, s mcTypes.State, key string, host string) error {
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		err := DeleteClientConfigItem(ctx, tx, key, host)
 		if err != nil {

@@ -52,7 +52,6 @@ func (s *servicePlacementNFSSuite) TestInvalidPayload() {
 	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
 	assert.ErrorContains(s.T(), err, "expected cluster_id to be valid")
 
-
 	payload.Payload = "{\"cluster_id\":\"foo\",\"v4_min_version\":10}"
 
 	err = ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
@@ -91,13 +90,13 @@ func (s *servicePlacementNFSSuite) TestDBUpdate() {
 	}
 
 	groupConfig := database.NFSServiceGroupConfig{
-                V4MinVersion: nfs.V4MinVersion,
+		V4MinVersion: nfs.V4MinVersion,
 	}
 
-        serviceInfo := database.NFSServiceInfo{
-                BindAddress: nfs.BindAddress,
-                BindPort:    nfs.BindPort,
-        }
+	serviceInfo := database.NFSServiceInfo{
+		BindAddress: nfs.BindAddress,
+		BindPort:    nfs.BindPort,
+	}
 
 	db := mocks.NewGroupedServiceQueryIntf(s.T())
 

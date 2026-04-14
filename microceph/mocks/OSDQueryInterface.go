@@ -7,7 +7,7 @@ import (
 
 	mock "github.com/stretchr/testify/mock"
 
-	state "github.com/canonical/microcluster/v2/state" // mockery gets confused about import paths here
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types" // mockery gets confused about import paths here
 
 	types "github.com/canonical/microceph/microceph/api/types"
 )
@@ -18,7 +18,7 @@ type OSDQueryInterface struct {
 }
 
 // Delete provides a mock function with given fields: ctx, s, osd
-func (_m *OSDQueryInterface) Delete(ctx context.Context, s state.State, osd int64) error {
+func (_m *OSDQueryInterface) Delete(ctx context.Context, s mcTypes.State, osd int64) error {
 	ret := _m.Called(ctx, s, osd)
 
 	if len(ret) == 0 {
@@ -26,7 +26,7 @@ func (_m *OSDQueryInterface) Delete(ctx context.Context, s state.State, osd int6
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, int64) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, int64) error); ok {
 		r0 = rf(ctx, s, osd)
 	} else {
 		r0 = ret.Error(0)
@@ -36,7 +36,7 @@ func (_m *OSDQueryInterface) Delete(ctx context.Context, s state.State, osd int6
 }
 
 // HaveOSD provides a mock function with given fields: ctx, s, osd
-func (_m *OSDQueryInterface) HaveOSD(ctx context.Context, s state.State, osd int64) (bool, error) {
+func (_m *OSDQueryInterface) HaveOSD(ctx context.Context, s mcTypes.State, osd int64) (bool, error) {
 	ret := _m.Called(ctx, s, osd)
 
 	if len(ret) == 0 {
@@ -45,16 +45,16 @@ func (_m *OSDQueryInterface) HaveOSD(ctx context.Context, s state.State, osd int
 
 	var r0 bool
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, int64) (bool, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, int64) (bool, error)); ok {
 		return rf(ctx, s, osd)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, int64) bool); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, int64) bool); ok {
 		r0 = rf(ctx, s, osd)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, state.State, int64) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, mcTypes.State, int64) error); ok {
 		r1 = rf(ctx, s, osd)
 	} else {
 		r1 = ret.Error(1)
@@ -64,7 +64,7 @@ func (_m *OSDQueryInterface) HaveOSD(ctx context.Context, s state.State, osd int
 }
 
 // List provides a mock function with given fields: ctx, s
-func (_m *OSDQueryInterface) List(ctx context.Context, s state.State) (types.Disks, error) {
+func (_m *OSDQueryInterface) List(ctx context.Context, s mcTypes.State) (types.Disks, error) {
 	ret := _m.Called(ctx, s)
 
 	if len(ret) == 0 {
@@ -73,10 +73,10 @@ func (_m *OSDQueryInterface) List(ctx context.Context, s state.State) (types.Dis
 
 	var r0 types.Disks
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State) (types.Disks, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State) (types.Disks, error)); ok {
 		return rf(ctx, s)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, state.State) types.Disks); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State) types.Disks); ok {
 		r0 = rf(ctx, s)
 	} else {
 		if ret.Get(0) != nil {
@@ -84,7 +84,7 @@ func (_m *OSDQueryInterface) List(ctx context.Context, s state.State) (types.Dis
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, state.State) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, mcTypes.State) error); ok {
 		r1 = rf(ctx, s)
 	} else {
 		r1 = ret.Error(1)
@@ -94,7 +94,7 @@ func (_m *OSDQueryInterface) List(ctx context.Context, s state.State) (types.Dis
 }
 
 // Path provides a mock function with given fields: ctx, s, osd
-func (_m *OSDQueryInterface) Path(ctx context.Context, s state.State, osd int64) (string, error) {
+func (_m *OSDQueryInterface) Path(ctx context.Context, s mcTypes.State, osd int64) (string, error) {
 	ret := _m.Called(ctx, s, osd)
 
 	if len(ret) == 0 {
@@ -103,16 +103,16 @@ func (_m *OSDQueryInterface) Path(ctx context.Context, s state.State, osd int64)
 
 	var r0 string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, int64) (string, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, int64) (string, error)); ok {
 		return rf(ctx, s, osd)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, int64) string); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, int64) string); ok {
 		r0 = rf(ctx, s, osd)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, state.State, int64) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, mcTypes.State, int64) error); ok {
 		r1 = rf(ctx, s, osd)
 	} else {
 		r1 = ret.Error(1)
@@ -122,7 +122,7 @@ func (_m *OSDQueryInterface) Path(ctx context.Context, s state.State, osd int64)
 }
 
 // UpdatePath provides a mock function with given fields: ctx, s, osd, path
-func (_m *OSDQueryInterface) UpdatePath(ctx context.Context, s state.State, osd int64, path string) error {
+func (_m *OSDQueryInterface) UpdatePath(ctx context.Context, s mcTypes.State, osd int64, path string) error {
 	ret := _m.Called(ctx, s, osd, path)
 
 	if len(ret) == 0 {
@@ -130,7 +130,7 @@ func (_m *OSDQueryInterface) UpdatePath(ctx context.Context, s state.State, osd 
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, state.State, int64, string) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, mcTypes.State, int64, string) error); ok {
 		r0 = rf(ctx, s, osd, path)
 	} else {
 		r0 = ret.Error(0)

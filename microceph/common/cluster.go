@@ -3,17 +3,21 @@ package common
 import (
 	"context"
 
-	"github.com/canonical/microceph/microceph/logger"
+	"github.com/canonical/lxd/shared/api"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
+
 	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 func GetClusterMemberNames(ctx context.Context, s interfaces.StateInterface) ([]string, error) {
-	leader, err := s.ClusterState().Leader()
+	leader, err := s.ClusterState().Connect().Leader(false)
 	if err != nil {
 		return nil, err
 	}
 
-	members, err := leader.GetClusterMembers(ctx)
+	var members []mcTypes.ClusterMember
+	err = leader.Query(ctx, "GET", mcTypes.PublicEndpoint, &api.NewURL().Path("cluster").URL, nil, &members)
 	if err != nil {
 		return nil, err
 	}

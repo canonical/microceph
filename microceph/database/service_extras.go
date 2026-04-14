@@ -6,20 +6,20 @@ import (
 	"fmt"
 
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 )
 
 // ServiceQueryInterface is for querying services. Introduced for mocking.
 //
 //go:generate mockery --name ServiceQueryInterface
 type ServiceQueryInterface interface {
-	List(ctx context.Context, s state.State) (types.Services, error)
+	List(ctx context.Context, s mcTypes.State) (types.Services, error)
 }
 
 type ServiceQueryImpl struct{}
 
 // List retrieves all services from the database.
-func (sq ServiceQueryImpl) List(ctx context.Context, s state.State) (types.Services, error) {
+func (sq ServiceQueryImpl) List(ctx context.Context, s mcTypes.State) (types.Services, error) {
 	services := types.Services{}
 
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {

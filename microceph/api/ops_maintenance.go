@@ -9,13 +9,11 @@ import (
 
 	"github.com/canonical/microceph/microceph/logger"
 
-	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/lxd/lxd/util"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
-	"github.com/canonical/microcluster/v2/rest"
-	"github.com/canonical/microcluster/v2/state"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/gorilla/mux"
 )
 
@@ -67,25 +65,25 @@ func (r *maintenanceResponse) String() string {
 }
 
 // /ops/maintenance/{node} endpoint.
-var opsMaintenanceNodeCmd = rest.Endpoint{
+var opsMaintenanceNodeCmd = mcTypes.Endpoint{
 	Path: "ops/maintenance/{node}",
-	Put:  rest.EndpointAction{Handler: cmdPutMaintenance, ProxyTarget: true},
+	Put:  mcTypes.EndpointAction{Handler: cmdPutMaintenance, ProxyTarget: true},
 }
 
 // cmdPutMaintenance bring a node in or out of maintenance
-func cmdPutMaintenance(s state.State, r *http.Request) response.Response {
+func cmdPutMaintenance(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var results []ceph.Result
 	var maintenanceRequest types.MaintenanceRequest
 
 	node, err := url.PathUnescape(mux.Vars(r)["node"])
 	if err != nil {
-		return response.BadRequest(err)
+		return mcTypes.BadRequest(err)
 	}
 
 	err = json.NewDecoder(r.Body).Decode(&maintenanceRequest)
 	if err != nil {
 		logger.Errorf("failed decoding body: %v", err)
-		return response.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
 	maintenance := ceph.Maintenance{
@@ -107,7 +105,7 @@ func cmdPutMaintenance(s state.State, r *http.Request) response.Response {
 	}
 
 	if err != nil {
-		return response.BadRequest(err)
+		return mcTypes.BadRequest(err)
 	}
 
 	for _, result := range results {
