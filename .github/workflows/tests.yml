@@ -1239,6 +1239,9 @@ jobs:
 
           sudo umount /mnt/nfs
 
+      - name: Test log rotation
+        run: ~/actionutils.sh test_log_rotation
+
       - name: Test stale run dir migration (NFS)
         run: ~/actionutils.sh test_nfs_stale_run_dir_migration
 
