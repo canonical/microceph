@@ -35,7 +35,7 @@ OSDs
 In general, reserving 2 cores per OSD is sufficient. The type of storage
 device also impacts the number of cores utilised by the OSD. A non-volatile
 memory express (NVMe) OSD drive can leverage up to 6 cores, which will provide
-higher input/output operations per second (IOPs) than if fewer cores are
+higher input/output operations per second (IOPS) than if fewer cores are
 available. It is therefore more reliable to consider the desired IOPS and
 calculate the number of cores required from there. 1 core can provide
 1000–3000 IOPS and 200–500 MB/s throughput.

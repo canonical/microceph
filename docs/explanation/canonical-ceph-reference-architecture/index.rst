@@ -21,14 +21,16 @@ configurations, to further inform your architectural choices.
 
 .. warning::
 
-   This reference architecture is not prescriptive, i.e., it serves only as a
-   recommendation for reference hardware. We advise that you have a specific
-   discussion with Canonical before purchasing any equipment, in particular to
-   ensure there are no performance or capacity pitfalls found after the
-   deployment. Canonical is not liable or responsible for any equipment
-   purchases made as a result of this reference architecture. Following these
-   recommendations does not guarantee that the proposed hardware will meet the
-   requirements of your project or use case.
+   This reference architecture is a starting point, not a prescription. Before making any
+   purchasing decisions, we recommend reviewing your plans with Canonical to ensure they
+   align with your specific needs. Hardware requirements can vary significantly depending
+   on your workload and goals.
+
+   Canonical is not liable or responsible for any equipment purchases made as a result
+   of this reference architecture. Following these recommendations does not guarantee
+   that the proposed hardware will meet the requirements of your project or use case.
+
+   To discuss your specific requirements, contact Canonical.
 
 .. toctree::
     :maxdepth: 2

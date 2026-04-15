@@ -25,7 +25,7 @@ Canonical Ceph cluster deployment:
    * - Ubuntu (Host OS)
      - `Ubuntu releases <https://releases.ubuntu.com/>`__
    * - Linux Kernel
-     - `Ubuntu Kernel release cycle <https://ubuntu.com/about/release-cycle#ubuntu-kernel-release-cycle>`__
+     - `Ubuntu Kernel release cycle <https://ubuntu.com/about/release-cycle/>`__
    * - Canonical Ceph
      - `Charmed Ceph release notes <https://ubuntu.com/ceph/docs/release-notes>`__,
        `MicroCeph release notes <https://canonical-microceph.readthedocs-hosted.com/latest/reference/release-notes/>`__,
