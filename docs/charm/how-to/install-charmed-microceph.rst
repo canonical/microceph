@@ -4,20 +4,25 @@
 Install MicroCeph with Juju
 ===========================
 
-This guide shows how to perform a general install of MicroCeph.
+This guide shows how to perform a general install of MicroCeph using Juju.
 
-What you will need
-------------------
+Prerequisites
+-------------
 
 - A snapd-compatible host to run the `Juju client <https://documentation.ubuntu.com/juju/3.6/howto/manage-juju/?utm_source%3Atakeover=#install-juju>`_
-- A `MAAS cluster <https://maas.io/install>`_ (with a user account at your
-  disposal), or a `manual cloud cluster <https://discourse.charmhub.io/t/juju-101-configure-3-12/4484>`_
-- Disks on each node to add as OSD to the Ceph cluster
+- A machine cloud (substrate), e.g. `MAAS <https://documentation.ubuntu.com/juju/3.6/reference/cloud/list-of-supported-clouds/the-maas-cloud-and-juju/>`_,
+  `LXD <https://documentation.ubuntu.com/juju/3.6/reference/cloud/list-of-supported-clouds/the-lxd-cloud-and-juju/>`_
+  or `AWS <https://documentation.ubuntu.com/juju/3.6/reference/cloud/list-of-supported-clouds/the-amazon-ec2-cloud-and-juju/>`_ at your disposal
+  See the `Juju documentation <https://documentation.ubuntu.com/juju/3.6/reference/cloud/list-of-supported-clouds/>`_ for the full list of supported clouds and more information on how to set them up.
+
+.. important:: MicroCeph requires a machine cloud and will not work with a Kubernetes cluster.
+
+- Disks on each node to add as object storage daemons (OSDs) to the Ceph cluster
 
 Deploy MicroCeph
 ----------------
 
-The actual deployment of MicroCeph is straightforward:
+Deploy three units of the MicroCeph charm to three machines.
 
 .. code-block:: text
 
@@ -40,8 +45,8 @@ The output to the ``juju status`` command should look similar to this:
    1        started  10.5.1.191  manual:10.5.1.191  ubuntu@22.04      Manually provisioned machine
    2        started  10.5.1.81   manual:10.5.1.81   ubuntu@22.04      Manually provisioned machine
 
-Verification
-------------
+Verify your deployment
+----------------------
 
 Verify the state of the Ceph cluster by running the ``ceph status`` command on
 one of the nodes:
