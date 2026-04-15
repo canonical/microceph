@@ -96,7 +96,7 @@ Commercial support
 .. _MicroCeph: https://github.com/canonical/microceph
 .. _charm-microceph: https://github.com/canonical/charm-microceph
 .. _Ceph General: https://matrix.to/#/#ubuntu-ceph:matrix.org
-.. _Ceph Devel: https://app.element.io/#/room/#ceph-devel:ubuntu.com
+.. _Ceph Devel: https://matrix.to/#/#ceph-devel:ubuntu.com
 .. _Ubuntu Pro: https://ubuntu.com/pro
 .. _Livepatch Service: https://ubuntu.com/security/livepatch
 .. _Expanded Security Maintenance: https://ubuntu.com/security/esm

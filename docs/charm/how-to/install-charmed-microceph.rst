@@ -9,9 +9,9 @@ This guide shows how to perform a general install of MicroCeph.
 What you will need
 ------------------
 
-- A snapd-compatible host to run the `Juju client <https://juju.is/docs/installing>`_
+- A snapd-compatible host to run the `Juju client <https://documentation.ubuntu.com/juju/3.6/howto/manage-juju/?utm_source%3Atakeover=#install-juju>`_
 - A `MAAS cluster <https://maas.io/install>`_ (with a user account at your
-  disposal) OR a `Manual cloud cluster <https://juju.is/docs/olm/manual-setup>`_
+  disposal), or a `manual cloud cluster <https://discourse.charmhub.io/t/juju-101-configure-3-12/4484>`_
 - Disks on each node to add as OSD to the Ceph cluster
 
 Deploy MicroCeph

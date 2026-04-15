@@ -9,7 +9,7 @@ suggestions, fixes and constructive feedback. Whether you are new to MicroCeph a
 or you’re an expert and want to create a how-to guide to help others, we will be happy to work with you to make our documentation better for everybody.
 
 `Raise an issue <https://github.com/canonical/microceph/issues/new>`_ in our GitHub repository or talk to us on our
-`Matrix <https://app.element.io/#/room/#ceph-general:ubuntu.com>`_ channel.
+`Matrix <https://matrix.to/#/#ceph-general:ubuntu.com>`_ channel.
 
 We hope to make it as easy as possible to contribute. If you feel something is unclear, wrong, or broken, please don’t
 hesitate to leave a comment in the Matrix room.

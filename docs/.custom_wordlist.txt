@@ -381,3 +381,16 @@ nvme
 sata
 virtio
 variadic
+disaggregated
+Disaggregated
+hyperconverged
+Hyperconverged
+RadosGW
+NICs
+OOB
+SSD
+SSHing
+unpartitioned
+GateWay
+Certbot
+LetsEncrypt

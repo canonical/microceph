@@ -7,7 +7,7 @@ Overview
 
 MicroCeph provides a simple and consistent workflow to support maintenance activity.
 
-Before proceeding, please refer to the :doc:`Cluster maintenance</explanation/cluster-maintenance>`
+Before proceeding, please refer to the :doc:`Cluster maintenance</snap/explanation/cluster-maintenance>`
 to understand its functionality and impact.
 
 Enabling Cluster Maintenance

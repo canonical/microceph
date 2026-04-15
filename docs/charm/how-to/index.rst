@@ -5,17 +5,17 @@ How-to guides
 =============
 
 Our how-to guides give directions on how to perform key operations and processes
-in charm-microCeph.
+in MicroCeph using Juju.
 
-Install and deploy charm-microCeph
-----------------------------------
+Install and deploy MicroCeph with Juju
+--------------------------------------
 
-Deploy a charm-microCeph cluster with Juju.
+Deploy a MicroCeph cluster from a charm.
 
 .. toctree::
    :maxdepth: 1
 
-   Install charm-microceph <install-charmed-microceph>
+   Install MicroCeph from a charm <install-charmed-microceph>
 
 Manage cluster storage
 ----------------------
