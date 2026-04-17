@@ -47,12 +47,12 @@ mkdir -p "${DOCS_DIR}/charm"
 # Use rsync if available, otherwise fall back to cp
 if command -v rsync &>/dev/null; then
     rsync -a --delete --exclude='.gitkeep' \
-        "${TMPDIR}/charm-microceph/${CHARM_DOCS_DIR}/charm/" \
+        "${TMPDIR}/charm-microceph/${CHARM_DOCS_DIR}/" \
         "${DOCS_DIR}/charm/"
 else
     rm -rf "${DOCS_DIR}/charm/"
     mkdir -p "${DOCS_DIR}/charm"
-    cp -a "${TMPDIR}/charm-microceph/${CHARM_DOCS_DIR}/charm/." \
+    cp -a "${TMPDIR}/charm-microceph/${CHARM_DOCS_DIR}/." \
         "${DOCS_DIR}/charm/"
 fi
 
