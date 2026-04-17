@@ -24,7 +24,7 @@ build:
       fi
     pre_build:
     # Install pandoc for .md -> .rst conversion in fetch-charm-docs.sh
-    - sudo apt-get install -y pandoc
+    - apt-get install -y pandoc
     # Fetch and convert charm documentation from the charm-microceph repository
     - bash docs/scripts/fetch-charm-docs.sh
 
