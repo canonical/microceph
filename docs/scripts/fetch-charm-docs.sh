@@ -69,10 +69,17 @@ else
     )
 fi
 
-# Require pandoc for .md -> .rst conversion.
+# Ensure pandoc is available for .md -> .rst conversion.
+# If not installed, download a static binary to a temp location.
 if ! command -v pandoc &>/dev/null; then
-    echo "ERROR: pandoc is required but not installed."
-    exit 1
+    echo "pandoc not found, downloading static binary..."
+    PANDOC_VERSION="3.1.9"
+    PANDOC_DIR="${TMPDIR}/pandoc-bin"
+    mkdir -p "${PANDOC_DIR}"
+    curl -fsSL "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-linux-amd64.tar.gz" \
+        | tar -xz -C "${PANDOC_DIR}" --strip-components=2 "pandoc-${PANDOC_VERSION}/bin/pandoc"
+    export PATH="${PANDOC_DIR}:${PATH}"
+    echo "pandoc $(pandoc --version | head -1) installed to ${PANDOC_DIR}."
 fi
 
 # Convert a markdown file to RST, writing to dest path.
