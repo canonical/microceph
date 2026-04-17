@@ -33,6 +33,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install pandoc
+        run: sudo apt-get install -y pandoc
+
       - name: Fetch charm documentation
         run: |
           bash docs/scripts/fetch-charm-docs.sh "${CHARM_BRANCH}" "${CHARM_REPO_URL}"

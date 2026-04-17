@@ -394,3 +394,6 @@ unpartitioned
 GateWay
 Certbot
 LetsEncrypt
+utilize
+utilized
+virtualization
