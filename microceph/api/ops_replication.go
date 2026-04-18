@@ -99,6 +99,10 @@ func cmdOpsReplication(s mcTypes.State, r *http.Request, overwriteType types.Rep
 			return mcTypes.InternalError(err)
 		}
 
+        if data.RemoteName != "" && data.RemoteName == data.LocalAlias {
+            return response.SmartError(fmt.Errorf("local alias (--local-name) and remote name must be different to avoid site conflicts"))
+        }
+
 		// carry RbdReplicationRequest in interface object.
 		err = data.SetAPIObjectID(resource)
 		if err != nil {
