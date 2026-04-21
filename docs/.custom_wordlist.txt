@@ -397,3 +397,4 @@ LetsEncrypt
 utilize
 utilized
 virtualization
+osds
