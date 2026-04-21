@@ -1,10 +1,13 @@
 #!/bin/bash
 # fetch-charm-docs.sh
 #
-# Syncs charm documentation changes from the charm-microceph repository
-# into docs/charm/. On each run, only files that changed since the last
-# sync are updated. The last-synced commit SHA is stored in
-# docs/charm/.charm-docs-ref.
+# Fetches charm documentation from the charm-microceph repository and
+# converts it to RST format under docs/charm/. Run automatically as part
+# of the docs build (make html, make run, etc.).
+#
+# The charm/ directory is not committed to this repository; it is
+# populated on demand at build time from the canonical source in
+# charm-microceph.
 #
 # Usage:
 #   ./scripts/fetch-charm-docs.sh [branch] [charm-repo-url]
@@ -23,16 +26,13 @@ CHARM_BRANCH="${1:-${CHARM_BRANCH:-main}}"
 CHARM_REPO_URL="${2:-${CHARM_REPO_URL:-https://github.com/canonical/charm-microceph.git}}"
 CHARM_DOCS_DIR="${CHARM_DOCS_DIR:-docs}"
 
-# File that records the last charm-microceph commit SHA we synced from.
-REF_FILE="${DOCS_DIR}/charm/.charm-docs-ref"
-
 # Temporary directory for cloning
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
 echo "Fetching charm documentation from ${CHARM_REPO_URL} (branch: ${CHARM_BRANCH})..."
 
-# Clone with full history of the docs directory so we can diff against last ref.
+# Sparse clone — only the docs directory.
 git clone --branch "${CHARM_BRANCH}" --filter=blob:none --sparse \
     "${CHARM_REPO_URL}" "${TMPDIR}/charm-microceph"
 
@@ -46,28 +46,6 @@ if [ ! -d "${CHARM_DOCS_DIR}" ]; then
 fi
 
 CHARM_SRC="${TMPDIR}/charm-microceph/${CHARM_DOCS_DIR}"
-CURRENT_SHA="$(git rev-parse HEAD)"
-
-# Determine which files to sync:
-# - If a previous ref exists, only sync files changed since that ref.
-# - If no ref exists (first run), sync all docs files.
-if [ -f "${REF_FILE}" ]; then
-    LAST_SHA="$(cat "${REF_FILE}")"
-    if [ "${LAST_SHA}" = "${CURRENT_SHA}" ]; then
-        echo "Already up to date (${CURRENT_SHA}). Nothing to sync."
-        exit 0
-    fi
-    echo "Syncing changes from ${LAST_SHA:0:7} to ${CURRENT_SHA:0:7}..."
-    mapfile -t CHANGED_FILES < <(
-        git diff --name-only "${LAST_SHA}" "${CURRENT_SHA}" -- "${CHARM_DOCS_DIR}/" \
-        | sed "s|^${CHARM_DOCS_DIR}/||"
-    )
-else
-    echo "No previous sync ref found. Performing initial sync of all docs..."
-    mapfile -t CHANGED_FILES < <(
-        find "${CHARM_DOCS_DIR}" -type f | sed "s|^${CHARM_DOCS_DIR}/||"
-    )
-fi
 
 # Ensure pandoc is available for .md -> .rst conversion.
 # If not installed, download a static binary to a temp location.
@@ -89,22 +67,43 @@ convert_md_to_rst() {
     pandoc --from=markdown --to=rst --wrap=none -o "${dest}" "${src}"
 }
 
-# Map source paths to destination paths and convert changed files.
-# Source layout:            Destination layout:
-#   how-to-guides/*.md  ->  charm/how-to/*.rst
-#   tutorials/*.md      ->  charm/tutorial/*.rst  (getting-started -> get-started)
-synced=0
-for rel_path in "${CHANGED_FILES[@]}"; do
-    src="${CHARM_SRC}/${rel_path}"
-    [ -f "${src}" ] || continue  # skip deletions
+# Ensure an RST file has at least one heading so Sphinx can link to it
+# from a toctree. Some upstream markdown files omit a top-level H1;
+# when that happens, derive a title from the filename and prepend it.
+ensure_rst_title() {
+    local rst_file="$1"
+    # A top-level RST heading uses '=' as the underline. If none exists,
+    # the document has no title Sphinx can link to.
+    if grep -qE '^={3,}$' "${rst_file}"; then
+        return
+    fi
+    local base title underline tmp
+    base="$(basename "${rst_file}" .rst)"
+    # Hyphens to spaces, then sentence-case (capitalise first letter only).
+    title="$(echo "${base}" | tr '-' ' ' | sed 's/./\u&/')"
+    underline="$(printf '%*s' "${#title}" '' | tr ' ' '=')"
+    tmp="$(mktemp)"
+    { printf '%s\n%s\n\n' "${title}" "${underline}"; cat "${rst_file}"; } > "${tmp}"
+    mv "${tmp}" "${rst_file}"
+}
 
+# Map source paths to destination paths and convert all docs files.
+# Source layout (charm-microceph repo):  Destination layout (this repo):
+#   how-to-guides/*.md               ->  charm/how-to/*.rst
+#   tutorials/*.md                   ->  charm/tutorial/*.rst  (getting-started -> get-started)
+#   explanation/*.md                 ->  charm/explanation/*.rst  (when available)
+#   reference/*.md                   ->  charm/reference/*.rst    (when available)
+synced=0
+while IFS= read -r -d '' src; do
+    rel_path="${src#${CHARM_SRC}/}"
     case "${rel_path}" in
         how-to-guides/*.md)
             filename="$(basename "${rel_path}" .md).rst"
             dest="${DOCS_DIR}/charm/how-to/${filename}"
             mkdir -p "${DOCS_DIR}/charm/how-to"
             convert_md_to_rst "${src}" "${dest}"
-            echo "  Updated: charm/how-to/${filename}"
+            ensure_rst_title "${dest}"
+            echo "  Fetched: charm/how-to/${filename}"
             synced=$((synced + 1))
             ;;
         tutorials/*.md)
@@ -113,13 +112,29 @@ for rel_path in "${CHANGED_FILES[@]}"; do
             dest="${DOCS_DIR}/charm/tutorial/${filename}"
             mkdir -p "${DOCS_DIR}/charm/tutorial"
             convert_md_to_rst "${src}" "${dest}"
-            echo "  Updated: charm/tutorial/${filename}"
+            ensure_rst_title "${dest}"
+            echo "  Fetched: charm/tutorial/${filename}"
+            synced=$((synced + 1))
+            ;;
+        explanation/*.md)
+            filename="$(basename "${rel_path}" .md).rst"
+            dest="${DOCS_DIR}/charm/explanation/${filename}"
+            mkdir -p "${DOCS_DIR}/charm/explanation"
+            convert_md_to_rst "${src}" "${dest}"
+            ensure_rst_title "${dest}"
+            echo "  Fetched: charm/explanation/${filename}"
+            synced=$((synced + 1))
+            ;;
+        reference/*.md)
+            filename="$(basename "${rel_path}" .md).rst"
+            dest="${DOCS_DIR}/charm/reference/${filename}"
+            mkdir -p "${DOCS_DIR}/charm/reference"
+            convert_md_to_rst "${src}" "${dest}"
+            ensure_rst_title "${dest}"
+            echo "  Fetched: charm/reference/${filename}"
             synced=$((synced + 1))
             ;;
     esac
-done
+done < <(find "${CHARM_SRC}" -type f -name "*.md" -print0)
 
-# Save the current SHA for the next run.
-echo "${CURRENT_SHA}" > "${REF_FILE}"
-
-echo "Charm documentation sync complete: ${synced} file(s) updated (ref: ${CURRENT_SHA:0:7})."
+echo "Charm documentation fetch complete: ${synced} file(s) fetched."

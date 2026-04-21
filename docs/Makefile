@@ -104,10 +104,10 @@ run: install fetch-charm-docs
 	. $(VENV); $(VENVDIR)/bin/sphinx-autobuild -b dirhtml --host $(SPHINX_HOST) --port $(SPHINX_PORT) "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS)
 
 # Doesn't depend on $(BUILDDIR) to rebuild properly at every run.
-html: install
+html: install fetch-charm-docs
 	. $(VENV); $(SPHINXBUILD) -W --keep-going -b dirhtml "$(SOURCEDIR)" "$(BUILDDIR)" -w $(SPHINXDIR)/warnings.txt $(SPHINXOPTS)
 
-epub: install
+epub: install fetch-charm-docs
 	. $(VENV); $(SPHINXBUILD) -b epub "$(SOURCEDIR)" "$(BUILDDIR)" -w $(SPHINXDIR)/warnings.txt $(SPHINXOPTS)
 
 serve: html
@@ -129,7 +129,7 @@ spellcheck: spellcheck-install
 
 spelling: html spellcheck
 
-linkcheck: install
+linkcheck: install fetch-charm-docs
 	. $(VENV) ; $(SPHINXBUILD) -b linkcheck "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) || { grep --color -F "[broken]" "$(BUILDDIR)/output.txt"; exit 1; }
 	exit 0
 
