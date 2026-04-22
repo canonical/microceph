@@ -30,7 +30,7 @@ configurations, to further inform your architectural choices.
    of this reference architecture. Following these recommendations does not guarantee
    that the proposed hardware will meet the requirements of your project or use case.
 
-   To discuss your specific requirements, contact Canonical.
+   To discuss your specific requirements, `contact Canonical <https://ubuntu.com/ceph#get-in-touch>`_.
 
 .. toctree::
     :maxdepth: 2

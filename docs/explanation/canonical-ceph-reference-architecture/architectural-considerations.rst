@@ -42,8 +42,9 @@ Cluster service placement
 
 Ceph is composed of several components, both for the control plane and the
 data plane. Control plane services include Ceph Monitors (MONs), Ceph Managers
-(MGRs), Ceph RADOS Gateways (RGWs), and Ceph metadata servers (MDSs), whereas
-the data-plane services include Ceph object storage daemons (OSDs).
+(MGRs), and Ceph metadata servers (MDSs), whereas
+the data-plane services include Ceph object storage daemons (OSDs), Ceph RADOS Gateway (RGW),
+and the Ceph Filesystem (CephFS).
 
 .. image:: ../assets/ceph-internals.png
    :alt: Ceph internal components
@@ -78,12 +79,12 @@ Disaggregated architecture
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The :ref:`disaggregated approach <hw-rec-disaggregated-architecture>`, on the other hand, features dedicated nodes for
-each type of service, e.g. OSDs, RGW and MDS (control plane services).
+each type of service.
 
 This architecture is suitable in specific scenarios, for example, where
 applications require high performance object or file system storage, because
-dedicated RGWs or MDSs can provide lower latency and dedicated resources to
-those services.
+dedicated RGWs or MDSs can provide lower latency and higher bandwidth by allocating
+dedicated resources to those services.
 
 .. image:: ../assets/disaggregated-architecture.png
    :alt: Disaggregated Ceph architecture

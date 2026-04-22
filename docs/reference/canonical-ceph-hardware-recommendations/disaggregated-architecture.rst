@@ -1,5 +1,5 @@
 .. meta::
-   :description: Disaggregated Ceph architecture hardware specifications, including reference configurations for dedicated control plane, RGW, and MDS nodes.
+   :description: Disaggregated Ceph architecture hardware specifications, including reference configurations for dedicated control plane: RGW, and MON/MDS nodes.
 
 .. _hw-rec-disaggregated-architecture:
 
@@ -10,8 +10,9 @@ In the context of disaggregated nodes, **a minimum of nine nodes** is required
 to be eligible for Ubuntu Pro Managed Solutions and Delivery services with
 Canonical.
 
-The initial configuration suggestion would be three nodes for the control plane
-(MON, RadosGW, MDS), and six nodes for dedicated OSDs. However, the distribution
+The initial configuration suggestion would be three nodes for the control plane:
+Ceph Monitors (MONs), Ceph RADOS Gateway (RGW), and Ceph metadata servers (MDSs),
+and six nodes for dedicated object storage daemons (OSDs). However, the distribution
 needs to be adapted to your requirements, and allows for several combinations:
 
 Dedicated control plane nodes
@@ -19,8 +20,8 @@ Dedicated control plane nodes
 
 In some cases, customers prefer to have a set of nodes dedicated to control
 plane services, with the Ceph OSDs separated. The control plane nodes would
-host the Ceph MON service. It is preferred to host the RadosGW or MDS services
-on the Ceph OSD nodes, so that the RadosGW and MDS services scale out with the
+host the Ceph MON service. It is preferred to host the RGW or MDS services
+on the Ceph OSD nodes, so that the RGW and MDS services scale out with the
 increase of the storage cluster itself.
 
 Considering a generic use case, the specifications below are recommended:
@@ -38,7 +39,7 @@ Considering a generic use case, the specifications below are recommended:
    * - Storage
      - 2x 960 GB SSD/NVMe for OS
 
-If it is decided to host the RadosGW or MDS services on the control plane
+If it is decided to host the RGW or MDS services on the control plane
 nodes, Canonical recommends increasing the specifications of the control plane
 nodes with the recommendations listed under the
 :ref:`hw-rec-dedicated-rgw-nodes` and :ref:`hw-rec-dedicated-mds-nodes`
