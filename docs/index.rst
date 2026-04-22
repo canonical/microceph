@@ -1,7 +1,6 @@
 .. meta::
    :description: MicroCeph is the easiest way to deploy and manage a Ceph cluster.
 
-=========
 MicroCeph
 =========
 
@@ -20,30 +19,24 @@ well as home labs and single workstations.
 MicroCeph is focused on providing a modern deployment and management experience
 to Ceph administrators and storage software developers.
 
----------
-
 In this documentation
 ---------------------
 
-..  grid:: 1 2 1 2
+MicroCeph can be deployed and managed as a standalone snap or as a charm as
+part of a Juju model.
 
-   ..  grid-item:: :doc:`Tutorial <tutorial/get-started>`
+.. grid:: 1 1 2 2
 
-      **A hands-on introduction** to MicroCeph for new users
+   .. grid-item-card:: :doc:`MicroCeph snap › <snap/tutorial/get-started>`
 
-   ..  grid-item:: :doc:`How-to guides <how-to/index>`
+      The ``microceph`` snap is a self-contained, secure and dependency-free
+      Linux app package used to deploy and manage a Ceph cluster. If you are
+      new to MicroCeph, start here.
 
-      **Step-by-step guides** covering key operations and common tasks
+   .. grid-item-card:: :doc:`MicroCeph charm › <charm/tutorial/get-started>`
 
-   .. grid-item:: :doc:`Reference <reference/index>`
-
-      **Technical information** - specifications, APIs, architecture
-
-   .. grid-item:: :doc:`Explanation <explanation/index>`
-
-      **Discussion and clarification** of key topics
-
----------
+      The ``microceph`` charms take care of installing, configuring and
+      managing MicroCeph on cloud instances managed by Juju.
 
 Project and community
 ---------------------
@@ -52,34 +45,58 @@ MicroCeph is a member of the Ubuntu family. It's an open-source project that
 warmly welcomes community projects, contributions, suggestions, fixes and
 constructive feedback.
 
-* We follow the Ubuntu community `Code of conduct`_
-* Contribute to the project on `GitHub`_ (documentation contributions go under
+Get involved
+~~~~~~~~~~~~
+
+* Contribute to the project on the `MicroCeph`_ or `charm-microceph`_ GitHub repositories _ (documentation contributions go under
   the :file:`docs` directory)
 * GitHub is also used as our bug tracker
-* To speak with us, you can find us on Matrix in `Ubuntu Ceph`
+* To speak with us, you can find us on Matrix in `Ceph General`_ or `Ceph Devel`_
+* :doc:`Contribute to our documentation <contributing/index>`
+
+Governance and policies
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* We follow the Ubuntu community `Code of conduct`_
+
+Commercial support
+~~~~~~~~~~~~~~~~~~
+
 * Optionally enable `Ubuntu Pro`_ on your Ceph nodes. This is a service that
   provides the `Livepatch Service`_ and the `Expanded Security Maintenance`_
   (ESM) program.
 
 .. toctree::
    :hidden:
-   :maxdepth: 1
+   :titlesonly:
+   :caption: Deploy from Snap package
 
-   tutorial/get-started
+   Tutorial <snap/tutorial/get-started>
+   How-to guides <snap/how-to/index>
+   Reference <snap/reference/index>
+   Explanation <snap/explanation/index>
 
 .. toctree::
    :hidden:
-   :maxdepth: 2
+   :titlesonly:
+   :caption: Deploy with Juju
 
-   how-to/index
-   reference/index
-   explanation/index
-   Contribute to our docs <contributing/index>
+   Tutorial <charm/tutorial/get-started>
+   How-to guides <charm/how-to/index>
+
+.. toctree::
+   :hidden:
+   :titlesonly:
+   :caption: Contributing
+
+   Contribute to our documentation <contributing/index>
 
 .. LINKS
 .. _Code of conduct: https://ubuntu.com/community/ethos/code-of-conduct
-.. _GitHub: https://github.com/canonical/microceph
+.. _MicroCeph: https://github.com/canonical/microceph
+.. _charm-microceph: https://github.com/canonical/charm-microceph
 .. _Ceph General: https://matrix.to/#/#ubuntu-ceph:matrix.org
+.. _Ceph Devel: https://matrix.to/#/#ceph-devel:ubuntu.com
 .. _Ubuntu Pro: https://ubuntu.com/pro
 .. _Livepatch Service: https://ubuntu.com/security/livepatch
 .. _Expanded Security Maintenance: https://ubuntu.com/security/esm

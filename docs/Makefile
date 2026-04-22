@@ -20,6 +20,9 @@ CONFIRM_SUDO    ?= N
 VALE_CONFIG     = $(SPHINXDIR)/vale.ini
 SPHINX_HOST     ?= 127.0.0.1
 SPHINX_PORT     ?= 18000
+CHARM_REPO_URL  ?= https://github.com/canonical/charm-microceph.git
+CHARM_BRANCH    ?= main
+FETCH_SCRIPT    = $(SOURCEDIR)/scripts/fetch-charm-docs.sh
 
 # Put it first so that "make" without argument is like "make help".
 help:
@@ -45,7 +48,7 @@ help:
 .PHONY: full-help spellcheck-install pa11y-install install run html \
         epub serve clean clean-doc spelling spellcheck linkcheck woke \
         allmetrics pa11y pdf-prep-force pdf-prep pdf vale-install vale \
-		update
+		update fetch-charm-docs
 
 full-help: $(VENVDIR)
 	@. $(VENV); $(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
@@ -90,14 +93,21 @@ pa11y-install:
 
 install: $(VENVDIR)
 
-run: install
+# Fetch charm documentation from the charm-microceph repository.
+# Set CHARM_REPO_URL and CHARM_BRANCH to override defaults.
+fetch-charm-docs:
+	@echo "Fetching charm documentation..."
+	@CHARM_REPO_URL="$(CHARM_REPO_URL)" CHARM_BRANCH="$(CHARM_BRANCH)" \
+		bash $(FETCH_SCRIPT) "$(CHARM_BRANCH)" "$(CHARM_REPO_URL)"
+
+run: install fetch-charm-docs
 	. $(VENV); $(VENVDIR)/bin/sphinx-autobuild -b dirhtml --host $(SPHINX_HOST) --port $(SPHINX_PORT) "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS)
 
 # Doesn't depend on $(BUILDDIR) to rebuild properly at every run.
-html: install
+html: install fetch-charm-docs
 	. $(VENV); $(SPHINXBUILD) -W --keep-going -b dirhtml "$(SOURCEDIR)" "$(BUILDDIR)" -w $(SPHINXDIR)/warnings.txt $(SPHINXOPTS)
 
-epub: install
+epub: install fetch-charm-docs
 	. $(VENV); $(SPHINXBUILD) -b epub "$(SOURCEDIR)" "$(BUILDDIR)" -w $(SPHINXDIR)/warnings.txt $(SPHINXOPTS)
 
 serve: html
@@ -119,7 +129,7 @@ spellcheck: spellcheck-install
 
 spelling: html spellcheck
 
-linkcheck: install
+linkcheck: install fetch-charm-docs
 	. $(VENV) ; $(SPHINXBUILD) -b linkcheck "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) || { grep --color -F "[broken]" "$(BUILDDIR)/output.txt"; exit 1; }
 	exit 0
 

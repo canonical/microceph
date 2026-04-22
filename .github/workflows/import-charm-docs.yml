@@ -1,0 +1,55 @@
+name: Import Charm Documentation
+
+# This workflow imports charm documentation and rebuilds the combined docs.
+# It is triggered by:
+#   1. repository_dispatch events from the charm-microceph repo (push-button import)
+#   2. Manual workflow dispatch
+
+on:
+  repository_dispatch:
+    types: [charm-docs-update]
+  workflow_dispatch:
+    inputs:
+      charm_branch:
+        description: "Branch of charm-microceph to fetch docs from"
+        required: false
+        default: "main"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CHARM_REPO_URL: https://github.com/canonical/charm-microceph.git
+  CHARM_BRANCH: ${{ github.event.client_payload.charm_branch || github.event.inputs.charm_branch || 'main' }}
+
+jobs:
+  import-charm-docs:
+    name: Import Charm Docs and Rebuild
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout MicroCeph repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pandoc
+        run: sudo apt-get install -y pandoc
+
+      - name: Fetch charm documentation
+        run: |
+          bash docs/scripts/fetch-charm-docs.sh "${CHARM_BRANCH}" "${CHARM_REPO_URL}"
+
+      - name: Build documentation
+        working-directory: docs
+        run: |
+          make html
+
+      - name: Report trigger source
+        if: github.event_name == 'repository_dispatch'
+        run: |
+          echo "## Documentation Rebuild Triggered by Charm Repository" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Charm branch:** ${CHARM_BRANCH}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Charm PR:** ${{ github.event.client_payload.charm_pr_url || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Charm commit:** ${{ github.event.client_payload.charm_sha || 'N/A' }}" >> $GITHUB_STEP_SUMMARY

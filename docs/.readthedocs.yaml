@@ -22,6 +22,10 @@ build:
       then
         exit 183;
       fi
+    pre_build:
+    # Fetch and convert charm documentation from the charm-microceph repository.
+    # fetch-charm-docs.sh will auto-download pandoc if not available.
+    - bash docs/scripts/fetch-charm-docs.sh
 
 # Build documentation in the docs/ directory with Sphinx
 sphinx:

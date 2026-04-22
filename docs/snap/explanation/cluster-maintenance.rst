@@ -11,7 +11,7 @@ MicroCeph provides a simple and consistent workflow to support maintenance activ
 executing any high-risk maintenance operations on a node, operators are strongly recommended to
 enable maintenance mode to minimise the impact and ensure system stability. For more information on how
 to enable maintenance mode in MicroCeph, please refer to :doc:`Perform cluster
-maintenance</how-to/perform-cluster-maintenance>`.
+maintenance</snap/how-to/perform-cluster-maintenance>`.
 
 Strategy
 --------

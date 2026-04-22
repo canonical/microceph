@@ -16,6 +16,12 @@
 # Build outputs
 _build
 
+# Charm docs (fetched from charm-microceph repo at build time, not committed here)
+charm/*
+!charm/how-to/
+charm/how-to/*
+!charm/how-to/index.rst
+
 # Node.js
 package*.json
 

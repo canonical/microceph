@@ -32,7 +32,7 @@ Firstly, before initiating the upgrade, ensure that the cluster is healthy. Use 
 **Note**: Do not start the upgrade if the cluster is unhealthy.
 
 
-Secondly, review the :doc:`release notes </reference/release-notes>` to check for any version-specific information.
+Secondly, review the :doc:`release notes </snap/reference/release-notes>` to check for any version-specific information.
 
 
 

@@ -218,16 +218,20 @@ redirects = {
 linkcheck_ignore = [
     "http://127.0.0.1:8000",
     "https://github.com/canonical/ACME/*",
-    "https://app.element.io/#/room/#ceph-general:ubuntu.com",
-    "https://matrix.to/#/#documentation:ubuntu.com"
+    "https://matrix.to/#/#ceph-general:ubuntu.com",
+    "https://matrix.to/#/#documentation:ubuntu.com",
+    "https://matrix.to/#/#ceph-devel:ubuntu.com",
+    "https://matrix.to/#/#ubuntu-ceph:matrix.org"
     ]
 
 # A regex list of URLs where anchors are ignored by 'make linkcheck'
 
 linkcheck_anchors_ignore_for_url = [
     r"https://github\.com/.*",
-    r"https://app.element.io/#/room/#ceph-general:ubuntu.com",
-    r"https://matrix.to/#/#documentation:ubuntu.com"
+    r"https://matrix.to/#/#ceph-general:ubuntu.com",
+    r"https://matrix.to/#/#documentation:ubuntu.com",
+    r"https://matrix.to/#/#ceph-devel:ubuntu.com",
+    r"https://matrix.to/#/#ubuntu-ceph:matrix.org"
     ]
 
 # give linkcheck multiple tries on failure
