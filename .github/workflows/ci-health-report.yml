@@ -1,0 +1,63 @@
+name: CI Health Report
+
+on:
+  push:
+    paths:
+      - .github/scripts/ci_health_report/**
+  pull_request:
+    paths:
+      - .github/scripts/ci_health_report/**
+  schedule:
+    - cron: "0 9 * * 1" # Every Monday at 09:00 UTC
+  workflow_dispatch:
+    inputs:
+      report-issue:
+        description: "GitHub issue number to post the report to"
+        required: false
+      lookback-days:
+        description: "How many days back to look (default: 30)"
+        required: false
+        default: "30"
+      top-jobs:
+        description: "Number of top failing jobs to highlight (default: 5)"
+        required: false
+        default: "5"
+
+env:
+  REPORT_ISSUE: ${{ inputs.report-issue || vars.CI_HEALTH_REPORT_ISSUE }}
+  LOOKBACK_DAYS: ${{ inputs.lookback-days || vars.LOOKBACK_DAYS || '30' }}
+  TOP_JOBS: ${{ inputs.top-jobs || vars.TOP_JOBS || '5' }}
+
+permissions:
+  actions: read
+  issues: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test CI health report script
+        run: python3 -m unittest test_ci_health_report -v
+        working-directory: .github/scripts/ci_health_report
+
+  report:
+    needs: test
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate report issue
+        if: ${{ env.REPORT_ISSUE == '' }}
+        run: |
+          echo "::error::REPORT_ISSUE is not set. Configure vars.CI_HEALTH_REPORT_ISSUE or pass report-issue input."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate CI Health Report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PYTHONUNBUFFERED: "1"
+        run: python3 .github/scripts/ci_health_report/ci_health_report.py
