@@ -50,7 +50,7 @@ with minimal configuration.
 
 See an example of a MicroCeph cluster below.. The `MicroCeph architecture
 section
-<https://canonical-microceph.readthedocs-hosted.com/latest/explanation/microceph-architecture/>`_
+<https://canonical-microceph.readthedocs-hosted.com/latest/snap/explanation/microceph-architecture/>`_
 provides more details about MicroCeph components.
 
 .. image:: ../assets/ex-microceph-cluster.png

@@ -28,7 +28,7 @@ Canonical Ceph cluster deployment:
      - `Ubuntu Kernel release cycle <https://ubuntu.com/about/release-cycle/>`__
    * - Canonical Ceph
      - `Charmed Ceph release notes <https://ubuntu.com/ceph/docs/release-notes>`__,
-       `MicroCeph release notes <https://canonical-microceph.readthedocs-hosted.com/latest/reference/release-notes/>`__,
+       `MicroCeph release notes <https://canonical-microceph.readthedocs-hosted.com/latest/snap/reference/release-notes/>`__,
        `charm-microceph <https://charmhub.io/microceph>`__
    * - MAAS
      - `MAAS release notes and upgrade instructions <https://canonical.com/maas/docs/release-notes-and-upgrade-instructions>`__
