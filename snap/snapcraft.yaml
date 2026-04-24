@@ -164,6 +164,12 @@ apps:
       - network
       - network-bind
       - process-control
+  log-rotate:
+    command: commands/log-rotate.start
+    daemon: oneshot
+    timer: "00:02,06:04,12:07,18:03"
+    after:
+      - daemon
   # Commands
   ceph:
     command: commands/ceph
@@ -457,11 +463,28 @@ parts:
       - lib/*/liburcu-bp.so*
       - lib/*/libwbclient.so*
 
+  logrotate:
+    plugin: nil
+    stage-packages:
+      - logrotate
+    organize:
+      usr/sbin/: bin/
+      usr/lib/: lib/
+    stage:
+      - -etc/logrotate.conf
+    prime:
+      - bin/logrotate
+      - lib/*/libacl.so*
+      - lib/*/libpopt.so*
+      - lib/*/libselinux.so*
+      - lib/*/libpcre2-8.so*
+
   strip:
     after:
       - ceph
       - dqlite
       - microceph
+      - logrotate
     plugin: nil
     override-prime: |
       set -x
@@ -474,3 +497,6 @@ parts:
   wrappers:
     plugin: dump
     source: snapcraft/
+    permissions:
+      - path: etc/logrotate.conf
+        mode: "0644"
