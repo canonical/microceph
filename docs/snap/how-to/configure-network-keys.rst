@@ -7,7 +7,7 @@ If you configure a cluster network, OSDs will route heartbeat, object replicatio
 
 The MicroCeph cluster configuration CLI supports setting, getting, resetting and listing supported config keys mentioned below.
 
-.. list-table:: Supported config Keys
+.. list-table:: Supported config keys
    :widths: 30 70
    :header-rows: 1
 

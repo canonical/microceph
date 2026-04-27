@@ -42,7 +42,7 @@ Auditing and centralized logging
 * Enable Auditing:  
 
   * Configure Ceph logging levels via Ceph configuration options,
-    (e.g., ``log_to_file \= true``, ``debug_mon``, ``debug_osd``). See :ref:`changing the log level <change-log-level>`
+    (e.g., ``log_to_file = true``, ``debug_mon``, ``debug_osd``). See :ref:`changing the log level <change-log-level>`
     for how to set log levels. Ceph logs are found in :file:`/var/snap/microceph/common/logs/ceph/`.  
   * microcephd logs to :file:`/var/log/syslog`, see :ref:`changing the log level <change-log-level>` for details on setting log levels.  
 
