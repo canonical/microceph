@@ -1,10 +1,10 @@
-========================================
+.. _enable-fde:
+
 Enable full disk encryption in MicroCeph
 ========================================
 
 Full disk encryption (FDE) in MicroCeph allows operating encrypted
-OSDs in a MicroCeph cluster. See the :doc:`FDE explanation
-<../explanation/security/about-fde>` to learn more about FDE
+OSDs in a MicroCeph cluster. See the :ref:`FDE explanation <about-fde>` to learn more about FDE
 protection and its limitations.
 
 Prerequisites
@@ -13,8 +13,9 @@ Prerequisites
 To use FDE, the following prerequisites must be met:
 
 - The installed snapd daemon version must be >= 2.59.1
-- The ``dm-crypt`` kernel module must be available. Note that some cloud-optimised kernels do not ship dm-crypt by default. Check by running ``sudo modinfo dm-crypt``
-- The snap dm-crypt plug has to be connected, and ``microceph.daemon`` subsequently restarted:
+- The `dm-crypt kernel module`_ must be available. Note that some cloud-optimised kernels
+  do not ship dm-crypt by default. Check by running ``sudo modinfo dm-crypt``
+- The `snap dm-crypt plug`_ has to be connected, and ``microceph.daemon`` subsequently restarted:
 
   .. code-block:: none
 
@@ -32,4 +33,8 @@ FDE for OSDs is activated by passing the optional ``--encrypt`` flag when adding
     sudo microceph disk add /dev/sdx --wipe --encrypt
 
 Note that there is no facility to encrypt an OSD that is already part of the cluster. To enable encryption you will have to take the OSD disk out of the cluster, ensure data is replicated and the cluster converged and is healthy, and then re-introduce the OSD with encryption.
+
+.. LINKS
+.. _dm-crypt kernel module: https://www.kernel.org/doc/html/latest/admin-guide/device-mapper/dm-crypt.html
+.. _snap dm-crypt plug: https://snapcraft.io/docs/reference/interfaces/dm-crypt-interface/
 

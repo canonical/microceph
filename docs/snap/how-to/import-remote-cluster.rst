@@ -1,4 +1,5 @@
-==================================
+.. _import-remote-cluster:
+
 Import a remote MicroCeph cluster
 ==================================
 

@@ -1,6 +1,8 @@
 .. meta::
    :description: Explanations of MicroCeph concepts and topics like, the MicroCeph charm, MicroCeph architecture, security, network configuration, remote replication, and cluster scaling.
 
+.. _snap-explanation:
+
 Explanation
 ===========
 
@@ -8,7 +10,7 @@ The explanatory and conceptual guides in this section provide a better understan
 They enable you to expand your knowledge and become better at configuring, encrypting, managing, deploying and backing up your workloads.
 
 Working with MicroCeph
------------------------
+----------------------
 
 Understand the steps to take to successfully deploy and manage your Ceph clusters quickly.
 
@@ -56,9 +58,9 @@ cryptographic technology used in MicroCeph.
    MicroCeph architecture <microceph-architecture>
    Security in MicroCeph <security/security-overview>
 
-If you have a specific goal, but are already familiar with MicroCeph, our :doc:`how-to guides <../how-to/index>` have more in-depth detail and instructions.
+If you have a specific goal, and are already familiar with MicroCeph, our :ref:`how-to guides <snap-how-to>` have more in-depth detail and instructions.
 
-Take a look at our :doc:`reference <../reference/index>` section when you need to know which MicroCeph commands to use.
+Take a look at our :ref:`reference section <reference>` when you need to know which MicroCeph commands to use.
 
 Canonical Ceph reference architecture
 --------------------------------------

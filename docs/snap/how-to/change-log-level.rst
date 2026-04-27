@@ -1,4 +1,5 @@
-======================
+.. _change-log-level:
+
 Changing the log level
 ======================
 

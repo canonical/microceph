@@ -1,10 +1,7 @@
-===============
+.. _major-upgrades:
+
 Major Upgrades
 ===============
-
-
-Overview
---------
 
 This guide provides step-by-step instructions on how to upgrade your MicroCeph cluster to a new major release. 
 
@@ -29,11 +26,14 @@ Firstly, before initiating the upgrade, ensure that the cluster is healthy. Use 
 
     sudo ceph -s
 
-**Note**: Do not start the upgrade if the cluster is unhealthy.
+.. note::
+   
+   Do not start the upgrade if the cluster is unhealthy.
 
 
-Secondly, review the :doc:`release notes </snap/reference/release-notes>` to check for any version-specific information.
-
+Secondly, review the :ref:`release notes <release-notes>` to check for any version-specific information.
+Also consult the `upstream Ceph release notes`_ for the target version, and check the
+`Ubuntu release notes`_ for any relevant information.
 
 
 Optional but Recommended: Preparation Steps
@@ -82,5 +82,9 @@ If you had previously set noout, unset it with this command:
 
 
 You have now successfully upgraded your Ceph cluster.
+
+.. LINKS
+.. _upstream Ceph release notes: https://docs.ceph.com/en/latest/releases/
+.. _Ubuntu release notes: https://documentation.ubuntu.com/release-notes/
 
 

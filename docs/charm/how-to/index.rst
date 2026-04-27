@@ -1,6 +1,8 @@
 .. meta::
    :description: How-to guides for deploying and managing MicroCeph with Juju.
 
+.. _charm-how-to:
+
 How-to guides
 =============
 

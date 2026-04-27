@@ -1,17 +1,15 @@
-================
+.. _cluster-maintenance:
+
 Maintenance Mode
 ================
-
-Overview
---------
 
 Cluster maintenance is important for keeping the Ceph Storage Cluster at a healthy state.
 
 MicroCeph provides a simple and consistent workflow to support maintenance activity. Before
 executing any high-risk maintenance operations on a node, operators are strongly recommended to
 enable maintenance mode to minimise the impact and ensure system stability. For more information on how
-to enable maintenance mode in MicroCeph, please refer to :doc:`Perform cluster
-maintenance</snap/how-to/perform-cluster-maintenance>`.
+to enable maintenance mode in MicroCeph, please refer to our:ref:`guide on performing cluster
+maintenance <perform-cluster-maintenance>`.
 
 Strategy
 --------
@@ -23,8 +21,8 @@ repeatedly run the steps without any issue.
 
 The strategy is defined as follows:
 
-Enabling maintenance mode
-~~~~~~~~~~~~~~~~~~~~~~~~~
+Enable maintenance mode
+~~~~~~~~~~~~~~~~~~~~~~~
 
 - Check if OSDs on the node are ``ok-to-stop`` to ensure sufficient redundancy to tolerate the loss
   of OSDs on the node.
@@ -34,8 +32,8 @@ Enabling maintenance mode
   maintenance slot. (default=True)
 - *(Optional)* Bring the OSDs down and disable the service (Default=False)
 
-Disabling maintenance mode
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+Disable maintenance mode
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 - Remove noout flag to allow data migration from triggering after the planned maintenance slot.
 - Bring the OSDs up and enable the service

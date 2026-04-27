@@ -1,4 +1,5 @@
-====================================
+.. _mount-block-devices:
+
 Mount MicroCeph backed Block Devices
 ====================================
 
@@ -15,7 +16,7 @@ Ceph cluster, mapping it on the client machine, and then mounting it.
    the client tools as described in this documentation, even if the client
    machine is the MicroCeph node itself.
 
-MicroCeph Operations:
+MicroCeph operations
 ---------------------
 
 Check Ceph cluster's status:
@@ -59,7 +60,7 @@ Create RBD image:
     $ sudo rbd list -p block_pool
     bd_foo
 
-Client Operations:
+Client operations
 ------------------
 
 Download 'ceph-common' package:
@@ -133,8 +134,8 @@ Mount the device on a suitable path:
 With this, you now have a block device mounted at ``/mnt/new-mount`` on
 your client machine that you can perform IO to.
 
-Perform IO and observe the ceph cluster:
-----------------------------------------
+Perform IO and observe the ceph cluster
+---------------------------------------
 
 Write a file on the mounted device:
 
@@ -203,4 +204,4 @@ It's also possible to set the default features on a per-pool basis to tailor the
 
     $ sudo rbd config pool set <pool_name> rbd_default_features <value>
 
-Refer to the `Ceph documentation <https://docs.ceph.com/en/latest/rbd/rbd-config-ref/#image-features>`_ for more details on RBD features and their bitmask values.
+Refer to the `upstream documentation on RBD image features <https://docs.ceph.com/en/latest/rbd/rbd-config-ref/#image-features>`_ for more details on RBD features and their bitmask values.

@@ -1,4 +1,6 @@
-Release Notes
+.. _release-notes:
+
+Release notes
 =============
 
 The following provides details on major MicroCeph releases, beginning with the MicroCeph squid release.
@@ -25,7 +27,7 @@ Highlights
 -  Various fixes and documentation improvements
 
 
-Important Changes
+Important changes
 ~~~~~~~~~~~~~~~~~
 
 For added security, MicroCeph now checks hostnames upon cluster
@@ -36,7 +38,7 @@ node will fail, and log a message `Joining server certificate SAN does
 not contain join token name` to syslog.
 
 
-Known Issues
+Known issues
 ~~~~~~~~~~~~
 
 iSCSI users are advised that the upstream developers of Ceph encountered

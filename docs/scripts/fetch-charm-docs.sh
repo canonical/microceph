@@ -67,6 +67,21 @@ convert_md_to_rst() {
     pandoc --from=markdown --to=rst --wrap=none -o "${dest}" "${src}"
 }
 
+# Prepend a Sphinx :ref: label to an rST file if it is not already present.
+# This ensures cross-references in the parent docs remain stable even though
+# the file is regenerated on every build.
+ensure_ref_label() {
+    local rst_file="$1"
+    local label="$2"
+    if grep -qF ".. _${label}:" "${rst_file}"; then
+        return
+    fi
+    local tmp
+    tmp="$(mktemp)"
+    { printf '.. _%s:\n\n' "${label}"; cat "${rst_file}"; } > "${tmp}"
+    mv "${tmp}" "${rst_file}"
+}
+
 # Ensure an RST file has at least one heading so Sphinx can link to it
 # from a toctree. Some upstream markdown files omit a top-level H1;
 # when that happens, derive a title from the filename and prepend it.
@@ -113,6 +128,7 @@ while IFS= read -r -d '' src; do
             mkdir -p "${DOCS_DIR}/charm/tutorial"
             convert_md_to_rst "${src}" "${dest}"
             ensure_rst_title "${dest}"
+            [ "${filename}" = "get-started.rst" ] && ensure_ref_label "${dest}" "charm-get-started"
             echo "  Fetched: charm/tutorial/${filename}"
             synced=$((synced + 1))
             ;;

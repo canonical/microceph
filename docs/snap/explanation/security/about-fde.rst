@@ -1,4 +1,5 @@
-=================================
+.. _about-fde:
+
 Full disk encryption in MicroCeph
 =================================
 
@@ -48,7 +49,7 @@ Limitations
 Usage
 -----
 
-See our :doc:`how-to guide for enabling FDE <../../how-to/enable-fde>` for MicroCeph OSDs.
+See our :ref:`guide on enabling FDE <enable-fde>` for MicroCeph OSDs.
 
 
 

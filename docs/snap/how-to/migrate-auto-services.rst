@@ -1,4 +1,5 @@
-============================================
+.. _migrate-auto-services:
+
 Migrating automatically-provisioned services
 ============================================
 
@@ -33,12 +34,12 @@ Where the source and destination are node names that are available via the
 Post-migration, the :command:`status` command can also be used to verify the
 distribution of services among nodes.
 
-**Notes:**
-
-* It's not possible, nor useful, to have more than one instance of an
+.. note::
+  
+  It's not possible, nor useful, to have more than one instance of an
   automatically-provisioned service on any given node.
-
-* RADOS Gateway services are not considered to be of the
+  
+  RADOS Gateway services are not considered to be of the
   automatically-provisioned type; they are enabled and disabled explicitly on a
   node.
 

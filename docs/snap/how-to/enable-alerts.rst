@@ -1,22 +1,26 @@
-=======================================
-Enabling Prometheus Alertmanager alerts
-=======================================
+.. _enable-alerts:
 
-Pre-Requisite
+Enable Prometheus Alertmanager alerts
+=====================================
+
+Prometheus Alertmanager handles alerts sent by the Prometheus server. It takes care of deduplicating,
+grouping, and routing them to the correct receiver integration such as email. It also takes care of silencing and inhibition of alerts.
+
+Alerts are configured using `alerting rules <https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/>`_.
+These rules allow the user to define alert conditions using Prometheus expressions. Ceph is designed to be configurable
+with Alertmanager, you can use the default set of alerting rules provided below to get basic alerts from your MicroCeph deployments.
+
+The default alert rules can be downloaded from :download:`prometheus_alerts.yaml <assets/prometheus_alerts.yaml>`.
+
+Prerequisites
 -------------
-In order to configure alerts, your MicroCeph deployment must enable metrics collections with Prometheus. Follow :doc:`this How-To <enable-metrics>` if you haven't configured it. Also, Alertmanager is distributed as a separate binary which should be installed and running.
 
-Introduction
-------------
+In order to configure alerts, your MicroCeph deployment must enable metrics collections with Prometheus.
+Follow the :ref:`guide on enabling metrics collection with Prometheus <enable-metrics>` if you haven't configured it.
+Also, Alertmanager is distributed as a separate binary which should be installed and running.
 
-Prometheus Alertmanager handles alerts sent by the Prometheus server. It takes care of deduplicating, grouping, and routing them to the correct receiver integration such as email. It also takes care of silencing and inhibition of alerts.
-
-Alerts are configured using `Alerting Rules <https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/>`_. These rules allows the user to define alert conditions using Prometheus expressions. Ceph is designed to be configurable with Alertmanager, you can use the default set of alerting rules provided below to get basic alerts from your MicroCeph deployments.
-
-The default alert rules can be downloaded from :download:`here <assets/prometheus_alerts.yaml>`
-
-Configuring Alert rules
------------------------
+Configure Alert rules
+---------------------
 
 Alerting rules and Alertmanager targets are configured in Prometheus using the same config file we used to configure scraping targets.
 
@@ -59,4 +63,5 @@ Click on the 'Alerts' tab on Prometheus dashboard to view the configured alerts:
 
 .. figure:: assets/alerts
 
-Look we already have an active 'CephHealthWarning' alert! (shown in red) while the other configured alerts are inactive (shown in green). Hence, Alertmanager is configured and working.
+Look we already have an active 'CephHealthWarning' alert! (shown in red) while the other configured alerts are inactive (shown in green).
+Hence, Alertmanager is configured and working.

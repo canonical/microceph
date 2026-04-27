@@ -1,4 +1,6 @@
 
+.. _contributing:
+
 Contribute to our documentation
 ===============================
 
@@ -26,7 +28,7 @@ Contributing on GitHub
 To create issues, comment, reply, or submit contributions, you need to set up a `GitHub <https://github.com/>`_ account and a `Git <https://git-scm.com/>`_ environment.
 You don’t need to know Git before you start, and you definitely don’t need to work on the command line if you don’t want to.
 Many documentation tasks can be done using GitHub’s web interface. On the command line, we use the standard fork and pull model.
-Learn more about how to work with Git `here <https://canonical-open-documentation-academy.readthedocs.io/en/latest/docs/howto/get-started/using_git/>`_.
+Learn more about how to work with Git in the `Open Documentation Academy Git guide <https://canonical-open-documentation-academy.readthedocs.io/en/latest/docs/howto/get-started/using_git/>`_.
 
 For spelling and grammatical changes, which are quick and easy to submit, feel free to create a Pull Request (PR).
 For more substantial changes or suggestions, we recommend creating an issue first, so that we can discuss and agree on an approach before
@@ -78,19 +80,19 @@ But even if you’re an expert, we want the academy to be a place to share knowl
 and somewhere you can ask for help on your own projects.
 
 The best way to get started is with our `task list <https://github.com/canonical/open-documentation-academy/issues>`_ .
-Take a look, bookmark it, and see our `Getting started <https://discourse.ubuntu.com/t/getting-started/42769>`_ guide for next steps.
+Take a look, bookmark it, and see our `guide on getting started with the Open Documentation Academy <https://discourse.ubuntu.com/t/getting-started/42769>`_ for next steps.
 
 Stay in touch either through the task list, or through one of the following locations:
 
 
-* Our `discussion forum <https://canonical.com/documentation/open-documentation-academy>`_ on the Ubuntu Community Hub.  
-* In the `Matrix room <https://matrix.to/#/#documentation:ubuntu.com>`_ for interactive chat.  
-* `Follow us on Fosstodon <https://fosstodon.org/@CanonicalDocumentation>`_ for the latest updates and events.
+* Our `discussion forum <https://canonical.com/documentation/open-documentation-academy>`_ on the Ubuntu Community Hub 
+* In the `Matrix room <https://matrix.to/#/#documentation:ubuntu.com>`_ for interactive chat
+* `Follow us on Fosstodon <https://fosstodon.org/@CanonicalDocumentation>`_ for the latest updates and events
 
 If you’d like to ask us questions outside of our public forums, feel free to email us at docsacademy@canonical.com.
 
 In addition to the above, we have a weekly Community Hour starting at 16:00 UTC every Friday. Everyone is welcome, and
-links and comments can be found on the `forum post <https://discourse.ubuntu.com/t/documentation-office-hours/42771>`_.
+links and comments can be found on the `Community Hour forum post <https://discourse.ubuntu.com/t/documentation-office-hours/42771>`_.
 
 Finally, subscribe to our `Documentation event calendar <https://calendar.google.com/calendar/u/0?cid=Y19mYTY4YzE5YWEwY2Y4YWE1ZWNkNzMyNjZmNmM0ZDllOTRhNTIwNTNjODc1ZjM2ZmQ3Y2MwNTQ0MzliOTIzZjMzQGdyb3VwLmNhbGVuZGFyLmdvb2dsZS5jb20>`_.
 We’ll expand our Community Hour schedule and add other events throughout the year.

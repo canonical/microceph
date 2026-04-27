@@ -1,12 +1,13 @@
-============================
-Configuring Cluster network
+.. _configure-network-keys:
+
+Configuring cluster network
 ============================
 
 If you configure a cluster network, OSDs will route heartbeat, object replication and recovery traffic over the cluster network. This may improve performance compared to using a single network. 
 
 The MicroCeph cluster configuration CLI supports setting, getting, resetting and listing supported config keys mentioned below.
 
-.. list-table:: Supported Config Keys
+.. list-table:: Supported config Keys
    :widths: 30 70
    :header-rows: 1
 

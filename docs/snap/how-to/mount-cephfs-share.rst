@@ -1,4 +1,5 @@
-====================================
+.. _mount-cephfs-shares:
+
 Mount MicroCeph backed CephFs shares
 ====================================
 
@@ -8,8 +9,8 @@ This tutorial will guide you with mounting CephFs shares using MicroCeph.
 The above will be achieved by creating an fs on the MicroCeph deployed
 Ceph cluster, and then mounting it using the kernel driver.
 
-MicroCeph Operations:
----------------------
+MicroCeph operations
+--------------------
 
 Check Ceph cluster's status:
 
@@ -47,8 +48,8 @@ Create CephFs share:
     $ sudo ceph fs ls
     name: newFs, metadata pool: cephfs_meta, data pools: [cephfs_data ]
 
-Client Operations:
-------------------
+Client operations
+-----------------
 
 Download 'ceph-common' package:
 
@@ -95,8 +96,8 @@ Here, we provide the Cephx user (admin in our example) and the fs created earlie
 With this, you now have a CephFs mounted at ``/mnt/mycephfs`` on
 your client machine that you can perform IO to.
 
-Perform IO and observe the ceph cluster:
-----------------------------------------
+Perform IO and observe the ceph cluster
+---------------------------------------
 
 Write a file:
 

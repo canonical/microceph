@@ -1,6 +1,8 @@
 .. meta::
    :description: MicroCeph how-to guides for installing, configuring, managing, upgrading and consuming Ceph cluster storage.
 
+.. _snap-how-to:
+
 How-to guides
 =============
 

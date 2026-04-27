@@ -1,3 +1,5 @@
+.. _microceph-charm:
+
 The MicroCeph charm
 ===================
 
@@ -7,7 +9,7 @@ MicroCeph. In effect, the charm installs the ``microceph`` snap. As expected,
 it provides MicroCeph management via standard Juju commands (e.g. ``juju
 config`` and ``juju run``).
 
-For more information, see the `microceph`_ entry on the Charmhub.
+To learn more, see the `MicroCeph charm on Charmhub`_, the :ref:`MicroCeph charm tutorial <charm-get-started>`, and the :ref:`MicroCeph charm how-to guides <charm-how-to>`.
 
 .. LINKS
-.. _microceph: https://charmhub.io/microceph
+.. _MicroCeph charm on Charmhub: https://charmhub.io/microceph

@@ -1,9 +1,7 @@
-===========================================
+.. _enable-metrics:
+
 Enabling metrics collection with Prometheus
 ===========================================
-
-Introduction
-------------
 
 Metrics play an important role in understanding the operation of your MicroCeph deployment. These metrics or measurements form the basis for analysing and understanding your cluster's behaviour and are essential for providing reliable services.
 

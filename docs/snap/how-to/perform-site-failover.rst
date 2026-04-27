@@ -1,4 +1,5 @@
-=============================================
+.. _perform-site-failover:
+
 Perform failover for replicated RBD resources
 =============================================
 
@@ -10,8 +11,8 @@ images in all rbd pools and make them primary. This enables them to be consumed 
 Prerequisites
 --------------
 1. A primary and a secondary MicroCeph cluster, for example named "primary_cluster" and "secondary_cluster"
-2. primary_cluster has imported configurations from secondary_cluster and vice versa. refer to :doc:`import remote <./import-remote-cluster>`
-3. RBD replication is configured for at least 1 rbd image. refer to :doc:`configure rbd replication <./configure-rbd-mirroring>`
+2. primary_cluster has imported configurations from secondary_cluster and vice versa. Refer to our :ref:`guide on importing a remote cluster <import-remote-cluster>`.
+3. RBD replication is configured for at least one RBD image. Refer to :ref:`Configure RBD replication <configure-rbd-mirroring>`.
 
 Failover to a non-primary remote cluster
 -----------------------------------------
@@ -38,7 +39,7 @@ Since promotion of secondary_cluster may cause a split-brain condition in future
 it is necessary to pass --yes-i-really-mean-it flag.
 
 Verify RBD replication primary status
----------------------------------------------
+-------------------------------------
 
 List all the resources on 'secondary_cluster' again to check primary status.
 

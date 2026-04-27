@@ -1,9 +1,7 @@
-===============
-Removing a disk
-===============
+.. _remove-disk:
 
-Overview
---------
+Remove a disk
+=============
 
 There are valid reasons for wanting to remove a disk from a Ceph cluster. A
 common use case is the need to replace one that has been identified as nearing
@@ -12,8 +10,8 @@ the removal of a cluster node (machine).
 
 The following resources provide extra context to the disk removal operation:
 
-* the :doc:`../explanation/cluster-scaling` page
-* the :doc:`disk <../reference/commands/disk>` command reference
+* the :ref:`cluster scaling explanation <cluster-scaling>`
+* the :ref:`disk command reference <disk-command>`
 
 .. note::
 

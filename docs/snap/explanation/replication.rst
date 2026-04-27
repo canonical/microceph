@@ -1,6 +1,8 @@
 .. meta::
     :description: Information about cluster-to-cluster replication in MicroCeph for disaster recovery.
 
+.. _explanation-replication:
+
 Remote replication
 ==================
 
@@ -74,4 +76,10 @@ Recovery time objective (RTO)
 
 RTO is the maximum acceptable amount of time that a system can be down after a disruption before
 significant damage or intolerable consequences occur.
+
+For practical instructions on setting up replication, see:
+
+* :ref:`Configure RBD replication <configure-rbd-mirroring>`
+* :ref:`Configure CephFS mirroring <configure-cephfs-mirroring>`
+* :ref:`Perform site failover <perform-site-failover>`
 
