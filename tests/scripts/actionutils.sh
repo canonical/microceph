@@ -127,7 +127,7 @@ function test_encrypted_wal_db_startup() {
         --wal-device /dev/sdie --wal-encrypt \
         --db-device /dev/sdif --db-encrypt
 
-    wait_for_osds "${expected_osds}"
+    wait_for_osds_up_in "${expected_osds}"
 
     # Find the OSD ID just created
     local osd_id
@@ -151,7 +151,7 @@ function test_encrypted_wal_db_startup() {
         fi
     done
 
-    wait_for_osds "${expected_osds}" || exit 1
+    wait_for_osds_up_in "${expected_osds}" || exit 1
 }
 
 function add_lvm_vol() {
@@ -1285,6 +1285,43 @@ function wait_for_osds() {
     sudo microceph.ceph -s
     if (( res < expect )); then
         echo "Never reached ${expect} OSDs"
+        return 1
+    fi
+}
+
+function wait_for_osds_up_in() {
+    local expect="${1?missing}"
+    local up_osds=0
+    local in_osds=0
+    local status=""
+    local tries=24
+
+    install_tools
+    for ((i=0; i<tries; i++)); do
+        status=$(sudo microceph.ceph -s -f json 2>/dev/null || true)
+        if [[ -n "$status" ]]; then
+            up_osds=$(jq -r '.osdmap.num_up_osds // 0' <<<"$status" 2>/dev/null || echo 0)
+            in_osds=$(jq -r '.osdmap.num_in_osds // 0' <<<"$status" 2>/dev/null || echo 0)
+        else
+            up_osds=0
+            in_osds=0
+        fi
+
+        [[ "$up_osds" =~ ^[0-9]+$ ]] || up_osds=0
+        [[ "$in_osds" =~ ^[0-9]+$ ]] || in_osds=0
+
+        if (( up_osds >= expect && in_osds >= expect )); then
+            echo "Found >=${expect} OSDs up and in"
+            break
+        else
+            printf '.'
+            sleep 5
+        fi
+    done
+
+    sudo microceph.ceph -s
+    if (( up_osds < expect || in_osds < expect )); then
+        echo "Never reached ${expect} OSDs up and in (up=${up_osds}, in=${in_osds})"
         return 1
     fi
 }
