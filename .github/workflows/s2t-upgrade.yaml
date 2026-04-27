@@ -44,7 +44,7 @@ jobs:
         for c in node-wrk0 node-wrk1 node-wrk2 ; do
           ~/actionutils.sh add_osd_to_node $c
         done
-        ~/actionutils.sh headexec wait_for_osds 3
+        ~/actionutils.sh headexec wait_for_osds_up_in 3
 
     - name: Enable RGW
       run: ~/actionutils.sh headexec enable_rgw
@@ -56,7 +56,7 @@ jobs:
       run: ~/actionutils.sh refresh_snap tentacle
 
     - name: Wait until 3 OSDs are up
-      run:  ~/actionutils.sh headexec wait_for_osds 3
+      run:  ~/actionutils.sh headexec wait_for_osds_up_in 3
 
     - name: Verify config
       run: ~/actionutils.sh test_ceph_conf
