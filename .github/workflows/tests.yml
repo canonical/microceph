@@ -526,7 +526,22 @@ jobs:
       - name: Print logs for failure
         if: failure()
         run: |
-          sudo snap logs microceph -n 1000
+          set +e
+          lxc list
+          lxc storage list
+          lxc storage volume list default
+          for c in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
+            echo "=== $c ==="
+            if ! lxc info "$c" >/dev/null 2>&1 ; then
+              echo "$c not found"
+              continue
+            fi
+            lxc exec "$c" -- sh -c "microceph status" || true
+            lxc exec "$c" -- sh -c "microceph.ceph -s" || true
+            lxc exec "$c" -- sh -c "microceph.ceph health detail" || true
+            lxc exec "$c" -- sh -c "sudo snap logs microceph -n 1000" || true
+            lxc exec "$c" -- sh -c "sudo snap logs microceph.daemon -n 1000" || true
+          done
 
   availability-zone-tests:
     name: Availability zone crush rule testing
@@ -632,7 +647,22 @@ jobs:
       - name: Print logs for failure
         if: failure()
         run: |
-          sudo snap logs microceph -n 1000
+          set +e
+          lxc list
+          lxc storage list
+          lxc storage volume list default
+          for c in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
+            echo "=== $c ==="
+            if ! lxc info "$c" >/dev/null 2>&1 ; then
+              echo "$c not found"
+              continue
+            fi
+            lxc exec "$c" -- sh -c "microceph status" || true
+            lxc exec "$c" -- sh -c "microceph.ceph -s" || true
+            lxc exec "$c" -- sh -c "microceph.ceph health detail" || true
+            lxc exec "$c" -- sh -c "sudo snap logs microceph -n 1000" || true
+            lxc exec "$c" -- sh -c "sudo snap logs microceph.daemon -n 1000" || true
+          done
 
   test-sequential-mon-host-refresh:
     name: Regression test for sequential join mon host refresh (issue #556)
