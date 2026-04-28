@@ -31,9 +31,9 @@ Firstly, before initiating the upgrade, ensure that the cluster is healthy. Use 
    Do not start the upgrade if the cluster is unhealthy.
 
 
-Secondly, review the :ref:`release notes <release-notes>` to check for any version-specific information.
-Also consult the `upstream Ceph release notes`_ for the target version, and check the
-`Ubuntu release notes`_ for any relevant information.
+Then, review the :ref:`release notes <release-notes>` to check for any version-specific information.
+Also consult the :external+upstream-ceph:doc:`upstream Ceph release notes <releases/index>` for the target version, and check the
+:external+ubuntu-release-notes:doc:`Ubuntu release notes <index>` for any relevant information.
 
 
 Optional but Recommended: Preparation Steps
@@ -82,9 +82,5 @@ If you had previously set noout, unset it with this command:
 
 
 You have now successfully upgraded your Ceph cluster.
-
-.. LINKS
-.. _upstream Ceph release notes: https://docs.ceph.com/en/latest/releases/
-.. _Ubuntu release notes: https://documentation.ubuntu.com/release-notes/
 
 

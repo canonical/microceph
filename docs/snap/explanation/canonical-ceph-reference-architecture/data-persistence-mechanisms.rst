@@ -28,9 +28,8 @@ Ceph permit quorum formation and allow full service.
    For replicated pools, the number of replicas for objects in the pool is
    configured to 3 (``size``). The minimum number of written replicas for
    objects in the pool in order to acknowledge an I/O operation to the client
-   is by Ceph's default configured to 2 (``min_size``). See the `pool,
-   placement group (PG), and CRUSH config reference
-   <https://docs.ceph.com/en/latest/rados/configuration/pool-pg-config-ref/#confval-osd_pool_default_min_size>`_
+   is by Ceph's default configured to 2 (``min_size``). See the
+   :external+upstream-ceph:confval:`pool, placement group (PG), and CRUSH config reference <osd_pool_default_min_size>`
    in the upstream documentation.
 
 

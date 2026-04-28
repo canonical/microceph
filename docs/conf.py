@@ -346,8 +346,25 @@ if os.path.exists('./reuse/substitutions.yaml'):
     with open('./reuse/substitutions.yaml', 'r') as fd:
         myst_substitutions = yaml.safe_load(fd.read())
 
-# Add configuration for intersphinx mapping
+# Disable automatic fallback resolution so that all intersphinx references
+# must be written explicitly as :external+key:ref:`label`.
+# This prevents ambiguous or accidental cross-project resolution.
+intersphinx_disabled_reftypes = ['*']
 
-# intersphinx_mapping = {
-#    'starter-pack': ('https://canonical-example-product-documentation.readthedocs-hosted.com/en/latest', None)
-#}
+# Intersphinx mapping: links to external Sphinx documentation sets
+# Keys are short identifiers used in :external+key:ref:`label` roles.
+# The second tuple element (None) means Sphinx fetches objects.inv automatically
+# from the base URL.
+
+intersphinx_mapping = {
+    # Upstream Ceph documentation
+    'upstream-ceph': ('https://docs.ceph.com/en/latest/', None),
+    # Snap packaging documentation
+    'snapcraft': ('https://snapcraft.io/docs/', None),
+    # MicroCloud documentation
+    'microcloud': ('https://documentation.ubuntu.com/microcloud/latest/', None),
+    # Juju documentation (relevant for the MicroCeph charm)
+    'juju': ('https://documentation.ubuntu.com/juju/latest/', None),
+    # Ubuntu release notes
+    'ubuntu-release-notes': ('https://documentation.ubuntu.com/release-notes/', None),
+}

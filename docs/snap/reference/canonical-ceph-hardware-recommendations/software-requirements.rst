@@ -33,4 +33,4 @@ Canonical Ceph cluster deployment:
    * - MAAS
      - `MAAS release notes and upgrade instructions <https://canonical.com/maas/docs/release-notes-and-upgrade-instructions>`__
    * - Juju
-     - `Juju release notes <https://documentation.ubuntu.com/juju/3.6/releasenotes/>`__
+     - :external+juju:doc:`Juju release notes <releasenotes/index>`

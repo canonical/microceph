@@ -35,7 +35,7 @@ By default, it will accept HTTP requests on port 9283 on all IPv4 and IPv6 addre
    ceph config set mgr mgr/prometheus/server_addr <addr>
    ceph config set mgr mgr/prometheus/port <port>
 
-For details on how metrics endpoint can be further configured visit `Ceph Prometheus module <https://docs.ceph.com/en/quincy/mgr/prometheus/>`_
+For details on how metrics endpoint can be further configured visit :external+upstream-ceph:doc:`Ceph Prometheus module <mgr/prometheus>`.
 
 Configuring Prometheus to scrape MicroCeph
 ------------------------------------------

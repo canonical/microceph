@@ -14,7 +14,7 @@ Failure domains
 
 In the realm of Ceph, the concept of `failure domains`_ comes into play in order to provide data safety. A failure domain is an entity or a category across which object replicas are spread. This could be OSDs, hosts, racks, or even larger aggregates like rooms or data centres. The key purpose of failure domains is to mitigate the risk of extensive data loss that could occur if a larger aggregate (e.g. machine or rack) crashes or becomes otherwise unavailable.
 
-This spreading of data or objects across various failure domains is managed through the Ceph's Controlled Replication Under Scalable Hashing (CRUSH_) rules. The CRUSH algorithm enables Ceph to distribute data replicas over various failure domains efficiently and without any central directory, thus providing consistent performance as you scale. 
+This spreading of data or objects across various failure domains is managed through the Ceph's Controlled Replication Under Scalable Hashing (:external+upstream-ceph:doc:`CRUSH <rados/operations/crush-map>`) rules. The CRUSH algorithm enables Ceph to distribute data replicas over various failure domains efficiently and without any central directory, thus providing consistent performance as you scale. 
 
 In simple terms, if one component within a failure domain fails, Ceph's built-in redundancy means your data is still accessible from an alternate location. For instance, with a host-level failure domain, Ceph will ensure that no two replicas are placed on the same host. This prevents loss of more than one replica should a host crash or get disconnected. This extends to higher-level aggregates like racks and rooms as well.
 
@@ -85,4 +85,4 @@ As an example, consider a cluster with 3 nodes with host-level failure domain an
 
 
 .. _`failure domains`: https://en.wikipedia.org/wiki/Failure_domain
-.. _CRUSH: https://docs.ceph.com/en/latest/rados/operations/crush-map/
+

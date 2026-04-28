@@ -15,7 +15,7 @@ To use FDE, the following prerequisites must be met:
 - The installed snapd daemon version must be >= 2.59.1
 - The `dm-crypt kernel module`_ must be available. Note that some cloud-optimised kernels
   do not ship dm-crypt by default. Check by running ``sudo modinfo dm-crypt``
-- The `snap dm-crypt plug`_ has to be connected, and ``microceph.daemon`` subsequently restarted:
+- The :external+snapcraft:ref:`snap dm-crypt plug <interfaces-dm-crypt-interface>` has to be connected, and ``microceph.daemon`` subsequently restarted:
 
   .. code-block:: none
 
@@ -36,5 +36,5 @@ Note that there is no facility to encrypt an OSD that is already part of the clu
 
 .. LINKS
 .. _dm-crypt kernel module: https://www.kernel.org/doc/html/latest/admin-guide/device-mapper/dm-crypt.html
-.. _snap dm-crypt plug: https://snapcraft.io/docs/reference/interfaces/dm-crypt-interface/
+
 

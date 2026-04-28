@@ -51,11 +51,11 @@ Perform upgrades
 Release notes
 -------------
 
-* Always read the :ref:`MicroCeph release notes <release-notes>`, the `upstream Ceph release notes`_,
-  and the `Ubuntu release notes`_ before upgrading or making significant changes,
+* Always read the :ref:`MicroCeph release notes <release-notes>`, the :external+upstream-ceph:doc:`upstream Ceph release notes <releases/index>`,
+  and the :external+ubuntu-release-notes:doc:`Ubuntu release notes <index>` before upgrading or making significant changes,
   as they contain information about security fixes, new features, and potential issues.
 
 .. LINKS
 .. _Ceph announce mailing list: https://lists.ceph.io/postorius/lists/ceph-announce.ceph.io/
-.. _upstream Ceph release notes: https://docs.ceph.com/en/latest/releases/
-.. _Ubuntu release notes: https://documentation.ubuntu.com/release-notes/
+
+

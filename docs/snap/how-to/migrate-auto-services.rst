@@ -6,9 +6,9 @@ Migrating automatically-provisioned services
 MicroCeph deploys automatically-provisioned Ceph services when needed. These
 services include:
 
-* MON - `Monitor service`_
-* MDS - `Metadata service`_
-* MGR - `Manager service`_
+* MON - :external+upstream-ceph:doc:`Monitor service <man/8/ceph-mon>`
+* MDS - :external+upstream-ceph:doc:`Metadata service <man/8/ceph-mds>`
+* MGR - :external+upstream-ceph:doc:`Manager service <mgr/index>`
 
 It can however be useful to have the ability to move (or migrate) these
 services from one node to another. This may be desirable during a maintenance
@@ -45,6 +45,4 @@ distribution of services among nodes.
 
 .. LINKS
 
-.. _Manager service: https://docs.ceph.com/en/latest/mgr/
-.. _Monitor service: https://docs.ceph.com/en/latest/man/8/ceph-mon/
-.. _Metadata service: https://docs.ceph.com/en/latest/man/8/ceph-mds/
+

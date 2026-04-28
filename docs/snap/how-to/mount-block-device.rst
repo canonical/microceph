@@ -204,4 +204,7 @@ It's also possible to set the default features on a per-pool basis to tailor the
 
     $ sudo rbd config pool set <pool_name> rbd_default_features <value>
 
-Refer to the `upstream documentation on RBD image features <https://docs.ceph.com/en/latest/rbd/rbd-config-ref/#image-features>`_ for more details on RBD features and their bitmask values.
+Refer to the `upstream documentation on RBD image features`_ for more details on RBD features and their bitmask values.
+
+.. LINKS
+.. _upstream documentation on RBD image features: https://docs.ceph.com/en/latest/rbd/rbd-config-ref/#image-features

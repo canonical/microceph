@@ -22,7 +22,7 @@ Prerequisites
 Refer to our :ref:`guide on mounting MicroCeph-backed block devices <mount-block-devices>`
 for getting started with RBD.
 
-Once you have a the block device mounted and in use, you can jump to `Ceph RBD Snapshots`_.
+Once you have a the block device mounted and in use, you can jump to :external+upstream-ceph:doc:`Ceph RBD Snapshots <rbd/rbd-snapshot>`.
 
 CephFs snapshots
 ----------------
@@ -35,9 +35,5 @@ Prerequisites
 
 Refer to our :ref:`guide on mounting MicroCeph-backed CephFs shares <mount-cephfs-shares>`.
 
-Once you have a the filesystem mounted and in use, you can jump to `CephFs Snapshots`_.
+Once you have a the filesystem mounted and in use, you can jump to :external+upstream-ceph:doc:`CephFs Snapshots <dev/cephfs-snapshots>`.
 
-.. LINKS
-
-.. _Ceph RBD Snapshots: https://docs.ceph.com/en/latest/rbd/rbd-snapshot/
-.. _CephFs Snapshots: https://docs.ceph.com/en/latest/dev/cephfs-snapshots/
