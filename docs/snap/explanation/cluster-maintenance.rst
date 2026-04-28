@@ -8,7 +8,7 @@ Cluster maintenance is important for keeping the Ceph Storage Cluster at a healt
 MicroCeph provides a simple and consistent workflow to support maintenance activity. Before
 executing any high-risk maintenance operations on a node, operators are strongly recommended to
 enable maintenance mode to minimise the impact and ensure system stability. For more information on how
-to enable maintenance mode in MicroCeph, please refer to our:ref:`guide on performing cluster
+to enable maintenance mode in MicroCeph, please refer to our :ref:`guide on performing cluster
 maintenance <perform-cluster-maintenance>`.
 
 Strategy

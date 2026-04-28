@@ -58,10 +58,6 @@ cryptographic technology used in MicroCeph.
    MicroCeph architecture <microceph-architecture>
    Security in MicroCeph <security/security-overview>
 
-If you have a specific goal, and are already familiar with MicroCeph, our :ref:`how-to guides <snap-how-to>` have more in-depth detail and instructions.
-
-Take a look at our :ref:`reference section <reference>` when you need to know which MicroCeph commands to use.
-
 Canonical Ceph reference architecture
 --------------------------------------
 
@@ -74,4 +70,11 @@ information on Ubuntu certified hardware.
    :maxdepth: 2
 
    Canonical Ceph reference architecture <canonical-ceph-reference-architecture/index>
+
+If you have a specific goal, and are already familiar with MicroCeph, our
+:ref:`how-to guides <snap-how-to>` have more in-depth detail and instructions.
+
+Take a look at our :ref:`reference section <snap-reference>` to find our
+release notes and recommended hardware specifications, or when you need
+to know which MicroCeph commands to use.
 
