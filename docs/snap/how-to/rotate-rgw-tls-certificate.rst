@@ -1,6 +1,7 @@
-==============================
+.. _rotate-rgw-tls-certificates:
+
 Rotate RGW TLS certificates
-==============================
+===========================
 
 If you have RGW running with SSL enabled, you can rotate its TLS certificates
 without needing to disable and re-enable the service.
@@ -8,7 +9,7 @@ without needing to disable and re-enable the service.
 Prerequisites
 -------------
 
-- RGW must already be enabled with SSL. See :doc:`enable-service-instances` for
+- RGW must already be enabled with SSL. See :ref:`enable service instances <enable-service-instances>` for
   details on enabling RGW with ``--ssl-certificate`` and ``--ssl-private-key``.
 - The replacement certificate and private key must be base64 encoded.
 
@@ -27,7 +28,7 @@ connections.
      --restart
 
 Write certificate without restart
------------------------------------
+---------------------------------
 
 Without ``--restart``, the certificate and key are written to disk but the RGW
 service continues serving the old certificate. You must restart the service
@@ -40,7 +41,7 @@ manually for the change to take effect.
      --ssl-private-key "$(base64 -w0 /path/to/new-server.key)"
 
 Rotate on a specific node
---------------------------
+-------------------------
 
 In a multi-node cluster, each node has its own certificate files. Use
 ``--target`` to rotate the certificate on a specific node. Repeat for each
@@ -55,7 +56,7 @@ node that runs RGW:
      --restart
 
 Verify the certificate
------------------------
+----------------------
 
 After restarting the RGW service, verify that the new certificate is being
 served. The SSL port is the value passed to ``microceph enable rgw --ssl-port``

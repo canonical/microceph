@@ -57,7 +57,7 @@ provides more details about MicroCeph components.
    :alt: MicroCeph architecture overview
 
 MicroCeph is often deployed with other products, e.g.
-`MicroCloud <https://documentation.ubuntu.com/microcloud/default/microcloud/>`_,
+:external+microcloud:doc:`MicroCloud <index>`,
 as in this diagram:
 
 .. image:: ../assets/microceph-microcloud.png

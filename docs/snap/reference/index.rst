@@ -1,7 +1,7 @@
 .. meta::
    :description: MicroCeph reference information, including CLI commands and release notes. 
 
-.. _reference:
+.. _snap-reference:
 
 Reference
 =========

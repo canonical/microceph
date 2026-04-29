@@ -1,17 +1,15 @@
-===========================
+.. _perform-cluster-maintenance:
+
 Perform cluster maintenance
 ===========================
 
-Overview
---------
-
 MicroCeph provides a simple and consistent workflow to support maintenance activity.
 
-Before proceeding, please refer to the :doc:`Cluster maintenance</snap/explanation/cluster-maintenance>`
+Before proceeding, please refer to the :ref:`cluster maintenance explanation <cluster-maintenance>`
 to understand its functionality and impact.
 
-Enabling Cluster Maintenance
-----------------------------
+Enable cluster maintenance
+--------------------------
 
 To review the action plan for enabling maintenance mode, run
 
@@ -52,8 +50,8 @@ maintenance operations.
    microceph cluster maintenance enter <node> --ignore-check
 
 
-Disabling Cluster Maintenance
------------------------------
+Disable cluster maintenance
+---------------------------
 
 To review the action plan for disabling maintenance mode, run
 

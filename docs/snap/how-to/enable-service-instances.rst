@@ -1,6 +1,7 @@
-=====================================
-Enabling additional service instances
-=====================================
+.. _enable-service-instances:
+
+Enable additional service instances
+===================================
 
 To ensure a base level of resiliency, MicroCeph will always try to enable a
 sufficient number of instances for certain services in the cluster. This
@@ -8,16 +9,16 @@ number is set to three by default.
 
 The services affected by this include:
 
-* MON (`Monitor service`_)
-* MDS (`Metadata service`_)
-* MGR (`Manager service`_)
+* MON (:external+upstream-ceph:doc:`Monitor service <man/8/ceph-mon>`)
+* MDS (:external+upstream-ceph:doc:`Metadata service <man/8/ceph-mds>`)
+* MGR (:external+upstream-ceph:doc:`Manager service <mgr/index>`)
 
 Cluster designs that call for extra service instances, however, can be
 satisfied by manual means. In addition to the above-listed services, the
 following service can be added manually to a node:
 
 * NFS
-* RGW (`RADOS Gateway service`_)
+* RGW (:external+upstream-ceph:doc:`RADOS Gateway service <radosgw/index>`)
 * cephfs-mirror
 
 This is the purpose of the :command:`enable` command. It manually enables a
@@ -213,10 +214,3 @@ View cluster status again and verify the expected changes:
 .. note::
 
    At the moment, the ``cephfs-mirror`` service can only be enabled once per cluster.
-
-.. LINKS
-
-.. _Manager service: https://docs.ceph.com/en/latest/mgr/
-.. _Monitor service: https://docs.ceph.com/en/latest/man/8/ceph-mon/
-.. _Metadata service: https://docs.ceph.com/en/latest/man/8/ceph-mds/
-.. _RADOS Gateway service: https://docs.ceph.com/en/latest/radosgw/

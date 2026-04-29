@@ -1,4 +1,5 @@
-==================================================
+.. _integrate-keystone:
+
 Configure Openstack Keystone Auth in MicroCeph RGW
 ==================================================
 
@@ -100,9 +101,9 @@ A user can set/get/list/reset the above mentioned config keys as follows:
    | # | KEY | VALUE |
    +---+-----+-------+
 
-For detailed documentation of what keys should be configured, visit `Ceph Docs`_
+For detailed documentation of what keys should be configured, visit the :external+upstream-ceph:doc:`upstream Ceph documentation on RGW Keystone configuration <radosgw/keystone>`.
 
 .. LINKS
 
 .. _Openstack Keystone: https://docs.openstack.org/keystone/latest/getting-started/architecture.html#identity
-.. _Ceph Docs: https://docs.ceph.com/en/latest/radosgw/keystone/
+

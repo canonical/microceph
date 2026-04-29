@@ -1,5 +1,7 @@
 .. meta::
-   :description: MicroCeph is the easiest way to deploy and manage a Ceph cluster.
+   :description: MicroCeph is a lightweight way of deploying and managing a Ceph cluster. Ceph is a highly scalable, open-source distributed storage system designed to provide excellent performance, reliability, and flexibility for object, block, and file-level storage. This is the homepage of MicroCeph's documentation.
+
+.. _microceph-homepage:
 
 MicroCeph
 =========
@@ -27,15 +29,15 @@ part of a Juju model.
 
 .. grid:: 1 1 2 2
 
-   .. grid-item-card:: :doc:`MicroCeph snap › <snap/tutorial/get-started>`
+   .. grid-item-card:: :ref:`MicroCeph snap › <snap-get-started>`
 
       The ``microceph`` snap is a self-contained, secure and dependency-free
       Linux app package used to deploy and manage a Ceph cluster. If you are
       new to MicroCeph, start here.
 
-   .. grid-item-card:: :doc:`MicroCeph charm › <charm/tutorial/get-started>`
+   .. grid-item-card:: :ref:`MicroCeph charm › <charm-get-started>`
 
-      The ``microceph`` charms take care of installing, configuring and
+      The ``microceph`` charm takes care of installing, configuring and
       managing MicroCeph on cloud instances managed by Juju.
 
 Project and community
@@ -52,7 +54,7 @@ Get involved
   the :file:`docs` directory)
 * GitHub is also used as our bug tracker
 * To speak with us, you can find us on Matrix in `Ceph General`_ or `Ceph Devel`_
-* :doc:`Contribute to our documentation <contributing/index>`
+* :ref:`Contribute to our documentation <contributing>`
 
 Governance and policies
 ~~~~~~~~~~~~~~~~~~~~~~~

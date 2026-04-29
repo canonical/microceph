@@ -1,4 +1,5 @@
-==================================
+.. _configure-cephfs-mirroring:
+
 Configure CephFS replication
 ==================================
 
@@ -15,15 +16,15 @@ directory path relative to the parent volume using MicroCeph CLI commands.
    The CLI commands described in this guide are to be executed on the primary MicroCeph cluster.
 
 Prerequisites
---------------
+-------------
 1. A primary and a secondary MicroCeph cluster, for example named ``primary_cluster`` and ``secondary_cluster``.
-2. Both ``primary_cluster`` and ``secondary_cluster`` have imported exchanged cluster tokens. Refer to our :doc:`how to guide for importing a remote microceph cluster <./import-remote-cluster>`.
+2. Both ``primary_cluster`` and ``secondary_cluster`` have imported exchanged cluster tokens. Refer to our :ref:`guide on importing a remote cluster <import-remote-cluster>`.
 3. Both clusters have an active CephFS volume called ``vol``.
-4. Both clusters have exactly one ``cephfs-mirror`` daemon enabled. Refer to our :ref:`how-to guide for enabling the cephfs-mirror service <enable-cephfs-mirror-daemon>`.
+4. Both clusters have exactly one ``cephfs-mirror`` daemon enabled. Refer to our :ref:`guide on enabling the cephfs-mirror service <enable-cephfs-mirror-daemon>`.
 
 
 Enable CephFS replication
--------------------------------
+-------------------------
 
 An operator can enable replication for a given cephfs directory path as follows:
 
@@ -42,8 +43,8 @@ Similarly, an operator can enable replication for a given subvolume as follows:
 Here, ``<subvolume>`` is the name of the subvolume and ``<subvolumegroup>`` is the name of the parent subvolume group. If the
 subvolume does not have a parent subvolume group, then ``<subvolumegroup>`` can be omitted.
 
-Listing all CephFS replication images
-------------------------------------------
+List all CephFS replication images
+----------------------------------
 
 An operator can list all the resources enabled for replication as follows:
 
@@ -62,7 +63,7 @@ An operator can list all the resources enabled for replication as follows:
   +--------+------------------------------------+-----------+
 
 Check CephFS replication status
-------------------------------------
+-------------------------------
 
 An operator can check the current replication status of a volume as follows:
 
@@ -90,8 +91,8 @@ An operator can check the current replication status of a volume as follows:
 
 The status shows that there are three resources in the volume (vol), all with one snapshot synced to the configured remotes.
 
-Disabling CephFS replication
----------------------------------
+Disable CephFS replication
+--------------------------
 
 In some use-cases (say migration), the operator may want to disable replication for a given resource.
 

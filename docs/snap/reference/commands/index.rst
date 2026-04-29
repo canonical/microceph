@@ -1,4 +1,5 @@
-======================
+.. _snap-cli-reference:
+
 MicroCeph CLI Commands
 ======================
 

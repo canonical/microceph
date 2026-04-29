@@ -1,4 +1,5 @@
-==============
+.. _attack-surface:
+
 Attack surface
 ==============
 
@@ -63,7 +64,7 @@ Ceph daemons and potentially microcephd listen on TCP ports. Use host-level fire
 Network protocols and endpoints
 -------------------------------
 
-* Ceph Protocol (Messenger v1/v2): Used for all internal Ceph communication (MON, OSD, MGR, MDS).
+* :external+upstream-ceph:doc:`Ceph Messenger protocol (v1/v2) <rados/configuration/msgr2>`: Used for all internal Ceph communication (MON, OSD, MGR, MDS).
   Messenger v2 (default in newer Ceph versions) provides encryption capabilities for data in transit.  
 * Microcluster Protocol: Used for communication between microcephd instances in a multi-node cluster.
   This communication is secured using TLS.  
@@ -101,6 +102,6 @@ The primary management attack surface is the host, snap environment, and the mic
 * Host OS: Compromise of the host OS grants control over MicroCeph, including access to
   microcephd and its database. Standard host hardening is advised.  
 * Snap Environment (snapd): Vulnerabilities in snapd or the MicroCeph snap package itself
-  could be vectors. Note that MicroCeph is running with strict snap confinement; see
-  `here <https://snapcraft.io/docs/snap-confinement>`_ for details on confinement.  
+  could be vectors. Note that MicroCeph is running with strict snap confinement; see the :external+snapcraft:ref:`snap confinement documentation <explanation-security-snap-confinement>` for more details.
 * Ceph Dashboard: If enabled, secure its access via network controls and strong authentication.
+

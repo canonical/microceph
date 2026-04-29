@@ -1,11 +1,9 @@
-====================================
+.. _snap-content-interface:
+
 Snap content interface for MicroCeph
 ====================================
 
-Overview
---------
-
-Snap content interfaces enable access to a particular directory from a producer snap. The MicroCeph ``ceph-conf`` content interface is designed to facilitate access to MicroCeph's configuration and credentials. This interface includes information about MON addresses, enabling a consumer snap to connect to the MicroCeph cluster using this data.
+:external+snapcraft:ref:`Snap content interfaces <interfaces-content-interface>` enable access to a particular directory from a producer snap. The MicroCeph ``ceph-conf`` content interface is designed to facilitate access to MicroCeph's configuration and credentials. This interface includes information about Ceph Monitor (MON) addresses, enabling a consumer snap to connect to the MicroCeph cluster using this data.
 
 Additionally, the ``ceph-conf`` content interface also provides version information of the running Ceph software.
 
@@ -29,5 +27,6 @@ To connect the ``ceph-conf`` content interface to a consumer snap, use the follo
 
 
 Replace ``<consumer-snap-name>`` with the name of your consumer snap. Once executed, this command establishes a connection between the consumer snap and the MicroCeph ``ceph-conf`` interface.
+
 
 

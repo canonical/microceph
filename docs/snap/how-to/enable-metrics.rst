@@ -1,9 +1,7 @@
-===========================================
+.. _enable-metrics:
+
 Enabling metrics collection with Prometheus
 ===========================================
-
-Introduction
-------------
 
 Metrics play an important role in understanding the operation of your MicroCeph deployment. These metrics or measurements form the basis for analysing and understanding your cluster's behaviour and are essential for providing reliable services.
 
@@ -37,7 +35,7 @@ By default, it will accept HTTP requests on port 9283 on all IPv4 and IPv6 addre
    ceph config set mgr mgr/prometheus/server_addr <addr>
    ceph config set mgr mgr/prometheus/port <port>
 
-For details on how metrics endpoint can be further configured visit `Ceph Prometheus module <https://docs.ceph.com/en/quincy/mgr/prometheus/>`_
+For details on how metrics endpoint can be further configured visit :external+upstream-ceph:doc:`Ceph Prometheus module <mgr/prometheus>`.
 
 Configuring Prometheus to scrape MicroCeph
 ------------------------------------------

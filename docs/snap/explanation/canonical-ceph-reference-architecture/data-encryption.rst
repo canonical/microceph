@@ -15,8 +15,7 @@ This encryption takes two forms:
 
 Encryption in transit and at rest is enabled by default once Canonical Ceph is
 related to a Vault ``secrets-storage`` relation. Data encryption in transit is
-enabled via the `Messenger V2
-<https://docs.ceph.com/en/reef/rados/configuration/msgr2/>`_ feature.
+enabled via the :external+upstream-ceph:doc:`Messenger V2 <rados/configuration/msgr2>` feature.
 
 Encryption can lower the Input/Output (I/O) bandwidth of the storage layer.
 The impact of this varies per workload and should be considered when deciding

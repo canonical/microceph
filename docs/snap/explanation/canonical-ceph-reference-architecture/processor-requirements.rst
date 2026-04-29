@@ -25,8 +25,7 @@ performance.
 
 This section outlines CPU requirements for Ceph Object Storage Daemons (OSDs),
 Ceph Monitors (MONs), the CephFS Metadata Server (MDS), RADOS Gateway (RGW),
-and the NVMe-oF Gateway service. Read the `upstream Ceph documentation
-<https://docs.ceph.com/en/latest/start/hardware-recommendations/#cpu>`_ to
+and the NVMe-oF Gateway service. Read the :external+upstream-ceph:doc:`upstream Ceph documentation <start/hardware-recommendations>` to
 learn more about CPU recommendations.
 
 OSDs
@@ -45,9 +44,7 @@ MONs
 
 Ceph MONs are control plane services that are not very CPU-intensive. Resource
 requirements spike when the cluster is undergoing changes; the Ceph MON
-service requires 2 to 4 cores to function adequately. `For quorum, Ceph MONs
-should be an odd number
-<https://docs.ceph.com/en/latest/rados/operations/add-or-rm-mons/>`_.
+service requires 2 to 4 cores to function adequately. :external+upstream-ceph:doc:`For quorum, Ceph MONs should be an odd number <rados/operations/add-or-rm-mons>`.
 
 MDS
 ---

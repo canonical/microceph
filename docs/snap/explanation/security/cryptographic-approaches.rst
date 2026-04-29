@@ -1,3 +1,5 @@
+.. _cryptography-in-microceph:
+
 Cryptographic approaches in MicroCeph
 =======================================
 
@@ -86,6 +88,7 @@ When FDE is requested, MicroCeph generates a random key and stores it in the Cep
 Linux Unified Key Setup (LUKS) via ``cryptsetup``, using ``cipher AES-XTS-plain64`` and ``SHA256`` hashing, with a 256-bit keysize.
 
 .. note::
+
     While the FDE approach for OSD encryption shares some of the techniques employed by the data at rest
     encryption features in Ubuntu Ceph, it's a separate implementation due to the specific sandboxing needs of the MicroCeph snap.
 

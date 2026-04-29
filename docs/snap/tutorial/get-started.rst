@@ -1,11 +1,14 @@
 .. meta::
     :description: A tutorial for deploying a Ceph cluster on a single node using MicroCeph and store a JPEG image in an S3 bucket managed by MicroCeph.
 
+.. _snap-get-started:
+
 Deploy a single-node MicroCeph cluster
 ======================================
 
 .. The note below is only visible when viewed through MicroCloud's docs site:
    https://documentation.ubuntu.com/microcloud/latest/microceph/
+
 .. only:: integrated
 
    .. admonition:: For MicroCloud users
@@ -27,14 +30,13 @@ By the end of this tutorial, after successfully using MicroCeph to store an imag
 What you'll need
 ----------------
 
-- The latest Ubuntu LTS version. Find Ubuntu release information `here`_.
+- The latest Ubuntu LTS version. See the `Ubuntu release cycle <https://ubuntu.com/about/release-cycle>`_ for release information.
 - 2 CPU cores
 - 4 GiB RAM
 - 12GiB disk space
 - An Internet connection
 
 .. LINKS
-.. _here: https://ubuntu.com/about/release-cycle
 
 Install MicroCeph
 -----------------
@@ -327,7 +329,7 @@ Next steps
 
 You have deployed a healthy Ceph cluster on a single-node and enabled RGW on it. Even better, you have consumed the storage in that cluster by creating a bucket and storing an image object in it. Curious to see what else you can do with MicroCeph?
 
-See our :doc:`how-to guides <../how-to/index>`, packed with instructions to help you achieve specific goals with MicroCeph.
+See our :ref:`how-to guides <snap-how-to>`, packed with instructions to help you achieve specific goals with MicroCeph.
 
-Or, explore our :doc:`Explanation <../explanation/index>` and
-:doc:`Reference <../reference/index>` sections for additional information and quick references.
+Or, explore our :ref:`Explanation <snap-explanation>` and
+:ref:`Reference <snap-reference>` sections for additional information and quick references.

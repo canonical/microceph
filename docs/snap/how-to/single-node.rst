@@ -1,8 +1,11 @@
+.. _single-node-install:
+
 How to install MicroCeph on a single node
 =========================================
 
 .. The note below is only visible when viewed through MicroCloud's docs site:
    https://documentation.ubuntu.com/microcloud/latest/microceph/
+
 .. only:: integrated
 
    .. admonition:: For MicroCloud users
@@ -117,7 +120,7 @@ Manage the cluster
 ------------------
 
 Your Ceph cluster is now deployed and can be managed by following the resources
-found in the :doc:`How-to <../how-to/index>` section.
+found in the :ref:`how-to guides section <snap-how-to>`.
 
 The cluster can also be managed using native Ceph tooling if snap-level
 commands are not yet available for a desired task:

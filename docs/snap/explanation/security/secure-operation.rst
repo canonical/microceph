@@ -1,4 +1,5 @@
-===================================
+.. _secure-operation-best-practices:
+
 Best practices for secure operation
 ===================================
 
@@ -7,13 +8,13 @@ Maintaining security is an ongoing process.
 Vulnerability management
 ------------------------
 
-* Monitor Advisories: Actively track CVEs and security advisories for:  
+* Monitor advisories: Actively track CVEs and security advisories for:  
 
-  * Ceph (via Ceph announce list, security trackers).  
+  * Ceph (via the `Ceph announce mailing list`_ and security trackers).  
   * MicroCeph snap (check snap channels/updates).  
   * Host OS (use relevant security advisories for the host OS, e.g., USNs for Ubuntu).  
 
-* Patch Management: Implement a process for testing and applying security patches promptly
+* Patch management: Implement a process for testing and applying security patches promptly
   using sudo snap refresh microceph and the host OS's package manager
   (e.g., apt update && apt upgrade for Debian/Ubuntu). Use snap channels
   (e.g., the /candidate channel) for testing before refreshing stable.
@@ -50,6 +51,11 @@ Perform upgrades
 Release notes
 -------------
 
-* Always read the release notes for Ceph versions included in MicroCeph snap updates,
-  the MicroCeph snap itself, and the host OS before upgrading or making significant changes,
+* Always read the :ref:`MicroCeph release notes <release-notes>`, the :external+upstream-ceph:doc:`upstream Ceph release notes <releases/index>`,
+  and the :external+ubuntu-release-notes:doc:`Ubuntu release notes <index>` before upgrading or making significant changes,
   as they contain information about security fixes, new features, and potential issues.
+
+.. LINKS
+.. _Ceph announce mailing list: https://lists.ceph.io/postorius/lists/ceph-announce.ceph.io/
+
+

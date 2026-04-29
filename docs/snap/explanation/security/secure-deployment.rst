@@ -1,4 +1,5 @@
-====================================
+.. _secure-deployment-best-practices:
+
 Best practices for secure deployment
 ====================================
 
@@ -8,7 +9,7 @@ Network architecture
 --------------------
 
 * Segmentation: If the MicroCeph host has multiple network interfaces, configure Ceph's
-  public_network and cluster_network settings appropriately (check MicroCeph docs for details),
+  ``public_network`` and ``cluster_network`` settings appropriately (see :ref:`cluster network configurations <explanation-cluster-configurations>` for details),
   configure the microcephd listen/advertise addresses if needed for clustering, and use the firewall
   to enforce segregation between client access networks, cluster networks, and management networks.  
 * As a best practice, use firewalling or VLANs to segregate into these zones:  
@@ -20,7 +21,7 @@ Network architecture
 * Firewalls: Implement strict firewall rules (e.g. using iptables, nftables) on all nodes:  
 
   * Deny all traffic by default.  
-  * Allow only necessary ports between specific hosts/networks (refer to the port table).  
+  * Allow only necessary ports between specific hosts/networks (refer to the :ref:`port table <attack-surface>`).  
   * Restrict access to management interfaces (SSH, Juju, Dashboard) to trusted administrative networks.
 
 Minimum privileges
@@ -40,10 +41,10 @@ Auditing and centralized logging
 
 * Enable Auditing:  
 
-  * Configure Ceph logging levels via Ceph configuration options
-    (e.g., log_to_file \= true, debug_mon, debug_osd). Check MicroCeph
-    documentation for how to set these. Ceph logs are found in /var/snap/microceph/common/logs/ceph/.  
-  * microcephd logs to /var/log/syslog, see the MicroCeph documentation for details on setting log levels.  
+  * Configure Ceph logging levels via Ceph configuration options,
+    (e.g., ``log_to_file = true``, ``debug_mon``, ``debug_osd``). See :ref:`changing the log level <change-log-level>`
+    for how to set log levels. Ceph logs are found in :file:`/var/snap/microceph/common/logs/ceph/`.  
+  * microcephd logs to :file:`/var/log/syslog`, see :ref:`changing the log level <change-log-level>` for details on setting log levels.  
 
 * Centralized Logging: Configure host-level standard log shipping mechanisms
   (e.g., rsyslog, journald forwarding) to send Ceph logs, microcephd logs,
@@ -56,8 +57,9 @@ Alerting
 --------
 
 * Configure Monitoring: Enable the Prometheus MGR module
-  (sudo microceph.ceph mgr module enable Prometheus) and configure it if necessary
-  via Ceph MGR configuration options (e.g., sudo microceph.ceph config set mgr mgr/prometheus/...).  
+  (``sudo microceph.ceph mgr module enable Prometheus``) and configure it if necessary
+  via Ceph MGR configuration options (e.g.,``sudo microceph.ceph config set mgr mgr/prometheus/...``).
+  See :ref:`enabling metrics collection with Prometheus <enable-metrics>` for a full setup guide.  
 * Security Alerts: Configure alerts for security anomalies and health issues such as:  
 
   * Ceph health status changes (HEALTH_WARN, HEALTH_ERR).  
