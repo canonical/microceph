@@ -5,3 +5,5 @@ _build
 .vscode
 microceph/coverage.out
 microceph/coverage.html
+__pycache__/
+*.pyc
