@@ -186,7 +186,7 @@ else:
 # Template and asset locations
 
 #html_static_path = ["_static"]
-#templates_path = ["_templates"]
+templates_path = ["_templates"]
 
 
 #############
@@ -285,12 +285,12 @@ exclude_patterns = [
 
 # Adds custom CSS files, located under 'html_static_path'
 
-# html_css_files = []
+html_css_files = ["https://assets.ubuntu.com/v1/d86746ef-cookie_banner.css"]
 
 
 # Adds custom JavaScript files, located under 'html_static_path'
 
-# html_js_files = []
+html_js_files = ["https://assets.ubuntu.com/v1/287a5e8f-bundle.js"]
 
 
 # Specifies a reST snippet to be appended to each .rst file
