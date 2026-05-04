@@ -1,3 +1,6 @@
+.. meta::
+   :description: How to enable RADOS Gateway (RGW) or NFS service, or add more MON, MDS and MDS Ceph services in a MicroCeph cluster.
+
 .. _enable-service-instances:
 
 Enable additional service instances

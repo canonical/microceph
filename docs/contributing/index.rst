@@ -1,3 +1,5 @@
+.. meta::
+   :description: How to contribute to MicroCeph documentation.
 
 .. _contributing:
 

@@ -1,3 +1,6 @@
+.. meta::
+   :description: How to configure Prometheus to collect metrics for your MicroCeph cluster.
+
 .. _enable-metrics:
 
 Enabling metrics collection with Prometheus
