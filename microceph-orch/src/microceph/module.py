@@ -317,7 +317,7 @@ class MicroCephOrchestrator(Orchestrator,
         """
         hosts = []
         if spec.placement and spec.placement.hosts:
-            hosts = [str(h) for h in spec.placement.hosts]
+            hosts = [h.hostname if hasattr(h, 'hostname') else str(h) for h in spec.placement.hosts]
 
         if not hosts:
             raise ValueError(
@@ -397,7 +397,7 @@ class MicroCephOrchestrator(Orchestrator,
         rbd-mirror is a client-like service with no additional parameters.
         The Go API's ClientServicePlacement handler takes no payload.
         """
-        logger.debug(f"Applying rbd-mirror service, spec: {vars(spec)}")
+        logger.debug("Applying rbd-mirror service")
         return self._apply_service("rbd-mirror", spec, "{}")
 
     @handle_orch_error
@@ -414,7 +414,7 @@ class MicroCephOrchestrator(Orchestrator,
         key source is added, SSL cannot be fully configured via the
         orchestrator interface.
         """
-        logger.debug(f"Applying RGW service, spec: {vars(spec)}")
+        logger.debug("Applying RGW service")
 
         # Build RGW-specific payload from the spec.
         # Go's RgwServicePlacement expects: Port, SSLPort, SSLCertificate, SSLPrivateKey
@@ -449,7 +449,7 @@ class MicroCephOrchestrator(Orchestrator,
         Extracts the NFS cluster ID and optional port from the
         NFSServiceSpec and passes them as the JSON payload.
         """
-        logger.debug(f"Applying NFS service, spec: {vars(spec)}")
+        logger.debug("Applying NFS service")
 
         # Go's NFSServicePlacement expects: cluster_id, v4_min_version, bind_address, bind_port
         # The Ceph NFSServiceSpec uses service_id as the NFS cluster identifier.
@@ -470,19 +470,19 @@ class MicroCephOrchestrator(Orchestrator,
     @handle_orch_error
     def apply_mon(self, spec: ServiceSpec) -> OrchResult[str]:
         """Enable the MON service on the target hosts."""
-        logger.debug(f"Applying MON service, spec: {vars(spec)}")
+        logger.debug("Applying MON service")
         return self._apply_service("mon", spec, "{}")
 
     @handle_orch_error
     def apply_mgr(self, spec: ServiceSpec) -> OrchResult[str]:
         """Enable the MGR service on the target hosts."""
-        logger.debug(f"Applying MGR service, spec: {vars(spec)}")
+        logger.debug("Applying MGR service")
         return self._apply_service("mgr", spec, "{}")
 
     @handle_orch_error
     def apply_mds(self, spec: ServiceSpec) -> OrchResult[str]:
         """Enable the MDS service on the target hosts."""
-        logger.debug(f"Applying MDS service, spec: {vars(spec)}")
+        logger.debug("Applying MDS service")
         return self._apply_service("mds", spec, "{}")
 
     @handle_orch_error
@@ -492,7 +492,7 @@ class MicroCephOrchestrator(Orchestrator,
         cephfs-mirror is a client-like service (same as rbd-mirror)
         with no additional parameters.
         """
-        logger.debug(f"Applying cephfs-mirror service, spec: {vars(spec)}")
+        logger.debug("Applying cephfs-mirror service")
         return self._apply_service("cephfs-mirror", spec, "{}")
 
     @handle_orch_error

@@ -27,6 +27,9 @@ assert_contains() {
         PASS=$((PASS + 1))
     else
         echo "  FAIL $desc (expected to contain: '$needle')"
+        echo "  ----- actual output -----"
+        echo "$haystack" | sed 's/^/  | /'
+        echo "  -------------------------"
         FAIL=$((FAIL + 1))
         ERRORS+=("$desc")
     fi
@@ -36,6 +39,9 @@ assert_not_contains() {
     local desc="$1" needle="$2" haystack="$3"
     if echo "$haystack" | grep -qE "$needle"; then
         echo "  FAIL $desc (should NOT contain: '$needle')"
+        echo "  ----- actual output -----"
+        echo "$haystack" | sed 's/^/  | /'
+        echo "  -------------------------"
         FAIL=$((FAIL + 1))
         ERRORS+=("$desc")
     else
