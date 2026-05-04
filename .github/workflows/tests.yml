@@ -525,8 +525,7 @@ jobs:
 
       - name: Print logs for failure
         if: failure()
-        run: |
-          sudo snap logs microceph -n 1000
+        run: ~/actionutils.sh dump_multinode_debug
 
   availability-zone-tests:
     name: Availability zone crush rule testing
@@ -631,8 +630,7 @@ jobs:
 
       - name: Print logs for failure
         if: failure()
-        run: |
-          sudo snap logs microceph -n 1000
+        run: ~/actionutils.sh dump_multinode_debug
 
   test-sequential-mon-host-refresh:
     name: Regression test for sequential join mon host refresh (issue #556)
