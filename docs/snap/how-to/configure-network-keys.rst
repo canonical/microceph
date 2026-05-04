@@ -1,3 +1,6 @@
+.. meta::
+   :description: How to configure the MicroCeph cluster network for OSD replication and recovery traffic.
+
 .. _configure-network-keys:
 
 Configuring cluster network

@@ -1,3 +1,6 @@
+.. meta::
+   :description: A guide for standard MicroCeph operations like enabling, disabling and monitoring replication for RBD workloads.
+
 .. _configure-rbd-mirroring:
 
 Configure RBD replication

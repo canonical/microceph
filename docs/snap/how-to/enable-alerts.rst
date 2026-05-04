@@ -1,3 +1,6 @@
+.. meta::
+   :description: How to configure alert rules for metric collection from your MicroCeph cluster.
+
 .. _enable-alerts:
 
 Enable Prometheus Alertmanager alerts

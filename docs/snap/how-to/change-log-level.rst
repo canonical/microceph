@@ -1,3 +1,6 @@
+.. meta::
+   :description: How to configure the MicroCeph log level.
+
 .. _change-log-level:
 
 Changing the log level

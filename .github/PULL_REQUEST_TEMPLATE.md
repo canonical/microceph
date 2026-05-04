@@ -31,5 +31,6 @@ Please check that you have:
 - [ ] self-reviewed the code in this PR
 - [ ] added code comments, particularly in less straightforward areas
 - [ ] checked and added or updated relevant documentation
+- [ ] added or updated HTML meta descriptions for any new or modified documentation pages (see [#643](https://github.com/canonical/microceph/pull/643))
 - [ ] checked and added or updated relevant release notes
 - [ ] added tests to verify effectiveness of this change

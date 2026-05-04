@@ -1,3 +1,6 @@
+.. meta::
+   :description: How to encrypt your data at rest using full disk encryption (FDE) in MicroCeph.
+
 .. _enable-fde:
 
 Enable full disk encryption in MicroCeph
