@@ -5,6 +5,56 @@ Release notes
 
 The following provides details on major MicroCeph releases, beginning with the MicroCeph squid release.
 
+MicroCeph Tentacle
+------------------
+
+The Ceph team is happy to announce the release of MicroCeph v20
+(tentacle). This is the first stable release in the Tentacle series of
+releases.
+
+The MicroCeph tentacle release can be installed from the tentacle/stable
+track.
+
+Highlights
+~~~~~~~~~~
+
+-  Uses Ceph 20.2.0 (tentacle)
+-  Built on Ubuntu 24.04 (``core24`` snap base)
+-  Upgraded to microcluster v3
+-  Log rotation for the ``logs/`` directory via ``logrotate``
+-  Reference architecture documentation
+-  Consolidated charm-microceph and MicroCeph documentation
+-  Includes all features and fixes from the squid stable cycle
+
+
+Important Changes
+~~~~~~~~~~~~~~~~~
+
+The snap is now built on the ``core24`` base. Hosts must be running an
+Ubuntu release that supports ``core24`` snaps.
+
+The microcluster dependency has been upgraded from v2 to v3. This is an
+internal change but affects the underlying cluster database schema.
+
+
+Known Issues
+~~~~~~~~~~~~
+
+Upgrades from quincy directly to tentacle are not supported. Upgrade to
+squid first, then to tentacle.
+
+
+List of pull requests
+~~~~~~~~~~~~~~~~~~~~~
+
+- `#718 <https://github.com/canonical/microceph/pull/718>`__: test: upgrade squid to tentacle
+- `#714 <https://github.com/canonical/microceph/pull/714>`__: feat: add log rotation for the logs directory
+- `#713 <https://github.com/canonical/microceph/pull/713>`__: docs: Add reference architecture
+- `#707 <https://github.com/canonical/microceph/pull/707>`__: docs: consolidate MicroCeph charm documentation with MicroCeph docs
+- `#706 <https://github.com/canonical/microceph/pull/706>`__: feat: move to MicroCeph Tentacle, upgrade cluster library to v3, and rebase on core 24
+- `#698 <https://github.com/canonical/microceph/pull/698>`__: ci: add weekly health report workflow
+
+
 MicroCeph Squid
 ---------------
 
@@ -20,6 +70,17 @@ Highlights
 
 -  Uses Ceph 19.2.0 (squid)
 -  Support for RBD remote replication
+-  CephFS remote replication (enable/disable, status, listing)
+-  NFS service support via Ceph NFS Ganesha
+-  Adopt existing (non-MicroCeph) Ceph clusters into MicroCeph
+   management
+-  Availability Zone support for OSDs
+-  Cluster maintenance mode with monitor-quorum protection
+-  MicroCeph orchestrator module shipped in the snap
+-  DSL-based device matching for OSD, WAL, and DB selection
+-  Support for modifying RGW SSL certificates at runtime
+-  ``microceph waitready`` command to verify cluster readiness
+-  ``stripingv2`` enabled by default in the RBD feature set
 -  OSD support for many additional block device types such as NVMe,
    partitions, LVM volumes
 -  Improved ipv6 support
@@ -37,6 +98,13 @@ cluster join` is being run. If the hostname does not match joining the
 node will fail, and log a message `Joining server certificate SAN does
 not contain join token name` to syslog.
 
+Monitors are now enforced to use the ``v2`` (msgr2) protocol. Clients
+that only support ``v1`` will not be able to connect.
+
+The joiner address is now auto-detected from the join token peers when
+running ``microceph cluster join``; manual address overrides remain
+supported.
+
 
 Known issues
 ~~~~~~~~~~~~
@@ -47,6 +115,82 @@ Issue 68215 before attempting an upgrade to 19.2.0.
 
 List of pull requests
 ~~~~~~~~~~~~~~~~~~~~~
+
+Squid stable updates (post-v19.2.0):
+
+- `#711 <https://github.com/canonical/microceph/pull/711>`__: fix: update Go module dependencies
+- `#710 <https://github.com/canonical/microceph/pull/710>`__: fix: auto-detect joiner address from join token peers
+- `#708 <https://github.com/canonical/microceph/pull/708>`__: fix: resolve references to stale paths
+- `#703 <https://github.com/canonical/microceph/pull/703>`__: fix: increase disk operation timeout
+- `#702 <https://github.com/canonical/microceph/pull/702>`__: fix: resolve monitor refresh loop
+- `#700 <https://github.com/canonical/microceph/pull/700>`__: fix: resolve all Go static check failures and drop the previous linter
+- `#699 <https://github.com/canonical/microceph/pull/699>`__: feat: add support for declarative WAL and DB device usage with execution, cleanup, and validation
+- `#697 <https://github.com/canonical/microceph/pull/697>`__: feat: add support for modifying the RGW SSL certificate
+- `#696 <https://github.com/canonical/microceph/pull/696>`__: fix: wait for RBD mirror health before testing disable operations
+- `#695 <https://github.com/canonical/microceph/pull/695>`__: ci: cache the snap build artifact between jobs
+- `#691 <https://github.com/canonical/microceph/pull/691>`__: fix: re-enable services after a snap disable and enable cycle
+- `#688 <https://github.com/canonical/microceph/pull/688>`__: docs: add a database schema update guide to the developer docs
+- `#687 <https://github.com/canonical/microceph/pull/687>`__: feat: add Availability Zone support
+- `#684 <https://github.com/canonical/microceph/pull/684>`__: refactor: maintenance mode quality improvements
+- `#683 <https://github.com/canonical/microceph/pull/683>`__: feat: add a wait-ready command to verify the cluster is ready
+- `#682 <https://github.com/canonical/microceph/pull/682>`__: docs: fix a documentation link
+- `#681 <https://github.com/canonical/microceph/pull/681>`__: fix: resolve "no disks present" error when adding all disks
+- `#680 <https://github.com/canonical/microceph/pull/680>`__: fix: resolve missing unlock of encrypted WAL and DB at OSD start
+- `#679 <https://github.com/canonical/microceph/pull/679>`__: feat: close inactive issues automatically
+- `#677 <https://github.com/canonical/microceph/pull/677>`__: ci: avoid building Sphinx from source
+- `#676 <https://github.com/canonical/microceph/pull/676>`__: fix: resolve unexpected loop device behaviour
+- `#672 <https://github.com/canonical/microceph/pull/672>`__: fix: make device-node matching conform to the device DSL spec
+- `#668 <https://github.com/canonical/microceph/pull/668>`__: feat: add declarative device matching for OSD selection
+- `#661 <https://github.com/canonical/microceph/pull/661>`__: tests: functional test helper housekeeping
+- `#659 <https://github.com/canonical/microceph/pull/659>`__: fix: amend the command parameter
+- `#657 <https://github.com/canonical/microceph/pull/657>`__: fix: multi-monitor adopt bootstrap
+- `#656 <https://github.com/canonical/microceph/pull/656>`__: fix: add content attributes for content plugs
+- `#650 <https://github.com/canonical/microceph/pull/650>`__: feat: add v2 striping to the default RBD feature set
+- `#646 <https://github.com/canonical/microceph/pull/646>`__: feat: add a format flag to cluster list
+- `#643 <https://github.com/canonical/microceph/pull/643>`__: docs: add HTML meta descriptions
+- `#642 <https://github.com/canonical/microceph/pull/642>`__: docs: add a how-to document for MicroCeph CephFS replication
+- `#641 <https://github.com/canonical/microceph/pull/641>`__: docs: use a ref target for the cluster network how-to
+- `#638 <https://github.com/canonical/microceph/pull/638>`__: docs: refine the get-started tutorial
+- `#637 <https://github.com/canonical/microceph/pull/637>`__: docs: add remote replication explanations
+- `#635 <https://github.com/canonical/microceph/pull/635>`__: fix: pin dqlite to the LTS release
+- `#633 <https://github.com/canonical/microceph/pull/633>`__: docs: create a redirect for a renamed file
+- `#632 <https://github.com/canonical/microceph/pull/632>`__: docs: split up the security overview
+- `#631 <https://github.com/canonical/microceph/pull/631>`__: docs: add a how-to for reporting security issues
+- `#630 <https://github.com/canonical/microceph/pull/630>`__: docs: split up the full-disk encryption documentation
+- `#628 <https://github.com/canonical/microceph/pull/628>`__: feat: add support for enabling and disabling CephFS replication
+- `#627 <https://github.com/canonical/microceph/pull/627>`__: docs: fix a documentation title
+- `#626 <https://github.com/canonical/microceph/pull/626>`__: docs: move the architecture documentation
+- `#625 <https://github.com/canonical/microceph/pull/625>`__: ci: increase wait time for OSDs
+- `#624 <https://github.com/canonical/microceph/pull/624>`__: ci: make the OSD check more robust
+- `#622 <https://github.com/canonical/microceph/pull/622>`__: feat: adopt existing Ceph clusters using MicroCeph
+- `#621 <https://github.com/canonical/microceph/pull/621>`__: fix: improve pristine disk check with Ceph BlueStore tool validation
+- `#619 <https://github.com/canonical/microceph/pull/619>`__: feat: expose useful Ceph tools
+- `#616 <https://github.com/canonical/microceph/pull/616>`__: fix: use the Ceph BlueStore tool for wiping disks
+- `#607 <https://github.com/canonical/microceph/pull/607>`__: docs: correct command invocation in client config docs
+- `#606 <https://github.com/canonical/microceph/pull/606>`__: docs: fix section headings
+- `#604 <https://github.com/canonical/microceph/pull/604>`__: fix: implement structured logging with persistent configuration
+- `#601 <https://github.com/canonical/microceph/pull/601>`__: feat: add support for fetching CephFS mirroring status and lists to the replication framework
+- `#600 <https://github.com/canonical/microceph/pull/600>`__: fix: remove unnecessary references to the client from the command
+- `#599 <https://github.com/canonical/microceph/pull/599>`__: test: speed up tests
+- `#594 <https://github.com/canonical/microceph/pull/594>`__: fix: list virtio block disk devices
+- `#591 <https://github.com/canonical/microceph/pull/591>`__: refactor: move subprocess handling to a common package
+- `#590 <https://github.com/canonical/microceph/pull/590>`__: fix: check if disks are pristine before attempting to use them
+- `#588 <https://github.com/canonical/microceph/pull/588>`__: fix: add checks before adding OSD, WAL, or DB devices
+- `#585 <https://github.com/canonical/microceph/pull/585>`__: feat: create only one OSD pool for NFS Ganesha
+- `#584 <https://github.com/canonical/microceph/pull/584>`__: feat: add the MicroCeph orchestrator module to the snap build
+- `#583 <https://github.com/canonical/microceph/pull/583>`__: docs: update documentation to include information about enabling NFS
+- `#582 <https://github.com/canonical/microceph/pull/582>`__: refactor: add an OSD manager to improve testing
+- `#578 <https://github.com/canonical/microceph/pull/578>`__: feat: add CephFS mirror to the service placement interface
+- `#575 <https://github.com/canonical/microceph/pull/575>`__: fix: prevent enabling snapshot replication on RBD pools
+- `#574 <https://github.com/canonical/microceph/pull/574>`__: feat: add NFS support
+- `#573 <https://github.com/canonical/microceph/pull/573>`__: docs: update disk add documentation
+- `#572 <https://github.com/canonical/microceph/pull/572>`__: docs: migrate to the extension-based starter pack
+- `#567 <https://github.com/canonical/microceph/pull/567>`__: feat: enforce v2 for monitors
+- `#565 <https://github.com/canonical/microceph/pull/565>`__: feat: ensure a majority of monitor services remain available before entering maintenance mode
+- `#545 <https://github.com/canonical/microceph/pull/545>`__: docs: MicroCloud integration annotations
+
+Initial v19.2.0 release:
+
 
 - `#467 <https://github.com/canonical/microceph/pull/467>`__: Fix: increase timings for osd release
 - `#466 <https://github.com/canonical/microceph/pull/466>`__: Adjust ‘verify_health’ iterations
