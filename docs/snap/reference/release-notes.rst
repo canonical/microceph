@@ -27,7 +27,7 @@ Highlights
 -  Includes all features and fixes from the squid stable cycle
 
 
-Important Changes
+Important changes
 ~~~~~~~~~~~~~~~~~
 
 The snap is now built on the ``core24`` base. Hosts must be running an
@@ -37,11 +37,18 @@ The microcluster dependency has been upgraded from v2 to v3. This is an
 internal change but affects the underlying cluster database schema.
 
 
-Known Issues
+Known issues
 ~~~~~~~~~~~~
 
 Upgrades from quincy directly to tentacle are not supported. Upgrade to
 squid first, then to tentacle.
+
+Erasure-coded pool users are advised that the upstream Ceph developers
+identified a bug where OSDs crash when ``allow_ec_optimizations`` is
+set on a pool, regardless of the ``allow_ec_overwrites`` setting,
+making the cluster unusable. Read `Tracker Issue 74813
+<https://tracker.ceph.com/issues/74813>`__ before enabling
+``allow_ec_optimizations`` on Ceph 20.2.0.
 
 
 List of pull requests
