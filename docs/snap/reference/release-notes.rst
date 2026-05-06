@@ -58,7 +58,7 @@ List of pull requests
 - `#714 <https://github.com/canonical/microceph/pull/714>`__: feat: add log rotation for the logs directory
 - `#713 <https://github.com/canonical/microceph/pull/713>`__: docs: Add reference architecture
 - `#707 <https://github.com/canonical/microceph/pull/707>`__: docs: consolidate MicroCeph charm documentation with MicroCeph docs
-- `#706 <https://github.com/canonical/microceph/pull/706>`__: feat: move to MicroCeph Tentacle, upgrade cluster library to v3, and rebase on core 24
+- `#706 <https://github.com/canonical/microceph/pull/706>`__: feat: move to MicroCeph Tentacle, upgrade cluster library to v3, and build on core 24
 - `#698 <https://github.com/canonical/microceph/pull/698>`__: ci: add weekly health report workflow
 
 
@@ -134,7 +134,7 @@ Squid stable updates (post-v19.2.0):
 - `#699 <https://github.com/canonical/microceph/pull/699>`__: feat: add support for declarative WAL and DB device usage with execution, cleanup, and validation
 - `#697 <https://github.com/canonical/microceph/pull/697>`__: feat: add support for modifying the RGW SSL certificate
 - `#696 <https://github.com/canonical/microceph/pull/696>`__: fix: wait for RBD mirror health before testing disable operations
-- `#695 <https://github.com/canonical/microceph/pull/695>`__: ci: cache the snap build artifact between jobs
+- `#695 <https://github.com/canonical/microceph/pull/695>`__: ci: cache the built snap between jobs
 - `#691 <https://github.com/canonical/microceph/pull/691>`__: fix: re-enable services after a snap disable and enable cycle
 - `#688 <https://github.com/canonical/microceph/pull/688>`__: docs: add a database schema update guide to the developer docs
 - `#687 <https://github.com/canonical/microceph/pull/687>`__: feat: add Availability Zone support
@@ -170,9 +170,9 @@ Squid stable updates (post-v19.2.0):
 - `#625 <https://github.com/canonical/microceph/pull/625>`__: ci: increase wait time for OSDs
 - `#624 <https://github.com/canonical/microceph/pull/624>`__: ci: make the OSD check more robust
 - `#622 <https://github.com/canonical/microceph/pull/622>`__: feat: adopt existing Ceph clusters using MicroCeph
-- `#621 <https://github.com/canonical/microceph/pull/621>`__: fix: improve pristine disk check with Ceph BlueStore tool validation
+- `#621 <https://github.com/canonical/microceph/pull/621>`__: fix: improve pristine disk check with ``ceph-bluestore-tool`` validation
 - `#619 <https://github.com/canonical/microceph/pull/619>`__: feat: expose useful Ceph tools
-- `#616 <https://github.com/canonical/microceph/pull/616>`__: fix: use the Ceph BlueStore tool for wiping disks
+- `#616 <https://github.com/canonical/microceph/pull/616>`__: fix: use ``ceph-bluestore-tool`` for wiping disks
 - `#607 <https://github.com/canonical/microceph/pull/607>`__: docs: correct command invocation in client config docs
 - `#606 <https://github.com/canonical/microceph/pull/606>`__: docs: fix section headings
 - `#604 <https://github.com/canonical/microceph/pull/604>`__: fix: implement structured logging with persistent configuration
@@ -180,7 +180,7 @@ Squid stable updates (post-v19.2.0):
 - `#600 <https://github.com/canonical/microceph/pull/600>`__: fix: remove unnecessary references to the client from the command
 - `#599 <https://github.com/canonical/microceph/pull/599>`__: test: speed up tests
 - `#594 <https://github.com/canonical/microceph/pull/594>`__: fix: list virtio block disk devices
-- `#591 <https://github.com/canonical/microceph/pull/591>`__: refactor: move subprocess handling to a common package
+- `#591 <https://github.com/canonical/microceph/pull/591>`__: refactor: move sub-process handling to a common package
 - `#590 <https://github.com/canonical/microceph/pull/590>`__: fix: check if disks are pristine before attempting to use them
 - `#588 <https://github.com/canonical/microceph/pull/588>`__: fix: add checks before adding OSD, WAL, or DB devices
 - `#585 <https://github.com/canonical/microceph/pull/585>`__: feat: create only one OSD pool for NFS Ganesha
