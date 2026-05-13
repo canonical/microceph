@@ -548,6 +548,7 @@ jobs:
       # artifact. Remove this step before merging this PR.
       - name: FAULTCAT-DEMO faultcat explore
         if: failure()
+        timeout-minutes: 6
         uses: canonical/faultcat/.github/actions/faultcat-explore@feat/explore-mode
         with:
           hints: microceph,lxd
