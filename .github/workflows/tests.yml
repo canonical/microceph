@@ -431,20 +431,22 @@ jobs:
       - name: Bootstrap
         run: ~/actionutils.sh bootstrap_head public
 
+      # FAULTCAT-DEMO: this step is deliberately disabled (`if: false`)
+      # so the downstream "Verify config" / "Add 2 OSDs" / "Test failure
+      # domain scale up" steps fail naturally on the missing setup. This
+      # exercises explore mode against a real diagnostics_gap-shaped
+      # failure (state expected by a later step was never set up by an
+      # earlier step). Skipping at this point fails the job at minute
+      # ~5-6 instead of minute ~9, so the demo feedback loop is faster.
+      # Restore by removing the `if: false` line before merging.
       - name: Setup cluster
+        if: false
         run: ~/actionutils.sh cluster_nodes public
 
       - name: Verify config
         run: ~/actionutils.sh test_ceph_conf
 
-      # FAULTCAT-DEMO: this step is deliberately disabled (`if: false`)
-      # so the downstream "Test 3 osds present" / "Test crush rules"
-      # steps fail naturally on the missing setup. This exercises
-      # explore mode against a real `diagnostics_gap`-shaped failure
-      # (state expected by a later step was never set up by an earlier
-      # step). Restore by removing the `if: false` line before merging.
       - name: Add 2 OSDs
-        if: false
         run: |
           for c in node-wrk1 node-wrk2 ; do
             ~/actionutils.sh add_osd_to_node $c
