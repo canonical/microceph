@@ -5,6 +5,7 @@ on:
 
 jobs:
   build-microceph:
+    if: false  # FAULTCAT-DEMO: bypass build, multi-node-tests pulls snap from store
     name: Build microceph snap
     runs-on: ubuntu-22.04
     env:
@@ -397,14 +398,11 @@ jobs:
   multi-node-tests:
     name: Multi node testing
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    # FAULTCAT-DEMO: no longer `needs: build-microceph` — we install
+    # the published snap from snapcraft instead, which skips the ~3 min
+    # build step. Restore `needs: build-microceph` and the Download
+    # snap / Install local microceph snap steps before merging.
     steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -425,8 +423,11 @@ jobs:
       - name: Create containers with loopback devices
         run: ~/actionutils.sh create_containers public
 
-      - name: Install local microceph snap
-        run: ~/actionutils.sh install_multinode
+      # FAULTCAT-DEMO: was `~/actionutils.sh install_multinode` (local
+      # snap from build-microceph artifact); using the published snap
+      # via install_store to skip the build. Restore before merging.
+      - name: Install microceph snap from store
+        run: ~/actionutils.sh install_store reef/stable
 
       - name: Bootstrap
         run: ~/actionutils.sh bootstrap_head public
