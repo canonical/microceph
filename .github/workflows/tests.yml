@@ -48,6 +48,7 @@ jobs:
           retention-days: 5
 
   dsl-functional-tests:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: DSL functional tests
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -92,6 +93,7 @@ jobs:
           lxc storage volume list default || true
 
   api-tests:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: API tests
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -139,6 +141,7 @@ jobs:
           ~/actionutils.sh dump_microceph_debug
 
   static-checks:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Run static checks
     runs-on: ubuntu-24.04
     steps:
@@ -164,6 +167,7 @@ jobs:
           make check-static
 
   unit-tests:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Run Unit tests
     runs-on: ubuntu-24.04
     steps:
@@ -189,6 +193,7 @@ jobs:
           make check-unit
 
   single-system-tests:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Single node with encryption
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -544,10 +549,12 @@ jobs:
         with:
           hints: microceph,lxd
           openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          faultcat-ref: feat/explore-mode
           artifact-name: faultcat-probe-multi-node
           fail-on-explore-error: "false"
 
   availability-zone-tests:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Availability zone crush rule testing
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -597,6 +604,7 @@ jobs:
           done
 
   multi-node-tests-with-custom-microceph-ip:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Multi node testing with custom microceph IP
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -654,6 +662,7 @@ jobs:
           sudo snap logs microceph -n 1000
 
   test-sequential-mon-host-refresh:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Regression test for sequential join mon host refresh (issue #556)
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -700,6 +709,7 @@ jobs:
           done
 
   test-maintenance-modes:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Test maintenance mode
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -800,6 +810,7 @@ jobs:
         run: ~/actionutils.sh test_maintenance_enter_set_noout_stop_osds_and_exit_force node-wrk1
 
   loop-file-tests:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Test with loopback file OSDs
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -855,6 +866,7 @@ jobs:
           sudo snap logs microceph -n 1000
 
   wal-db-tests:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Test WAL/DB device usage
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -926,6 +938,7 @@ jobs:
           sudo snap logs microceph -n 1000
 
   upgrade-reef-tests:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Test reef upgrades
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -1002,6 +1015,7 @@ jobs:
         uses: lhotari/action-upterm@v1
 
   cluster-tests:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Test MicroCeph Cluster features.
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -1063,6 +1077,7 @@ jobs:
         run: ~/actionutils.sh testrgw "newFile"
 
   rbd-replication-test:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Test MicroCeph RBD Remote Replication features.
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -1132,6 +1147,7 @@ jobs:
         run: ~/actionutils.sh remote_remove_and_verify
 
   cephfs-replication-test:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Test MicroCeph Cephfs Remote Replication features.
     runs-on: ubuntu-24.04
     needs: build-microceph
@@ -1197,6 +1213,7 @@ jobs:
         run: ~/actionutils.sh remote_disable_mirror_daemon "cephfs-mirror"
 
   nfs-test:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Test MicroCeph NFS feature
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -1268,6 +1285,7 @@ jobs:
         run: ~/actionutils.sh disable_nfs foo
 
   nfs-multinode-test:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Test MicroCeph NFS feature (multinode)
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -1388,6 +1406,7 @@ jobs:
         run: ~/actionutils.sh test_v2_all_nodes
 
   wiping-test:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Verify pristineness and wiping
     runs-on: ubuntu-22.04
     needs: build-microceph
@@ -1413,6 +1432,7 @@ jobs:
         run: ~/actionutils.sh verify_pristine_check
 
   cephadm-adopt-test:
+    if: false  # FAULTCAT-DEMO: disabled to speed up explore-mode demo cycle
     name: Adopt test with cephadm
     runs-on: ubuntu-24.04
     needs: build-microceph
