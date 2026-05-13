@@ -432,7 +432,14 @@ jobs:
       - name: Verify config
         run: ~/actionutils.sh test_ceph_conf
 
+      # FAULTCAT-DEMO: this step is deliberately disabled (`if: false`)
+      # so the downstream "Test 3 osds present" / "Test crush rules"
+      # steps fail naturally on the missing setup. This exercises
+      # explore mode against a real `diagnostics_gap`-shaped failure
+      # (state expected by a later step was never set up by an earlier
+      # step). Restore by removing the `if: false` line before merging.
       - name: Add 2 OSDs
+        if: false
         run: |
           for c in node-wrk1 node-wrk2 ; do
             ~/actionutils.sh add_osd_to_node $c
@@ -527,6 +534,18 @@ jobs:
         if: failure()
         run: |
           sudo snap logs microceph -n 1000
+
+      # FAULTCAT-DEMO: run faultcat explore against the live failed runner
+      # state, upload scrubbed evidence/findings/suggestions as an
+      # artifact. Remove this step before merging this PR.
+      - name: FAULTCAT-DEMO faultcat explore
+        if: failure()
+        uses: canonical/faultcat/.github/actions/faultcat-explore@feat/explore-mode
+        with:
+          hints: microceph,lxd
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          artifact-name: faultcat-probe-multi-node
+          fail-on-explore-error: "false"
 
   availability-zone-tests:
     name: Availability zone crush rule testing
