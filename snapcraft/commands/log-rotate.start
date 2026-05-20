@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+
+# Ensure the state file is created with 600 so logrotate does not warn that
+# it is world-readable and skip lock acquisition.
+umask 077
+
+exec "${SNAP}/bin/logrotate" \
+    "${SNAP}/etc/logrotate.conf" \
+    -s "${SNAP_COMMON}/logrotate.status"
