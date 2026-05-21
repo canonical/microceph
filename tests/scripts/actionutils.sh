@@ -2390,6 +2390,75 @@ function test_nfs_stale_run_dir_migration() {
     echo "NFS stale run dir migration: PASS"
 }
 
+# test_log_rotation verifies that the log-rotate snap service rotates both Ceph
+# daemon logs and the Ganesha log under $SNAP_COMMON/logs/. NFS must already be
+# enabled before calling this function so that ganesha.log exists.
+function test_log_rotation() {
+    set -eux
+
+    local logs_dir="/var/snap/microceph/common/logs"
+
+    # Wait for Ganesha log to appear (NFS must be enabled by caller).
+    for i in $(seq 1 30); do
+        if [ -f "${logs_dir}/ganesha/ganesha.log" ]; then
+            break
+        fi
+        if [[ $i -eq 30 ]]; then
+            echo "FAIL: Ganesha log not found after 30s"
+            exit 1
+        fi
+        sleep 1
+    done
+
+    # Verify a ceph-mon log exists.
+    ls "${logs_dir}"/ceph-mon.*.log
+
+    # Wait 1 minute for daemons to write log content.
+    sleep 60
+
+    # Show the systemd timer unit and status so CI output captures the
+    # configured schedule and last/next trigger times.
+    echo "--- snap.microceph.log-rotate.timer ---"
+    cat /etc/systemd/system/snap.microceph.log-rotate.timer || true
+    systemctl status snap.microceph.log-rotate.timer || true
+
+    # Show log file sizes so CI output captures whether files are empty.
+    echo "--- log file sizes before rotation ---"
+    ls -la "${logs_dir}"/*.log || true
+    ls -la "${logs_dir}/ganesha"/*.log || true
+
+    # Backdate the state file to yesterday so the daily check is satisfied.
+    # Without this, logrotate falls back to the log file's mtime, which is
+    # always today because Ceph daemons are continuously appending.
+    # Log file names include the hostname (e.g. ceph-mon.<hostname>.log) so
+    # discover them dynamically rather than hardcoding.
+    local yesterday
+    yesterday=$(date -d "yesterday" "+%Y-%-m-%-d-0:0:0")
+    {
+        echo "logrotate state -- version 2"
+        for f in "${logs_dir}"/*.log "${logs_dir}"/ganesha/*.log; do
+            [ -f "${f}" ] && echo "\"${f}\" ${yesterday}"
+        done
+    } | sudo tee /var/snap/microceph/common/logrotate.status > /dev/null
+    sudo chmod 600 /var/snap/microceph/common/logrotate.status
+
+    sudo snap run microceph.log-rotate
+
+    # Show resulting directory state before asserting.
+    echo "--- log directory after rotation ---"
+    ls -la "${logs_dir}"/ || true
+    ls -la "${logs_dir}/ganesha"/ || true
+
+    # Verify at least one rotated backup exists for both daemon and ganesha logs.
+    ls "${logs_dir}"/ceph-mon.*.log.1
+    ls "${logs_dir}/ganesha/ganesha.log.1"
+
+    # Original files must still exist, truncated in-place by copytruncate.
+    test -f "${logs_dir}/ganesha/ganesha.log"
+
+    echo "test_log_rotation: PASS"
+}
+
 run="${1}"
 shift
 
