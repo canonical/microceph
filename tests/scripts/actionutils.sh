@@ -1004,11 +1004,13 @@ function upgrade_multinode() {
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
         lxc exec $container -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
         lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
-        sleep 5
+        # Give the snap services time to (re)start before polling.
+        sleep 15
         expect=3
-        for i in $(seq 1 20); do
-            res=$( ( lxc exec $container -- sh -c "microceph.ceph osd status" | fgrep -c "exists,up" ) )
-            if [[ $res -eq $expect ]] ; then
+        for i in $(seq 1 30); do
+            # osd status may fail while daemons are restarting; default res=0.
+            res=$(lxc exec $container -- sh -c "microceph.ceph osd status 2>/dev/null | fgrep -c 'exists,up'" 2>/dev/null || echo 0)
+            if [[ "${res}" -eq $expect ]] ; then
                 echo "Found ${expect} osd up"
                 break
             else
@@ -1016,8 +1018,8 @@ function upgrade_multinode() {
                 sleep 10
             fi
         done
-        res=$( ( lxc exec $container -- sh -c "microceph.ceph osd status" | fgrep -c "exists,up" ) )
-        if [[ $res -ne $expect ]] ; then
+        res=$(lxc exec $container -- sh -c "microceph.ceph osd status 2>/dev/null | fgrep -c 'exists,up'" 2>/dev/null || echo 0)
+        if [[ "${res}" -ne $expect ]] ; then
             echo "Expected $expect OSD up, got $res"
             lxc exec $container -- sh -c "microceph.ceph -s"
             exit 1
