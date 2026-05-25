@@ -145,8 +145,13 @@ class BaseService(ABC):
         try:
             response.raise_for_status()
         except HTTPError as e:
-            # Do some nice translating to microclusterdexceptions
-            error = response.json().get("error")
+            # Do some nice translating to microclusterdexceptions.
+            # The error body is normally JSON with an "error" key, but a
+            # non-JSON body or a missing key must not mask the real HTTPError.
+            try:
+                error = response.json().get("error") or ""
+            except ValueError:
+                error = ""
             if "remote with name" in error:
                 raise NodeAlreadyExistsException(
                     "Already node exists in the microcluster"

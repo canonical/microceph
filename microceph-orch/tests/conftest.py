@@ -127,9 +127,6 @@ def mock_client():
     # Default: no disks
     client.services.list_disks.return_value = []
 
-    # Default: no resources
-    client.services.list_resources.return_value = []
-
     # Default: status available
     client.status.is_available.return_value = None
 

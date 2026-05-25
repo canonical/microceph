@@ -57,11 +57,6 @@ class ExtendedAPIService(service.BaseService):
         services = self._get("/1.0/services")
         return services.get("metadata") or []
 
-    def list_resources(self) -> list[dict]:
-        """List all resources."""
-        nodes = self._get("/1.0/resources")
-        return nodes.get("metadata") or []
-
     def list_disks(self) -> list[dict]:
         """List all disks"""
         disks = self._get("/1.0/disks")

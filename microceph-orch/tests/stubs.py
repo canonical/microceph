@@ -4,6 +4,11 @@ Minimal stubs for Ceph types used by the orchestrator module.
 The real types live in ceph.deployment.*, mgr_module, and orchestrator;
 which are only importable inside the Ceph snap environment. These stubs
 replicate just enough behaviour to test our code outside the snap.
+
+NOTE: the stubs are intentionally plain classes. They do NOT reproduce
+the real Ceph enum / NamedTuple machinery (e.g. PlacementSpec with
+HostPlacementSpec entries), so bugs that depend on that behaviour are
+only caught by the integration suite (tests/scripts/test-orch.sh).
 """
 
 from typing import Optional, List, Dict, Any, Generic, TypeVar

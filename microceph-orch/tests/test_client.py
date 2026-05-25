@@ -104,16 +104,6 @@ class TestExtendedAPIService:
         result = svc.list_disks()
         assert result == []
 
-    def test_list_resources_null_metadata(self, mock_session, endpoint):
-        svc = ExtendedAPIService(mock_session, endpoint)
-        mock_session.request.return_value = MagicMock(
-            status_code=200,
-            text='{}',
-            json=lambda: {"metadata": None},
-        )
-        result = svc.list_resources()
-        assert result == []
-
     def test_enable_service_payload(self, mock_session, endpoint):
         svc = ExtendedAPIService(mock_session, endpoint)
         mock_session.request.return_value = MagicMock(

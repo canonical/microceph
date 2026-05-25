@@ -18,6 +18,12 @@ from stubs import (
 from microceph.client.service import RemoteException
 
 
+def _svc(service, location, group_id="", info=""):
+    """Build a MicroCeph service record as returned by list_services()."""
+    return {"service": service, "location": location,
+            "group_id": group_id, "info": info}
+
+
 # ===================================================================
 # available()
 # ===================================================================
@@ -69,6 +75,17 @@ class TestGetHosts:
         result = orchestrator.get_hosts()
         # Should fall back to raw address when no ":" present
         assert result.result[0].addr == "192.168.1.100"
+
+    def test_get_hosts_ipv6_address(self, orchestrator, mock_client):
+        mock_client.cluster.get_cluster_members.return_value = [
+            # bracketed IPv6 with port
+            {"name": "h1", "address": "[fe80::1]:7443", "status": "ONLINE"},
+            # bare IPv6 literal, no port
+            {"name": "h2", "address": "fe80::2", "status": "ONLINE"},
+        ]
+        result = orchestrator.get_hosts()
+        assert result.result[0].addr == "fe80::1"
+        assert result.result[1].addr == "fe80::2"
 
     def test_get_hosts_missing_address(self, orchestrator, mock_client):
         mock_client.cluster.get_cluster_members.return_value = [
@@ -250,7 +267,6 @@ class TestGetInventory:
             {"location": "node1", "path": "/dev/sdb"},
             {"location": "node1", "path": "/dev/sdc"},
         ]
-        mock_client.services.list_resources.return_value = {}
         result = orchestrator.get_inventory()
         inv = result.result
         # 3 hosts (from cluster members), node1 has 2 OSD disks
@@ -265,7 +281,6 @@ class TestGetInventory:
             {"location": "node1", "path": "/dev/sda"},
             {"location": "node2", "path": "/dev/sda"},
         ]
-        mock_client.services.list_resources.return_value = {}
         result = orchestrator.get_inventory()
         hosts = {h.name for h in result.result}
         assert hosts == {"node1", "node2", "node3"}
@@ -276,7 +291,6 @@ class TestGetInventory:
             {"location": "node2", "path": "/dev/sda"},
             {"location": "node3", "path": "/dev/sda"},
         ]
-        mock_client.services.list_resources.return_value = {}
         filt = InventoryFilter(hosts=["node1", "node3"])
         result = orchestrator.get_inventory(host_filter=filt)
         hosts = {h.name for h in result.result}
@@ -284,14 +298,12 @@ class TestGetInventory:
 
     def test_get_inventory_empty(self, orchestrator, mock_client):
         mock_client.services.list_disks.return_value = []
-        mock_client.services.list_resources.return_value = {}
         mock_client.cluster.get_cluster_members.return_value = []
         result = orchestrator.get_inventory()
         assert result.result == []
 
     def test_get_inventory_includes_members_without_disks(self, orchestrator, mock_client):
         mock_client.services.list_disks.return_value = []
-        mock_client.services.list_resources.return_value = {}
         # Default mock has 3 cluster members
         result = orchestrator.get_inventory()
         hosts = {h.name for h in result.result}
@@ -313,7 +325,10 @@ class TestApplyRbdMirror:
         )
         result = orchestrator.apply_rbd_mirror(spec)
         assert result.exception is None
-        assert "enabled on node1, node2" in result.result
+        # Summary confirms enablement and echoes the requested placement
+        # without claiming each host was individually provisioned.
+        assert "enabled" in result.result
+        assert "requested placement: node1, node2" in result.result
         # Single API call regardless of host count (local socket only)
         mock_client.services.enable_service.assert_called_once()
 
@@ -324,8 +339,9 @@ class TestApplyRbdMirror:
         assert "No placement hosts" in str(result.exception)
 
     def test_apply_rbd_mirror_skips_existing(self, orchestrator, mock_client):
+        # node1 already runs the service; node2 is also requested.
         mock_client.services.list_services.return_value = [
-            {"service": "rbd-mirror", "location": "node1", "group_id": "", "info": ""},
+            _svc("rbd-mirror", "node1"),
         ]
         spec = ServiceSpec(
             service_type="rbd-mirror",
@@ -334,12 +350,12 @@ class TestApplyRbdMirror:
         result = orchestrator.apply_rbd_mirror(spec)
         assert result.exception is None
         assert "already active on node1" in result.result
-        assert "enabled on node2" in result.result
+        assert "enabled" in result.result
         mock_client.services.enable_service.assert_called_once()
 
     def test_apply_rbd_mirror_all_existing(self, orchestrator, mock_client):
         mock_client.services.list_services.return_value = [
-            {"service": "rbd-mirror", "location": "node1", "group_id": "", "info": ""},
+            _svc("rbd-mirror", "node1"),
         ]
         spec = ServiceSpec(
             service_type="rbd-mirror",
@@ -372,7 +388,8 @@ class TestApplyRgw:
         )
         result = orchestrator.apply_rgw(spec)
         assert result.exception is None
-        assert "enabled on node1" in result.result
+        assert "enabled" in result.result
+        assert "node1" in result.result
 
         call_kwargs = mock_client.services.enable_service.call_args
         assert call_kwargs.kwargs["name"] == "rgw"
@@ -428,7 +445,8 @@ class TestApplyNfs:
         )
         result = orchestrator.apply_nfs(spec)
         assert result.exception is None
-        assert "enabled on node1" in result.result
+        assert "enabled" in result.result
+        assert "node1" in result.result
 
         call_kwargs = mock_client.services.enable_service.call_args
         payload = json.loads(call_kwargs.kwargs["payload"])
@@ -478,7 +496,7 @@ class TestApplyNfs:
 
     def test_apply_nfs_skips_existing(self, orchestrator, mock_client):
         mock_client.services.list_services.return_value = [
-            {"service": "nfs", "location": "node1", "group_id": "mycluster", "info": "{}"},
+            _svc("nfs", "node1", group_id="mycluster", info="{}"),
         ]
         spec = NFSServiceSpec(
             service_type="nfs",
@@ -487,7 +505,24 @@ class TestApplyNfs:
         )
         result = orchestrator.apply_nfs(spec)
         assert "already active on node1" in result.result
-        assert "enabled on node2" in result.result
+        assert "enabled" in result.result
+        mock_client.services.enable_service.assert_called_once()
+
+    def test_apply_nfs_distinct_cluster_not_conflated(self, orchestrator, mock_client):
+        """A host running nfs.other must not suppress enabling nfs.mycluster."""
+        mock_client.services.list_services.return_value = [
+            _svc("nfs", "node1", group_id="other", info="{}"),
+        ]
+        spec = NFSServiceSpec(
+            service_type="nfs",
+            service_id="mycluster",
+            placement=PlacementSpec(hosts=["node1"]),
+        )
+        result = orchestrator.apply_nfs(spec)
+        assert result.exception is None
+        # nfs.other on node1 must not be mistaken for nfs.mycluster
+        assert "already active" not in result.result
+        assert "enabled" in result.result
         mock_client.services.enable_service.assert_called_once()
 
 
@@ -507,7 +542,8 @@ class TestApplyCephfsMirror:
         )
         result = orchestrator.apply_cephfs_mirror(spec)
         assert result.exception is None
-        assert "enabled on node1" in result.result
+        assert "enabled" in result.result
+        assert "node1" in result.result
         mock_client.services.enable_service.assert_called_once_with(
             name="cephfs-mirror", payload="{}", wait=True,
         )
@@ -571,7 +607,8 @@ class TestApplyGenericServices:
         )
         result = orchestrator.apply_mon(spec)
         assert result.exception is None
-        assert "enabled on node1" in result.result
+        assert "enabled" in result.result
+        assert "node1" in result.result
         mock_client.services.enable_service.assert_called_once_with(
             name="mon", payload="{}", wait=True,
         )

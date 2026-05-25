@@ -132,12 +132,16 @@ class MicroCephOrchestrator(Orchestrator,
         """
         specs = []
         for m in self.microceph.cluster.get_cluster_members():
-            # Address from microcluster is in "host:port" format.
-            # rpartition splits on the last ":" to separate host from port.
+            # microcluster addresses are "host:port"; IPv6 uses the
+            # bracketed "[addr]:port" form. Strip the port without
+            # corrupting a bare IPv6 literal (which also contains ":").
             address = m.get('address', '')
-            addr, _, _ = address.rpartition(":")
-            if not addr:
-                # No ":" found; use the raw address (may be hostname only).
+            if address.startswith('['):
+                addr = address[1:].partition(']')[0]
+            elif address.count(':') == 1:
+                addr = address.rsplit(':', 1)[0]
+            else:
+                # No port present (hostname-only or bare IPv6 literal).
                 addr = address
             specs.append(HostSpec(
                 m.get('name', ''),
@@ -151,10 +155,15 @@ class MicroCephOrchestrator(Orchestrator,
         """Get a dict describing the distribution of services"""
         service_hostlist = defaultdict(list)
         for record in recorded_services:
-            service_name = record['service'] if not record['group_id'] else f"{record['service']}.{record['group_id']}"
-            service_host = record['location']
+            service = record.get('service', '')
+            group_id = record.get('group_id', '')
+            service_name = service if not group_id else f"{service}.{group_id}"
+            service_host = record.get('location', '')
             service_hostlist[service_name].append(service_host)
-            logger.debug(f"microcephs record service({service_name}) at ({service_host}) configured({record['info']})")
+            logger.debug(
+                f"microceph record service({service_name}) at "
+                f"({service_host}) configured({record.get('info', '')})"
+            )
         return service_hostlist
 
     @staticmethod
@@ -269,6 +278,15 @@ class MicroCephOrchestrator(Orchestrator,
                 host_filter: Optional[InventoryFilter] = None,
                 refresh: bool = False
             ) -> List[InventoryHost]:
+        """Report storage device inventory per host.
+
+        Devices are sourced from the cluster-wide OSD list (/1.0/disks), so
+        every reported device backs an existing OSD and is marked
+        unavailable. Discovery of free/unused disks is not exposed here:
+        /1.0/resources reports only the local node and the socket client
+        cannot proxy to peers (see the _apply_service note on targeting).
+        Hosts with no OSD disks are still listed so callers see every member.
+        """
 
         # Resolve which hosts to include based on the filter.
         filter_hosts = None
@@ -327,8 +345,14 @@ class MicroCephOrchestrator(Orchestrator,
 
         return hosts
 
-    def _get_existing_service_hosts(self, service_type: str) -> set:
-        """Return the set of hostnames that already run the given service type."""
+    def _get_existing_service_hosts(self, service_type: str,
+                                    group_id: Optional[str] = None) -> set:
+        """Return the set of hostnames that already run the given service.
+
+        When group_id is provided (e.g. an NFS cluster id), only services
+        matching both the type and that group are counted, so distinct NFS
+        clusters are not conflated.
+        """
         try:
             services = self.microceph.services.list_services()
         except RemoteException:
@@ -336,16 +360,17 @@ class MicroCephOrchestrator(Orchestrator,
             return set()
 
         return {
-            svc['location'] for svc in services
-            if svc['service'] == service_type
+            svc.get('location', '') for svc in services
+            if svc.get('service') == service_type
+            and (group_id is None or svc.get('group_id', '') == group_id)
         }
 
-    def _apply_service(self, service_name: str, spec: ServiceSpec, payload: str) -> str:
-        """Common logic for applying (enabling) a service on the local node.
+    def _apply_service(self, service_name: str, spec: ServiceSpec,
+                       payload: str, group_id: Optional[str] = None) -> str:
+        """Common logic for applying (enabling) a service.
 
         Validates placement hosts and checks whether the service is already
-        running. Calls enable_service once; the request goes to the local
-        node via the unix socket.
+        running, then calls enable_service once.
 
         Returns a summary string on success.
         Raises an exception if placement is invalid or the API call fails.
@@ -354,26 +379,19 @@ class MicroCephOrchestrator(Orchestrator,
         connects via unix socket to the local node only. MicroCeph's Go
         client uses UseTarget() to proxy to specific hosts, but this is
         not exposed through the socket. See todo #6.
-        Placement hosts are validated and logged, but the enable call
-        always runs on the local node regardless.
+        Because the enable call cannot be confirmed per host, the summary
+        reports the requested placement rather than claiming each host was
+        individually provisioned.
         """
         hosts = self._get_placement_hosts(spec)
-        existing = self._get_existing_service_hosts(service_name)
+        existing = self._get_existing_service_hosts(service_name, group_id)
 
-        # Check if the service is already active on the local node.
-        # Since we can only target the local node, we check if any
-        # of the requested hosts that are local already have the service.
-        all_existing = all(h in existing for h in hosts)
-        if all_existing:
+        # If every requested host already runs the service, there is
+        # nothing to do.
+        if existing.issuperset(hosts):
             skipped_str = ', '.join(hosts)
             logger.info(f"Skipping {service_name}: already active on {skipped_str}")
             return f"{service_name}: already active on {skipped_str}"
-
-        if existing:
-            logger.info(
-                f"{service_name} already active on {', '.join(existing & set(hosts))}; "
-                f"enabling for remaining hosts"
-            )
 
         logger.info(f"Enabling {service_name} (requested hosts: {', '.join(hosts)})")
         self.microceph.services.enable_service(
@@ -382,13 +400,16 @@ class MicroCephOrchestrator(Orchestrator,
             wait=True,
         )
 
-        new_hosts = [h for h in hosts if h not in existing]
-        parts = [f"enabled on {', '.join(new_hosts)}"]
-        skipped_hosts = [h for h in hosts if h in existing]
-        if skipped_hosts:
-            parts.append(f"already active on {', '.join(skipped_hosts)}")
+        # The enable call is served by the local node and cannot be
+        # confirmed per host (see note above), so report the request
+        # honestly rather than claiming every placement host gained the
+        # service.
+        summary = f"enabled (requested placement: {', '.join(hosts)})"
+        already_active = sorted(existing & set(hosts))
+        if already_active:
+            summary += f"; already active on {', '.join(already_active)}"
 
-        return f"{service_name}: {'; '.join(parts)}"
+        return f"{service_name}: {summary}"
 
     @handle_orch_error
     def apply_rbd_mirror(self, spec: ServiceSpec) -> OrchResult[str]:
@@ -465,7 +486,7 @@ class MicroCephOrchestrator(Orchestrator,
             nfs_params['bind_address'] = spec.virtual_ip
 
         payload = json.dumps(nfs_params)
-        return self._apply_service("nfs", spec, payload)
+        return self._apply_service("nfs", spec, payload, group_id=spec.service_id)
 
     @handle_orch_error
     def apply_mon(self, spec: ServiceSpec) -> OrchResult[str]:
@@ -517,6 +538,11 @@ class MicroCephOrchestrator(Orchestrator,
                 raise ValueError("NFS removal requires service name in 'nfs.<cluster_id>' format")
             self.microceph.services.delete_nfs_service(svc_id)
         else:
+            if svc_id:
+                logger.debug(
+                    f"Ignoring id '{svc_id}' for {svc_type}: MicroCeph manages "
+                    f"a single {svc_type} service per node"
+                )
             self.microceph.services.delete_service(svc_type)
 
         return f"Removed service {service_name}"

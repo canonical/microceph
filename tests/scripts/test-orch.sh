@@ -16,7 +16,7 @@ PASS=0
 FAIL=0
 ERRORS=()
 
-run_ceph() { sudo $CEPH "$@" 2>&1; }
+run_ceph() { sudo "$CEPH" "$@" 2>&1; }
 
 # --- Test helpers ---
 
@@ -76,7 +76,6 @@ echo "=== 2. Host listing ==="
 # ===================================================================
 
 output=$(run_ceph orch host ls)
-host_count=$(echo "$output" | grep -c "hosts in cluster" || true)
 assert_contains "hosts listed" "hosts in cluster" "$output"
 
 # ===================================================================
