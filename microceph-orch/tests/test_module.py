@@ -296,6 +296,12 @@ class TestGetInventory:
         hosts = {h.name for h in result.result}
         assert hosts == {"node1", "node3"}
 
+    def test_get_inventory_label_filter_rejected(self, orchestrator, mock_client):
+        filt = InventoryFilter(labels=["role=osd"])
+        result = orchestrator.get_inventory(host_filter=filt)
+        assert isinstance(result.exception, NotImplementedError)
+        mock_client.services.list_disks.assert_not_called()
+
     def test_get_inventory_empty(self, orchestrator, mock_client):
         mock_client.services.list_disks.return_value = []
         mock_client.cluster.get_cluster_members.return_value = []

@@ -286,12 +286,20 @@ class MicroCephOrchestrator(Orchestrator,
         /1.0/resources reports only the local node and the socket client
         cannot proxy to peers (see the _apply_service note on targeting).
         Hosts with no OSD disks are still listed so callers see every member.
+
+        Only `host_filter.hosts` is honored; `host_filter.labels` raises
+        NotImplementedError because MicroCeph has no host-label concept.
         """
 
         # Resolve which hosts to include based on the filter.
         filter_hosts = None
-        if host_filter and host_filter.hosts:
-            filter_hosts = set(host_filter.hosts)
+        if host_filter:
+            if host_filter.labels:
+                raise NotImplementedError(
+                    "MicroCeph orchestrator does not support host labels"
+                )
+            if host_filter.hosts:
+                filter_hosts = set(host_filter.hosts)
 
         osd_disks = self.microceph.services.list_disks()
 
