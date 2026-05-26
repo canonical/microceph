@@ -190,7 +190,7 @@ jobs:
 
       - name: Run orchestrator Python unit-tests
         run: |
-          pip install pytest
+          python3 -m pip install ./microceph-orch pytest
           cd microceph-orch
           PYTHONPATH=src:tests python3 -m pytest tests/ -v
 
