@@ -26,6 +26,10 @@ func (c *cmdDisk) Command() *cobra.Command {
 	diskRemoveCmd := cmdDiskRemove{common: c.common, disk: c}
 	cmd.AddCommand(diskRemoveCmd.Command())
 
+	// EncryptionSupported
+	encryptionSupportCmd := cmdDiskEncryptionSupport{common: c.common, disk: c}
+	cmd.AddCommand(encryptionSupportCmd.Command())
+
 	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
 	cmd.Args = cobra.NoArgs
 	cmd.Run = func(cmd *cobra.Command, args []string) { _ = cmd.Usage() }

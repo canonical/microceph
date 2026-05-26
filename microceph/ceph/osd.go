@@ -152,7 +152,7 @@ func (m *OSDManager) prepareDisk(disk *types.DiskParameter, suffix string, osdPa
 		}
 	}
 	if disk.Encrypt {
-		err := m.checkEncryptSupport()
+		err := m.CheckEncryptSupport()
 		if err != nil {
 			return fmt.Errorf("encryption unsupported on this machine: %w", err)
 		}
@@ -301,12 +301,12 @@ Verify your version of snapd by running "snap version"
 	return fmt.Sprintf("/dev/mapper/luksosd%s-%d", suffix, osdID), nil
 }
 
-// checkEncryptSupport checks if the kernel supports encryption.
+// CheckEncryptSupport checks if the kernel supports encryption.
 // Checks performed:
 // - Check if the kernel module is loaded.
 // - Check if we have a mapper control file.
 // - Check if we can access /run
-func (m *OSDManager) checkEncryptSupport() error {
+func (m *OSDManager) CheckEncryptSupport() error {
 	// Check if we have a mapper
 	_, err := m.fs.Stat("/dev/mapper/control")
 	if err != nil {
