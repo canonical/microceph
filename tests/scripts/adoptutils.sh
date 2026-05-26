@@ -123,7 +123,7 @@ function wait_for_active_mds() {
   while true; do
     active=$(lxc exec "$container" -- bash -c \
       "sudo microceph.ceph fs status ${fs} --format json 2>/dev/null \
-       | python3 -c \"import sys,json; d=json.load(sys.stdin); print(len([r for r in d.get('mdsmap',[]) if r.get('state')=='active']))\" 2>/dev/null || echo 0")
+       | jq '[.mdsmap[]? | select(.state // \"\" | contains(\"active\"))] | length' 2>/dev/null || echo 0")
     if [[ "${active:-0}" -ge 1 ]]; then
       echo "MDS active on ${fs} in ${container}"
       return 0
