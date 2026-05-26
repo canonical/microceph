@@ -18,12 +18,14 @@ To use FDE, the following prerequisites must be met:
 - The installed snapd daemon version must be >= 2.59.1
 - The `dm-crypt kernel module`_ must be available. Note that some cloud-optimised kernels
   do not ship dm-crypt by default. Check by running ``sudo modinfo dm-crypt``
-- The :external+snapcraft:ref:`snap dm-crypt plug <interfaces-dm-crypt-interface>` has to be connected, and ``microceph.daemon`` subsequently restarted:
+- The :external+snapcraft:ref:`snap dm-crypt plug <interfaces-dm-crypt-interface>` has to be connected. When MicroCeph is installed from the Snap Store this plug auto-connects, so no action is needed. For locally-built or ``--dangerous`` installs, connect it manually and restart ``microceph.daemon``:
 
   .. code-block:: none
 
      sudo snap connect microceph:dm-crypt
      sudo snap restart microceph.daemon
+
+  You can confirm all prerequisites are met by running ``sudo microceph disk encryption-support``.
 
 
 Enable FDE

@@ -207,8 +207,10 @@ Usage:
 
 .. note::
 
-   To enable encryption support, connect the snap interface and load the
-   kernel module:
+   When MicroCeph is installed from the Snap Store, the ``dm-crypt``
+   interface auto-connects, so no manual ``snap connect`` is required.
+   For locally-built or ``--dangerous`` installs, connect the snap
+   interface and load the kernel module manually:
 
    .. code-block:: bash
 
