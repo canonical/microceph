@@ -786,7 +786,7 @@ func (s *osdSuite) TestCheckEncryptSupport() {
 	defer func() { common.ProcessExec = originalProcessExec }()
 
 	// Test missing /dev/mapper/control
-	err := osdmgr.checkEncryptSupport()
+	err := osdmgr.CheckEncryptSupport()
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "missing /dev/mapper/control")
 
@@ -800,7 +800,7 @@ func (s *osdSuite) TestCheckEncryptSupport() {
 	r.On("RunCommand", "snapctl", "is-connected", "dm-crypt").Return("", fmt.Errorf("not connected")).Once()
 
 	// Test dm-crypt interface not connected
-	err = osdmgr.checkEncryptSupport()
+	err = osdmgr.CheckEncryptSupport()
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "dm-crypt interface")
 
@@ -808,7 +808,7 @@ func (s *osdSuite) TestCheckEncryptSupport() {
 	r.On("RunCommand", "snapctl", "is-connected", "dm-crypt").Return("", nil).Once()
 
 	// Test missing dm_crypt module
-	err = osdmgr.checkEncryptSupport()
+	err = osdmgr.CheckEncryptSupport()
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "missing dm_crypt module")
 
@@ -822,7 +822,7 @@ func (s *osdSuite) TestCheckEncryptSupport() {
 	// Test successful encryption support check, need /run directory
 	err = fs.MkdirAll("/run", 0755)
 	assert.NoError(s.T(), err)
-	err = osdmgr.checkEncryptSupport()
+	err = osdmgr.CheckEncryptSupport()
 	assert.NoError(s.T(), err)
 }
 

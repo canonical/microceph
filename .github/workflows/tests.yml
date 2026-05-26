@@ -123,6 +123,13 @@ jobs:
           ~/actionutils.sh hurl tests/hurl/services-mon.hurl
           ~/actionutils.sh hurl tests/hurl/maintenance-put-failed.hurl
           ~/actionutils.sh hurl tests/hurl/disks-list.hurl
+          ~/actionutils.sh hurl tests/hurl/disks-encryption-support-unsupported.hurl
+
+      - name: API disk encryption-support (supported)
+        run: |
+          sudo snap connect microceph:dm-crypt
+          sudo modprobe dm_crypt
+          ~/actionutils.sh hurl tests/hurl/disks-encryption-support-supported.hurl
 
       - name: API disk Hurl testing with discoverable devices
         run: |
