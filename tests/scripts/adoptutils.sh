@@ -114,6 +114,30 @@ function exchange_adopt_remote_tokens() {
   lxc exec $sec_name -- sh -c "microceph remote import sitea $primary_token --local-name=$sec_name"
 }
 
+function wait_for_active_mds() {
+  # Poll until the given fs has at least one active MDS rank.
+  # Usage: wait_for_active_mds <container> <fs_name> [timeout_seconds]
+  local container=$1 fs=$2 timeout=${3:-120}
+  local deadline=$(( $(date +%s) + timeout ))
+  echo "Waiting for active MDS on ${fs} in ${container}..."
+  while true; do
+    active=$(lxc exec "$container" -- bash -c \
+      "sudo microceph.ceph fs status ${fs} --format json 2>/dev/null \
+       | jq '[.mdsmap[]? | select(.state // \"\" | contains(\"active\"))] | length' 2>/dev/null || echo 0")
+    if [[ "${active:-0}" -ge 1 ]]; then
+      echo "MDS active on ${fs} in ${container}"
+      return 0
+    fi
+    if [[ $(date +%s) -ge $deadline ]]; then
+      echo "Timed out waiting for active MDS on ${fs} in ${container}"
+      lxc exec "$container" -- bash -c "sudo microceph.ceph fs status ${fs}" || true
+      return 1
+    fi
+    echo -n '.'
+    sleep 5
+  done
+}
+
 function remote_enable_fs_rep() {
   set -eux
   pri_name=$1
@@ -124,6 +148,9 @@ function remote_enable_fs_rep() {
   lxc exec $pri_name -- bash -c "sudo microceph enable cephfs-mirror"
   lxc exec $pri_name -- bash -c "sudo microceph.ceph fs volume create vol"
   lxc exec $pri_name -- bash -c "sudo microceph.ceph mgr module enable mirroring"
+  # Wait for MDS to become active before enabling mirroring; the
+  # 'fs snapshot mirror enable' command hangs if no MDS rank is up yet.
+  wait_for_active_mds "$pri_name" "vol"
   lxc exec $pri_name -- bash -c "sudo microceph.ceph fs snapshot mirror enable vol"
 
   # Secondary
@@ -131,6 +158,8 @@ function remote_enable_fs_rep() {
   lxc exec $sec_name -- bash -c "sudo microceph enable cephfs-mirror"
   lxc exec $sec_name -- bash -c "sudo microceph.ceph fs volume create vol"
   lxc exec $sec_name -- bash -c "sudo microceph.ceph mgr module enable mirroring"
+  # Same wait for secondary.
+  wait_for_active_mds "$sec_name" "vol"
   lxc exec $sec_name -- bash -c "sudo microceph.ceph fs snapshot mirror enable vol"
 }
 
