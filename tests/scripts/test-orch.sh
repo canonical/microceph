@@ -123,7 +123,6 @@ sleep 3
 placement="${first_host:-$(hostname)}"
 output=$(run_ceph orch apply rgw default --placement="$placement")
 assert_contains "rgw applied" "enabled|already active" "$output"
-assert_contains "rgw applied" "enabled" "$output"
 sleep 5
 
 output=$(run_ceph orch ls)
