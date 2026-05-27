@@ -682,7 +682,7 @@ func (m *OSDManager) resolvePartitionStablePath(parentPath string, partition uin
 		}
 	}
 
-	storage, err := m.storage.GetStorage()
+	storage, err := m.getStorageWithRetry()
 	if err == nil {
 		for _, disk := range storage.Disks {
 			if common.GetDevicePath(&disk) != parentPath {
@@ -772,7 +772,7 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 		var generatedAux *generatedAuxDevicesManifest
 		createdAux := false
 
-		dataStorage, err := m.storage.GetStorage()
+		dataStorage, err := m.getStorageWithRetry()
 		if err != nil {
 			logger.Errorf("Unable to list system disks before adding OSD %s: %v", planned.OSDPath, err)
 			resp.Reports = append(resp.Reports, types.DiskAddReport{Path: planned.OSDPath, Report: "Failure", Error: fmt.Sprintf("unable to list system disks: %v", err)})

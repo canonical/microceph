@@ -917,7 +917,21 @@ var storageRetrySleepFunc = time.Sleep
 
 // getStorageWithRetry calls GetStorage() up to 3 times, retrying on any error
 func (m *OSDManager) getStorageWithRetry() (*api.ResourcesStorage, error) {
-	return m.storage.GetStorage()
+	const maxAttempts = 3
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		var storage *api.ResourcesStorage
+		storage, err = m.storage.GetStorage()
+		if err == nil {
+			return storage, nil
+		}
+		if attempt < maxAttempts {
+			logger.Warnf("Transient error enumerating storage (attempt %d/%d): %v; retrying",
+				attempt, maxAttempts, err)
+			storageRetrySleepFunc(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+	}
+	return nil, err
 }
 
 func (m *OSDManager) stabilizeDevicePath(data *types.DiskParameter) (*api.ResourcesStorage, error) {
@@ -926,7 +940,7 @@ func (m *OSDManager) stabilizeDevicePath(data *types.DiskParameter) (*api.Resour
 		return nil, nil
 	}
 
-	storage, err := m.storage.GetStorage()
+	storage, err := m.getStorageWithRetry()
 	if err != nil {
 		logger.Errorf("failed to stabilize device path for %s, err %v", data.Path, err)
 		return nil, fmt.Errorf("unable to list system disks: %w", err)
@@ -1358,7 +1372,7 @@ func trueBoolMapKeys(m map[string]bool) []string {
 }
 
 func (m *OSDManager) getStorageAndConfiguredDisks(ctx context.Context) (*api.ResourcesStorage, types.Disks, error) {
-	storage, err := m.storage.GetStorage()
+	storage, err := m.getStorageWithRetry()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get storage resources: %w", err)
 	}
