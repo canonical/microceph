@@ -910,6 +910,16 @@ func (m *OSDManager) validateAddOSDArgs(data types.DiskParameter, wal *types.Dis
 	return nil
 }
 
+// storageRetrySleepFunc is the sleep function used between GetStorage retry attempts.
+// It is a package-level variable so that tests can replace it with a no-op for fast
+// execution without changing retry logic.
+var storageRetrySleepFunc = time.Sleep
+
+// getStorageWithRetry calls GetStorage() up to 3 times, retrying on any error
+func (m *OSDManager) getStorageWithRetry() (*api.ResourcesStorage, error) {
+	return m.storage.GetStorage()
+}
+
 func (m *OSDManager) stabilizeDevicePath(data *types.DiskParameter) (*api.ResourcesStorage, error) {
 	logger.Infof("Stabilizing device path for %s", data.Path)
 	if data.LoopSize != 0 {
