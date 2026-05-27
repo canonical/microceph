@@ -1264,6 +1264,31 @@ function add_osd_to_node() {
     sleep 1
 }
 
+function wait_for_pool_crush_rule() {
+    # Wait until at least one pool exists on the cluster with the given
+    # crush_rule id. After the failure-domain auto-switch flips the default
+    # crush rule (e.g. osd -> host), the mgr-created .mgr pool may not yet
+    # exist, or pool migration may still be in flight, so an immediate
+    # `ceph osd pool ls detail | grep crush_rule N` race-fails.
+    local rule_id="${1?missing rule id}"
+    local tries="${2:-30}"
+    local out=""
+
+    for ((i=0; i<tries; i++)); do
+        out=$(sudo microceph.ceph osd pool ls detail 2>/dev/null || true)
+        if echo "$out" | grep -qF "crush_rule ${rule_id}"; then
+            echo "Found pool with crush_rule ${rule_id}"
+            return 0
+        fi
+        sleep 2
+    done
+
+    echo "No pool reached crush_rule ${rule_id} after ${tries} tries"
+    echo "--- pool ls detail ---"
+    echo "$out"
+    return 1
+}
+
 function wait_for_osds() {
     local expect="${1?missing}"
     local res=0

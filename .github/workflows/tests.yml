@@ -465,7 +465,10 @@ jobs:
         run: |
           set -uex
           lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host
-          lxc exec node-wrk0 -- sh -c "microceph.ceph osd pool ls detail" | grep -F "crush_rule 2"
+          # Wait for pool migration to crush_rule 2 (host failure domain).
+          # The mgr-created .mgr pool may not yet exist when this step runs,
+          # so a bare `grep crush_rule 2` races against pool creation/migration.
+          lxc exec node-wrk0 -- /mnt/actionutils.sh wait_for_pool_crush_rule 2
 
       - name: Add another OSD
         run: |
