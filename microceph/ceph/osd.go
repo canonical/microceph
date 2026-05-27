@@ -910,13 +910,37 @@ func (m *OSDManager) validateAddOSDArgs(data types.DiskParameter, wal *types.Dis
 	return nil
 }
 
+// storageRetrySleepFunc is the sleep function used between GetStorage retry attempts.
+// It is a package-level variable so that tests can replace it with a no-op for fast
+// execution without changing retry logic.
+var storageRetrySleepFunc = time.Sleep
+
+// getStorageWithRetry calls GetStorage() up to 3 times, retrying on any error
+func (m *OSDManager) getStorageWithRetry() (*api.ResourcesStorage, error) {
+	const maxAttempts = 3
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		var storage *api.ResourcesStorage
+		storage, err = m.storage.GetStorage()
+		if err == nil {
+			return storage, nil
+		}
+		if attempt < maxAttempts {
+			logger.Warnf("Transient error enumerating storage (attempt %d/%d): %v; retrying",
+				attempt, maxAttempts, err)
+			storageRetrySleepFunc(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+	}
+	return nil, err
+}
+
 func (m *OSDManager) stabilizeDevicePath(data *types.DiskParameter) (*api.ResourcesStorage, error) {
 	logger.Infof("Stabilizing device path for %s", data.Path)
 	if data.LoopSize != 0 {
 		return nil, nil
 	}
 
-	storage, err := m.storage.GetStorage()
+	storage, err := m.getStorageWithRetry()
 	if err != nil {
 		logger.Errorf("failed to stabilize device path for %s, err %v", data.Path, err)
 		return nil, fmt.Errorf("unable to list system disks: %w", err)
@@ -1348,7 +1372,7 @@ func trueBoolMapKeys(m map[string]bool) []string {
 }
 
 func (m *OSDManager) getStorageAndConfiguredDisks(ctx context.Context) (*api.ResourcesStorage, types.Disks, error) {
-	storage, err := m.storage.GetStorage()
+	storage, err := m.getStorageWithRetry()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get storage resources: %w", err)
 	}

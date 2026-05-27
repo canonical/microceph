@@ -1424,3 +1424,56 @@ func (s *osdSuite) TestIsRackDegradeBlockedMoreThan3AZs() {
 	assert.NoError(s.T(), err)
 	assert.False(s.T(), blocked)
 }
+
+// TestGetStorageWithRetry is a regression test for the udevd TOCTOU race in
+// /dev/disk/by-id/. udevd atomically replaces symlinks by writing a .#-prefixed
+// temp entry then renaming it. LXD's GetStorage() can see the .# entry in readdir
+// and then get ENOENT on lstat because the rename completed between the two calls.
+// getStorageWithRetry must absorb that transient error and succeed on the next attempt.
+func (s *osdSuite) TestGetStorageWithRetry() {
+	storageRetrySleepFunc = func(_ time.Duration) {}
+	s.T().Cleanup(func() { storageRetrySleepFunc = time.Sleep })
+
+	osdmgr := NewOSDManager(nil)
+	goodStorage := &api.ResourcesStorage{
+		Disks: []api.ResourcesStorageDisk{{Device: "sda"}},
+	}
+
+	calls := 0
+	mockStorage := mocks.NewStorageInterface(s.T())
+	mockStorage.On("GetStorage").Return(func() (*api.ResourcesStorage, error) {
+		calls++
+		if calls == 1 {
+			// Exact error from the CI failure: udevd renamed .#scsi-... out from
+			// under LXD's EvalSymlinks call.
+			return nil, fmt.Errorf(`Failed to find "/dev/disk/by-id/.#scsi-0QEMU_QEMU_HARDDISK_lxd_microceph--dsl--01d14fb4b757b3ed": lstat /dev/disk/by-id/.#scsi-0QEMU_QEMU_HARDDISK_lxd_microceph--dsl--01d14fb4b757b3ed: no such file or directory`)
+		}
+		return goodStorage, nil
+	})
+	osdmgr.storage = mockStorage
+
+	storage, err := osdmgr.getStorageWithRetry()
+
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), goodStorage, storage)
+	assert.Equal(s.T(), 2, calls)
+}
+
+// TestGetStorageWithRetryExhausted verifies that errors are propagated after all
+// retry attempts are exhausted, and that GetStorage() is called exactly maxAttempts
+// times before giving up.
+func (s *osdSuite) TestGetStorageWithRetryExhausted() {
+	storageRetrySleepFunc = func(_ time.Duration) {}
+	s.T().Cleanup(func() { storageRetrySleepFunc = time.Sleep })
+
+	osdmgr := NewOSDManager(nil)
+	persistentErr := fmt.Errorf("persistent storage error")
+
+	mockStorage := mocks.NewStorageInterface(s.T())
+	mockStorage.On("GetStorage").Return(nil, persistentErr).Times(3)
+	osdmgr.storage = mockStorage
+
+	_, err := osdmgr.getStorageWithRetry()
+
+	require.ErrorIs(s.T(), err, persistentErr)
+}
