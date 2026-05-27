@@ -256,6 +256,20 @@ class TestListDaemons:
         result = orchestrator.list_daemons()
         assert len(result.result) == 1
 
+    def test_list_daemons_metadata_missing_optional_keys(self, orchestrator, mock_client):
+        # ExtendedAPIService.list_services() may omit group_id (and other
+        # optional keys); list_daemons must not raise KeyError.
+        mock_client.services.list_services.return_value = [
+            {"service": "mon", "location": "n1"},
+        ]
+        result = orchestrator.list_daemons()
+        assert result.exception is None
+        assert len(result.result) == 1
+        daemon = result.result[0]
+        assert daemon.daemon_type == "mon"
+        assert daemon.hostname == "n1"
+        assert daemon.service_name == "mon"
+
 
 # ===================================================================
 # get_inventory()

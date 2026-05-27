@@ -234,9 +234,9 @@ class MicroCephOrchestrator(Orchestrator,
         services = self.microceph.services.list_services()
         descriptions = []
         for svc in services:
-            svc_daemon_type = svc['service']
-            svc_hostname = svc['location']
-            svc_group_id = svc['group_id']
+            svc_daemon_type = svc.get('service', '')
+            svc_hostname = svc.get('location', '')
+            svc_group_id = svc.get('group_id', '')
             svc_ip = None
             svc_ports = None
             svc_name = f"{svc_daemon_type}.{svc_group_id}" if svc_group_id else svc_daemon_type
