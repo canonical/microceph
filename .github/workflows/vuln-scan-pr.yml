@@ -1,0 +1,91 @@
+name: Vuln scan (PR diff)
+
+on:
+  pull_request:
+    paths:
+      - microceph/go.mod
+      - microceph/go.sum
+      - .github/actions/govulncheck/**
+      - .github/workflows/vuln-scan-pr.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diff:
+    name: Compare called vulns vs base branch
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Scan PR head
+        id: head-scan
+        uses: ./.github/actions/govulncheck
+        with:
+          working-directory: microceph
+          output-file: govulncheck-head.json
+          fail-on-vuln: "false"
+
+      - name: Stash head scan output
+        run: cp microceph/govulncheck-head.json /tmp/govulncheck-head.json
+
+      - name: Checkout base ref into subdir
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Scan base ref
+        id: base-scan
+        uses: ./.github/actions/govulncheck
+        with:
+          working-directory: base/microceph
+          output-file: govulncheck-base.json
+          fail-on-vuln: "false"
+
+      - name: Diff called vulnerabilities
+        env:
+          HEAD_JSON: /tmp/govulncheck-head.json
+          BASE_JSON: base/microceph/govulncheck-base.json
+        run: |
+          set -uo pipefail
+
+          extract_ids() {
+            jq -rs '
+              [ .[]
+                | select(.finding? and (.finding.trace[]?.function != null))
+                | .finding.osv
+              ] | unique[]
+            ' "$1" 2>/dev/null | sort -u
+          }
+
+          extract_ids "${HEAD_JSON}" > /tmp/head-ids.txt
+          extract_ids "${BASE_JSON}" > /tmp/base-ids.txt
+
+          new_ids=$(comm -23 /tmp/head-ids.txt /tmp/base-ids.txt)
+
+          echo "## Vulnerability scan diff" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Base (${{ github.event.pull_request.base.ref }}) called vulns: $(wc -l </tmp/base-ids.txt)" >> "${GITHUB_STEP_SUMMARY}"
+          echo "PR head called vulns: $(wc -l </tmp/head-ids.txt)" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+
+          if [ -z "${new_ids}" ]; then
+            echo "No new called-path vulnerabilities introduced by this PR." >> "${GITHUB_STEP_SUMMARY}"
+            echo "No new called vulnerabilities."
+            exit 0
+          fi
+
+          echo "### New called-path vulnerabilities" >> "${GITHUB_STEP_SUMMARY}"
+          echo '```' >> "${GITHUB_STEP_SUMMARY}"
+          echo "${new_ids}" >> "${GITHUB_STEP_SUMMARY}"
+          echo '```' >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "::error::This PR introduces new called-path vulnerabilities:"
+          echo "${new_ids}"
+          exit 1

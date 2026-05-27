@@ -1,0 +1,96 @@
+name: Vuln scan (scheduled)
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  full-scan:
+    name: Full govulncheck scan
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run govulncheck
+        id: scan
+        continue-on-error: true
+        uses: ./.github/actions/govulncheck
+        with:
+          working-directory: microceph
+          output-file: govulncheck.json
+          fail-on-vuln: "true"
+
+      - name: Render summary
+        id: render
+        env:
+          OUTCOME: ${{ steps.scan.outcome }}
+          CALLED_COUNT: ${{ steps.scan.outputs.called-count }}
+          CALLED_IDS: ${{ steps.scan.outputs.called-ids }}
+        run: |
+          set -uo pipefail
+          body_file=$(mktemp)
+
+          {
+            echo "Daily govulncheck scan of \`microceph/\` on \`${GITHUB_REF_NAME}\` (commit \`${GITHUB_SHA}\`)."
+            echo ""
+            echo "Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo ""
+            echo "## Called-path vulnerabilities: ${CALLED_COUNT}"
+            echo ""
+            if [ -n "${CALLED_IDS}" ]; then
+              echo '```'
+              echo "${CALLED_IDS}"
+              echo '```'
+              echo ""
+              echo "See the workflow run logs for full call-stack traces."
+            fi
+          } > "${body_file}"
+
+          echo "body-file=${body_file}" >> "${GITHUB_OUTPUT}"
+          cat "${body_file}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Open or update tracking issue
+        if: steps.scan.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BODY_FILE: ${{ steps.render.outputs.body-file }}
+          TITLE: "[vuln-scan] govulncheck found called-path vulnerabilities"
+        run: |
+          set -uo pipefail
+
+          existing=$(gh issue list --state open --search "${TITLE} in:title" --json number,title --jq '.[] | select(.title=="'"${TITLE}"'") | .number' | head -n1)
+
+          if [ -n "${existing}" ]; then
+            echo "Updating issue #${existing}"
+            gh issue comment "${existing}" --body-file "${BODY_FILE}"
+          else
+            echo "Opening new issue"
+            gh issue create --title "${TITLE}" --body-file "${BODY_FILE}" --label security
+          fi
+
+      - name: Close tracking issue when clean
+        if: steps.scan.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: "[vuln-scan] govulncheck found called-path vulnerabilities"
+        run: |
+          set -uo pipefail
+          existing=$(gh issue list --state open --search "${TITLE} in:title" --json number,title --jq '.[] | select(.title=="'"${TITLE}"'") | .number' | head -n1)
+          if [ -n "${existing}" ]; then
+            gh issue comment "${existing}" --body "Scan clean as of run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. Closing."
+            gh issue close "${existing}"
+          fi
+
+      - name: Propagate scan result
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "::error::govulncheck reported called-path vulnerabilities; see tracking issue."
+          exit 1
