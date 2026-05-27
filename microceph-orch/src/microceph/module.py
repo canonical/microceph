@@ -45,6 +45,12 @@ daemon_spec_map = {
     'nfs': NFSServiceSpec,
 }
 
+# Services for which MicroCeph's backend supports restart. The Go
+# serviceWorkerTable (microceph/ceph/services.go) only registers handlers
+# for osd, mon and rgw; restarting any other service raises
+# "no handler defined for service X" at the backend.
+RESTART_SUPPORTED_SERVICES = frozenset({"osd", "mon", "rgw"})
+
 class MicroCephOrchestrator(Orchestrator,
                             MgrModule,
                             metaclass=CLICommandMeta):
@@ -442,8 +448,22 @@ class MicroCephOrchestrator(Orchestrator,
         SSLPrivateKey to enable SSL. Until the spec is extended or a separate
         key source is added, SSL cannot be fully configured via the
         orchestrator interface.
+
+        Note on service_id (realms/zones): MicroCeph deploys a single bare
+        "rgw" service per node and does not support multiple RGW instances
+        with distinct service_ids on the same cluster. If a service_id is
+        provided in the spec, it is ignored and a warning is logged.
         """
         logger.debug("Applying RGW service")
+
+        # MicroCeph stores a single bare "rgw" service; per-realm service_id
+        # is not supported by the backend, so we drop it with a warning.
+        if spec.service_id:
+            logger.warning(
+                f"RGW service_id={spec.service_id!r} ignored: MicroCeph deploys "
+                "a single 'rgw' service; multiple RGW realms with distinct "
+                "service_ids are not supported."
+            )
 
         # Build RGW-specific payload from the spec.
         # Go's RgwServicePlacement expects: Port, SSLPort, SSLCertificate, SSLPrivateKey
@@ -510,8 +530,20 @@ class MicroCephOrchestrator(Orchestrator,
 
     @handle_orch_error
     def apply_mds(self, spec: ServiceSpec) -> OrchResult[str]:
-        """Enable the MDS service on the target hosts."""
+        """Enable the MDS service on the target hosts.
+
+        Note on service_id (filesystem name): MicroCeph deploys a single
+        bare "mds" service and does not support per-filesystem MDS
+        placement. If a service_id is provided in the spec, it is
+        ignored and a warning is logged.
+        """
         logger.debug("Applying MDS service")
+        if spec.service_id:
+            logger.warning(
+                f"MDS service_id={spec.service_id!r} ignored: MicroCeph deploys "
+                "a single 'mds' service; per-filesystem MDS placement is not "
+                "supported."
+            )
         return self._apply_service("mds", spec, "{}")
 
     @handle_orch_error
@@ -587,6 +619,13 @@ class MicroCephOrchestrator(Orchestrator,
             )
 
         svc_type, _ = self._parse_service_name(service_name)
+
+        if svc_type not in RESTART_SUPPORTED_SERVICES:
+            raise NotImplementedError(
+                f"Restart of service type {svc_type!r} is not supported by "
+                f"MicroCeph. Supported services: "
+                f"{sorted(RESTART_SUPPORTED_SERVICES)}."
+            )
 
         self.microceph.services.restart_services([svc_type])
         return [f"Restarted {service_name}"]

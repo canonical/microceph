@@ -451,6 +451,28 @@ class TestApplyRgw:
         result = orchestrator.apply_rgw(spec)
         assert result.exception is not None
 
+    def test_apply_rgw_service_id_warns(self, orchestrator, mock_client, caplog):
+        # MicroCeph deploys a single bare 'rgw' service; per-realm
+        # service_id is silently dropped — log a warning instead of
+        # surprising the caller.
+        spec = RGWSpec(
+            service_type="rgw",
+            service_id="realm1",
+            placement=PlacementSpec(hosts=["node1"]),
+        )
+        import logging
+        with caplog.at_level(logging.WARNING):
+            result = orchestrator.apply_rgw(spec)
+
+        assert result.exception is None
+        # service_id is not forwarded to the backend.
+        call_kwargs = mock_client.services.enable_service.call_args
+        assert call_kwargs.kwargs["name"] == "rgw"
+        assert any(
+            "service_id" in r.message and "realm1" in r.message
+            for r in caplog.records
+        )
+
 
 # ===================================================================
 # apply_nfs()
@@ -655,6 +677,27 @@ class TestApplyGenericServices:
             name="mds", payload="{}", wait=True,
         )
 
+    def test_apply_mds_service_id_warns(self, orchestrator, mock_client, caplog):
+        # Per-filesystem MDS placement is not supported by MicroCeph;
+        # service_id (filesystem name) must be dropped with a warning.
+        spec = ServiceSpec(
+            service_type="mds",
+            service_id="fs1",
+            placement=PlacementSpec(hosts=["node1"]),
+        )
+        import logging
+        with caplog.at_level(logging.WARNING):
+            result = orchestrator.apply_mds(spec)
+
+        assert result.exception is None
+        mock_client.services.enable_service.assert_called_once_with(
+            name="mds", payload="{}", wait=True,
+        )
+        assert any(
+            "service_id" in r.message and "fs1" in r.message
+            for r in caplog.records
+        )
+
 
 # ===================================================================
 # remove_service()
@@ -713,9 +756,20 @@ class TestServiceAction:
         mock_client.services.restart_services.assert_called_once_with(["mon"])
 
     def test_restart_service_with_id(self, orchestrator, mock_client):
-        result = orchestrator.service_action("restart", "nfs.mycluster")
+        # Service identifiers are stripped before dispatching to the
+        # MicroCeph API; rgw is a supported restart target.
+        result = orchestrator.service_action("restart", "rgw.realm1")
         assert result.exception is None
-        mock_client.services.restart_services.assert_called_once_with(["nfs"])
+        mock_client.services.restart_services.assert_called_once_with(["rgw"])
+
+    def test_restart_unsupported_service_type(self, orchestrator, mock_client):
+        # MicroCeph's backend serviceWorkerTable only handles osd/mon/rgw.
+        # The orchestrator must reject restart for other service types up
+        # front rather than surfacing an opaque RemoteException.
+        for svc in ["nfs.mycluster", "mds", "mgr", "rbd-mirror"]:
+            result = orchestrator.service_action("restart", svc)
+            assert isinstance(result.exception, NotImplementedError), svc
+            mock_client.services.restart_services.assert_not_called()
 
     def test_unsupported_action(self, orchestrator, mock_client):
         result = orchestrator.service_action("stop", "mon")
