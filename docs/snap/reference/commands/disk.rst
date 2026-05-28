@@ -16,9 +16,10 @@ Available commands:
 
 .. code-block:: none
 
-   add         Add a Ceph disk (OSD)
-   list        List servers in the cluster
-   remove      Remove a Ceph disk (OSD)
+   add                  Add a Ceph disk (OSD)
+   encryption-support   Check if disk encryption is supported
+   list                 List servers in the cluster
+   remove               Remove a Ceph disk (OSD)
 
 Global flags:
 
@@ -183,6 +184,38 @@ Limitations:
 - ``--wal-encrypt`` and ``--wal-wipe`` require ``--wal-match`` when using DSL-based selection.
 - ``--db-encrypt`` and ``--db-wipe`` require ``--db-match`` when using DSL-based selection.
 - ``--wal-match`` and ``--db-match`` must resolve to disjoint device sets.
+
+
+``encryption-support``
+----------------------
+
+Checks whether dm-crypt disk encryption is supported on this node. Exits
+with a non-zero status and prints the reason if encryption is not available.
+Exits zero and prints a confirmation message if all prerequisites are met.
+
+Encryption requires:
+
+- The ``dm-crypt`` snap interface to be connected.
+- The ``dm_crypt`` kernel module to be loaded.
+- The ``/dev/mapper/control`` device to be present.
+
+Usage:
+
+.. code-block:: none
+
+   microceph disk encryption-support
+
+.. note::
+
+   When MicroCeph is installed from the Snap Store, the ``dm-crypt``
+   interface auto-connects, so no manual ``snap connect`` is required.
+   For locally-built or ``--dangerous`` installs, connect the snap
+   interface and load the kernel module manually:
+
+   .. code-block:: bash
+
+      sudo snap connect microceph:dm-crypt
+      sudo modprobe dm_crypt
 
 
 ``list``
