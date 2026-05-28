@@ -83,6 +83,12 @@ type DisksDelete struct {
 	Timeout                int64 `json:"timeout" yaml:"timeout"`
 }
 
+// DisksEncryptionSupportResponse is the response body for GET /1.0/disks/encryption-support.
+type DisksEncryptionSupportResponse struct {
+	Supported         bool   `json:"supported" yaml:"supported"`
+	ReasonUnsupported string `json:"reason_unsupported,omitempty" yaml:"reason_unsupported,omitempty"`
+}
+
 // Disks is a slice of disks
 type Disks []Disk
 

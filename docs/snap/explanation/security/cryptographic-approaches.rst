@@ -83,7 +83,7 @@ Data at rest
 MicroCeph offers full disk encryption (FDE) for Object Storage Daemons (OSDs), activated when adding disks. Note that this disk encryption
 only pertains to user data managed in Ceph, and not encryption of the cluster data (such as administrative data, 
 logs, etc.).
-To use FDE, users must first connect the ``dm-crypt`` plug for MicroCeph (it is not auto-connected).
+To use FDE, the ``dm-crypt`` plug for MicroCeph must be connected. This plug auto-connects when MicroCeph is installed from the Snap Store; for locally-built or ``--dangerous`` installs it must be connected manually.
 When FDE is requested, MicroCeph generates a random key and stores it in the Ceph Monitor (MON). This key is then used to setup
 Linux Unified Key Setup (LUKS) via ``cryptsetup``, using ``cipher AES-XTS-plain64`` and ``SHA256`` hashing, with a 256-bit keysize.
 

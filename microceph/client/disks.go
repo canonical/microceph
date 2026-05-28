@@ -93,3 +93,25 @@ func RemoveDisk(ctx context.Context, c mcTypes.Client, data *types.DisksDelete) 
 	}
 	return nil
 }
+
+// GetEncryptionSupport returns whether or not encryption is supported
+// and an optional reason why.
+func GetEncryptionSupport(ctx context.Context, c mcTypes.Client) (bool, string, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+
+	supported := types.DisksEncryptionSupportResponse{}
+
+	err := c.Query(
+		queryCtx,
+		"GET",
+		types.ExtendedPathPrefix,
+		&api.NewURL().Path("disks", "encryption-support").URL,
+		nil,
+		&supported)
+	if err != nil {
+		return false, "", err
+	}
+
+	return supported.Supported, supported.ReasonUnsupported, nil
+}

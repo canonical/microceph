@@ -15,6 +15,7 @@ var Servers = map[string]mcTypes.Server{
 				PathPrefix: types.ExtendedPathPrefix,
 				Endpoints: []mcTypes.Endpoint{
 					disksCmd,
+					disksEncryptionSupportCmd,
 					disksDelCmd,
 					resourcesCmd,
 					servicesCmd,

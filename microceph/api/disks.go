@@ -38,6 +38,13 @@ var disksDelCmd = mcTypes.Endpoint{
 	Delete: mcTypes.EndpointAction{Handler: cmdDisksDelete, ProxyTarget: true},
 }
 
+// /1.0/disks/encryption-support endpoint.
+var disksEncryptionSupportCmd = mcTypes.Endpoint{
+	Path: "disks/encryption-support",
+
+	Get: mcTypes.EndpointAction{Handler: cmdDisksEncryptionSupport, ProxyTarget: true},
+}
+
 var mu sync.Mutex
 
 func cmdDisksGet(s mcTypes.State, r *http.Request) mcTypes.Response {
@@ -266,6 +273,20 @@ func cmdDisksDelete(s mcTypes.State, r *http.Request) mcTypes.Response {
 	}
 
 	return mcTypes.EmptySyncResponse
+}
+
+// cmdDisksEncryptionSupport is the handler for GET /1.0/disks/encryption-support.
+func cmdDisksEncryptionSupport(s mcTypes.State, r *http.Request) mcTypes.Response {
+	var resp types.DisksEncryptionSupportResponse
+
+	m := ceph.NewOSDManager(s)
+	err := m.CheckEncryptSupport()
+	if err != nil {
+		resp.ReasonUnsupported = err.Error()
+	}
+	resp.Supported = err == nil
+
+	return mcTypes.SyncResponse(true, resp)
 }
 
 // parseAndPatchDiskPostParams parses/patches Disk add command parameters
