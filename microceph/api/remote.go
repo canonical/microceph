@@ -46,6 +46,16 @@ func cmdRemotePut(state state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
+	remoteName, err := url.PathUnescape(mux.Vars(r)["name"])
+	if err != nil {
+		return response.BadRequest(err)
+	}
+
+	err = validateRemoteImportRequest(remoteName, req)
+	if err != nil {
+		return response.BadRequest(err)
+	}
+
 	err = renderConfAndKeyringFiles(req.Name, req.LocalName, req.Config)
 	if err != nil {
 		return response.InternalError(fmt.Errorf("couldn't render files: %w", err))
@@ -86,6 +96,13 @@ func cmdRemoteGet(state state.State, r *http.Request) response.Response {
 		return response.InternalError(err)
 	}
 
+	if remoteName != "" {
+		err = validateRemoteName(remoteName)
+		if err != nil {
+			return response.BadRequest(err)
+		}
+	}
+
 	remotes, err := database.GetRemoteDb(r.Context(), state, remoteName)
 	if err != nil {
 		return response.SmartError(err)
@@ -101,6 +118,11 @@ func cmdRemoteGet(state state.State, r *http.Request) response.Response {
 // cmdRemoteDelete is handler for removing Remote records from MicroCeph internal db.
 func cmdRemoteDelete(state state.State, r *http.Request) response.Response {
 	remoteName, err := url.PathUnescape(mux.Vars(r)["name"])
+	if err != nil {
+		return response.BadRequest(err)
+	}
+
+	err = validateRemoteName(remoteName)
 	if err != nil {
 		return response.BadRequest(err)
 	}
@@ -125,6 +147,42 @@ func cmdRemoteDelete(state state.State, r *http.Request) response.Response {
 }
 
 /*****************HELPER FUNCTIONS**************************/
+
+var reservedRemoteNames = map[string]struct{}{
+	"ceph":    {},
+	"ganesha": {},
+	"radosgw": {},
+}
+
+func validateRemoteName(name string) error {
+	if !constants.IsValidClusterName(name) {
+		return fmt.Errorf("remote names can only have [a-z] or [0-9] characters")
+	}
+
+	_, isReserved := reservedRemoteNames[name]
+	if isReserved {
+		return fmt.Errorf("remote name %q is reserved", name)
+	}
+
+	return nil
+}
+
+func validateRemoteImportRequest(routeName string, req types.RemoteImportRequest) error {
+	err := validateRemoteName(req.Name)
+	if err != nil {
+		return err
+	}
+
+	if routeName != req.Name {
+		return fmt.Errorf("remote name in URL %q does not match request body %q", routeName, req.Name)
+	}
+
+	if !constants.IsValidClusterName(req.LocalName) {
+		return fmt.Errorf("local names can only have [a-z] or [0-9] characters")
+	}
+
+	return nil
+}
 
 func isRemoteConfigured(remoteName string) bool {
 	// check remote configured for RBD mirroring
