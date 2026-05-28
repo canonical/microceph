@@ -345,18 +345,32 @@ class TestApplyRbdMirror:
         )
         result = orchestrator.apply_rbd_mirror(spec)
         assert result.exception is None
-        # Summary confirms enablement and echoes the requested placement
-        # without claiming each host was individually provisioned.
-        assert "enabled" in result.result
-        assert "requested placement: node1, node2" in result.result
-        # Single API call regardless of host count (local socket only)
-        mock_client.services.enable_service.assert_called_once()
+        # Per-host fan-out via the proxyTarget middleware: one call per
+        # requested host with target=<host>.
+        assert "enabled on node1, node2" in result.result
+        assert mock_client.services.enable_service.call_count == 2
+        targets = sorted(
+            c.kwargs["target"]
+            for c in mock_client.services.enable_service.call_args_list
+        )
+        assert targets == ["node1", "node2"]
 
     def test_apply_rbd_mirror_no_placement(self, orchestrator, mock_client):
         spec = ServiceSpec(service_type="rbd-mirror")
         result = orchestrator.apply_rbd_mirror(spec)
         assert result.exception is not None
         assert "No placement hosts" in str(result.exception)
+
+    def test_apply_rbd_mirror_service_id_rejected(self, orchestrator, mock_client):
+        # Bare-name guard: rbd-mirror does not support dotted names.
+        spec = ServiceSpec(
+            service_type="rbd-mirror",
+            service_id="zone1",
+            placement=PlacementSpec(hosts=["node1"]),
+        )
+        result = orchestrator.apply_rbd_mirror(spec)
+        assert isinstance(result.exception, ValueError)
+        mock_client.services.enable_service.assert_not_called()
 
     def test_apply_rbd_mirror_skips_existing(self, orchestrator, mock_client):
         # node1 already runs the service; node2 is also requested.
@@ -370,8 +384,48 @@ class TestApplyRbdMirror:
         result = orchestrator.apply_rbd_mirror(spec)
         assert result.exception is None
         assert "already active on node1" in result.result
-        assert "enabled" in result.result
+        assert "enabled on node2" in result.result
+        # Only the not-yet-active host is targeted.
         mock_client.services.enable_service.assert_called_once()
+        assert (
+            mock_client.services.enable_service.call_args.kwargs["target"]
+            == "node2"
+        )
+
+    def test_apply_list_services_failure_propagates(self, orchestrator, mock_client):
+        # If list_services itself fails we must NOT silently treat the
+        # set of existing hosts as empty and re-apply everywhere; the
+        # error has to surface.
+        mock_client.services.list_services.side_effect = RemoteException(
+            "list failed"
+        )
+        spec = ServiceSpec(
+            service_type="rbd-mirror",
+            placement=PlacementSpec(hosts=["node1"]),
+        )
+        result = orchestrator.apply_rbd_mirror(spec)
+        assert isinstance(result.exception, RemoteException)
+        mock_client.services.enable_service.assert_not_called()
+
+    def test_apply_rbd_mirror_partial_failure(self, orchestrator, mock_client):
+        # node1 enables, node2 fails — any failure raises with
+        # partial-success context in the message.
+        spec = ServiceSpec(
+            service_type="rbd-mirror",
+            placement=PlacementSpec(hosts=["node1", "node2"]),
+        )
+
+        def side_effect(*args, **kwargs):
+            if kwargs.get("target") == "node2":
+                raise RemoteException("node2 boom")
+
+        mock_client.services.enable_service.side_effect = side_effect
+        result = orchestrator.apply_rbd_mirror(spec)
+        assert isinstance(result.exception, RuntimeError)
+        msg = str(result.exception)
+        assert "Failed to enable rbd-mirror" in msg
+        assert "node2: node2 boom" in msg
+        assert "enabled on node1" in msg
 
     def test_apply_rbd_mirror_all_existing(self, orchestrator, mock_client):
         mock_client.services.list_services.return_value = [
@@ -408,11 +462,11 @@ class TestApplyRgw:
         )
         result = orchestrator.apply_rgw(spec)
         assert result.exception is None
-        assert "enabled" in result.result
-        assert "node1" in result.result
+        assert "enabled on node1" in result.result
 
         call_kwargs = mock_client.services.enable_service.call_args
         assert call_kwargs.kwargs["name"] == "rgw"
+        assert call_kwargs.kwargs["target"] == "node1"
 
     def test_apply_rgw_with_port(self, orchestrator, mock_client):
         spec = RGWSpec(
@@ -426,6 +480,7 @@ class TestApplyRgw:
         call_kwargs = mock_client.services.enable_service.call_args
         payload = json.loads(call_kwargs.kwargs["payload"])
         assert payload["Port"] == 8080
+        assert call_kwargs.kwargs["target"] == "node1"
 
     def test_apply_rgw_ssl_cert_without_key_warns(self, orchestrator, mock_client, caplog):
         """SSL cert is present but no key; should warn and not send cert."""
@@ -451,27 +506,19 @@ class TestApplyRgw:
         result = orchestrator.apply_rgw(spec)
         assert result.exception is not None
 
-    def test_apply_rgw_service_id_warns(self, orchestrator, mock_client, caplog):
+    def test_apply_rgw_service_id_rejected(self, orchestrator, mock_client):
         # MicroCeph deploys a single bare 'rgw' service; per-realm
-        # service_id is silently dropped — log a warning instead of
-        # surprising the caller.
+        # service_id is not supported and is rejected up front so the
+        # operator does not believe a realm was provisioned.
         spec = RGWSpec(
             service_type="rgw",
             service_id="realm1",
             placement=PlacementSpec(hosts=["node1"]),
         )
-        import logging
-        with caplog.at_level(logging.WARNING):
-            result = orchestrator.apply_rgw(spec)
-
-        assert result.exception is None
-        # service_id is not forwarded to the backend.
-        call_kwargs = mock_client.services.enable_service.call_args
-        assert call_kwargs.kwargs["name"] == "rgw"
-        assert any(
-            "service_id" in r.message and "realm1" in r.message
-            for r in caplog.records
-        )
+        result = orchestrator.apply_rgw(spec)
+        assert isinstance(result.exception, ValueError)
+        assert "does not support a service_id" in str(result.exception)
+        mock_client.services.enable_service.assert_not_called()
 
 
 # ===================================================================
@@ -487,12 +534,12 @@ class TestApplyNfs:
         )
         result = orchestrator.apply_nfs(spec)
         assert result.exception is None
-        assert "enabled" in result.result
-        assert "node1" in result.result
+        assert "enabled on node1" in result.result
 
         call_kwargs = mock_client.services.enable_service.call_args
         payload = json.loads(call_kwargs.kwargs["payload"])
         assert payload["cluster_id"] == "mycluster"
+        assert call_kwargs.kwargs["target"] == "node1"
 
     def test_apply_nfs_with_port(self, orchestrator, mock_client):
         spec = NFSServiceSpec(
@@ -547,8 +594,13 @@ class TestApplyNfs:
         )
         result = orchestrator.apply_nfs(spec)
         assert "already active on node1" in result.result
-        assert "enabled" in result.result
+        assert "enabled on node2" in result.result
         mock_client.services.enable_service.assert_called_once()
+        # Only the host that did not yet run the cluster is targeted.
+        assert (
+            mock_client.services.enable_service.call_args.kwargs["target"]
+            == "node2"
+        )
 
     def test_apply_nfs_distinct_cluster_not_conflated(self, orchestrator, mock_client):
         """A host running nfs.other must not suppress enabling nfs.mycluster."""
@@ -584,11 +636,20 @@ class TestApplyCephfsMirror:
         )
         result = orchestrator.apply_cephfs_mirror(spec)
         assert result.exception is None
-        assert "enabled" in result.result
-        assert "node1" in result.result
+        assert "enabled on node1" in result.result
         mock_client.services.enable_service.assert_called_once_with(
-            name="cephfs-mirror", payload="{}", wait=True,
+            name="cephfs-mirror", payload="{}", wait=True, target="node1",
         )
+
+    def test_apply_cephfs_mirror_service_id_rejected(self, orchestrator, mock_client):
+        spec = ServiceSpec(
+            service_type="cephfs-mirror",
+            service_id="x",
+            placement=PlacementSpec(hosts=["node1"]),
+        )
+        result = orchestrator.apply_cephfs_mirror(spec)
+        assert isinstance(result.exception, ValueError)
+        mock_client.services.enable_service.assert_not_called()
 
 
 # ===================================================================
@@ -630,11 +691,15 @@ class TestDescribeServiceNameFilter:
 # ===================================================================
 
 class TestRemoveServiceDotted:
-    def test_remove_dotted_non_nfs_service(self, orchestrator, mock_client):
-        """e.g. mds.myfs should call delete_service('mds')"""
+    def test_remove_dotted_non_nfs_rejected(self, orchestrator, mock_client):
+        # Removing 'mds.myfs' (or any dotted non-NFS name) must be
+        # rejected: silently dropping the id would otherwise wipe the
+        # bare MDS service across every host while the operator
+        # believed only a specific filesystem was being removed.
         result = orchestrator.remove_service("mds.myfs")
-        assert result.exception is None
-        mock_client.services.delete_service.assert_called_once_with("mds")
+        assert isinstance(result.exception, ValueError)
+        assert "does not support a service_id" in str(result.exception)
+        mock_client.services.delete_service.assert_not_called()
 
 
 # ===================================================================
@@ -649,10 +714,9 @@ class TestApplyGenericServices:
         )
         result = orchestrator.apply_mon(spec)
         assert result.exception is None
-        assert "enabled" in result.result
-        assert "node1" in result.result
+        assert "enabled on node1" in result.result
         mock_client.services.enable_service.assert_called_once_with(
-            name="mon", payload="{}", wait=True,
+            name="mon", payload="{}", wait=True, target="node1",
         )
 
     def test_apply_mgr(self, orchestrator, mock_client):
@@ -663,8 +727,28 @@ class TestApplyGenericServices:
         result = orchestrator.apply_mgr(spec)
         assert result.exception is None
         mock_client.services.enable_service.assert_called_once_with(
-            name="mgr", payload="{}", wait=True,
+            name="mgr", payload="{}", wait=True, target="node1",
         )
+
+    def test_apply_mon_service_id_rejected(self, orchestrator, mock_client):
+        spec = ServiceSpec(
+            service_type="mon",
+            service_id="x",
+            placement=PlacementSpec(hosts=["node1"]),
+        )
+        result = orchestrator.apply_mon(spec)
+        assert isinstance(result.exception, ValueError)
+        mock_client.services.enable_service.assert_not_called()
+
+    def test_apply_mgr_service_id_rejected(self, orchestrator, mock_client):
+        spec = ServiceSpec(
+            service_type="mgr",
+            service_id="x",
+            placement=PlacementSpec(hosts=["node1"]),
+        )
+        result = orchestrator.apply_mgr(spec)
+        assert isinstance(result.exception, ValueError)
+        mock_client.services.enable_service.assert_not_called()
 
     def test_apply_mds(self, orchestrator, mock_client):
         spec = ServiceSpec(
@@ -674,29 +758,21 @@ class TestApplyGenericServices:
         result = orchestrator.apply_mds(spec)
         assert result.exception is None
         mock_client.services.enable_service.assert_called_once_with(
-            name="mds", payload="{}", wait=True,
+            name="mds", payload="{}", wait=True, target="node1",
         )
 
-    def test_apply_mds_service_id_warns(self, orchestrator, mock_client, caplog):
+    def test_apply_mds_service_id_rejected(self, orchestrator, mock_client):
         # Per-filesystem MDS placement is not supported by MicroCeph;
-        # service_id (filesystem name) must be dropped with a warning.
+        # a service_id (filesystem name) is rejected up front.
         spec = ServiceSpec(
             service_type="mds",
             service_id="fs1",
             placement=PlacementSpec(hosts=["node1"]),
         )
-        import logging
-        with caplog.at_level(logging.WARNING):
-            result = orchestrator.apply_mds(spec)
-
-        assert result.exception is None
-        mock_client.services.enable_service.assert_called_once_with(
-            name="mds", payload="{}", wait=True,
-        )
-        assert any(
-            "service_id" in r.message and "fs1" in r.message
-            for r in caplog.records
-        )
+        result = orchestrator.apply_mds(spec)
+        assert isinstance(result.exception, ValueError)
+        assert "does not support a service_id" in str(result.exception)
+        mock_client.services.enable_service.assert_not_called()
 
 
 # ===================================================================
@@ -705,26 +781,80 @@ class TestApplyGenericServices:
 
 class TestRemoveService:
     def test_remove_service_basic(self, orchestrator, mock_client):
+        mock_client.services.list_services.return_value = [
+            _svc("rgw", "node1"),
+            _svc("rgw", "node2"),
+        ]
         result = orchestrator.remove_service("rgw")
         assert result.exception is None
-        assert "Removed service rgw" in result.result
-        mock_client.services.delete_service.assert_called_once_with("rgw")
+        assert "removed from node1, node2" in result.result
+        assert mock_client.services.delete_service.call_count == 2
+
+    def test_remove_service_no_hosts(self, orchestrator, mock_client):
+        # list_services returns [] (default) — nothing to remove.
+        result = orchestrator.remove_service("rgw")
+        assert result.exception is None
+        assert "no hosts" in result.result
+        mock_client.services.delete_service.assert_not_called()
 
     def test_remove_service_nfs_with_cluster_id(self, orchestrator, mock_client):
+        mock_client.services.list_services.return_value = [
+            _svc("nfs", "node1", group_id="mycluster"),
+        ]
         result = orchestrator.remove_service("nfs.mycluster")
         assert result.exception is None
-        assert "Removed service nfs.mycluster" in result.result
-        mock_client.services.delete_nfs_service.assert_called_once_with("mycluster")
+        assert "removed from node1" in result.result
+        mock_client.services.delete_nfs_service.assert_called_once()
+        c = mock_client.services.delete_nfs_service.call_args
+        assert c.args == ("mycluster",)
+        assert c.kwargs["target"] == "node1"
 
     def test_remove_service_nfs_without_cluster_id(self, orchestrator, mock_client):
         result = orchestrator.remove_service("nfs")
         assert result.exception is not None
         assert "cluster_id" in str(result.exception)
 
+    def test_remove_service_nfs_group_id_no_match(self, orchestrator, mock_client):
+        # NFS cluster 'other' exists on node1, but we're removing
+        # 'mycluster' — there is nothing to do; the call must NOT
+        # cascade into deleting the unrelated cluster.
+        mock_client.services.list_services.return_value = [
+            _svc("nfs", "node1", group_id="other"),
+        ]
+        result = orchestrator.remove_service("nfs.mycluster")
+        assert result.exception is None
+        assert "no hosts" in result.result
+        mock_client.services.delete_nfs_service.assert_not_called()
+
     def test_remove_service_api_error(self, orchestrator, mock_client):
+        mock_client.services.list_services.return_value = [
+            _svc("rgw", "node1"),
+        ]
         mock_client.services.delete_service.side_effect = RemoteException("fail")
         result = orchestrator.remove_service("rgw")
         assert result.exception is not None
+        assert "Failed to remove" in str(result.exception)
+
+    def test_remove_service_partial_failure(self, orchestrator, mock_client):
+        # node1 succeeds, node2 fails — any failure raises so the
+        # operator sees a visible error, and the partial-success
+        # context is included in the message.
+        mock_client.services.list_services.return_value = [
+            _svc("rgw", "node1"),
+            _svc("rgw", "node2"),
+        ]
+
+        def side_effect(*args, **kwargs):
+            if kwargs.get("target") == "node2":
+                raise RemoteException("node2 boom")
+
+        mock_client.services.delete_service.side_effect = side_effect
+        result = orchestrator.remove_service("rgw")
+        assert isinstance(result.exception, RuntimeError)
+        msg = str(result.exception)
+        assert "Failed to remove rgw" in msg
+        assert "node2: node2 boom" in msg
+        assert "removed from node1" in msg
 
 
 # ===================================================================
@@ -750,26 +880,67 @@ class TestRemoveHost:
 
 class TestServiceAction:
     def test_restart_service(self, orchestrator, mock_client):
+        mock_client.services.list_services.return_value = [
+            _svc("mon", "node1"),
+            _svc("mon", "node2"),
+        ]
         result = orchestrator.service_action("restart", "mon")
         assert result.exception is None
-        assert "Restarted mon" in result.result[0]
-        mock_client.services.restart_services.assert_called_once_with(["mon"])
+        # One restart call per host carrying target=<host>.
+        assert mock_client.services.restart_services.call_count == 2
+        targets = sorted(
+            c.kwargs["target"]
+            for c in mock_client.services.restart_services.call_args_list
+        )
+        assert targets == ["node1", "node2"]
+        assert any("Restarted mon on node1" in r for r in result.result)
+        assert any("Restarted mon on node2" in r for r in result.result)
 
-    def test_restart_service_with_id(self, orchestrator, mock_client):
-        # Service identifiers are stripped before dispatching to the
-        # MicroCeph API; rgw is a supported restart target.
-        result = orchestrator.service_action("restart", "rgw.realm1")
+    def test_restart_no_hosts(self, orchestrator, mock_client):
+        # No hosts running the service — no-op (still success).
+        result = orchestrator.service_action("restart", "mon")
         assert result.exception is None
-        mock_client.services.restart_services.assert_called_once_with(["rgw"])
+        assert any("nothing to restart" in r for r in result.result)
+        mock_client.services.restart_services.assert_not_called()
+
+    def test_restart_dotted_non_nfs_rejected(self, orchestrator, mock_client):
+        # Dotted non-NFS names are rejected: restarting 'rgw.realm1'
+        # would have to silently drop the id and restart every rgw,
+        # which is a surprising operation.
+        result = orchestrator.service_action("restart", "rgw.realm1")
+        assert isinstance(result.exception, ValueError)
+        assert "does not support a service_id" in str(result.exception)
+        mock_client.services.restart_services.assert_not_called()
 
     def test_restart_unsupported_service_type(self, orchestrator, mock_client):
         # MicroCeph's backend serviceWorkerTable only handles osd/mon/rgw.
         # The orchestrator must reject restart for other service types up
         # front rather than surfacing an opaque RemoteException.
         for svc in ["nfs.mycluster", "mds", "mgr", "rbd-mirror"]:
+            mock_client.services.restart_services.reset_mock()
             result = orchestrator.service_action("restart", svc)
             assert isinstance(result.exception, NotImplementedError), svc
             mock_client.services.restart_services.assert_not_called()
+
+    def test_restart_partial_failure(self, orchestrator, mock_client):
+        # node1 restarts, node2 fails — any failure raises with
+        # partial-success context in the message.
+        mock_client.services.list_services.return_value = [
+            _svc("mon", "node1"),
+            _svc("mon", "node2"),
+        ]
+
+        def side_effect(*args, **kwargs):
+            if kwargs.get("target") == "node2":
+                raise RemoteException("node2 boom")
+
+        mock_client.services.restart_services.side_effect = side_effect
+        result = orchestrator.service_action("restart", "mon")
+        assert isinstance(result.exception, RuntimeError)
+        msg = str(result.exception)
+        assert "Failed to restart mon" in msg
+        assert "node2: node2 boom" in msg
+        assert "restarted on node1" in msg
 
     def test_unsupported_action(self, orchestrator, mock_client):
         result = orchestrator.service_action("stop", "mon")
@@ -777,6 +948,10 @@ class TestServiceAction:
         assert "not supported" in str(result.exception)
 
     def test_restart_api_error(self, orchestrator, mock_client):
+        mock_client.services.list_services.return_value = [
+            _svc("mon", "node1"),
+        ]
         mock_client.services.restart_services.side_effect = RemoteException("fail")
         result = orchestrator.service_action("restart", "mon")
         assert result.exception is not None
+        assert "Failed to restart" in str(result.exception)

@@ -115,7 +115,8 @@ assert_exit_ok "device ls succeeds" run_ceph orch device ls
 echo "=== 6. Apply RGW ==="
 # ===================================================================
 
-# Clean up RGW if it was already enabled by prior test steps
+# Clean up RGW if it was already enabled by prior test steps.
+# `orch rm rgw` is now cluster-wide (fans out to every host running rgw).
 run_ceph orch rm rgw >/dev/null 2>&1 || true
 sleep 3
 
@@ -130,6 +131,34 @@ assert_contains "rgw in service list" "rgw" "$output"
 
 output=$(run_ceph orch ps --daemon-type rgw)
 assert_contains "rgw daemon visible" "rgw" "$output"
+
+# Per-host targeting check: the RGW daemon must end up on the
+# requested host (first_host), not on whichever node served the unix
+# socket. This is what the ?target= proxyTarget mechanism is for.
+output=$(run_ceph orch ps --hostname "$placement" --daemon-type rgw)
+assert_contains "rgw daemon on requested host $placement" "rgw" "$output"
+
+# ===================================================================
+echo "=== 6b. Apply RGW on a second host (per-host targeting) ==="
+# ===================================================================
+
+# Find a host that is NOT the first one to verify cross-node enablement
+# from the local socket. Only run this leg when the cluster has more
+# than one host (single-node deployments skip).
+second_host=$(run_ceph orch host ls | awk 'NR>1 && NF>0 && $1 != "'"$first_host"'" {print $1; exit}')
+if [ -n "$second_host" ] && [ "$second_host" != "$first_host" ]; then
+    output=$(run_ceph orch apply rgw default --placement="$first_host,$second_host")
+    assert_contains "rgw applied to two hosts" "enabled|already active" "$output"
+    sleep 5
+
+    # Verify both hosts now run rgw. The local node (running the orch
+    # client) is the unix-socket endpoint; the second_host enablement
+    # exercises the unix-socket -> proxyTarget -> remote mTLS path.
+    output=$(run_ceph orch ps --hostname "$second_host" --daemon-type rgw)
+    assert_contains "rgw daemon on $second_host (cross-node target)" "rgw" "$output"
+else
+    echo "  SKIP per-host targeting RGW test (only one host in cluster)"
+fi
 
 # ===================================================================
 echo "=== 7. Apply NFS ==="
@@ -161,23 +190,38 @@ echo "=== 8. Restart service ==="
 # ===================================================================
 
 output=$(run_ceph orch restart mon)
-assert_contains "mon restarted" "Restarted" "$output"
+assert_contains "mon restarted" "Restarted mon on" "$output"
+
+# Per-host fan-out: in a multi-host cluster the restart output should
+# enumerate each host running mon, not a single "Restarted mon".
+if [ -n "${second_host:-}" ] && [ "$second_host" != "$first_host" ]; then
+    assert_contains "mon restart enumerates first host" "$first_host" "$output"
+fi
+
+# Dotted-name guard: orch restart rgw.realm1 must fail with a clear
+# "does not support a service_id" error rather than silently restart
+# every rgw daemon.
+output=$(run_ceph orch restart rgw.realm1 2>&1 || true)
+assert_contains "dotted restart rejected" "does not support a service_id" "$output"
 
 # ===================================================================
 echo "=== 9. Remove RGW ==="
 # ===================================================================
 
 output=$(run_ceph orch rm rgw)
-assert_contains "rgw removed" "Removed" "$output"
+assert_contains "rgw removed" "removed from" "$output"
 sleep 3
 
-# Verify RGW is gone from the local node. In multi-node clusters,
-# RGW may still appear on other nodes if it was enabled independently
-# (orch rm only affects the local node; per-host targeting not yet
-# supported, see UseTarget limitation).
+# remove_service fans out across every host running the service, so
+# RGW must be gone from BOTH first_host and second_host (when present).
 local_host="${first_host:-$(hostname)}"
 output=$(run_ceph orch ps --hostname "$local_host" --daemon-type rgw)
-assert_not_contains "rgw gone from local node" "rgw" "$output"
+assert_not_contains "rgw gone from first host" "rgw" "$output"
+
+if [ -n "${second_host:-}" ] && [ "$second_host" != "$first_host" ]; then
+    output=$(run_ceph orch ps --hostname "$second_host" --daemon-type rgw)
+    assert_not_contains "rgw gone from second host (cluster-wide remove)" "rgw" "$output"
+fi
 
 # ===================================================================
 echo "=== 10. Remove NFS ==="

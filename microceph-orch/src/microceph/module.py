@@ -51,6 +51,31 @@ daemon_spec_map = {
 # "no handler defined for service X" at the backend.
 RESTART_SUPPORTED_SERVICES = frozenset({"osd", "mon", "rgw"})
 
+# Services for which MicroCeph distinguishes individual instances via a
+# `service_id` (the `<type>.<id>` dotted form). Currently only NFS, where
+# the id is the NFS cluster_id. Any other service is deployed as a single
+# bare instance per node; using a dotted name on them is rejected up front
+# so operators get a clear error instead of an apparently successful
+# operation that silently targets the wrong scope.
+DOTTED_NAME_SUPPORTED_SERVICES = frozenset({"nfs"})
+
+
+def _require_bare_service_name(svc_type: str, svc_id: str) -> None:
+    """Reject dotted service names for services that don't support them.
+
+    Raises ValueError if `svc_id` is non-empty and `svc_type` is not in
+    DOTTED_NAME_SUPPORTED_SERVICES.
+    """
+    if svc_id and svc_type not in DOTTED_NAME_SUPPORTED_SERVICES:
+        supported = ", ".join(sorted(DOTTED_NAME_SUPPORTED_SERVICES))
+        raise ValueError(
+            f"Service type '{svc_type}' does not support a service_id; "
+            f"MicroCeph deploys a single bare '{svc_type}' per node. "
+            f"Use '{svc_type}' (without an id) instead of "
+            f"'{svc_type}.{svc_id}'. Dotted names are only valid for: "
+            f"{supported}."
+        )
+
 class MicroCephOrchestrator(Orchestrator,
                             MgrModule,
                             metaclass=CLICommandMeta):
@@ -366,64 +391,99 @@ class MicroCephOrchestrator(Orchestrator,
         When group_id is provided (e.g. an NFS cluster id), only services
         matching both the type and that group are counted, so distinct NFS
         clusters are not conflated.
-        """
-        try:
-            services = self.microceph.services.list_services()
-        except RemoteException:
-            logger.warning(f"Failed to list services while checking existing {service_type} hosts")
-            return set()
 
+        A failure to list services from the backend is propagated to the
+        caller rather than swallowed: returning an empty set on error
+        would otherwise produce false "no-op" successes and re-apply
+        services that are in fact already running.
+        """
+        services = self.microceph.services.list_services()
         return {
             svc.get('location', '') for svc in services
             if svc.get('service') == service_type
             and (group_id is None or svc.get('group_id', '') == group_id)
         }
 
-    def _apply_service(self, service_name: str, spec: ServiceSpec,
+    def _apply_service(self, service_type: str, spec: ServiceSpec,
                        payload: str, group_id: Optional[str] = None) -> str:
         """Common logic for applying (enabling) a service.
 
-        Validates placement hosts and checks whether the service is already
-        running, then calls enable_service once.
+        Per-host targeting: MicroCeph's HTTP API endpoints for service
+        enable/delete/restart all declare ProxyTarget=true in the Go
+        rest layer. The microcluster proxyTarget middleware inspects the
+        `?target=<member>` query parameter and forwards the request over
+        mTLS to that member's HTTPS endpoint. The Python client uses the
+        local unix socket; the server transparently proxies per-host
+        calls from there, so no direct HTTPS connectivity from the orch
+        module is required.
+
+        We iterate requested placement hosts, skip any host that already
+        runs the service, and call enable_service once per remaining
+        host with `target=<host>`. Any per-host failure raises so the
+        operator gets a visible error rather than a partial-success
+        result that the Ceph orchestrator framework would render as
+        green.
+
+        Note: `service_type` is the bare service type (e.g. "rgw",
+        "nfs"), never the dotted form. Callers that accept dotted names
+        are expected to parse and pass `group_id` separately.
 
         Returns a summary string on success.
-        Raises an exception if placement is invalid or the API call fails.
-
-        NOTE: Per-host targeting is not yet supported. The Python client
-        connects via unix socket to the local node only. MicroCeph's Go
-        client uses UseTarget() to proxy to specific hosts, but this is
-        not exposed through the socket. See todo #6.
-        Because the enable call cannot be confirmed per host, the summary
-        reports the requested placement rather than claiming each host was
-        individually provisioned.
+        Raises RuntimeError if any host fails to enable.
         """
         hosts = self._get_placement_hosts(spec)
-        existing = self._get_existing_service_hosts(service_name, group_id)
+        existing = self._get_existing_service_hosts(service_type, group_id)
 
         # If every requested host already runs the service, there is
         # nothing to do.
         if existing.issuperset(hosts):
             skipped_str = ', '.join(hosts)
-            logger.info(f"Skipping {service_name}: already active on {skipped_str}")
-            return f"{service_name}: already active on {skipped_str}"
+            logger.info(f"Skipping {service_type}: already active on {skipped_str}")
+            return f"{service_type}: already active on {skipped_str}"
 
-        logger.info(f"Enabling {service_name} (requested hosts: {', '.join(hosts)})")
-        self.microceph.services.enable_service(
-            name=service_name,
-            payload=payload,
-            wait=True,
-        )
-
-        # The enable call is served by the local node and cannot be
-        # confirmed per host (see note above), so report the request
-        # honestly rather than claiming every placement host gained the
-        # service.
-        summary = f"enabled (requested placement: {', '.join(hosts)})"
+        to_enable = [h for h in hosts if h not in existing]
         already_active = sorted(existing & set(hosts))
-        if already_active:
-            summary += f"; already active on {', '.join(already_active)}"
 
-        return f"{service_name}: {summary}"
+        enabled: List[str] = []
+        failures: List[str] = []
+        for host in to_enable:
+            logger.info(f"Enabling {service_type} on {host}")
+            try:
+                self.microceph.services.enable_service(
+                    name=service_type,
+                    payload=payload,
+                    wait=True,
+                    target=host,
+                )
+                enabled.append(host)
+            except Exception as e:
+                logger.error(f"Failed to enable {service_type} on {host}: {e}")
+                failures.append(f"{host}: {e}")
+
+        # Any failure is surfaced as an exception so the orchestrator
+        # framework reports the operation as failed. Partial-success
+        # context is included in the message to aid debugging.
+        if failures:
+            ctx = []
+            if enabled:
+                ctx.append(f"enabled on {', '.join(enabled)}")
+            if already_active:
+                ctx.append(f"already active on {', '.join(already_active)}")
+            ctx_str = f" ({'; '.join(ctx)})" if ctx else ""
+            raise RuntimeError(
+                f"Failed to enable {service_type}: "
+                + "; ".join(failures)
+                + ctx_str
+            )
+
+        parts = []
+        if enabled:
+            parts.append(f"enabled on {', '.join(enabled)}")
+        if already_active:
+            parts.append(f"already active on {', '.join(already_active)}")
+
+        summary = "; ".join(parts) if parts else "no-op"
+        return f"{service_type}: {summary}"
 
     @handle_orch_error
     def apply_rbd_mirror(self, spec: ServiceSpec) -> OrchResult[str]:
@@ -431,8 +491,10 @@ class MicroCephOrchestrator(Orchestrator,
 
         rbd-mirror is a client-like service with no additional parameters.
         The Go API's ClientServicePlacement handler takes no payload.
+        Dotted names are rejected (see `_require_bare_service_name`).
         """
         logger.debug("Applying rbd-mirror service")
+        _require_bare_service_name("rbd-mirror", spec.service_id or "")
         return self._apply_service("rbd-mirror", spec, "{}")
 
     @handle_orch_error
@@ -451,19 +513,12 @@ class MicroCephOrchestrator(Orchestrator,
 
         Note on service_id (realms/zones): MicroCeph deploys a single bare
         "rgw" service per node and does not support multiple RGW instances
-        with distinct service_ids on the same cluster. If a service_id is
-        provided in the spec, it is ignored and a warning is logged.
+        with distinct service_ids on the same cluster. Supplying a
+        service_id raises ValueError so the operator is not surprised
+        by a silently-misscoped subsequent remove_service call.
         """
         logger.debug("Applying RGW service")
-
-        # MicroCeph stores a single bare "rgw" service; per-realm service_id
-        # is not supported by the backend, so we drop it with a warning.
-        if spec.service_id:
-            logger.warning(
-                f"RGW service_id={spec.service_id!r} ignored: MicroCeph deploys "
-                "a single 'rgw' service; multiple RGW realms with distinct "
-                "service_ids are not supported."
-            )
+        _require_bare_service_name("rgw", spec.service_id or "")
 
         # Build RGW-specific payload from the spec.
         # Go's RgwServicePlacement expects: Port, SSLPort, SSLCertificate, SSLPrivateKey
@@ -518,14 +573,22 @@ class MicroCephOrchestrator(Orchestrator,
 
     @handle_orch_error
     def apply_mon(self, spec: ServiceSpec) -> OrchResult[str]:
-        """Enable the MON service on the target hosts."""
+        """Enable the MON service on the target hosts.
+
+        Dotted names are rejected (see `_require_bare_service_name`).
+        """
         logger.debug("Applying MON service")
+        _require_bare_service_name("mon", spec.service_id or "")
         return self._apply_service("mon", spec, "{}")
 
     @handle_orch_error
     def apply_mgr(self, spec: ServiceSpec) -> OrchResult[str]:
-        """Enable the MGR service on the target hosts."""
+        """Enable the MGR service on the target hosts.
+
+        Dotted names are rejected (see `_require_bare_service_name`).
+        """
         logger.debug("Applying MGR service")
+        _require_bare_service_name("mgr", spec.service_id or "")
         return self._apply_service("mgr", spec, "{}")
 
     @handle_orch_error
@@ -534,16 +597,10 @@ class MicroCephOrchestrator(Orchestrator,
 
         Note on service_id (filesystem name): MicroCeph deploys a single
         bare "mds" service and does not support per-filesystem MDS
-        placement. If a service_id is provided in the spec, it is
-        ignored and a warning is logged.
+        placement. Supplying a service_id raises ValueError.
         """
         logger.debug("Applying MDS service")
-        if spec.service_id:
-            logger.warning(
-                f"MDS service_id={spec.service_id!r} ignored: MicroCeph deploys "
-                "a single 'mds' service; per-filesystem MDS placement is not "
-                "supported."
-            )
+        _require_bare_service_name("mds", spec.service_id or "")
         return self._apply_service("mds", spec, "{}")
 
     @handle_orch_error
@@ -551,41 +608,80 @@ class MicroCephOrchestrator(Orchestrator,
         """Enable the cephfs-mirror service on the target hosts.
 
         cephfs-mirror is a client-like service (same as rbd-mirror)
-        with no additional parameters.
+        with no additional parameters. Dotted names are rejected
+        (see `_require_bare_service_name`).
         """
         logger.debug("Applying cephfs-mirror service")
+        _require_bare_service_name("cephfs-mirror", spec.service_id or "")
         return self._apply_service("cephfs-mirror", spec, "{}")
 
     @handle_orch_error
     def remove_service(self, service_name: str, force: bool = False) -> OrchResult[str]:
-        """Remove a service from the local node.
+        """Remove a service cluster-wide.
 
-        Sends a DELETE request to the local MicroCeph API. This removes
-        the service from the node connected via the unix socket only;
-        it does not remove the service cluster-wide. Per-host targeting
-        requires UseTarget support (see todo #6).
+        Discovers all hosts currently running the requested service via
+        list_services() and issues a DELETE per host using the server-side
+        proxyTarget middleware (see _apply_service for transport notes).
+        Errors from individual hosts are collected so a partial failure
+        does not mask successful removals on other nodes.
 
-        :param service_name: service type or type.id (e.g. "rgw", "nfs.mycluster")
+        :param service_name: service type or type.id (e.g. "rgw",
+            "nfs.mycluster")
         :param force: unused, kept for interface compatibility
         """
         logger.info(f"Removing service: {service_name}, force={force}")
 
         svc_type, svc_id = self._parse_service_name(service_name)
 
-        # NFS requires the cluster_id in the delete body
-        if svc_type == 'nfs':
-            if not svc_id:
-                raise ValueError("NFS removal requires service name in 'nfs.<cluster_id>' format")
-            self.microceph.services.delete_nfs_service(svc_id)
-        else:
-            if svc_id:
-                logger.debug(
-                    f"Ignoring id '{svc_id}' for {svc_type}: MicroCeph manages "
-                    f"a single {svc_type} service per node"
-                )
-            self.microceph.services.delete_service(svc_type)
+        if svc_type == 'nfs' and not svc_id:
+            raise ValueError(
+                "NFS removal requires service name in 'nfs.<cluster_id>' format"
+            )
+        # For non-NFS services, a dotted name is rejected up front:
+        # MicroCeph deploys a single bare instance per node and silently
+        # dropping the id would let an operator believe they were
+        # removing a specific realm/filesystem while actually wiping the
+        # bare service from every host.
+        _require_bare_service_name(svc_type, svc_id)
 
-        return f"Removed service {service_name}"
+        # Discover hosts currently running this service. For non-nfs
+        # services group_id is unused; for nfs it filters to the specific
+        # cluster_id.
+        group_id = svc_id if svc_type == 'nfs' else None
+        hosts = sorted(self._get_existing_service_hosts(svc_type, group_id))
+
+        if not hosts:
+            logger.info(f"No hosts found running {service_name}; nothing to do")
+            return f"{service_name}: no hosts running this service"
+
+        removed: List[str] = []
+        failures: List[str] = []
+        for host in hosts:
+            try:
+                if svc_type == 'nfs':
+                    self.microceph.services.delete_nfs_service(
+                        svc_id, target=host,
+                    )
+                else:
+                    self.microceph.services.delete_service(
+                        svc_type, target=host,
+                    )
+                removed.append(host)
+            except Exception as e:
+                logger.error(f"Failed to remove {service_name} from {host}: {e}")
+                failures.append(f"{host}: {e}")
+
+        # Any failure raises so the operator gets a visible error;
+        # partial-success context is included in the message.
+        if failures:
+            ctx = f" (removed from {', '.join(removed)})" if removed else ""
+            raise RuntimeError(
+                f"Failed to remove {service_name}: "
+                + "; ".join(failures)
+                + ctx
+            )
+
+        return f"{service_name}: removed from {', '.join(removed)}"
 
     @handle_orch_error
     def remove_host(self, host: str, force: bool = False,
@@ -605,7 +701,9 @@ class MicroCephOrchestrator(Orchestrator,
     def service_action(self, action: str, service_name: str) -> OrchResult[List[str]]:
         """Perform an action (restart) on a service.
 
-        Currently only 'restart' is supported via the MicroCeph API.
+        Currently only 'restart' is supported via the MicroCeph API. The
+        restart is fanned out per host running the service, using the
+        server-side proxyTarget middleware (see _apply_service).
 
         :param action: one of "start", "stop", "restart", "redeploy", "reconfig"
         :param service_name: service type (e.g. "mon", "rgw")
@@ -618,7 +716,12 @@ class MicroCephOrchestrator(Orchestrator,
                 "Only 'restart' is currently available."
             )
 
-        svc_type, _ = self._parse_service_name(service_name)
+        svc_type, svc_id = self._parse_service_name(service_name)
+
+        # All currently-supported restart services are bare; reject
+        # dotted names so an operator does not silently restart all
+        # NFS clusters (etc.) when intending to target one.
+        _require_bare_service_name(svc_type, svc_id)
 
         if svc_type not in RESTART_SUPPORTED_SERVICES:
             raise NotImplementedError(
@@ -627,5 +730,36 @@ class MicroCephOrchestrator(Orchestrator,
                 f"{sorted(RESTART_SUPPORTED_SERVICES)}."
             )
 
-        self.microceph.services.restart_services([svc_type])
-        return [f"Restarted {service_name}"]
+        # group_id is threaded through for future-proofing: if NFS
+        # were ever added to RESTART_SUPPORTED_SERVICES, _require_bare
+        # above would already have rejected the dotted-name path, so
+        # svc_id is always empty here; keeping the call shape future-
+        # compatible avoids a silent fan-out across all clusters.
+        group_id = svc_id if svc_type in DOTTED_NAME_SUPPORTED_SERVICES else None
+        hosts = sorted(self._get_existing_service_hosts(svc_type, group_id))
+        if not hosts:
+            return [f"No hosts running {svc_type}; nothing to restart"]
+
+        restarted: List[str] = []
+        failures: List[str] = []
+        for host in hosts:
+            try:
+                self.microceph.services.restart_services(
+                    [svc_type], target=host,
+                )
+                restarted.append(host)
+            except Exception as e:
+                logger.error(f"Failed to restart {svc_type} on {host}: {e}")
+                failures.append(f"{host}: {e}")
+
+        if failures:
+            ctx = (
+                f" (restarted on {', '.join(restarted)})" if restarted else ""
+            )
+            raise RuntimeError(
+                f"Failed to restart {svc_type}: "
+                + "; ".join(failures)
+                + ctx
+            )
+
+        return [f"Restarted {svc_type} on {h}" for h in restarted]

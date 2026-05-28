@@ -74,7 +74,8 @@ class ExtendedAPIService(service.BaseService):
             for member in members
         }
 
-    def enable_service(self, name: str, payload: str = "", wait: bool = True) -> None:
+    def enable_service(self, name: str, payload: str = "", wait: bool = True,
+                       target: str | None = None) -> None:
         """Enable a service on the cluster.
 
         Sends a PUT request to /1.0/services/<name> with an EnableService payload.
@@ -85,38 +86,54 @@ class ExtendedAPIService(service.BaseService):
         :param name: service name (e.g. 'rgw', 'nfs', 'rbd-mirror')
         :param payload: JSON string with service-specific parameters
         :param wait: if True, the server waits for the service to be fully enabled
+        :param target: optional cluster member name. When set, the
+            server-side proxyTarget middleware (microcluster) forwards
+            the request over mTLS to that node, allowing per-host
+            service enablement from the local unix socket. When None,
+            no target is forwarded and the server handles the request
+            on the node receiving the unix-socket connection.
         """
         # Note: The "bool" key maps to Go's EnableService.Wait field which has
         # the struct tag `json:"bool"` (upstream naming quirk in MicroCeph).
+        params = {"target": target} if target is not None else None
         self._put(f"/1.0/services/{name}", json={
             "name": name,
             "bool": wait,
             "payload": payload,
-        })
+        }, params=params)
 
-    def delete_service(self, name: str) -> None:
+    def delete_service(self, name: str, target: str | None = None) -> None:
         """Delete/disable a service on the cluster.
 
         :param name: service name (e.g. 'rgw', 'nfs', 'rbd-mirror')
+        :param target: optional cluster member name; see enable_service.
         """
-        self._delete(f"/1.0/services/{name}")
+        params = {"target": target} if target is not None else None
+        self._delete(f"/1.0/services/{name}", params=params)
 
-    def restart_services(self, services: list[str]) -> None:
+    def restart_services(self, services: list[str],
+                         target: str | None = None) -> None:
         """Restart one or more services on the cluster.
 
         Sends a POST to /1.0/services/restart with a list of service objects.
 
         :param services: list of service names (e.g. ['mon', 'rgw'])
+        :param target: optional cluster member name; see enable_service.
         """
+        params = {"target": target} if target is not None else None
         payload = [{"service": svc} for svc in services]
-        self._post("/1.0/services/restart", json=payload)
+        self._post("/1.0/services/restart", json=payload, params=params)
 
-    def delete_nfs_service(self, cluster_id: str) -> None:
+    def delete_nfs_service(self, cluster_id: str,
+                           target: str | None = None) -> None:
         """Delete/disable an NFS service by cluster ID.
 
         NFS deletion requires the cluster_id in the request body, unlike
         other services which are identified by URL path alone.
 
         :param cluster_id: NFS cluster identifier
+        :param target: optional cluster member name; see enable_service.
         """
-        self._delete("/1.0/services/nfs", json={"cluster_id": cluster_id})
+        params = {"target": target} if target is not None else None
+        self._delete("/1.0/services/nfs",
+                     json={"cluster_id": cluster_id}, params=params)
