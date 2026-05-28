@@ -145,7 +145,10 @@ echo "=== 6b. Apply RGW on a second host (per-host targeting) ==="
 # Find a host that is NOT the first one to verify cross-node enablement
 # from the local socket. Only run this leg when the cluster has more
 # than one host (single-node deployments skip).
-second_host=$(run_ceph orch host ls | awk 'NR>1 && NF>0 && $1 != "'"$first_host"'" {print $1; exit}')
+# Filter to rows whose first column looks like a hostname (starts with
+# a letter) so the trailing "N hosts in cluster" footer line is not
+# mistaken for a host name on single-node CI.
+second_host=$(run_ceph orch host ls | awk 'NR>1 && NF>0 && $1 ~ /^[A-Za-z]/ && $1 != "'"$first_host"'" {print $1; exit}')
 if [ -n "$second_host" ] && [ "$second_host" != "$first_host" ]; then
     output=$(run_ceph orch apply rgw default --placement="$first_host,$second_host")
     assert_contains "rgw applied to two hosts" "enabled|already active" "$output"
@@ -227,13 +230,16 @@ fi
 echo "=== 10. Remove NFS ==="
 # ===================================================================
 
-output=$(run_ceph orch rm nfs.testcluster)
-# NFS removal may fail if the service never fully started
-if echo "$output" | grep -q "Removed"; then
-    echo "  PASS nfs removed"
+output=$(run_ceph orch rm nfs.testcluster 2>&1 || true)
+# NFS removal may fail if the service never fully started. In that
+# case remove_service now raises OrchestratorError("not running on
+# any host"); accept either the success ("removed from") shape or
+# that specific error.
+if echo "$output" | grep -qE "removed from|not running on any host"; then
+    echo "  PASS nfs removal completed (either removed or never started)"
     PASS=$((PASS + 1))
 else
-    echo "  WARN nfs removal returned: $output (service may not have been running)"
+    echo "  WARN nfs removal returned unexpected output: $output"
 fi
 sleep 3
 

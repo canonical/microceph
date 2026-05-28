@@ -31,6 +31,8 @@ from orchestrator import (
     CLICommandMeta,
     handle_orch_error,
     OrchResult,
+    OrchestratorError,
+    OrchestratorValidationError,
 )
 
 from .client.client import Client
@@ -243,9 +245,15 @@ class MicroCephOrchestrator(Orchestrator,
                     service_id=svc_id, service_type=svc_type, placement=PlacementSpec(hosts=hostlist, count=len(hostlist))
                 )
 
+            # `size` is the desired daemon count; `running` is the actual.
+            # MicroCeph's desired state IS the current set of hosts running
+            # the service (no separate spec store), so they match. Setting
+            # `size` explicitly avoids `ceph orch ls` rendering `RUNNING/-`,
+            # which looks like a degraded/incomplete deployment.
             service_descs.append(ServiceDescription(
                 spec=spec,
-                running=len(hostlist)
+                running=len(hostlist),
+                size=len(hostlist),
             ))
 
         return service_descs
@@ -326,7 +334,7 @@ class MicroCephOrchestrator(Orchestrator,
         filter_hosts = None
         if host_filter:
             if host_filter.labels:
-                raise NotImplementedError(
+                raise OrchestratorValidationError(
                     "MicroCeph orchestrator does not support host labels"
                 )
             if host_filter.hosts:
@@ -457,6 +465,20 @@ class MicroCephOrchestrator(Orchestrator,
                 )
                 enabled.append(host)
             except Exception as e:
+                # Tolerate the TOCTOU window between the snapshot taken
+                # by _get_existing_service_hosts and the per-host enable
+                # call. The backend's genericHospitalityCheck
+                # (microceph/ceph/services_placement_generic.go) returns
+                # "<svc> service already active on host" if the service
+                # raced into existence between snapshot and enable; for
+                # an apply that is the desired end-state, not a failure.
+                if "already active on host" in str(e):
+                    logger.info(
+                        f"{service_type} became active on {host} after "
+                        "snapshot; treating as no-op."
+                    )
+                    enabled.append(host)
+                    continue
                 logger.error(f"Failed to enable {service_type} on {host}: {e}")
                 failures.append(f"{host}: {e}")
 
@@ -470,7 +492,7 @@ class MicroCephOrchestrator(Orchestrator,
             if already_active:
                 ctx.append(f"already active on {', '.join(already_active)}")
             ctx_str = f" ({'; '.join(ctx)})" if ctx else ""
-            raise RuntimeError(
+            raise OrchestratorError(
                 f"Failed to enable {service_type}: "
                 + "; ".join(failures)
                 + ctx_str
@@ -651,8 +673,12 @@ class MicroCephOrchestrator(Orchestrator,
         hosts = sorted(self._get_existing_service_hosts(svc_type, group_id))
 
         if not hosts:
-            logger.info(f"No hosts found running {service_name}; nothing to do")
-            return f"{service_name}: no hosts running this service"
+            # Match cephadm: removing a service that is not deployed is
+            # surfaced as an error so the operator notices a typo or
+            # stale state rather than seeing a green no-op.
+            raise OrchestratorError(
+                f"Service {service_name!r} is not running on any host"
+            )
 
         removed: List[str] = []
         failures: List[str] = []
@@ -675,7 +701,7 @@ class MicroCephOrchestrator(Orchestrator,
         # partial-success context is included in the message.
         if failures:
             ctx = f" (removed from {', '.join(removed)})" if removed else ""
-            raise RuntimeError(
+            raise OrchestratorError(
                 f"Failed to remove {service_name}: "
                 + "; ".join(failures)
                 + ctx
@@ -711,7 +737,7 @@ class MicroCephOrchestrator(Orchestrator,
         logger.info(f"Service action: {action} on {service_name}")
 
         if action != "restart":
-            raise NotImplementedError(
+            raise OrchestratorValidationError(
                 f"Service action '{action}' is not supported by MicroCeph. "
                 "Only 'restart' is currently available."
             )
@@ -724,7 +750,7 @@ class MicroCephOrchestrator(Orchestrator,
         _require_bare_service_name(svc_type, svc_id)
 
         if svc_type not in RESTART_SUPPORTED_SERVICES:
-            raise NotImplementedError(
+            raise OrchestratorValidationError(
                 f"Restart of service type {svc_type!r} is not supported by "
                 f"MicroCeph. Supported services: "
                 f"{sorted(RESTART_SUPPORTED_SERVICES)}."
@@ -738,7 +764,12 @@ class MicroCephOrchestrator(Orchestrator,
         group_id = svc_id if svc_type in DOTTED_NAME_SUPPORTED_SERVICES else None
         hosts = sorted(self._get_existing_service_hosts(svc_type, group_id))
         if not hosts:
-            return [f"No hosts running {svc_type}; nothing to restart"]
+            # Restarting a service that is not deployed is an error: the
+            # operator either targeted the wrong name or expected the
+            # service to be running. Match cephadm semantics.
+            raise OrchestratorError(
+                f"Service {svc_type!r} is not running on any host"
+            )
 
         restarted: List[str] = []
         failures: List[str] = []
@@ -756,7 +787,7 @@ class MicroCephOrchestrator(Orchestrator,
             ctx = (
                 f" (restarted on {', '.join(restarted)})" if restarted else ""
             )
-            raise RuntimeError(
+            raise OrchestratorError(
                 f"Failed to restart {svc_type}: "
                 + "; ".join(failures)
                 + ctx

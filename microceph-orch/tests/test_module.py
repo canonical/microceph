@@ -13,6 +13,8 @@ from stubs import (
     RGWSpec,
     NFSServiceSpec,
     InventoryFilter,
+    OrchestratorError,
+    OrchestratorValidationError,
 )
 
 from microceph.client.service import RemoteException
@@ -313,7 +315,7 @@ class TestGetInventory:
     def test_get_inventory_label_filter_rejected(self, orchestrator, mock_client):
         filt = InventoryFilter(labels=["role=osd"])
         result = orchestrator.get_inventory(host_filter=filt)
-        assert isinstance(result.exception, NotImplementedError)
+        assert isinstance(result.exception, OrchestratorValidationError)
         mock_client.services.list_disks.assert_not_called()
 
     def test_get_inventory_empty(self, orchestrator, mock_client):
@@ -421,7 +423,7 @@ class TestApplyRbdMirror:
 
         mock_client.services.enable_service.side_effect = side_effect
         result = orchestrator.apply_rbd_mirror(spec)
-        assert isinstance(result.exception, RuntimeError)
+        assert isinstance(result.exception, OrchestratorError)
         msg = str(result.exception)
         assert "Failed to enable rbd-mirror" in msg
         assert "node2: node2 boom" in msg
@@ -791,10 +793,12 @@ class TestRemoveService:
         assert mock_client.services.delete_service.call_count == 2
 
     def test_remove_service_no_hosts(self, orchestrator, mock_client):
-        # list_services returns [] (default) — nothing to remove.
+        # list_services returns [] (default) — removing a service that
+        # isn't deployed must surface as an error (cephadm parity), not
+        # a green no-op.
         result = orchestrator.remove_service("rgw")
-        assert result.exception is None
-        assert "no hosts" in result.result
+        assert isinstance(result.exception, OrchestratorError)
+        assert "not running on any host" in str(result.exception)
         mock_client.services.delete_service.assert_not_called()
 
     def test_remove_service_nfs_with_cluster_id(self, orchestrator, mock_client):
@@ -816,14 +820,15 @@ class TestRemoveService:
 
     def test_remove_service_nfs_group_id_no_match(self, orchestrator, mock_client):
         # NFS cluster 'other' exists on node1, but we're removing
-        # 'mycluster' — there is nothing to do; the call must NOT
-        # cascade into deleting the unrelated cluster.
+        # 'mycluster' — there is nothing to do for this cluster_id;
+        # surface as an error and do NOT cascade into deleting the
+        # unrelated cluster.
         mock_client.services.list_services.return_value = [
             _svc("nfs", "node1", group_id="other"),
         ]
         result = orchestrator.remove_service("nfs.mycluster")
-        assert result.exception is None
-        assert "no hosts" in result.result
+        assert isinstance(result.exception, OrchestratorError)
+        assert "not running on any host" in str(result.exception)
         mock_client.services.delete_nfs_service.assert_not_called()
 
     def test_remove_service_api_error(self, orchestrator, mock_client):
@@ -850,7 +855,7 @@ class TestRemoveService:
 
         mock_client.services.delete_service.side_effect = side_effect
         result = orchestrator.remove_service("rgw")
-        assert isinstance(result.exception, RuntimeError)
+        assert isinstance(result.exception, OrchestratorError)
         msg = str(result.exception)
         assert "Failed to remove rgw" in msg
         assert "node2: node2 boom" in msg
@@ -897,10 +902,12 @@ class TestServiceAction:
         assert any("Restarted mon on node2" in r for r in result.result)
 
     def test_restart_no_hosts(self, orchestrator, mock_client):
-        # No hosts running the service — no-op (still success).
+        # Restarting a service that isn't deployed surfaces as an
+        # error so the operator notices the typo or stale assumption
+        # (cephadm parity).
         result = orchestrator.service_action("restart", "mon")
-        assert result.exception is None
-        assert any("nothing to restart" in r for r in result.result)
+        assert isinstance(result.exception, OrchestratorError)
+        assert "not running on any host" in str(result.exception)
         mock_client.services.restart_services.assert_not_called()
 
     def test_restart_dotted_non_nfs_rejected(self, orchestrator, mock_client):
@@ -919,7 +926,7 @@ class TestServiceAction:
         for svc in ["nfs.mycluster", "mds", "mgr", "rbd-mirror"]:
             mock_client.services.restart_services.reset_mock()
             result = orchestrator.service_action("restart", svc)
-            assert isinstance(result.exception, NotImplementedError), svc
+            assert isinstance(result.exception, OrchestratorValidationError), svc
             mock_client.services.restart_services.assert_not_called()
 
     def test_restart_partial_failure(self, orchestrator, mock_client):
@@ -936,7 +943,7 @@ class TestServiceAction:
 
         mock_client.services.restart_services.side_effect = side_effect
         result = orchestrator.service_action("restart", "mon")
-        assert isinstance(result.exception, RuntimeError)
+        assert isinstance(result.exception, OrchestratorError)
         msg = str(result.exception)
         assert "Failed to restart mon" in msg
         assert "node2: node2 boom" in msg

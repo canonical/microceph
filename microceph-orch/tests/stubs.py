@@ -111,9 +111,10 @@ class InventoryHost:
 
 
 class ServiceDescription:
-    def __init__(self, spec=None, running=0, **kwargs):
+    def __init__(self, spec=None, running=0, size=0, **kwargs):
         self.spec = spec
         self.running = running
+        self.size = size
 
 
 class DaemonDescription:
@@ -125,6 +126,14 @@ class DaemonDescription:
         self.hostname = hostname
         self.ip = ip
         self.ports = ports
+
+
+class OrchestratorError(Exception):
+    pass
+
+
+class OrchestratorValidationError(OrchestratorError):
+    pass
 
 
 class Orchestrator:

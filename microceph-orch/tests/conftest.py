@@ -28,6 +28,8 @@ from stubs import (
     ServiceDescription,
     DaemonDescription,
     Orchestrator,
+    OrchestratorError,
+    OrchestratorValidationError,
     MgrModule,
     NotifyType,
 )
@@ -83,6 +85,8 @@ def _install_mocks():
     orch_mod.CLICommandMeta = CLICommandMeta
     orch_mod.handle_orch_error = handle_orch_error
     orch_mod.OrchResult = OrchResult
+    orch_mod.OrchestratorError = OrchestratorError
+    orch_mod.OrchestratorValidationError = OrchestratorValidationError
 
     # snap-only deps
     requests_unixsocket_mod = MagicMock()
