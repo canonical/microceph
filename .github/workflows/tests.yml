@@ -1177,6 +1177,24 @@ jobs:
       - name: Disable Cephfs Mirror daemons
         run: ~/actionutils.sh remote_disable_mirror_daemon "cephfs-mirror"
 
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          for node in node-wrk0 node-wrk1 node-wrk2 ; do
+            echo "=== $node: snap logs microceph ==="
+            lxc exec $node -- sh -c "snap logs microceph -n 1000" || true
+            echo "=== $node: snap logs cephfs-mirror ==="
+            lxc exec $node -- sh -c "snap logs microceph.cephfs-mirror -n 1000" || true
+            echo "=== $node: ceph -s ==="
+            lxc exec $node -- sh -c "microceph.ceph -s" || true
+            echo "=== $node: fs snapshot mirror daemon status ==="
+            lxc exec $node -- sh -c "microceph.ceph fs snapshot mirror daemon status" || true
+            echo "=== $node: replication status cephfs vol ==="
+            lxc exec $node -- sh -c "microceph replication status cephfs vol --json" || true
+            echo "=== $node: ceph.conf ==="
+            lxc exec $node -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf" || true
+          done
+
   nfs-test:
     name: Test MicroCeph NFS feature
     runs-on: ubuntu-22.04

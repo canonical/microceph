@@ -71,6 +71,13 @@ func (c *cmdReplicationDisableCephFS) Run(cmd *cobra.Command, args []string) err
 		return err
 	}
 
+	// Volume-level force disable waits for every mirror path to become idle
+	// before issuing removes (see disableCephFSVolumeMirror); surface that so
+	// the operator does not perceive the call as hung.
+	if c.flagForce && len(c.subvolume) == 0 && len(c.dirpath) == 0 {
+		fmt.Println("Checking mirror path stability before disabling replication; this may take up to a minute...")
+	}
+
 	_, err = client.SendReplicationRequest(context.Background(), cli, payload)
 	return err
 }

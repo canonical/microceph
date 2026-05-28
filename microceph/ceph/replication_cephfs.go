@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/Rican7/retry"
+	"github.com/Rican7/retry/backoff"
+	"github.com/Rican7/retry/strategy"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
@@ -14,6 +18,22 @@ import (
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/tidwall/gjson"
 )
+
+// cephFSMirrorStabilityAttempts and cephFSMirrorStabilityBackoff bound the
+// pre-disable wait that ensures every mirror path is idle before removal.
+// Declared as vars (not consts) so unit tests can shrink them.
+var (
+	cephFSMirrorStabilityAttempts uint          = 12
+	cephFSMirrorStabilityBackoff                = 5 * time.Second
+	cephFSDisableRemoveAttempts   uint          = 10
+	cephFSDisableRemoveBackoff                  = 5 * time.Second
+)
+
+const cephFSMirrorIdleState = "idle"
+
+// peerStatusFetcher fetches the per-path mirror status for one peer of a volume.
+// Extracted as a type so tests can stub the live admin-socket call.
+type peerStatusFetcher func(ctx context.Context, peerID string) (types.CephFsReplicationMirrorStatusMap, error)
 
 // CephFSSnapshotMirrorDaemonStatus is the abstraction for storing
 type CephFSSnapshotMirrorDaemonStatus []struct {
@@ -181,7 +201,11 @@ func (rh *CephfsReplicationHandler) DisableHandler(ctx context.Context, args ...
 		if len(rh.Request.SubvolumeGroup) != 0 {
 			return fmt.Errorf("Disable not supported for subvolumegroup. Provide a subvolume name to proceed.")
 		}
-		err = disableCephFSVolumeMirror(ctx, rh.Request, rh.MirrorList)
+		fetchers, ferr := rh.buildPeerStatusFetchers()
+		if ferr != nil {
+			return fmt.Errorf("REPCFS: failed to build peer status fetchers: %w", ferr)
+		}
+		err = disableCephFSVolumeMirror(ctx, rh.Request, rh.MirrorList, fetchers)
 	case types.CephfsResourceSubvolume:
 		err = cephFSSnapshotMirrorRemovePath(ctx, rh.Request.Volume, GetCephFSSubvolumePath(rh.Request.SubvolumeGroup, rh.Request.Subvolume))
 	case types.CephfsResourceDirectory:
@@ -289,6 +313,29 @@ func (rh *CephfsReplicationHandler) PromoteHandler(ctx context.Context, args ...
 func (rh *CephfsReplicationHandler) DemoteHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPCFS: Demote handler, Req %v", rh.Request)
 	return fmt.Errorf("%s not implemented for cephfs", types.DemoteReplicationRequest)
+}
+
+// buildPeerStatusFetchers resolves volumeID + peers + admin socket once, and returns
+// one peerStatusFetcher closure per peer. Returns an empty map when the volume has no
+// peers yet so the caller can skip pre-disable wait.
+func (rh *CephfsReplicationHandler) buildPeerStatusFetchers() (map[string]peerStatusFetcher, error) {
+	volumeID, peers := GetCephFsMirrorVolumeAndPeersId(rh)
+	if volumeID < 0 || len(peers) == 0 {
+		return map[string]peerStatusFetcher{}, nil
+	}
+
+	adminSock, err := FindCephFsMirrorAdminSockPath()
+	if err != nil || len(adminSock) == 0 {
+		return nil, fmt.Errorf("failed to find CephFS mirror admin socket: %w", err)
+	}
+
+	fetchers := make(map[string]peerStatusFetcher, len(peers))
+	for _, peer := range peers {
+		fetchers[peer] = func(ctx context.Context, peerID string) (types.CephFsReplicationMirrorStatusMap, error) {
+			return GetCephFsMirrorPeerStatus(ctx, adminSock, rh.Request.Volume, volumeID, peerID)
+		}
+	}
+	return fetchers, nil
 }
 
 // #### CephFS Mirroring Specific Helpers ####
@@ -470,17 +517,77 @@ func enableCephFSResourceMirror(ctx context.Context, request types.CephfsReplica
 }
 
 // disableCephFSVolumeMirror iterates over all paths enabled for mirroring in a volume and disables them.
-func disableCephFSVolumeMirror(ctx context.Context, request types.CephfsReplicationRequest, mirrorPathList []string) error {
+// Before issuing the removes it waits until every path reports an idle mirror state across
+// all peers so the cephfs-mirror daemon does not race with an in-flight snapshot sync;
+// each per-path remove is then retried with linear backoff to absorb transient daemon errors.
+func disableCephFSVolumeMirror(ctx context.Context, request types.CephfsReplicationRequest, mirrorPathList []string, fetchers map[string]peerStatusFetcher) error {
 	if !request.IsForceOp {
 		err := fmt.Errorf("Disabling it for the volume (%s) may result in data-loss, please use appropriate parmaters", request.Volume)
 		return err
 	}
 
+	if err := cephFSWaitForMirrorPathsIdle(ctx, mirrorPathList, fetchers); err != nil {
+		return err
+	}
+
 	for _, mirrorPath := range mirrorPathList {
-		err := cephFSSnapshotMirrorRemovePath(ctx, request.Volume, mirrorPath)
-		if err != nil {
-			logger.Errorf("Failed to remove mirror path %s on CephFS volume %s: %v", mirrorPath, request.Volume, err)
+		path := mirrorPath
+		err := retry.Retry(func(i uint) error {
+			err := cephFSSnapshotMirrorRemovePath(ctx, request.Volume, path)
+			if err != nil {
+				logger.Errorf("REPCFS: attempt %d: failed to remove mirror path %s on CephFS volume %s: %v", i, path, request.Volume, err)
+			}
 			return err
+		},
+			strategy.Limit(cephFSDisableRemoveAttempts),
+			strategy.Backoff(backoff.Linear(cephFSDisableRemoveBackoff)),
+		)
+		if err != nil {
+			return fmt.Errorf("Failed to remove mirror path %s on CephFS volume %s: %w", path, request.Volume, err)
+		}
+	}
+
+	return nil
+}
+
+// cephFSWaitForMirrorPathsIdle polls each peer's mirror status and waits until every path
+// reports the idle state. Returns "mirror path not stable: <path>" if any path remains
+// non-idle after cephFSMirrorStabilityAttempts probes (linear backoff).
+func cephFSWaitForMirrorPathsIdle(ctx context.Context, mirrorPathList []string, fetchers map[string]peerStatusFetcher) error {
+	if len(mirrorPathList) == 0 || len(fetchers) == 0 {
+		return nil
+	}
+
+	for _, mirrorPath := range mirrorPathList {
+		path := mirrorPath
+		var lastState string
+		err := retry.Retry(func(i uint) error {
+			for peerID, fetch := range fetchers {
+				status, err := fetch(ctx, peerID)
+				if err != nil {
+					return fmt.Errorf("failed to fetch mirror status for peer %s: %w", peerID, err)
+				}
+
+				pathStatus, ok := status[path]
+				if !ok {
+					// Path not yet reported by this peer; treat as not-yet-stable.
+					lastState = "missing"
+					return fmt.Errorf("path %s not reported by peer %s", path, peerID)
+				}
+
+				if pathStatus.State != cephFSMirrorIdleState {
+					lastState = pathStatus.State
+					return fmt.Errorf("path %s on peer %s is in state %q", path, peerID, pathStatus.State)
+				}
+			}
+			return nil
+		},
+			strategy.Limit(cephFSMirrorStabilityAttempts),
+			strategy.Backoff(backoff.Linear(cephFSMirrorStabilityBackoff)),
+		)
+		if err != nil {
+			logger.Errorf("REPCFS: mirror path %s did not stabilise (last state: %s): %v", path, lastState, err)
+			return fmt.Errorf("mirror path not stable: %s", path)
 		}
 	}
 
