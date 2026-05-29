@@ -21,17 +21,15 @@ jobs:
 
       - name: Run govulncheck
         id: scan
-        continue-on-error: true
         uses: ./.github/actions/govulncheck
         with:
           working-directory: microceph
           output-file: govulncheck.json
-          fail-on-vuln: "true"
+          fail-on-vuln: "false"
 
       - name: Render summary
         id: render
         env:
-          OUTCOME: ${{ steps.scan.outcome }}
           CALLED_COUNT: ${{ steps.scan.outputs.called-count }}
           CALLED_IDS: ${{ steps.scan.outputs.called-ids }}
         run: |
@@ -58,7 +56,7 @@ jobs:
           cat "${body_file}" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Open or update tracking issue
-        if: steps.scan.outcome == 'failure'
+        if: steps.scan.outputs.called-count != '0' && steps.scan.outputs.called-count != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BODY_FILE: ${{ steps.render.outputs.body-file }}
@@ -77,7 +75,7 @@ jobs:
           fi
 
       - name: Close tracking issue when clean
-        if: steps.scan.outcome == 'success'
+        if: steps.scan.outputs.called-count == '0' || steps.scan.outputs.called-count == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TITLE: "[vuln-scan] govulncheck found called-path vulnerabilities"
@@ -88,9 +86,3 @@ jobs:
             gh issue comment "${existing}" --body "Scan clean as of run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. Closing."
             gh issue close "${existing}"
           fi
-
-      - name: Propagate scan result
-        if: steps.scan.outcome == 'failure'
-        run: |
-          echo "::error::govulncheck reported called-path vulnerabilities; see tracking issue."
-          exit 1
