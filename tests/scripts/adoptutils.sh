@@ -77,6 +77,8 @@ function adopt_cephadm() {
   set -eux
   # hostname
   name=$1
+  # Optional: snap glob/path (defaults to /home/runner/*.snap for CI)
+  local snap_glob="${2:-/home/runner/*.snap}"
 
   # fetch cephadm adopt data
   # FSID
@@ -89,7 +91,7 @@ function adopt_cephadm() {
   # Admin Key
   key=$(lxc exec $name -- sh -c "cat /etc/ceph/ceph.client.admin.keyring" | grep key | cut -d " " -f 3)
 
-  lxc --quiet file push /home/runner/*.snap $name/root/
+  lxc --quiet file push $snap_glob $name/root/
 
   # install microceph snap
   lxc exec $name -- sh -c "sudo snap install --dangerous /root/microceph_*.snap"
