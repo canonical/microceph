@@ -1894,26 +1894,14 @@ func (m *OSDManager) purgeOSD(osd int64) error {
 	for i := 0; i < retries; i++ {
 		err = m.doPurge(osd)
 		if err == nil {
-			// Success: break the retry loop
 			break
 		}
-		// we're getting a RunError from common.ProcessExec.RunCommand, and it
-		// wraps the original exit error if there's one
-		exitError, ok := err.(shared.RunError).Unwrap().(*exec.ExitError)
-		if !ok {
-			// not an exit error, abort and bubble up the error
-			logger.Warnf("Purge failed with non-exit error: %v", err)
-			break
-		}
-		if syscall.Errno(exitError.ExitCode()) != syscall.EBUSY {
-			// not a busy error, abort and bubble up the error
-			logger.Warnf("Purge failed with unexpected exit error: %v", exitError)
-			break
-		}
-		// purge failed with EBUSY - retry after a delay, and make delay exponential
-		logger.Infof("Purge failed %v, retrying in %v", err, backoff)
+		// Retry on any failure: the OSD process may still be shutting down
+		// when purge is attempted, causing transient errors. ceph CLI exits
+		// with 1 (not errno 16) in these cases.
+		logger.Infof("Purge attempt %d failed: %v, retrying in %v", i+1, err, backoff)
 		backoff = time.Duration(math.Pow(2, float64(i))) * time.Millisecond * 100
-		time.Sleep(backoff)
+		purgeRetrySleepFunc(backoff)
 	}
 
 	if err != nil {
@@ -2309,6 +2297,9 @@ var (
 	osdKillPollInterval     = 250 * time.Millisecond
 	osdPresenceRetryWindow  = 5 * time.Second
 	osdPresencePollInterval = 250 * time.Millisecond
+	// purgeRetrySleepFunc is the sleep function used between purgeOSD retry attempts.
+	// Replaced in tests to avoid slow backoff delays.
+	purgeRetrySleepFunc = time.Sleep
 )
 
 func isExitCode(err error, code int) bool {

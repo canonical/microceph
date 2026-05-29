@@ -981,6 +981,35 @@ func (s *osdSuite) TestDoPurge() {
 	assert.Error(s.T(), err)
 }
 
+// TestPurgeOSD tests purgeOSD retry logic.
+func (s *osdSuite) TestPurgeOSD() {
+	origSleep := purgeRetrySleepFunc
+	purgeRetrySleepFunc = func(_ time.Duration) {}
+	s.T().Cleanup(func() { purgeRetrySleepFunc = origSleep })
+
+	osdmgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	osdmgr.runner = r
+
+	// Succeeds on first attempt.
+	r.On("RunCommand", "ceph", "osd", "purge", "osd.0", "--yes-i-really-mean-it").Return("", nil).Once()
+	err := osdmgr.purgeOSD(0)
+	assert.NoError(s.T(), err)
+
+	// Fails transiently then succeeds — retry must fire regardless of error type.
+	r.On("RunCommand", "ceph", "osd", "purge", "osd.1", "--yes-i-really-mean-it").Return("", fmt.Errorf("exit status 1")).Once()
+	r.On("RunCommand", "ceph", "osd", "purge", "osd.1", "--yes-i-really-mean-it").Return("", nil).Once()
+	err = osdmgr.purgeOSD(1)
+	assert.NoError(s.T(), err)
+
+	// Exhausts all retries and returns error.
+	for range 10 {
+		r.On("RunCommand", "ceph", "osd", "purge", "osd.2", "--yes-i-really-mean-it").Return("", fmt.Errorf("exit status 1")).Once()
+	}
+	err = osdmgr.purgeOSD(2)
+	assert.Error(s.T(), err)
+}
+
 // TestTestSafeStop tests OSD safe stop check
 func (s *osdSuite) TestTestSafeStop() {
 	osdmgr := NewOSDManager(nil)
