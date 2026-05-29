@@ -60,6 +60,7 @@ function install_and_bootstrap_microceph() {
 }
 
 function install_tools() {
+    command -v jq >/dev/null 2>&1 && command -v s3cmd >/dev/null 2>&1 && return
     sudo apt-get update -qq
     sudo apt-get -qq -y install s3cmd jq
 }

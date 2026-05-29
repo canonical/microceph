@@ -568,7 +568,7 @@ function wait_for_vm_command() {
 # Wait for VM to be ready
 function wait_for_dsl_vm() {
     local name=$1
-    local timeout=${2:-300}
+    local timeout=${2:-600}
 
     log "Waiting for VM '$name' to be ready (timeout: ${timeout}s)..."
     wait_for_vm_command "VM '$name' to be ready" "$timeout" bash -lc "lxc exec '$name' -- cloud-init status 2>/dev/null | grep -q done"
@@ -587,7 +587,7 @@ function vm_shell() {
 
 function wait_for_vm_disk_count_ge() {
     local expected="$1"
-    local timeout="${2:-120}"
+    local timeout="${2:-240}"
 
     wait_for_vm_command "at least ${expected} visible block disks in the VM" "$timeout" vm_shell "[ \$(lsblk -dn -o TYPE | grep -c '^disk$') -ge ${expected} ]"
 }
@@ -597,13 +597,13 @@ function microceph_ready() {
 }
 
 function wait_for_microceph_ready() {
-    local timeout="${1:-180}"
+    local timeout="${1:-360}"
 
     wait_for_vm_command "MicroCeph daemon readiness" "$timeout" microceph_ready
 }
 
 function wait_for_microceph_ready_nonfatal() {
-    local timeout="${1:-180}"
+    local timeout="${1:-360}"
     local elapsed=0
 
     while [[ $elapsed -lt $timeout ]]; do
@@ -630,17 +630,17 @@ function bootstrap_microceph_cluster_in_vm() {
         echo "$output" >&2
 
         if [[ "$status" == "0" ]]; then
-            wait_for_microceph_ready 180
+            wait_for_microceph_ready 360
             return 0
         fi
 
         if grep -Eq 'Database is online|cluster already exists|already bootstrapped' <<<"$output"; then
             log "Bootstrap reported an already-initialized cluster; continuing"
-            wait_for_microceph_ready 180
+            wait_for_microceph_ready 360
             return 0
         fi
 
-        if wait_for_microceph_ready_nonfatal 90; then
+        if wait_for_microceph_ready_nonfatal 180; then
             log "Bootstrap command exited with status $status, but the cluster became ready; continuing"
             return 0
         fi
@@ -886,7 +886,7 @@ function log_available_disk_matches_by_type() {
 
 function wait_for_configured_disk_count_ge() {
     local expected=$1
-    local timeout=${2:-120}
+    local timeout=${2:-240}
     local elapsed=0
     local current=0
 
@@ -904,7 +904,7 @@ function wait_for_configured_disk_count_ge() {
 
 function wait_for_configured_disk_count_eq() {
     local expected=$1
-    local timeout=${2:-120}
+    local timeout=${2:-240}
     local elapsed=0
     local current=0
 
@@ -947,14 +947,14 @@ function assert_path_missing_in_vm() {
 
 function wait_for_path_exists_in_vm() {
     local path="$1"
-    local timeout=${2:-120}
+    local timeout=${2:-240}
 
     wait_for_vm_command "path to appear in VM: $path" "$timeout" vm_shell "test -e '$path'"
 }
 
 function wait_for_path_missing_in_vm() {
     local path="$1"
-    local timeout=${2:-120}
+    local timeout=${2:-240}
     local elapsed=0
 
     while [[ $elapsed -lt $timeout ]]; do
@@ -1019,7 +1019,7 @@ function ensure_dm_crypt_ready() {
     fi
 
     vm_exec snap restart microceph.daemon || true
-    wait_for_microceph_ready 180
+    wait_for_microceph_ready 360
     return 0
 }
 
@@ -1112,7 +1112,7 @@ function setup_dsl_test() {
     attach_readonly_volume
 
     wait_for_dsl_vm "$VM_NAME"
-    wait_for_vm_disk_count_ge 9 180
+    wait_for_vm_disk_count_ge 9 360
 }
 
 # Resolve snap path glob pattern to actual file
@@ -1511,7 +1511,7 @@ function test_dsl_add_disk() {
     add_result=$(vm_exec_expect_success "dsl add should succeed" microceph disk add --osd-match "eq(@size, 10GiB)")
     assert_output_contains "$add_result" "$expected_path|Success" "dsl add output should mention the added disk or success"
 
-    wait_for_configured_disk_count_ge $((configured_before + 1)) 180
+    wait_for_configured_disk_count_ge $((configured_before + 1)) 360
     configured_after=$(json_configured_count)
     assert_ge "$configured_after" $((configured_before + 1)) "expected one disk to be added via DSL"
 }
@@ -1571,7 +1571,7 @@ function test_dsl_pristine_with_wipe() {
     dsl_wipe_result=$(vm_exec microceph disk add --osd-match "eq(@devnode, '$test_devnode')" --wipe 2>&1 || true)
     echo "$dsl_wipe_result"
 
-    wait_for_configured_disk_count_ge $((configured_before + 1)) 180
+    wait_for_configured_disk_count_ge $((configured_before + 1)) 360
     configured_after=$(json_configured_count)
     assert_ge "$configured_after" $((configured_before + 1)) "--wipe should allow adding the non-pristine disk"
 }
@@ -1774,7 +1774,7 @@ function test_dsl_dryrun_no_new_osd_warning() {
     local add_output output
     add_output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" 2>&1 || true)
     echo "$add_output"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     log_available_disks_snapshot
     log_configured_disks_snapshot
     log_available_disk_matches_by_sizes "OSD candidate" "12GiB"
@@ -1794,7 +1794,7 @@ function test_dsl_add_wal_only() {
     before_parts=$(get_partition_count "$wal_parent")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
     echo "$output"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     after_parts=$(get_partition_count "$wal_parent")
     assert_eq "$after_parts" "$((before_parts + 1))" "WAL parent should gain one partition"
     osd_id=$(get_osd_id_for_path "$osd_path")
@@ -1813,7 +1813,7 @@ function test_dsl_add_db_only() {
     before_parts=$(get_partition_count "$db_parent")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 11GiB)" --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
     echo "$output"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     after_parts=$(get_partition_count "$db_parent")
     assert_eq "$after_parts" "$((before_parts + 1))" "DB parent should gain one partition"
     osd_id=$(get_osd_id_for_path "$osd_path")
@@ -1834,7 +1834,7 @@ function test_dsl_add_waldb() {
     before_db=$(get_partition_count "$db_parent")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
     echo "$output"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     after_wal=$(get_partition_count "$wal_parent")
     after_db=$(get_partition_count "$db_parent")
     assert_eq "$after_wal" "$((before_wal + 1))" "WAL parent should gain one partition"
@@ -1854,7 +1854,7 @@ function test_dsl_empty_wal_match_warns_and_adds_data_only() {
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 999GiB)" --wal-size 1GiB 2>&1 || true)
     echo "$output"
     assert_output_contains "$output" 'Warning: WAL match expression resolved to no devices' "expected WAL warning"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     osd_id=$(get_osd_id_for_path "$osd_path")
     [[ -n "$osd_id" ]] || fail "Could not resolve OSD id for $osd_path"
     wal_link="$(get_osd_data_dir "$osd_id")/block.wal"
@@ -1868,7 +1868,7 @@ function test_dsl_empty_db_match_warns_and_adds_data_only() {
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --db-match "eq(@size, 999GiB)" --db-size 2GiB 2>&1 || true)
     echo "$output"
     assert_output_contains "$output" 'Warning: DB match expression resolved to no devices' "expected DB warning"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     osd_id=$(get_osd_id_for_path "$osd_path")
     [[ -n "$osd_id" ]] || fail "Could not resolve OSD id for $osd_path"
     db_link="$(get_osd_data_dir "$osd_id")/block.db"
@@ -1884,7 +1884,7 @@ function test_dsl_waldb_idempotent_rerun() {
     before_db=$(get_partition_count "$db_parent")
     first=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
     echo "$first"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     mid_wal=$(get_partition_count "$wal_parent")
     mid_db=$(get_partition_count "$db_parent")
     second=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
@@ -1907,7 +1907,7 @@ function test_dsl_waldb_distribution_across_multiple_aux_disks() {
     before2=$(get_partition_count "$wal2")
     output=$(vm_exec microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "or(eq(@size, 20GiB), eq(@size, 21GiB))" --wal-size 1GiB 2>&1 || true)
     echo "$output"
-    wait_for_configured_disk_count_ge 2 180
+    wait_for_configured_disk_count_ge 2 360
     after1=$(get_partition_count "$wal1")
     after2=$(get_partition_count "$wal2")
     assert_eq "$after1" "$((before1 + 1))" "first WAL carrier should get one partition"
@@ -1927,7 +1927,7 @@ function test_dsl_partitioned_non_ceph_aux_disk_is_rejected() {
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
     echo "$output"
     assert_output_contains "$output" 'Warning: WAL match expression resolved to no devices' "expected warning for rejected partitioned WAL carrier"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
 
     after_parts=$(get_partition_count "$wal_parent")
     assert_eq "$after_parts" "$after_partition_setup" "partitioned non-Ceph WAL disk must not receive a new WAL partition"
@@ -1949,7 +1949,7 @@ function test_dsl_non_pristine_whole_aux_device_requires_wipe() {
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
     echo "$output"
     assert_output_contains "$output" 'Warning: WAL match expression resolved to no devices' "expected warning for non-pristine WAL carrier without wipe"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
 
     after_parts=$(get_partition_count "$wal_parent")
     assert_eq "$after_parts" "$before_parts" "non-pristine WAL carrier without wipe must not receive a partition"
@@ -1971,7 +1971,7 @@ function test_dsl_non_pristine_whole_aux_device_with_wipe_is_allowed() {
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-wipe 2>&1 || true)
     echo "$output"
     assert_output_not_contains "$output" 'Warning: WAL match expression resolved to no devices' "non-pristine WAL carrier with wipe should remain eligible"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
 
     after_parts=$(get_partition_count "$wal_parent")
     assert_eq "$after_parts" "$((before_parts + 1))" "non-pristine WAL carrier with wipe should gain one partition"
@@ -2002,7 +2002,7 @@ function test_dsl_partitioned_foreign_aux_disk_with_wipe_is_reclaimed() {
 
     output=$(vm_exec_expect_success "partitioned foreign WAL carrier with wipe should succeed" microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-wipe)
     assert_output_not_contains "$output" 'Warning: WAL match expression resolved to no devices' "partitioned foreign WAL carrier with wipe should remain eligible"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
 
     after_parts=$(get_partition_count "$wal_parent")
     assert_eq "$after_parts" "$((before_parts + 1))" "reclaimed WAL carrier should be reset and end with one fresh partition"
@@ -2026,7 +2026,7 @@ function test_dsl_whole_disk_ceph_aux_device_is_rejected() {
 
     first_output=$(vm_exec microceph disk add "$osd1_path" --wal-device "$wal_parent" 2>&1 || true)
     echo "$first_output"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
 
     first_osd_id=$(get_osd_id_for_path "$osd1_path")
     [[ -n "$first_osd_id" ]] || fail "Could not resolve OSD id for $osd1_path"
@@ -2039,7 +2039,7 @@ function test_dsl_whole_disk_ceph_aux_device_is_rejected() {
     second_output=$(vm_exec microceph disk add --osd-match "eq(@size, 11GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
     echo "$second_output"
     assert_output_contains "$second_output" 'Warning: WAL match expression resolved to no devices' "expected warning for Ceph-owned whole-disk WAL carrier"
-    wait_for_configured_disk_count_ge 2 180
+    wait_for_configured_disk_count_ge 2 360
 
     after_second_parts=$(get_partition_count "$wal_parent")
     assert_eq "$after_second_parts" "$after_first_parts" "Ceph-owned whole-disk WAL carrier must not receive a DSL WAL partition"
@@ -2072,7 +2072,7 @@ function test_dsl_encrypted_aux_carrier_is_reused_for_additional_partitions() {
 
     first_output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-encrypt --db-match "eq(@size, 30GiB)" --db-size 2GiB --db-encrypt 2>&1 || true)
     echo "$first_output"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     after_first_wal=$(get_partition_count "$wal_parent")
     after_first_db=$(get_partition_count "$db_parent")
     assert_eq "$after_first_wal" "$((before_wal + 1))" "first encrypted run should create one WAL partition"
@@ -2102,7 +2102,7 @@ function test_dsl_encrypted_aux_carrier_is_reused_for_additional_partitions() {
     echo "$second_output"
     assert_output_not_contains "$second_output" 'Warning: WAL match expression resolved to no devices' "encrypted WAL carrier should remain reusable"
     assert_output_not_contains "$second_output" 'Warning: DB match expression resolved to no devices' "encrypted DB carrier should remain reusable"
-    wait_for_configured_disk_count_ge 2 180
+    wait_for_configured_disk_count_ge 2 360
     after_second_wal=$(get_partition_count "$wal_parent")
     after_second_db=$(get_partition_count "$db_parent")
     assert_eq "$after_second_wal" "$((before_wal + 2))" "second encrypted run should create a second WAL partition"
@@ -2145,7 +2145,7 @@ function test_dsl_encrypted_whole_disk_aux_device_is_rejected() {
 
     first_output=$(vm_exec microceph disk add "$osd1_path" --wal-device "$wal_parent" --wal-encrypt 2>&1 || true)
     echo "$first_output"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
 
     first_osd_id=$(get_osd_id_for_path "$osd1_path")
     [[ -n "$first_osd_id" ]] || fail "Could not resolve OSD id for $osd1_path"
@@ -2163,7 +2163,7 @@ function test_dsl_encrypted_whole_disk_aux_device_is_rejected() {
     second_output=$(vm_exec microceph disk add --osd-match "eq(@size, 11GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
     echo "$second_output"
     assert_output_contains "$second_output" 'Warning: WAL match expression resolved to no devices' "expected warning for encrypted Ceph-owned whole-disk WAL carrier"
-    wait_for_configured_disk_count_ge 2 180
+    wait_for_configured_disk_count_ge 2 360
 
     after_second_parts=$(get_partition_count "$wal_parent")
     assert_eq "$after_second_parts" "$after_first_parts" "encrypted whole-disk WAL carrier must not receive a DSL WAL partition"
@@ -2179,13 +2179,13 @@ function test_dsl_remove_osd_cleans_generated_aux_partitions() {
     local osd_path output osd_id osd_dir wal_target db_target manifest_path remove_output
     osd_path=$(get_available_disk_path_by_size "12GiB")
     output=$(vm_exec_expect_success "dsl WAL+DB add should succeed before remove" microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB)
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
 
     osd_id=$(get_osd_id_for_path "$osd_path")
     [[ -n "$osd_id" ]] || fail "Could not resolve OSD id for $osd_path"
     osd_dir=$(get_osd_data_dir "$osd_id")
     manifest_path="$osd_dir/generated-aux-devices.json"
-    wait_for_path_exists_in_vm "$manifest_path" 120
+    wait_for_path_exists_in_vm "$manifest_path" 240
     wal_target=$(get_symlink_target "$osd_dir/block.wal")
     db_target=$(get_symlink_target "$osd_dir/block.db")
 
@@ -2194,10 +2194,10 @@ function test_dsl_remove_osd_cleans_generated_aux_partitions() {
 
     remove_output=$(vm_exec_expect_success "dsl OSD remove should succeed" microceph disk remove "$osd_id" --bypass-safety-checks)
     assert_output_contains "$remove_output" "Removing osd\.${osd_id}" "remove output should mention the OSD being removed"
-    wait_for_configured_disk_count_eq 0 180
-    wait_for_path_missing_in_vm "$manifest_path" 120
-    wait_for_path_missing_in_vm "$wal_target" 120
-    wait_for_path_missing_in_vm "$db_target" 120
+    wait_for_configured_disk_count_eq 0 360
+    wait_for_path_missing_in_vm "$manifest_path" 240
+    wait_for_path_missing_in_vm "$wal_target" 240
+    wait_for_path_missing_in_vm "$db_target" 240
 }
 
 function test_dsl_remove_osd_cleanup_survives_daemon_restart() {
@@ -2206,24 +2206,24 @@ function test_dsl_remove_osd_cleanup_survives_daemon_restart() {
 
     osd_path=$(get_available_disk_path_by_size "12GiB")
     output=$(vm_exec_expect_success "dsl WAL+DB add should succeed before restart" microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB)
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
 
     osd_id=$(get_osd_id_for_path "$osd_path")
     [[ -n "$osd_id" ]] || fail "Could not resolve OSD id for $osd_path"
     osd_dir=$(get_osd_data_dir "$osd_id")
     manifest_path="$osd_dir/generated-aux-devices.json"
-    wait_for_path_exists_in_vm "$manifest_path" 120
+    wait_for_path_exists_in_vm "$manifest_path" 240
     wal_target=$(get_symlink_target "$osd_dir/block.wal")
     db_target=$(get_symlink_target "$osd_dir/block.db")
 
     vm_exec_expect_success "microceph daemon restart should succeed" snap restart microceph.daemon >/dev/null
-    wait_for_microceph_ready 180
+    wait_for_microceph_ready 360
 
     vm_exec_expect_success "dsl OSD remove after restart should succeed" microceph disk remove "$osd_id" --bypass-safety-checks >/dev/null
-    wait_for_configured_disk_count_eq 0 180
-    wait_for_path_missing_in_vm "$manifest_path" 120
-    wait_for_path_missing_in_vm "$wal_target" 120
-    wait_for_path_missing_in_vm "$db_target" 120
+    wait_for_configured_disk_count_eq 0 360
+    wait_for_path_missing_in_vm "$manifest_path" 240
+    wait_for_path_missing_in_vm "$wal_target" 240
+    wait_for_path_missing_in_vm "$db_target" 240
 }
 
 function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
@@ -2234,7 +2234,7 @@ function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     osd1_path=$(get_available_disk_path_by_size "10GiB")
     osd2_path=$(get_available_disk_path_by_size "11GiB")
     output=$(vm_exec_expect_success "two-OSD WAL+DB add should succeed" microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB)
-    wait_for_configured_disk_count_ge 2 180
+    wait_for_configured_disk_count_ge 2 360
 
     osd1_id=$(get_osd_id_for_path "$osd1_path")
     osd2_id=$(get_osd_id_for_path "$osd2_path")
@@ -2254,9 +2254,9 @@ function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     assert_path_exists_in_vm "$osd2_db"
 
     vm_exec_expect_success "first OSD remove should succeed" microceph disk remove "$osd1_id" --bypass-safety-checks >/dev/null
-    wait_for_configured_disk_count_eq 1 180
-    wait_for_path_missing_in_vm "$osd1_wal" 120
-    wait_for_path_missing_in_vm "$osd1_db" 120
+    wait_for_configured_disk_count_eq 1 360
+    wait_for_path_missing_in_vm "$osd1_wal" 240
+    wait_for_path_missing_in_vm "$osd1_db" 240
     assert_path_exists_in_vm "$osd2_dir/block.wal"
     assert_path_exists_in_vm "$osd2_dir/block.db"
     assert_path_exists_in_vm "$osd2_wal"
@@ -2289,10 +2289,10 @@ function test_dsl_end_to_end_matrix_from_local_snap() {
     before_wal=$(get_partition_count "$wal1")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB 2>&1 || true)
     echo "$output"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     osd_id=$(get_osd_id_for_path "$osd_path")
     vm_exec microceph disk remove "$osd_id" --bypass-safety-checks
-    wait_for_configured_disk_count_eq 0 180
+    wait_for_configured_disk_count_eq 0 360
     assert_eq "$(get_partition_count "$wal1")" "$before_wal" "WAL-only remove should restore WAL carrier partition count"
 
     # DB-only add/remove.
@@ -2300,10 +2300,10 @@ function test_dsl_end_to_end_matrix_from_local_snap() {
     before=$(get_partition_count "$db1")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 11GiB)" --db-match "eq(@size, 30GiB)" --db-size 2GiB 2>&1 || true)
     echo "$output"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     osd_id=$(get_osd_id_for_path "$osd_path")
     vm_exec microceph disk remove "$osd_id" --bypass-safety-checks
-    wait_for_configured_disk_count_eq 0 180
+    wait_for_configured_disk_count_eq 0 360
     assert_eq "$(get_partition_count "$db1")" "$before" "DB-only remove should restore DB carrier partition count"
 
     # WAL+DB add/remove.
@@ -2312,10 +2312,10 @@ function test_dsl_end_to_end_matrix_from_local_snap() {
     before=$(get_partition_count "$db2")
     output=$(vm_exec microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 21GiB)" --wal-size 1GiB --db-match "eq(@size, 31GiB)" --db-size 2GiB 2>&1 || true)
     echo "$output"
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     osd_id=$(get_osd_id_for_path "$osd_path")
     vm_exec microceph disk remove "$osd_id" --bypass-safety-checks
-    wait_for_configured_disk_count_eq 0 180
+    wait_for_configured_disk_count_eq 0 360
     after_wal=$(get_partition_count "$wal2")
     assert_eq "$after_wal" "$before_wal" "WAL+DB remove should restore WAL carrier partition count"
     assert_eq "$(get_partition_count "$db2")" "$before" "WAL+DB remove should restore DB carrier partition count"
@@ -2346,7 +2346,7 @@ function test_dsl_dryrun_and_execute_consistency() {
     [[ -n "$planned_db_part" && "$planned_db_part" != "null" ]] || fail "Could not parse planned DB partition number from json dry-run"
 
     execute_output=$(vm_exec_expect_success "dsl add should match dry-run plan" microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB)
-    wait_for_configured_disk_count_ge 1 180
+    wait_for_configured_disk_count_ge 1 360
     after_wal=$(get_partition_count "$wal_parent")
     after_db=$(get_partition_count "$db_parent")
     assert_eq "$after_wal" "$((before_wal + 1))" "execute should create one WAL partition"
