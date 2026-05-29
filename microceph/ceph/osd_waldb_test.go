@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -804,6 +805,43 @@ func TestExecuteDSLProvisionPlanCleansCreatedAuxOnPartitionCreationFailure(t *te
 	assert.Equal(t, "Failure", resp.Reports[0].Report)
 	assert.Contains(t, resp.Reports[0].Error, assert.AnError.Error())
 	assert.Empty(t, resp.Warnings)
+}
+
+// TestDeletePartitionTreatsAlreadyRemovedKernelEntryAsCleaned is a regression
+// test for the flaky WAL/DB cleanup failure seen in the DSL "rm2" case
+// (https://github.com/canonical/microceph/issues/749).
+func TestDeletePartitionTreatsAlreadyRemovedKernelEntryAsCleaned(t *testing.T) {
+	var st mcTypes.State
+	mgr := NewOSDManager(st)
+	mgr.fs = afero.NewMemMapFs()
+	// Force the storage fallback in resolvePartitionStablePath to fail fast so
+	// the re-resolve after partx relies only on the in-memory fs state.
+	mgr.storage = staticStorage{err: assert.AnError}
+	runner := mocks.NewRunner(t)
+	mgr.runner = runner
+
+	parentPath := "/dev/disk/by-id/db"
+	partitionPath := "/dev/disk/by-id/db-part1"
+	require.NoError(t, mgr.fs.MkdirAll("/dev/disk/by-id", 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, partitionPath, []byte("db-part"), 0644))
+
+	// sfdisk --delete succeeds and, like the real tool without --no-reread,
+	// causes the kernel partition entry (the /dev node) to disappear.
+	runner.On("RunCommand", "sfdisk", "--delete", parentPath, "1").
+		Run(func(args mock.Arguments) {
+			require.NoError(t, mgr.fs.Remove(partitionPath))
+		}).Return("", nil).Once()
+
+	// By the time partx -d runs, the kernel entry is already gone, so partx
+	// fails exactly as observed in CI.
+	partxErr := fmt.Errorf("Failed to run: partx -d --nr 1:1 %s: exit status 1 "+
+		"(partx: %s: error deleting partition 1)", parentPath, parentPath)
+	runner.On("RunCommand", "partx", "-d", "--nr", "1:1", parentPath).
+		Return("", partxErr).Once()
+
+	err := mgr.deletePartition(parentPath, 1)
+	require.NoError(t, err,
+		"deletePartition must treat an already-removed kernel partition entry as cleaned, not as an error")
 }
 
 func TestResolvePartitionStablePathFallsBackToRawDeviceWhenStorageUnavailable(t *testing.T) {
