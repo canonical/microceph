@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Local Builder <local@example.com>
+Date: Fri, 29 May 2026 00:00:00 +0000
+Subject: [PATCH] mgr/dashboard: import OpenSSL crypto in verify_tls_files
+
+Fix the dashboard TLS validation path in Ceph 20.2.0 packaging where
+verify_tls_files references crypto without importing it at function scope,
+which crashes the mgr dashboard module with:
+
+  NameError: name 'crypto' is not defined
+
+---
+ share/ceph/mgr/mgr_util.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/share/ceph/mgr/mgr_util.py b/share/ceph/mgr/mgr_util.py
+index abcdef1..1234567 100644
+--- a/share/ceph/mgr/mgr_util.py
++++ b/share/ceph/mgr/mgr_util.py
+@@-1,6 +1,7 @@
+     if not os.path.isfile(pkey_fname):
+         raise ServerConfigException('private key %s does not exist' % pkey_fname)
+
++    from OpenSSL import crypto, SSL
+     try:
+         with open(pkey_fname) as f:
+             pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, f.read())
+-- 
+2.43.0
