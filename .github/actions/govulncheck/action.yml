@@ -79,7 +79,7 @@ runs:
             | select(.finding? and (.finding.trace[]?.function != null))
             | .finding.osv
           ] | unique[]
-        ' "${OUTPUT_FILE}" 2>/dev/null || true)
+        ' "${OUTPUT_FILE}")
         called=$(printf "%s\n" "${called_ids}" | grep -c . || true)
 
         {

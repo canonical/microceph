@@ -5,6 +5,7 @@ on:
     paths:
       - microceph/go.mod
       - microceph/go.sum
+      - microceph/**/*.go
       - .github/actions/govulncheck/**
       - .github/workflows/vuln-scan-pr.yml
 
@@ -42,7 +43,7 @@ jobs:
 
       - name: Scan base ref
         id: base-scan
-        uses: ./.github/actions/govulncheck
+        uses: ./base/.github/actions/govulncheck
         with:
           working-directory: base/microceph
           output-file: govulncheck-base.json
