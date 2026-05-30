@@ -55,6 +55,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_JSON: /tmp/govulncheck-head.json
           BASE_JSON: base/microceph/govulncheck-base.json
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           set -uo pipefail
 
@@ -74,7 +76,7 @@ jobs:
 
           echo "## Vulnerability scan diff" >> "${GITHUB_STEP_SUMMARY}"
           echo "" >> "${GITHUB_STEP_SUMMARY}"
-          echo "Base (${{ github.event.pull_request.base.ref }}) called vulns: $(wc -l </tmp/base-ids.txt)" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Base (${BASE_REF}) called vulns: $(wc -l </tmp/base-ids.txt)" >> "${GITHUB_STEP_SUMMARY}"
           echo "PR head called vulns: $(wc -l </tmp/head-ids.txt)" >> "${GITHUB_STEP_SUMMARY}"
           echo "" >> "${GITHUB_STEP_SUMMARY}"
 
@@ -91,7 +93,7 @@ jobs:
 
           body="## govulncheck: new called-path vulnerabilities
 
-This PR introduces new called-path vulnerabilities vs base (\`${{ github.event.pull_request.base.ref }}\`):
+This PR introduces new called-path vulnerabilities vs base (\`${BASE_REF}\`):
 
 \`\`\`
 ${new_ids}
@@ -99,4 +101,5 @@ ${new_ids}
 
 Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
-          gh pr comment ${{ github.event.pull_request.number }} --body "${body}"
+          gh pr comment "${PR_NUMBER}" --body "${body}"
+          exit 1
