@@ -1,0 +1,102 @@
+name: govulncheck
+description: Run govulncheck against a Go module and emit JSON results.
+
+inputs:
+  working-directory:
+    description: Directory containing the Go module to scan.
+    required: false
+    default: microceph
+  go-version:
+    description: Go toolchain version to install (passed to actions/setup-go).
+    required: false
+    default: 1.25.x
+  output-file:
+    description: Path (relative to working-directory) for the JSON scan output.
+    required: false
+    default: govulncheck.json
+  fail-on-vuln:
+    description: |
+      When 'true', fail the step if any called-path vulnerabilities are found.
+      When 'false', always succeed; the caller is expected to consume output-file.
+    required: false
+    default: "true"
+
+outputs:
+  output-file:
+    description: Absolute path to the JSON scan output produced by this step.
+    value: ${{ steps.scan.outputs.output-file }}
+  called-count:
+    description: Number of called-path Go vulnerability IDs found.
+    value: ${{ steps.scan.outputs.called-count }}
+  called-ids:
+    description: Newline-separated list of called-path Go vulnerability IDs.
+    value: ${{ steps.scan.outputs.called-ids }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install cgo dependencies (libdqlite)
+      shell: bash
+      run: |
+        sudo add-apt-repository ppa:dqlite/dev -y --no-update
+        sudo apt-get update
+        sudo apt-get install -y libdqlite1.17-dev
+
+    - name: Install Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+
+    - name: Install govulncheck
+      shell: bash
+      run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+    - name: Run govulncheck
+      id: scan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        OUTPUT_FILE: ${{ inputs.output-file }}
+        FAIL_ON_VULN: ${{ inputs.fail-on-vuln }}
+      run: |
+        set -uo pipefail
+
+        # govulncheck exits 3 when vulnerabilities are found in called code,
+        # 0 when clean, non-zero/non-3 on tooling failure.
+        govulncheck -format json ./... > "${OUTPUT_FILE}"
+        gv_rc=$?
+
+        if [ "${gv_rc}" -ne 0 ] && [ "${gv_rc}" -ne 3 ]; then
+          echo "::error::govulncheck failed with exit code ${gv_rc}"
+          exit "${gv_rc}"
+        fi
+
+        # govulncheck -format json emits NDJSON (one JSON object per line).
+        # A finding has a 'called' trace when at least one trace frame carries
+        # a 'function' field — module-only summary findings are not reachable.
+        called_ids=$(jq -rs '
+          [ .[]
+            | select(.finding? and (.finding.trace[]?.function != null))
+            | .finding.osv
+          ] | unique[]
+        ' "${OUTPUT_FILE}")
+        called=$(printf "%s\n" "${called_ids}" | grep -c . || true)
+
+        {
+          echo "output-file=${PWD}/${OUTPUT_FILE}"
+          echo "called-count=${called}"
+          echo "called-ids<<EOF"
+          printf "%s\n" "${called_ids}"
+          echo "EOF"
+        } >> "${GITHUB_OUTPUT}"
+
+        echo "govulncheck called-path vulnerabilities: ${called}"
+        if [ "${called}" -gt 0 ]; then
+          echo "${called_ids}"
+        fi
+
+        if [ "${FAIL_ON_VULN}" = "true" ] && [ "${called}" -gt 0 ]; then
+          echo "::error::govulncheck found ${called} called-path vulnerabilities"
+          exit 1
+        fi
+        exit 0
