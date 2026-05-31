@@ -164,6 +164,16 @@ apps:
       - network
       - network-bind
       - process-control
+  "ceph-exporter":
+    command: commands/ceph-exporter.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+    plugs:
+      - network
+      - network-bind
+      - process-control
   log-rotate:
     command: commands/log-rotate.start
     daemon: oneshot
@@ -277,6 +287,7 @@ parts:
       - radosgw
       - rbd-mirror
       - cephfs-mirror
+      - ceph-exporter
       # Utilities
       - coreutils
       - util-linux
@@ -310,6 +321,7 @@ parts:
       - bin/radosgw-admin
       - bin/rbd-mirror
       - bin/cephfs-mirror
+      - bin/ceph-exporter
       - bin/truncate
       - bin/uuidgen
       - bin/findmnt
