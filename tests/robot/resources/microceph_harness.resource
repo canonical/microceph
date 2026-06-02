@@ -74,6 +74,16 @@ Run In Head Node
     [Arguments]    ${cmd}    ${timeout}=300
     Run In Container    node-wrk0    ${cmd}    ${timeout}
 
+Get Public Network CIDR
+    [Documentation]    Returns the CIDR of the LXD public network (e.g. 10.0.0.0/24) from the outer VM.
+    ${result}=    Run In VM    lxc network list --format=csv | grep 'public' | cut -d, -f4    30
+    RETURN    ${result.stdout.strip()}
+
+Get VM Hostname
+    [Documentation]    Returns the hostname of the outer VM.
+    ${result}=    Run In VM    hostname
+    RETURN    ${result.stdout.strip()}
+
 # ---------------------------------------------------------------------------
 # VM lifecycle
 # ---------------------------------------------------------------------------
@@ -488,16 +498,21 @@ Add LVM Volume OSD
     ${result}=    Run In VM    sudo microceph disk list --json | jq -r '.ConfiguredDisks[].path' | grep "/dev/vgtst/lvtest" -c    30
     Should Be Equal As Strings    ${result.stdout.strip()}    1    msg=LVM OSD not found in disk list
 
+Create Loop Device At
+    [Documentation]    Creates a single named loop-backed block device at ${device} on the outer VM.
+    [Arguments]    ${device}    ${size}=4G
+    ${lf_result}=    Run In VM    mktemp /tmp/mctestXXXXXX    30
+    ${lf}=    Set Variable    ${lf_result.stdout.strip()}
+    Run In VM And Check    sudo truncate -s ${size} ${lf}    30
+    ${ld_result}=    Run In VM    sudo losetup --show -f ${lf}    30
+    ${minor}=    Evaluate    '${ld_result.stdout.strip()}'.replace('/dev/loop', '')
+    Run In VM And Check    sudo mknod -m 0660 ${device} b 7 ${minor}    30
+
 Create Loop Devices
     [Documentation]    Creates /dev/sdia, /dev/sdib, /dev/sdic as loop-backed devices.
     Log To Console    [osd] Creating loop devices /dev/sdia, /dev/sdib, /dev/sdic...
     FOR    ${l}    IN    a    b    c
-        ${lf_result}=    Run In VM    mktemp /tmp/mctestXXXXXX    30
-        ${lf}=    Set Variable    ${lf_result.stdout.strip()}
-        Run In VM And Check    sudo truncate -s 4G ${lf}    30
-        ${ld_result}=    Run In VM    sudo losetup --show -f ${lf}    30
-        ${minor}=    Evaluate    '${ld_result.stdout.strip()}'.replace('/dev/loop', '')
-        Run In VM And Check    sudo mknod -m 0660 /dev/sdi${l} b 7 ${minor}    30
+        Create Loop Device At    /dev/sdi${l}
     END
 
 # ---------------------------------------------------------------------------
@@ -591,6 +606,19 @@ Exercise RGW SSL
     Run In VM And Check    s3cmd --ca-certs=/tmp/ca.crt --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey mb s3://testbucketssl    30
     Run In VM And Check    s3cmd --ca-certs=/tmp/ca.crt --host localhost --host-bucket="localhost/%(bucket)" --access_key=fooAccessKey --secret_key=fooSecretKey put -P ~/${filename}.txt s3://testbucketssl    30
     Run In VM And Check    CURL_CA_BUNDLE=/tmp/ca.crt curl -s https://localhost/testbucketssl/${filename}.txt | grep -F hello-radosgw-ssl    30
+
+Generate Self Signed CA And Server Cert In Container
+    [Documentation]    Generates a self-signed CA and server cert chain inside ${container}.
+    ...    Creates /tmp/ca.key, /tmp/ca.crt, /tmp/server.key, /tmp/server.csr,
+    ...    /tmp/server.crt, and /tmp/extfile.cnf inside the container.
+    [Arguments]    ${container}
+    Run In Container    ${container}    sudo openssl genrsa -out /tmp/ca.key 2048 && sudo openssl req -x509 -new -nodes -key /tmp/ca.key -days 1024 -out /tmp/ca.crt -outform PEM -subj '/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com' && sudo openssl genrsa -out /tmp/server.key 2048 && sudo openssl req -new -key /tmp/server.key -out /tmp/server.csr -subj '/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com' && echo 'subjectAltName = DNS:localhost' > /tmp/extfile.cnf && sudo openssl x509 -req -in /tmp/server.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -out /tmp/server.crt -days 365 -extfile /tmp/extfile.cnf    120
+
+Read Base64 File From Container
+    [Documentation]    Returns the base64-encoded (no line wrapping) contents of a file inside ${container}.
+    [Arguments]    ${container}    ${path}
+    ${result}=    Run In VM    lxc exec ${container} -- bash -c "sudo base64 -w0 ${path}"    30
+    RETURN    ${result.stdout.strip()}
 
 Enable RGW Head Node
     [Documentation]    Enables RGW on node-wrk0 and waits for it to start.
@@ -889,6 +917,27 @@ Remove Node
 # NFS operations
 # ---------------------------------------------------------------------------
 
+Get Node IP
+    [Documentation]    Returns the primary IP of a container (first address from hostname -I).
+    [Arguments]    ${container}
+    ${result}=    Run In VM    lxc exec ${container} -- bash -c 'hostname -I' | cut -d ' ' -f1    30
+    RETURN    ${result.stdout.strip()}
+
+Mount NFS In VM
+    [Documentation]    Mounts an NFS share from ${ip}:${export} at ${mountpoint} on the outer VM.
+    [Arguments]    ${ip}    ${export}    ${mountpoint}
+    Run In VM And Check    sudo mount -t nfs -o rw "${ip}:${export}" ${mountpoint}    30
+
+Write File In VM
+    [Documentation]    Writes ${content} to ${path} on the outer VM using sudo tee.
+    [Arguments]    ${path}    ${content}
+    Run In VM And Check    echo "${content}" | sudo tee ${path}    10
+
+File In VM Should Contain
+    [Documentation]    Asserts that ${path} on the outer VM contains ${text}.
+    [Arguments]    ${path}    ${text}
+    Run In VM And Check    cat ${path} | grep -F "${text}"    10
+
 Enable NFS
     [Arguments]    ${cluster_id}
     Log To Console    [nfs] Enabling NFS cluster ${cluster_id}...
@@ -986,6 +1035,54 @@ Verify Remote Authentication On All Nodes
     Run In Container    node-wrk3    microceph.ceph -s    30
     Run In Container    node-wrk3    microceph.ceph -s --cluster sitea --id siteb    30
     Run In VM And Check    lxc exec node-wrk3 -- sh -c "microceph remote list --json" | jq -e 'any(.[]; .local_name == "siteb")'    30
+
+Get Synced Image Count On Node
+    [Documentation]    Returns string: total images across all RBD replication entries on ${node}.
+    ...    jq expression: '[.[].Images | length] | add // 0'
+    [Arguments]    ${node}
+    ${result}=    Run In VM    lxc exec ${node} -- sh -c "sudo microceph replication list rbd --json | jq '[.[].Images | length] | add // 0'"    30
+    RETURN    ${result.stdout.strip()}
+
+Get Primary Image Count On Node
+    [Documentation]    Returns string: count of RBD images where is_primary==true on ${node}.
+    [Arguments]    ${node}
+    ${result}=    Run In VM    lxc exec ${node} -- sh -c "sudo microceph replication list rbd --json | jq '[.[].Images[] | select(.is_primary==true)] | length'"    30
+    RETURN    ${result.stdout.strip()}
+
+Get RBD Mirror Pool Health
+    [Documentation]    Returns the health string from rbd mirror pool status on ${node} for ${pool}.
+    [Arguments]    ${node}    ${pool}
+    ${result}=    Run In VM    lxc exec ${node} -- sh -c "sudo microceph.rbd mirror pool status ${pool} --format json 2>/dev/null | grep -o '\"health\"[[:space:]]*:[[:space:]]*\"[^\"]*\"' | head -1 | sed 's/.*\"\\([^\"]*\\)\"$/\\1/' || echo UNKNOWN"    15
+    RETURN    ${result.stdout.strip()}
+
+Wait For CephFS Replication List Non Empty
+    [Documentation]    Polls until the CephFS replication list for ${vol} on ${node} is non-empty.
+    [Arguments]    ${node}    ${vol}    ${attempts}=50
+    FOR    ${i}    IN RANGE    ${attempts}
+        ${empty}=    Run In VM    lxc exec ${node} -- sh -c "sudo microceph replication list cephfs --json | jq '.${vol} | . == {}'"    30
+        IF    "${empty.stdout.strip()}" == "false"    RETURN
+        IF    ${i} == ${attempts} - 1    Fail    CephFS replication list for ${vol} still empty after ${attempts} attempts
+        Sleep    5s
+    END
+
+Wait For CephFS Snaps Synced
+    [Documentation]    Polls until total snaps_synced for volume ${vol} on ${node} reaches ${threshold}.
+    ...    NOTE: jq runs on the outer VM (not inside the container) — the lxc exec output is piped
+    ...    to the outer VM's jq binary. This is intentional and must be preserved.
+    [Arguments]    ${node}    ${vol}    ${threshold}    ${attempts}=100
+    FOR    ${i}    IN RANGE    ${attempts}
+        ${result}=    Run In VM    lxc exec ${node} -- sh -c "microceph replication status cephfs ${vol} --json" | jq '[.peers[].mirror_status | .[] | .snaps_synced // 0] | add // 0'    30
+        ${total}=    Evaluate    int('${result.stdout.strip()}') if '${result.stdout.strip()}'.isdigit() else 0
+        IF    ${total} >= ${threshold}    RETURN
+        Sleep    5s
+    END
+    Fail    CephFS snaps_synced for ${vol} never reached ${threshold} after ${attempts} attempts
+
+Read File In VM
+    [Documentation]    Returns the result of running cat ${path} on the outer VM.
+    [Arguments]    ${path}
+    ${result}=    Run In VM    cat ${path}    10
+    RETURN    ${result}
 
 Wait For Pool Crush Rule
     [Documentation]    Polls osd pool ls detail until at least one pool carries the given crush_rule id

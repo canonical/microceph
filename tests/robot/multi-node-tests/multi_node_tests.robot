@@ -38,17 +38,11 @@ Enable Services On Head Node For
 Enable RGW SSL On Head Node
     [Documentation]    Generates SSL cert and enables RGW with SSL on node-wrk0.
     Log To Console    [rgw] Enabling RGW SSL on node-wrk0...
-    Run In Container    node-wrk0    sudo openssl genrsa -out /tmp/ca.key 2048 && sudo openssl req -x509 -new -nodes -key /tmp/ca.key -days 1024 -out /tmp/ca.crt -outform PEM -subj '/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com' && sudo openssl genrsa -out /tmp/server.key 2048 && sudo openssl req -new -key /tmp/server.key -out /tmp/server.csr -subj '/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com' && echo 'subjectAltName = DNS:localhost' > /tmp/extfile.cnf && sudo openssl x509 -req -in /tmp/server.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -out /tmp/server.crt -days 365 -extfile /tmp/extfile.cnf    120
-    ${cert}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo base64 -w0 /tmp/server.crt"    30
-    ${key}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo base64 -w0 /tmp/server.key"    30
-    Run In Container    node-wrk0    microceph enable rgw --ssl-certificate=${cert.stdout.strip()} --ssl-private-key=${key.stdout.strip()}    120
-    FOR    ${i}    IN RANGE    8
-        ${result}=    Run In VM    lxc exec node-wrk0 -- bash -c "microceph.ceph -s | grep -F 'rgw:' | sed -E 's/.* ([0-9]+) daemon.*/\\1/' || echo 0"    30
-        ${count}=    Evaluate    int('${result.stdout.strip()}') if '${result.stdout.strip()}'.isdigit() else 0
-        IF    ${count} >= 1    RETURN
-        Sleep    5s
-    END
-    Fail    RGW SSL never started on node-wrk0
+    Generate Self Signed CA And Server Cert In Container    node-wrk0
+    ${cert}=    Read Base64 File From Container    node-wrk0    /tmp/server.crt
+    ${key}=    Read Base64 File From Container    node-wrk0    /tmp/server.key
+    Run In Container    node-wrk0    microceph enable rgw --ssl-certificate=${cert} --ssl-private-key=${key}    120
+    Wait For RGW On Head Node    1
 
 Wait For RGW On Head Node
     [Documentation]    Waits for expected number of RGW daemons from node-wrk0.
@@ -69,15 +63,10 @@ Test Cross Node Certificate Rotation Inline
     Run In Container    node-wrk0    sudo openssl genrsa -out /tmp/target-cert.key 2048 && sudo openssl req -new -key /tmp/target-cert.key -out /tmp/target-cert.csr -subj '/CN=target-cert' && echo 'subjectAltName = DNS:localhost' > /tmp/target-cert-ext.cnf && sudo openssl x509 -req -in /tmp/target-cert.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -out /tmp/target-cert.crt -days 365 -extfile /tmp/target-cert-ext.cnf    60
     ${target_addr_result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph status | grep -F '${target}' | grep -oP '\\(\\K[^)]+' || true"    30
     ${target_addr}=    Set Variable    ${target_addr_result.stdout.strip()}
-    ${cert}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo base64 -w0 /tmp/target-cert.crt"    30
-    ${key}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo base64 -w0 /tmp/target-cert.key"    30
-    Run In Container    node-wrk0    microceph certificate set rgw --ssl-certificate=${cert.stdout.strip()} --ssl-private-key=${key.stdout.strip()} --target ${target} --restart    120
-    FOR    ${i}    IN RANGE    8
-        ${result}=    Run In VM    lxc exec node-wrk0 -- bash -c "microceph.ceph -s | grep -F 'rgw:' | sed -E 's/.* ([0-9]+) daemon.*/\\1/' || echo 0"    30
-        ${count}=    Evaluate    int('${result.stdout.strip()}') if '${result.stdout.strip()}'.isdigit() else 0
-        IF    ${count} >= 1    BREAK
-        Sleep    5s
-    END
+    ${cert}=    Read Base64 File From Container    node-wrk0    /tmp/target-cert.crt
+    ${key}=    Read Base64 File From Container    node-wrk0    /tmp/target-cert.key
+    Run In Container    node-wrk0    microceph certificate set rgw --ssl-certificate=${cert} --ssl-private-key=${key} --target ${target} --restart    120
+    Wait For RGW On Head Node    1
     FOR    ${i}    IN RANGE    60
         ${ssl_up}=    Run In VM    echo | openssl s_client -connect ${target_addr}:443 2>/dev/null | grep -q "BEGIN CERTIFICATE" && echo yes || echo no    15
         IF    "${ssl_up.stdout.strip()}" == "yes"    BREAK
@@ -85,9 +74,9 @@ Test Cross Node Certificate Rotation Inline
     END
     ${cn}=    Run In VM    echo | openssl s_client -connect ${target_addr}:443 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*CN *= *//p'    30
     Should Be Equal As Strings    ${cn.stdout.strip()}    target-cert    msg=Expected CN=target-cert on ${target}
-    ${orig_cert}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo base64 -w0 /tmp/server.crt"    30
-    ${orig_key}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo base64 -w0 /tmp/server.key"    30
-    Run In Container    node-wrk0    microceph certificate set rgw --ssl-certificate=${orig_cert.stdout.strip()} --ssl-private-key=${orig_key.stdout.strip()} --target ${target} --restart    120
+    ${orig_cert}=    Read Base64 File From Container    node-wrk0    /tmp/server.crt
+    ${orig_key}=    Read Base64 File From Container    node-wrk0    /tmp/server.key
+    Run In Container    node-wrk0    microceph certificate set rgw --ssl-certificate=${orig_cert} --ssl-private-key=${orig_key} --target ${target} --restart    120
     Wait For RGW On Head Node    1
     FOR    ${i}    IN RANGE    60
         ${ssl_up}=    Run In VM    echo | openssl s_client -connect ${target_addr}:443 2>/dev/null | grep -q "BEGIN CERTIFICATE" && echo yes || echo no    15
@@ -134,6 +123,41 @@ Remove Node Head Node
     Run In Container    node-wrk0    microceph.ceph -s    30
     Run In Container    node-wrk0    microceph status    30
 
+CRUSH Rule Should Be    ${expected_rule_id}
+    [Documentation]    Verifies the default CRUSH rule matches expected_rule_id on node-wrk0.
+    [Arguments]    ${expected_rule_id}
+    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x ${expected_rule_id}    30
+
+Wait For N OSDs Up And In On Head Node
+    [Documentation]    Polls ceph status on node-wrk0 until N OSDs are all up and in.
+    [Arguments]    ${n}    ${tries}=30
+    FOR    ${i}    IN RANGE    ${tries}
+        ${osd_check}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: ${n} osds: ${n} up.*${n} in"    30
+        IF    ${osd_check.rc} == 0    RETURN
+        Sleep    5s
+    END
+    Fail    Timed out waiting for ${n} OSDs up and in on node-wrk0
+
+Wait For CRUSH Auto Host Rule On Head Node
+    [Documentation]    Polls until microceph_auto_host appears in crush rule list on node-wrk0.
+    [Arguments]    ${tries}=20
+    FOR    ${i}    IN RANGE    ${tries}
+        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host    30
+        IF    ${result.rc} == 0    RETURN
+        Sleep    5s
+    END
+    Fail    microceph_auto_host crush rule never appeared in osd crush rule ls
+
+Verify Node Removed From Cluster
+    [Documentation]    Asserts the node is gone from microceph status and that the mon daemon
+    ...    count is either 3 (clean removal) or 4 with the node still out of quorum (transitional).
+    [Arguments]    ${node}
+    Run In VM Must Fail    lxc exec node-wrk0 -- sh -c "microceph status" | grep "^- ${node} "
+    ${ceph_s}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s"    30
+    ${has_3}=    Evaluate    "mon: 3 daemons" in """${ceph_s.stdout}"""
+    ${has_4_ooq}=    Evaluate    "mon: 4 daemons" in """${ceph_s.stdout}""" and "${node}" in """${ceph_s.stdout}"""
+    Should Be True    ${has_3} or ${has_4_ooq}    msg=Expected mon: 3 daemons or 4 with ${node} out-of-quorum after node removal
+
 *** Test Cases ***
 Test MicroCeph Status After Cluster Setup
     [Documentation]    Smoke-checks that microceph status succeeds on the fully-formed 4-node cluster
@@ -145,27 +169,17 @@ Test CRUSH Host Failure Domain Auto Scaling
     [Documentation]    Adds OSDs one at a time and verifies the CRUSH rule transitions from
     ...    OSD-level (rule 1) to host-level (rule 2) once 3 OSDs across 3 hosts are present.
     [Tags]    multi-node    crush    osd
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 1    30
+    CRUSH Rule Should Be    1
     Add OSD To Node    node-wrk1
     Add OSD To Node    node-wrk2
     Wait For OSD Count Head    2
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x 1    30
+    CRUSH Rule Should Be    1
     Add OSD To Node    node-wrk0
     Wait For OSD Count Head    3
     Wait For CRUSH Rule    2
     Wait For OSD Count Head    3
-    FOR    ${i}    IN RANGE    20
-        ${osd_check}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"    30
-        IF    ${osd_check.rc} == 0    BREAK
-        Sleep    5s
-    END
-    Should Be Equal As Integers    ${osd_check.rc}    0    msg=Timed out waiting for 3 OSDs up and in
-    FOR    ${i}    IN RANGE    20
-        ${crush_rule}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host    30
-        IF    ${crush_rule.rc} == 0    BREAK
-        Sleep    5s
-    END
-    Should Be Equal As Integers    ${crush_rule.rc}    0    msg=microceph_auto_host crush rule never appeared in osd crush rule ls
+    Wait For N OSDs Up And In On Head Node    3
+    Wait For CRUSH Auto Host Rule On Head Node
     Wait For Pool Crush Rule    2
 
 Test OSD Add Remove
@@ -173,13 +187,8 @@ Test OSD Add Remove
     [Tags]    multi-node    osd
     Add OSD To Node    node-wrk3
     Wait For OSD Count Head    4
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph disk remove 4"    120
-    FOR    ${i}    IN RANGE    30
-        ${osd_check}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds: 3 up.*3 in"    30
-        IF    ${osd_check.rc} == 0    BREAK
-        Sleep    5s
-    END
-    Should Be Equal As Integers    ${osd_check.rc}    0    msg=Timed out waiting for 3 OSDs up and in after OSD removal
+    Run In Container    node-wrk0    microceph disk remove 4    120
+    Wait For N OSDs Up And In On Head Node    3
 
 Test Service Migration
     [Documentation]    Migrates services from node-wrk1 to node-wrk3 and verifies placement.
@@ -196,9 +205,9 @@ Test Multi Node RGW SSL
     [Tags]    multi-node    rgw
     Enable Services On Head Node For    node-wrk1
     Enable RGW SSL On Head Node
-    ${cert}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo base64 -w0 /tmp/server.crt"    30
-    ${key}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo base64 -w0 /tmp/server.key"    30
-    Run In VM And Check    lxc exec node-wrk0 -- bash -c "microceph enable rgw --target node-wrk1 --ssl-certificate=\"${cert.stdout.strip()}\" --ssl-private-key=\"${key.stdout.strip()}\""    120
+    ${cert}=    Read Base64 File From Container    node-wrk0    /tmp/server.crt
+    ${key}=    Read Base64 File From Container    node-wrk0    /tmp/server.key
+    Run In VM And Check    lxc exec node-wrk0 -- bash -c "microceph enable rgw --target node-wrk1 --ssl-certificate=\"${cert}\" --ssl-private-key=\"${key}\""    120
     Wait For RGW On Head Node    2
 
 Test Cross Node Certificate Rotation
@@ -210,8 +219,8 @@ Test Prohibit CRUSH Scaledown
     [Documentation]    Removes wrk0's OSD (OSD 3) with --prohibit-crush-scaledown and verifies
     ...    the host failure domain rule is not downgraded.
     [Tags]    multi-node    crush    osd
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph disk remove 3 --prohibit-crush-scaledown --bypass-safety-checks"    120
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host    30
+    Run In Container    node-wrk0    microceph disk remove 3 --prohibit-crush-scaledown --bypass-safety-checks    120
+    Wait For CRUSH Auto Host Rule On Head Node
 
 Test Node Removal
     [Documentation]    Re-adds wrk0's OSD then removes node-wrk3 from the cluster.
@@ -222,8 +231,4 @@ Test Node Removal
     Add OSD To Node    node-wrk0
     Wait For OSD Count Head    3
     Remove Node Head Node    node-wrk3
-    Run In VM Must Fail    lxc exec node-wrk0 -- sh -c "microceph status" | grep "^- node-wrk3 "
-    ${ceph_s}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s"    30
-    ${has_3}=    Evaluate    "mon: 3 daemons" in """${ceph_s.stdout}"""
-    ${has_4_ooq}=    Evaluate    "mon: 4 daemons" in """${ceph_s.stdout}""" and "node-wrk3" in """${ceph_s.stdout}"""
-    Should Be True    ${has_3} or ${has_4_ooq}    msg=Expected mon: 3 daemons or 4 with wrk3 out-of-quorum after node removal
+    Verify Node Removed From Cluster    node-wrk3

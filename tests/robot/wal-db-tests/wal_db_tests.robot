@@ -25,12 +25,7 @@ Test Encrypted WAL DB Startup Inline
     Run In VM And Check    sudo snap restart microceph.daemon    60
     # Create 3 loop devices for data (sdid), WAL (sdie), DB (sdif)
     FOR    ${l}    IN    d    e    f
-        ${lf_result}=    Run In VM    mktemp /tmp/mctestXXXXXX    30
-        ${lf}=    Set Variable    ${lf_result.stdout.strip()}
-        Run In VM And Check    sudo truncate -s 4G ${lf}    30
-        ${ld_result}=    Run In VM    sudo losetup --show -f ${lf}    30
-        ${minor}=    Evaluate    '${ld_result.stdout.strip()}'.replace('/dev/loop', '')
-        Run In VM And Check    sudo mknod -m 0660 /dev/sdi${l} b 7 ${minor}    30
+        Create Loop Device At    /dev/sdi${l}
     END
     Run In VM And Check    sudo microceph disk add /dev/sdid --encrypt --wal-device /dev/sdie --wal-encrypt --db-device /dev/sdif --db-encrypt    120
     # Wait for expected_osds up AND in (mirrors bash wait_for_osds_up_in)

@@ -14,6 +14,29 @@ Single System Suite Setup
     Copy Snap To VM
     Install Tools
 
+Wait For All Daemons After Restart
+    [Documentation]    Polls ceph status until mon, mgr, osd, and rgw are all visible, then
+    ...    waits for the ceph-osd process to appear. Used after snap stop/start.
+    FOR    ${i}    IN RANGE    16
+        ${result}=    Run In VM    sudo microceph.ceph status    30
+        Log    Attempt ${i}: ${result.stdout}
+        IF    "mon: 1 daemons" in $result.stdout and "(active, since" in $result.stdout and "osd: 3 osds" in $result.stdout and "rgw: 1 daemon" in $result.stdout
+            Log To Console    [status] PASS: all daemons visible after restart (attempt ${i})
+            BREAK
+        END
+        IF    ${i} == 15    Fail    Cluster never came back fully after snap restart
+        Sleep    15s
+    END
+    FOR    ${i}    IN RANGE    10
+        ${pgrep}=    Run In VM    pgrep ceph-osd    10
+        IF    ${pgrep.rc} == 0
+            Log To Console    [status] ceph-osd process found
+            RETURN
+        END
+        IF    ${i} == 9    Fail    ceph-osd process never appeared after snap restart
+        Sleep    2s
+    END
+
 Test Waitready Inline
     [Documentation]    Installs snap, verifies waitready fails before bootstrap,
     ...    bootstraps, then verifies waitready passes after bootstrap.
@@ -48,24 +71,17 @@ Test Orchestrator Module
     Run In VM And Check    sudo microceph.ceph mgr module ls | grep -F "microceph"    30
     Run In VM And Check    sudo microceph.ceph mgr module enable microceph    30
     Run In VM And Check    sudo microceph.ceph orch set backend microceph    30
-    ${hn}=    Run In VM    hostname
-    ${hn_str}=    Strip String    ${hn.stdout}
-    Run In VM And Check    sudo microceph.ceph orch host ls | grep -F ${hn_str}    30
-    Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mon" | grep -F ${hn_str}    30
-    Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mds" | grep -F ${hn_str}    30
-    Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mgr" | grep -F ${hn_str}    30
+    ${hn}=    Get VM Hostname
+    Run In VM And Check    sudo microceph.ceph orch host ls | grep -F ${hn}    30
+    Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mon" | grep -F ${hn}    30
+    Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mds" | grep -F ${hn}    30
+    Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mgr" | grep -F ${hn}    30
 
 Add OSD With Failure
     [Documentation]    Verifies adding an encrypted OSD fails without dm-crypt,
     ...    and batch disk add fails with wal/db device flags.
     [Tags]    osd    disk-management
-    ${lf_result}=    Run In VM    mktemp /tmp/mctestXXXXXX    30
-    ${lf}=    Set Variable    ${lf_result.stdout.strip()}
-    Run In VM And Check    sudo truncate -s 1G ${lf}    30
-    ${ld_result}=    Run In VM    sudo losetup --show -f ${lf}    30
-    ${ld}=    Set Variable    ${ld_result.stdout.strip()}
-    ${minor}=    Evaluate    '${ld}'.replace('/dev/loop', '')
-    Run In VM And Check    sudo mknod -m 0660 /dev/sdi21 b 7 ${minor}    30
+    Create Loop Device At    /dev/sdi21    1G
     ${r}=    Run In VM    sudo microceph disk add --wipe /dev/sdi21 --encrypt 2>&1 | grep -c Failure    30
     Should Not Be Equal As Strings    ${r.stdout.strip()}    0    msg=FDE should fail without dm-crypt
     ${r2}=    Run In VM    sudo microceph disk add /dev/sdi21 /dev/sdi22 --wal-device /dev/sdi23 2>&1 | grep -c "not supported for batch disk addition"    30
@@ -127,27 +143,7 @@ Test Cluster Restart Verify
     [Tags]    osd    rgw    mon    mgr
     Run In VM And Check    sudo snap stop microceph    120
     Run In VM And Check    sudo snap start microceph    60
-    FOR    ${i}    IN RANGE    16
-        ${result}=    Run In VM    sudo microceph.ceph status    30
-        Log    Attempt ${i}: ${result.stdout}
-        IF    "mon: 1 daemons" in $result.stdout and "(active, since" in $result.stdout and "osd: 3 osds" in $result.stdout and "rgw: 1 daemon" in $result.stdout
-            Log To Console    [status] PASS: all daemons visible after restart (attempt ${i})
-            BREAK
-        END
-        IF    ${i} == 15
-            Fail    Cluster never came back fully after snap restart
-        END
-        Sleep    15s
-    END
-    FOR    ${i}    IN RANGE    10
-        ${pgrep}=    Run In VM    pgrep ceph-osd    10
-        IF    ${pgrep.rc} == 0
-            Log To Console    [status] ceph-osd process found
-            BREAK
-        END
-        IF    ${i} == 9    Fail    ceph-osd process never appeared after snap restart
-        Sleep    2s
-    END
+    Wait For All Daemons After Restart
 
 Test Snap Disable Enable Service Restoration
     [Documentation]    Disables then re-enables the snap and verifies all services restart.

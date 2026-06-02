@@ -63,11 +63,61 @@ Wait For Snap Service State On
     END
     Fail    Timed out waiting for microceph.${service} on ${node} to be ${expected_active}/${expected_enabled}
 
-Assert Output Contains Pattern
-    [Documentation]    Fails if pattern is not found in output string.
-    [Arguments]    ${output}    ${pattern}    ${context}
-    ${match}=    Run Process    bash -c "echo ${output} | grep -E '${pattern}'"    shell=True
-    Should Be Equal As Integers    ${match.rc}    0    msg=${context}: pattern '${pattern}' not found
+Wait For OSD Removed From Cluster
+    [Documentation]    Polls until osd.${osd_id} is no longer visible in ceph osd info via ${head_node}.
+    [Arguments]    ${head_node}    ${osd_id}
+    FOR    ${i}    IN RANGE    8
+        ${gone}=    Run In VM    lxc exec ${head_node} -- sh -c "microceph.ceph osd info osd.${osd_id} 2>/dev/null && echo exists || echo gone"    30
+        IF    "${gone.stdout.strip()}" == "gone"
+            Log To Console    [maintenance] osd.${osd_id} confirmed removed
+            RETURN
+        END
+        Sleep    5s
+    END
+    Fail    OSD osd.${osd_id} was not removed from cluster within timeout
+
+Remove Cluster Node With Retry
+    [Documentation]    Removes ${node} from the cluster via ${head_node}, retrying on transient
+    ...    'context canceled' RPC errors. The target may be busy rebalancing OSDs and not respond in time.
+    [Arguments]    ${head_node}    ${node}    ${attempts}=3
+    FOR    ${attempt}    IN RANGE    ${attempts}
+        ${result}=    Run In VM    lxc exec ${head_node} -- bash -eo pipefail -c "microceph cluster remove ${node}"    120
+        IF    ${result.rc} == 0    RETURN
+        Log To Console    [maintenance] Remove ${node} attempt ${attempt} failed: ${result.stderr.strip()} — retrying in 10s
+        IF    ${attempt} == ${attempts} - 1    Fail    Failed to remove ${node} after ${attempts} attempts: ${result.stderr}
+        Sleep    10s
+    END
+
+Wait For Node Absent From Mons
+    [Documentation]    Polls until ${node} no longer appears in the mon daemons list via ${head_node}.
+    [Arguments]    ${head_node}    ${node}
+    FOR    ${i}    IN RANGE    8
+        ${result}=    Run In VM    lxc exec ${head_node} -- sh -c "microceph.ceph -s | grep -q 'mon: .*daemons.*${node}' && echo yes || echo no"    30
+        IF    "${result.stdout.strip()}" == "no"
+            Log To Console    [maintenance] ${node} no longer in mon list
+            RETURN
+        END
+        Sleep    5s
+    END
+
+Stop And Disable Mon On Container
+    [Documentation]    Stops and disables the microceph mon service on ${container}.
+    [Arguments]    ${container}
+    Run In VM And Check    lxc exec ${container} -- sh -c "sudo systemctl stop snap.microceph.mon && sudo systemctl disable snap.microceph.mon"    30
+
+Wait For Health To Mention
+    [Documentation]    Polls ceph health via ${head_node} until ${substring} appears in the output.
+    [Arguments]    ${head_node}    ${substring}    ${tries}=100
+    Log To Console    [maintenance] Waiting for ceph health to mention '${substring}' (up to ${tries}s)...
+    FOR    ${i}    IN RANGE    ${tries}
+        ${health}=    Run In VM    lxc exec ${head_node} -- sh -c "microceph.ceph health 2>/dev/null || true"    15
+        IF    "${substring}" in $health.stdout
+            Log To Console    [maintenance] '${substring}' detected in health after ${i}s
+            RETURN
+        END
+        Sleep    1s
+    END
+    Fail    ceph health never mentioned '${substring}' after ${tries} attempts
 
 Run Dry Run Maintenance Enter
     [Documentation]    Runs maintenance enter --dry-run with given flags on node from itself.
@@ -261,39 +311,11 @@ Test Quorum Guardrail Blocks Enter
     ...    verifies that entering maintenance is blocked to protect quorum.
     [Tags]    maintenance    cluster    mon
     Run In Container    node-wrk0    microceph disk remove osd.4 --bypass-safety-checks    300
-    FOR    ${i}    IN RANGE    8
-        ${gone}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph osd info osd.4 2>/dev/null && echo exists || echo gone"    30
-        IF    "${gone.stdout.strip()}" == "gone"
-            Log To Console    [maintenance] osd.4 confirmed removed
-            BREAK
-        END
-        Sleep    5s
-    END
-    FOR    ${attempt}    IN RANGE    3
-        ${result}=    Run In VM    lxc exec node-wrk0 -- bash -eo pipefail -c "microceph cluster remove node-wrk3"    120
-        IF    ${result.rc} == 0    BREAK
-        Log To Console    [maintenance] Remove node-wrk3 attempt ${attempt} failed: ${result.stderr.strip()} — retrying in 10s
-        IF    ${attempt} == 2    Fail    Failed to remove node-wrk3 after 3 attempts: ${result.stderr}
-        Sleep    10s
-    END
-    FOR    ${i}    IN RANGE    8
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s | grep -q 'mon: .*daemons.*node-wrk3' && echo yes || echo no"    30
-        IF    "${result.stdout.strip()}" == "no"
-            Log To Console    [maintenance] node-wrk3 no longer in mon list
-            BREAK
-        END
-        Sleep    5s
-    END
-    Run In VM And Check    lxc exec node-wrk2 -- sh -c "sudo systemctl stop snap.microceph.mon && sudo systemctl disable snap.microceph.mon"    30
-    Log To Console    [maintenance] Waiting for ceph to detect quorum warning (up to 100s)...
-    FOR    ${i}    IN RANGE    100
-        ${health}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph health 2>/dev/null || true"    15
-        IF    "quorum" in $health.stdout
-            Log To Console    [maintenance] Quorum warning detected after ${i}s
-            BREAK
-        END
-        Sleep    1s
-    END
+    Wait For OSD Removed From Cluster    node-wrk0    4
+    Remove Cluster Node With Retry    node-wrk0    node-wrk3
+    Wait For Node Absent From Mons    node-wrk0    node-wrk3
+    Stop And Disable Mon On Container    node-wrk2
+    Wait For Health To Mention    node-wrk0    quorum
     Run In VM Must Fail    lxc exec node-wrk0 -- sh -c "microceph cluster maintenance enter node-wrk1"
 
 Test Force Maintenance Enter And Exit Without Noout Or Stop

@@ -75,12 +75,11 @@ Test Mount And Write NFS
     ...    via NFS v4, writes a file, reads it back, and unmounts.
     [Tags]    nfs    multi-node
     Run In VM And Check    sudo apt install nfs-common -y    300
-    ${addr}=    Run In VM    lxc exec node-wrk0 -- bash -c 'hostname -I' | cut -d ' ' -f1
-    ${ip}=    Strip String    ${addr.stdout}
+    ${ip}=    Get Node IP    node-wrk0
     Run In VM And Check    sudo mkdir -p /mnt/nfs    10
-    Run In VM And Check    sudo mount -t nfs -o rw "${ip}:/testfsdir" /mnt/nfs/    30
-    Run In VM And Check    echo "Hello there!" | sudo tee /mnt/nfs/general.kenobi    10
-    Run In VM And Check    cat /mnt/nfs/general.kenobi | grep -F "Hello there!"    10
+    Mount NFS In VM    ${ip}    /testfsdir    /mnt/nfs/
+    Write File In VM    /mnt/nfs/general.kenobi    Hello there!
+    File In VM Should Contain    /mnt/nfs/general.kenobi    Hello there!
     Run In VM And Check    sudo umount /mnt/nfs    10
 
 Test Disable NFS On All Nodes

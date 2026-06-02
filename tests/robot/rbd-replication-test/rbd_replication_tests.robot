@@ -51,8 +51,8 @@ Wait For Secondary Sync
     [Arguments]    ${threshold}
     Log To Console    [rbd] Waiting for ${threshold} images to sync to siteb...
     FOR    ${i}    IN RANGE    100
-        ${result}=    Run In VM    lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd --json | jq '[.[].Images | length] | add // 0'"    30
-        ${images}=    Evaluate    int('${result.stdout.strip()}') if '${result.stdout.strip()}'.isdigit() else 0
+        ${count_str}=    Get Synced Image Count On Node    node-wrk2
+        ${images}=    Evaluate    int('${count_str}') if '${count_str}'.isdigit() else 0
         IF    ${images} >= ${threshold}
             Log To Console    [rbd] ${images} images synced to secondary
             RETURN
@@ -79,8 +79,8 @@ Failover To Site B
     Should Be True    int('${img_count.stdout.strip()}') >= 1    msg=Site B has no secondary images
     Run In Container    node-wrk2    sudo microceph replication promote --remote sitea --yes-i-really-mean-it    120
     FOR    ${i}    IN RANGE    100
-        ${result}=    Run In VM    lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd --json | jq '[.[].Images[] | select(.is_primary==true)] | length'"    30
-        ${count}=    Evaluate    int('${result.stdout.strip()}') if '${result.stdout.strip()}'.isdigit() else 0
+        ${count_str}=    Get Primary Image Count On Node    node-wrk2
+        ${count}=    Evaluate    int('${count_str}') if '${count_str}'.isdigit() else 0
         IF    ${count} > 0
             Log To Console    [rbd] ${count} images promoted to primary on site B
             BREAK
@@ -107,8 +107,7 @@ Wait For RBD Mirror Health
     FOR    ${pool}    IN    @{pools}
         Log To Console    [rbd] Waiting for mirror health OK/WARNING on ${node} pool ${pool}...
         FOR    ${i}    IN RANGE    120
-            ${result}=    Run In VM    lxc exec ${node} -- sh -c "sudo microceph.rbd mirror pool status ${pool} --format json 2>/dev/null | grep -o '\"health\"[[:space:]]*:[[:space:]]*\"[^\"]*\"' | head -1 | sed 's/.*\"\\([^\"]*\\)\"$/\\1/' || echo UNKNOWN"    15
-            ${health}=    Set Variable    ${result.stdout.strip()}
+            ${health}=    Get RBD Mirror Pool Health    ${node}    ${pool}
             IF    "${health}" == "OK" or "${health}" == "WARNING"
                 Log To Console    [rbd] ${pool} health=${health}
                 BREAK

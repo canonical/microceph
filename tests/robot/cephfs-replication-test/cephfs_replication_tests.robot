@@ -59,12 +59,7 @@ Verify CephFS Mirror List Output
     IF    "${groupedpath.stdout.strip()}" != ""
         Run In Container    node-wrk0    sudo microceph.ceph fs snapshot mirror add vol ${groupedpath.stdout.strip()}    60
     END
-    FOR    ${i}    IN RANGE    50
-        ${empty}=    Run In VM    lxc exec node-wrk0 -- sh -c "sudo microceph replication list cephfs --json | jq '.vol | . == {}'"    30
-        IF    "${empty.stdout.strip()}" == "false"    BREAK
-        IF    ${i} == 49    Fail    List output empty after 50 attempts
-        Sleep    5s
-    END
+    Wait For CephFS Replication List Non Empty    node-wrk0    vol
     ${list_json}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo microceph replication list cephfs --json | jq -c '.vol[]'"    30
     Log    CephFS list output: ${list_json.stdout}
     # Assert each list entry's resource_type matches its path (mirrors bash
@@ -90,28 +85,20 @@ Wait For CephFS Sync
     Run In VM And Check    sudo mkdir -p /mnt/primary/dir1/.snap/two-snap    30
     Run In VM And Check    sudo mkdir -p /mnt/primary/dir2/.snap/two-snap    30
     Sleep    20s
-    FOR    ${i}    IN RANGE    ${attempts}
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph replication status cephfs vol --json" | jq '[.peers[].mirror_status | .[] | .snaps_synced // 0] | add // 0'    30
-        ${total}=    Evaluate    int('${result.stdout.strip()}') if '${result.stdout.strip()}'.isdigit() else 0
-        IF    ${total} >= 2
-            Log To Console    [cephfs] Snapshots replicated to secondary (total snaps_synced=${total})
-            RETURN
-        END
-        Sleep    5s
-    END
-    Fail    CephFS snapshots did not replicate after ${attempts} attempts
+    Wait For CephFS Snaps Synced    node-wrk0    vol    2    ${attempts}
+    Log To Console    [cephfs] Snapshots replicated to secondary
 
 Verify CephFS Data Integrity
     [Documentation]    Mounts the secondary filesystem and verifies file contents match the primary.
     Log To Console    [cephfs] Verifying CephFS data integrity...
-    ${node0_f1}=    Run In VM    cat /mnt/primary/dir1/test_file    10
-    ${node0_f2}=    Run In VM    cat /mnt/primary/dir2/test_file    10
+    ${node0_f1}=    Read File In VM    /mnt/primary/dir1/test_file
+    ${node0_f2}=    Read File In VM    /mnt/primary/dir2/test_file
     Run In VM And Check    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.conf /etc/ceph/    30
     Run In VM And Check    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.keyring /etc/ceph/    30
     Run In VM And Check    sudo mkdir -p /mnt/secondary    10
     Run In VM And Check    sudo mount -t ceph :/ /mnt/secondary/ -o name=admin,fs=vol    60
-    ${node2_f1}=    Run In VM    cat /mnt/secondary/dir1/test_file    10
-    ${node2_f2}=    Run In VM    cat /mnt/secondary/dir2/test_file    10
+    ${node2_f1}=    Read File In VM    /mnt/secondary/dir1/test_file
+    ${node2_f2}=    Read File In VM    /mnt/secondary/dir2/test_file
     Should Be Equal As Strings    ${node0_f1.stdout.strip()}    ${node2_f1.stdout.strip()}    msg=dir1/test_file mismatch between primary and secondary
     Should Be Equal As Strings    ${node0_f2.stdout.strip()}    ${node2_f2.stdout.strip()}    msg=dir2/test_file mismatch between primary and secondary
 
