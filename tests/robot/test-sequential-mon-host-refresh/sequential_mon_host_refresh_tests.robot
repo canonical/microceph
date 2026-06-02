@@ -23,11 +23,35 @@ Sequential Mon Refresh Suite Setup
     Create LXD Containers With Loop Devices    public
     Install MicroCeph On All Nodes
 
+Wait For IP In Ceph Conf On Node
+    [Documentation]    Polls until ${ip} appears in ceph.conf on the given LXD container.
+    [Arguments]    ${node}    ${ip}    ${attempts}=24
+    FOR    ${i}    IN RANGE    ${attempts}
+        ${result}=    Run In VM    lxc exec ${node} -- sh -c "grep -q '${ip}' /var/snap/microceph/current/conf/ceph.conf && echo yes || echo no" 2>/dev/null || true    15
+        IF    "${result.stdout.strip()}" == "yes"
+            Log To Console    [mon] ${node} ceph.conf contains ${ip} (attempt ${i})
+            RETURN
+        END
+        Sleep    5s
+    END
+    Fail    Timed out waiting for ${ip} in ceph.conf on ${node}
+
+Mon Host Line Should Contain IP Once
+    [Documentation]    Verifies ${ip} appears exactly once on the mon host line in ${node}'s ceph.conf.
+    [Arguments]    ${node}    ${ip}
+    ${count}=    Run In VM    lxc exec ${node} -- sh -c "grep 'mon host' /var/snap/microceph/current/conf/ceph.conf | grep -c '${ip}'"    30
+    Should Be Equal As Strings    ${count.stdout.strip()}    1    msg=${ip} not exactly-once on mon host line in ${node} ceph.conf
+
+Public Network Should Be Set Once
+    [Documentation]    Verifies public_network = ${cidr} appears exactly once in ${node}'s ceph.conf.
+    [Arguments]    ${node}    ${cidr}
+    ${count}=    Run In VM    lxc exec ${node} -- sh -c "grep -c 'public_network = ${cidr}' /var/snap/microceph/current/conf/ceph.conf"    30
+    Should Be Equal As Strings    ${count.stdout.strip()}    1    msg=public_network = ${cidr} not exactly-once in ${node} ceph.conf
+
 Derive Node IPs
     [Documentation]    Computes node0 and node1 IPs from the public network gateway and saves
     ...    them as suite variables for use across test cases.
-    ${nw_result}=    Run In VM    lxc network list --format=csv | grep 'public' | cut -d, -f4    30
-    ${nw}=    Set Variable    ${nw_result.stdout.strip()}
+    ${nw}=    Get Public Network CIDR
     ${gw}=    Evaluate    '${nw}'.split('/')[0]
     Set Suite Variable    ${NODE0_IP}    ${gw}0
     Set Suite Variable    ${NODE1_IP}    ${gw}1
@@ -45,8 +69,7 @@ Test Bootstrap Head Node With Public Network
     [Documentation]    Bootstraps node-wrk0 with --public-network so that its IP is recorded
     ...    as the first monitor address.
     [Tags]    multi-node    regression    mon
-    ${nw_result}=    Run In VM    lxc network list --format=csv | grep 'public' | cut -d, -f4    30
-    ${nw}=    Set Variable    ${nw_result.stdout.strip()}
+    ${nw}=    Get Public Network CIDR
     Log To Console    [mon] Bootstrapping node-wrk0 with public-network=${nw}...
     Run In Container    node-wrk0    microceph cluster bootstrap --public-network=${nw}    120
 
@@ -55,17 +78,7 @@ Test Wait For Head Node First Monitor Refresh
     ...    node0_ip (regression: the first refresh must complete before the second node joins).
     [Tags]    multi-node    regression    mon
     Log To Console    [mon] Waiting for node-wrk0 first monitor refresh (node0_ip=${NODE0_IP})...
-    FOR    ${i}    IN RANGE    24
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "grep -q '${NODE0_IP}' /var/snap/microceph/current/conf/ceph.conf && echo yes || echo no" 2>/dev/null || true    15
-        IF    "${result.stdout.strip()}" == "yes"
-            Log To Console    [mon] node-wrk0 completed first monitor refresh (attempt ${i})
-            BREAK
-        END
-        IF    ${i} == 23
-            Fail    Timed out waiting for node-wrk0 first monitor refresh
-        END
-        Sleep    5s
-    END
+    Wait For IP In Ceph Conf On Node    node-wrk0    ${NODE0_IP}
 
 Test Join First Worker Node To Cluster
     [Documentation]    Generates a join token on node-wrk0 and joins node-wrk1 to the cluster.
@@ -79,58 +92,32 @@ Test Head Node Config Updated With Worker IP
     ...    node1_ip (verifying the sequential monitor-host refresh propagates to the head node).
     [Tags]    multi-node    regression    mon
     Log To Console    [mon] Waiting for node-wrk0 to update ceph.conf with ${NODE1_IP}...
-    FOR    ${i}    IN RANGE    24
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "grep -q '${NODE1_IP}' /var/snap/microceph/current/conf/ceph.conf && echo yes || echo no" 2>/dev/null || true    15
-        IF    "${result.stdout.strip()}" == "yes"
-            Log To Console    [mon] node-wrk0 ceph.conf updated with node1_ip (attempt ${i})
-            BREAK
-        END
-        IF    ${i} == 23
-            Fail    Timed out waiting for node-wrk0 to update ceph.conf with ${NODE1_IP}
-        END
-        Sleep    5s
-    END
+    Wait For IP In Ceph Conf On Node    node-wrk0    ${NODE1_IP}
 
 Test Worker Node Config Updated With Own IP
     [Documentation]    Polls node-wrk1's ceph.conf until it contains node1_ip (verifying the
     ...    joining node also receives the full monitor list).
     [Tags]    multi-node    regression    mon
     Log To Console    [mon] Waiting for node-wrk1 to update ceph.conf with ${NODE1_IP}...
-    FOR    ${i}    IN RANGE    24
-        ${result}=    Run In VM    lxc exec node-wrk1 -- sh -c "grep -q '${NODE1_IP}' /var/snap/microceph/current/conf/ceph.conf && echo yes || echo no" 2>/dev/null || true    15
-        IF    "${result.stdout.strip()}" == "yes"
-            Log To Console    [mon] node-wrk1 ceph.conf updated (attempt ${i})
-            BREAK
-        END
-        IF    ${i} == 23
-            Fail    Timed out waiting for node-wrk1 to update ceph.conf with ${NODE1_IP}
-        END
-        Sleep    5s
-    END
+    Wait For IP In Ceph Conf On Node    node-wrk1    ${NODE1_IP}
 
 Test All Monitor IPs Present In Head Node Config
     [Documentation]    Verifies that node-wrk0's ceph.conf mon host line contains both the head
     ...    node IP and the worker node IP exactly once each (mirrors bash verify_bootstrap_configs).
     [Tags]    multi-node    regression    mon
-    ${count0}=    Run In VM    lxc exec node-wrk0 -- sh -c "grep 'mon host' /var/snap/microceph/current/conf/ceph.conf | grep -c '${NODE0_IP}'"    30
-    Should Be Equal As Strings    ${count0.stdout.strip()}    1    msg=${NODE0_IP} not exactly-once on mon host line in node-wrk0 ceph.conf
-    ${count1}=    Run In VM    lxc exec node-wrk0 -- sh -c "grep 'mon host' /var/snap/microceph/current/conf/ceph.conf | grep -c '${NODE1_IP}'"    30
-    Should Be Equal As Strings    ${count1.stdout.strip()}    1    msg=${NODE1_IP} not exactly-once on mon host line in node-wrk0 ceph.conf
+    Mon Host Line Should Contain IP Once    node-wrk0    ${NODE0_IP}
+    Mon Host Line Should Contain IP Once    node-wrk0    ${NODE1_IP}
 
 Test All Monitor IPs Present In Worker Node Config
     [Documentation]    Verifies that node-wrk1's ceph.conf mon host line contains both the head
     ...    node IP and the worker node IP exactly once each (mirrors bash verify_bootstrap_configs).
     [Tags]    multi-node    regression    mon
-    ${count0}=    Run In VM    lxc exec node-wrk1 -- sh -c "grep 'mon host' /var/snap/microceph/current/conf/ceph.conf | grep -c '${NODE0_IP}'"    30
-    Should Be Equal As Strings    ${count0.stdout.strip()}    1    msg=${NODE0_IP} not exactly-once on mon host line in node-wrk1 ceph.conf
-    ${count1}=    Run In VM    lxc exec node-wrk1 -- sh -c "grep 'mon host' /var/snap/microceph/current/conf/ceph.conf | grep -c '${NODE1_IP}'"    30
-    Should Be Equal As Strings    ${count1.stdout.strip()}    1    msg=${NODE1_IP} not exactly-once on mon host line in node-wrk1 ceph.conf
+    Mon Host Line Should Contain IP Once    node-wrk1    ${NODE0_IP}
+    Mon Host Line Should Contain IP Once    node-wrk1    ${NODE1_IP}
 
 Test Public Network Set In Both Node Configs
     [Documentation]    Verifies that public_network = <cidr> with the exact network value appears
     ...    exactly once in ceph.conf on both nodes (mirrors bash verify_bootstrap_configs).
     [Tags]    multi-node    regression    mon
-    ${count0}=    Run In VM    lxc exec node-wrk0 -- sh -c "grep -c 'public_network = ${NW}' /var/snap/microceph/current/conf/ceph.conf"    30
-    Should Be Equal As Strings    ${count0.stdout.strip()}    1    msg=public_network = ${NW} not exactly-once in node-wrk0 ceph.conf
-    ${count1}=    Run In VM    lxc exec node-wrk1 -- sh -c "grep -c 'public_network = ${NW}' /var/snap/microceph/current/conf/ceph.conf"    30
-    Should Be Equal As Strings    ${count1.stdout.strip()}    1    msg=public_network = ${NW} not exactly-once in node-wrk1 ceph.conf
+    Public Network Should Be Set Once    node-wrk0    ${NW}
+    Public Network Should Be Set Once    node-wrk1    ${NW}

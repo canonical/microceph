@@ -23,18 +23,18 @@ Bombard RGW Configs
     ...    The original bash ran without set -e so individual command failures were silently ignored;
     ...    we replicate that here — each config set is attempted but its rc is not checked.
     Log To Console    [config] Bombarding RGW Keystone configs...
-    Run In VM    sudo microceph cluster config set rgw_s3_auth_use_keystone true --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_url example.url.com --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_admin_user admin --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_admin_password admin --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_admin_project project --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_admin_domain domain --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_service_token_enabled true --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_service_token_accepted_roles admin_role --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_api_version 3 --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_accepted_roles Member,member --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_accepted_admin_roles admin_role --skip-restart || true    30
-    Run In VM    sudo microceph cluster config set rgw_keystone_token_cache_size 500 --skip-restart || true    30
+    Run In VM    sudo microceph cluster config set rgw_s3_auth_use_keystone true --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_url example.url.com --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_admin_user admin --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_admin_password admin --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_admin_project project --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_admin_domain domain --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_service_token_enabled true --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_service_token_accepted_roles admin_role --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_api_version 3 --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_accepted_roles Member,member --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_accepted_admin_roles admin_role --skip-restart    30
+    Run In VM    sudo microceph cluster config set rgw_keystone_token_cache_size 500 --skip-restart    30
     Run In VM And Check    sudo microceph cluster config set rgw_keystone_verify_ssl false --wait    60
     Sleep    30s
     Run In VM And Check    sudo microceph.ceph status    30

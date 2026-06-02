@@ -31,7 +31,6 @@ Test Orchestrator Module
     [Tags]    mgr
     Run In VM And Check    sudo microceph.ceph mgr module enable microceph    30
     Run In VM And Check    sudo microceph.ceph orch set backend microceph    30
-    ${hn}=    Run In VM    hostname
-    ${hn_str}=    Strip String    ${hn.stdout}
-    Run In VM And Check    sudo microceph.ceph orch host ls | grep -F ${hn_str}    30
-    Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mon" | grep -F ${hn_str}    30
+    ${hn}=    Get VM Hostname
+    Run In VM And Check    sudo microceph.ceph orch host ls | grep -F ${hn}    30
+    Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mon" | grep -F ${hn}    30

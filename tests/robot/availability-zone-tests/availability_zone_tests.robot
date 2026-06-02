@@ -65,8 +65,7 @@ Bootstrap AZ Cluster
     [Documentation]    Bootstraps 4-node cluster across 3 availability zones:
     ...    node-wrk0/1 in az-a, node-wrk2 in az-b, node-wrk3 in az-c.
     Log To Console    [az] Bootstrapping cluster with 3 availability zones...
-    ${nw_result}=    Run In VM    lxc network list --format=csv | grep 'public' | cut -d, -f4    30
-    ${nw}=    Set Variable    ${nw_result.stdout.strip()}
+    ${nw}=    Get Public Network CIDR
     Run In Container    node-wrk0    microceph cluster bootstrap --public-network=${nw} --availability-zone=az-a    120
     Sleep    5s
     ${tok1}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk1"    60
