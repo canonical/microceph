@@ -124,7 +124,7 @@ if html_title == '':
 ### Additional files
 ############################################################
 
-html_static_path = ['.sphinx/_static']
+html_static_path = ['.sphinx/_static', '_static']
 
 html_css_files = [
     'custom.css',

@@ -1,4 +1,5 @@
 import datetime
+import os
 
 # Custom configuration for the Sphinx documentation builder.
 # All configuration specific to your project should be done in this file.
@@ -41,7 +42,8 @@ copyright = '%s, %s' % (datetime.date.today().year, author)
 
 ## Open Graph configuration - defines what is displayed in the website preview
 # The URL of the documentation output
-ogp_site_url = 'https://canonical-starter-pack.readthedocs-hosted.com/'
+version_slug = f"{os.environ.get('READTHEDOCS_VERSION', 'local')}"
+ogp_site_url = f"https://canonical.com/ceph/docs/{version_slug}/"
 # The documentation website name (usually the same as the product name)
 ogp_site_name = project
 # An image or logo that is used in the preview
@@ -89,7 +91,15 @@ html_context = {
 
 # If your project is on documentation.ubuntu.com, specify the project
 # slug (for example, "lxd") here.
-slug = ""
+slug = 'ceph/docs'
+
+# Base URL and sitemap configuration
+html_baseurl = f"https://canonical.com/ceph/docs/{version_slug}/"
+
+if 'READTHEDOCS_VERSION' in os.environ:
+    sitemap_url_scheme = '{version}{link}'
+else:
+    sitemap_url_scheme = '{link}'
 
 ############################################################
 ### Redirects
@@ -140,7 +150,7 @@ custom_excludes = [
 custom_html_css_files = []
 
 # Add JavaScript files (located in .sphinx/_static/)
-custom_html_js_files = []
+custom_html_js_files = ['js/overwrite_links.js']
 
 ## The following settings override the default configuration.
 
