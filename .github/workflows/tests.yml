@@ -530,14 +530,16 @@ jobs:
 
   availability-zone-tests:
     name: Availability zone crush rule testing
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted-linux-amd64-jammy-large]
     needs: build-microceph
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
         with:
           name: snaps
-          path: /home/runner
+
+      - name: Stage snap in HOME
+        run: cp "$GITHUB_WORKSPACE"/microceph_*.snap "$HOME"/
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -682,14 +684,16 @@ jobs:
 
   test-maintenance-modes:
     name: Test maintenance mode
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted-linux-amd64-jammy-large]
     needs: build-microceph
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
         with:
           name: snaps
-          path: /home/runner
+
+      - name: Stage snap in HOME
+        run: cp "$GITHUB_WORKSPACE"/microceph_*.snap "$HOME"/
 
       - name: Checkout code
         uses: actions/checkout@v3
@@ -908,14 +912,16 @@ jobs:
 
   upgrade-quincy-tests:
     name: Test quincy upgrades
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted-linux-amd64-jammy-large]
     needs: build-microceph
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
         with:
           name: snaps
-          path: /home/runner
+
+      - name: Stage snap in HOME
+        run: cp "$GITHUB_WORKSPACE"/microceph_*.snap "$HOME"/
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -980,14 +986,16 @@ jobs:
 
   upgrade-reef-tests:
     name: Test reef upgrades
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted-linux-amd64-jammy-large]
     needs: build-microceph
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
         with:
           name: snaps
-          path: /home/runner
+
+      - name: Stage snap in HOME
+        run: cp "$GITHUB_WORKSPACE"/microceph_*.snap "$HOME"/
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -1467,14 +1475,16 @@ jobs:
 
   cephadm-adopt-test:
     name: Adopt test with cephadm
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted-linux-amd64-noble-large]
     needs: build-microceph
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
         with:
           name: snaps
-          path: /home/runner
+
+      - name: Stage snap in HOME
+        run: cp "$GITHUB_WORKSPACE"/microceph_*.snap "$HOME"/
 
       - name: Checkout code
         uses: actions/checkout@v4
