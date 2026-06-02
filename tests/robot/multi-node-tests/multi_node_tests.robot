@@ -123,7 +123,7 @@ Remove Node Head Node
     Run In Container    node-wrk0    microceph.ceph -s    30
     Run In Container    node-wrk0    microceph status    30
 
-CRUSH Rule Should Be    ${expected_rule_id}
+CRUSH Rule Should Be
     [Documentation]    Verifies the default CRUSH rule matches expected_rule_id on node-wrk0.
     [Arguments]    ${expected_rule_id}
     Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x ${expected_rule_id}    30
