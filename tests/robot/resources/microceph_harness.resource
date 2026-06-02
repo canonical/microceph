@@ -63,11 +63,30 @@ Run In VM Must Fail
 
 Run In Container
     [Documentation]    Runs cmd inside an inner LXD container via the outer VM.
+    ...    ${cmd} is written to a temp file by the local runner using Python file I/O
+    ...    and pushed into the container with lxc file push, so it is never interpreted
+    ...    by any intermediate shell regardless of what characters it contains.
     ...    bash -eo pipefail: mirrors set -e semantics so any failing command or pipe stage
     ...    inside the container fails the keyword immediately.
     [Arguments]    ${container}    ${cmd}    ${timeout}=300
     Log To Console    [${container}] ${cmd[:80]}
-    Run In VM And Check    lxc exec ${container} -- bash -eo pipefail -c "${cmd}"    ${timeout}
+    ${tmpname}=    Evaluate    'rf_cmd_' + __import__('uuid').uuid4().hex[:8] + '.sh'
+    ${localpath}=    Set Variable    /tmp/${tmpname}
+    ${remotepath}=    Set Variable    /tmp/${tmpname}
+    Create File    ${localpath}    ${cmd}
+    ${push_vm}=    Run Process    lxc    file    push    ${localpath}    ${OUTER_VM}${remotepath}    timeout=30
+    Should Be Equal As Integers    ${push_vm.rc}    0    msg=Failed to push script to outer VM: ${push_vm.stderr}
+    ${push_ct}=    Run Process    lxc    exec    ${OUTER_VM}    --    lxc    file    push    ${remotepath}    ${container}${remotepath}    timeout=30
+    Should Be Equal As Integers    ${push_ct.rc}    0    msg=Failed to push script to ${container}: ${push_ct.stderr}
+    ${result}=    Run Process    lxc    exec    ${OUTER_VM}    --    lxc    exec    ${container}    --    bash    -eo    pipefail    ${remotepath}
+    ...    timeout=${timeout}
+    Log    Container cmd rc=${result.rc}: ${result.stdout}
+    Log    STDERR: ${result.stderr}
+    Run Keyword And Ignore Error    Run Process    lxc    exec    ${OUTER_VM}    --    lxc    exec    ${container}    --    rm    -f    ${remotepath}    timeout=10
+    Run Keyword And Ignore Error    Run Process    lxc    exec    ${OUTER_VM}    --    rm    -f    ${remotepath}    timeout=10
+    Run Keyword And Ignore Error    Remove File    ${localpath}
+    Should Be Equal As Integers    ${result.rc}    0
+    ...    msg=Command failed (rc=${result.rc}):\nSTDERR: ${result.stderr}\nSTDOUT: ${result.stdout}
 
 Run In Head Node
     [Documentation]    Runs cmd inside node-wrk0 container.

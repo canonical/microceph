@@ -40,17 +40,11 @@ def main():
 
     # Resolve the target path (always required by robot).
     here = os.path.dirname(__file__)
-    if args.all:
-        target = here
-    elif args.test_suite:
+    if args.test_suite:
         target = os.path.join(here, args.test_suite)
     else:
-        print(
-            "WARNING: no --test-suite or --all given; running stub_test.robot (no real tests).",
-            file=sys.stderr,
-            flush=True,
-        )
-        target = os.path.join(here, "stub_test.robot")
+        # Default to the full suite so an unqualified run exercises everything.
+        target = here
 
     robot_args = robot_flags + [target]
     cmd = [sys.executable, "-u", "-m", "robot"] + robot_args

@@ -134,3 +134,8 @@ make check-static    # lint / static checks
 ```
 
 Integration tests run in GitHub Actions only — do not try to run them locally.
+
+## Robot Framework integration tests
+
+See [tests/robot/README.md](tests/robot/README.md) for the full test suite layout,
+how to run individual suites, and the shared harness conventions.
