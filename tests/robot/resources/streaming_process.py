@@ -1,7 +1,10 @@
 """Robot Framework library: run a shell command with real-time console output."""
 
+import os
+import signal
 import subprocess
 import sys
+import threading
 
 
 def run_streaming_process(cmd, timeout=None, xtrace=False):
@@ -22,6 +25,10 @@ def run_streaming_process(cmd, timeout=None, xtrace=False):
 
     timeout_int = int(timeout) if timeout is not None else None
 
+    # start_new_session=True places the shell and all its children in a new
+    # process group (PGID == proc.pid).  On timeout we kill the whole group so
+    # grandchild processes (e.g. "sleep N" spawned by a shell one-liner) cannot
+    # keep the stdout pipe open and block the reader thread.
     proc = subprocess.Popen(
         cmd,
         shell=True,
@@ -29,21 +36,34 @@ def run_streaming_process(cmd, timeout=None, xtrace=False):
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        start_new_session=True,
     )
 
     # Robot Framework redirects sys.stdout to its log buffer; write to the
     # original stdout so lines appear on the console as they are produced.
     console = sys.__stdout__ or sys.stdout
     lines = []
-    try:
+
+    def _reader():
         for line in proc.stdout:
             console.write(line)
             console.flush()
             lines.append(line)
+
+    # The reader runs in a daemon thread so proc.wait(timeout=) on the main
+    # thread is the actual hang guard.  Killing the process group closes the
+    # pipe, which ends the reader loop; join() then drains any final buffered
+    # lines.
+    thread = threading.Thread(target=_reader, daemon=True)
+    thread.start()
+
+    try:
         proc.wait(timeout=timeout_int)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        os.killpg(proc.pid, signal.SIGKILL)
         proc.wait()
+        thread.join(timeout=5)
         raise RuntimeError(f"Process timed out after {timeout}s: {cmd}")
 
+    thread.join()
     return [proc.returncode, "".join(lines)]
