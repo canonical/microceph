@@ -71,6 +71,20 @@ var GetRemoteDb = func(ctx context.Context, s mcTypes.State, name string) (types
 var DeleteRemoteDb = func(ctx context.Context, s mcTypes.State, remoteName string) error {
 	pathConst := constants.GetPathConst()
 
+	if !constants.IsValidClusterName(remoteName) {
+		return fmt.Errorf("invalid remote name %q", remoteName)
+	}
+
+	confFile := fmt.Sprintf("%s.conf", remoteName)
+	keyringFile := fmt.Sprintf("%s.keyring", remoteName)
+	if !filepath.IsLocal(confFile) || filepath.Base(confFile) != confFile {
+		return fmt.Errorf("invalid remote name %q", remoteName)
+	}
+
+	if !filepath.IsLocal(keyringFile) || filepath.Base(keyringFile) != keyringFile {
+		return fmt.Errorf("invalid remote name %q", remoteName)
+	}
+
 	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		// Remove record to database.
 		err := DeleteRemote(ctx, tx, remoteName)
@@ -85,12 +99,12 @@ var DeleteRemoteDb = func(ctx context.Context, s mcTypes.State, remoteName strin
 	}
 
 	// Remove remote conf and keyring files.
-	err = os.Remove(filepath.Join(pathConst.ConfPath, fmt.Sprintf("%s.conf", remoteName)))
+	err = os.Remove(filepath.Join(pathConst.ConfPath, confFile))
 	if err != nil {
 		return err
 	}
 
-	err = os.Remove(filepath.Join(pathConst.ConfPath, fmt.Sprintf("%s.keyring", remoteName)))
+	err = os.Remove(filepath.Join(pathConst.ConfPath, keyringFile))
 	if err != nil {
 		return err
 	}

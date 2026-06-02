@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
@@ -30,9 +29,8 @@ func cmdClusterGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 	}
 
 	// Check that the cluster name is conformant.
-	isOk, err := regexp.MatchString(constants.ClusterNameRegex, req.RemoteName)
-	if err != nil || !isOk {
-		err := fmt.Errorf("cluster names can only have [a-z] or [0-9] characters: %w", err)
+	if !constants.IsValidClusterName(req.RemoteName) {
+		err := fmt.Errorf("cluster names can only have [a-z] or [0-9] characters")
 		logger.Error(err.Error())
 		return mcTypes.BadRequest(err)
 	}

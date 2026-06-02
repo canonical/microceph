@@ -4,6 +4,7 @@ package constants
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 )
 
 // Constants for Size Constraints
@@ -89,5 +90,12 @@ func GetPathFileMode() PathFileMode {
 
 // Regexes
 
-// ClusterNameRegex is the regex for validating cluster names (a-z0-9)
-const ClusterNameRegex = "^[a-z0-9]+$"
+// ClusterNameRegex is the regex for validating cluster names (a-z0-9, max 63 chars)
+const ClusterNameRegex = "^[a-z0-9]{1,63}$"
+
+var clusterNameRegex = regexp.MustCompile(ClusterNameRegex)
+
+// IsValidClusterName reports whether name is a valid cluster name.
+func IsValidClusterName(name string) bool {
+	return clusterNameRegex.MatchString(name)
+}
