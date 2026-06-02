@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — loop-file-tests
+Documentation    loop-file-tests
 ...    Tests MicroCeph with loopback-file OSDs: add 4 via loop,1G,4, exercise RGW, remove one.
 Resource        ../resources/microceph_harness.resource
 Suite Setup     Loop File Tests Suite Setup

@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — cluster-tests
+Documentation    cluster-tests
 ...    Tests cluster-level features: cluster list JSON output, RGW config bombardment
 ...    (multiple concurrent config sets), and verifies RGW continues to work after.
 Resource        ../resources/microceph_harness.resource

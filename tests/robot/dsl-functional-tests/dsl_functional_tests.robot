@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — dsl-functional-tests
+Documentation    dsl-functional-tests
 ...    Runs test_dsl_functest.sh directly on the host runner (no outer VM).
 ...    The script creates its own KVM VMs internally; nesting KVM inside an LXD
 ...    VM makes the inner agent unreachable, so we must run on bare metal.

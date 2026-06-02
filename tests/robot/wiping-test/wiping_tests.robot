@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — wiping-test
+Documentation    wiping-test
 ...    Tests MicroCeph pristine disk check: creates dirty disks via an OSD add/remove
 ...    cycle, removes the snap, reinstalls, then verifies dirty disks are rejected
 ...    and can be successfully added with --wipe.

@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — multi-node basic tests
+Documentation    multi-node basic tests
 ...    Bootstraps a 4-node cluster in LXD containers and verifies OSD addition.
 Resource        ../resources/microceph_harness.resource
 Suite Setup     Multi Node Basic Suite Setup

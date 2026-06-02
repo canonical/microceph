@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — static-checks
+Documentation    static-checks
 ...    Runs Go static analysis on the host runner. Go, libdqlite, and shellcheck
 ...    are installed by the CI YAML before Robot runs; no VM or snap needed.
 Resource        ../resources/microceph_harness.resource

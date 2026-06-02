@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — multi-node-tests-with-custom-microceph-ip
+Documentation    multi-node-tests-with-custom-microceph-ip
 ...    Multi-node cluster bootstrapped with --microceph-ip on an internal network,
 ...    verifying each node uses its own internal IP for cluster communication.
 Resource        ../resources/microceph_harness.resource

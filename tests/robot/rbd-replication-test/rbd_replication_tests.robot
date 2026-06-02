@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — rbd-replication-test
+Documentation    rbd-replication-test
 ...    Tests MicroCeph RBD remote replication: two 2-node sites (sitea=wrk0/1, siteb=wrk2/3),
 ...    exchange tokens, enable rbd-mirror, configure pool and image mirroring,
 ...    verify sync, failover, and remote removal.

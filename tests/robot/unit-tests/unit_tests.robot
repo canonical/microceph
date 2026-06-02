@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — unit-tests
+Documentation    unit-tests
 ...    Runs Go unit tests on the host runner. Go and libdqlite are installed by the
 ...    CI YAML before Robot runs; no VM or snap needed.
 Resource        ../resources/microceph_harness.resource

@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — test-maintenance-modes
+Documentation    test-maintenance-modes
 ...    Tests cluster maintenance enter/exit with various flag combinations: dry-run,
 ...    --set-noout, --stop-osds, --force, and the quorum-safety guardrail.
 Resource        ../resources/microceph_harness.resource

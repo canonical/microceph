@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — wal-db-tests
+Documentation    wal-db-tests
 ...    Tests MicroCeph WAL/DB device OSD configuration: adds loop-file OSDs,
 ...    then adds an OSD with dedicated WAL and DB devices; verifies disk list hides WAL/DB block devs;
 ...    tests encrypted WAL/DB startup (LUKS volume close and reopen).

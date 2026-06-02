@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — test-sequential-mon-host-refresh
+Documentation    test-sequential-mon-host-refresh
 ...    Regression test for issue #556: after nodes are added one at a time, all nodes'
 ...    ceph.conf must be updated with the complete monitor address list.
 Resource        ../resources/microceph_harness.resource

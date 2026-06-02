@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — cephfs-replication-test
+Documentation    cephfs-replication-test
 ...    Tests MicroCeph CephFS remote replication: two 2-node sites, exchange tokens,
 ...    enable cephfs-mirror, configure directory mirroring, verify sync and data integrity.
 Resource        ../resources/microceph_harness.resource

@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — nfs-test
+Documentation    nfs-test
 ...    Tests MicroCeph NFS feature on a single node: enable NFS cluster, create CephFS volume,
 ...    create export, mount via CephFS NFS, write/read a file, test log rotation and stale run dir migration.
 Resource        ../resources/microceph_harness.resource

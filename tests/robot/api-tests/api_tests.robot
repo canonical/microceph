@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — api-tests
+Documentation    api-tests
 ...    Tests the MicroCeph REST API via Hurl: services-mon, maintenance-put-failed,
 ...    disks-list, disk encryption-support endpoints, and the disk API with discoverable
 ...    devices (via DSL).

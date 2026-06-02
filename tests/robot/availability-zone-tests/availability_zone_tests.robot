@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — availability-zone-tests
+Documentation    availability-zone-tests
 ...    Tests CRUSH rack-level failure domain with availability zones: rule transitions,
 ...    and full AZ lifecycle (remove and re-add a zone).
 Resource        ../resources/microceph_harness.resource

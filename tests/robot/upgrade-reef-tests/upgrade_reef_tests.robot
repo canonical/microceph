@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — upgrade-reef-tests
+Documentation    upgrade-reef-tests
 ...    Installs MicroCeph from reef/stable Snap Store channel on 4 containers, bootstraps,
 ...    adds 3 OSDs, enables and exercises RGW, then upgrades to the locally-built snap
 ...    and verifies the cluster remains healthy.

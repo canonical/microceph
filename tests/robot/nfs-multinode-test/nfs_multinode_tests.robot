@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — nfs-multinode-test
+Documentation    nfs-multinode-test
 ...    Tests MicroCeph NFS in a multi-node LXD cluster: enables NFS on 3 nodes,
 ...    creates a CephFS volume and export, then mounts and writes via NFS v4.
 Resource        ../resources/microceph_harness.resource

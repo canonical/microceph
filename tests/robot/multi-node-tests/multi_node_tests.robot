@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — multi-node-tests
+Documentation    multi-node-tests
 ...    Full multi-node test: CRUSH host failure domain, OSD add/remove, node removal,
 ...    service migration, client config, RGW SSL, cross-node certificate rotation.
 Resource        ../resources/microceph_harness.resource

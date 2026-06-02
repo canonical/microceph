@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — messenger-v2-tests
+Documentation    messenger-v2-tests
 ...    Verifies that MicroCeph uses Messenger v2 protocol only (no v1 addresses, no port 6789).
 ...    Bootstraps with --v2-only flag, then verifies on single node and all nodes.
 Resource        ../resources/microceph_harness.resource

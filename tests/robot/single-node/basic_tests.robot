@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — single-node basic tests
+Documentation    single-node basic tests
 ...    Verifies waitready lifecycle and the Orchestrator module on a single-node cluster.
 Resource        ../resources/microceph_harness.resource
 Suite Setup     Single Node Basic Suite Setup

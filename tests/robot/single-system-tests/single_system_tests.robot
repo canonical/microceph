@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation    Translated from: .github/workflows/tests.yml — single-system-tests
+Documentation    single-system-tests
 ...    Single-node MicroCeph with encryption, LVM, RGW (plain and SSL), certificate rotation,
 ...    cluster config, pool replication, log control, IPv6 mon-ip, and snap disable/enable.
 Resource        ../resources/microceph_harness.resource
