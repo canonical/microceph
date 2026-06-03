@@ -582,6 +582,11 @@ func (m *OSDManager) deletePartition(parentPath string, partition uint64) error 
 	partitionRange := fmt.Sprintf("%d:%d", partition, partition)
 	_, err = m.runner.RunCommand("partx", "-d", "--nr", partitionRange, parentPath)
 	if err != nil {
+		_, resolveErr := m.resolvePartitionStablePath(parentPath, partition)
+		if resolveErr != nil {
+			logger.Infof("Kernel partition entry %d on %s already removed, treating as cleaned", partition, parentPath)
+			return nil
+		}
 		return fmt.Errorf("failed to remove kernel partition entry %d on %s: %w", partition, parentPath, err)
 	}
 
