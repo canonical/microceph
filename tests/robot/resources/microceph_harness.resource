@@ -414,11 +414,7 @@ Join Worker Nodes To Cluster
             Append To List    ${mon_ips}    ${gw}${i}
         END
     END
-    FOR    ${i}    IN RANGE    8
-        ${res}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph status | grep -cE '^- node' || true"    30
-        IF    int('${res.stdout.strip()}') >= 4    BREAK
-        Sleep    2s
-    END
+    Wait For N Nodes In Cluster    4
     Run In Container    node-wrk0    microceph status    30
     Run In Container    node-wrk0    microceph.ceph -s    30
 
@@ -1054,6 +1050,22 @@ Verify Remote Authentication On All Nodes
     Run In Container    node-wrk3    microceph.ceph -s    30
     Run In Container    node-wrk3    microceph.ceph -s --cluster sitea --id siteb    30
     Run In VM And Check    lxc exec node-wrk3 -- sh -c "microceph remote list --json" | jq -e 'any(.[]; .local_name == "siteb")'    30
+
+Node Is In Mon List
+    [Documentation]    Returns "yes" if ${node} appears in the mon daemons line of ceph -s via ${head_node}.
+    [Arguments]    ${node}    ${head_node}=node-wrk0
+    ${result}=    Run In VM    lxc exec ${head_node} -- sh -c "microceph.ceph -s | grep -q 'mon: .*daemons.*${node}' && echo yes || echo no"    30
+    RETURN    ${result.stdout.strip()}
+
+Wait For N Nodes In Cluster
+    [Documentation]    Polls microceph status on ${head_node} until at least ${n} nodes appear (8 x 2 s).
+    [Arguments]    ${n}    ${head_node}=node-wrk0
+    FOR    ${i}    IN RANGE    8
+        ${res}=    Run In VM    lxc exec ${head_node} -- sh -c "microceph status | grep -cE '^- node' || true"    30
+        IF    int('${res.stdout.strip()}') >= ${n}    RETURN
+        Sleep    2s
+    END
+    Fail    Cluster did not reach ${n} node(s) after 16 s
 
 Get Synced Image Count On Node
     [Documentation]    Returns string: total images across all RBD replication entries on ${node}.

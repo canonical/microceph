@@ -29,8 +29,8 @@ Enable Services On Head Node For
     Run In Container    node-wrk0    microceph enable mds --target ${node}    120
     Run In Container    node-wrk0    microceph enable mgr --target ${node}    120
     FOR    ${i}    IN RANGE    8
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s | grep -q 'mon: .*daemons.*${node}' && echo yes || echo no"    30
-        IF    "${result.stdout.strip()}" == "yes"    BREAK
+        ${in_mon}=    Node Is In Mon List    ${node}
+        IF    "${in_mon}" == "yes"    BREAK
         Sleep    2s
     END
     Run In Container    node-wrk0    microceph.ceph -s    30
@@ -115,8 +115,8 @@ Remove Node Head Node
         Sleep    10s
     END
     FOR    ${i}    IN RANGE    8
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s | grep -q 'mon: .*daemons.*${node}' && echo yes || echo no"    30
-        IF    "${result.stdout.strip()}" != "yes"    BREAK
+        ${in_mon}=    Node Is In Mon List    ${node}
+        IF    "${in_mon}" != "yes"    BREAK
         Sleep    5s
     END
     Sleep    1s

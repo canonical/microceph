@@ -92,8 +92,8 @@ Wait For Node Absent From Mons
     [Documentation]    Polls until ${node} no longer appears in the mon daemons list via ${head_node}.
     [Arguments]    ${head_node}    ${node}
     FOR    ${i}    IN RANGE    8
-        ${result}=    Run In VM    lxc exec ${head_node} -- sh -c "microceph.ceph -s | grep -q 'mon: .*daemons.*${node}' && echo yes || echo no"    30
-        IF    "${result.stdout.strip()}" == "no"
+        ${in_mon}=    Node Is In Mon List    ${node}    ${head_node}
+        IF    "${in_mon}" == "no"
             Log To Console    [maintenance] ${node} no longer in mon list
             RETURN
         END

@@ -61,6 +61,11 @@ AZ Wait For OSD Count
     END
     Fail    Never reached ${expected} OSDs on node-wrk0
 
+OSD Tree Should Contain AZ Rack Bucket
+    [Documentation]    Asserts the CRUSH OSD tree on node-wrk0 contains the rack bucket for ${az_name}.
+    [Arguments]    ${az_name}
+    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.${az_name}"    30
+
 Bootstrap AZ Cluster
     [Documentation]    Bootstraps 4-node cluster across 3 availability zones:
     ...    node-wrk0/1 in az-a, node-wrk2 in az-b, node-wrk3 in az-c.
@@ -77,11 +82,7 @@ Bootstrap AZ Cluster
     ${tok3}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk3"    60
     Run In Container    node-wrk3    microceph cluster join ${tok3.stdout.strip()} --availability-zone=az-c    120
     Sleep    3s
-    FOR    ${i}    IN RANGE    8
-        ${res}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph status | grep -cE '^- node' || true"    30
-        IF    int('${res.stdout.strip()}') >= 4    BREAK
-        Sleep    2s
-    END
+    Wait For N Nodes In Cluster    4
     Run In Container    node-wrk0    microceph status    30
     Log To Console    [az] Cluster ready with 4 nodes across 3 AZs
 
@@ -160,9 +161,9 @@ Test CRUSH Rule Upgraded To Rack Level With Three AZs
 Test OSD Tree Shows All Three AZ Rack Buckets
     [Documentation]    Verifies the CRUSH OSD tree contains rack buckets for az-a, az-b, and az-c.
     [Tags]    crush    availability-zone
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-a"    30
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-b"    30
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-c"    30
+    OSD Tree Should Contain AZ Rack Bucket    az-a
+    OSD Tree Should Contain AZ Rack Bucket    az-b
+    OSD Tree Should Contain AZ Rack Bucket    az-c
 
 Test CRUSH Add Bucket Idempotent
     [Documentation]    Verifies that osd crush add-bucket is idempotent: calling it again for an
@@ -203,7 +204,7 @@ Test Cluster Healthy After AZ-C OSD Removal
 Test AZ-C Rack Bucket Persists After OSD Removal
     [Documentation]    Verifies the az.az-c rack bucket still exists in the CRUSH tree after the OSD was removed.
     [Tags]    crush    availability-zone
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-c"    30
+    OSD Tree Should Contain AZ Rack Bucket    az-c
 
 Test Remove Node Wrk3 From Cluster
     [Documentation]    Removes node-wrk3 from the cluster with --force and verifies the cluster is healthy.
@@ -217,7 +218,7 @@ Test Remove Node Wrk3 From Cluster
 Test AZ-C Rack Bucket Persists After Node Removal
     [Documentation]    Verifies the az.az-c rack bucket still exists after node-wrk3 was removed.
     [Tags]    crush    availability-zone
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-c"    30
+    OSD Tree Should Contain AZ Rack Bucket    az-c
     AZ Wait Healthy
 
 Test Rejoin Node Wrk3 Into AZ-C
@@ -228,11 +229,7 @@ Test Rejoin Node Wrk3 Into AZ-C
     Sleep    2s
     ${tok}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk3"    60
     Run In Container    node-wrk3    microceph cluster join ${tok.stdout.strip()} --availability-zone=az-c    120
-    FOR    ${i}    IN RANGE    8
-        ${res}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph status | grep -cE '^- node' || true"    30
-        IF    int('${res.stdout.strip()}') >= 4    BREAK
-        Sleep    2s
-    END
+    Wait For N Nodes In Cluster    4
     Run In Container    node-wrk0    microceph status    30
     Log To Console    [az] node-wrk3 rejoined in az-c
 
@@ -252,5 +249,5 @@ Test Rack CRUSH Rule Maintained After AZ Rejoin
     ${rack_rule_id}=    AZ Get Rule ID    microceph_auto_rack
     ${default_rule}=    AZ Get Default Rule
     Should Be Equal As Strings    ${default_rule}    ${rack_rule_id}    msg=Rack rule should still be active after re-add
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.az-c"    30
+    OSD Tree Should Contain AZ Rack Bucket    az-c
     Log To Console    [az] PASSED: rack rule maintained and az-c bucket present
