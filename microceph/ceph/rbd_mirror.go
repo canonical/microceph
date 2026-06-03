@@ -706,6 +706,10 @@ func appendRemoteClusterArgs(args []string, cluster string, client string) []str
 
 // writeRemotePeerToken writes the provided string to a newly created token file.
 func writeRemotePeerToken(token string, remoteName string) error {
+	if !constants.IsValidClusterName(remoteName) {
+		return fmt.Errorf("remote names can only have [a-z] or [0-9] characters")
+	}
+
 	// create token Dir
 	tokenDirPath := filepath.Join(
 		constants.GetPathConst().ConfPath,
@@ -729,6 +733,7 @@ func writeRemotePeerToken(token string, remoteName string) error {
 		logger.Errorf("REPRBD: %s", ne.Error())
 		return ne
 	}
+	defer file.Close()
 
 	// write to file
 	_, err = file.WriteString(token)

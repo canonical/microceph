@@ -8,6 +8,19 @@ cd "${SNAP}"
 
 . "${SNAP}/commands/common"
 
+# Debug instrumentation for the SIGHUP-reentrancy diagnosis. The daemon
+# (re)spawns OSDs by issuing `snapctl restart --reload microceph.osd`, whose
+# reload-command (osd.reload) sends SIGHUP to this process. Without a guard a
+# HUP delivered while spawn() is running re-enters spawn() on top of the live
+# frame; repeated reload-HUPs stack dozens of spawn() frames until bash's
+# function-context stack corrupts and aborts with
+# "pop_var_context: head of shell_variables not a function context" (exit 129).
+# These logs go to stderr (systemd journal / CI logs).
+dbg() {
+    # shellcheck disable=SC2154
+    echo "[osd.start pid=$$ $(date -u +%H:%M:%S)] $* (funcdepth=${#FUNCNAME[@]})" >&2
+}
+
 limits
 
 maybe_unlock() {
@@ -39,31 +52,53 @@ is_osd_running() {
     nc -z -U "${skt}" >/dev/null 2>&1
 }
 
+# Reentrancy guard. A reload SIGHUP that arrives while spawn() is already
+# running must NOT re-enter spawn() (that corrupts bash's function-context
+# stack). Instead, note that another pass is needed and let the running
+# spawn() loop pick up the newly-added OSD before returning to its wait.
+SPAWNING=0
+SPAWN_PENDING=0
+
 spawn() {
-    for i in "${SNAP_COMMON}/data/osd"/*; do
-        filename="$(basename "${i}")"
-        [ -z "$filename" ] && continue
+    if [ "${SPAWNING}" = "1" ]; then
+        dbg "HUP during active spawn(); deferring re-scan instead of re-entering"
+        SPAWN_PENDING=1
+        return 0
+    fi
+    SPAWNING=1
 
-        nr="${filename##ceph-}"
-        [ -z "$nr" ] && continue
+    while : ; do
+        SPAWN_PENDING=0
+        dbg "spawn() scanning for OSDs to start"
+        for i in "${SNAP_COMMON}/data/osd"/*; do
+            filename="$(basename "${i}")"
+            [ -z "$filename" ] && continue
 
-        [ ! -e "${i}/ready" ] && continue
+            nr="${filename##ceph-}"
+            [ -z "$nr" ] && continue
 
-        is_osd_running "${nr}" && continue
+            [ ! -e "${i}/ready" ] && continue
 
-        if [ -b "${i}/unencrypted" ] ; then
-            maybe_unlock "${i}/unencrypted" "${nr}" "$( get_key "${nr}" )"
-        fi
-        if [ -b "${i}/unencrypted.wal" ] ; then
-            maybe_unlock "${i}/unencrypted.wal" "${nr}" "$( get_key "${nr}" ".wal" )" ".wal"
-        fi
-        if [ -b "${i}/unencrypted.db" ] ; then
-            maybe_unlock "${i}/unencrypted.db" "${nr}" "$( get_key "${nr}" ".db" )" ".db"
-        fi
+            is_osd_running "${nr}" && continue
 
-        ceph-osd --cluster ceph --id "${nr}"
+            if [ -b "${i}/unencrypted" ] ; then
+                maybe_unlock "${i}/unencrypted" "${nr}" "$( get_key "${nr}" )"
+            fi
+            if [ -b "${i}/unencrypted.wal" ] ; then
+                maybe_unlock "${i}/unencrypted.wal" "${nr}" "$( get_key "${nr}" ".wal" )" ".wal"
+            fi
+            if [ -b "${i}/unencrypted.db" ] ; then
+                maybe_unlock "${i}/unencrypted.db" "${nr}" "$( get_key "${nr}" ".db" )" ".db"
+            fi
+
+            ceph-osd --cluster ceph --id "${nr}"
+        done
+
+        # If a reload HUP arrived during the scan above, rescan before parking.
+        [ "${SPAWN_PENDING}" = "1" ] || break
     done
 
+    SPAWNING=0
     wait
     sleep infinity &
     wait
