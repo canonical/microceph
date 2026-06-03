@@ -29,8 +29,10 @@ Test Messenger V2 On Single Node
 
 Ceph Conf Should Have No V1 Addresses
     [Documentation]    Asserts that ceph.conf on ${node} contains no v1: monitor addresses.
+    ...    Uses || true so that grep -c exiting rc=1 (zero matches) does not also trigger
+    ...    the fallback and produce duplicate output -- grep -c already prints "0" on stdout.
     [Arguments]    ${node}
-    ${result}=    Run In VM    lxc exec ${node} -- sh -c "grep -c 'v1:' /var/snap/microceph/current/conf/ceph.conf || echo 0"    30
+    ${result}=    Run In VM    lxc exec ${node} -- sh -c "grep -c 'v1:' /var/snap/microceph/current/conf/ceph.conf || true"    30
     Should Be Equal As Strings    ${result.stdout.strip()}    0    msg=Messenger V1 address found in ceph.conf on ${node}
 
 Test Messenger V2 On All Nodes
