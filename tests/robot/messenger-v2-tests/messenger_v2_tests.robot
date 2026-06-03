@@ -27,12 +27,17 @@ Test Messenger V2 On Single Node
     ${listening_6789}=    Run In VM    lxc exec node-wrk0 -- sh -c "sudo ss -Htnpl | grep -c ':6789.*ceph-mon' || true"    30
     Should Be Equal As Strings    ${listening_6789.stdout.strip()}    0    msg=ceph-mon is still listening on port 6789
 
+Ceph Conf Should Have No V1 Addresses
+    [Documentation]    Asserts that ceph.conf on ${node} contains no v1: monitor addresses.
+    [Arguments]    ${node}
+    ${result}=    Run In VM    lxc exec ${node} -- sh -c "grep -c 'v1:' /var/snap/microceph/current/conf/ceph.conf || echo 0"    30
+    Should Be Equal As Strings    ${result.stdout.strip()}    0    msg=Messenger V1 address found in ceph.conf on ${node}
+
 Test Messenger V2 On All Nodes
     [Documentation]    Verifies that none of the 4 nodes have v1 monitor addresses in ceph.conf.
     Log To Console    [messenger-v2] Checking all nodes for v1 addresses in ceph.conf...
     FOR    ${i}    IN    0    1    2    3
-        ${result}=    Run In VM    lxc exec node-wrk${i} -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf | grep 'v1:' | wc -l || echo 0"    30
-        Should Be Equal As Strings    ${result.stdout.strip()}    0    msg=Messenger V1 is active on node ${i}
+        Ceph Conf Should Have No V1 Addresses    node-wrk${i}
     END
 
 *** Test Cases ***

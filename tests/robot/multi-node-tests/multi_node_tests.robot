@@ -44,17 +44,6 @@ Enable RGW SSL On Head Node
     Run In Container    node-wrk0    microceph enable rgw --ssl-certificate=${cert} --ssl-private-key=${key}    120
     Wait For RGW On Head Node    1
 
-Wait For RGW On Head Node
-    [Documentation]    Waits for expected number of RGW daemons from node-wrk0.
-    [Arguments]    ${expect}
-    Log To Console    [rgw] Waiting for ${expect} RGW daemon(s) on node-wrk0...
-    FOR    ${i}    IN RANGE    20
-        ${result}=    Run In VM    lxc exec node-wrk0 -- bash -c "microceph.ceph -s | grep -F 'rgw:' | sed -E 's/.* ([0-9]+) daemon.*/\\1/' || echo 0"    30
-        ${count}=    Evaluate    int('${result.stdout.strip()}') if '${result.stdout.strip()}'.isdigit() else 0
-        IF    ${count} >= ${expect}    RETURN
-        Sleep    5s
-    END
-    Fail    Never reached ${expect} RGW daemon(s) on head node
 
 Test Cross Node Certificate Rotation Inline
     [Documentation]    Rotates the RGW SSL certificate on target using --target from node-wrk0.
@@ -67,23 +56,14 @@ Test Cross Node Certificate Rotation Inline
     ${key}=    Read Base64 File From Container    node-wrk0    /tmp/target-cert.key
     Run In Container    node-wrk0    microceph certificate set rgw --ssl-certificate=${cert} --ssl-private-key=${key} --target ${target} --restart    120
     Wait For RGW On Head Node    1
-    FOR    ${i}    IN RANGE    60
-        ${ssl_up}=    Run In VM    echo | openssl s_client -connect ${target_addr}:443 2>/dev/null | grep -q "BEGIN CERTIFICATE" && echo yes || echo no    15
-        IF    "${ssl_up.stdout.strip()}" == "yes"    BREAK
-        Sleep    5s
-    END
-    ${cn}=    Run In VM    echo | openssl s_client -connect ${target_addr}:443 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*CN *= *//p'    30
-    Should Be Equal As Strings    ${cn.stdout.strip()}    target-cert    msg=Expected CN=target-cert on ${target}
+    Wait For RGW SSL Port    ${target_addr}
+    ${cn}=    Get RGW SSL CN    ${target_addr}
+    Should Be Equal As Strings    ${cn}    target-cert    msg=Expected CN=target-cert on ${target}
     ${orig_cert}=    Read Base64 File From Container    node-wrk0    /tmp/server.crt
     ${orig_key}=    Read Base64 File From Container    node-wrk0    /tmp/server.key
     Run In Container    node-wrk0    microceph certificate set rgw --ssl-certificate=${orig_cert} --ssl-private-key=${orig_key} --target ${target} --restart    120
     Wait For RGW On Head Node    1
-    FOR    ${i}    IN RANGE    60
-        ${ssl_up}=    Run In VM    echo | openssl s_client -connect ${target_addr}:443 2>/dev/null | grep -q "BEGIN CERTIFICATE" && echo yes || echo no    15
-        IF    "${ssl_up.stdout.strip()}" == "yes"    BREAK
-        IF    ${i} == 59    Fail    RGW SSL port never recovered after cert restore on ${target_addr}:443
-        Sleep    5s
-    END
+    Wait For RGW SSL Port    ${target_addr}
 
 Wait For CRUSH Rule
     [Documentation]    Polls until osd_pool_default_crush_rule equals ${expected} on node-wrk0.

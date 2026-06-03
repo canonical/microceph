@@ -41,25 +41,23 @@ Check Snap Service State On
 Wait For Noout State On
     [Documentation]    Polls until osd noout is in expected state (set/unset) on node.
     [Arguments]    ${node}    ${expected}    ${timeout}=120
-    ${elapsed}=    Set Variable    0
-    WHILE    int('${elapsed}') < int('${timeout}')
+    ${tries}=    Evaluate    int(${timeout}) // 5
+    FOR    ${i}    IN RANGE    ${tries}
         ${state}=    Is OSD Noout Set On    ${node}
         IF    "${expected}" == "set" and "${state}" == "yes"    RETURN
         IF    "${expected}" == "unset" and "${state}" == "no"    RETURN
         Sleep    5s
-        ${elapsed}=    Evaluate    int('${elapsed}') + 5
     END
     Fail    Timed out waiting for osd noout to be '${expected}' on ${node}
 
 Wait For Snap Service State On
     [Documentation]    Polls until microceph.<service> reaches expected active/enabled state on node.
     [Arguments]    ${node}    ${service}    ${expected_active}    ${expected_enabled}    ${timeout}=120
-    ${elapsed}=    Set Variable    0
-    WHILE    int('${elapsed}') < int('${timeout}')
+    ${tries}=    Evaluate    int(${timeout}) // 5
+    FOR    ${i}    IN RANGE    ${tries}
         ${state}=    Check Snap Service State On    ${node}    ${service}    ${expected_active}    ${expected_enabled}
         IF    "${state}" == "yes"    RETURN
         Sleep    5s
-        ${elapsed}=    Evaluate    int('${elapsed}') + 5
     END
     Fail    Timed out waiting for microceph.${service} on ${node} to be ${expected_active}/${expected_enabled}
 
@@ -166,24 +164,28 @@ Test Dry Run Maintenance Exit Inline
     Should Contain    ${result.stdout}    Start osd service in node '${node}'    msg=Expected start-osd action
     Log To Console    [maintenance] PASSED: dry-run maintenance exit
 
-Test Maintenance Enter And Exit Inline
-    [Documentation]    Enters/exits maintenance (--set-noout=false --stop-osds=false) 3× each.
-    [Arguments]    ${node}
-    Log To Console    [maintenance] Testing maintenance enter/exit (no-noout no-stop-osds) on ${node}...
+Run Maintenance Enter Exit Cycle
+    [Documentation]    Runs ${count} idempotent enter/exit cycles on ${node}.
+    ...    ${enter_flags} is appended to the enter command (e.g. "--set-noout=true --stop-osds=true").
+    ...    ${enter_noout} ("set"/"unset") and ${enter_svc_active}/${enter_svc_enabled}
+    ...    ("active"/"inactive", "enabled"/"disabled") specify expected states after enter.
+    ...    Exit always restores noout=unset and osd=active/enabled.
+    [Arguments]    ${node}    ${enter_flags}    ${enter_noout}    ${enter_svc_active}    ${enter_svc_enabled}    ${count}=3
     Run In Container    ${node}    microceph status    30
-    FOR    ${i}    IN    1    2    3
-        Log To Console    [maintenance] Enter count ${i}...
-        Run In Container    ${node}    microceph cluster maintenance enter --set-noout=false --stop-osds=false ${node}    120
-        Wait For Noout State On    ${node}    unset    120
-        Wait For Snap Service State On    ${node}    osd    active    enabled    120
+    ${noout_result}=    Set Variable If    "${enter_noout}" == "set"    yes    no
+    FOR    ${i}    IN RANGE    ${count}
+        Log To Console    [maintenance] Enter ${i}...
+        Run In Container    ${node}    microceph cluster maintenance enter ${enter_flags} ${node}    120
+        Wait For Noout State On    ${node}    ${enter_noout}    120
+        Wait For Snap Service State On    ${node}    osd    ${enter_svc_active}    ${enter_svc_enabled}    120
         Run In Container    ${node}    microceph.ceph -s    30
         ${noout}=    Is OSD Noout Set On    ${node}
-        Should Be Equal As Strings    ${noout}    no    msg=noout should be unset
-        ${svc}=    Check Snap Service State On    ${node}    osd    active    enabled
-        Should Be Equal As Strings    ${svc}    yes    msg=OSD service should be active/enabled
+        Should Be Equal As Strings    ${noout}    ${noout_result}    msg=Unexpected noout state after enter
+        ${svc}=    Check Snap Service State On    ${node}    osd    ${enter_svc_active}    ${enter_svc_enabled}
+        Should Be Equal As Strings    ${svc}    yes    msg=Unexpected OSD service state after enter
     END
-    FOR    ${i}    IN    1    2    3
-        Log To Console    [maintenance] Exit count ${i}...
+    FOR    ${i}    IN RANGE    ${count}
+        Log To Console    [maintenance] Exit ${i}...
         Run In Container    ${node}    microceph cluster maintenance exit ${node}    120
         Wait For Noout State On    ${node}    unset    120
         Wait For Snap Service State On    ${node}    osd    active    enabled    120
@@ -193,94 +195,30 @@ Test Maintenance Enter And Exit Inline
         ${svc}=    Check Snap Service State On    ${node}    osd    active    enabled
         Should Be Equal As Strings    ${svc}    yes    msg=OSD service should be active/enabled after exit
     END
-    Log To Console    [maintenance] PASSED: maintenance enter/exit (no-noout no-stop-osds)
+
+Test Maintenance Enter And Exit Inline
+    [Documentation]    Enters/exits maintenance (--set-noout=false --stop-osds=false) 3× each.
+    [Arguments]    ${node}
+    Log To Console    [maintenance] Testing maintenance enter/exit (no-noout no-stop-osds) on ${node}...
+    Run Maintenance Enter Exit Cycle    ${node}    --set-noout=false --stop-osds=false    unset    active    enabled
 
 Test Maintenance Enter Set Noout Stop OSDs And Exit Inline
     [Documentation]    Enters/exits maintenance (--set-noout=true --stop-osds=true) 3× each.
     [Arguments]    ${node}
     Log To Console    [maintenance] Testing maintenance enter/exit (set-noout stop-osds) on ${node}...
-    Run In Container    ${node}    microceph status    30
-    FOR    ${i}    IN    1    2    3
-        Log To Console    [maintenance] Enter count ${i}...
-        Run In Container    ${node}    microceph cluster maintenance enter --set-noout=true --stop-osds=true ${node}    120
-        Wait For Noout State On    ${node}    set    120
-        Wait For Snap Service State On    ${node}    osd    inactive    disabled    120
-        Run In Container    ${node}    microceph.ceph -s    30
-        ${noout}=    Is OSD Noout Set On    ${node}
-        Should Be Equal As Strings    ${noout}    yes    msg=noout should be set
-        ${svc}=    Check Snap Service State On    ${node}    osd    active    enabled
-        Should Be Equal As Strings    ${svc}    no    msg=OSD service should NOT be active/enabled
-    END
-    FOR    ${i}    IN    1    2    3
-        Log To Console    [maintenance] Exit count ${i}...
-        Run In Container    ${node}    microceph cluster maintenance exit ${node}    120
-        Wait For Noout State On    ${node}    unset    120
-        Wait For Snap Service State On    ${node}    osd    active    enabled    120
-        Run In Container    ${node}    microceph.ceph -s    30
-        ${noout}=    Is OSD Noout Set On    ${node}
-        Should Be Equal As Strings    ${noout}    no    msg=noout should be unset after exit
-        ${svc}=    Check Snap Service State On    ${node}    osd    active    enabled
-        Should Be Equal As Strings    ${svc}    yes    msg=OSD service should be active/enabled after exit
-    END
-    Log To Console    [maintenance] PASSED: maintenance enter/exit (set-noout stop-osds)
+    Run Maintenance Enter Exit Cycle    ${node}    --set-noout=true --stop-osds=true    set    inactive    disabled
 
 Test Maintenance Enter And Exit Force Inline
     [Documentation]    Enters/exits maintenance with --force (--set-noout=false --stop-osds=false) 3× each.
     [Arguments]    ${node}
     Log To Console    [maintenance] Testing --force maintenance enter/exit (no-noout no-stop-osds) on ${node}...
-    Run In Container    ${node}    microceph status    30
-    FOR    ${i}    IN    1    2    3
-        Log To Console    [maintenance] Force Enter count ${i}...
-        Run In Container    ${node}    microceph cluster maintenance enter --set-noout=false --stop-osds=false --force ${node}    120
-        Wait For Noout State On    ${node}    unset    120
-        Wait For Snap Service State On    ${node}    osd    active    enabled    120
-        Run In Container    ${node}    microceph.ceph -s    30
-        ${noout}=    Is OSD Noout Set On    ${node}
-        Should Be Equal As Strings    ${noout}    no    msg=noout should be unset
-        ${svc}=    Check Snap Service State On    ${node}    osd    active    enabled
-        Should Be Equal As Strings    ${svc}    yes    msg=OSD service should be active/enabled
-    END
-    FOR    ${i}    IN    1    2    3
-        Log To Console    [maintenance] Force Exit count ${i}...
-        Run In Container    ${node}    microceph cluster maintenance exit ${node}    120
-        Wait For Noout State On    ${node}    unset    120
-        Wait For Snap Service State On    ${node}    osd    active    enabled    120
-        Run In Container    ${node}    microceph.ceph -s    30
-        ${noout}=    Is OSD Noout Set On    ${node}
-        Should Be Equal As Strings    ${noout}    no    msg=noout should be unset after exit
-        ${svc}=    Check Snap Service State On    ${node}    osd    active    enabled
-        Should Be Equal As Strings    ${svc}    yes    msg=OSD service should be active/enabled after exit
-    END
-    Log To Console    [maintenance] PASSED: --force maintenance enter/exit (no-noout no-stop-osds)
+    Run Maintenance Enter Exit Cycle    ${node}    --set-noout=false --stop-osds=false --force    unset    active    enabled
 
 Test Maintenance Enter Set Noout Stop OSDs And Exit Force Inline
     [Documentation]    Enters/exits maintenance with --force (--set-noout=true --stop-osds=true) 3× each.
     [Arguments]    ${node}
     Log To Console    [maintenance] Testing --force maintenance enter/exit (set-noout stop-osds) on ${node}...
-    Run In Container    ${node}    microceph status    30
-    FOR    ${i}    IN    1    2    3
-        Log To Console    [maintenance] Force Enter count ${i}...
-        Run In Container    ${node}    microceph cluster maintenance enter --set-noout=true --stop-osds=true --force ${node}    120
-        Wait For Noout State On    ${node}    set    120
-        Wait For Snap Service State On    ${node}    osd    inactive    disabled    120
-        Run In Container    ${node}    microceph.ceph -s    30
-        ${noout}=    Is OSD Noout Set On    ${node}
-        Should Be Equal As Strings    ${noout}    yes    msg=noout should be set
-        ${svc}=    Check Snap Service State On    ${node}    osd    active    enabled
-        Should Be Equal As Strings    ${svc}    no    msg=OSD service should NOT be active/enabled
-    END
-    FOR    ${i}    IN    1    2    3
-        Log To Console    [maintenance] Force Exit count ${i}...
-        Run In Container    ${node}    microceph cluster maintenance exit ${node}    120
-        Wait For Noout State On    ${node}    unset    120
-        Wait For Snap Service State On    ${node}    osd    active    enabled    120
-        Run In Container    ${node}    microceph.ceph -s    30
-        ${noout}=    Is OSD Noout Set On    ${node}
-        Should Be Equal As Strings    ${noout}    no    msg=noout should be unset after exit
-        ${svc}=    Check Snap Service State On    ${node}    osd    active    enabled
-        Should Be Equal As Strings    ${svc}    yes    msg=OSD service should be active/enabled after exit
-    END
-    Log To Console    [maintenance] PASSED: --force maintenance enter/exit (set-noout stop-osds)
+    Run Maintenance Enter Exit Cycle    ${node}    --set-noout=true --stop-osds=true --force    set    inactive    disabled
 
 *** Test Cases ***
 Test Dry Run Maintenance Enter

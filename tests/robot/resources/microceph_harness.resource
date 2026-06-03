@@ -103,6 +103,11 @@ Get VM Hostname
     ${result}=    Run In VM    hostname
     RETURN    ${result.stdout.strip()}
 
+Get VM IP
+    [Documentation]    Returns the primary IP of the outer VM (first address from hostname -I).
+    ${result}=    Run In VM    hostname -I | cut -d ' ' -f1    10
+    RETURN    ${result.stdout.strip()}
+
 # ---------------------------------------------------------------------------
 # VM lifecycle
 # ---------------------------------------------------------------------------
@@ -635,17 +640,23 @@ Read Base64 File From Container
     ${result}=    Run In VM    lxc exec ${container} -- bash -c "sudo base64 -w0 ${path}"    30
     RETURN    ${result.stdout.strip()}
 
+Wait For RGW On Head Node
+    [Documentation]    Polls until at least ${expect} RGW daemons are running on node-wrk0.
+    [Arguments]    ${expect}    ${tries}=20
+    Log To Console    [rgw] Waiting for ${expect} RGW daemon(s) on node-wrk0...
+    FOR    ${i}    IN RANGE    ${tries}
+        ${result}=    Run In VM    lxc exec node-wrk0 -- bash -c "microceph.ceph -s | grep -F 'rgw:' | sed -E 's/.* ([0-9]+) daemon.*/\\1/' || echo 0"    30
+        ${count}=    Evaluate    int('${result.stdout.strip()}') if '${result.stdout.strip()}'.isdigit() else 0
+        IF    ${count} >= ${expect}    RETURN
+        Sleep    5s
+    END
+    Fail    Never reached ${expect} RGW daemon(s) on head node
+
 Enable RGW Head Node
     [Documentation]    Enables RGW on node-wrk0 and waits for it to start.
     Log To Console    [rgw] Enabling RGW on node-wrk0...
     Run In Container    node-wrk0    microceph enable rgw    120
-    FOR    ${i}    IN RANGE    8
-        ${result}=    Run In VM    lxc exec node-wrk0 -- bash -c "microceph.ceph -s | grep -F 'rgw:' | sed -E 's/.* ([0-9]+) daemon.*/\1/' || echo 0"    30
-        ${count}=    Evaluate    int('${result.stdout.strip()}') if '${result.stdout.strip()}'.isdigit() else 0
-        IF    ${count} >= 1    RETURN
-        Sleep    5s
-    END
-    Fail    RGW never started on node-wrk0
+    Wait For RGW On Head Node    1
 
 Exercise RGW Head Node
     [Documentation]    Exercises RGW on node-wrk0.
@@ -1066,6 +1077,15 @@ Wait For N Nodes In Cluster
         Sleep    2s
     END
     Fail    Cluster did not reach ${n} node(s) after 16 s
+
+Mount CephFS From Container
+    [Documentation]    Pulls ceph.conf and keyring from ${container} into /etc/ceph/ on the outer VM,
+    ...    then mounts the CephFS volume ${vol} at ${mountpoint}.
+    [Arguments]    ${container}    ${mountpoint}    ${vol}
+    Run In VM And Check    sudo lxc file pull ${container}/var/snap/microceph/current/conf/ceph.conf /etc/ceph/    30
+    Run In VM And Check    sudo lxc file pull ${container}/var/snap/microceph/current/conf/ceph.keyring /etc/ceph/    30
+    Run In VM And Check    sudo mkdir -p ${mountpoint}    10
+    Run In VM And Check    sudo mount -t ceph :/ ${mountpoint} -o name=admin,fs=${vol}    60
 
 Get Synced Image Count On Node
     [Documentation]    Returns string: total images across all RBD replication entries on ${node}.

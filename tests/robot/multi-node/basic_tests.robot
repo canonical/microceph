@@ -22,7 +22,7 @@ Multi Node Basic Suite Setup
 Test Multi Node Bootstrap
     [Documentation]    Verifies all 4 nodes are visible in microceph status after bootstrapping.
     [Tags]    multi-node    cluster
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph status | grep -cE '^- node' | grep -E '^[4-9]|^[0-9]{2,}'"    60
+    Wait For N Nodes In Cluster    4
 
 Test OSD Addition
     [Documentation]    Adds an OSD to each worker node and verifies 3 OSDs are in.

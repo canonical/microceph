@@ -175,9 +175,8 @@ Test SSL Certificate Rotation
 Test SSL Certificate Rotation With Target Self
     [Documentation]    Rotates the RGW SSL certificate using --target (self) via test_certificate_set_rgw_target.
     [Tags]    rgw
-    ${hn}=    Run In VM    hostname
-    ${hn_str}=    Strip String    ${hn.stdout}
-    Test SSL Certificate Rotation With Target    ${hn_str}
+    ${hn}=    Get VM Hostname
+    Test SSL Certificate Rotation With Target    ${hn}
 
 Test SSL Certificate Set When Not Running
     [Documentation]    Verifies that certificate set rgw fails when RGW is not running.

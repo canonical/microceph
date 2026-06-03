@@ -31,10 +31,7 @@ Configure CephFS Mirroring
     Run In Container    node-wrk0    sudo microceph replication enable cephfs --volume vol --dir-path /dir1/ --remote siteb    120
     Run In Container    node-wrk0    sudo microceph replication enable cephfs --volume vol --dir-path /dir2/ --remote siteb    120
     Log To Console    [cephfs] Installing ceph-common and mounting primary filesystem...
-    Run In VM And Check    sudo lxc file pull node-wrk0/var/snap/microceph/current/conf/ceph.conf /etc/ceph/    30
-    Run In VM And Check    sudo lxc file pull node-wrk0/var/snap/microceph/current/conf/ceph.keyring /etc/ceph/    30
-    Run In VM And Check    sudo mkdir -p /mnt/primary    10
-    Run In VM And Check    sudo mount -t ceph :/ /mnt/primary/ -o name=admin,fs=vol    60
+    Mount CephFS From Container    node-wrk0    /mnt/primary    vol
     Run In VM And Check    sudo mkdir -p /mnt/primary/dir1 /mnt/primary/dir2    10
     Run In VM And Check    echo ${STR1} | sudo tee /mnt/primary/dir1/test_file    10
     Run In VM And Check    echo ${STR2} | sudo tee /mnt/primary/dir2/test_file    10
@@ -93,10 +90,7 @@ Verify CephFS Data Integrity
     Log To Console    [cephfs] Verifying CephFS data integrity...
     ${node0_f1}=    Read File In VM    /mnt/primary/dir1/test_file
     ${node0_f2}=    Read File In VM    /mnt/primary/dir2/test_file
-    Run In VM And Check    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.conf /etc/ceph/    30
-    Run In VM And Check    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.keyring /etc/ceph/    30
-    Run In VM And Check    sudo mkdir -p /mnt/secondary    10
-    Run In VM And Check    sudo mount -t ceph :/ /mnt/secondary/ -o name=admin,fs=vol    60
+    Mount CephFS From Container    node-wrk2    /mnt/secondary    vol
     ${node2_f1}=    Read File In VM    /mnt/secondary/dir1/test_file
     ${node2_f2}=    Read File In VM    /mnt/secondary/dir2/test_file
     Should Be Equal As Strings    ${node0_f1.stdout.strip()}    ${node2_f1.stdout.strip()}    msg=dir1/test_file mismatch between primary and secondary

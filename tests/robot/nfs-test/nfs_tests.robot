@@ -119,8 +119,7 @@ Test Mount And Write NFS
     Run In VM And Check    sudo mkdir -p /mnt/nfs    10
     Run In VM And Check    sudo cp /var/snap/microceph/current/conf/ceph.conf /etc/ceph/    10
     Run In VM And Check    sudo cp /var/snap/microceph/current/conf/ceph.client.admin.keyring /etc/ceph/    10
-    ${addr}=    Run In VM    hostname -I | cut -d ' ' -f1
-    ${ip}=    Strip String    ${addr.stdout}
+    ${ip}=    Get VM IP
     Run In VM And Check    sudo mount -t ceph "${ip}:/" /mnt/nfs -o name=admin    30
     Write File In VM    /mnt/nfs/general.kenobi    Hello there!
     File In VM Should Contain    /mnt/nfs/general.kenobi    Hello there!
