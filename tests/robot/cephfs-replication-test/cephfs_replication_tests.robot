@@ -59,8 +59,7 @@ Verify CephFS Mirror List Output
     Wait For CephFS Replication List Non Empty    node-wrk0    vol
     ${list_json}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo microceph replication list cephfs --json | jq -c '.vol[]'"    30
     Log    CephFS list output: ${list_json.stdout}
-    # Assert each list entry's resource_type matches its path (mirrors bash
-    # replication_verify_cephfs_list_output): /volumes/... paths must be "subvolume", else "directory".
+    # Assert each list entry's resource_type matches its path: /volumes/... paths must be "subvolume", else "directory".
     @{items}=    Evaluate    [__import__('json').loads(line) for line in $list_json.stdout.splitlines() if line.strip()]
     Should Not Be Empty    ${items}    msg=CephFS replication list returned no entries to classify
     FOR    ${item}    IN    @{items}
