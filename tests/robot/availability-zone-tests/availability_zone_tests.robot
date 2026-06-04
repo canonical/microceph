@@ -30,14 +30,8 @@ AZ Get Rule ID
     RETURN    ${result.stdout.strip()}
 
 AZ Wait Healthy
-    [Documentation]    Polls HEALTH_OK on node-wrk0 (60 × 5 s = 300 s max).
-    FOR    ${i}    IN RANGE    60
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph health"    30
-        IF    "HEALTH_OK" in $result.stdout    RETURN
-        Sleep    5s
-    END
-    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s"    30
-    Fail    Cluster did not reach HEALTH_OK
+    [Documentation]    Polls HEALTH_OK on node-wrk0.
+    Wait For Cluster Health OK    node-wrk0
 
 AZ Get OSD ID For Node
     [Documentation]    Returns the numeric OSD ID for the first OSD on a given host node.

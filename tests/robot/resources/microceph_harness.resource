@@ -677,33 +677,41 @@ Exercise RGW Head Node
 # Cluster health and config
 # ---------------------------------------------------------------------------
 
-Verify Cluster Health
-    [Documentation]    Polls microceph.ceph health until HEALTH_OK (100 × 3 s).
-    Log To Console    [health] Waiting for HEALTH_OK...
-    FOR    ${i}    IN RANGE    100
-        ${result}=    Run In VM    sudo microceph.ceph health    30
+Wait For Cluster Health OK
+    [Documentation]    Polls microceph.ceph health until HEALTH_OK (${tries} × ${interval}).
+    ...    Pass node= (e.g. node-wrk0) to poll inside that LXD container; omit to run
+    ...    directly on the outer VM with sudo.
+    [Arguments]    ${node}=${EMPTY}    ${tries}=100    ${interval}=3s
+    IF    '${node}' == '${EMPTY}'
+        ${cmd}=    Set Variable    sudo microceph.ceph health
+        ${label}=    Set Variable    outer VM
+    ELSE
+        ${cmd}=    Set Variable    lxc exec ${node} -- sh -c "microceph.ceph health"
+        ${label}=    Set Variable    ${node}
+    END
+    Log To Console    [health] Waiting for HEALTH_OK (${label})...
+    FOR    ${i}    IN RANGE    ${tries}
+        ${result}=    Run In VM    ${cmd}    30
         IF    "${result.stdout.strip()}" == "HEALTH_OK"
             Log To Console    [health] HEALTH_OK
             RETURN
         END
-        Sleep    3s
+        Sleep    ${interval}
     END
-    Run In VM And Check    sudo microceph.ceph -s    30
+    IF    '${node}' == '${EMPTY}'
+        Run In VM And Check    sudo microceph.ceph -s    30
+    ELSE
+        Run In Container    ${node}    microceph.ceph -s    30
+    END
     Fail    Cluster did not reach HEALTH_OK
 
+Verify Cluster Health
+    [Documentation]    Polls microceph.ceph health until HEALTH_OK on the outer VM.
+    Wait For Cluster Health OK
+
 Verify Cluster Health Head Node
-    [Documentation]    Polls cluster health via node-wrk0.
-    Log To Console    [health] Waiting for HEALTH_OK on node-wrk0...
-    FOR    ${i}    IN RANGE    100
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph health"    30
-        IF    "${result.stdout.strip()}" == "HEALTH_OK"
-            Log To Console    [health] HEALTH_OK
-            RETURN
-        END
-        Sleep    3s
-    END
-    Run In Container    node-wrk0    microceph.ceph -s    30
-    Fail    Cluster did not reach HEALTH_OK
+    [Documentation]    Polls microceph.ceph health until HEALTH_OK via node-wrk0.
+    Wait For Cluster Health OK    node-wrk0
 
 Test Cluster Config Operations
     [Documentation]    Verifies rbd_default_features and tests cluster_network config set/reset.
