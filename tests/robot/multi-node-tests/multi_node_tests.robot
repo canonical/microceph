@@ -45,7 +45,7 @@ Enable RGW SSL On Head Node
     Wait For RGW On Head Node    1
 
 
-Test Cross Node Certificate Rotation
+Rotate Certificates Cross Node
     [Documentation]    Rotates the RGW SSL certificate on target using --target from node-wrk0.
     [Arguments]    ${target}
     Log To Console    [rgw] Testing certificate rotation on ${target} from node-wrk0...
@@ -193,7 +193,7 @@ Test Multi Node RGW SSL
 Test Cross Node Certificate Rotation
     [Documentation]    Rotates the RGW SSL certificate on node-wrk1 using --target from the head node.
     [Tags]    multi-node    rgw
-    Test Cross Node Certificate Rotation Inline    node-wrk1
+    Rotate Certificates Cross Node    node-wrk1
 
 Test Prohibit CRUSH Scaledown
     [Documentation]    Removes wrk0's OSD (OSD 3) with --prohibit-crush-scaledown and verifies
