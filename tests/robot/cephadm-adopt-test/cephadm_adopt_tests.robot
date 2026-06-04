@@ -28,9 +28,8 @@ Cephadm Adopt Suite Teardown
     Log To Console    [teardown] Cleaning up cephadm VMs (primary, secondary)...
     Run Process    lxc delete --force primary     shell=True    timeout=60
     Run Process    lxc delete --force secondary    shell=True    timeout=60
-    FOR ${v} IN primary-1 primary-2 primary-3 secondary-1 secondary-2 secondary-3
-        Run Keyword And Ignore Error
-        ...    Run Process lxc storage volume delete default ${v} timeout=60
+    FOR    ${v}    IN    primary-1    primary-2    primary-3    secondary-1    secondary-2    secondary-3
+        Run Keyword And Ignore Error    Run Process    lxc storage volume delete default ${v}    timeout=60    shell=True
     END
 
 Run Adoptutils
