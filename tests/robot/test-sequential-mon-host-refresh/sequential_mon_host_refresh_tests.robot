@@ -84,7 +84,7 @@ Test Join First Worker Node To Cluster
     [Documentation]    Generates a join token on node-wrk0 and joins node-wrk1 to the cluster.
     [Tags]    multi-node    regression    mon
     Log To Console    [mon] Joining node-wrk1 sequentially...
-    ${tok}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk1"    60
+    ${tok}=    Run In VM    lxc exec node-wrk0 -- microceph cluster add node-wrk1    60
     Run In Container    node-wrk1    microceph cluster join ${tok.stdout.strip()}    120
 
 Test Head Node Config Updated With Worker IP

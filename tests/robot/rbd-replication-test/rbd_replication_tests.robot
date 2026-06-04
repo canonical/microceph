@@ -66,10 +66,10 @@ Verify RBD Mirroring List
     Log To Console    [rbd] Verifying RBD mirroring list...
     Run In Container    node-wrk0    sudo microceph replication list rbd    30
     Run In Container    node-wrk2    sudo microceph replication list rbd    30
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "sudo microceph replication list rbd" | grep "pool_one.*image_one"    30
-    Run In VM And Check    lxc exec node-wrk1 -- sh -c "sudo microceph replication list rbd" | grep "pool_one.*image_two"    30
-    Run In VM And Check    lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_one"    30
-    Run In VM And Check    lxc exec node-wrk3 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_two"    30
+    Run In VM And Check    lxc exec node-wrk0 -- sudo microceph replication list rbd | grep "pool_one.*image_one"    30
+    Run In VM And Check    lxc exec node-wrk1 -- sudo microceph replication list rbd | grep "pool_one.*image_two"    30
+    Run In VM And Check    lxc exec node-wrk2 -- sudo microceph replication list rbd | grep "pool_two.*image_one"    30
+    Run In VM And Check    lxc exec node-wrk3 -- sudo microceph replication list rbd | grep "pool_two.*image_two"    30
     Run In Container    node-wrk0    sudo microceph replication status rbd --json    30
 
 Failover To Site B

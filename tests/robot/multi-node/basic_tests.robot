@@ -31,4 +31,4 @@ Test OSD Addition
     Add OSD To Node    node-wrk2
     Add OSD To Node    node-wrk3
     Wait For OSD Count Head    3
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: 3 osds"    60
+    Run In VM And Check    lxc exec node-wrk0 -- microceph.ceph -s | egrep "osd: 3 osds"    60

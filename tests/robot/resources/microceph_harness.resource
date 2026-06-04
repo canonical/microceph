@@ -323,8 +323,8 @@ Create LXD Containers With Loop Devices
         Run In VM And Check    sudo truncate -s 1G ${lf}    30
         ${ld_result}=    Run In VM    sudo losetup --show -f ${lf}    30
         ${minor}=    Evaluate    '${ld_result.stdout.strip()}'.replace('/dev/loop', '')
-        Run In VM And Check    lxc exec ${c} -- sh -c "mknod -m 0660 /dev/sdia b 7 ${minor}"    10
-        Run In VM And Check    lxc exec ${c} -- sh -c "ln -s /bin/true /usr/local/bin/udevadm"    10
+        Run In VM And Check    lxc exec ${c} -- mknod -m 0660 /dev/sdia b 7 ${minor}    10
+        Run In VM And Check    lxc exec ${c} -- ln -s /bin/true /usr/local/bin/udevadm    10
     END
     Install Tools
 
@@ -341,10 +341,10 @@ Install MicroCeph On All Nodes
         Run In VM And Check    lxc exec ${container} -- sh -c "sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd jq"    300
         Run In VM And Check    lxc exec ${container} -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"    600
         Run In VM And Check    lxc exec ${container} -- sh -c "snap connect microceph:block-devices && snap connect microceph:hardware-observe && snap connect microceph:mount-observe"    120
-        Run In VM And Check    lxc exec ${container} -- sh -c "snap alias microceph.ceph ceph"    30
+        Run In VM And Check    lxc exec ${container} -- snap alias microceph.ceph ceph    30
         Run In VM And Check    lxc exec ${container} -- sh -c "sed -e 's|/sys/devices/\\*\\*/ r,|/sys/devices/** r,|' -i.bak /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"    30
-        Run In VM And Check    lxc exec ${container} -- sh -c "apparmor_parser -r /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"    60
-        Run In VM And Check    lxc exec ${container} -- sh -c "snap restart microceph.daemon"    120
+        Run In VM And Check    lxc exec ${container} -- apparmor_parser -r /var/lib/snapd/apparmor/profiles/snap.microceph.daemon    60
+        Run In VM And Check    lxc exec ${container} -- snap restart microceph.daemon    120
     END
 
 Install MicroCeph From Store On All Nodes
@@ -399,7 +399,7 @@ Join Worker Nodes To Cluster
     @{mon_ips}=    Create List    ${gw}0
     FOR    ${i}    IN    1    2    3
         Log To Console    [cluster] Joining node-wrk${i}...
-        ${tok_result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk${i}"    60
+        ${tok_result}=    Run In VM    lxc exec node-wrk0 -- microceph cluster add node-wrk${i}    60
         ${tok}=    Set Variable    ${tok_result.stdout.strip()}
         IF    "${network_mode}" == "internal"
             ${node_ip}=    Set Variable    ${gw}${i}
@@ -431,7 +431,7 @@ Add OSD To Node
     [Documentation]    Adds /dev/sdia as an OSD on the specified inner container.
     [Arguments]    ${container}
     Log To Console    [osd] Adding OSD to ${container}...
-    Run In VM And Check    lxc exec ${container} -- sh -c "microceph disk add /dev/sdia --wipe"    120
+    Run In VM And Check    lxc exec ${container} -- microceph disk add /dev/sdia --wipe    120
     Sleep    1s
 
 Wait For OSD Count
@@ -686,7 +686,7 @@ Wait For Cluster Health OK
         ${cmd}=    Set Variable    sudo microceph.ceph health
         ${label}=    Set Variable    outer VM
     ELSE
-        ${cmd}=    Set Variable    lxc exec ${node} -- sh -c "microceph.ceph health"
+        ${cmd}=    Set Variable    lxc exec ${node} -- microceph.ceph health
         ${label}=    Set Variable    ${node}
     END
     Log To Console    [health] Waiting for HEALTH_OK (${label})...
@@ -1019,7 +1019,7 @@ Refresh Multi Node Snap
     [Documentation]    Refreshes all 4 inner containers from the Snap Store channel.
     [Arguments]    ${channel}
     FOR    ${container}    IN    node-wrk0    node-wrk1    node-wrk2    node-wrk3
-        Run In VM And Check    lxc exec ${container} -- sh -c "sudo snap refresh microceph --channel ${channel}"    300
+        Run In VM And Check    lxc exec ${container} -- sudo snap refresh microceph --channel ${channel}    300
     END
 
 # ---------------------------------------------------------------------------
@@ -1032,14 +1032,14 @@ Bootstrap Two Sites
     Log To Console    [replication] Bootstrapping sitea (node-wrk0/1)...
     Run In Container    node-wrk0    microceph cluster bootstrap    120
     Run In Container    node-wrk0    microceph disk add loop,1G,2    120
-    ${tok}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk1"    60
+    ${tok}=    Run In VM    lxc exec node-wrk0 -- microceph cluster add node-wrk1    60
     Run In Container    node-wrk1    microceph cluster join ${tok.stdout.strip()}    120
     Run In Container    node-wrk1    microceph disk add loop,1G,2    120
     Sleep    10s
     Log To Console    [replication] Bootstrapping siteb (node-wrk2/3)...
     Run In Container    node-wrk2    microceph cluster bootstrap    120
     Run In Container    node-wrk2    microceph disk add loop,1G,2    120
-    ${tok2}=    Run In VM    lxc exec node-wrk2 -- sh -c "microceph cluster add node-wrk3"    60
+    ${tok2}=    Run In VM    lxc exec node-wrk2 -- microceph cluster add node-wrk3    60
     Run In Container    node-wrk3    microceph cluster join ${tok2.stdout.strip()}    120
     Run In Container    node-wrk3    microceph disk add loop,1G,2    120
     Sleep    10s
@@ -1048,8 +1048,8 @@ Exchange Remote Site Tokens
     [Documentation]    Exports tokens from each site and imports them cross-site with --local-name.
     ...    After this call, sitea knows siteb and siteb knows sitea.
     Log To Console    [replication] Exchanging site tokens...
-    ${sitea_token}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster export siteb"    60
-    ${siteb_token}=    Run In VM    lxc exec node-wrk2 -- sh -c "microceph cluster export sitea"    60
+    ${sitea_token}=    Run In VM    lxc exec node-wrk0 -- microceph cluster export siteb    60
+    ${siteb_token}=    Run In VM    lxc exec node-wrk2 -- microceph cluster export sitea    60
     Run In Container    node-wrk0    microceph remote import siteb ${siteb_token.stdout.strip()} --local-name=sitea    60
     Run In Container    node-wrk2    microceph remote import sitea ${sitea_token.stdout.strip()} --local-name=siteb    60
     Sleep    15s    reason=Allow remote credentials to propagate across the cluster
@@ -1059,16 +1059,16 @@ Verify Remote Authentication On All Nodes
     Log To Console    [replication] Verifying remote authentication on all nodes...
     Run In Container    node-wrk0    microceph.ceph -s    30
     Run In Container    node-wrk0    microceph.ceph -s --cluster siteb --id sitea    30
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph remote list --json" | jq -e 'any(.[]; .name == "siteb")'    30
+    Run In VM And Check    lxc exec node-wrk0 -- microceph remote list --json | jq -e 'any(.[]; .name == "siteb")'    30
     Run In Container    node-wrk1    microceph.ceph -s    30
     Run In Container    node-wrk1    microceph.ceph -s --cluster siteb --id sitea    30
-    Run In VM And Check    lxc exec node-wrk1 -- sh -c "microceph remote list --json" | jq -e 'any(.[]; .local_name == "sitea")'    30
+    Run In VM And Check    lxc exec node-wrk1 -- microceph remote list --json | jq -e 'any(.[]; .local_name == "sitea")'    30
     Run In Container    node-wrk2    microceph.ceph -s    30
     Run In Container    node-wrk2    microceph.ceph -s --cluster sitea --id siteb    30
-    Run In VM And Check    lxc exec node-wrk2 -- sh -c "microceph remote list --json" | jq -e 'any(.[]; .name == "sitea")'    30
+    Run In VM And Check    lxc exec node-wrk2 -- microceph remote list --json | jq -e 'any(.[]; .name == "sitea")'    30
     Run In Container    node-wrk3    microceph.ceph -s    30
     Run In Container    node-wrk3    microceph.ceph -s --cluster sitea --id siteb    30
-    Run In VM And Check    lxc exec node-wrk3 -- sh -c "microceph remote list --json" | jq -e 'any(.[]; .local_name == "siteb")'    30
+    Run In VM And Check    lxc exec node-wrk3 -- microceph remote list --json | jq -e 'any(.[]; .local_name == "siteb")'    30
 
 Node Is In Mon List
     [Documentation]    Returns "yes" if ${node} appears in the mon daemons line of ceph -s via ${head_node}.

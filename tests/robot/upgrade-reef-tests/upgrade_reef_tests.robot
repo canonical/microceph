@@ -60,7 +60,7 @@ Test Status After Upgrade
     ...    Retries up to 60s to allow the database to finish starting after upgrade.
     [Tags]    upgrade
     FOR    ${i}    IN RANGE    12
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "sudo microceph status"    30
+        ${result}=    Run In VM    lxc exec node-wrk0 -- sudo microceph status    30
         IF    ${result.rc} == 0    BREAK
         Sleep    5s
     END

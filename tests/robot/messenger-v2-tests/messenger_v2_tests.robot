@@ -21,7 +21,7 @@ Messenger V2 Suite Setup
 Test Messenger V2 On Single Node
     [Documentation]    Verifies node-wrk0 has no v1 addresses in mon dump and is not listening on port 6789.
     Log To Console    [messenger-v2] Checking node-wrk0 for messenger v2 compliance...
-    ${out}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph mon dump"    30
+    ${out}=    Run In VM    lxc exec node-wrk0 -- microceph.ceph mon dump    30
     Should Not Contain    ${out.stdout}    v1:    msg=Messenger V1 address is still present in mon dump
     Should Not Contain    ${out.stdout}    6789    msg=Messenger V1 port 6789 is still present in mon dump
     ${listening_6789}=    Run In VM    lxc exec node-wrk0 -- sh -c "sudo ss -Htnpl | grep -c ':6789.*ceph-mon' || true"    30

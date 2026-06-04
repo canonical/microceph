@@ -30,20 +30,20 @@ Enable NFS In Nodes
     Log To Console    [nfs] Enabling NFS cluster ${cluster_id} in nodes: @{containers}
     FOR    ${container}    IN    @{containers}
         Log To Console    [nfs] Enabling NFS on ${container}...
-        Run In VM And Check    lxc exec ${container} -- sh -c "microceph enable nfs --cluster-id ${cluster_id}"    120
+        Run In VM And Check    lxc exec ${container} -- microceph enable nfs --cluster-id ${cluster_id}    120
     END
 
 Create NFS FS Volume In Node
     [Documentation]    Creates a CephFS volume on a specific container.
     [Arguments]    ${volume_name}    ${container}
     Log To Console    [nfs] Creating CephFS volume ${volume_name} on ${container}...
-    Run In VM And Check    lxc exec ${container} -- sh -c "microceph.ceph fs volume create ${volume_name}"    120
+    Run In VM And Check    lxc exec ${container} -- microceph.ceph fs volume create ${volume_name}    120
 
 Create NFS Export In Node
     [Documentation]    Creates an NFS export on a specific container.
     [Arguments]    ${cluster_id}    ${fsname}    ${container}
     Log To Console    [nfs] Creating NFS export for ${cluster_id}/${fsname} on ${container}...
-    Run In VM And Check    lxc exec ${container} -- sh -c "microceph.ceph nfs export create cephfs ${cluster_id} /${fsname}dir ${fsname}"    60
+    Run In VM And Check    lxc exec ${container} -- microceph.ceph nfs export create cephfs ${cluster_id} /${fsname}dir ${fsname}    60
 
 Disable NFS In Nodes
     [Documentation]    Disables NFS cluster in each specified container.
@@ -51,7 +51,7 @@ Disable NFS In Nodes
     Log To Console    [nfs] Disabling NFS cluster ${cluster_id} in nodes: @{containers}
     FOR    ${container}    IN    @{containers}
         Log To Console    [nfs] Disabling NFS on ${container}...
-        Run In VM And Check    lxc exec ${container} -- sh -c "microceph disable nfs --cluster-id ${cluster_id}"    60
+        Run In VM And Check    lxc exec ${container} -- microceph disable nfs --cluster-id ${cluster_id}    60
     END
 
 *** Test Cases ***

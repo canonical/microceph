@@ -25,7 +25,7 @@ Test Custom MicroCeph IP Bootstrap
     [Documentation]    Verifies each node reports its internal IP in microceph status after
     ...    bootstrapping with --microceph-ip on an internal network.
     [Tags]    multi-node    custom-ip
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph status"    30
+    Run In VM And Check    lxc exec node-wrk0 -- microceph status    30
 
 Test Three OSDs With Custom IP
     [Documentation]    Adds 3 OSDs (one per node-wrk0..2) and verifies they are all up and in.
@@ -34,4 +34,4 @@ Test Three OSDs With Custom IP
     Add OSD To Node    node-wrk1
     Add OSD To Node    node-wrk2
     Wait For OSD Count Head    3
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph -s"    30
+    Run In VM And Check    lxc exec node-wrk0 -- microceph.ceph -s    30

@@ -254,7 +254,7 @@ Test Quorum Guardrail Blocks Enter
     Wait For Node Absent From Mons    node-wrk0    node-wrk3
     Stop And Disable Mon On Container    node-wrk2
     Wait For Health To Mention    node-wrk0    quorum
-    Run In VM Must Fail    lxc exec node-wrk0 -- sh -c "microceph cluster maintenance enter node-wrk1"
+    Run In VM Must Fail    lxc exec node-wrk0 -- microceph cluster maintenance enter node-wrk1
 
 Test Force Maintenance Enter And Exit Without Noout Or Stop
     [Documentation]    Enters maintenance with --force (--set-noout=false --stop-osds=false)

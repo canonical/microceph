@@ -20,7 +20,7 @@ AZ Tests Suite Setup
 
 AZ Get Default Rule
     [Documentation]    Returns the current default CRUSH rule ID from node-wrk0.
-    ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph config get mon osd_pool_default_crush_rule" | tr -d '[:space:]'    30
+    ${result}=    Run In VM    lxc exec node-wrk0 -- microceph.ceph config get mon osd_pool_default_crush_rule | tr -d '[:space:]'    30
     RETURN    ${result.stdout.strip()}
 
 AZ Get Rule ID
@@ -44,7 +44,7 @@ AZ Get OSD ID For Node
 OSD Tree Should Contain AZ Rack Bucket
     [Documentation]    Asserts the CRUSH OSD tree on node-wrk0 contains the rack bucket for ${az_name}.
     [Arguments]    ${az_name}
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree" | grep -F "az.${az_name}"    30
+    Run In VM And Check    lxc exec node-wrk0 -- microceph.ceph osd tree | grep -F "az.${az_name}"    30
 
 Bootstrap AZ Cluster
     [Documentation]    Bootstraps 4-node cluster across 3 availability zones:
@@ -53,13 +53,13 @@ Bootstrap AZ Cluster
     ${nw}=    Get Public Network CIDR
     Run In Container    node-wrk0    microceph cluster bootstrap --public-network=${nw} --availability-zone=az-a    120
     Sleep    5s
-    ${tok1}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk1"    60
+    ${tok1}=    Run In VM    lxc exec node-wrk0 -- microceph cluster add node-wrk1    60
     Run In Container    node-wrk1    microceph cluster join ${tok1.stdout.strip()} --availability-zone=az-a    120
     Sleep    3s
-    ${tok2}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk2"    60
+    ${tok2}=    Run In VM    lxc exec node-wrk0 -- microceph cluster add node-wrk2    60
     Run In Container    node-wrk2    microceph cluster join ${tok2.stdout.strip()} --availability-zone=az-b    120
     Sleep    3s
-    ${tok3}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk3"    60
+    ${tok3}=    Run In VM    lxc exec node-wrk0 -- microceph cluster add node-wrk3    60
     Run In Container    node-wrk3    microceph cluster join ${tok3.stdout.strip()} --availability-zone=az-c    120
     Sleep    3s
     Wait For N Nodes In Cluster    4
@@ -149,7 +149,7 @@ Test CRUSH Add Bucket Idempotent
     [Documentation]    Verifies that osd crush add-bucket is idempotent: calling it again for an
     ...    existing bucket must not fail. Guards against Ceph returning EEXIST in the future.
     [Tags]    crush    availability-zone
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush add-bucket az.az-a rack"    30
+    Run In VM And Check    lxc exec node-wrk0 -- microceph.ceph osd crush add-bucket az.az-a rack    30
 
 Test Remove AZ-C OSD Blocked By Rack Protection
     [Documentation]    Verifies that attempting to remove the only OSD in az-c is blocked to
@@ -205,9 +205,9 @@ Test Rejoin Node Wrk3 Into AZ-C
     [Documentation]    Re-adds node-wrk3 to the cluster with --availability-zone=az-c and waits for 4 nodes.
     [Tags]    crush    availability-zone
     Log To Console    [az] Re-joining node-wrk3 with az-c...
-    Run In VM And Check    lxc exec node-wrk3 -- sh -c "fuser -k /dev/sdia" 2>/dev/null || true    10
+    Run In VM And Check    lxc exec node-wrk3 -- fuser -k /dev/sdia 2>/dev/null || true    10
     Sleep    2s
-    ${tok}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph cluster add node-wrk3"    60
+    ${tok}=    Run In VM    lxc exec node-wrk0 -- microceph cluster add node-wrk3    60
     Run In Container    node-wrk3    microceph cluster join ${tok.stdout.strip()} --availability-zone=az-c    120
     Wait For N Nodes In Cluster    4
     Run In Container    node-wrk0    microceph status    30

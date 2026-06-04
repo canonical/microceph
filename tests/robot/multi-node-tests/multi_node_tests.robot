@@ -45,7 +45,7 @@ Enable RGW SSL On Head Node
     Wait For RGW On Head Node    1
 
 
-Test Cross Node Certificate Rotation Inline
+Test Cross Node Certificate Rotation
     [Documentation]    Rotates the RGW SSL certificate on target using --target from node-wrk0.
     [Arguments]    ${target}
     Log To Console    [rgw] Testing certificate rotation on ${target} from node-wrk0...
@@ -69,7 +69,7 @@ Wait For CRUSH Rule
     [Documentation]    Polls until osd_pool_default_crush_rule equals ${expected} on node-wrk0.
     [Arguments]    ${expected}    ${attempts}=30
     FOR    ${i}    IN RANGE    ${attempts}
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph config get mon osd_pool_default_crush_rule"    30
+        ${result}=    Run In VM    lxc exec node-wrk0 -- microceph.ceph config get mon osd_pool_default_crush_rule    30
         ${val}=    Set Variable    ${result.stdout.strip()}
         IF    "${val}" == "${expected}"
             Log To Console    [crush] CRUSH rule is now ${val}
@@ -88,7 +88,7 @@ Remove Node Head Node
     Log To Console    [cluster] Removing node ${node} via node-wrk0...
     Verify Cluster Health Head Node
     FOR    ${attempt}    IN RANGE    3
-        ${result}=    Run In VM    lxc exec node-wrk0 -- bash -eo pipefail -c "microceph cluster remove ${node}"    120
+        ${result}=    Run In VM    lxc exec node-wrk0 -- microceph cluster remove ${node}    120
         IF    ${result.rc} == 0    BREAK
         Log To Console    [cluster] Remove attempt ${attempt} failed (rc=${result.rc}): ${result.stderr.strip()} — retrying in 10s
         IF    ${attempt} == 2    Fail    Failed to remove ${node} after 3 attempts: ${result.stderr}
@@ -106,13 +106,13 @@ Remove Node Head Node
 CRUSH Rule Should Be
     [Documentation]    Verifies the default CRUSH rule matches expected_rule_id on node-wrk0.
     [Arguments]    ${expected_rule_id}
-    Run In VM And Check    lxc exec node-wrk0 -- sh -c "microceph.ceph config get mon osd_pool_default_crush_rule" | fgrep -x ${expected_rule_id}    30
+    Run In VM And Check    lxc exec node-wrk0 -- microceph.ceph config get mon osd_pool_default_crush_rule | fgrep -x ${expected_rule_id}    30
 
 Wait For N OSDs Up And In On Head Node
     [Documentation]    Polls ceph status on node-wrk0 until N OSDs are all up and in.
     [Arguments]    ${n}    ${tries}=30
     FOR    ${i}    IN RANGE    ${tries}
-        ${osd_check}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s" | egrep "osd: ${n} osds: ${n} up.*${n} in"    30
+        ${osd_check}=    Run In VM    lxc exec node-wrk0 -- microceph.ceph -s | egrep "osd: ${n} osds: ${n} up.*${n} in"    30
         IF    ${osd_check.rc} == 0    RETURN
         Sleep    5s
     END
@@ -122,7 +122,7 @@ Wait For CRUSH Auto Host Rule On Head Node
     [Documentation]    Polls until microceph_auto_host appears in crush rule list on node-wrk0.
     [Arguments]    ${tries}=20
     FOR    ${i}    IN RANGE    ${tries}
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph osd crush rule ls" | grep -F microceph_auto_host    30
+        ${result}=    Run In VM    lxc exec node-wrk0 -- microceph.ceph osd crush rule ls | grep -F microceph_auto_host    30
         IF    ${result.rc} == 0    RETURN
         Sleep    5s
     END
@@ -132,8 +132,8 @@ Verify Node Removed From Cluster
     [Documentation]    Asserts the node is gone from microceph status and that the mon daemon
     ...    count is either 3 (clean removal) or 4 with the node still out of quorum (transitional).
     [Arguments]    ${node}
-    Run In VM Must Fail    lxc exec node-wrk0 -- sh -c "microceph status" | grep "^- ${node} "
-    ${ceph_s}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s"    30
+    Run In VM Must Fail    lxc exec node-wrk0 -- microceph status | grep "^- ${node} "
+    ${ceph_s}=    Run In VM    lxc exec node-wrk0 -- microceph.ceph -s    30
     ${has_3}=    Evaluate    "mon: 3 daemons" in """${ceph_s.stdout}"""
     ${has_4_ooq}=    Evaluate    "mon: 4 daemons" in """${ceph_s.stdout}""" and "${node}" in """${ceph_s.stdout}"""
     Should Be True    ${has_3} or ${has_4_ooq}    msg=Expected mon: 3 daemons or 4 with ${node} out-of-quorum after node removal
@@ -187,7 +187,7 @@ Test Multi Node RGW SSL
     Enable RGW SSL On Head Node
     ${cert}=    Read Base64 File From Container    node-wrk0    /tmp/server.crt
     ${key}=    Read Base64 File From Container    node-wrk0    /tmp/server.key
-    Run In VM And Check    lxc exec node-wrk0 -- bash -c "microceph enable rgw --target node-wrk1 --ssl-certificate=\"${cert}\" --ssl-private-key=\"${key}\""    120
+    Run In VM And Check    lxc exec node-wrk0 -- microceph enable rgw --target node-wrk1 --ssl-certificate=${cert} --ssl-private-key=${key}    120
     Wait For RGW On Head Node    2
 
 Test Cross Node Certificate Rotation
