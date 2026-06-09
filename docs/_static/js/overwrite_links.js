@@ -1,6 +1,6 @@
  // Replace oldDomain with newDomain
 const oldDomain = 'canonical-microcephcanonicalcom.readthedocs-hosted.com/';
-const newDomain = 'canonical.com/ceph/docs';
+const newDomain = 'canonical.com/ceph/docs/';
 
 function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
