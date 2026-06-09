@@ -17,6 +17,7 @@ package logger
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -140,4 +141,59 @@ func TestLogDefaults(t *testing.T) {
 	if parsed.Msg != "test desc" {
 		t.Errorf("Expected Msg to default to description 'test desc', got '%s'", parsed.Msg)
 	}
+}
+
+func TestLogConcurrent(t *testing.T) {
+	// Restore defaults and callback after test
+	oldCallback := RegisterLogCallback(defaultLogOutput)
+	defer RegisterLogCallback(oldCallback)
+
+	oldDefaults := RegisterDefaults(nil)
+	defer RegisterDefaults(oldDefaults)
+
+	const goroutines = 10
+	const iterations = 50
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 3)
+
+	// Goroutines registering callbacks
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				_ = RegisterLogCallback(func(msg string) {
+					// Dummy callback
+				})
+			}
+		}(i)
+	}
+
+	// Goroutines registering defaults
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				_ = RegisterDefaults(map[string]string{
+					"appid":  "app_id_concurrent",
+					"detail": "detail_concurrent",
+				})
+			}
+		}(i)
+	}
+
+	// Goroutines calling Log
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				params := LogParams{
+					Event: "sys_test",
+				}
+				_ = Log("concurrent log test", params)
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }

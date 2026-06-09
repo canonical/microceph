@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,22 +34,30 @@ type LogParams struct {
 type LogCallback func(msg string)
 
 var (
-    // Overridable callback that outputs a log string.
+	// Overridable callback that outputs a log string.
 	logCallbackFunc LogCallback = defaultLogOutput
 	defaults = make(map[string]string)
+	selogMtx sync.Mutex
 )
 
 func defaultLogOutput(msg string) {
+	// For SEL, the allowed log levels are INFO, WARN and ERROR.
+	// We pick WARN as the default, since INFO is too lenient and ERROR
+	// is too strict.
 	Warn(msg)
 }
 
 func RegisterLogCallback(fn LogCallback) LogCallback {
+	selogMtx.Lock()
+	defer selogMtx.Unlock()
 	prev := logCallbackFunc
 	logCallbackFunc = fn
 	return prev
 }
 
 func RegisterDefaults(dfls map[string]string) map[string]string {
+	selogMtx.Lock()
+	defer selogMtx.Unlock()
 	prev := defaults
 	defaults = dfls
 	return prev
@@ -99,16 +108,16 @@ func makeLogStr(description, level, msg, appID, event, detail string) (string, e
 }
 
 func mapDefault(val string, key string) string {
-    if val != "" {
-        return val
-    }
+	if val != "" {
+		return val
+	}
 
-    ret, ok := defaults[key]
-    if ok {
-        return ret
-    }
+	ret, ok := defaults[key]
+	if ok {
+		return ret
+	}
 
-    return val
+	return val
 }
 
 func Log(description string, params LogParams) error {
@@ -122,10 +131,10 @@ func Log(description string, params LogParams) error {
 		msg = description
 	}
 
-    msg = mapDefault(msg, "msg")
-    detail := mapDefault(params.Detail, "detail")
-    appID := mapDefault(params.AppID, "appid")
-    event := mapDefault(params.Event, "event")
+	msg = mapDefault(msg, "msg")
+	detail := mapDefault(params.Detail, "detail")
+	appID := mapDefault(params.AppID, "appid")
+	event := mapDefault(params.Event, "event")
 
 	logStr, err := makeLogStr(description, level, msg, appID, event, detail)
 	if err != nil {
