@@ -89,7 +89,7 @@ function adopt_cephadm() {
   # Admin Key
   key=$(lxc exec $name -- sh -c "cat /etc/ceph/ceph.client.admin.keyring" | grep key | cut -d " " -f 3)
 
-  lxc --quiet file push /home/runner/*.snap $name/root/
+  lxc --quiet file push "$HOME"/microceph_*.snap $name/root/
 
   # install microceph snap
   lxc exec $name -- sh -c "sudo snap install --dangerous /root/microceph_*.snap"

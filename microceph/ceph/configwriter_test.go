@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/constants"
@@ -187,6 +188,31 @@ func (s *configWriterSuite) TestWriteCephKeyring() {
 	data, err := os.ReadFile(keyring.GetPath())
 	assert.Equal(s.T(), nil, err)
 	assert.Contains(s.T(), string(data), "key = secretkey")
+}
+
+func (s *configWriterSuite) TestWriteConfigRejectsNonLocalFilenames() {
+	tests := []string{
+		"../escaped.keyring",
+		"/tmp/escaped.keyring",
+		"subdir/escaped.keyring",
+	}
+
+	for _, configFile := range tests {
+		s.T().Run(configFile, func(t *testing.T) {
+			keyring := NewCephKeyring(s.Tmp, configFile)
+			err := keyring.WriteConfig(
+				map[string]any{
+					"name": "client.admin",
+					"key":  "secretkey",
+				},
+				0644,
+			)
+			assert.Error(t, err)
+		})
+	}
+
+	_, err := os.Stat(filepath.Join(s.Tmp, "..", "escaped.keyring"))
+	assert.True(s.T(), os.IsNotExist(err))
 }
 
 // Test NFS Ganesha config writing

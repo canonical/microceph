@@ -24,8 +24,21 @@ func (c *Config) GetPath() string {
 	return filepath.Join(c.configDir, c.configFile)
 }
 
+func (c *Config) validateConfigFile() error {
+	if !filepath.IsLocal(c.configFile) || filepath.Base(c.configFile) != c.configFile {
+		return fmt.Errorf("invalid config filename %q", c.configFile)
+	}
+
+	return nil
+}
+
 // WriteConfig writes the configuration file given a data bag and a filemode
 func (c *Config) WriteConfig(data map[string]any, mode int) error {
+	err := c.validateConfigFile()
+	if err != nil {
+		return err
+	}
+
 	fd, err := os.OpenFile(c.GetPath(), os.O_CREATE|os.O_TRUNC|os.O_RDWR, os.FileMode(mode))
 	if err != nil {
 		return fmt.Errorf("Couldn't write %s: %w", c.configFile, err)
