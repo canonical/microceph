@@ -292,6 +292,35 @@ Setup LXD In VM
     Run In VM And Check    sudo snap set lxd daemon.group=adm    30
     Run In VM And Check    sudo lxd init --auto    60
 
+Build Base LXD Image
+    [Documentation]    Builds a base LXD image (ubuntu-22.04-microceph) with s3cmd, jq, and the
+    ...    locally-built MicroCeph snap pre-installed.  The builder container uses the default
+    ...    lxdbr0 bridge (which has outbound NAT) so apt-get works without the test network.
+    ...    Per-container setup is then reduced to apparmor_parser + snap restart only.
+    [Arguments]    ${home}
+    Log To Console    [setup] Building base LXD image with tools and MicroCeph...
+    Run In VM And Check    lxc init local:ubuntu-22.04 builder    60
+    Run In VM And Check    lxc config set builder security.privileged true    10
+    Run In VM And Check    lxc config set builder security.nesting true    10
+    Run In VM And Check    bash -c "printf 'lxc.cgroup2.devices.allow = b 7:* rwm\\nlxc.cgroup2.devices.allow = c 10:237 rwm' | lxc config set builder raw.lxc -"    10
+    Run In VM And Check    lxc config device add builder homedir disk source=${home} path=/mnt    10
+    Run In VM And Check    lxc start builder    60
+    Sleep    5s
+    FOR    ${i}    IN RANGE    20
+        ${r}=    Run In VM    lxc exec builder -- snap version    10
+        IF    ${r.rc} == 0    BREAK
+        Sleep    3s
+    END
+    Run In VM And Check    lxc exec builder -- sh -c "apt-get update -qq && apt-get -qq -y install s3cmd jq"    300
+    Run In VM And Check    lxc exec builder -- sh -c "snap install --dangerous /mnt/microceph_*.snap"    600
+    Run In VM And Check    lxc exec builder -- sh -c "snap connect microceph:block-devices && snap connect microceph:hardware-observe && snap connect microceph:mount-observe"    120
+    Run In VM And Check    lxc exec builder -- snap alias microceph.ceph ceph    30
+    Run In VM And Check    lxc exec builder -- sh -c "sed -e 's|/sys/devices/\\*\\*/ r,|/sys/devices/** r,|' -i.bak /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"    30
+    Run In VM And Check    lxc stop builder    60
+    Run In VM And Check    lxc publish builder --alias ubuntu-22.04-microceph    120
+    Run In VM And Check    lxc delete builder    10
+    Log To Console    [setup] Base image ubuntu-22.04-microceph ready.
+
 Create LXD Containers With Loop Devices
     [Documentation]    Creates 4 privileged LXD containers with loop-back disks.
     [Arguments]    ${network_type}=public
@@ -303,11 +332,11 @@ Create LXD Containers With Loop Devices
     ${mask}=    Evaluate    '${nw}'.split('/')[1]
     ${home_result}=    Run In VM    echo $HOME    10
     ${home}=    Set Variable    ${home_result.stdout.strip()}
-    # Pre-pull ubuntu:22.04 image so the per-container init doesn't race the download
     Run In VM And Check    lxc image copy ubuntu:22.04 local: --alias ubuntu-22.04 --auto-update    600
+    Build Base LXD Image    ${home}
     FOR    ${i}    IN RANGE    4
         ${c}=    Set Variable    node-wrk${i}
-        Run In VM And Check    lxc init local:ubuntu-22.04 ${c}    60
+        Run In VM And Check    lxc init local:ubuntu-22.04-microceph ${c}    60
         Run In VM And Check    lxc config set ${c} security.privileged true    10
         Run In VM And Check    lxc config set ${c} security.nesting true    10
         Run In VM And Check    bash -c "printf 'lxc.cgroup2.devices.allow = b 7:* rwm\\nlxc.cgroup2.devices.allow = c 10:237 rwm' | lxc config set ${c} raw.lxc -"    10
@@ -335,14 +364,9 @@ Install MicroCeph On All Nodes
         Log    SNAP_PATH not set — skipping multi-node snap installation    level=WARN
         RETURN
     END
-    Log To Console    [install] Installing MicroCeph on all nodes...
+    Log To Console    [install] Activating MicroCeph on all nodes...
     FOR    ${container}    IN    node-wrk0    node-wrk1    node-wrk2    node-wrk3
-        Log To Console    [install] Installing on ${container}...
-        Run In VM And Check    lxc exec ${container} -- sh -c "sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd jq"    300
-        Run In VM And Check    lxc exec ${container} -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"    600
-        Run In VM And Check    lxc exec ${container} -- sh -c "snap connect microceph:block-devices && snap connect microceph:hardware-observe && snap connect microceph:mount-observe"    120
-        Run In VM And Check    lxc exec ${container} -- snap alias microceph.ceph ceph    30
-        Run In VM And Check    lxc exec ${container} -- sh -c "sed -e 's|/sys/devices/\\*\\*/ r,|/sys/devices/** r,|' -i.bak /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"    30
+        Log To Console    [install] Activating on ${container}...
         Run In VM And Check    lxc exec ${container} -- apparmor_parser -r /var/lib/snapd/apparmor/profiles/snap.microceph.daemon    60
         Run In VM And Check    lxc exec ${container} -- snap restart microceph.daemon    120
     END
