@@ -10,15 +10,7 @@ Test Tags       multi-node    rbd    replication    remote    lxd    slow    int
 
 *** Keywords ***
 RBD Replication Suite Setup
-    Launch Outer Test VM    vm_name=microceph-rbdrep-vm    disk_size=50GiB
-    Copy Scripts To VM
-    Copy Snap To VM
-    Install Tools
-    Clear IPTables
-    Free Runner Disk
-    Setup LXD In VM
-    Create LXD Containers With Loop Devices    public
-    Install MicroCeph On All Nodes
+    Provision Multinode VM    microceph-rbdrep-vm    50GiB    public
 
 Verify Snapshot Pool Replication Fails
     [Documentation]    Verifies that enabling snapshot-based replication on a pool (not an image) fails.

@@ -9,14 +9,7 @@ Test Tags       multi-node    nfs    cephfs    lxd    slow    integration
 
 *** Keywords ***
 NFS Multinode Suite Setup
-    Launch Outer Test VM    vm_name=microceph-nfsmn-vm    disk_size=50GiB
-    Copy Scripts To VM
-    Copy Snap To VM
-    Clear IPTables
-    Free Runner Disk
-    Setup LXD In VM
-    Create LXD Containers With Loop Devices    public
-    Install MicroCeph On All Nodes
+    Provision Multinode VM    microceph-nfsmn-vm    50GiB    public
     Bootstrap Head Node    public
     Join Worker Nodes To Cluster    public
     Add OSD To Node    node-wrk0

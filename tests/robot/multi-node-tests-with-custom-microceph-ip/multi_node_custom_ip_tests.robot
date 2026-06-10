@@ -9,14 +9,7 @@ Test Tags       multi-node    cluster    custom-ip    lxd    slow    integration
 
 *** Keywords ***
 Custom IP Suite Setup
-    Launch Outer Test VM    vm_name=microceph-cip-vm    disk_size=50GiB
-    Copy Scripts To VM
-    Copy Snap To VM
-    Clear IPTables
-    Free Runner Disk
-    Setup LXD In VM
-    Create LXD Containers With Loop Devices    internal
-    Install MicroCeph On All Nodes
+    Provision Multinode VM    microceph-cip-vm    50GiB    internal
     Bootstrap Head Node    internal
     Join Worker Nodes To Cluster    internal
 

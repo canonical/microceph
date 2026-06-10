@@ -285,6 +285,20 @@ Enable DM Crypt
 # Multi-node LXD container setup
 # ---------------------------------------------------------------------------
 
+Provision Multinode VM
+    [Documentation]    Launches the outer VM and provisions LXD + 4 inner MicroCeph nodes.
+    ...    The sequence itself is not retried, so setup failures surface instead of being
+    ...    masked (Launch Outer Test VM retries the bare lxc launch internally).
+    [Arguments]    ${vm_name}    ${disk_size}    ${network_type}=public
+    Launch Outer Test VM    vm_name=${vm_name}    disk_size=${disk_size}
+    Copy Scripts To VM
+    Copy Snap To VM
+    Clear IPTables
+    Free Runner Disk
+    Setup LXD In VM
+    Create LXD Containers With Loop Devices    ${network_type}
+    Install MicroCeph On All Nodes
+
 Setup LXD In VM
     [Documentation]    Installs and initialises LXD inside the outer VM.
     Log To Console    [setup] Setting up LXD inside ${OUTER_VM} (may take several minutes)...
@@ -294,7 +308,13 @@ Setup LXD In VM
     END
     Run In VM And Check    sudo snap refresh    300
     Run In VM And Check    sudo snap set lxd daemon.group=adm    30
-    Run In VM And Check    sudo lxd init --auto    60
+    # Force a btrfs (copy-on-write) storage pool. On the default "dir" backend every
+    # lxc init / publish is a full rootfs copy, which serializes ~6 x 1.5GB copies in
+    # multi-node setup; btrfs makes instance creation a near-instant reflink snapshot.
+    # Size the loop file explicitly: the auto default (~20% of free space, capped at
+    # 30GB) can be too small for the base image + 4 node rootfs deltas + loop OSDs
+    # that replication suites create inside container rootfs.
+    Run In VM And Check    sudo lxd init --auto --storage-backend btrfs --storage-create-loop 25    60
 
 Build Base LXD Image
     [Documentation]    Builds a base LXD image (ubuntu-22.04-microceph) with s3cmd, jq, and the
@@ -303,26 +323,32 @@ Build Base LXD Image
     ...    Per-container setup is then reduced to apparmor_parser + snap restart only.
     [Arguments]    ${home}
     Log To Console    [setup] Building base LXD image with tools and MicroCeph...
-    Run In VM And Check    lxc init local:ubuntu-22.04 builder    60
-    Run In VM And Check    lxc config set builder security.privileged true    10
-    Run In VM And Check    lxc config set builder security.nesting true    10
-    Run In VM And Check    bash -c "printf 'lxc.cgroup2.devices.allow = b 7:* rwm\\nlxc.cgroup2.devices.allow = c 10:237 rwm' | lxc config set builder raw.lxc -"    10
-    Run In VM And Check    lxc config device add builder homedir disk source=${home} path=/mnt    10
-    Run In VM And Check    lxc start builder    60
+    # Namespaced instance name plus up-front cleanup. Launch Outer Test VM recreates the
+    # outer VM each run, so leftovers cannot normally exist; this is cheap future-proofing
+    # for any flow that reuses an outer VM (e.g. manual debugging inside it).
+    ${builder}=    Set Variable    microceph-img-builder
+    Run In VM    lxc delete --force ${builder}    30
+    Run In VM    lxc image delete ubuntu-22.04-microceph    30
+    Run In VM And Check    lxc init local:ubuntu-22.04 ${builder}    120
+    Run In VM And Check    lxc config set ${builder} security.privileged true    10
+    Run In VM And Check    lxc config set ${builder} security.nesting true    10
+    Run In VM And Check    bash -c "printf 'lxc.cgroup2.devices.allow = b 7:* rwm\\nlxc.cgroup2.devices.allow = c 10:237 rwm' | lxc config set ${builder} raw.lxc -"    10
+    Run In VM And Check    lxc config device add ${builder} homedir disk source=${home} path=/mnt    10
+    Run In VM And Check    lxc start ${builder}    60
     Sleep    5s
     FOR    ${i}    IN RANGE    20
-        ${r}=    Run In VM    lxc exec builder -- snap version    10
+        ${r}=    Run In VM    lxc exec ${builder} -- snap version    10
         IF    ${r.rc} == 0    BREAK
         Sleep    3s
     END
-    Run In VM And Check    lxc exec builder -- sh -c "apt-get update -qq && apt-get -qq -y install s3cmd jq"    300
-    Run In VM And Check    lxc exec builder -- sh -c "snap install --dangerous /mnt/microceph_*.snap"    600
-    Run In VM And Check    lxc exec builder -- sh -c "snap connect microceph:block-devices && snap connect microceph:hardware-observe && snap connect microceph:mount-observe"    120
-    Run In VM And Check    lxc exec builder -- snap alias microceph.ceph ceph    30
-    Run In VM And Check    lxc exec builder -- sh -c "sed -e 's|/sys/devices/\\*\\*/ r,|/sys/devices/** r,|' -i.bak /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"    30
-    Run In VM And Check    lxc stop builder    60
-    Run In VM And Check    lxc publish builder --alias ubuntu-22.04-microceph    120
-    Run In VM And Check    lxc delete builder    10
+    Run In VM And Check    lxc exec ${builder} -- sh -c "apt-get update -qq && apt-get -qq -y install s3cmd jq"    300
+    Run In VM And Check    lxc exec ${builder} -- sh -c "snap install --dangerous /mnt/microceph_*.snap"    600
+    Run In VM And Check    lxc exec ${builder} -- sh -c "snap connect microceph:block-devices && snap connect microceph:hardware-observe && snap connect microceph:mount-observe"    120
+    Run In VM And Check    lxc exec ${builder} -- snap alias microceph.ceph ceph    30
+    Run In VM And Check    lxc exec ${builder} -- sh -c "sed -e 's|/sys/devices/\\*\\*/ r,|/sys/devices/** r,|' -i.bak /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"    30
+    Run In VM And Check    lxc stop ${builder}    60
+    Run In VM And Check    lxc publish ${builder} --alias ubuntu-22.04-microceph    300
+    Run In VM And Check    lxc delete ${builder}    10
     Log To Console    [setup] Base image ubuntu-22.04-microceph ready.
 
 Create LXD Containers With Loop Devices
@@ -336,11 +362,11 @@ Create LXD Containers With Loop Devices
     ${mask}=    Evaluate    '${nw}'.split('/')[1]
     ${home_result}=    Run In VM    echo $HOME    10
     ${home}=    Set Variable    ${home_result.stdout.strip()}
-    Run In VM And Check    lxc image copy ubuntu:22.04 local: --alias ubuntu-22.04 --auto-update    600
+    Run In VM And Check    lxc image copy ubuntu:22.04 local: --alias ubuntu-22.04    600
     Build Base LXD Image    ${home}
     FOR    ${i}    IN RANGE    4
         ${c}=    Set Variable    node-wrk${i}
-        Run In VM And Check    lxc init local:ubuntu-22.04-microceph ${c}    60
+        Run In VM And Check    lxc init local:ubuntu-22.04-microceph ${c}    120
         Run In VM And Check    lxc config set ${c} security.privileged true    10
         Run In VM And Check    lxc config set ${c} security.nesting true    10
         Run In VM And Check    bash -c "printf 'lxc.cgroup2.devices.allow = b 7:* rwm\\nlxc.cgroup2.devices.allow = c 10:237 rwm' | lxc config set ${c} raw.lxc -"    10
@@ -378,10 +404,14 @@ Install MicroCeph On All Nodes
 Install MicroCeph From Store On All Nodes
     [Documentation]    Installs microceph from the Snap Store channel on all 4 inner containers.
     ...    Also installs s3cmd so RGW exercises work (jq is not needed; Wait For OSD Count Head uses outer VM's jq).
+    ...    Purges the pre-baked local snap first: containers are created from the
+    ...    ubuntu-22.04-microceph image, which already has the locally-built snap installed,
+    ...    and `snap install` on an installed snap is a no-op -- without the purge an
+    ...    upgrade suite would "upgrade" local to local and test nothing.
     [Arguments]    ${channel}
     Log To Console    [install] Installing MicroCeph from store (${channel}) on all nodes...
     FOR    ${container}    IN    node-wrk0    node-wrk1    node-wrk2    node-wrk3
-        Run In VM And Check    lxc exec ${container} -- sh -c "sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd && sudo snap install microceph --channel ${channel}"    300
+        Run In VM And Check    lxc exec ${container} -- sh -c "sudo snap remove --purge microceph >/dev/null 2>&1 || true; sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd && sudo snap install microceph --channel ${channel}"    600
     END
 
 Bootstrap Head Node

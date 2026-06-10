@@ -13,14 +13,7 @@ ${STR2}    IJKLMNOP
 
 *** Keywords ***
 CephFS Replication Suite Setup
-    Launch Outer Test VM    vm_name=microceph-cfsrep-vm    disk_size=50GiB
-    Copy Scripts To VM
-    Copy Snap To VM
-    Clear IPTables
-    Free Runner Disk
-    Setup LXD In VM
-    Create LXD Containers With Loop Devices    public
-    Install MicroCeph On All Nodes
+    Provision Multinode VM    microceph-cfsrep-vm    50GiB    public
 
 Configure CephFS Mirroring
     [Documentation]    Creates CephFS volumes on both sites, enables directory mirroring,

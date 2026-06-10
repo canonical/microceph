@@ -9,14 +9,7 @@ Test Tags       multi-node    cluster    osd    rgw    integration    lxd    slo
 
 *** Keywords ***
 Multi Node Suite Setup
-    Launch Outer Test VM    vm_name=microceph-mn-vm    disk_size=50GiB
-    Copy Scripts To VM
-    Copy Snap To VM
-    Clear IPTables
-    Free Runner Disk
-    Setup LXD In VM
-    Create LXD Containers With Loop Devices    public
-    Install MicroCeph On All Nodes
+    Provision Multinode VM    microceph-mn-vm    50GiB    public
     Bootstrap Head Node    public
     Join Worker Nodes To Cluster    public
     Verify Ceph Config Has Public Network

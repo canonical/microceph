@@ -9,14 +9,7 @@ Test Tags       multi-node    messenger-v2    mon    lxd    slow    integration
 
 *** Keywords ***
 Messenger V2 Suite Setup
-    Launch Outer Test VM    vm_name=microceph-msgv2-vm    disk_size=50GiB
-    Copy Scripts To VM
-    Copy Snap To VM
-    Clear IPTables
-    Free Runner Disk
-    Setup LXD In VM
-    Create LXD Containers With Loop Devices    public
-    Install MicroCeph On All Nodes
+    Provision Multinode VM    microceph-msgv2-vm    50GiB    public
 
 Test Messenger V2 On Single Node
     [Documentation]    Verifies node-wrk0 has no v1 addresses in mon dump and is not listening on port 6789.

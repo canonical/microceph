@@ -9,14 +9,7 @@ Test Tags       multi-node    crush    availability-zone    lxd    slow    integ
 
 *** Keywords ***
 AZ Tests Suite Setup
-    Launch Outer Test VM    vm_name=microceph-az-vm    disk_size=50GiB
-    Copy Scripts To VM
-    Copy Snap To VM
-    Clear IPTables
-    Free Runner Disk
-    Setup LXD In VM
-    Create LXD Containers With Loop Devices    public
-    Install MicroCeph On All Nodes
+    Provision Multinode VM    microceph-az-vm    50GiB    public
 
 AZ Get Default Rule
     [Documentation]    Returns the current default CRUSH rule ID from node-wrk0.
@@ -39,7 +32,6 @@ AZ Get OSD ID For Node
     [Arguments]    ${node}
     ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph osd tree -f json 2>/dev/null" | jq -r '.nodes[] | select(.name=="${node}") | (.children // [])[] | select(. >= 0)' | head -1    30
     RETURN    ${result.stdout.strip()}
-
 
 OSD Tree Should Contain AZ Rack Bucket
     [Documentation]    Asserts the CRUSH OSD tree on node-wrk0 contains the rack bucket for ${az_name}.

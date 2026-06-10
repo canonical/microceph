@@ -9,14 +9,7 @@ Test Tags       multi-node    maintenance    cluster    lxd    slow    integrati
 
 *** Keywords ***
 Maintenance Suite Setup
-    Launch Outer Test VM    vm_name=microceph-maint-vm    disk_size=50GiB
-    Copy Scripts To VM
-    Copy Snap To VM
-    Clear IPTables
-    Free Runner Disk
-    Setup LXD In VM
-    Create LXD Containers With Loop Devices    internal
-    Install MicroCeph On All Nodes
+    Provision Multinode VM    microceph-maint-vm    50GiB    internal
     Bootstrap Head Node    internal
     Join Worker Nodes To Cluster    internal
     FOR    ${i}    IN RANGE    4

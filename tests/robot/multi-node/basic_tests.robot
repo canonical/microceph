@@ -8,13 +8,7 @@ Test Tags       multi-node    cluster    integration    lxd    slow
 
 *** Keywords ***
 Multi Node Basic Suite Setup
-    Launch Outer Test VM    vm_name=microceph-mn-basic-vm    disk_size=50GiB
-    Copy Scripts To VM
-    Copy Snap To VM
-    Clear IPTables
-    Setup LXD In VM
-    Create LXD Containers With Loop Devices    public
-    Install MicroCeph On All Nodes
+    Provision Multinode VM    microceph-mn-basic-vm    50GiB    public
     Bootstrap Head Node    public
     Join Worker Nodes To Cluster    public
 

@@ -14,14 +14,7 @@ ${NW}          ${EMPTY}
 
 *** Keywords ***
 Sequential Mon Refresh Suite Setup
-    Launch Outer Test VM    vm_name=microceph-smr-vm    disk_size=50GiB
-    Copy Scripts To VM
-    Copy Snap To VM
-    Clear IPTables
-    Free Runner Disk
-    Setup LXD In VM
-    Create LXD Containers With Loop Devices    public
-    Install MicroCeph On All Nodes
+    Provision Multinode VM    microceph-smr-vm    50GiB    public
 
 Wait For IP In Ceph Conf On Node
     [Documentation]    Polls until ${ip} appears in ceph.conf on the given LXD container.
