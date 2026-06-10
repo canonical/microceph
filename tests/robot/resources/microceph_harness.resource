@@ -38,8 +38,12 @@ Run In VM
     [Documentation]    Runs an arbitrary bash command inside the outer VM (no fail on non-zero).
     ...    bash -eo pipefail: pipe failures and early command failures propagate to the exit code,
     ...    mirroring the set -e behaviour of the original bash CI steps.
+    ...    lxc exec -n (--disable-stdin) wires the command's stdin to /dev/null. Without it the
+    ...    command inherits Robot's stdin (a tty on interactive runs, Robot Framework >= 7.0), and
+    ...    commands that read stdin to EOF when it is not a tty -- notably lxc init / lxc launch,
+    ...    which slurp instance config YAML from stdin -- block forever on a tty that never EOFs.
     [Arguments]    ${bash_cmd}    ${timeout}=300
-    ${result}=    Run Process    lxc    exec    ${OUTER_VM}    --    bash    -eo    pipefail    -c    ${bash_cmd}
+    ${result}=    Run Process    lxc    exec    -n    ${OUTER_VM}    --    bash    -eo    pipefail    -c    ${bash_cmd}
     ...    timeout=${timeout}
     Log    VM cmd rc=${result.rc}: ${result.stdout}
     Log    STDERR: ${result.stderr}
@@ -76,14 +80,14 @@ Run In Container
     Create File    ${localpath}    ${cmd}
     ${push_vm}=    Run Process    lxc    file    push    ${localpath}    ${OUTER_VM}${remotepath}    timeout=30
     Should Be Equal As Integers    ${push_vm.rc}    0    msg=Failed to push script to outer VM: ${push_vm.stderr}
-    ${push_ct}=    Run Process    lxc    exec    ${OUTER_VM}    --    lxc    file    push    ${remotepath}    ${container}${remotepath}    timeout=30
+    ${push_ct}=    Run Process    lxc    exec    -n    ${OUTER_VM}    --    lxc    file    push    ${remotepath}    ${container}${remotepath}    timeout=30
     Should Be Equal As Integers    ${push_ct.rc}    0    msg=Failed to push script to ${container}: ${push_ct.stderr}
-    ${result}=    Run Process    lxc    exec    ${OUTER_VM}    --    lxc    exec    ${container}    --    bash    -eo    pipefail    ${remotepath}
+    ${result}=    Run Process    lxc    exec    -n    ${OUTER_VM}    --    lxc    exec    -n    ${container}    --    bash    -eo    pipefail    ${remotepath}
     ...    timeout=${timeout}
     Log    Container cmd rc=${result.rc}: ${result.stdout}
     Log    STDERR: ${result.stderr}
-    Run Keyword And Ignore Error    Run Process    lxc    exec    ${OUTER_VM}    --    lxc    exec    ${container}    --    rm    -f    ${remotepath}    timeout=10
-    Run Keyword And Ignore Error    Run Process    lxc    exec    ${OUTER_VM}    --    rm    -f    ${remotepath}    timeout=10
+    Run Keyword And Ignore Error    Run Process    lxc    exec    -n    ${OUTER_VM}    --    lxc    exec    -n    ${container}    --    rm    -f    ${remotepath}    timeout=10
+    Run Keyword And Ignore Error    Run Process    lxc    exec    -n    ${OUTER_VM}    --    rm    -f    ${remotepath}    timeout=10
     Run Keyword And Ignore Error    Remove File    ${localpath}
     Should Be Equal As Integers    ${result.rc}    0
     ...    msg=Command failed (rc=${result.rc}):\nSTDERR: ${result.stderr}\nSTDOUT: ${result.stdout}
@@ -133,7 +137,7 @@ Launch Outer Test VM
     Log To Console    [setup] Waiting for VM agent in ${vm_name}...
     Wait For VM Agent    ${vm_name}
     Log To Console    [setup] Waiting for cloud-init in ${vm_name}...
-    ${wait_cmd}=    Set Variable    lxc exec ${vm_name} -- cloud-init status --wait
+    ${wait_cmd}=    Set Variable    lxc exec -n ${vm_name} -- cloud-init status --wait
     ${result}=    Run Process    ${wait_cmd}    shell=True    timeout=300
     Should Be Equal As Integers    ${result.rc}    0    msg=cloud-init failed in ${vm_name}: ${result.stderr}
     Log To Console    [setup] VM ${vm_name} ready.
@@ -143,7 +147,7 @@ Wait For VM Agent
     [Arguments]    ${vm_name}
     Log    Waiting for VM agent in ${vm_name}
     FOR    ${i}    IN RANGE    60
-        ${test_cmd}=    Set Variable    lxc exec ${vm_name} -- true
+        ${test_cmd}=    Set Variable    lxc exec -n ${vm_name} -- true
         ${result}=    Run Process    ${test_cmd}    shell=True    timeout=15
         Return From Keyword If    ${result.rc} == 0
         Sleep    5s

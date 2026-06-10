@@ -29,9 +29,13 @@ def run_streaming_process(cmd, timeout=None, xtrace=False):
     # process group (PGID == proc.pid).  On timeout we kill the whole group so
     # grandchild processes (e.g. "sleep N" spawned by a shell one-liner) cannot
     # keep the stdout pipe open and block the reader thread.
+    # stdin=DEVNULL: scripts run here contain lxc launch/exec calls, which read
+    # stdin to EOF when it is not a tty; inheriting Robot's stdin can block
+    # forever (e.g. a pipe that never closes).  /dev/null gives instant EOF.
     proc = subprocess.Popen(
         cmd,
         shell=True,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
