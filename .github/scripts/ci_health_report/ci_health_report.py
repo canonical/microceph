@@ -2,14 +2,23 @@
 """
 CI Health Report
 
-Queries completed GitHub Actions workflow runs over a lookback window,
-calculates per-job failure rates, and posts a summary to a GitHub issue.
+Queries completed GitHub Actions workflow runs on the monitored branches over
+a lookback window, calculates per-job failure rates and the overall flaky
+rate, and posts a summary to a GitHub issue.
+
+Only runs on the monitored branches are counted. Code merged there has
+already passed the test suite, so any post-merge failure is a false positive
+(or a regression) - the "flaky rate" (CE144):
+
+  flaky rate = (jobs failing on monitored branches) / (total jobs)
 
 Required environment variables:
-  GH_TOKEN      - GitHub token with actions:read and issues:write
-  GH_REPO       - Repository in "owner/repo" format
-  REPORT_ISSUE  - Issue number to post the report to
-  LOOKBACK_DAYS - How many days back to look (default: 30)
+  GH_TOKEN        - GitHub token with actions:read and issues:write
+  GH_REPO         - Repository in "owner/repo" format
+  REPORT_ISSUE    - Issue number to post the report to
+  LOOKBACK_DAYS   - How many days back to look (default: 30)
+  TOP_JOBS        - Number of top failing jobs to highlight (default: 5)
+  REPORT_BRANCHES - Comma-separated branches to measure (e.g. "main,squid")
 """
 
 import os
@@ -19,9 +28,18 @@ from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import urllib.request
 import urllib.error
+import urllib.parse
 import json
 
 COUNTED_CONCLUSIONS = {"success", "failure"}
+
+# Events that represent the branch's own code being tested. Excludes
+# pull_request so a fork PR whose head branch shares a monitored branch
+# name cannot leak into the stats.
+COUNTED_EVENTS = {"push", "schedule", "workflow_dispatch"}
+
+# CE144 acceptance criterion: flaky rate must stay below this (percent).
+FLAKY_RATE_THRESHOLD = 3.0
 
 
 def bucket_count(lookback_days):
@@ -101,14 +119,15 @@ def gh_get(token, path):
     return json.loads(_urlopen(req))
 
 
-def get_runs(token, repo, since):
-    """Return all completed workflow runs created on or after `since`."""
+def get_runs(token, repo, since, branch):
+    """Return all completed workflow runs on `branch` created on or after `since`."""
     runs = []
     page = 1
+    branch_q = urllib.parse.quote(branch, safe="")
     while True:
         data = gh_get(token, (
             f"/repos/{repo}/actions/runs"
-            f"?status=completed&created=>={since}&per_page=100&page={page}"
+            f"?status=completed&created=>={since}&branch={branch_q}&per_page=100&page={page}"
         ))
         batch = data.get("workflow_runs", [])
         if not batch:
@@ -119,13 +138,18 @@ def get_runs(token, repo, since):
 
 
 def get_jobs(token, repo, run_id):
-    """Return all jobs for a workflow run."""
+    """Return all jobs for a workflow run, including earlier re-run attempts.
+
+    `filter=all` matters for the flaky rate: the API default (`latest`) only
+    returns the newest attempt, so a flaky job that failed and was re-run to
+    green would disappear from the stats entirely.
+    """
     jobs = []
     page = 1
     while True:
         data = gh_get(token, (
             f"/repos/{repo}/actions/runs/{run_id}/jobs"
-            f"?per_page=100&page={page}"
+            f"?filter=all&per_page=100&page={page}"
         ))
         batch = data.get("jobs", [])
         if not batch:
@@ -146,8 +170,12 @@ def post_comment(token, repo, issue_number, body):
     _urlopen(req)
 
 
-def build_report(stats, lookback_days, top_n, now):
-    """Build the markdown report string from aggregated job stats."""
+def build_report(stats, branch_totals, lookback_days, top_n, now):
+    """Build the markdown report string from aggregated job stats.
+
+    `branch_totals` maps each monitored branch to {"runs", "failures"} job
+    totals and determines which branches are named in the report.
+    """
     # Sort by failure rate descending for the main table
     rows = sorted(stats.items(), key=lambda x: x[1]["failures"] / x[1]["runs"], reverse=True)
 
@@ -167,14 +195,29 @@ def build_report(stats, lookback_days, top_n, now):
 
     total_runs = sum(s["runs"] for s in stats.values())
     total_failures = sum(s["failures"] for s in stats.values())
-    overall_rate = (total_failures / total_runs * 100) if total_runs else 0.0
+    flaky_rate = (total_failures / total_runs * 100) if total_runs else 0.0
+    flaky_status = "✅" if flaky_rate < FLAKY_RATE_THRESHOLD else "❌"
 
+    branch_lines = []
+    for branch, t in branch_totals.items():
+        if t["runs"] == 0:
+            branch_lines.append(f"  - `{branch}`: no data")
+            continue
+        rate = t["failures"] / t["runs"] * 100
+        status = "✅" if rate < FLAKY_RATE_THRESHOLD else "❌"
+        failures_word = "failure" if t["failures"] == 1 else "failures"
+        runs_word = "job run" if t["runs"] == 1 else "job runs"
+        branch_lines.append(
+            f"  - `{branch}`: {rate:.1f}% {status} ({t['failures']} {failures_word} / {t['runs']} {runs_word})"
+        )
+
+    branches_label = ", ".join(branch_totals)
     timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     lines = [
         "## CI Health Report",
         "",
-        f"_Last {lookback_days} days — generated {timestamp}_",
+        f"_Last {lookback_days} days on {branches_label} — generated {timestamp}_",
         "",
         "### Job Failure Rates",
         "",
@@ -196,7 +239,9 @@ def build_report(stats, lookback_days, top_n, now):
         "",
         f"- **Total job runs:** {total_runs}",
         f"- **Total failures:** {total_failures}",
-        f"- **Overall failure rate:** {overall_rate:.1f}%",
+        f"- **Flaky rate:** {flaky_rate:.1f}% {flaky_status} (acceptance: < {FLAKY_RATE_THRESHOLD:.0f}%)",
+        "- **Per-branch flaky rate:**",
+        *branch_lines,
     ]
     return "\n".join(lines)
 
@@ -207,24 +252,34 @@ def main():
     issue_number = os.environ.get("REPORT_ISSUE", "")
     lookback_days_str = os.environ.get("LOOKBACK_DAYS", "")
     top_jobs_str = os.environ.get("TOP_JOBS", "")
+    branches_str = os.environ.get("REPORT_BRANCHES", "")
 
-    if not token or not repo or not issue_number or not lookback_days_str or not top_jobs_str:
-        print("Error: GH_TOKEN, GH_REPO, REPORT_ISSUE, LOOKBACK_DAYS, and TOP_JOBS must all be set.", file=sys.stderr)
+    if not token or not repo or not issue_number or not lookback_days_str or not top_jobs_str or not branches_str:
+        print("Error: GH_TOKEN, GH_REPO, REPORT_ISSUE, LOOKBACK_DAYS, TOP_JOBS, and REPORT_BRANCHES must all be set.", file=sys.stderr)
         sys.exit(1)
 
     lookback_days = int(lookback_days_str)
     top_jobs = int(top_jobs_str)
+    branches = [b.strip() for b in branches_str.split(",") if b.strip()]
+    if not branches:
+        print("Error: REPORT_BRANCHES contains no branch names.", file=sys.stderr)
+        sys.exit(1)
 
     now = datetime.now(timezone.utc)
     since_dt = now - timedelta(days=lookback_days)
     since = since_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     num_buckets = bucket_count(lookback_days)
 
-    print(f"Fetching workflow runs since {since}...")
-    runs = get_runs(token, repo, since)
-    print(f"Found {len(runs)} completed runs.")
+    # (branch, run) pairs across all monitored branches
+    branch_runs = []
+    for branch in branches:
+        print(f"Fetching workflow runs on {branch} since {since}...")
+        runs = get_runs(token, repo, since, branch)
+        runs = [r for r in runs if r.get("event") in COUNTED_EVENTS]
+        print(f"Found {len(runs)} completed runs on {branch}.")
+        branch_runs.extend((branch, run) for run in runs)
 
-    if not runs:
+    if not branch_runs:
         print("No runs found. Skipping report.")
         return
 
@@ -236,10 +291,12 @@ def main():
         "failures": 0,
         "buckets": [{"runs": 0, "failures": 0} for _ in range(num_buckets)],
     })
+    # branch -> job-level totals, for the per-branch flaky rate breakdown
+    branch_totals = {branch: {"runs": 0, "failures": 0} for branch in branches}
     window_secs = (now - since_dt).total_seconds()
 
-    for i, run in enumerate(runs, start=1):
-        print(f"  Fetching jobs for run {i}/{len(runs)} (id={run['id']})...")
+    for i, (branch, run) in enumerate(branch_runs, start=1):
+        print(f"  Fetching jobs for run {i}/{len(branch_runs)} (id={run['id']})...")
         run_dt = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
         elapsed = (run_dt - since_dt).total_seconds()  # seconds from window start to this run
         # clamp: elapsed==window_secs would produce index num_buckets
@@ -254,15 +311,17 @@ def main():
             key = (run["name"], job["name"])
             stats[key]["runs"] += 1
             stats[key]["buckets"][bucket_idx]["runs"] += 1
+            branch_totals[branch]["runs"] += 1
             if conclusion == "failure":
                 stats[key]["failures"] += 1
                 stats[key]["buckets"][bucket_idx]["failures"] += 1
+                branch_totals[branch]["failures"] += 1
 
     if not stats:
         print("No job data collected. Skipping report.")
         return
 
-    report = build_report(stats, lookback_days, top_jobs, now)
+    report = build_report(stats, branch_totals, lookback_days, top_jobs, now)
 
     # Write to GitHub step summary if available
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")

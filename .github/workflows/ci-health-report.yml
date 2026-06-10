@@ -22,11 +22,16 @@ on:
         description: "Number of top failing jobs to highlight (default: 5)"
         required: false
         default: "5"
+      branches:
+        description: "Comma-separated branches to measure (default: main,squid)"
+        required: false
+        default: "main,squid"
 
 env:
   REPORT_ISSUE: ${{ inputs.report-issue || vars.CI_HEALTH_REPORT_ISSUE }}
   LOOKBACK_DAYS: ${{ inputs.lookback-days || vars.LOOKBACK_DAYS || '30' }}
   TOP_JOBS: ${{ inputs.top-jobs || vars.TOP_JOBS || '5' }}
+  REPORT_BRANCHES: ${{ inputs.branches || vars.REPORT_BRANCHES || 'main,squid' }}
 
 permissions:
   actions: read
