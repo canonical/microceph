@@ -387,6 +387,22 @@ Create LXD Containers With Loop Devices
     END
     Install Tools
 
+Ensure Snap Mount Healthy
+    [Documentation]    Verifies the pre-baked microceph snap squashfs mount is alive in the
+    ...    container, repairing it if not. Containers cloned from the pre-baked image mount
+    ...    /snap/microceph/x1 via squashfuse at boot, and that FUSE mount intermittently
+    ...    comes up dead ("transport endpoint is not connected"), which breaks every
+    ...    subsequent snap command. Restarting the mount unit re-establishes it.
+    [Arguments]    ${container}
+    FOR    ${i}    IN RANGE    6
+        ${r}=    Run In VM    lxc exec ${container} -- sh -c "test -r /snap/microceph/current/meta/snap.yaml"    15
+        IF    ${r.rc} == 0    RETURN
+        Log To Console    [install] microceph snap mount broken on ${container}; restarting mount unit (attempt ${i})...
+        Run In VM    lxc exec ${container} -- sh -c "umount -l /snap/microceph/x1 2>/dev/null; systemctl restart snap-microceph-x1.mount"    30
+        Sleep    3s
+    END
+    Fail    microceph snap mount never became healthy on ${container}
+
 Install MicroCeph On All Nodes
     [Documentation]    Installs the locally-built snap on all 4 inner containers.
     [Arguments]    ${snap_path}=${SNAP_PATH}
@@ -397,6 +413,7 @@ Install MicroCeph On All Nodes
     Log To Console    [install] Activating MicroCeph on all nodes...
     FOR    ${container}    IN    node-wrk0    node-wrk1    node-wrk2    node-wrk3
         Log To Console    [install] Activating on ${container}...
+        Ensure Snap Mount Healthy    ${container}
         Run In VM And Check    lxc exec ${container} -- apparmor_parser -r /var/lib/snapd/apparmor/profiles/snap.microceph.daemon    60
         Run In VM And Check    lxc exec ${container} -- snap restart microceph.daemon    120
     END
@@ -411,6 +428,7 @@ Install MicroCeph From Store On All Nodes
     [Arguments]    ${channel}
     Log To Console    [install] Installing MicroCeph from store (${channel}) on all nodes...
     FOR    ${container}    IN    node-wrk0    node-wrk1    node-wrk2    node-wrk3
+        Ensure Snap Mount Healthy    ${container}
         Run In VM And Check    lxc exec ${container} -- sh -c "sudo snap remove --purge microceph >/dev/null 2>&1 || true; sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd && sudo snap install microceph --channel ${channel}"    600
     END
 
