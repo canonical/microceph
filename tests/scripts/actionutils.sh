@@ -999,6 +999,33 @@ function dump_microceph_debug() {
     sudo snap logs microceph -n 1000
 }
 
+function dump_multinode_debug() {
+    set +e
+
+    local nodes=("${@}")
+    if [[ ${#nodes[@]} -eq 0 ]]; then
+        nodes=(node-wrk0 node-wrk1 node-wrk2 node-wrk3)
+    fi
+
+    lxc list || true
+    lxc storage list || true
+    lxc storage volume list default || true
+
+    for node in "${nodes[@]}" ; do
+        echo "=== ${node} ==="
+        if ! lxc info "${node}" >/dev/null 2>&1 ; then
+            echo "${node} not found"
+            continue
+        fi
+
+        lxc exec "${node}" -- sh -c "microceph status" || true
+        lxc exec "${node}" -- sh -c "microceph.ceph -s" || true
+        lxc exec "${node}" -- sh -c "microceph.ceph health detail" || true
+        lxc exec "${node}" -- sh -c "sudo snap logs microceph -n 1000" || true
+        lxc exec "${node}" -- sh -c "sudo snap logs microceph.daemon -n 1000" || true
+    done
+}
+
 function upgrade_multinode() {
     # Refresh to local version, checking health
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
