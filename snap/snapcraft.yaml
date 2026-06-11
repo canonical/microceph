@@ -287,6 +287,8 @@ parts:
       - libatomic1
       - python3-ceph-common # used by microceph-orch
       - python3-openssl # used by ceph-mgr-dashboard for SSL
+      - python3-jmespath # used by ceph-mgr-dashboard (Tentacle)
+      - python3-xmltodict # used by ceph-mgr-dashboard (Tentacle)
 
     organize:
       sbin/: bin/
