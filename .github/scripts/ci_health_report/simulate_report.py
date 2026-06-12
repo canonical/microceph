@@ -52,8 +52,16 @@ for workflow, job, buckets in SCENARIOS:
     stats[key]["failures"] = sum(b["failures"] for b in buckets)
     stats[key]["buckets"]  = buckets
 
+# Synthetic per-branch split of the totals above (main carries most runs).
+total_runs     = sum(s["runs"]     for s in stats.values())
+total_failures = sum(s["failures"] for s in stats.values())
+branch_totals = {
+    "main":  {"runs": total_runs - 20, "failures": total_failures - 3},
+    "squid": {"runs": 20,              "failures": 3},
+}
+
 now = datetime(2026, 4, 7, 9, 0, 0, tzinfo=timezone.utc)
-report = build_report(stats, lookback_days=30, top_n=5, now=now)
+report = build_report(stats, branch_totals, lookback_days=30, top_n=5, now=now)
 
 output = sys.argv[1] if len(sys.argv) > 1 else "sample_report.md"
 with open(output, "w") as f:
