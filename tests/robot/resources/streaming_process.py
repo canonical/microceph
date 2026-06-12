@@ -13,6 +13,14 @@ def run_streaming_process(cmd, timeout=None, xtrace=False):
     If *xtrace* is True the command is prefixed with ``bash -x`` so every
     sub-command is echoed as it executes (equivalent to ``set -x``).
 
+    *xtrace* only works when *cmd* is a direct script invocation
+    (``/path/script.sh args``): bash takes the first word as a script file
+    operand, so the whole script body runs traced. It must not be used with
+    nested-shell commands such as ``lxc exec ... -- bash -c "..."`` --
+    ``bash -x lxc ...`` would misparse the ``lxc`` binary as a script file.
+    For those, put ``-x`` on the shell that executes the script (see the
+    ``Run Script In VM With Trace`` keyword in microceph_harness.resource).
+
     Returns a two-element list ``[rc, combined_output]`` so Robot callers
     can unpack it with the multi-assignment syntax::
 

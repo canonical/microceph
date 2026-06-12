@@ -5,12 +5,15 @@ Library         OperatingSystem
 Library         Process
 Library         String
 Library         Collections
+Library         streaming_process.py
 
 *** Variables ***
 ${SNAP_PATH}          ${EMPTY}
 ${OUTER_VM}           microceph-test-vm
 ${OUTER_VM_DISK}      50GiB
 ${REPO_ROOT}          ${CURDIR}/../../..
+# Default for bash -x tracing; override with --variable XTRACE:True.
+${XTRACE}             ${False}
 
 *** Keywords ***
 
@@ -96,6 +99,23 @@ Run In Head Node
     [Documentation]    Runs cmd inside node-wrk0 container.
     [Arguments]    ${cmd}    ${timeout}=300
     Run In Container    node-wrk0    ${cmd}    ${timeout}
+
+Run Script In VM With Trace
+    [Documentation]    Runs a script inside the outer VM, honouring ${XTRACE}.
+    ...    Output streams in real time via streaming_process.py. When ${XTRACE}
+    ...    is truthy the script runs under bash -x, tracing the whole script
+    ...    body. The -x must sit on the bash that executes the script file --
+    ...    a wrapping "bash -x -c '...'" would only trace the single dispatch
+    ...    line because the script then runs as an untraced child process.
+    ...    No bash -c wrapper is used, so ${script} must be an absolute path
+    ...    (lxc exec spawns no shell, hence no tilde expansion).
+    [Arguments]    ${script}    ${args}=${EMPTY}    ${timeout}=3600
+    ${runner}=    Set Variable If    '''${XTRACE}'''.upper() in ('TRUE', 'YES', '1')
+    ...    bash -x    bash
+    ${rc}    ${out}=    Run Streaming Process
+    ...    lxc exec ${OUTER_VM} -- ${runner} ${script} ${args}
+    ...    timeout=${timeout}
+    RETURN    ${rc}    ${out}
 
 Get Public Network CIDR
     [Documentation]    Returns the CIDR of the LXD public network (e.g. 10.0.0.0/24) from the outer VM.
