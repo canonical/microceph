@@ -1317,13 +1317,23 @@ Test RGW Stale Run Dir Migration
 # ---------------------------------------------------------------------------
 
 Collect MicroCeph Diagnostics
-    [Documentation]    Collects diagnostics from the outer VM; errors are ignored.
+    [Documentation]    Collects diagnostics from the outer VM and any inner nodes;
+    ...    errors are ignored. Multi-node suites run MicroCeph inside inner
+    ...    containers (node-wrk0..N), so each container found inside the outer VM
+    ...    is queried too. Single-node suites have no inner containers (or no
+    ...    inner lxc at all); the loop is skipped via the empty-line guard.
     ${r}=    Run In VM    sudo microceph status 2>/dev/null || true
     Log    microceph status: ${r.stdout}
     ${r}=    Run In VM    sudo microceph.ceph -s 2>/dev/null || true
     Log    ceph -s: ${r.stdout}
     ${r}=    Run In VM    sudo snap logs microceph -n 200 2>/dev/null || true
     Log    snap logs: ${r.stdout}
+    ${nodes}=    Run In VM    lxc ls -c n --format csv 2>/dev/null || true    30
+    FOR    ${node}    IN    @{nodes.stdout.strip().split('\n')}
+        IF    "${node.strip()}" == ""    CONTINUE
+        ${r}=    Run In VM    lxc exec -n ${node.strip()} -- sh -c "microceph status; microceph.ceph -s; snap logs microceph -n 200" 2>/dev/null || true    60
+        Log    [${node.strip()}] diagnostics: ${r.stdout}
+    END
 
 Destroy LXD Instances
     [Documentation]    Force-stops and force-deletes the outer VM.
