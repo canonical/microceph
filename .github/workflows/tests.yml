@@ -47,280 +47,120 @@ jobs:
           path: "*.snap"
           retention-days: 5
 
-  dsl-baseline-tests:
-    name: DSL baseline tests
-    runs-on: ubuntu-22.04
+  robot-tests:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner || 'ubuntu-22.04' }}
     needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-      - name: Run DSL baseline tests
-        run: python3 tests/robot/robot.py --test-suite dsl-functional-tests --snap-path '/home/runner/*.snap' --variable XTRACE:True --test "Run DSL Baseline Tests"
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-dsl-baseline-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: dsl-baseline-tests
+            name: DSL baseline tests
+            suite: dsl-functional-tests
+            args: --variable XTRACE:True --test "Run DSL Baseline Tests"
 
-  dsl-waldb-validation-tests:
-    name: DSL WAL-DB validation tests
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-      - name: Run DSL WAL-DB validation tests
-        run: python3 tests/robot/robot.py --test-suite dsl-functional-tests --snap-path '/home/runner/*.snap' --variable XTRACE:True --test "Run DSL WAL-DB Validation Tests"
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-dsl-waldb-validation-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
+          - id: dsl-waldb-validation-tests
+            name: DSL WAL-DB validation tests
+            suite: dsl-functional-tests
+            args: --variable XTRACE:True --test "Run DSL WAL-DB Validation Tests"
 
-  dsl-waldb-dryrun-tests:
-    name: DSL WAL-DB dry-run tests
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-      - name: Run DSL WAL-DB dry-run tests
-        run: python3 tests/robot/robot.py --test-suite dsl-functional-tests --snap-path '/home/runner/*.snap' --variable XTRACE:True --test "Run DSL WAL-DB Dry-Run Tests"
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-dsl-waldb-dryrun-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
+          - id: dsl-waldb-dryrun-tests
+            name: DSL WAL-DB dry-run tests
+            suite: dsl-functional-tests
+            args: --variable XTRACE:True --test "Run DSL WAL-DB Dry-Run Tests"
 
-  dsl-waldb-provision-tests:
-    name: DSL WAL-DB provision tests
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-      - name: Run DSL WAL-DB provision tests
-        run: python3 tests/robot/robot.py --test-suite dsl-functional-tests --snap-path '/home/runner/*.snap' --variable XTRACE:True --test "Run DSL WAL-DB Provision Tests"
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-dsl-waldb-provision-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
+          - id: dsl-waldb-provision-tests
+            name: DSL WAL-DB provision tests
+            suite: dsl-functional-tests
+            args: --variable XTRACE:True --test "Run DSL WAL-DB Provision Tests"
 
-  dsl-waldb-cleanup-tests:
-    name: DSL WAL-DB cleanup tests
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-      - name: Run DSL WAL-DB cleanup tests
-        run: python3 tests/robot/robot.py --test-suite dsl-functional-tests --snap-path '/home/runner/*.snap' --variable XTRACE:True --test "Run DSL WAL-DB Cleanup Tests"
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-dsl-waldb-cleanup-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
+          - id: dsl-waldb-cleanup-tests
+            name: DSL WAL-DB cleanup tests
+            suite: dsl-functional-tests
+            args: --variable XTRACE:True --test "Run DSL WAL-DB Cleanup Tests"
 
-  dsl-waldb-consistency-tests:
-    name: DSL WAL-DB consistency tests
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-      - name: Run DSL WAL-DB consistency tests
-        run: python3 tests/robot/robot.py --test-suite dsl-functional-tests --snap-path '/home/runner/*.snap' --variable XTRACE:True --test "Run DSL WAL-DB Consistency Tests"
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-dsl-waldb-consistency-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
+          - id: dsl-waldb-consistency-tests
+            name: DSL WAL-DB consistency tests
+            suite: dsl-functional-tests
+            args: --variable XTRACE:True --test "Run DSL WAL-DB Consistency Tests"
 
-  api-tests:
-    name: API tests
-    runs-on: ubuntu-22.04
-    needs: build-microceph
+          - id: api-tests
+            name: API tests
+            suite: api-tests
+            args: --variable XTRACE:True
+
+          - id: single-system-tests
+            name: Single node with encryption
+            suite: single-system-tests
+
+          - id: multi-node-tests
+            name: Multi node testing
+            suite: multi-node-tests
+
+          - id: availability-zone-tests
+            name: Availability zone crush rule testing
+            suite: availability-zone-tests
+
+          - id: multi-node-tests-with-custom-microceph-ip
+            name: Multi node testing with custom microceph IP
+            suite: multi-node-tests-with-custom-microceph-ip
+
+          - id: test-sequential-mon-host-refresh
+            name: Regression test for sequential join mon host refresh (issue #556)
+            suite: test-sequential-mon-host-refresh
+
+          - id: test-maintenance-modes
+            name: Test maintenance mode
+            suite: test-maintenance-modes
+
+          - id: loop-file-tests
+            name: Test with loopback file OSDs
+            suite: loop-file-tests
+
+          - id: wal-db-tests
+            name: Test WAL/DB device usage
+            suite: wal-db-tests
+
+          - id: upgrade-reef-tests
+            name: Test reef upgrades
+            suite: upgrade-reef-tests
+
+          - id: cluster-tests
+            name: Test MicroCeph Cluster features.
+            suite: cluster-tests
+
+          - id: rbd-replication-test
+            name: Test MicroCeph RBD Remote Replication features.
+            suite: rbd-replication-test
+
+          - id: cephfs-replication-test
+            name: Test MicroCeph Cephfs Remote Replication features.
+            suite: cephfs-replication-test
+            runner: ubuntu-24.04
+
+          - id: nfs-test
+            name: Test MicroCeph NFS feature
+            suite: nfs-test
+
+          - id: nfs-multinode-test
+            name: Test MicroCeph NFS feature (multinode)
+            suite: nfs-multinode-test
+
+          - id: messenger-v2-tests
+            name: Messenger v2 tests
+            suite: messenger-v2-tests
+
+          - id: wiping-test
+            name: Verify pristineness and wiping
+            suite: wiping-test
+            args: --variable XTRACE:True
+
+          - id: cephadm-adopt-test
+            name: Adopt test with cephadm
+            suite: cephadm-adopt-test
+            runner: ubuntu-24.04
+            args: --variable XTRACE:True
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -355,898 +195,14 @@ jobs:
       - name: Install Robot Framework
         run: pip3 install -r tests/robot/requirements.txt
 
-      - name: Run API tests
-        run: python3 tests/robot/robot.py --test-suite api-tests --snap-path '/home/runner/*.snap' --variable XTRACE:True
+      - name: Run Robot suite
+        run: python3 tests/robot/robot.py --test-suite ${{ matrix.suite }} --snap-path '/home/runner/*.snap' ${{ matrix.args }}
 
       - name: Upload Robot logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: robot-logs-api-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  single-system-tests:
-    name: Single node with encryption
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run single-system tests
-        run: python3 tests/robot/robot.py --test-suite single-system-tests --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-single-system-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  multi-node-tests:
-    name: Multi node testing
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run multi-node tests
-        run: python3 tests/robot/robot.py --test-suite multi-node-tests --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-multi-node-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  availability-zone-tests:
-    name: Availability zone crush rule testing
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run availability-zone tests
-        run: python3 tests/robot/robot.py --test-suite availability-zone-tests --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-availability-zone-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  multi-node-tests-with-custom-microceph-ip:
-    name: Multi node testing with custom microceph IP
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run multi-node tests with custom IP
-        run: python3 tests/robot/robot.py --test-suite multi-node-tests-with-custom-microceph-ip --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-multi-node-tests-with-custom-microceph-ip
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  test-sequential-mon-host-refresh:
-    name: Regression test for sequential join mon host refresh (issue #556)
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run sequential mon host refresh tests
-        run: python3 tests/robot/robot.py --test-suite test-sequential-mon-host-refresh --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-test-sequential-mon-host-refresh
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  test-maintenance-modes:
-    name: Test maintenance mode
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run maintenance mode tests
-        run: python3 tests/robot/robot.py --test-suite test-maintenance-modes --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-test-maintenance-modes
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  loop-file-tests:
-    name: Test with loopback file OSDs
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run loop-file tests
-        run: python3 tests/robot/robot.py --test-suite loop-file-tests --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-loop-file-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  wal-db-tests:
-    name: Test WAL/DB device usage
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run WAL/DB tests
-        run: python3 tests/robot/robot.py --test-suite wal-db-tests --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-wal-db-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  upgrade-reef-tests:
-    name: Test reef upgrades
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run upgrade-reef tests
-        run: python3 tests/robot/robot.py --test-suite upgrade-reef-tests --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-upgrade-reef-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  cluster-tests:
-    name: Test MicroCeph Cluster features.
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run cluster tests
-        run: python3 tests/robot/robot.py --test-suite cluster-tests --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-cluster-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  rbd-replication-test:
-    name: Test MicroCeph RBD Remote Replication features.
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run RBD replication tests
-        run: python3 tests/robot/robot.py --test-suite rbd-replication-test --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-rbd-replication-test
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  cephfs-replication-test:
-    name: Test MicroCeph Cephfs Remote Replication features.
-    runs-on: ubuntu-24.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run CephFS replication tests
-        run: python3 tests/robot/robot.py --test-suite cephfs-replication-test --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-cephfs-replication-test
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  nfs-test:
-    name: Test MicroCeph NFS feature
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run NFS tests
-        run: python3 tests/robot/robot.py --test-suite nfs-test --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-nfs-test
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  nfs-multinode-test:
-    name: Test MicroCeph NFS feature (multinode)
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run NFS multinode tests
-        run: python3 tests/robot/robot.py --test-suite nfs-multinode-test --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-nfs-multinode-test
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  messenger-v2-tests:
-    name: Messenger v2 tests
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run messenger v2 tests
-        run: python3 tests/robot/robot.py --test-suite messenger-v2-tests --snap-path '/home/runner/*.snap'
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-messenger-v2-tests
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  wiping-test:
-    name: Verify pristineness and wiping
-    runs-on: ubuntu-22.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run wiping tests
-        run: python3 tests/robot/robot.py --test-suite wiping-test --snap-path '/home/runner/*.snap' --variable XTRACE:True
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-wiping-test
-          path: |
-            output.xml
-            log.html
-            report.html
-          retention-days: 5
-
-  cephadm-adopt-test:
-    name: Adopt test with cephadm
-    runs-on: ubuntu-24.04
-    needs: build-microceph
-    steps:
-      - name: Download snap
-        uses: actions/download-artifact@v4
-        with:
-          name: snaps
-          path: /home/runner
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Clear FORWARD firewall rules
-        run: |
-          sudo iptables -P FORWARD ACCEPT || true
-          sudo ip6tables -P FORWARD ACCEPT || true
-          sudo iptables -F FORWARD || true
-          sudo ip6tables -F FORWARD || true
-
-      - name: Free runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-          imgs=$(sudo docker images -q 2>/dev/null || true)
-          [ -n "$imgs" ] && sudo docker rmi $imgs || true
-
-      - name: Initialize LXD
-        run: |
-          sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
-          sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
-
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
-
-      - name: Run cephadm adopt tests
-        run: python3 tests/robot/robot.py --test-suite cephadm-adopt-test --snap-path '/home/runner/*.snap' --variable XTRACE:True
-
-      - name: Upload Robot logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robot-logs-cephadm-adopt-test
+          name: robot-logs-${{ matrix.id }}
           path: |
             output.xml
             log.html
