@@ -5,3 +5,8 @@ _build
 .vscode
 microceph/coverage.out
 microceph/coverage.html
+report.html
+log.html
+output.xml
+tests/robot/__pycache__
+tests/robot/resources/__pycache__

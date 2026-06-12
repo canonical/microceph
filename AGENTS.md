@@ -133,4 +133,39 @@ make check-unit      # unit tests
 make check-static    # lint / static checks
 ```
 
-Integration tests run in GitHub Actions only — do not try to run them locally.
+## Robot Framework integration tests
+
+See [tests/robot/README.md](tests/robot/README.md) for the full suite layout and
+harness conventions.
+
+Two suites run on the host with no extra dependencies:
+
+```bash
+python3 tests/robot/robot.py --test-suite static-checks   # golangci-lint + go vet
+python3 tests/robot/robot.py --test-suite unit-tests       # go test ./...
+```
+
+All other suites are integration tests that launch LXD VMs.  To run them locally
+you need:
+
+1. **LXD initialised** on the host (`lxd init --auto` if not already done).
+2. **Internet access from LXD VMs** — suite setup runs `apt-get install s3cmd jq`
+   and other package installs inside the VMs.  If the LXD bridge has no outbound
+   route, package downloads will fail.
+3. **A built snap** — produce one with `snapcraft pack -v` at the repo root.
+
+Run a single suite:
+
+```bash
+python3 tests/robot/robot.py --snap-path /path/to/microceph_*.snap \
+    --test-suite cluster-tests
+```
+
+Run every suite sequentially:
+
+```bash
+python3 tests/robot/robot.py --snap-path /path/to/microceph_*.snap
+```
+
+Results land in `output.xml`, `log.html`, and `report.html` in the working
+directory.  Each suite tears down its own LXD VM on completion (or failure).
