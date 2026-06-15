@@ -12,3 +12,8 @@ dependencies = [
 
 [tool.uv.sources]
 snap-helpers = { git = "https://github.com/albertodonato/snap-helpers" }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
