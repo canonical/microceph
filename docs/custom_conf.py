@@ -149,7 +149,7 @@ custom_excludes = [
 custom_html_css_files = []
 
 # Add JavaScript files (located in .sphinx/_static/)
-custom_html_js_files = ['js/overwrite_links.js']
+custom_html_js_files = []
 
 ## The following settings override the default configuration.
 
