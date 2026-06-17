@@ -23,6 +23,25 @@ def _classify_cephfs_list_entries(list_output):
     return items
 
 
+def cephfs_replication_list_has_volume(list_output, volume):
+    """Return True if the CephFS replication list has a non-empty entry for *volume*.
+
+    *list_output* is the stdout of ``microceph replication list cephfs --json`` -- a
+    JSON object keyed by volume name. Returns True only when *volume* is present and
+    maps to a non-empty value. An absent key, an empty entry, or unparseable/empty
+    output all return False, so a poller keeps waiting rather than treating a missing
+    volume as a successful sync (jq's ``.<vol> == {}`` could not distinguish an absent
+    key from a populated one, since ``null == {}`` is false).
+    """
+    try:
+        data = json.loads(list_output)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    return bool(data.get(volume))
+
+
 def verify_cephfs_list_entry_types(list_output):
     """Assert every CephFS replication list entry's type matches its path.
 

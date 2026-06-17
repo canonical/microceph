@@ -7,6 +7,7 @@ Library         String
 Library         Collections
 Library         streaming_process.py
 Library         snap_services.py
+Library         cephfs_replication.py
 
 *** Variables ***
 ${SNAP_PATH}          ${EMPTY}
@@ -1215,12 +1216,16 @@ Get RBD Mirror Pool Health
     RETURN    ${health}
 
 Wait For CephFS Replication List Non Empty
-    [Documentation]    Polls until the CephFS replication list for ${vol} on ${node} is non-empty.
+    [Documentation]    Polls until the CephFS replication list for ${vol} on ${node} has a non-empty entry.
+    ...    JSON parsing and the present-and-non-empty check are delegated to
+    ...    cephfs_replication.py, so an absent volume key counts as "not present yet"
+    ...    (keep polling) rather than success.
     [Arguments]    ${node}    ${vol}    ${attempts}=50
     FOR    ${i}    IN RANGE    ${attempts}
-        ${empty}=    Run In VM    lxc exec ${node} -- sh -c "sudo microceph replication list cephfs --json | jq '.${vol} | . == {}'"    30
-        IF    "${empty.stdout.strip()}" == "false"    RETURN
-        IF    ${i} == ${attempts} - 1    Fail    CephFS replication list for ${vol} still empty after ${attempts} attempts
+        ${result}=    Run In VM    lxc exec ${node} -- sudo microceph replication list cephfs --json    30
+        ${present}=    CephFS Replication List Has Volume    ${result.stdout}    ${vol}
+        IF    ${present}    RETURN
+        IF    ${i} == ${attempts} - 1    Fail    CephFS replication list for ${vol} still empty or absent after ${attempts} attempts
         Sleep    5s
     END
 
