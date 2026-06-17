@@ -62,9 +62,14 @@ def run_streaming_process(cmd, timeout=None, xtrace=False):
             console.flush()
             lines.append(line)
 
-    # The reader runs in a daemon thread so proc.wait(timeout=) on the main
-    # thread is the actual hang guard.  Killing the process group closes the
-    # pipe, which ends the reader loop; join() then drains any final buffered
+    # The reader's "for line in proc.stdout" loop only ends when the pipe
+    # closes, which only happens once the process (and its group) exits -- so
+    # the reader thread on its own offers no protection against a hung child.
+    # That is why the reader runs as a daemon thread and proc.wait(timeout=) on
+    # the main thread is the actual hang guard: wait() enforces the deadline
+    # independently of the reader, returning/raising whether or not stdout has
+    # closed.  On timeout we kill the whole process group, which closes the
+    # pipe and ends the reader loop; join() then drains any final buffered
     # lines.
     thread = threading.Thread(target=_reader, daemon=True)
     thread.start()
