@@ -6,10 +6,12 @@ Integration tests for MicroCeph using [Robot Framework](https://robotframework.o
 
 ### Host-only suites (no LXD, no snap required)
 
+Use `tox`, which installs the dependencies into an isolated venv instead of the
+system Python (this is also how CI runs them):
+
 ```bash
-pip3 install -r tests/robot/requirements.txt
-python3 tests/robot/robot.py --test-suite static-checks   # golangci-lint + go vet
-python3 tests/robot/robot.py --test-suite unit-tests       # go test ./...
+tox -e robot -- --test-suite static-checks   # golangci-lint + go vet
+tox -e robot -- --test-suite unit-tests       # go test ./...
 ```
 
 ### Integration suites
@@ -40,20 +42,14 @@ python3 tests/robot/robot.py --test-suite unit-tests       # go test ./...
 Run a single suite:
 
 ```bash
-python3 tests/robot/robot.py --snap-path /path/to/microceph_*.snap \
+tox -e robot -- --snap-path /path/to/microceph_*.snap \
     --test-suite cluster-tests
 ```
 
 Run all suites sequentially (omitting `--test-suite` defaults to the full tree):
 
 ```bash
-python3 tests/robot/robot.py --snap-path /path/to/microceph_*.snap
-```
-
-Via tox:
-
-```bash
-tox -e robot -- --snap-path /path/to/microceph_*.snap --test-suite cluster-tests
+tox -e robot -- --snap-path /path/to/microceph_*.snap
 ```
 
 Results land in `output.xml`, `log.html`, and `report.html` in the working directory.

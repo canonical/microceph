@@ -192,11 +192,11 @@ jobs:
           sudo snap set lxd daemon.group=adm
           sudo lxd init --auto
 
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
+      - name: Install tox
+        run: pipx install tox
 
       - name: Run Robot suite
-        run: python3 tests/robot/robot.py --test-suite ${{ matrix.suite }} --snap-path '/home/runner/*.snap' ${{ matrix.args }}
+        run: tox -e robot -- --test-suite ${{ matrix.suite }} --snap-path '/home/runner/*.snap' ${{ matrix.args }}
 
       - name: Upload Robot logs
         if: always()

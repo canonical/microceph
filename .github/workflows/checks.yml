@@ -25,11 +25,11 @@ jobs:
         with:
           go-version: 1.25.x
 
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
+      - name: Install tox
+        run: pipx install tox
 
       - name: Run static checks
-        run: python3 tests/robot/robot.py --test-suite static-checks
+        run: tox -e robot -- --test-suite static-checks
 
       - name: Upload Robot logs
         if: always()
@@ -62,11 +62,11 @@ jobs:
         with:
           go-version: 1.25.x
 
-      - name: Install Robot Framework
-        run: pip3 install -r tests/robot/requirements.txt
+      - name: Install tox
+        run: pipx install tox
 
       - name: Run unit tests
-        run: python3 tests/robot/robot.py --test-suite unit-tests
+        run: tox -e robot -- --test-suite unit-tests
 
       - name: Upload Robot logs
         if: always()

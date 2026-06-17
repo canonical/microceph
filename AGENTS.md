@@ -138,11 +138,12 @@ make check-static    # lint / static checks
 See [tests/robot/README.md](tests/robot/README.md) for the full suite layout and
 harness conventions.
 
-Two suites run on the host with no extra dependencies:
+Two suites run on the host with no extra dependencies. Use `tox`, which installs
+the dependencies into an isolated venv rather than the system Python (matches CI):
 
 ```bash
-python3 tests/robot/robot.py --test-suite static-checks   # golangci-lint + go vet
-python3 tests/robot/robot.py --test-suite unit-tests       # go test ./...
+tox -e robot -- --test-suite static-checks   # golangci-lint + go vet
+tox -e robot -- --test-suite unit-tests       # go test ./...
 ```
 
 All other suites are integration tests that launch LXD VMs.  To run them locally
@@ -157,14 +158,14 @@ you need:
 Run a single suite:
 
 ```bash
-python3 tests/robot/robot.py --snap-path /path/to/microceph_*.snap \
+tox -e robot -- --snap-path /path/to/microceph_*.snap \
     --test-suite cluster-tests
 ```
 
 Run every suite sequentially:
 
 ```bash
-python3 tests/robot/robot.py --snap-path /path/to/microceph_*.snap
+tox -e robot -- --snap-path /path/to/microceph_*.snap
 ```
 
 Results land in `output.xml`, `log.html`, and `report.html` in the working
