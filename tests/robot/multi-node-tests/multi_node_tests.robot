@@ -24,6 +24,7 @@ Enable Services On Head Node For
     FOR    ${i}    IN RANGE    8
         ${in_mon}=    Node Is In Mon List    ${node}
         IF    "${in_mon}" == "yes"    BREAK
+        IF    ${i} == 7    Fail    ${node} did not appear in the mon list after 16 s
         Sleep    2s
     END
     Run In Container    node-wrk0    microceph.ceph -s    30
@@ -90,6 +91,7 @@ Remove Node Head Node
     FOR    ${i}    IN RANGE    8
         ${in_mon}=    Node Is In Mon List    ${node}
         IF    "${in_mon}" != "yes"    BREAK
+        IF    ${i} == 7    Fail    ${node} still in mon list 40 s after removal
         Sleep    5s
     END
     Sleep    1s
