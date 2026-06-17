@@ -6,6 +6,7 @@ Library         Process
 Library         String
 Library         Collections
 Library         streaming_process.py
+Library         snap_services.py
 
 *** Variables ***
 ${SNAP_PATH}          ${EMPTY}
@@ -852,16 +853,17 @@ Test Snap Disable Enable
     ...    each one by name is restored after re-enable (not just the aggregate count), and
     ...    fails on timeout. Mirrors bash test_snap_disable_enable + check_snap_service_active_enabled.
     Log To Console    [snap] Testing snap disable/enable service restoration...
-    ${before_result}=    Run In VM    snap services microceph | awk '$2 == "enabled" && $3 == "active" {print $1}'    30
-    @{services_before}=    Evaluate    $before_result.stdout.split()
+    ${before_result}=    Run In VM    snap services microceph    30
+    @{services_before}=    Enabled Active Services    ${before_result.stdout}
     ${count_before}=    Get Length    ${services_before}
     Log To Console    [snap] ${count_before} enabled+active service(s) before disable: ${services_before}
     Run In VM And Check    sudo snap disable microceph    60
     Run In VM And Check    sudo snap enable microceph    60
     ${restored}=    Set Variable    ${False}
     FOR    ${i}    IN RANGE    30
-        ${active_count}=    Run In VM    snap services microceph | awk '$2 == "enabled" && $3 == "active"' | wc -l    30
-        ${active}=    Evaluate    int('${active_count.stdout.strip()}')
+        ${now_result}=    Run In VM    snap services microceph    30
+        @{services_now}=    Enabled Active Services    ${now_result.stdout}
+        ${active}=    Get Length    ${services_now}
         IF    ${active} >= ${count_before}
             Log To Console    [snap] All ${count_before} service(s) re-enabled after ${i}s
             ${restored}=    Set Variable    ${True}
