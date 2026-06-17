@@ -93,29 +93,33 @@ Failover To Site B
     Should Be True    ${count} > 0    msg=Site A images not demoted after 100 rounds
 
 Wait For RBD Mirror Health
-    [Documentation]    Waits for RBD mirror pool health OK or WARNING on the given node for each listed pool.
-    ...    WARNING is accepted because after a failover the new secondary is in resync state.
+    [Documentation]    Waits for RBD mirror pool health to reach OK on ${node} for each listed pool.
+    ...    After a failover the promoted primary returns to health OK once its peer resumes replaying
+    ...    (observed immediately in practice), so we assert that recovery rather than tolerating a
+    ...    degraded state.
     [Arguments]    ${node}    @{pools}
     FOR    ${pool}    IN    @{pools}
-        Log To Console    [rbd] Waiting for mirror health OK/WARNING on ${node} pool ${pool}...
-        FOR    ${i}    IN RANGE    120
+        Log To Console    [rbd] Waiting for mirror health OK on ${node} pool ${pool}...
+        FOR    ${i}    IN RANGE    60
             ${health}=    Get RBD Mirror Pool Health    ${node}    ${pool}
-            IF    "${health}" == "OK" or "${health}" == "WARNING"
+            IF    "${health}" == "OK"
                 Log To Console    [rbd] ${pool} health=${health}
                 BREAK
             END
-            IF    ${i} == 119
-                Fail    Timed out waiting for ${pool} mirror health on ${node} (last=${health})
+            IF    ${i} == 59
+                Fail    Timed out waiting for ${pool} mirror health OK on ${node} (last=${health})
             END
             Sleep    5s
         END
     END
 
 Disable RBD Mirroring
-    [Documentation]    Disables mirroring on pool_two images and both pools from siteb.
-    ...    Mirror health is UNKNOWN after failover; the disable ops work regardless so we skip the health wait.
+    [Documentation]    Waits for RBD mirror pool health to reach OK on siteb after the failover, then
+    ...    disables mirroring on pool_two images and both pools. The promoted primary (node-wrk2)
+    ...    reports health OK once its peer is replaying, so we gate the disable on that instead of a
+    ...    blind sleep.
     Log To Console    [rbd] Disabling RBD mirroring...
-    Sleep    15s    reason=Allow mirror state to settle after failover before disabling
+    Wait For RBD Mirror Health    node-wrk2    pool_one    pool_two
     ${disable_result}=    Run In VM    lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_two 2>&1"    60
     Should Not Be Equal As Integers    ${disable_result.rc}    0    msg=disable pool_two should fail while images are in Image mirroring mode
     Should Contain    ${disable_result.stdout}    in Image mirroring mode    msg=Expected 'in Image mirroring mode' error
@@ -181,8 +185,10 @@ Test Failover To Site B
     Failover To Site B
 
 Test Disable RBD Mirroring
-    [Documentation]    Waits for mirror health OK then disables mirroring on both pools.
+    [Documentation]    Waits for mirror health to reach OK on siteb after the failover,
+    ...    then disables mirroring on both pools.
     [Tags]    rbd    replication
+    [Timeout]    15 minutes
     Disable RBD Mirroring
 
 Test Remove Remote And Verify

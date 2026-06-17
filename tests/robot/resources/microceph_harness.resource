@@ -1205,10 +1205,12 @@ Get Primary Image Count On Node
     RETURN    ${result.stdout.strip()}
 
 Get RBD Mirror Pool Health
-    [Documentation]    Returns the health string from rbd mirror pool status on ${node} for ${pool}.
+    [Documentation]    Returns the summary health string (OK/WARNING/ERROR/UNKNOWN) for ${pool} on ${node}.
     [Arguments]    ${node}    ${pool}
-    ${result}=    Run In VM    lxc exec ${node} -- sh -c "sudo microceph.rbd mirror pool status ${pool} --format json 2>/dev/null | grep -o '\"health\"[[:space:]]*:[[:space:]]*\"[^\"]*\"' | head -1 | sed 's/.*\"\\([^\"]*\\)\"$/\\1/' || echo UNKNOWN"    15
-    RETURN    ${result.stdout.strip()}
+    ${result}=    Run In VM    lxc exec ${node} -- sh -c "sudo microceph.rbd mirror pool status ${pool} --verbose | sed -n 's/^health: //p' | head -1"    30
+    ${health}=    Set Variable    ${result.stdout.strip()}
+    IF    "${health}" == "${EMPTY}"    RETURN    UNKNOWN
+    RETURN    ${health}
 
 Wait For CephFS Replication List Non Empty
     [Documentation]    Polls until the CephFS replication list for ${vol} on ${node} is non-empty.
