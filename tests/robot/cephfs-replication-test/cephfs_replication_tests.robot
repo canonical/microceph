@@ -3,6 +3,7 @@ Documentation    cephfs-replication-test
 ...    Tests MicroCeph CephFS remote replication: two 2-node sites, exchange tokens,
 ...    enable cephfs-mirror, configure directory mirroring, verify sync and data integrity.
 Resource        ../resources/microceph_harness.resource
+Library         ../resources/cephfs_replication.py
 Suite Setup     CephFS Replication Suite Setup
 Suite Teardown  Teardown MicroCeph Environment
 Test Tags       multi-node    cephfs    replication    remote    lxd    slow    integration
@@ -31,15 +32,19 @@ Configure CephFS Mirroring
 
 Verify CephFS Mirror List Output
     [Documentation]    Creates subvolumes, adds them to the mirror list, and verifies the list output.
-    ...    Both subvolumegroup and subvolume creation are attempted but not required — some Ceph
-    ...    builds have a Python binding bug (TypeError in make_ex / Charset.__init__) that causes
-    ...    these operations to fail even when the MDS is healthy. The list output will still be
-    ...    non-empty from the directory paths configured in Configure CephFS Mirroring.
+    ...    subvolumegroup / subvolume creation is best-effort: some Ceph builds hit an open cephfs
+    ...    python-binding bug (canonical/microceph#610) where get_ancestor_xattr raises a TypeError in
+    ...    a mirroring environment, so the create can fail even with a healthy MDS. The create outcome
+    ...    is logged so the bug status is visible in the run. The list output is still non-empty from
+    ...    the directory paths configured in Configure CephFS Mirroring. Entry-type classification is
+    ...    done in cephfs_replication.py.
     Log To Console    [cephfs] Verifying CephFS mirror list output...
-    Run Keyword And Ignore Error    Run In Container    node-wrk0    sudo microceph.ceph fs subvolumegroup create vol testGroup    60
-    ${sv_result}=    Run Keyword And Ignore Error    Run In Container    node-wrk0    sudo microceph.ceph fs subvolume create vol testSubVol    60
+    ${grp_status}    ${grp_msg}=    Run Keyword And Ignore Error    Run In Container    node-wrk0    sudo microceph.ceph fs subvolumegroup create vol testGroup    60
+    Log To Console    [cephfs] subvolumegroup create (best-effort, #610): ${grp_status}
+    ${sv_status}    ${sv_msg}=    Run Keyword And Ignore Error    Run In Container    node-wrk0    sudo microceph.ceph fs subvolume create vol testSubVol    60
+    Log To Console    [cephfs] subvolume create (best-effort, #610): ${sv_status}
     Run Keyword And Ignore Error    Run In Container    node-wrk0    sudo microceph.ceph fs subvolume create vol testGroupedSubVol testGroup    60
-    IF    "${sv_result[0]}" == "PASS"
+    IF    "${sv_status}" == "PASS"
         ${subvolpath}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs subvolume getpath vol testSubVol 2>/dev/null || echo ''"    30
         IF    "${subvolpath.stdout.strip()}" != ""
             Run In Container    node-wrk0    sudo microceph.ceph fs snapshot mirror add vol ${subvolpath.stdout.strip()}    60
@@ -52,18 +57,9 @@ Verify CephFS Mirror List Output
     Wait For CephFS Replication List Non Empty    node-wrk0    vol
     ${list_json}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo microceph replication list cephfs --json | jq -c '.vol[]'"    30
     Log    CephFS list output: ${list_json.stdout}
-    # Assert each list entry's resource_type matches its path: /volumes/... paths must be "subvolume", else "directory".
-    @{items}=    Evaluate    [__import__('json').loads(line) for line in $list_json.stdout.splitlines() if line.strip()]
-    Should Not Be Empty    ${items}    msg=CephFS replication list returned no entries to classify
-    FOR    ${item}    IN    @{items}
-        ${path}=    Set Variable    ${item}[resource_path]
-        ${type}=    Set Variable    ${item}[resource_type]
-        IF    "volumes" in "${path}"
-            Should Be Equal    ${type}    subvolume    msg=Expected subvolume type for path ${path}, got ${type}
-        ELSE
-            Should Be Equal    ${type}    directory    msg=Expected directory type for path ${path}, got ${type}
-        END
-    END
+    # /volumes/... paths must classify as "subvolume", every other entry as "directory".
+    ${items}=    Verify CephFS List Entry Types    ${list_json.stdout}
+    Log    CephFS list classified entries: ${items}
 
 Wait For CephFS Sync
     [Documentation]    Takes snapshots in both mirrored directories and waits for replication.
