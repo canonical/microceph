@@ -33,6 +33,7 @@ func GetServicePlacementTable() map[string](PlacementIntf) {
 		"rgw":           &RgwServicePlacement{},
 		"rbd-mirror":    &ClientServicePlacement{"rbd-mirror"},
 		"cephfs-mirror": &ClientServicePlacement{"cephfs-mirror"},
+		"ceph-exporter": &ClientServicePlacement{"ceph-exporter"},
 	}
 }
 
