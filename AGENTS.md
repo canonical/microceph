@@ -136,7 +136,8 @@ make check-static    # lint / static checks
 ## Robot Framework integration tests
 
 See [tests/robot/README.md](tests/robot/README.md) for the full suite layout and
-harness conventions.
+harness conventions, and [Designing Robot Framework tests](#designing-robot-framework-tests)
+below for how to structure new suites and harness keywords.
 
 Two suites run on the host with no extra dependencies. Use `tox`, which installs
 the dependencies into an isolated venv rather than the system Python (matches CI):
@@ -170,3 +171,71 @@ tox -e robot -- --snap-path /path/to/microceph_*.snap
 
 Results land in `output.xml`, `log.html`, and `report.html` in the working
 directory.  Each suite tears down its own LXD VM on completion (or failure).
+
+## Designing Robot Framework tests
+
+The harness is the class library `tests/robot/resources/microceph_harness.py`, holding the shared
+keywords as Python methods. The companion `tests/robot/resources/microceph_harness.resource` carries
+the `Library` imports and `*** Variables ***` that suites consume, plus some keywords still written in
+Robot (RGW/NFS helpers, a few setup wrappers). Robot maps a Python method `run_in_vm_and_check` to the
+keyword `Run In VM And Check` (case/space/underscore-insensitive), so moving a keyword body between
+Robot and Python never touches a suite as long as the name is preserved.
+
+### Where does my code go?
+
+| Code | Location |
+|------|----------|
+| Test body: actions **plus** the assertions for one feature | The suite's `*** Keywords ***` or the test case itself — keep it readable Robot |
+| Area-agnostic primitives: exec helpers, `_poll_until`, lifecycle, parsers | `microceph_harness.py` |
+| Area-coupled logic shared across suites | An area module sibling (`rbd_replication.py`, `cluster_ops.py`, `snap_services.py`, …) |
+
+**Rule of thumb:** if a keyword does work *and* asserts the outcome, it is a test body — it belongs
+in the suite, not the shared harness. Move loops, branching, parsing, and polling to Python; keep
+linear "do X, check Y" in Robot.
+
+### Purify: fetch raw, decide in Python
+
+The remote command does the **minimum I/O** (`microceph.ceph -s -f json`, `snap services microceph`).
+The **parse/decision** lives in a pure Python helper (`@staticmethod` or module-level — no `self`, no
+`BuiltIn`) using `json.loads`/regex. This keeps the helper unit-testable and removes fragile
+`jq`/`grep` pipelines from the shell command. Preserve the resulting *value*, not the `jq`/`grep`
+string.
+
+### Library rules (breaking if ignored)
+
+- **Class name == module name (lowercase).** `Library microceph_harness.py` auto-selects the class
+  by filename. A `CamelCase` class silently registers **zero** keywords.
+- **`ROBOT_LIBRARY_SCOPE = "SUITE"`** must be set on the class.
+- **Read Robot variables lazily** via `BuiltIn().get_variable_value(...)` inside methods. Never read
+  `${OUTER_VM}`, `${SNAP_PATH}`, etc. in `__init__` — the class is instantiated for keyword discovery
+  before a run context exists, which raises `RobotNotRunningError`.
+- **`subprocess` with `shell=False`** — run commands as arg lists, never as host shell strings.
+- **Result namedtuple exposes `.rc` / `.stdout` / `.stderr`.** The name `rc` is load-bearing: suites
+  read `${result.rc}` via extended-variable syntax. Renaming it `returncode` breaks every caller
+  without an error.
+- **Use `_poll_until(predicate, attempts, interval, fail_msg, ...)` for every poll loop** — never
+  re-implement `FOR`/`Sleep`.
+- **Never call `BuiltIn().run_keyword()`.** Compose Python directly (`self.run_in_vm(...)`). The only
+  allowed `BuiltIn` calls are `get_variable_value` and `set_suite_variable`. Replace `Log` with
+  `robot.api.logger.info`, `Sleep` with `time.sleep`, and `Should *` / `Fail` with
+  `raise AssertionError(msg)` (keep the message text).
+- **Container commands go through the exec helpers** — never hand-build `lxc exec <node> -- sh -c "..."`
+  and pass it to `run_in_vm`. Sites where non-zero rc is a valid outcome (`grep -c`, `cmd || echo 0`)
+  need a **non-raising** variant and must **not** run under `bash -eo pipefail` (errexit aborts before
+  the `|| echo` fallback and changes the captured output).
+- **Keep helper modules separate.** The class imports `snap_services.py`, `rbd_replication.py`, etc.
+  but must never re-export their keyword names — two imported libraries exposing the same keyword name
+  is a Robot error.
+
+### Migrating an existing keyword
+
+Preserve **byte-for-byte**: the keyword name, return shape (bare string vs. result namedtuple — match
+what callers consume), timeouts, sleeps, and assertion-message text. Only rewrite the extraction
+pipeline. If you find a dead argument or an unreachable keyword, **flag it** for a maintainer — do not
+silently fix it.
+
+### Verify
+
+- Add pytest tests for every pure helper in `tests/robot/resources/test_harness_helpers.py`; they run
+  from the `unit-tests` suite and need no LXD.
+- Run `tox -e robot -- --dryrun ...` to prove keyword resolution across all suites before opening a PR.
