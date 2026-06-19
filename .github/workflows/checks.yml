@@ -1,0 +1,80 @@
+name: Checks
+
+on:
+  - push
+  - pull_request
+
+jobs:
+  static-checks:
+    name: Run static checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo add-apt-repository ppa:dqlite/dev -y --no-update
+          sudo apt-get update
+          sudo apt-get install -y libdqlite1.17-dev
+
+      - name: Install Go (1.25)
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.x
+
+      - name: Install tox
+        run: pipx install tox
+
+      - name: Run static checks
+        run: tox -e robot -- --test-suite static-checks
+
+      - name: Upload Robot logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-logs-static-checks
+          path: |
+            output.xml
+            log.html
+            report.html
+          retention-days: 5
+
+  unit-tests:
+    name: Run Unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo add-apt-repository ppa:dqlite/dev -y --no-update
+          sudo apt-get update
+          sudo apt-get install -y libdqlite1.17-dev
+
+      - name: Install Go (1.25)
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.x
+
+      - name: Install tox
+        run: pipx install tox
+
+      - name: Run unit tests
+        run: tox -e robot -- --test-suite unit-tests
+
+      - name: Upload Robot logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-logs-unit-tests
+          path: |
+            output.xml
+            log.html
+            report.html
+          retention-days: 5

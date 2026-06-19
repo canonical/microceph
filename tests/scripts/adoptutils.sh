@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 function create_cephadm_vm() {
-  set -u
+  set -eu
   input=$1
 
   if [[ -z $input ]]; then
@@ -9,6 +9,15 @@ function create_cephadm_vm() {
   else
     name=$input
   fi
+
+  # Remove leftovers from an interrupted previous run. Stale block volumes
+  # carry old bluestore/LVM data, which makes ceph-volume report the disks
+  # as unavailable; 'orch apply osd --all-available-devices' then creates
+  # zero OSDs and every later step fails far from the real cause.
+  lxc delete --force $name 2>/dev/null || true
+  for i in 1 2 3; do
+    lxc storage volume delete default $name-$i 2>/dev/null || true
+  done
 
   lxc --quiet launch ubuntu:24.04 --vm $name -c limits.cpu=4 -c limits.memory=4GB
 
@@ -20,15 +29,14 @@ function create_cephadm_vm() {
   lxc storage volume attach default $name-2 $name
   lxc storage volume attach default $name-3 $name
 
-  exec_ls_on_vm $name
-  success=$?
+  success=1
   for i in $(seq 1 10); do
-    if [[ $success -ne 0 ]]; then
-      echo "waiting."
-      sleep 20s
+    if exec_ls_on_vm $name; then
+      success=0
+      break
     fi
-    exec_ls_on_vm $name
-    success=$?
+    echo "waiting."
+    sleep 20s
   done
 
   if [[ $success -ne 0 ]]; then
@@ -62,21 +70,44 @@ function bootstrap_cephadm() {
 
   # Wait for the cluster to settle before adopt can connect
   echo "Waiting for ceph cluster to become healthy..."
+  healthy=0
   for i in $(seq 1 30); do
     if lxc exec $name -- sh -c "cephadm shell -- ceph health 2>/dev/null" | grep -q "HEALTH_OK"; then
       echo "Cluster is healthy"
+      healthy=1
       break
     fi
+    # A one-off daemon crash during bootstrap leaves a RECENT_CRASH warning
+    # that never clears on its own; archive crash reports so health can
+    # return to OK. A crash-looping daemon keeps regenerating the warning
+    # and still fails the gate below.
+    lxc exec $name -- sh -c "cephadm shell -- ceph crash archive-all 2>/dev/null" || true
     echo "Waiting for cluster health... attempt $i/30"
     sleep 10s
   done
   lxc exec $name -- sh -c "cephadm shell -- ceph -s"
+  if [[ $healthy -ne 1 ]]; then
+    echo "Cluster on $name did not reach HEALTH_OK; failing bootstrap"
+    return 1
+  fi
+
+  # HEALTH_OK with zero OSDs is impossible, but be explicit: every later
+  # stage (fs volume create, MDS activation, mirroring) silently wedges if
+  # the OSDs were never created, so verify all 3 are up before moving on.
+  up_osds=$(lxc exec $name -- sh -c "cephadm shell -- ceph osd stat --format json 2>/dev/null" | jq -r '.num_up_osds // 0')
+  if [[ "${up_osds}" -lt 3 ]]; then
+    echo "Expected 3 up OSDs on $name, found ${up_osds}; failing bootstrap"
+    lxc exec $name -- sh -c "cephadm shell -- ceph-volume inventory" || true
+    return 1
+  fi
 }
 
 function adopt_cephadm() {
   set -eux
   # hostname
   name=$1
+  # Optional: snap glob/path (defaults to /home/runner/*.snap for CI)
+  local snap_glob="${2:-/home/runner/*.snap}"
 
   # fetch cephadm adopt data
   # FSID
@@ -89,7 +120,7 @@ function adopt_cephadm() {
   # Admin Key
   key=$(lxc exec $name -- sh -c "cat /etc/ceph/ceph.client.admin.keyring" | grep key | cut -d " " -f 3)
 
-  lxc --quiet file push "$HOME"/microceph_*.snap $name/root/
+  lxc --quiet file push $snap_glob $name/root/
 
   # install microceph snap
   lxc exec $name -- sh -c "sudo snap install --dangerous /root/microceph_*.snap"
@@ -130,7 +161,13 @@ function wait_for_active_mds() {
     fi
     if [[ $(date +%s) -ge $deadline ]]; then
       echo "Timed out waiting for active MDS on ${fs} in ${container}"
+      # Dump enough state to tell an MDS problem from a cluster problem:
+      # an MDS stuck in 'creating' with MAX AVAIL 0 means the pools have
+      # no usable OSDs, not that the MDS itself is broken.
       lxc exec "$container" -- bash -c "sudo microceph.ceph fs status ${fs}" || true
+      lxc exec "$container" -- bash -c "sudo microceph.ceph -s" || true
+      lxc exec "$container" -- bash -c "sudo microceph.ceph osd tree" || true
+      lxc exec "$container" -- bash -c "sudo microceph.ceph df" || true
       return 1
     fi
     echo -n '.'
