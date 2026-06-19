@@ -101,7 +101,7 @@ html_context = {
     # TODO: If there's no such website,
     #       remove the {{ product_page }} link from the page header template
     #       (usually .sphinx/_templates/header.html; also, see README.rst).
-    "product_page": "",
+    "product_page": "microceph.com",
     # Product tag image; the orange part of your logo, shown in the page header
     #
     # To add a tag image, uncomment and update as needed.
