@@ -46,6 +46,176 @@ Test Waitready Inline
     Bootstrap MicroCeph Cluster
     Run In VM And Check    sudo microceph waitready --timeout 30    60
 
+Test Pool Replication Operations
+    [Documentation]    Tests pool replication-factor set/reset operations.
+    Log To Console    [pool] Testing pool replication factor operations...
+    Run In VM    sudo microceph.ceph osd pool create mypool    30
+    Run In VM And Check    sudo microceph pool set-rf --size 1 ""    30
+    Run In VM And Check    sudo microceph.ceph config get osd.1 osd_pool_default_size | grep -Fx "1"    30
+    Run In VM And Check    sudo microceph pool list | grep "mypool"    30
+    Run In VM And Check    sudo microceph pool list | grep "mypool" | grep -F " 3 "    30
+    Run In VM And Check    sudo microceph pool set-rf --size 3 mypool    30
+    Run In VM And Check    sudo microceph.ceph osd pool get mypool size | grep -Fx "size: 3"    30
+    Run In VM And Check    sudo microceph pool list | grep "mypool" | grep -F " 3 "    30
+    Run In VM And Check    sudo microceph pool set-rf --size 1 "*"    30
+    Run In VM And Check    sudo microceph.ceph osd pool get mypool size | grep -Fx "size: 1"    30
+    Run In VM And Check    sudo microceph pool list | grep "mypool" | grep -F " 1 "    30
+
+Test Log Level Control
+    [Documentation]    Sets log level to warning (3) and verifies.
+    Run In VM And Check    sudo microceph log set-level warning    30
+    ${result}=    Run In VM    sudo microceph log get-level    30
+    Should Be Equal As Strings    ${result.stdout.strip()}    3    msg=Incorrect log level: ${result.stdout}
+
+Test SSL Certificate Rotation
+    [Documentation]    Tests RGW SSL certificate rotation (with/without --restart).
+    Log To Console    [rgw] Testing SSL certificate rotation...
+    Run In VM And Check    sudo openssl genrsa -out /tmp/rotated-cert.key 2048    30
+    Run In VM And Check    sudo openssl req -new -key /tmp/rotated-cert.key -out /tmp/rotated-cert.csr -subj "/CN=rotated-cert"    30
+    Run In VM And Check    bash -c "echo 'subjectAltName = DNS:localhost' > /tmp/rotated-cert-ext.cnf"    10
+    Run In VM And Check    sudo openssl x509 -req -in /tmp/rotated-cert.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -out /tmp/rotated-cert.crt -days 365 -extfile /tmp/rotated-cert-ext.cnf    30
+    ${cert}=    Run In VM    sudo base64 -w0 /tmp/rotated-cert.crt    30
+    ${key}=    Run In VM    sudo base64 -w0 /tmp/rotated-cert.key    30
+    Run In VM And Check    sudo microceph certificate set rgw --ssl-certificate="${cert.stdout.strip()}" --ssl-private-key="${key.stdout.strip()}" --restart    120
+    Wait For RGW    1
+    Wait For RGW SSL Port
+    ${cn}=    Get RGW SSL CN
+    Should Be Equal As Strings    ${cn}    rotated-cert    msg=Expected CN=rotated-cert after --restart
+    Run In VM And Check    sudo openssl genrsa -out /tmp/rotated-cert-2.key 2048    30
+    Run In VM And Check    sudo openssl req -new -key /tmp/rotated-cert-2.key -out /tmp/rotated-cert-2.csr -subj "/CN=rotated-cert-2"    30
+    Run In VM And Check    bash -c "echo 'subjectAltName = DNS:localhost' > /tmp/rotated-cert-2-ext.cnf"    10
+    Run In VM And Check    sudo openssl x509 -req -in /tmp/rotated-cert-2.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -out /tmp/rotated-cert-2.crt -days 365 -extfile /tmp/rotated-cert-2-ext.cnf    30
+    ${cert2}=    Run In VM    sudo base64 -w0 /tmp/rotated-cert-2.crt    30
+    ${key2}=    Run In VM    sudo base64 -w0 /tmp/rotated-cert-2.key    30
+    Run In VM And Check    sudo microceph certificate set rgw --ssl-certificate="${cert2.stdout.strip()}" --ssl-private-key="${key2.stdout.strip()}"    60
+    Sleep    3s
+    ${cn}=    Get RGW SSL CN
+    Should Be Equal As Strings    ${cn}    rotated-cert    msg=Old cert should still be served without restart
+    Run In VM And Check    sudo snap restart microceph.rgw    60
+    Wait For RGW    1
+    Wait For RGW SSL Port
+    ${cn}=    Get RGW SSL CN
+    Should Be Equal As Strings    ${cn}    rotated-cert-2    msg=Expected rotated-cert-2 after manual restart
+    ${orig_cert}=    Run In VM    sudo base64 -w0 /tmp/server.crt    30
+    ${orig_key}=    Run In VM    sudo base64 -w0 /tmp/server.key    30
+    Run In VM And Check    sudo microceph certificate set rgw --ssl-certificate="${orig_cert.stdout.strip()}" --ssl-private-key="${orig_key.stdout.strip()}" --restart    120
+    Wait For RGW    1
+    Wait For RGW SSL Port
+
+Test SSL Certificate Rotation With Target
+    [Documentation]    Tests RGW SSL certificate rotation with --target flag.
+    [Arguments]    ${target}
+    Log To Console    [rgw] Testing certificate rotation with --target ${target}...
+    ${addr_result}=    Run In VM    sudo microceph status | grep -F "${target}" | grep -oP '\\(\\K[^)]+' || true    30
+    ${target_addr}=    Set Variable    ${addr_result.stdout.strip()}
+    Run In VM And Check    sudo openssl genrsa -out /tmp/target-cert.key 2048    30
+    Run In VM And Check    sudo openssl req -new -key /tmp/target-cert.key -out /tmp/target-cert.csr -subj "/CN=target-cert"    30
+    Run In VM And Check    bash -c "echo 'subjectAltName = DNS:localhost' > /tmp/target-cert-ext.cnf"    10
+    Run In VM And Check    sudo openssl x509 -req -in /tmp/target-cert.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -out /tmp/target-cert.crt -days 365 -extfile /tmp/target-cert-ext.cnf    30
+    ${cert}=    Run In VM    sudo base64 -w0 /tmp/target-cert.crt    30
+    ${key}=    Run In VM    sudo base64 -w0 /tmp/target-cert.key    30
+    Run In VM And Check    sudo microceph certificate set rgw --ssl-certificate="${cert.stdout.strip()}" --ssl-private-key="${key.stdout.strip()}" --target ${target} --restart    120
+    Wait For RGW    1
+    Wait For RGW SSL Port    ${target_addr}
+    ${cn}=    Get RGW SSL CN    ${target_addr}
+    Should Be Equal As Strings    ${cn}    target-cert    msg=Expected CN=target-cert on ${target}
+    ${orig_cert}=    Run In VM    sudo base64 -w0 /tmp/server.crt    30
+    ${orig_key}=    Run In VM    sudo base64 -w0 /tmp/server.key    30
+    Run In VM And Check    sudo microceph certificate set rgw --ssl-certificate="${orig_cert.stdout.strip()}" --ssl-private-key="${orig_key.stdout.strip()}" --target ${target} --restart    120
+    Wait For RGW    1
+    Wait For RGW SSL Port    ${target_addr}
+
+Test SSL Certificate Set When Not Running
+    [Documentation]    Verifies that certificate set fails when RGW is not running.
+    Log To Console    [rgw] Verifying certificate set fails when RGW is not running...
+    Run In VM And Check    sudo microceph disable rgw    60
+    Sleep    3s
+    ${cert}=    Run In VM    sudo base64 -w0 /tmp/server.crt    30
+    ${key}=    Run In VM    sudo base64 -w0 /tmp/server.key    30
+    Run In VM Must Fail    sudo microceph certificate set rgw --ssl-certificate="${cert.stdout.strip()}" --ssl-private-key="${key.stdout.strip()}"
+
+Test IPv6 Monitor Address Formatting
+    [Documentation]    Reinstalls with IPv6 mon-ip and verifies square brackets in ceph.conf.
+    [Arguments]    ${mon_ip}=fd42:7273:f336:a22::1
+    Log To Console    [mon] Testing IPv6 monitor address formatting...
+    Run In VM And Check    sudo snap remove microceph    300
+    ${iface_result}=    Run In VM    ip route show default | awk '/default via/ {print $5}' | head -1    30
+    ${iface}=    Set Variable    ${iface_result.stdout.strip()}
+    Log To Console    [mon] Adding IPv6 address to interface ${iface}...
+    Run In VM And Check    sudo ip -6 addr add dev ${iface} ${mon_ip}    30
+    Install And Bootstrap MicroCeph    ${mon_ip}
+    ${result}=    Run In VM    grep -F "[${mon_ip}]" /var/snap/microceph/current/conf/ceph.conf    30
+    Should Be Equal As Integers    ${result.rc}    0    msg=IPv6 address ${mon_ip} not wrapped in brackets in ceph.conf
+
+Test RGW Stale Run Dir Migration
+    [Documentation]    Injects a stale run dir into radosgw.conf, restarts the snap, and verifies
+    ...    the daemon repairs the config to use the stable 'current' symlink.
+    ...    Mirrors actionutils.sh test_rgw_stale_run_dir_migration.
+    Log To Console    [rgw] Testing RGW stale run dir migration...
+    Run In VM And Check    sudo sed -i 's|run dir = .*|run dir = /var/snap/microceph/1/run|' /var/snap/microceph/current/conf/radosgw.conf    10
+    Run In VM And Check    grep "run dir" /var/snap/microceph/current/conf/radosgw.conf    10
+    Run In VM And Check    sudo snap stop microceph    120
+    Run In VM And Check    sudo snap start microceph    60
+    Wait For RGW    1
+    Run In VM And Check    grep -q "run dir = /var/snap/microceph/current/run" /var/snap/microceph/current/conf/radosgw.conf    10
+
+Verify Mount Check
+    [Documentation]    Verifies that adding a mounted root device fails with "is currently mounted",
+    ...    even when --wipe is specified. Mirrors actionutils.sh verify_mount_check.
+    Log To Console    [disk] Testing mount check...
+    ${rootdev}=    Run In VM    findmnt --noheadings --output SOURCE /    30
+    ${err}=    Run In VM    sudo microceph disk add --wipe ${rootdev.stdout.strip()} 2>&1 || true    30
+    Should Contain    ${err.stdout}    is currently mounted    msg=Expected mount check failure for ${rootdev.stdout.strip()}
+
+Test Cluster Config Operations
+    [Documentation]    Verifies rbd_default_features and tests cluster_network config set/reset.
+    Log To Console    [config] Testing cluster config set/reset...
+    ${rbd_feat}=    Run In VM    sudo microceph.ceph config get mon rbd_default_features    30
+    Should Be Equal As Strings    ${rbd_feat.stdout.strip()}    63    msg=rbd_default_features not 63
+    ${cip}=    Run In VM    ip -4 -j route | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]'    30
+    ${ts}=    Run In VM    sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2    30
+    Run In VM And Check    sudo microceph cluster config set cluster_network ${cip.stdout.strip()}/8 --wait    60
+    ${ts2}=    Run In VM    sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2    30
+    ${out}=    Run In VM    sudo microceph cluster config get cluster_network | grep -cim1 'cluster_network'    30
+    Should Be True    int('${out.stdout.strip()}') >= 1    msg=config check failed
+    Should Be True    int('${ts2.stdout.strip()}') >= int('${ts.stdout.strip()}')    msg=OSD service did not restart after config set
+    Run In VM And Check    sudo microceph cluster config reset cluster_network --wait    60
+    ${ts3}=    Run In VM    sudo systemctl show --property ActiveEnterTimestampMonotonic snap.microceph.osd.service | cut -d= -f2    30
+    Should Be True    int('${ts3.stdout.strip()}') >= int('${ts2.stdout.strip()}')    msg=OSD service did not restart after config reset
+
+Test Snap Disable Enable
+    [Documentation]    Tests that snap disable/enable re-enables all services.
+    ...    Records the names of services that were enabled+active before disable and verifies
+    ...    each one by name is restored after re-enable (not just the aggregate count), and
+    ...    fails on timeout. Mirrors bash test_snap_disable_enable + check_snap_service_active_enabled.
+    Log To Console    [snap] Testing snap disable/enable service restoration...
+    ${before_result}=    Run In VM    snap services microceph    30
+    @{services_before}=    Enabled Active Services    ${before_result.stdout}
+    ${count_before}=    Get Length    ${services_before}
+    Log To Console    [snap] ${count_before} enabled+active service(s) before disable: ${services_before}
+    Run In VM And Check    sudo snap disable microceph    60
+    Run In VM And Check    sudo snap enable microceph    60
+    ${restored}=    Set Variable    ${False}
+    FOR    ${i}    IN RANGE    30
+        ${now_result}=    Run In VM    snap services microceph    30
+        @{services_now}=    Enabled Active Services    ${now_result.stdout}
+        ${active}=    Get Length    ${services_now}
+        IF    ${active} >= ${count_before}
+            Log To Console    [snap] All ${count_before} service(s) re-enabled after ${i}s
+            ${restored}=    Set Variable    ${True}
+            BREAK
+        END
+        Sleep    1s
+    END
+    IF    not ${restored}    Fail    Not all services re-enabled after 30s (expected ${count_before})
+    # Verify each previously enabled+active service is back, by name.
+    FOR    ${svc}    IN    @{services_before}
+        ${svc_state}=    Run In VM    snap services ${svc}    30
+        Should Contain    ${svc_state.stdout}    enabled    msg=Service ${svc} not enabled after re-enable
+        Should Contain    ${svc_state.stdout}    active    msg=Service ${svc} not active after re-enable
+    END
+    Verify Cluster Health
+
 *** Test Cases ***
 Test Waitready
     [Documentation]    Installs snap, verifies waitready fails before bootstrap, bootstraps,

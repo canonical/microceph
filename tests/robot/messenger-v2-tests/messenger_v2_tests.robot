@@ -9,7 +9,7 @@ Test Tags       multi-node    messenger-v2    mon    lxd    slow    integration
 
 *** Keywords ***
 Messenger V2 Suite Setup
-    Provision Multinode VM    microceph-msgv2-vm    50GiB    public
+    Provision Multinode VM    microceph-msgv2-vm    ${OUTER_VM_DISK}    public
 
 Test Messenger V2 On Single Node
     [Documentation]    Verifies node-wrk0 has no v1 addresses in mon dump and is not listening on port 6789.

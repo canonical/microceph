@@ -8,10 +8,16 @@ import threading
 
 
 def run_streaming_process(cmd, timeout=None, xtrace=False):
-    """Run *cmd* in a shell, printing each line to the console immediately.
+    """Run *cmd*, printing each line to the console immediately.
 
-    If *xtrace* is True the command is prefixed with ``bash -x`` so every
-    sub-command is echoed as it executes (equivalent to ``set -x``).
+    *cmd* may be either a shell command string (run via the shell) or an argv
+    list (run directly with ``shell=False``). The argv form is for callers that
+    build a command from dynamic components -- a VM name, a script path, args --
+    so that spaces or shell metacharacters in those components cannot be
+    reinterpreted by a shell. *xtrace* applies only to the string form.
+
+    If *xtrace* is True (string form) the command is prefixed with ``bash -x`` so
+    every sub-command is echoed as it executes (equivalent to ``set -x``).
 
     *xtrace* only works when *cmd* is a direct script invocation
     (``/path/script.sh args``): bash takes the first word as a script file
@@ -19,7 +25,8 @@ def run_streaming_process(cmd, timeout=None, xtrace=False):
     nested-shell commands such as ``lxc exec ... -- bash -c "..."`` --
     ``bash -x lxc ...`` would misparse the ``lxc`` binary as a script file.
     For those, put ``-x`` on the shell that executes the script (see the
-    ``Run Script In VM With Trace`` keyword in microceph_harness.resource).
+    ``Run Script In VM With Trace`` keyword in microceph_harness.py, which passes
+    an argv list with ``-x`` on the script's bash).
 
     Returns a two-element list ``[rc, combined_output]`` so Robot callers
     can unpack it with the multi-assignment syntax::
@@ -28,7 +35,8 @@ def run_streaming_process(cmd, timeout=None, xtrace=False):
 
     *timeout* is in seconds; None means no limit.
     """
-    if str(xtrace).upper() in ("TRUE", "YES", "1"):
+    use_shell = isinstance(cmd, str)
+    if use_shell and str(xtrace).upper() in ("TRUE", "YES", "1"):
         cmd = f"bash -x {cmd}"
 
     timeout_int = int(timeout) if timeout is not None else None
@@ -42,7 +50,7 @@ def run_streaming_process(cmd, timeout=None, xtrace=False):
     # forever (e.g. a pipe that never closes).  /dev/null gives instant EOF.
     proc = subprocess.Popen(
         cmd,
-        shell=True,
+        shell=use_shell,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

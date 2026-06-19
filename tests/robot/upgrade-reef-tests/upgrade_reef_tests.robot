@@ -10,7 +10,7 @@ Test Tags       multi-node    upgrade    osd    rgw    lxd    slow    integratio
 
 *** Keywords ***
 Upgrade Reef Suite Setup
-    Launch Outer Test VM    vm_name=microceph-ureef-vm    disk_size=50GiB
+    Launch Outer Test VM    vm_name=microceph-ureef-vm    disk_size=${OUTER_VM_DISK}
     Copy Scripts To VM
     Copy Snap To VM
     Install Tools

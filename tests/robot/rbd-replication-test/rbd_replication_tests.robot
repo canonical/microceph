@@ -4,13 +4,14 @@ Documentation    rbd-replication-test
 ...    exchange tokens, enable rbd-mirror, configure pool and image mirroring,
 ...    verify sync, failover, and remote removal.
 Resource        ../resources/microceph_harness.resource
+Resource        ../resources/replication.resource
 Suite Setup     RBD Replication Suite Setup
 Suite Teardown  Teardown MicroCeph Environment
 Test Tags       multi-node    rbd    replication    remote    lxd    slow    integration
 
 *** Keywords ***
 RBD Replication Suite Setup
-    Provision Multinode VM    microceph-rbdrep-vm    50GiB    public
+    Provision Multinode VM    microceph-rbdrep-vm    ${OUTER_VM_DISK}    public
 
 Verify Snapshot Pool Replication Fails
     [Documentation]    Verifies that enabling snapshot-based replication on a pool (not an image) fails.
