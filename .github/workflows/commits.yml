@@ -17,15 +17,39 @@ jobs:
 
   dco-check:
     permissions:
-      pull-requests: read  # for tim-actions/get-pr-commits to get list of commits from the PR
+      pull-requests: read  # for the gh api call that lists the PR's commits
     name: Signed-off-by (DCO)
     runs-on: ubuntu-24.04
     steps:
+    # tim-actions/get-pr-commits emits the full GitHub commits JSON as a step
+    # output, which tim-actions/dco then receives via the INPUT_COMMITS env var.
+    # On PRs with many/large commits that payload exceeds the kernel's per-env-var
+    # limit (MAX_ARG_STRLEN, 128 KiB) and execve of the action fails with
+    # "Argument list too long" before any DCO logic runs. Build the commits array
+    # ourselves and keep only the fields tim-actions/dco reads, so the payload
+    # stays well under the limit while the action does the validation unchanged.
     - name: Get PR Commits
       id: 'get-pr-commits'
-      uses: tim-actions/get-pr-commits@198af03565609bb4ed924d1260247b4881f09e7d # v1.3.1
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        commits=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits" --paginate \
+          | jq -c '[ .[] | {
+              sha,
+              commit: {
+                author:    {name: .commit.author.name,   email: .commit.author.email},
+                committer: {name: .commit.committer.name, email: .commit.committer.email},
+                message:   .commit.message,
+                verification: {verified: .commit.verification.verified}
+              },
+              author:  (if .author then {login: .author.login, type: .author.type} else null end),
+              parents: [ .parents[] | {sha} ]
+            } ]')
+        {
+          echo "commits<<EOF_COMMITS"
+          echo "$commits"
+          echo "EOF_COMMITS"
+        } >> "$GITHUB_OUTPUT"
 
     - name: Check that all commits are signed-off
       uses: tim-actions/dco@f2279e6e62d5a7d9115b0cb8e837b777b1b02e21 # v1.1.0
