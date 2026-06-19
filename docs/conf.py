@@ -65,7 +65,9 @@ copyright = "%s AGPL-3.0, %s" % (datetime.date.today().year, author)
 # NOTE: The Open Graph Protocol (OGP) enhances page display in a social graph
 #       and is used by social media platforms; see https://ogp.me/
 
-ogp_site_url = "https://canonical-microceph.readthedocs-hosted.com/"
+version_slug = f"{os.environ.get('READTHEDOCS_VERSION', 'local')}"
+
+ogp_site_url = f"https://canonical.com/ceph/docs/{version_slug}/"
 
 
 # Preview name of the documentation website
@@ -164,28 +166,28 @@ html_theme_options = {
 # If your documentation is hosted on https://docs.ubuntu.com/,
 # uncomment and update as needed.
 
-# slug = ''
+slug = 'ceph/docs'
 
 #######################
 # Sitemap configuration: https://sphinx-sitemap.readthedocs.io/
 #######################
 
+sitemap_filename = "doc-sitemap.xml"
+
 # Base URL of RTD hosted project
 
-html_baseurl = 'https://canonical-microceph.readthedocs-hosted.com/'
+html_baseurl = f"https://canonical.com/ceph/docs/{version_slug}/"
 
-# URL scheme. Add language and version scheme elements.
-# When configured with RTD variables, check for RTD environment so manual runs succeed:
+# URL scheme for sitemap generation
 
 if 'READTHEDOCS_VERSION' in os.environ:
-    version = os.environ["READTHEDOCS_VERSION"]
     sitemap_url_scheme = '{version}{link}'
 else:
-    sitemap_url_scheme = 'MANUAL/{link}'
+    sitemap_url_scheme = '{link}'
 
 # Template and asset locations
 
-#html_static_path = ["_static"]
+html_static_path = ["_static"]
 templates_path = ["_templates"]
 
 
@@ -290,7 +292,9 @@ html_css_files = ["https://assets.ubuntu.com/v1/d86746ef-cookie_banner.css"]
 
 # Adds custom JavaScript files, located under 'html_static_path'
 
-html_js_files = ["https://assets.ubuntu.com/v1/287a5e8f-bundle.js"]
+html_js_files = [
+    "https://assets.ubuntu.com/v1/287a5e8f-bundle.js",
+]
 
 
 # Specifies a reST snippet to be appended to each .rst file
