@@ -58,10 +58,24 @@ func getAllAZHosts(ctx context.Context, tx *sql.Tx) ([]database.HostTag, error) 
 	return tags, nil
 }
 
+// updateConfigFunc is the injectable wrapper for UpdateConfig, used so the
+// deferred join path can be tested without a real database.
+var updateConfigFunc = UpdateConfig
+
+// validateAndRecordAZFunc validates and records the availability zone for a
+// joining host within a database transaction. It is a var so tests can override it.
+var validateAndRecordAZFunc = func(ctx context.Context, s interfaces.StateInterface, az string) error {
+	return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if err := validateJoinAZ(ctx, tx, az); err != nil {
+			return err
+		}
+		return setJoinAZ(ctx, tx, s.ClusterState().Name(), az)
+	})
+}
+
 // Join will join an existing Ceph deployment.
 func Join(ctx context.Context, s interfaces.StateInterface, jc common.JoinConfig) error {
 	pathFileMode := constants.GetPathFileMode()
-	var spt = GetServicePlacementTable()
 
 	// Create our various paths.
 	for path, perm := range pathFileMode {
@@ -71,25 +85,45 @@ func Join(ctx context.Context, s interfaces.StateInterface, jc common.JoinConfig
 		}
 	}
 
+	// When deferred Ceph mode is active (CE142), the member joins
+	// MicroCluster/dqlite but does not run the normal ceph.Join
+	// auto-placement path: no ceph.conf is rendered, no mon/mds/mgr service
+	// records are created, and no services are started. Ceph services are
+	// later placed by the declarative placement engine once Ceph is
+	// bootstrapped. Availability zone metadata is still recorded for later
+	// use by the Ceph-only bootstrap operation.
+	if jc.DeferCeph {
+		logger.Info("Deferred join: MicroCluster membership recorded, Ceph join auto-placement skipped")
+		err := validateAndRecordAZFunc(ctx, s, jc.AvailabilityZone)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
 	// Generate the configuration files from the database.
-	err := UpdateConfig(ctx, s)
+	err := updateConfigFunc(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to generate the configuration: %w", err)
 	}
 
 	// Validate and record the availability zone for this host.
-	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if err := validateJoinAZ(ctx, tx, jc.AvailabilityZone); err != nil {
-			return err
-		}
-		return setJoinAZ(ctx, tx, s.ClusterState().Name(), jc.AvailabilityZone)
-	})
+	err = validateAndRecordAZFunc(ctx, s, jc.AvailabilityZone)
 	if err != nil {
 		return err
 	}
 
+	return legacyJoinServicesFunc(ctx, s)
+}
+
+// legacyJoinServicesFunc runs the legacy (non-deferred) Ceph join service
+// placement: create mon/mds/mgr service records, start planned services, and
+// start OSD. It is a var so tests can override it.
+var legacyJoinServicesFunc = func(ctx context.Context, s interfaces.StateInterface) error {
+	var spt = GetServicePlacementTable()
+
 	// check and create service records if needed to be spawned.
-	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		autoServices := []string{"mon", "mds", "mgr"}
 		for _, service := range autoServices {
 			err := checkAndCreateServiceRecord(s, ctx, tx, service)

@@ -263,7 +263,20 @@ parts:
       for quirk in `ls -1 $CRAFT_PART_SRC/*.patch`
       do
         echo "Applying patch $quirk from directory $(pwd)"
-        patch -p1 < $quirk
+        # Apply idempotently: --forward treats already-applied patches as
+        # success. If --forward reports the patch was already applied (exit 1
+        # with 'Skipping patch' / 'previously applied'), skip it — newer
+        # ceph-common may already ship the target files. Any other failure
+        # (genuine conflict, broken patch) must fail the build.
+        patch_stderr=$(patch -p1 --forward < $quirk 2>&1) || {
+          if echo "$patch_stderr" | grep -qE 'Skipping patch|previously applied'; then
+            echo "Patch $quirk already applied or obsolete; skipping"
+          else
+            echo "Patch $quirk failed:" >&2
+            echo "$patch_stderr" >&2
+            exit 1
+          fi
+        }
         echo "Done applying patch $quirk"
       done
       popd

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/canonical/microceph/microceph/logger"
 )
@@ -33,6 +34,10 @@ func JoinTokenPeers(token string) ([]string, error) {
 // JoinConfig holds all additional parameters that could be provided to the join API/CLI command.
 type JoinConfig struct {
 	AvailabilityZone string // Availability Zone of the host.
+
+	// DeferCeph, when true, joins MicroCluster/dqlite only and defers
+	// the normal ceph.Join auto-placement path. See spec CE142.
+	DeferCeph bool
 }
 
 func EncodeJoinConfig(data JoinConfig) map[string]string {
@@ -40,6 +45,7 @@ func EncodeJoinConfig(data JoinConfig) map[string]string {
 
 	return map[string]string{
 		"AvailabilityZone": data.AvailabilityZone,
+		"DeferCeph":        strconv.FormatBool(data.DeferCeph),
 	}
 }
 
@@ -47,4 +53,5 @@ func DecodeJoinConfig(input map[string]string, data *JoinConfig) {
 	logger.Debugf("decoding join config: %+v", input)
 
 	data.AvailabilityZone = input["AvailabilityZone"]
+	data.DeferCeph, _ = strconv.ParseBool(input["DeferCeph"])
 }

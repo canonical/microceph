@@ -68,7 +68,27 @@ func ServicePlacementHandler(ctx context.Context, s interfaces.StateInterface, p
 	return nil
 }
 
+// renderConfigFunc renders ceph.conf and the admin keyring from the shared
+// cluster database before enabling a service. It is injectable (suffixed Func
+// per project convention) so unit tests of the placement pipeline can bypass
+// database-dependent config rendering.
+var renderConfigFunc = UpdateConfig
+
 func EnableService(ctx context.Context, s interfaces.StateInterface, payload types.EnableService, item PlacementIntf) error {
+
+	// Ensure ceph.conf and the admin keyring are rendered from the shared
+	// cluster database before enabling any service. This is intentional for
+	// every EnableService call, not just deferred members: on already-configured
+	// nodes it is an idempotent no-op rewrite (WriteConfig overwrites the same
+	// content), and on deferred members (CE142) it is required because they have
+	// no ceph.conf until Ceph is bootstrapped elsewhere. Rendering here realises
+	// the "pre-joined members activate after Ceph bootstrap" step so role-managed
+	// placement can add services to deferred members.
+	if err := renderConfigFunc(ctx, s); err != nil {
+		retErr := fmt.Errorf("failed to render ceph config before %s enablement: %v", payload.Name, err)
+		logger.Error(retErr.Error())
+		return retErr
+	}
 
 	// Populate json payload data to the service object.
 	err := item.PopulateParams(s, payload.Payload)

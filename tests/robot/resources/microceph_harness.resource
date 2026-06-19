@@ -262,3 +262,132 @@ Run Hurl
     [Arguments]    ${hurl_file}
     Log To Console    [hurl] Running ${hurl_file}...
     Run In VM And Check    sudo hurl --unix-socket /var/snap/microceph/common/state/control.socket --test ${hurl_file}    120
+
+# ---------------------------------------------------------------------------
+# CE142 role-managed / deferred-Ceph helpers
+# ---------------------------------------------------------------------------
+
+MicroCeph API Get
+    [Documentation]    GETs a JSON path from the MicroCeph control socket on the outer VM (single-node)
+    ...    and returns the raw JSON stdout. Uses curl against the unix control socket.
+    [Arguments]    ${path}
+    ${result}=    Run In VM And Check    sudo curl -s --unix-socket /var/snap/microceph/common/state/control.socket http://localhost/1.0/${path}    30
+    RETURN    ${result.stdout}
+
+MicroCeph API Get In Container
+    [Documentation]    GETs a JSON path from the MicroCeph control socket inside an inner container.
+    [Arguments]    ${container}    ${path}
+    ${result}=    Run In VM And Check    lxc exec ${container} -- curl -s --unix-socket /var/snap/microceph/common/state/control.socket http://localhost/1.0/${path}    30
+    RETURN    ${result.stdout}
+
+MicroCeph API Put In Container
+    [Documentation]    PUTs a JSON body to a path on the MicroCeph control socket inside an inner container.
+    ...    Returns the response body (JSON), which contains a "status_code" field
+    ...    (200 on success, 400 on a SyncResponse(false) failure) so callers can assert outcome
+    ...    without curl's -w %{http_code} (which Robot misreads as an env var).
+    ...    The default timeout is 300s because placement PUTs with pending removals
+    ...    poll Ceph readiness (MON quorum, MGR, MDS) which can take minutes.
+    [Arguments]    ${container}    ${path}    ${body}    ${query}=${EMPTY}    ${timeout}=300
+    ${url}=    Set Variable    http://localhost/1.0/${path}${query}
+    ${result}=    Run In VM And Check    lxc exec ${container} -- curl -s -X PUT --unix-socket /var/snap/microceph/common/state/control.socket -H 'Content-Type: application/json' -d '${body}' '${url}'    ${timeout}
+    RETURN    ${result.stdout}
+
+MicroCeph API Delete In Container
+    [Documentation]    DELETEs a path on the MicroCeph control socket inside an inner container.
+    ...    Returns the response body JSON.
+    [Arguments]    ${container}    ${path}
+    ${result}=    Run In VM And Check    lxc exec ${container} -- curl -s -X DELETE --unix-socket /var/snap/microceph/common/state/control.socket 'http://localhost/1.0/${path}'    60
+    RETURN    ${result.stdout}
+
+Get Capabilities JSON
+    [Documentation]    Returns the capabilities JSON from the outer VM snap.
+    ${json}=    MicroCeph API Get    cluster/capabilities
+    RETURN    ${json}
+
+Get Placement Status JSON
+    [Documentation]    Returns the placement status JSON from the outer VM snap.
+    ${json}=    MicroCeph API Get    placement
+    RETURN    ${json}
+
+Get Placement Status JSON In Container
+    [Documentation]    Returns the placement status JSON from an inner container.
+    [Arguments]    ${container}
+    ${json}=    MicroCeph API Get In Container    ${container}    placement
+    RETURN    ${json}
+
+Assert Lifecycle State
+    [Documentation]    Asserts the ceph bootstrap lifecycle state field in the placement status JSON.
+    ...    Runs on the outer VM.
+    [Arguments]    ${expected_state}    ${bootstrapped}=${EMPTY}
+    ${json}=    Get Placement Status JSON
+    Should Contain    ${json}    "bootstrap_state":"${expected_state}"
+    ...    msg=Expected bootstrap_state=${expected_state}, got: ${json}
+    IF    "${bootstrapped}" != "${EMPTY}"
+        Should Contain    ${json}    "ceph_bootstrapped":${bootstrapped}
+        ...    msg=Expected ceph_bootstrapped=${bootstrapped}, got: ${json}
+    END
+
+Deferred Bootstrap Head Node
+    [Documentation]    Bootstraps MicroCluster only (Ceph deferred) on node-wrk0 over the public network.
+    ...    Mirrors Bootstrap Head Node but adds --defer-ceph and does NOT expect Ceph services.
+    Log To Console    [ce142] Deferred bootstrap on node-wrk0...
+    ${result}=    Run In VM    lxc network list --format=csv | grep 'public' | cut -d, -f4    30
+    ${nw}=    Set Variable    ${result.stdout.strip()}
+    Run In Container    node-wrk0    microceph cluster bootstrap --defer-ceph --public-network=${nw}    120
+    Sleep    5s
+    Run In Container    node-wrk0    microceph status    30
+
+Deferred Join Worker Nodes
+    [Documentation]    Joins node-wrk1..3 to the cluster with --defer-ceph (no Ceph auto-placement).
+    Log To Console    [ce142] Deferred join workers...
+    FOR    ${i}    IN    1    2    3
+        ${tok_result}=    Run In VM    lxc exec node-wrk0 -- microceph cluster add node-wrk${i}    60
+        ${tok}=    Set Variable    ${tok_result.stdout.strip()}
+        Run In Container    node-wrk${i}    microceph cluster join --defer-ceph ${tok}    120
+    END
+    Wait For N Nodes In Cluster    4
+    Run In Container    node-wrk0    microceph status    30
+
+Assert No Ceph Cluster On Container
+    [Documentation]    Asserts that a container has NOT bootstrapped Ceph: ceph status fails and no ceph.conf exists.
+    [Arguments]    ${container}
+    Run In VM Must Fail    lxc exec ${container} -- microceph.ceph status 2>/dev/null    30
+    ${conf}=    Run In VM    lxc exec ${container} -- test -f /var/snap/microceph/current/conf/ceph.conf && echo yes || echo no    15
+    Should Be Equal As Strings    ${conf.stdout.strip()}    no
+        ...    msg=Ceph config exists on ${container} but Ceph should not be bootstrapped
+
+Ceph Only Bootstrap Target
+    [Documentation]    Runs `microceph cluster bootstrap-ceph --target <member>` from node-wrk0 and waits
+    ...    for Ceph to come up on the target. Returns nothing.
+    [Arguments]    ${target}
+    Log To Console    [ce142] Ceph-only bootstrap targeting ${target}...
+    Run In Container    node-wrk0    microceph cluster bootstrap-ceph --target ${target}    300
+    Sleep    5s
+
+Wait For Ceph Healthy On Container
+    [Documentation]    Polls ceph health until HEALTH_OK on the given container (or non-empty health).
+    [Arguments]    ${container}    ${tries}=40
+    Log To Console    [health] Waiting for Ceph on ${container}...
+    FOR    ${i}    IN RANGE    ${tries}
+        ${result}=    Run In VM    lxc exec ${container} -- sh -c "microceph.ceph health 2>/dev/null"    30
+        ${h}=    Set Variable    ${result.stdout.strip()}
+        IF    '${h}' != '' and '${h}' != 'HEALTH_ERR'
+            Log To Console    [health] Ceph health on ${container}: ${h}
+            RETURN
+        END
+        Sleep    5s
+    END
+    Fail    Ceph never came up on ${container}
+
+Assert Member Has Control Services
+    [Documentation]    Asserts that mon/mgr/mds are present on ${member} via ceph -s on the head node.
+    ...    ${expected} is 'yes' or 'no'.
+    [Arguments]    ${member}    ${expected}=yes
+    ${status}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s 2>/dev/null"    30
+    IF    '${expected}' == 'yes'
+        Should Contain    ${status.stdout}    ${member}
+            ...    msg=${member} not found in ceph status; expected control services there. Status: ${status.stdout}
+    ELSE
+        Should Not Contain    ${status.stdout}    ${member}
+            ...    msg=${member} unexpectedly in ceph status; expected no control services there. Status: ${status.stdout}
+    END

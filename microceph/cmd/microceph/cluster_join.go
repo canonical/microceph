@@ -20,6 +20,7 @@ type cmdClusterJoin struct {
 
 	flagMicroCephIp      string
 	flagAvailabilityZone string
+	flagDeferCeph        bool
 }
 
 func (c *cmdClusterJoin) Command() *cobra.Command {
@@ -31,6 +32,7 @@ func (c *cmdClusterJoin) Command() *cobra.Command {
 
 	cmd.Flags().StringVar(&c.flagMicroCephIp, "microceph-ip", "", "Network address microceph daemon binds to.")
 	cmd.Flags().StringVar(&c.flagAvailabilityZone, "availability-zone", "", "Availability zone for failure domain distribution.")
+	cmd.Flags().BoolVar(&c.flagDeferCeph, "defer-ceph", false, "Join MicroCluster only and defer Ceph join auto-placement (CE142 role-managed mode)")
 	return cmd
 }
 
@@ -75,6 +77,7 @@ func (c *cmdClusterJoin) Run(cmd *cobra.Command, args []string) error {
 
 	joinConfig := common.EncodeJoinConfig(common.JoinConfig{
 		AvailabilityZone: c.flagAvailabilityZone,
+		DeferCeph:        c.flagDeferCeph,
 	})
 
 	return m.JoinCluster(ctx, hostname, address, token, joinConfig)

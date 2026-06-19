@@ -24,6 +24,7 @@ type cmdClusterBootstrap struct {
 	flagClusterNet       string
 	flagAvailabilityZone string
 	flagV2Only           bool
+	flagDeferCeph        bool
 }
 
 func (c *cmdClusterBootstrap) Command() *cobra.Command {
@@ -39,6 +40,7 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).")
 	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).")
 	cmd.Flags().BoolVar(&c.flagV2Only, "v2-only", false, "Whether to support V2 messenger only or both V1 and V2")
+	cmd.Flags().BoolVar(&c.flagDeferCeph, "defer-ceph", false, "Initialize MicroCluster only and defer Ceph bootstrap (CE142 role-managed mode)")
 	return cmd
 }
 
@@ -72,6 +74,7 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 		ClusterNet:       c.flagClusterNet,
 		V2Only:           c.flagV2Only,
 		AvailabilityZone: c.flagAvailabilityZone,
+		DeferCeph:        c.flagDeferCeph,
 	}
 
 	err = preCheckBootstrapConfig(data)

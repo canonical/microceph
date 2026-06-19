@@ -32,23 +32,42 @@ func (c *Config) validateConfigFile() error {
 	return nil
 }
 
-// WriteConfig writes the configuration file given a data bag and a filemode
+// WriteConfig writes the configuration file given a data bag and a filemode.
+// It writes atomically: the template is rendered to a temporary file in the
+// same directory, which is then renamed into place. This prevents a crashed
+// or partial write from leaving an empty or truncated config file that Ceph
+// daemons could read mid-write (AGENTS.md "Atomic file writes").
 func (c *Config) WriteConfig(data map[string]any, mode int) error {
 	err := c.validateConfigFile()
 	if err != nil {
 		return err
 	}
 
-	fd, err := os.OpenFile(c.GetPath(), os.O_CREATE|os.O_TRUNC|os.O_RDWR, os.FileMode(mode))
+	destPath := c.GetPath()
+	tmpFile := destPath + ".tmp"
+
+	fd, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_TRUNC|os.O_RDWR, os.FileMode(mode))
 	if err != nil {
 		return fmt.Errorf("Couldn't write %s: %w", c.configFile, err)
 	}
-	defer fd.Close()
 
-	err = c.configTemplate.Execute(fd, data)
-	if err != nil {
-		return fmt.Errorf("Couldn't render %s: %w", c.configFile, err)
+	renderErr := c.configTemplate.Execute(fd, data)
+	closeErr := fd.Close()
+	if renderErr != nil {
+		os.Remove(tmpFile)
+		return fmt.Errorf("Couldn't render %s: %w", c.configFile, renderErr)
 	}
+	if closeErr != nil {
+		os.Remove(tmpFile)
+		return fmt.Errorf("Couldn't close %s: %w", c.configFile, closeErr)
+	}
+
+	err = os.Rename(tmpFile, destPath)
+	if err != nil {
+		os.Remove(tmpFile)
+		return fmt.Errorf("Couldn't rename %s: %w", c.configFile, err)
+	}
+
 	return nil
 }
 

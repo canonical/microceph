@@ -14,6 +14,9 @@ type MockState struct {
 
 	URL         *api.URL
 	ClusterName string
+	Cert        *shared.CertInfo
+	DBObj       mcTypes.DB
+	StoreObj    mcTypes.Store
 }
 
 // Name returns the name supplied to MockState.
@@ -29,7 +32,19 @@ func (m *MockState) Address() *url.URL {
 	return &m.URL.URL
 }
 
-// ServerCert is set to always return nil to prematurely return before making database actions.
+// ServerCert returns the certificate supplied to MockState, or nil when unset
+// (mirroring the historical behaviour of prematurely returning before making
+// database actions).
 func (m *MockState) ServerCert() *shared.CertInfo {
-	return nil
+	return m.Cert
+}
+
+// Database returns the DB supplied to MockState, or nil when unset.
+func (m *MockState) Database() mcTypes.DB {
+	return m.DBObj
+}
+
+// Truststore returns the Store supplied to MockState, or nil when unset.
+func (m *MockState) Truststore() mcTypes.Store {
+	return m.StoreObj
 }

@@ -153,3 +153,51 @@ func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 	err = bootstrapper.Bootstrap(context.Background(), s.TestStateInterface)
 	assert.NoError(s.T(), err)
 }
+
+// TestSimpleBootstrapMarksLifecycle verifies that a successful non-deferred
+// (Simple) bootstrap marks the Ceph lifecycle as bootstrapped (CE142 blocker
+// fix: a fresh legacy cluster must not be left not_bootstrapped, otherwise
+// ApplyPlacement rejects it and bootstrap-ceph is not idempotent).
+func (s *simpleBootstrapSuite) TestSimpleBootstrapMarksLifecycle() {
+	r := mocks.NewRunner(s.T())
+	nw := mocks.NewNetworkIntf(s.T())
+	getServicesAndConfigsforDBUpdation = func(_ string, _ string, _ *SimpleBootstrapper) ([]string, map[string]string, []ceph.BootstrapHostTag, error) {
+		return []string{}, map[string]string{}, nil, nil
+	}
+
+	addNetworkSimpleBootstrapExpectations(nw)
+	addCephAuthToolExpectations(r)
+	addMonMapToolExpectations(r)
+	addInitMonExpectations(r)
+	addInitMgrExpectations(r)
+	addInitMdsExpectations(r)
+	addEnableMsgr2Expectations(r)
+	addCrushRuleExpectations(r)
+	addConfigExpectations(r)
+
+	common.ProcessExec = r
+	common.Network = nw
+
+	markCalled := false
+	origMark := ceph.MarkCephBootstrappedFunc
+	ceph.MarkCephBootstrappedFunc = func(_ context.Context, _ interfaces.StateInterface) error {
+		markCalled = true
+		return nil
+	}
+	defer func() { ceph.MarkCephBootstrappedFunc = origMark }()
+
+	bd := common.BootstrapConfig{
+		MonIp:      "1.1.1.1",
+		PublicNet:  "1.1.1.1/24",
+		ClusterNet: "1.1.1.1/24",
+	}
+
+	bootstrapper := SimpleBootstrapper{}
+	err := bootstrapper.Prefill(bd, interfaces.StateInterface(s.TestStateInterface))
+	assert.NoError(s.T(), err)
+	err = bootstrapper.Precheck(context.Background(), s.TestStateInterface)
+	assert.NoError(s.T(), err)
+	err = bootstrapper.Bootstrap(context.Background(), s.TestStateInterface)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), markCalled, "SimpleBootstrapper.Bootstrap must mark the lifecycle as bootstrapped")
+}
