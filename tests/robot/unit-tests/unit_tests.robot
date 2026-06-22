@@ -19,3 +19,14 @@ Run Go Unit Tests
     Log    ${result.stdout}
     Log    STDERR: ${result.stderr}
     Should Be Equal As Integers    ${result.rc}    0    msg=make check-unit failed:\n${result.stderr}
+
+Run Python Helper Unit Tests
+    [Documentation]    Runs pytest over the pure Python harness helpers (parsers + _poll_until).
+    ...    Host-only: no VM or snap needed. robotframework (imported by the harness module) and
+    ...    pytest are installed in the tox venv that runs this suite.
+    [Tags]    unit    fast    smoke    python
+    ${result}=    Run Process    python3    -m    pytest    -q
+    ...    ${REPO_ROOT}/tests/robot/resources/test_harness_helpers.py    timeout=300
+    Log    ${result.stdout}
+    Log    STDERR: ${result.stderr}
+    Should Be Equal As Integers    ${result.rc}    0    msg=pytest failed:\n${result.stdout}\n${result.stderr}

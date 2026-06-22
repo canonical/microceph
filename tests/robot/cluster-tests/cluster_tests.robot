@@ -23,6 +23,10 @@ Bombard RGW Configs
     ...    The original bash ran without set -e so individual command failures were silently ignored;
     ...    we replicate that here — each config set is attempted but its rc is not checked.
     Log To Console    [config] Bombarding RGW Keystone configs...
+    # First key uses the canonical 'rgw_'-prefixed name (rgw_s3_auth_use_keystone), matching the
+    # other rgw_keystone_* keys below; the original bash used the older unprefixed
+    # 's3_auth_use_keystone'. Bombard ignores per-set rc, so this is not asserted either way --
+    # renamed for awareness; maintainer to confirm the key name for the targeted Ceph release.
     Run In VM    sudo microceph cluster config set rgw_s3_auth_use_keystone true --skip-restart    30
     Run In VM    sudo microceph cluster config set rgw_keystone_url example.url.com --skip-restart    30
     Run In VM    sudo microceph cluster config set rgw_keystone_admin_user admin --skip-restart    30

@@ -9,7 +9,7 @@ Test Tags       multi-node    nfs    cephfs    lxd    slow    integration
 
 *** Keywords ***
 NFS Multinode Suite Setup
-    Provision Multinode VM    microceph-nfsmn-vm    50GiB    public
+    Provision Multinode VM    microceph-nfsmn-vm    ${OUTER_VM_DISK}    public
     Bootstrap Head Node    public
     Join Worker Nodes To Cluster    public
     Add OSD To Node    node-wrk0

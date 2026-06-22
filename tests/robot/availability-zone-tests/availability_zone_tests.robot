@@ -9,7 +9,7 @@ Test Tags       multi-node    crush    availability-zone    lxd    slow    integ
 
 *** Keywords ***
 AZ Tests Suite Setup
-    Provision Multinode VM    microceph-az-vm    50GiB    public
+    Provision Multinode VM    microceph-az-vm    ${OUTER_VM_DISK}    public
 
 AZ Get Default Rule
     [Documentation]    Returns the current default CRUSH rule ID from node-wrk0.

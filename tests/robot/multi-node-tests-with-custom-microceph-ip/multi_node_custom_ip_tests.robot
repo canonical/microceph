@@ -9,7 +9,7 @@ Test Tags       multi-node    cluster    custom-ip    lxd    slow    integration
 
 *** Keywords ***
 Custom IP Suite Setup
-    Provision Multinode VM    microceph-cip-vm    50GiB    internal
+    Provision Multinode VM    microceph-cip-vm    ${OUTER_VM_DISK}    internal
     Bootstrap Head Node    internal
     Join Worker Nodes To Cluster    internal
 

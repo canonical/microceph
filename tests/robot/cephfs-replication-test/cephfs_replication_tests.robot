@@ -3,6 +3,7 @@ Documentation    cephfs-replication-test
 ...    Tests MicroCeph CephFS remote replication: two 2-node sites, exchange tokens,
 ...    enable cephfs-mirror, configure directory mirroring, verify sync and data integrity.
 Resource        ../resources/microceph_harness.resource
+Resource        ../resources/replication.resource
 Library         ../resources/cephfs_replication.py
 Suite Setup     CephFS Replication Suite Setup
 Suite Teardown  Teardown MicroCeph Environment
@@ -14,7 +15,7 @@ ${STR2}    IJKLMNOP
 
 *** Keywords ***
 CephFS Replication Suite Setup
-    Provision Multinode VM    microceph-cfsrep-vm    50GiB    public
+    Provision Multinode VM    microceph-cfsrep-vm    ${OUTER_VM_DISK}    public
 
 Configure CephFS Mirroring
     [Documentation]    Creates CephFS volumes on both sites, enables directory mirroring,
@@ -55,16 +56,16 @@ Verify CephFS Mirror List Output
         Run In Container    node-wrk0    sudo microceph.ceph fs snapshot mirror add vol ${groupedpath.stdout.strip()}    60
     END
     Wait For CephFS Replication List Non Empty    node-wrk0    vol
-    ${list_json}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo microceph replication list cephfs --json | jq -c '.vol[]'"    30
+    ${list_json}=    Run In VM    lxc exec node-wrk0 -- sudo microceph replication list cephfs --json    30
     Log    CephFS list output: ${list_json.stdout}
     # /volumes/... paths must classify as "subvolume", every other entry as "directory".
-    ${items}=    Verify CephFS List Entry Types    ${list_json.stdout}
+    ${items}=    Verify CephFS List Entry Types    ${list_json.stdout}    vol
     Log    CephFS list classified entries: ${items}
 
 Wait For CephFS Sync
     [Documentation]    Takes snapshots in both mirrored directories and waits for replication.
-    ...    Uses recursive jq descent on the outer VM to sum snaps_synced across all mirror_status
-    ...    entries so the exact dir key format (/dir1 vs /dir1/) does not matter.
+    ...    Uses the Python helper _cephfs_snaps_synced_total to sum snaps_synced across all
+    ...    mirror_status entries so the exact dir key format (/dir1 vs /dir1/) does not matter.
     [Arguments]    ${attempts}
     Log To Console    [cephfs] Taking snapshots and waiting for sync...
     Run In VM And Check    sudo mkdir -p /mnt/primary/dir1/.snap/two-snap    30

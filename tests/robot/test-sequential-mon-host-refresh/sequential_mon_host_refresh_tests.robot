@@ -14,7 +14,7 @@ ${NW}          ${EMPTY}
 
 *** Keywords ***
 Sequential Mon Refresh Suite Setup
-    Provision Multinode VM    microceph-smr-vm    50GiB    public
+    Provision Multinode VM    microceph-smr-vm    ${OUTER_VM_DISK}    public
 
 Wait For IP In Ceph Conf On Node
     [Documentation]    Polls until ${ip} appears in ceph.conf on the given LXD container.

@@ -9,7 +9,7 @@ Test Tags       multi-node    maintenance    cluster    lxd    slow    integrati
 
 *** Keywords ***
 Maintenance Suite Setup
-    Provision Multinode VM    microceph-maint-vm    50GiB    internal
+    Provision Multinode VM    microceph-maint-vm    ${OUTER_VM_DISK}    internal
     Bootstrap Head Node    internal
     Join Worker Nodes To Cluster    internal
     FOR    ${i}    IN RANGE    4

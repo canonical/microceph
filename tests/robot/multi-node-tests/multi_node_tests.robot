@@ -3,16 +3,25 @@ Documentation    multi-node-tests
 ...    Full multi-node test: CRUSH host failure domain, OSD add/remove, node removal,
 ...    service migration, client config, RGW SSL, cross-node certificate rotation.
 Resource        ../resources/microceph_harness.resource
+Library         ../resources/cluster_ops.py
 Suite Setup     Multi Node Suite Setup
 Suite Teardown  Teardown MicroCeph Environment
 Test Tags       multi-node    cluster    osd    rgw    integration    lxd    slow
 
 *** Keywords ***
 Multi Node Suite Setup
-    Provision Multinode VM    microceph-mn-vm    50GiB    public
+    Provision Multinode VM    microceph-mn-vm    ${OUTER_VM_DISK}    public
     Bootstrap Head Node    public
     Join Worker Nodes To Cluster    public
     Verify Ceph Config Has Public Network
+
+Verify Ceph Config Has Public Network
+    [Documentation]    Checks that all nodes' ceph.conf contains public_network entry.
+    Log To Console    [config] Verifying all nodes have public_network in ceph.conf...
+    ${nodes}=    Run In VM    lxc ls -c n --format csv    30
+    FOR    ${node}    IN    @{nodes.stdout.strip().split('\n')}
+        Run In Container And Check    ${node.strip()}    grep -q public_network /var/snap/microceph/current/conf/ceph.conf    30
+    END
 
 Enable Services On Head Node For
     [Documentation]    Enables mon/mds/mgr on a target node, running commands from node-wrk0.
@@ -130,8 +139,53 @@ Verify Node Removed From Cluster
     Run In VM Must Fail    lxc exec node-wrk0 -- microceph status | grep "^- ${node} "
     ${ceph_s}=    Run In VM    lxc exec node-wrk0 -- microceph.ceph -s    30
     ${has_3}=    Evaluate    "mon: 3 daemons" in """${ceph_s.stdout}"""
-    ${has_4_ooq}=    Evaluate    "mon: 4 daemons" in """${ceph_s.stdout}""" and "${node}" in """${ceph_s.stdout}"""
+    ${has_4_ooq}=    Evaluate    "mon: 4 daemons" in """${ceph_s.stdout}""" and "out of quorum: ${node}" in """${ceph_s.stdout}"""
     Should Be True    ${has_3} or ${has_4_ooq}    msg=Expected mon: 3 daemons or 4 with ${node} out-of-quorum after node removal
+
+Check Client Configs
+    [Documentation]    Sets cluster-wide and per-host client configs, verifies they land in
+    ...    each worker's ceph.conf, then resets and verifies they are gone.
+    Log To Console    [config] Checking client config set/reset across nodes...
+    Run In Container    node-wrk0    microceph client config set rbd_cache true    30
+    FOR    ${node}    ${size}    IN    node-wrk1    512    node-wrk2    1024
+        Run In Container    ${node}    microceph client config set rbd_cache_size ${size} --target ${node}    30
+    END
+    FOR    ${node}    ${size}    IN    node-wrk1    512    node-wrk2    1024
+        ${r1}=    Run In Container Unchecked    ${node}    cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache = true'    30
+        ${r2}=    Run In Container Unchecked    ${node}    cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache_size = ${size}'    30
+        Should Be Equal As Strings    ${r1.stdout.strip()}    1    msg=rbd_cache not set on ${node}
+        Should Be Equal As Strings    ${r2.stdout.strip()}    1    msg=rbd_cache_size not set on ${node}
+    END
+    Run In Container    node-wrk0    microceph client config reset rbd_cache --yes-i-really-mean-it    30
+    Run In Container    node-wrk0    microceph client config reset rbd_cache_size --yes-i-really-mean-it    30
+    FOR    ${node}    IN    node-wrk1    node-wrk2
+        ${r1}=    Run In Container Unchecked    ${node}    cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache '    30
+        ${r2}=    Run In Container Unchecked    ${node}    cat /var/snap/microceph/current/conf/ceph.conf | grep -c 'rbd_cache_size'    30
+        Should Be Equal As Strings    ${r1.stdout.strip()}    0    msg=rbd_cache still in ceph.conf on ${node}
+        Should Be Equal As Strings    ${r2.stdout.strip()}    0    msg=rbd_cache_size still in ceph.conf on ${node}
+    END
+
+Test Service Migration
+    [Documentation]    Migrates services from ${src} to ${dst}, polls until placement settles,
+    ...    then asserts ${src} has only OSD and ${dst} has mds, mgr, mon.
+    [Arguments]    ${src}    ${dst}
+    Log To Console    [cluster] Migrating services from ${src} to ${dst}...
+    Run In Container    node-wrk0    microceph cluster migrate ${src} ${dst}    120
+    FOR    ${i}    IN RANGE    8
+        ${status}=    Run In Container Unchecked    node-wrk0    microceph status    30
+        ${src_ok}    ${dst_ok}=    Parse Migration Status    ${status.stdout}    ${src}    ${dst}
+        IF    ${src_ok} and ${dst_ok}
+            Log To Console    [cluster] Services migrated successfully
+            BREAK
+        END
+        Sleep    10s
+    END
+    Run In Container    node-wrk0    microceph status    30
+    Run In Container    node-wrk0    microceph.ceph -s    30
+    ${status}=    Run In Container Unchecked    node-wrk0    microceph status    30
+    ${src_ok}    ${dst_ok}=    Parse Migration Status    ${status.stdout}    ${src}    ${dst}
+    Should Be True    ${src_ok}    msg=${src} should have only OSD after migration
+    Should Be True    ${dst_ok}    msg=${dst} should have mds,mgr,mon after migration
 
 *** Test Cases ***
 Test MicroCeph Status After Cluster Setup
