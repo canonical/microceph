@@ -338,7 +338,7 @@ class microceph_harness:
 
     def get_public_network_cidr(self):
         """Returns the CIDR of the LXD public network (e.g. 10.0.0.0/24) from the outer VM."""
-        return self.run_in_vm("lxc network list --format=csv | grep 'public' | cut -d, -f4", 30).stdout.strip()
+        return self._network_cidr("public")
 
     def _network_cidr(self, network_type):
         """Returns the CIDR of the LXD network of *network_type* from the outer VM.
