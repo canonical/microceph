@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -191,6 +192,41 @@ func fixRadosGWRunDir(confFile, correctRunDir string) error {
 			return correct, true
 		}
 		return line, false
+	})
+}
+
+// updateRadosGWMonHost rewrites the `mon host` line in <confDir>/radosgw.conf to
+// keep it in sync with the current set of monitors. Unlike ceph.conf, which is
+// re-rendered on every refresh, radosgw.conf is written once at RGW enable time
+// (see EnableRGW) because the RGW frontend port/SSL settings are not persisted.
+// Rewriting only the mon host line in place preserves those settings while
+// keeping the monitor list fresh. It is a no-op when radosgw.conf does not
+// exist (RGW is not enabled).
+func updateRadosGWMonHost(confDir string, monitors []string) error {
+	// Never wipe an existing mon host line on an empty/unknown monitor set:
+	// a transient gap in the monitor list (e.g. truststore not yet populated,
+	// DB read race) would otherwise rewrite a healthy line to "mon host = ".
+	if len(monitors) == 0 {
+		return nil
+	}
+
+	// Normalize the monitor order before comparing: getMonitorsFromConfig
+	// iterates a map (randomized order in Go), and the no-change check below
+	// is an exact byte comparison. Sorting the slice avoids a spurious rewrite
+	// (and the tmp+rename dance) on every UpdateConfig tick when the monitor
+	// set is stable but the iteration order differs.
+	sorted := append([]string(nil), monitors...)
+	sort.Strings(sorted)
+
+	return fixConfigLine(filepath.Join(confDir, "radosgw.conf"), func(line string) (string, bool) {
+		if !strings.HasPrefix(strings.TrimSpace(line), "mon host = ") {
+			return line, false
+		}
+		correct := "mon host = " + strings.Join(sorted, ",")
+		if line == correct {
+			return line, false
+		}
+		return correct, true
 	})
 }
 

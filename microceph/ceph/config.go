@@ -381,7 +381,7 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 		return fmt.Errorf("failed to ensure backward compat: %w", err)
 	}
 
-	config, err := GetConfigDb(ctx, s)
+	config, err := fetchConfigDb(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to get config db: %w", err)
 	}
@@ -402,6 +402,16 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 
 	// Ensure that IPv6 addresses have square brackets around them (if IPv6 is used).
 	monitorAddresses = formatIPv6(monitorAddresses)
+
+	// Keep radosgw.conf's `mon host` line in sync with the current monitors.
+	// radosgw.conf is written once at RGW enable time (EnableRGW) and is never
+	// re-rendered from scratch, because the RGW frontend port/SSL settings are
+	// not persisted. We therefore rewrite only the mon host line in place,
+	// preserving the other settings. A missing file (RGW disabled) is a no-op;
+	// a failure here must not block the ceph.conf refresh below.
+	if err := updateRadosGWMonHost(confPath, monitorAddresses); err != nil {
+		logger.Warnf("failed to refresh radosgw.conf mon host: %v", err)
+	}
 
 	conf := NewCephConfig(constants.CephConfFileName)
 
