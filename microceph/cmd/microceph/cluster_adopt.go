@@ -41,8 +41,8 @@ func (c *cmdClusterAdopt) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.flagMicrocephIP, "microceph-ip", "", "Ceph cluster fsid")
 	cmd.Flags().StringVar(&c.flagFSID, "fsid", "", "Ceph cluster fsid")
 	cmd.Flags().StringSliceVar(&c.flagMonHosts, "mon-hosts", []string{}, "Comma separated list of mon addresses")
-	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public network Ceph daemons bind to")
-	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster network Ceph daemons bind to")
+	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Comma-delimited list of CIDRs for the Ceph public network")
+	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Comma-delimited list of CIDRs for the Ceph cluster network")
 	cmd.Flags().StringVar(&c.flagAvailabilityZone, "availability-zone", "", "Availability zone for failure domain distribution.")
 	return cmd
 }
