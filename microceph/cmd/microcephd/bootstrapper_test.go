@@ -167,3 +167,59 @@ func (s *bootstrapSuite) TestSimpleBootstrapNoParamsV2Only() {
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), expectedMonIP, bootstrapData.MonIp)
 }
+
+// Case 5: A multi-subnet public_network where mon-ip matches the second listed subnet.
+func (s *bootstrapSuite) TestSimpleBootstrapMonIpInSecondListedPubNet() {
+	r := mocks.NewRunner(s.T())
+	nw := mocks.NewNetworkIntf(s.T())
+
+	nw.On("FindNetworkAddress", "10.0.0.5").Return("10.0.0.0/24", nil)
+	nw.On("IsIpOnSubnet", "10.0.0.5", "192.168.1.0/24,10.0.0.0/24").Return(true)
+	nw.On("FindIpOnSubnet", "10.99.0.0/24").Return("10.99.0.7", nil)
+
+	common.ProcessExec = r
+	common.Network = nw
+	bootstrapData := common.BootstrapConfig{
+		MonIp:      "10.0.0.5",
+		PublicNet:  "192.168.1.0/24,10.0.0.0/24",
+		ClusterNet: "10.99.0.0/24",
+	}
+
+	err := PopulateDefaultNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+	assert.NoError(s.T(), err)
+
+	err = ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), cmp.Equal(bootstrapData, common.BootstrapConfig{
+		MonIp:      "10.0.0.5",
+		PublicNet:  "192.168.1.0/24,10.0.0.0/24",
+		ClusterNet: "10.99.0.0/24",
+	}))
+}
+
+// Case 6: Only multi-subnet public_network provided; mon-ip is deduced from the first listed subnet that has a local IP.
+func (s *bootstrapSuite) TestSimpleBootstrapMultiSubnetPubNetDeducesMonIP() {
+	r := mocks.NewRunner(s.T())
+	nw := mocks.NewNetworkIntf(s.T())
+
+	nw.On("FindIpOnSubnet", "192.168.1.0/24,10.0.0.0/24").Return("10.0.0.5", nil)
+	nw.On("IsIpOnSubnet", "10.0.0.5", "192.168.1.0/24,10.0.0.0/24").Return(true)
+	nw.On("FindNetworkAddress", "10.0.0.5").Return("10.0.0.0/24", nil)
+
+	common.ProcessExec = r
+	common.Network = nw
+	bootstrapData := common.BootstrapConfig{
+		PublicNet: "192.168.1.0/24,10.0.0.0/24",
+	}
+
+	err := PopulateDefaultNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+	assert.NoError(s.T(), err)
+
+	err = ValidateNetworkParams(s.TestStateInterface, &bootstrapData.MonIp, &bootstrapData.PublicNet, &bootstrapData.ClusterNet)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), cmp.Equal(bootstrapData, common.BootstrapConfig{
+		MonIp:      "10.0.0.5",
+		PublicNet:  "192.168.1.0/24,10.0.0.0/24",
+		ClusterNet: "192.168.1.0/24,10.0.0.0/24",
+	}))
+}

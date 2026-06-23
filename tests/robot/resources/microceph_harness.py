@@ -351,6 +351,16 @@ class microceph_harness:
             self.run_in_vm("lxc network list --format=csv", 30).stdout, network_type
         )
 
+    def get_ceph_conf_value(self, node, key):
+        """Returns the value of a ``key = value`` line in *node*'s ceph.conf, or "".
+
+        Fetches the raw ceph.conf from the inner container and extracts the value
+        in Python via the pure _ceph_conf_value parser, so the remote command only
+        does I/O. Used by the multi-subnet suite to read public_network / mon host.
+        """
+        text = self.run_in_container_unchecked(node, f"cat {CEPH_CONF}", 30).stdout
+        return self._ceph_conf_value(text, key)
+
     def get_vm_hostname(self):
         """Returns the hostname of the outer VM."""
         return self.run_in_vm("hostname").stdout.strip()
@@ -452,6 +462,41 @@ class microceph_harness:
                     return fields[3].strip()
                 return ""
         return ""
+
+    @staticmethod
+    def _ceph_conf_value(conf_text, key):
+        """Returns the value of the ``key = value`` line in ceph.conf text, else "".
+
+        ceph.conf carries ``name = value`` lines under section headers; this returns
+        the right-hand side of the first line whose key -- the text left of the first
+        ``=``, stripped -- equals *key*. Section headers and blank lines have no ``=``
+        and are skipped. Returns "" when *key* is absent. Keeps the comma-delimited
+        public_network value intact for the multi-subnet suite to compare verbatim.
+        """
+        for line in conf_text.splitlines():
+            if "=" not in line:
+                continue
+            name, _, value = line.partition("=")
+            if name.strip() == key:
+                return value.strip()
+        return ""
+
+    @staticmethod
+    def _last_eth_interface(ip_addr_text):
+        """Returns the name of the last eth* interface in ``ip a`` output, else "".
+
+        Replaces the ``ip a | grep ': eth' | tail -n 1 | cut -d@ -f1 | cut -d ' ' -f2``
+        pipeline used to find the most recently attached container NIC. Interface
+        header lines read ``<index>: <name>[@peer]: <flags> ...`` and are listed by
+        ascending ifindex, so the last eth* match is the newest NIC. The veth
+        ``@peer`` suffix is dropped, and indented address/link sub-lines are skipped.
+        """
+        name = ""
+        for line in ip_addr_text.splitlines():
+            m = re.match(r"\s*\d+:\s+(eth\w*)[@:]", line)
+            if m:
+                name = m.group(1)
+        return name
 
     @staticmethod
     def _count_configured_disks(disk_list_json, *substrings):
@@ -1250,11 +1295,9 @@ class microceph_harness:
             self.run_in_vm_and_check(f"lxc network attach {network_type} {c} eth2", 10)
             self.run_in_vm_and_check(f"lxc start {c}", 60)
             time.sleep(2)
-            dev = self.run_in_container_unchecked(
-                c,
-                "ip a | grep ': eth' | tail -n 1 | cut -d@ -f1 | cut -d ' ' -f2",
-                30,
-            ).stdout.strip()
+            dev = self._last_eth_interface(
+                self.run_in_container_unchecked(c, "ip a", 30).stdout
+            )
             self.exec_in_container(c, "ip", "addr", "add", f"{gw}{i}/{mask}", "dev", dev, timeout=10, check=True)
             lf = self.run_in_vm(f"sudo mktemp -p /mnt mctest-{i}-XXXX.img", 30).stdout.strip()
             self.run_in_vm_and_check(f"sudo truncate -s 1G {lf}", 30)
@@ -1337,6 +1380,43 @@ class microceph_harness:
         self.run_in_container(
             head, f'microceph.ceph -s | grep "mon: 1 daemons, quorum {head}"', 30
         )
+
+    def bootstrap_multi_subnet_head(self):
+        """Bootstraps node-wrk0 across two subnets, mon-ip on the SECOND listed one.
+
+        Reproduces canonical/microceph#734: the head already has an address on the
+        "public" network (eth2, from create_lxd_containers_with_loop_devices). This
+        creates a second LXD network ("subnetb"), attaches it as an extra NIC,
+        assigns the head an address on it, and bootstraps with a comma-delimited
+        --public-network / --cluster-network plus --mon-ip set to the address on the
+        SECOND listed subnet -- the exact case that failed before multi-subnet
+        support. Returns [public_networks, mon_ip] for the suite to assert against.
+        """
+        head = HEAD_NODE
+        logger.console("[cluster] Bootstrapping head node across two subnets...")
+        self.run_in_vm_and_check("lxc network create subnetb", 60)
+        public_cidr = self._network_cidr("public")
+        second_cidr = self._network_cidr("subnetb")
+        gw2, mask2 = second_cidr.split("/")
+        mon_ip = f"{gw2}0"
+        self.run_in_vm_and_check(f"lxc network attach subnetb {head} eth3", 10)
+        time.sleep(2)
+        dev = self._last_eth_interface(
+            self.run_in_container_unchecked(head, "ip a", 30).stdout
+        )
+        self.exec_in_container(
+            head, "ip", "addr", "add", f"{mon_ip}/{mask2}", "dev", dev, timeout=10, check=True
+        )
+        public_networks = f"{public_cidr},{second_cidr}"
+        self.run_in_container(
+            head,
+            f"microceph cluster bootstrap --public-network={public_networks} "
+            f"--cluster-network={public_networks} --mon-ip={mon_ip}",
+            120,
+        )
+        time.sleep(5)
+        self.run_in_container(head, "microceph status", 30)
+        return [public_networks, mon_ip]
 
     def join_worker_nodes_to_cluster(self, network_mode="public"):
         """Joins node-wrk1..3 to the cluster."""
