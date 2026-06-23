@@ -324,9 +324,9 @@ func backwardCompatPubnet(ctx context.Context, s interfaces.StateInterface) erro
 
 	// do we have a public_network configured?
 	// if it is unset, the below will evaluate to the empty string
-	// and subsequently fail the net.ParseCIDR check
+	// and subsequently fail the common.ParseSubnetList check
 	pubNet := config["public_network"]
-	_, _, err = net.ParseCIDR(pubNet)
+	_, err = common.ParseSubnetList(pubNet)
 	if err == nil {
 		return nil
 	}
