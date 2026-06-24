@@ -565,13 +565,33 @@ function wait_for_vm_command() {
     fail "Timed out waiting for ${description}"
 }
 
-# Wait for VM to be ready
+# Non-fatal variant: returns 1 on timeout instead of exiting, so the caller
+# can tear down and retry (e.g. relaunch a VM whose agent never came up).
+function wait_for_vm_command_nonfatal() {
+    local description="$1"
+    local timeout="$2"
+    shift 2
+
+    local elapsed=0
+    while [[ $elapsed -lt $timeout ]]; do
+        if "$@" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+
+    log "Timed out waiting for ${description}"
+    return 1
+}
+
+# Non-fatal VM readiness wait: returns 1 on timeout instead of exiting.
 function wait_for_dsl_vm() {
     local name=$1
     local timeout=${2:-600}
 
     log "Waiting for VM '$name' to be ready (timeout: ${timeout}s)..."
-    wait_for_vm_command "VM '$name' to be ready" "$timeout" bash -lc "lxc exec '$name' -- cloud-init status 2>/dev/null | grep -q done"
+    wait_for_vm_command_nonfatal "VM '$name' to be ready" "$timeout" bash -lc "lxc exec '$name' -- cloud-init status 2>/dev/null | grep -q done" || return 1
     log "VM '$name' is ready"
 }
 
@@ -1106,13 +1126,30 @@ function setup_dsl_test() {
     fi
 
     create_dsl_volumes
-    launch_dsl_vm
 
-    attach_dsl_volumes
-    attach_readonly_volume
+    # Launch + attach + wait for readiness. The LXD VM agent occasionally
+    # boots but never responds within the readiness window (the runner logs
+    # "LXD VM agent isn't currently running"). When that happens, delete the
+    # stale VM and relaunch instead of failing the whole test case.
+    local attempt=1
+    local max_attempts=3
+    while (( attempt <= max_attempts )); do
+        launch_dsl_vm
+        attach_dsl_volumes
+        attach_readonly_volume
+        if wait_for_dsl_vm "$VM_NAME"; then
+            wait_for_vm_disk_count_ge 9 360
+            return 0
+        fi
+        if (( attempt < max_attempts )); then
+            log "VM '$VM_NAME' did not become ready (attempt ${attempt}/${max_attempts}); deleting and relaunching..."
+        fi
+        lxc stop "$VM_NAME" --force 2>/dev/null || true
+        lxc delete "$VM_NAME" --force 2>/dev/null || true
+        attempt=$((attempt + 1))
+    done
 
-    wait_for_dsl_vm "$VM_NAME"
-    wait_for_vm_disk_count_ge 9 360
+    fail "VM '$VM_NAME' did not become ready after ${max_attempts} launch attempts"
 }
 
 # Resolve snap path glob pattern to actual file
