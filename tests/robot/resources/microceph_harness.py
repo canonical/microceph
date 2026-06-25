@@ -7,6 +7,7 @@ BuiltIn().run_keyword() boilerplate.
 """
 
 import glob
+import ipaddress
 import json
 import re
 import subprocess
@@ -462,6 +463,19 @@ class microceph_harness:
                     return fields[3].strip()
                 return ""
         return ""
+
+    @staticmethod
+    def _host_address(cidr, host_offset):
+        """Returns the address at *host_offset* hosts into *cidr*'s network, as a string.
+
+        Does arithmetic on an ipaddress network rather than string-appending to the
+        gateway (which could overflow an octet, e.g. yield an invalid '10.0.0.1000').
+        For '10.0.0.1/24' with host_offset=10 this returns '10.0.0.10' -- matching the
+        '.10'-based host convention the suite assigns to the head node. strict=False
+        tolerates the host bits set on the LXD gateway CIDR.
+        """
+        network = ipaddress.ip_network(cidr, strict=False)
+        return str(network.network_address + host_offset)
 
     @staticmethod
     def _ceph_conf_value(conf_text, key):
@@ -1397,8 +1411,8 @@ class microceph_harness:
         self.run_in_vm_and_check("lxc network create subnetb", 60)
         public_cidr = self._network_cidr("public")
         second_cidr = self._network_cidr("subnetb")
-        gw2, mask2 = second_cidr.split("/")
-        mon_ip = f"{gw2}0"
+        _, mask2 = second_cidr.split("/")
+        mon_ip = self._host_address(second_cidr, 10)
         self.run_in_vm_and_check(f"lxc network attach subnetb {head} eth3", 10)
         time.sleep(2)
         dev = self._last_eth_interface(

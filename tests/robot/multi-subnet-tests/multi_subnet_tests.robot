@@ -20,8 +20,8 @@ Multi Subnet Suite Setup
     [Documentation]    Provisions the outer VM and inner nodes on the "public"
     ...    subnet, then bootstraps the head across a second subnet with mon-ip on it.
     Provision Multinode VM    microceph-ms-vm    ${OUTER_VM_DISK}    public
-    ${pubnets}    ${mon_ip} =    Bootstrap Multi Subnet Head
-    Set Suite Variable    ${EXPECTED_PUBNETS}    ${pubnets}
+    ${networks}    ${mon_ip} =    Bootstrap Multi Subnet Head
+    Set Suite Variable    ${EXPECTED_NETWORKS}    ${networks}
     Set Suite Variable    ${MON_IP}    ${mon_ip}
 
 *** Test Cases ***
@@ -29,13 +29,13 @@ Public Network List Is Rendered Verbatim
     [Documentation]    The comma-delimited public_network is written to ceph.conf unchanged.
     [Tags]    network
     ${value} =    Get Ceph Conf Value    ${HEAD}    public_network
-    Should Be Equal    ${value}    ${EXPECTED_PUBNETS}
+    Should Be Equal    ${value}    ${EXPECTED_NETWORKS}
 
 Cluster Network List Is Stored
     [Documentation]    The comma-delimited cluster_network is stored in the cluster config.
     [Tags]    network
     ${result} =    Run In Container    ${HEAD}    microceph.ceph config get osd cluster_network    30
-    Should Be Equal    ${result.stdout.strip()}    ${EXPECTED_PUBNETS}
+    Should Be Equal    ${result.stdout.strip()}    ${EXPECTED_NETWORKS}
 
 Mon Binds On The Second Listed Subnet
     [Documentation]    The mon-ip on the non-first listed subnet is accepted, written to

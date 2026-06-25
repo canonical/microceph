@@ -318,6 +318,26 @@ def test_parse_network_cidr_short_row_returns_empty():
 
 
 # ---------------------------------------------------------------------------
+# _host_address
+# ---------------------------------------------------------------------------
+
+def test_host_address_standard_24():
+    # The ".10" head host the suite assigns on a /24 gateway CIDR.
+    assert H._host_address("10.0.0.1/24", 10) == "10.0.0.10"
+
+
+def test_host_address_gateway_host_part_ignored():
+    # Arithmetic is on the network address, so the gateway's host part is
+    # irrelevant
+    assert H._host_address("10.0.0.249/24", 10) == "10.0.0.10"
+
+
+def test_host_address_16_prefix():
+    # strict=False masks the host bits before computing the network address.
+    assert H._host_address("10.1.0.1/16", 10) == "10.1.0.10"
+
+
+# ---------------------------------------------------------------------------
 # _count_configured_disks
 # ---------------------------------------------------------------------------
 
