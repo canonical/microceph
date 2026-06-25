@@ -910,28 +910,11 @@ func (m *OSDManager) validateAddOSDArgs(data types.DiskParameter, wal *types.Dis
 	return nil
 }
 
-// storageRetrySleepFunc is the sleep function used between GetStorage retry attempts.
-// It is a package-level variable so that tests can replace it with a no-op for fast
-// execution without changing retry logic.
-var storageRetrySleepFunc = time.Sleep
-
-// getStorageWithRetry calls GetStorage() up to 3 times, retrying on any error
+// getStorageWithRetry calls GetStorage() up to 3 times, retrying on any error.
+// It delegates to the shared GetStorageWithRetry helper so the daemon /resources
+// endpoint and the OSD add/remove paths share identical retry behaviour.
 func (m *OSDManager) getStorageWithRetry() (*api.ResourcesStorage, error) {
-	const maxAttempts = 3
-	var err error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		var storage *api.ResourcesStorage
-		storage, err = m.storage.GetStorage()
-		if err == nil {
-			return storage, nil
-		}
-		if attempt < maxAttempts {
-			logger.Warnf("Transient error enumerating storage (attempt %d/%d): %v; retrying",
-				attempt, maxAttempts, err)
-			storageRetrySleepFunc(time.Duration(attempt) * 500 * time.Millisecond)
-		}
-	}
-	return nil, err
+	return GetStorageWithRetry(m.storage.GetStorage)
 }
 
 func (m *OSDManager) stabilizeDevicePath(data *types.DiskParameter) (*api.ResourcesStorage, error) {
