@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -170,18 +171,35 @@ func PostRefresh() error {
 // services can be re-enabled successfully.
 func migrateStaleRunDir() {
 	pathConsts := constants.GetPathConst()
-	err := fixRadosGWRunDir(filepath.Join(pathConsts.ConfPath, "radosgw.conf"), pathConsts.RunPath)
+	rgwConf := filepath.Join(pathConsts.ConfPath, "radosgw.conf")
+	changed, err := fixRadosGWRunDir(rgwConf, pathConsts.RunPath)
 	if err != nil {
 		logger.Warnf("migration: failed to update run dir in radosgw.conf: %v", err)
+	} else if changed {
+		logger.Infof("migration: fixed stale run dir in %s", rgwConf)
 	}
-	err = fixGaneshaRunDir(filepath.Join(pathConsts.ConfPath, "ganesha", "ganesha.conf"), pathConsts.RunPath)
+
+	ganeshaConf := filepath.Join(pathConsts.ConfPath, "ganesha", "ganesha.conf")
+	changed, err = fixGaneshaRunDir(ganeshaConf, pathConsts.RunPath)
 	if err != nil {
 		logger.Warnf("migration: failed to update run dir in ganesha.conf: %v", err)
+	} else if changed {
+		logger.Infof("migration: fixed stale run dir in %s", ganeshaConf)
 	}
 }
 
+// radosgwConfMu serializes mutations of radosgw.conf. The per-minute
+// UpdateConfig loop (updateRadosGWMonHost) and the startup migration
+// (fixRadosGWRunDir via migrateStaleRunDir) both rewrite radosgw.conf through
+// fixConfigLine; without coordination their read-modify-rename cycles could
+// clobber each other (shared .tmp path and lost updates). This mutex makes
+// those writes safe.
+var radosgwConfMu sync.Mutex
+
 // fixRadosGWRunDir updates the 'run dir' line in radosgw.conf to correctRunDir.
-func fixRadosGWRunDir(confFile, correctRunDir string) error {
+func fixRadosGWRunDir(confFile, correctRunDir string) (bool, error) {
+	radosgwConfMu.Lock()
+	defer radosgwConfMu.Unlock()
 	return fixConfigLine(confFile, func(line string) (string, bool) {
 		if strings.HasPrefix(strings.TrimSpace(line), "run dir = ") {
 			correct := "run dir = " + correctRunDir
@@ -194,8 +212,53 @@ func fixRadosGWRunDir(confFile, correctRunDir string) error {
 	})
 }
 
+// updateRadosGWMonHost rewrites the `mon host` line in <confDir>/radosgw.conf to
+// keep it in sync with the current set of monitors. Unlike ceph.conf, which is
+// re-rendered on every refresh, radosgw.conf is written once at RGW enable time
+// (see EnableRGW) because the RGW frontend port/SSL settings are not persisted.
+// Rewriting only the mon host line in place preserves those settings while
+// keeping the monitor list fresh. It is a no-op when radosgw.conf does not
+// exist (RGW is not enabled).
+func updateRadosGWMonHost(confDir string, monitors []string) error {
+	// Never wipe an existing mon host line on an empty/unknown monitor set:
+	// a transient gap in the monitor list (e.g. truststore not yet populated,
+	// DB read race) would otherwise rewrite a healthy line to "mon host = ".
+	if len(monitors) == 0 {
+		return nil
+	}
+
+	// Normalize the monitor order before comparing: getMonitorsFromConfig
+	// iterates a map (randomized order in Go), and the no-change check below
+	// is an exact byte comparison. Sorting the slice avoids a spurious rewrite
+	// (and the tmp+rename dance) on every UpdateConfig tick when the monitor
+	// set is stable but the iteration order differs.
+	sorted := append([]string(nil), monitors...)
+	sort.Strings(sorted)
+
+	radosgwConfMu.Lock()
+	defer radosgwConfMu.Unlock()
+	confFile := filepath.Join(confDir, "radosgw.conf")
+	changed, err := fixConfigLine(confFile, func(line string) (string, bool) {
+		if !strings.HasPrefix(strings.TrimSpace(line), "mon host = ") {
+			return line, false
+		}
+		correct := "mon host = " + strings.Join(sorted, ",")
+		if line == correct {
+			return line, false
+		}
+		return correct, true
+	})
+	if err != nil {
+		return err
+	}
+	if changed {
+		logger.Infof("updated radosgw.conf mon host in %s", confFile)
+	}
+	return nil
+}
+
 // fixGaneshaRunDir updates the CCacheDir line in ganesha.conf to use correctRunDir.
-func fixGaneshaRunDir(confFile, correctRunDir string) error {
+func fixGaneshaRunDir(confFile, correctRunDir string) (bool, error) {
 	return fixConfigLine(confFile, func(line string) (string, bool) {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, `CCacheDir = "`) && strings.HasSuffix(trimmed, `/ganesha";`) {
@@ -212,14 +275,15 @@ func fixGaneshaRunDir(confFile, correctRunDir string) error {
 }
 
 // fixConfigLine reads confFile, applies fn to every line, and atomically
-// rewrites the file if any line changed.  Returns nil if the file does not exist.
-func fixConfigLine(confFile string, fn func(string) (string, bool)) error {
+// rewrites the file if any line changed. It returns false with nil error if
+// the file does not exist or no line changed.
+func fixConfigLine(confFile string, fn func(string) (string, bool)) (bool, error) {
 	data, err := os.ReadFile(confFile)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	lines := strings.Split(string(data), "\n")
@@ -233,21 +297,20 @@ func fixConfigLine(confFile string, fn func(string) (string, bool)) error {
 	}
 
 	if !changed {
-		return nil
+		return false, nil
 	}
 
 	tmpFile := confFile + ".tmp"
 	err = os.WriteFile(tmpFile, []byte(strings.Join(lines, "\n")), constants.PermissionUserRwWorldRAccess)
 	if err != nil {
-		return fmt.Errorf("failed to write %s: %w", tmpFile, err)
+		return false, fmt.Errorf("failed to write %s: %w", tmpFile, err)
 	}
 	err = os.Rename(tmpFile, confFile)
 	if err != nil {
 		os.Remove(tmpFile)
-		return fmt.Errorf("failed to replace %s: %w", confFile, err)
+		return false, fmt.Errorf("failed to replace %s: %w", confFile, err)
 	}
-	logger.Infof("migration: fixed stale run dir in %s", confFile)
-	return nil
+	return true, nil
 }
 
 // reEnableServices checks which services are registered in the database for
