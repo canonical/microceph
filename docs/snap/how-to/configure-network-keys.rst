@@ -19,6 +19,25 @@ The MicroCeph cluster configuration CLI supports setting, getting, resetting and
    * - cluster_network
      - Set this key to desired CIDR to configure cluster network
 
+.. note::
+
+   ``cluster_network`` accepts a comma-delimited list of CIDRs, matching
+   Ceph's native ``ceph.conf`` syntax. The same applies to
+   ``--public-network`` and ``--cluster-network`` at
+   :command:`microceph cluster bootstrap` and
+   :command:`microceph cluster adopt`. Each host in the cluster must
+   have an interface address on at least one of the listed subnets.
+
+   ``public_network`` is set at :command:`microceph cluster bootstrap` (or
+   :command:`microceph cluster adopt`) time and is read-only afterwards: it
+   cannot be changed with :command:`microceph cluster config set`.
+
+   For example, to span two cluster networks:
+
+   .. code-block:: none
+
+      $ sudo microceph cluster config set cluster_network 10.5.0.0/16,10.6.0.0/16
+
 1. Supported config keys can be configured using the 'set' command:
 
   .. code-block:: shell

@@ -154,6 +154,10 @@ jobs:
             name: Messenger v2 tests
             suite: messenger-v2-tests
 
+          - id: multi-subnet-tests
+            name: Multi subnet bootstrap testing
+            suite: multi-subnet-tests
+
           - id: wiping-test
             name: Verify pristineness and wiping
             suite: wiping-test
