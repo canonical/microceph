@@ -181,8 +181,18 @@ func migrateStaleRunDir() {
 	}
 }
 
+// radosgwConfMu serializes mutations of radosgw.conf. The per-minute
+// UpdateConfig loop (updateRadosGWMonHost) and the startup migration
+// (fixRadosGWRunDir via migrateStaleRunDir) both rewrite radosgw.conf through
+// fixConfigLine; without coordination their read-modify-rename cycles could
+// clobber each other (shared .tmp path and lost updates). This mutex makes
+// those writes safe.
+var radosgwConfMu sync.Mutex
+
 // fixRadosGWRunDir updates the 'run dir' line in radosgw.conf to correctRunDir.
 func fixRadosGWRunDir(confFile, correctRunDir string) error {
+	radosgwConfMu.Lock()
+	defer radosgwConfMu.Unlock()
 	return fixConfigLine(confFile, func(line string) (string, bool) {
 		if strings.HasPrefix(strings.TrimSpace(line), "run dir = ") {
 			correct := "run dir = " + correctRunDir
@@ -218,6 +228,8 @@ func updateRadosGWMonHost(confDir string, monitors []string) error {
 	sorted := append([]string(nil), monitors...)
 	sort.Strings(sorted)
 
+	radosgwConfMu.Lock()
+	defer radosgwConfMu.Unlock()
 	return fixConfigLine(filepath.Join(confDir, "radosgw.conf"), func(line string) (string, bool) {
 		if !strings.HasPrefix(strings.TrimSpace(line), "mon host = ") {
 			return line, false
@@ -282,7 +294,7 @@ func fixConfigLine(confFile string, fn func(string) (string, bool)) error {
 		os.Remove(tmpFile)
 		return fmt.Errorf("failed to replace %s: %w", confFile, err)
 	}
-	logger.Infof("migration: fixed stale run dir in %s", confFile)
+	logger.Infof("updated %s", confFile)
 	return nil
 }
 

@@ -409,7 +409,8 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	// not persisted. We therefore rewrite only the mon host line in place,
 	// preserving the other settings. A missing file (RGW disabled) is a no-op;
 	// a failure here must not block the ceph.conf refresh below.
-	if err := updateRadosGWMonHost(confPath, monitorAddresses); err != nil {
+	err = updateRadosGWMonHost(confPath, monitorAddresses)
+	if err != nil {
 		logger.Warnf("failed to refresh radosgw.conf mon host: %v", err)
 	}
 
