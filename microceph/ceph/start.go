@@ -171,13 +171,20 @@ func PostRefresh() error {
 // services can be re-enabled successfully.
 func migrateStaleRunDir() {
 	pathConsts := constants.GetPathConst()
-	err := fixRadosGWRunDir(filepath.Join(pathConsts.ConfPath, "radosgw.conf"), pathConsts.RunPath)
+	rgwConf := filepath.Join(pathConsts.ConfPath, "radosgw.conf")
+	changed, err := fixRadosGWRunDir(rgwConf, pathConsts.RunPath)
 	if err != nil {
 		logger.Warnf("migration: failed to update run dir in radosgw.conf: %v", err)
+	} else if changed {
+		logger.Infof("migration: fixed stale run dir in %s", rgwConf)
 	}
-	err = fixGaneshaRunDir(filepath.Join(pathConsts.ConfPath, "ganesha", "ganesha.conf"), pathConsts.RunPath)
+
+	ganeshaConf := filepath.Join(pathConsts.ConfPath, "ganesha", "ganesha.conf")
+	changed, err = fixGaneshaRunDir(ganeshaConf, pathConsts.RunPath)
 	if err != nil {
 		logger.Warnf("migration: failed to update run dir in ganesha.conf: %v", err)
+	} else if changed {
+		logger.Infof("migration: fixed stale run dir in %s", ganeshaConf)
 	}
 }
 
@@ -190,7 +197,7 @@ func migrateStaleRunDir() {
 var radosgwConfMu sync.Mutex
 
 // fixRadosGWRunDir updates the 'run dir' line in radosgw.conf to correctRunDir.
-func fixRadosGWRunDir(confFile, correctRunDir string) error {
+func fixRadosGWRunDir(confFile, correctRunDir string) (bool, error) {
 	radosgwConfMu.Lock()
 	defer radosgwConfMu.Unlock()
 	return fixConfigLine(confFile, func(line string) (string, bool) {
@@ -230,7 +237,8 @@ func updateRadosGWMonHost(confDir string, monitors []string) error {
 
 	radosgwConfMu.Lock()
 	defer radosgwConfMu.Unlock()
-	return fixConfigLine(filepath.Join(confDir, "radosgw.conf"), func(line string) (string, bool) {
+	confFile := filepath.Join(confDir, "radosgw.conf")
+	changed, err := fixConfigLine(confFile, func(line string) (string, bool) {
 		if !strings.HasPrefix(strings.TrimSpace(line), "mon host = ") {
 			return line, false
 		}
@@ -240,10 +248,17 @@ func updateRadosGWMonHost(confDir string, monitors []string) error {
 		}
 		return correct, true
 	})
+	if err != nil {
+		return err
+	}
+	if changed {
+		logger.Infof("updated radosgw.conf mon host in %s", confFile)
+	}
+	return nil
 }
 
 // fixGaneshaRunDir updates the CCacheDir line in ganesha.conf to use correctRunDir.
-func fixGaneshaRunDir(confFile, correctRunDir string) error {
+func fixGaneshaRunDir(confFile, correctRunDir string) (bool, error) {
 	return fixConfigLine(confFile, func(line string) (string, bool) {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, `CCacheDir = "`) && strings.HasSuffix(trimmed, `/ganesha";`) {
@@ -260,14 +275,15 @@ func fixGaneshaRunDir(confFile, correctRunDir string) error {
 }
 
 // fixConfigLine reads confFile, applies fn to every line, and atomically
-// rewrites the file if any line changed.  Returns nil if the file does not exist.
-func fixConfigLine(confFile string, fn func(string) (string, bool)) error {
+// rewrites the file if any line changed. It returns false with nil error if
+// the file does not exist or no line changed.
+func fixConfigLine(confFile string, fn func(string) (string, bool)) (bool, error) {
 	data, err := os.ReadFile(confFile)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	lines := strings.Split(string(data), "\n")
@@ -281,21 +297,20 @@ func fixConfigLine(confFile string, fn func(string) (string, bool)) error {
 	}
 
 	if !changed {
-		return nil
+		return false, nil
 	}
 
 	tmpFile := confFile + ".tmp"
 	err = os.WriteFile(tmpFile, []byte(strings.Join(lines, "\n")), constants.PermissionUserRwWorldRAccess)
 	if err != nil {
-		return fmt.Errorf("failed to write %s: %w", tmpFile, err)
+		return false, fmt.Errorf("failed to write %s: %w", tmpFile, err)
 	}
 	err = os.Rename(tmpFile, confFile)
 	if err != nil {
 		os.Remove(tmpFile)
-		return fmt.Errorf("failed to replace %s: %w", confFile, err)
+		return false, fmt.Errorf("failed to replace %s: %w", confFile, err)
 	}
-	logger.Infof("updated %s", confFile)
-	return nil
+	return true, nil
 }
 
 // reEnableServices checks which services are registered in the database for

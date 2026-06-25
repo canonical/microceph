@@ -2438,12 +2438,12 @@ function test_nfs_stale_run_dir_migration() {
     # for the daemon to log that it repaired the file rather than just checking
     # service state.
     for i in $(seq 1 30); do
-        if sudo snap logs microceph.daemon -n 100 | grep -q "fixed stale run dir"; then
-            echo "daemon logged migration complete"
+        if sudo snap logs microceph.daemon -n 100 | grep -q "fixed stale run dir.*ganesha.conf"; then
+            echo "daemon logged ganesha migration complete"
             break
         fi
         if [[ $i -eq 30 ]]; then
-            echo "FAIL: daemon did not log migration after 30s"
+            echo "FAIL: daemon did not log ganesha migration after 30s"
             sudo snap logs microceph.daemon -n 100 || true
             exit 1
         fi
