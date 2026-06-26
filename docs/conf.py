@@ -234,9 +234,16 @@ linkcheck_anchors_ignore_for_url = [
     r"https://matrix.to/#/#ubuntu-ceph:matrix.org"
     ]
 
-# give linkcheck multiple tries on failure
-# linkcheck_timeout = 30
-linkcheck_retries = 3
+# External documentation sites (canonical.com, ubuntu.com, ...) intermittently
+# return 429 (rate limiting), 502 (bad gateway), or read timeouts while the
+# link checker is running. These are transient infra failures, not broken
+# links, yet they fail the docs build. Raise the retry count, the rate-limit
+# back-off window, and the per-request timeout so transient errors clear
+# instead of failing the build.
+# See https://github.com/canonical/microceph/issues/717
+linkcheck_timeout = 60
+linkcheck_retries = 5
+linkcheck_rate_limit_timeout = 600
 
 ########################
 # Configuration extras #
