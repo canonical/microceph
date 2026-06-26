@@ -1,0 +1,32 @@
+# govulncheck called-path allowlist
+#
+# Vulnerability IDs listed here are excluded from the "called-path" count that
+# the govulncheck action reports (and that the daily cron job tracks as a GitHub
+# issue). Each entry must carry a justification.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# govulncheck has no native ignore mechanism, and the Go vulnerability database
+# entries for github.com/canonical/lxd are recorded as "introduced: 0" with NO
+# fixed version. LXD does not publish Go-module semver releases, so the Go DB
+# maintainers never mapped the upstream fixes (LXD 6.5.0 / 5.21.4 / 6.6 / 6.7)
+# onto a Go pseudo-version. As a result govulncheck flags every lxd version as
+# vulnerable and a dependency bump can never clear the finding -- even when the
+# pinned commit already contains the upstream fix.
+#
+# microceph pins lxd at commit d936c90d47cf (go.mod:
+# v0.0.0-20260224152359-d936c90d47cf), which IS the upstream fix commit for
+# GO-2026-4595 (PR #17738, Feb 2026). Being a later main-branch commit, it also
+# contains the three Nov-2025 fixes below. microceph additionally only imports
+# LXD shared utility packages (shared, shared/api, shared/logger, lxd/util,
+# lxd/db/query, lxd/resources); it does not run the LXD daemon Operations API,
+# storage-volume, LXD-UI, or certificate-listing code where the vulnerabilities
+# actually live.
+#
+# Format: one GO-id per line; text after '#' is an ignored justification comment.
+# Re-review whenever go.mod's lxd pin changes or the Go DB adds fixed versions.
+
+GO-2025-3999  # lxd: privilege escalation via WebSocket hijack in Operations API; fixed upstream 5.21.4/6.5.0, present in pinned d936c90d47cf; daemon-only path, not used by microceph.
+GO-2025-4003  # lxd: CSRF via client-cert auth in LXD-UI; fixed upstream 5.0.5/5.21.4/6.5.0, present in pinned d936c90d47cf; LXD-UI not used by microceph.
+GO-2025-4121  # lxd: local privesc via custom storage volumes; fixed upstream 4.0.11/5.21.5/6.6, present in pinned d936c90d47cf; storage-volume daemon path not used by microceph.
+GO-2026-4595  # lxd: non-recursive cert listing bypasses authz; fixed upstream by commit d936c90d47cf (6.7), which is the exact lxd pin in go.mod; cert endpoint not used by microceph.

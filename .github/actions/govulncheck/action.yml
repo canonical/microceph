@@ -80,6 +80,44 @@ runs:
             | .finding.osv
           ] | unique[]
         ' "${OUTPUT_FILE}")
+
+        # Apply the documented allowlist. Some advisories (notably
+        # github.com/canonical/lxd) carry no fixed version in the Go
+        # vulnerability database, so govulncheck can never mark them resolved
+        # even when the pinned commit already contains the upstream fix. Each
+        # suppressed ID is justified in allowlist.txt.
+        allow_file="${GITHUB_ACTION_PATH}/allowlist.txt"
+        allow_ids=""
+        if [ -f "${allow_file}" ]; then
+          # Parse the allowlist into a clean ID list. 'sed' strips each line's
+          # '# justification' comment FIRST, so a GO-id mentioned inside prose
+          # can never be extracted; 'grep -oE' then pulls out the bare GO-ids.
+          # Sorting happens once below, just before 'comm'.
+          allow_ids=$(sed 's/#.*//' "${allow_file}" | grep -oE 'GO-[0-9]{4}-[0-9]+')
+        else
+          echo "::warning::govulncheck: allowlist file not found: ${allow_file}; no suppression applied"
+        fi
+
+        if [ -n "${allow_ids}" ] && [ -n "${called_ids}" ]; then
+          # 'comm' requires both inputs sorted. Sort each list once here and
+          # reuse the sorted copies for both set operations below, rather than
+          # re-sorting inline in every 'comm' call.
+          called_sorted=$(printf "%s\n" "${called_ids}" | sort -u)
+          allow_sorted=$(printf "%s\n" "${allow_ids}" | sort -u)
+
+          # comm -12 = lines common to both -> the IDs we are suppressing,
+          #            logged for transparency.
+          suppressed=$(comm -12 <(printf "%s\n" "${called_sorted}") <(printf "%s\n" "${allow_sorted}"))
+          if [ -n "${suppressed}" ]; then
+            echo "Suppressing allowlisted called-path vulnerabilities:"
+            printf "%s\n" "${suppressed}"
+          fi
+          # comm -23 = lines only in the first input -> called IDs that are NOT
+          #            allowlisted; these survive and drive the count and
+          #            pass/fail decision below.
+          called_ids=$(comm -23 <(printf "%s\n" "${called_sorted}") <(printf "%s\n" "${allow_sorted}"))
+        fi
+
         called=$(printf "%s\n" "${called_ids}" | grep -c . || true)
 
         {
