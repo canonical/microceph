@@ -12,15 +12,6 @@ Suite Teardown  Teardown MicroCeph Environment
 Test Tags       ce142    single-node    deferred    lxd    integration
 
 *** Keywords ***
-Wait For MicroCeph Control Socket
-    [Documentation]    Polls until the microceph control socket exists in the VM.
-    FOR    ${i}    IN RANGE    24
-        ${ready}=    Run In VM    test -S /var/snap/microceph/common/state/control.socket && echo yes || echo no    15
-        IF    "${ready.stdout.strip()}" == "yes"    RETURN
-        Sleep    5s
-    END
-    Fail    MicroCeph control socket never appeared
-
 CE142 Single Suite Setup
     [Documentation]    Launch VM, install snap, and perform a SINGLE deferred bootstrap.
     ...    All tests assert against this one deferred-cluster state; none re-bootstrap
@@ -35,13 +26,6 @@ CE142 Single Suite Setup
     Run In VM And Check    sudo microceph cluster bootstrap --defer-ceph    120
     Sleep    5s
     Run In VM And Check    sudo microceph status    30
-
-Put Placement Policy Outer VM
-    [Documentation]    PUTs a placement policy JSON body on the outer VM control socket and
-    ...    returns the response body JSON (contains "status_code":200 on success).
-    [Arguments]    ${body}
-    ${result}=    Run In VM And Check    sudo curl -s -X PUT --unix-socket /var/snap/microceph/common/state/control.socket -H 'Content-Type: application/json' -d '${body}' http://localhost/1.0/placement    30
-    RETURN    ${result.stdout}
 
 *** Test Cases ***
 Test Deferred Bootstrap Leaves Ceph Not Bootstrapped
@@ -61,28 +45,28 @@ Test Lifecycle State Not Bootstrapped
     [Documentation]    UAT-S1.1: GET /1.0/placement reports bootstrap_state=not_bootstrapped,
     ...    ceph_bootstrapped=false before Ceph-only bootstrap.
     [Tags]    deferred    api
-    AssertLifecycle State    not_bootstrapped    bootstrapped=false
+    Assert Lifecycle State    not_bootstrapped    bootstrapped=false
 
 Test Capability Markers Advertised
     [Documentation]    UAT-S1.1/S1.3/S1.5 precondition: GET /1.0/cluster/capabilities advertises
     ...    the CE142 capability markers so the charm can detect support.
     [Tags]    api    capabilities
-    ${json}=    Get Capabilities JSON
-    Should Contain    ${json}    deferred-ceph-bootstrap
-    ...    msg=deferred-ceph-bootstrap capability missing: ${json}
-    Should Contain    ${json}    ceph-only-bootstrap
-    ...    msg=ceph-only-bootstrap capability missing: ${json}
-    Should Contain    ${json}    declarative-placement
-    ...    msg=declarative-placement capability missing: ${json}
+    ${caps}=    Get Supported Capabilities
+    List Should Contain Value    ${caps}    deferred-ceph-bootstrap
+    ...    msg=deferred-ceph-bootstrap capability missing: ${caps}
+    List Should Contain Value    ${caps}    ceph-only-bootstrap
+    ...    msg=ceph-only-bootstrap capability missing: ${caps}
+    List Should Contain Value    ${caps}    declarative-placement
+    ...    msg=declarative-placement capability missing: ${caps}
 
 Test Placement Policy Empty Members Is No Op
     [Documentation]    UAT-S1.5 precondition: PUT /1.0/placement with an empty members map performs
     ...    no service operations, is accepted, and is stored as the active policy. Ceph must
     ...    remain unbootstrapped.
     [Tags]    api    placement
-    ${code}=    Put Placement Policy Outer VM    {"mode":"reconcile","members":{}}
-    Should Contain    ${code}    "status_code":200    msg=Empty placement PUT failed: ${code}
-    ${status}=    Get Placement Status JSON
-    Should Contain    ${status}    "active":true
-    ...    msg=Empty placement policy not stored as active: ${status}
+    ${resp}=    MicroCeph API Put    placement    {"mode":"reconcile","members":{}}    timeout=30
+    ${code}=    Response Status Code    ${resp}
+    Should Be Equal As Integers    ${code}    200    msg=Empty placement PUT failed: ${resp}
+    ${active}=    Placement Policy Active
+    Should Be True    ${active}    msg=Empty placement policy not stored as active
     Run In VM Must Fail    sudo microceph.ceph status 2>/dev/null    30

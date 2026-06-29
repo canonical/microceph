@@ -110,6 +110,8 @@ func CephOnlyBootstrap(ctx context.Context, s interfaces.StateInterface, target 
 	opCtx, opCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
 	defer opCancel()
 
+	logger.Debugf("Ceph-only bootstrap: starting (target=%s, force=%v)", target, force)
+
 	if force {
 		logger.Warnf("Ceph-only bootstrap invoked with --force: this resets an in_progress lifecycle row. Do not use --force while a live bootstrap may be running on another member; doing so can clobber a genuine in-progress bootstrap and lead to divergent cluster state.")
 	}
@@ -212,13 +214,16 @@ func atomicStartBootstrap(ctx context.Context, s interfaces.StateInterface, targ
 		// is only safe when no live bootstrap is running. See CephOnlyBootstrap
 		// doc comment.
 		if force {
-			_, err := tx.ExecContext(ctx, `
+			res, err := tx.ExecContext(ctx, `
 UPDATE cluster_lifecycle
    SET ceph_bootstrap_state = ?, detail = 'force-reset from in_progress'
  WHERE id = 1 AND ceph_bootstrap_state = ?`,
 				database.CephStateFailed, database.CephStateInProgress)
 			if err != nil {
 				return fmt.Errorf("failed to force-reset lifecycle state: %w", err)
+			}
+			if n, raErr := res.RowsAffected(); raErr == nil && n > 0 {
+				logger.Debugf("Ceph-only bootstrap: --force reset %d stale in_progress lifecycle row(s) to failed", n)
 			}
 		}
 
@@ -241,10 +246,12 @@ UPDATE cluster_lifecycle
 		if configBootstrapped {
 			if alreadyBootstrapped {
 				// Fully bootstrapped: genuine no-op success.
+				logger.Debugf("Ceph-only bootstrap: already bootstrapped (lifecycle=%s); no-op", lc.CephBootstrapState)
 				proceed = false
 				return nil
 			}
 			// Partial bootstrap: refuse to re-run over it.
+			logger.Debugf("Ceph-only bootstrap: partial bootstrap detected (config rows present but lifecycle=%s); refusing", lc.CephBootstrapState)
 			return fmt.Errorf("%w: a prior Ceph-only bootstrap left partial state (fsid/admin keyring present but Ceph not fully bootstrapped). Re-running would generate a divergent FSID and conflict with existing DB rows. Clean up the partial bootstrap on %s (remove ceph.conf/keyrings and the fsid/keyring.client.admin config rows) before retrying", ErrPartialBootstrap, target)
 		}
 
@@ -268,6 +275,7 @@ UPDATE cluster_lifecycle
 
 		if rowsAffected == 1 {
 			// Transition succeeded; bootstrap should proceed.
+			logger.Debugf("Ceph-only bootstrap: transitioned lifecycle to in_progress (target=%s)", target)
 			proceed = true
 			return nil
 		}
@@ -285,10 +293,12 @@ UPDATE cluster_lifecycle
 		}
 
 		if lc.CephBootstrapState == database.CephStateInProgress {
+			logger.Debugf("Ceph-only bootstrap: another bootstrap is in progress (recorded target=%s); refusing", lc.CephBootstrapTarget)
 			return ErrCephBootstrapInProgress
 		}
 
 		// Unexpected state: return it as an error for diagnosis.
+		logger.Debugf("Ceph-only bootstrap: unexpected lifecycle state %q; cannot start", lc.CephBootstrapState)
 		return fmt.Errorf("unexpected lifecycle state %q: cannot start bootstrap", lc.CephBootstrapState)
 	})
 
@@ -299,15 +309,25 @@ UPDATE cluster_lifecycle
 // config rows are present and a cheap Ceph connectivity check confirms the
 // cluster is usable. This handles the retry case where Ceph bootstrap steps
 // succeeded but the final lifecycle-recording transaction failed.
+//
+// The connectivity check runs locally on the member serving this request (the
+// bootstrap target, via ProxyTarget). A member that never rendered a local
+// ceph.conf cannot reach the cluster, so a retry that targets a DIFFERENT
+// member than the one that did the original (partial) bootstrap can misreport
+// a healthy cluster as ErrPartialBootstrap. Retries should therefore reuse the
+// original target; the error message names it when it is known.
 func recoverStaleBootstrappedLifecycle(ctx context.Context, s interfaces.StateInterface, target string) (bool, error) {
 	var staleConfigBootstrap bool
+	var recordedTarget string
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		lc, err := database.GetClusterLifecycle(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("failed to read lifecycle state: %w", err)
 		}
+		recordedTarget = lc.CephBootstrapTarget
 		alreadyBootstrapped := lc.CephBootstrapped || lc.CephBootstrapState == database.CephStateBootstrapped
 		if alreadyBootstrapped {
+			logger.Debugf("Ceph-only bootstrap: lifecycle already bootstrapped (recorded target=%s); no recovery needed", recordedTarget)
 			return nil
 		}
 		configBootstrapped, err := configIndicatesBootstrapped(ctx, tx)
@@ -321,12 +341,19 @@ func recoverStaleBootstrappedLifecycle(ctx context.Context, s interfaces.StateIn
 		return false, err
 	}
 	if !staleConfigBootstrap {
+		logger.Debugf("Ceph-only bootstrap: no stale config bootstrap detected; skipping recovery")
 		return false, nil
 	}
 
+	logger.Debugf("Ceph-only bootstrap: stale config bootstrap detected (recordedTarget=%s, thisTarget=%s); verifying Ceph connectivity", recordedTarget, target)
+
 	err = verifyExistingCephBootstrapFunc(ctx)
 	if err != nil {
-		return false, fmt.Errorf("%w: fsid/admin keyring config rows exist but Ceph connectivity verification failed: %v. Clean up the partial bootstrap on %s (remove ceph.conf/keyrings and the fsid/keyring.client.admin config rows) before retrying", ErrPartialBootstrap, err, target)
+		hint := ""
+		if recordedTarget != "" && recordedTarget != target {
+			hint = fmt.Sprintf(" Note: the previous bootstrap attempt was recorded on member %q; this verification ran on %q, which may lack a local ceph.conf — retry with --target %s before treating the bootstrap as partial.", recordedTarget, target, recordedTarget)
+		}
+		return false, fmt.Errorf("%w: fsid/admin keyring config rows exist but Ceph connectivity verification failed: %v. Clean up the partial bootstrap on %s (remove ceph.conf/keyrings and the fsid/keyring.client.admin config rows) before retrying.%s", ErrPartialBootstrap, err, target, hint)
 	}
 
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {

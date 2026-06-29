@@ -168,6 +168,18 @@ jobs:
             suite: cephadm-adopt-test
             runner: ubuntu-24.04
             args: --variable XTRACE:True
+
+          - id: ce142-deferred-single
+            name: CE142 deferred bootstrap single node
+            suite: ce142-deferred-single
+
+          - id: ce142-deferred-multinode
+            name: CE142 deferred lifecycle and placement multi node
+            suite: ce142-deferred-multinode
+
+          - id: ce142-legacy-placement
+            name: CE142 legacy bootstrap placement regression
+            suite: ce142-legacy-placement
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4

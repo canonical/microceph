@@ -22,31 +22,13 @@ CE142 Legacy Placement Suite Setup
     Install Tools
     Install And Bootstrap MicroCeph
 
-Wait For MicroCeph Control Socket
-    [Documentation]    Polls until the microceph control socket exists in the VM.
-    FOR    ${i}    IN RANGE    24
-        ${ready}=    Run In VM    test -S /var/snap/microceph/common/state/control.socket && echo yes || echo no    15
-        IF    "${ready.stdout.strip()}" == "yes"    RETURN
-        Sleep    5s
-    END
-    Fail    MicroCeph control socket never appeared
-
-Get Placement Bootstrap State
-    [Documentation]    Returns the bootstrap_state field from GET /1.0/placement.
-    ${json}=    Get Placement Status JSON
-    RETURN    ${json}
-
 *** Test Cases ***
 Test Legacy Bootstrap Reports Bootstrapped
     [Documentation]    A fresh non-deferred bootstrap must set cluster_lifecycle to
     ...    bootstrapped. GET /1.0/placement reports bootstrap_state=bootstrapped,
     ...    ceph_bootstrapped=true.
     [Tags]    legacy    placement
-    ${json}=    Get Placement Bootstrap State
-    Should Contain    ${json}    "bootstrap_state":"bootstrapped"
-    ...    msg=Fresh legacy cluster not reported as bootstrapped: ${json}
-    Should Contain    ${json}    "ceph_bootstrapped":true
-    ...    msg=ceph_bootstrapped not true on fresh legacy cluster: ${json}
+    Assert Lifecycle State    bootstrapped    bootstrapped=true
 
 Test Placement Accepted On Fresh Legacy Cluster
     [Documentation]    A non-empty placement policy PUT on a freshly-bootstrapped
@@ -56,12 +38,12 @@ Test Placement Accepted On Fresh Legacy Cluster
     ...    idempotent; the point is it is accepted, not rejected pre-bootstrap).
     [Tags]    placement
     ${hn}=    Get VM Hostname
-    ${body}=    Set Variable    {"mode":"reconcile","members":{"${hn}":{"control":true}}}
-    ${result}=    Run In VM And Check    sudo curl -s -X PUT --unix-socket /var/snap/microceph/common/state/control.socket -H 'Content-Type: application/json' -d '${body}' http://localhost/1.0/placement    120
-    Should Contain    ${result.stdout}    "status_code":200
-    ...    msg=Placement rejected on fresh legacy cluster (expected accepted): ${result.stdout}
-    Should Not Contain    ${result.stdout}    "Ceph not bootstrapped"
-    ...    msg=Placement rejected with pre-bootstrap guard on a bootstrapped cluster: ${result.stdout}
+    ${resp}=    MicroCeph API Put    placement    {"mode":"reconcile","members":{"${hn}":{"control":true}}}    timeout=120
+    ${code}=    Response Status Code    ${resp}
+    Should Be Equal As Integers    ${code}    200
+    ...    msg=Placement rejected on fresh legacy cluster (expected accepted): ${resp}
+    Should Not Contain    ${resp}    Ceph not bootstrapped
+    ...    msg=Placement rejected with pre-bootstrap guard on a bootstrapped cluster: ${resp}
 
 Test Ceph Only Bootstrap Is Idempotent On Legacy Cluster
     [Documentation]    On a fresh legacy cluster, `cluster bootstrap-ceph --target`

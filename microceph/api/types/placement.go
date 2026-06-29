@@ -23,6 +23,12 @@ type MemberPlacement struct {
 	StorageEligible *bool `json:"storage_eligible,omitempty" yaml:"storage_eligible,omitempty"`
 }
 
+// PlacementModeReconcile is the only supported placement policy mode. An
+// empty Mode is treated as reconcile. Unknown modes are rejected so a future
+// mode (e.g. dry-run) sent to an older snap fails loudly instead of being
+// silently applied as a reconcile.
+const PlacementModeReconcile = "reconcile"
+
 // PlacementPolicy is the body of PUT /1.0/placement. Members maps MicroCeph
 // member names to their desired placement. Members absent from the map are not
 // touched for service placement.
@@ -32,6 +38,8 @@ type PlacementPolicy struct {
 }
 
 // PlacementObservedMember captures the observed service placement for a member.
+// Control is true when the member hosts any of MON, MGR, or MDS. Nfs lists the
+// NFS group IDs placed on the member (from the grouped-services records).
 type PlacementObservedMember struct {
 	Member  string   `json:"member" yaml:"member"`
 	Control bool     `json:"control" yaml:"control"`

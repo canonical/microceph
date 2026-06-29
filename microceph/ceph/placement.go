@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
@@ -31,6 +32,78 @@ var ErrUnknownPlacementMember = fmt.Errorf("unknown cluster member in placement 
 // the last viable MON, MGR, or MDS. It is a client-side sentinel so the API
 // handler maps it to HTTP 400 rather than implying a server fault.
 var ErrKeepOneInvariant = fmt.Errorf("keep-one invariant")
+
+// ErrPlacementApplyInProgress is returned when another placement apply holds
+// the cluster-wide apply lock. It is a retryable condition, mirroring
+// ErrCephBootstrapInProgress.
+var ErrPlacementApplyInProgress = fmt.Errorf("placement apply already in progress")
+
+// placementApplyLease bounds how long a placement apply may hold the
+// cluster-wide dqlite lock before it is considered abandoned (daemon crashed
+// mid-apply) and reclaimable by the next writer. It must comfortably exceed
+// the API handler's server-side apply deadline (placementPutTimeout, 10 min)
+// so a live apply can never have its lock reclaimed underneath it.
+const placementApplyLease = 15 * time.Minute
+
+// LockPlacementApplyFunc is the injectable wrapper for LockPlacementApply,
+// used by the API handler so tests can override it.
+var LockPlacementApplyFunc = LockPlacementApply
+
+// LockPlacementApply acquires the cluster-wide placement apply lock (CE142).
+// ApplyPlacement reads observed service state and then mutates services over
+// minutes; two overlapping applies (possibly served by different members)
+// could each count the other's removal targets as keep-one retainers and
+// together remove the last viable control service. The dqlite-backed lock
+// makes the read-modify cycle mutually exclusive across all cluster members.
+//
+// The returned token must be passed to UnlockPlacementApply. If another apply
+// holds the lock, ErrPlacementApplyInProgress is returned; a lock older than
+// placementApplyLease is treated as abandoned and reclaimed.
+func LockPlacementApply(ctx context.Context, s interfaces.StateInterface) (int64, error) {
+	token := time.Now().UnixNano()
+	staleBefore := token - placementApplyLease.Nanoseconds()
+
+	var acquired bool
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		acquired, err = database.TryAcquirePlacementApplyLock(ctx, tx, token, staleBefore)
+		return err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to acquire placement apply lock: %w", err)
+	}
+	if !acquired {
+		logger.Debugf("placement apply lock not acquired: another apply holds it")
+		return 0, fmt.Errorf("%w: retry after the current apply completes", ErrPlacementApplyInProgress)
+	}
+	return token, nil
+}
+
+// UnlockPlacementApplyFunc is the injectable wrapper for UnlockPlacementApply,
+// used by the API handler so tests can override it.
+var UnlockPlacementApplyFunc = UnlockPlacementApply
+
+// UnlockPlacementApply releases the cluster-wide placement apply lock acquired
+// by LockPlacementApply. Releasing is conditional on the token: if this
+// holder's lease expired mid-apply and another writer reclaimed the lock, the
+// reclaimer's lock is left alone and a warning is logged.
+func UnlockPlacementApply(ctx context.Context, s interfaces.StateInterface, token int64) error {
+	var released bool
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		released, err = database.ReleasePlacementApplyLock(ctx, tx, token)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("failed to release placement apply lock: %w", err)
+	}
+	if !released {
+		logger.Warnf("placement apply lock was not held by this apply on release; its lease likely expired and another apply reclaimed it")
+	} else {
+		logger.Debugf("placement apply lock released (token=%d)", token)
+	}
+	return nil
+}
 
 // ApplyPlacement applies a declarative placement policy (CE142). It is the core
 // of the placement engine: it computes the diff between desired and observed
@@ -60,10 +133,13 @@ var getClusterLifecycleFunc = func(ctx context.Context, s interfaces.StateInterf
 	return lc, err
 }
 
-// ApplyPlacement applies the given placement policy to the cluster. It returns
-// an error if any requested removal was refused for keep-one safety, so the
-// caller can surface a clear blocked reason rather than silently storing a
-// partially-applied policy.
+// ApplyPlacement applies the given placement policy to the cluster. Requested
+// control-service adds are applied first, then removals. If a removal is
+// refused for keep-one safety the adds remain in effect (a partial apply) and
+// the function returns ErrKeepOneInvariant so the caller can surface a clear
+// blocked reason; the API handler is responsible for persisting the policy as
+// the declared intent in that case so GET /placement can report the
+// observed-vs-declared gap.
 func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
 	if s.ClusterState().ServerCert() == nil {
 		return fmt.Errorf("no server certificate")
@@ -113,6 +189,7 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 	if err != nil {
 		return fmt.Errorf("failed to get observed control services: %w", err)
 	}
+	logger.Debugf("Placement: observed control services: %s", formatControlMap(observedControl))
 
 	// Compute desired control members (those with control:true).
 	desiredControl := make(map[string]bool)
@@ -147,7 +224,8 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 	// Skip when there are no pending removals to avoid unnecessary polling.
 	viableControl := copyObservedControlServices(observedControl)
 	if hasPendingControlRemovals(policy, observedControl) {
-		verifyControlServicesReady(ctx, viableControl)
+		verifyControlServicesReady(ctx, viableControl, policy)
+		logger.Debugf("Placement: viability after readiness check: %s", formatControlMap(viableControl))
 	}
 
 	// Then remove control services from members that have control:false and
@@ -183,6 +261,7 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 			}
 
 			// keep-one: refuse removal if no other member retains the service.
+			logger.Debugf("Placement: keep-one check for %s on %s: %d viable retainer(s)", svc, memberName, retainers)
 			if retainers == 0 {
 				logger.Warnf("refusing to remove last %s on %s: keep-one invariant", svc, memberName)
 				refused = append(refused, fmt.Sprintf("%s on %s", svc, memberName))
@@ -336,12 +415,28 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 				om.Control = true
 			case "rgw":
 				om.Rgw = true
-			case "nfs":
-				// NFS group ID is tracked via grouped_services, not the services table.
-				// For observed status, we note the member has NFS.
-				om.Nfs = append(om.Nfs, svc.Service)
 			}
 		}
+
+		// Observed NFS: NFS placements are recorded in the grouped-services
+		// tables keyed by group ID, not in the plain services table, so they
+		// are collected separately. Report each member's NFS group IDs.
+		groupedServices, err := database.GetGroupedServices(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for _, gs := range groupedServices {
+			if gs.Service != "nfs" {
+				continue
+			}
+			om, ok := observedByMember[gs.Member]
+			if !ok {
+				om = &types.PlacementObservedMember{Member: gs.Member}
+				observedByMember[gs.Member] = om
+			}
+			om.Nfs = append(om.Nfs, gs.GroupID)
+		}
+
 		for _, om := range observedByMember {
 			status.Observed = append(status.Observed, *om)
 		}

@@ -1,0 +1,1 @@
+{"epoch":3,"min_mon_release_name":"tentacle","num_mons":2,"leader":"mds-verify-a","quorum":[{"rank":0,"name":"mds-verify-a"},{"rank":1,"name":"mds-verify-b"}]}

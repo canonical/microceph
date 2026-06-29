@@ -21,6 +21,7 @@ from robot.api import logger
 from robot.libraries.BuiltIn import BuiltIn
 from robot.utils import timestr_to_secs
 
+import placement_status
 from cephfs_replication import cephfs_replication_list_has_volume
 from rbd_replication import (
     rbd_mirror_health,
@@ -1610,3 +1611,216 @@ class microceph_harness:
         out = self.exec_in_container(node, "microceph", "remote", "list", "--json", timeout=30).stdout
         if not self._remote_list_has(out, field, value):
             raise AssertionError(f"remote list on {node} has no entry with {field}={value}")
+
+    # -----------------------------------------------------------------------
+    # CE142 role-managed / deferred-Ceph keywords
+    #
+    # Keywords fetch raw JSON from the MicroCeph control socket (minimum
+    # remote I/O) and decide locally via the pure parsers in
+    # placement_status.py (unit-tested in test_harness_helpers.py).
+    # -----------------------------------------------------------------------
+
+    def microceph_api_get(self, path):
+        """GETs a path from the MicroCeph control socket on the outer VM (single-node)
+        and returns the raw JSON stdout."""
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s --unix-socket {MICROCEPH_CONTROL_SOCKET} http://localhost/1.0/{path}", 30
+        )
+        return res.stdout
+
+    def microceph_api_put(self, path, body, timeout=120):
+        """PUTs a JSON body to a path on the MicroCeph control socket on the outer VM.
+
+        Returns the raw response body; decide on it with `Response Status Code`.
+        """
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s -X PUT --unix-socket {MICROCEPH_CONTROL_SOCKET}"
+            f" -H 'Content-Type: application/json' -d '{body}' http://localhost/1.0/{path}",
+            float(timeout),
+        )
+        return res.stdout
+
+    def microceph_api_get_in_container(self, container, path):
+        """GETs a path from the MicroCeph control socket inside an inner container."""
+        res = self.exec_in_container(
+            container, "curl", "-s", "--unix-socket", MICROCEPH_CONTROL_SOCKET,
+            f"http://localhost/1.0/{path}", timeout=30, check=True,
+        )
+        return res.stdout
+
+    def microceph_api_put_in_container(self, container, path, body, query="", timeout=300):
+        """PUTs a JSON body to a path on the MicroCeph control socket inside an inner container.
+
+        Returns the raw response body, which embeds the outcome ("status_code" 200 on
+        success, "error_code" on failure); decide on it with `Response Status Code`.
+        The default timeout is 300s because placement PUTs with pending removals poll
+        Ceph readiness (MON quorum, MGR, MDS) which can take minutes. The body goes
+        through the argv-based container exec helper, so no shell ever interprets it.
+        """
+        res = self.exec_in_container(
+            container, "curl", "-s", "-X", "PUT", "--unix-socket", MICROCEPH_CONTROL_SOCKET,
+            "-H", "Content-Type: application/json", "-d", body,
+            f"http://localhost/1.0/{path}{query}", timeout=float(timeout), check=True,
+        )
+        return res.stdout
+
+    def microceph_api_delete_in_container(self, container, path):
+        """DELETEs a path on the MicroCeph control socket inside an inner container.
+
+        Returns the raw response body JSON.
+        """
+        res = self.exec_in_container(
+            container, "curl", "-s", "-X", "DELETE", "--unix-socket", MICROCEPH_CONTROL_SOCKET,
+            f"http://localhost/1.0/{path}", timeout=60, check=True,
+        )
+        return res.stdout
+
+    def response_status_code(self, raw):
+        """Returns the code embedded in a microcluster API response body (int).
+
+        200 for a sync success, the error_code (e.g. 400) for an error body, 0
+        for unparseable bodies (so comparisons against 200 fail closed).
+        """
+        return placement_status.response_code(raw)
+
+    def get_capabilities_json(self):
+        """Returns the capabilities JSON from the outer VM snap."""
+        return self.microceph_api_get("cluster/capabilities")
+
+    def get_supported_capabilities(self):
+        """Returns the list of CE142 capability markers advertised by the outer VM snap."""
+        return placement_status.supported_capabilities(self.get_capabilities_json())
+
+    def get_placement_status_json(self):
+        """Returns the placement status JSON from the outer VM snap."""
+        return self.microceph_api_get("placement")
+
+    def get_placement_status_json_in_container(self, container):
+        """Returns the placement status JSON from an inner container."""
+        return self.microceph_api_get_in_container(container, "placement")
+
+    def placement_policy_active(self):
+        """Returns True when the outer VM snap reports an active placement policy."""
+        return placement_status.placement_active(self.get_placement_status_json())
+
+    def assert_lifecycle_state(self, expected_state, bootstrapped="", container=""):
+        """Asserts the ceph bootstrap lifecycle state in the placement status JSON.
+
+        Runs on the outer VM by default; pass container= to assert inside an
+        inner container. bootstrapped compares the ceph_bootstrapped flag when
+        given ('true'/'false').
+        """
+        if container == "":
+            raw = self.get_placement_status_json()
+            where = "outer VM"
+        else:
+            raw = self.get_placement_status_json_in_container(container)
+            where = container
+        state = placement_status.bootstrap_state(raw)
+        if state != expected_state:
+            raise AssertionError(
+                f"Expected bootstrap_state={expected_state} on {where}, got {state or '<absent>'}: {raw}"
+            )
+        if bootstrapped != "":
+            want = str(bootstrapped).strip().lower() == "true"
+            got = placement_status.ceph_bootstrapped(raw)
+            if got != want:
+                raise AssertionError(
+                    f"Expected ceph_bootstrapped={bootstrapped} on {where}, got {got}: {raw}"
+                )
+
+    def assert_bootstrap_state_in_container(self, container, expected_state, bootstrapped=""):
+        """Asserts the lifecycle bootstrap_state in the placement status JSON on a container."""
+        self.assert_lifecycle_state(expected_state, bootstrapped, container)
+
+    def wait_for_microceph_control_socket(self, tries=24):
+        """Polls until the microceph control socket exists in the outer VM."""
+        self._poll_until(
+            lambda: self.run_in_vm(f"test -S {MICROCEPH_CONTROL_SOCKET}", 15).rc == 0,
+            attempts=tries,
+            interval=5,
+            fail_msg="MicroCeph control socket never appeared",
+        )
+
+    def wait_for_ceph_healthy_on_container(self, container, tries=40):
+        """Polls ceph health on *container* until it reports non-empty health
+        that is not HEALTH_ERR."""
+        logger.console(f"[health] Waiting for Ceph on {container}...")
+
+        def predicate():
+            res = self.exec_in_container(container, "microceph.ceph", "health", timeout=30)
+            health = res.stdout.strip() if res.rc == 0 else ""
+            if health and health != "HEALTH_ERR":
+                logger.console(f"[health] Ceph health on {container}: {health}")
+                return True
+            return False
+
+        self._poll_until(
+            predicate,
+            attempts=tries,
+            interval=5,
+            fail_msg=f"Ceph never came up on {container}",
+        )
+
+    def get_mon_count(self, head_node=HEAD_NODE):
+        """Returns the current monmap daemon count reported by ceph -s on *head_node*.
+
+        Returns 0 when the cluster is unreachable, so callers polling for a
+        count treat an unready cluster as zero mons.
+        """
+        res = self.exec_in_container(head_node, "microceph.ceph", "-s", "-f", "json", timeout=30)
+        if res.rc != 0:
+            return 0
+        return placement_status.mon_count(res.stdout)
+
+    def wait_for_mon_count(self, n, tries=30):
+        """Polls ceph -s on the head node until at least *n* mon daemons are reported."""
+
+        def predicate():
+            count = self.get_mon_count()
+            if count >= int(n):
+                logger.console(f"[ce142] {count} mon daemons up")
+                return True
+            return False
+
+        self._poll_until(
+            predicate,
+            attempts=tries,
+            interval=5,
+            fail_msg=f"Never reached {n} mon daemons",
+        )
+
+    def assert_member_has_control_services(self, member, expected="yes"):
+        """Asserts that mon/mgr/mds are present on *member* via ceph -s on the head node.
+
+        *expected* is 'yes' or 'no'.
+        """
+        res = self.exec_in_container(HEAD_NODE, "microceph.ceph", "-s", timeout=30)
+        status = res.stdout if res.rc == 0 else ""
+        present = placement_status.member_in_ceph_status(status, member)
+        if str(expected).strip().lower() == "yes":
+            if not present:
+                raise AssertionError(
+                    f"{member} not found in ceph status; expected control services there. Status: {status}"
+                )
+        else:
+            if present:
+                raise AssertionError(
+                    f"{member} unexpectedly in ceph status; expected no control services there. Status: {status}"
+                )
+
+    def assert_no_ceph_cluster_on_container(self, container):
+        """Asserts that *container* has NOT bootstrapped Ceph: ceph status fails
+        and no ceph.conf exists."""
+        res = self.exec_in_container(container, "microceph.ceph", "status", timeout=30)
+        if res.rc == 0:
+            raise AssertionError(
+                f"microceph.ceph status unexpectedly succeeded on {container}; Ceph should not be bootstrapped"
+            )
+        conf = self.run_in_container_unchecked(
+            container, f"test -f {CEPH_CONF} && echo yes || echo no", 15
+        ).stdout.strip()
+        if conf != "no":
+            raise AssertionError(
+                f"Ceph config exists on {container} but Ceph should not be bootstrapped"
+            )

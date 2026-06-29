@@ -357,6 +357,44 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRefusesPartialBootstrap() 
 	assert.Equal(s.T(), database.CephStateFailed, lc.CephBootstrapState)
 }
 
+// TestCephOnlyBootstrapPartialRefusalHintsRecordedTarget verifies that when a
+// partial-bootstrap refusal happens on a retry targeting a DIFFERENT member
+// than the recorded one, the error names the recorded target: the connectivity
+// check runs locally on the serving member, and a member without a rendered
+// ceph.conf cannot see an otherwise healthy cluster, so the operator should
+// retry on the original target before treating the bootstrap as partial.
+func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapPartialRefusalHintsRecordedTarget() {
+	s.mockDB.set(database.ClusterLifecycle{
+		CephBootstrapped:    false,
+		CephBootstrapState:  database.CephStateFailed,
+		CephBootstrapTarget: "node-a",
+		Detail:              "prior partial failure",
+	})
+	s.mockDB.setConfig(map[string]string{
+		"fsid":                 "deadbeef-0000-0000-0000-000000000000",
+		"keyring.client.admin": "AQABfakekey==",
+	})
+
+	origVerify := verifyExistingCephBootstrapFunc
+	verifyExistingCephBootstrapFunc = func(_ context.Context) error {
+		return fmt.Errorf("ceph status failed")
+	}
+	s.T().Cleanup(func() { verifyExistingCephBootstrapFunc = origVerify })
+
+	origSteps := CephBootstrapStepsFunc
+	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+		return nil
+	}
+	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+
+	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	assert.ErrorIs(s.T(), err, ErrPartialBootstrap)
+	assert.Contains(s.T(), err.Error(), `recorded on member "node-a"`,
+		"the refusal must name the recorded bootstrap target")
+	assert.Contains(s.T(), err.Error(), "--target node-a",
+		"the refusal must suggest retrying on the recorded target")
+}
+
 // TestCephOnlyBootstrapRecoversStaleLifecycle verifies the recovery path for a
 // successful bootstrap whose final lifecycle write failed: config rows exist,
 // the lifecycle is stale, and a cheap Ceph connectivity check succeeds.

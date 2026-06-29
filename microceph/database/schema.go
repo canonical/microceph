@@ -23,6 +23,7 @@ var SchemaExtensions = []cluster.Update{
 	schemaUpdate8,
 	schemaUpdate9,
 	schemaUpdate10,
+	schemaUpdate11,
 }
 
 // getClusterTableName returns the name of the table that holds the record of cluster members from sqlite_master.
@@ -294,5 +295,15 @@ INSERT INTO placement_policy (id) VALUES (1);
 // lifecycle BlockedReason.
 func schemaUpdate10(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `ALTER TABLE placement_policy ADD COLUMN last_refusal TEXT DEFAULT NULL`)
+	return err
+}
+
+// schemaUpdate11 adds the apply_lock_token column to the placement_policy
+// table (CE142). It backs the cluster-wide placement apply lock: 0 means
+// unlocked, any other value is the acquiring writer's token (its acquisition
+// time in Unix nanoseconds). The token doubles as a lease timestamp so a lock
+// held by a crashed daemon can be reclaimed once the lease expires.
+func schemaUpdate11(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `ALTER TABLE placement_policy ADD COLUMN apply_lock_token INTEGER NOT NULL DEFAULT 0`)
 	return err
 }

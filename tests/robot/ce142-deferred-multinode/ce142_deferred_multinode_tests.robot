@@ -32,37 +32,6 @@ Ceph Only Bootstrap Target And Verify
     Run In Container    node-wrk0    microceph.ceph -s    30
     Assert Member Has Control Services    ${target}    yes
 
-Assert Bootstrap State In Container
-    [Documentation]    Asserts the lifecycle bootstrap_state in the placement status JSON on a container.
-    [Arguments]    ${container}    ${expected_state}    ${bootstrapped}=${EMPTY}
-    ${json}=    Get Placement Status JSON In Container    ${container}
-    Should Contain    ${json}    "bootstrap_state":"${expected_state}"
-        ...    msg=Expected bootstrap_state=${expected_state} on ${container}, got: ${json}
-    IF    "${bootstrapped}" != "${EMPTY}"
-        Should Contain    ${json}    "ceph_bootstrapped":${bootstrapped}
-            ...    msg=Expected ceph_bootstrapped=${bootstrapped} on ${container}, got: ${json}
-    END
-
-Put Placement In Container
-    [Documentation]    PUTs a placement policy on a container's control socket; returns the response body JSON.
-    [Arguments]    ${container}    ${body}
-    ${body_json}=    MicroCeph API Put In Container    ${container}    placement    ${body}
-    RETURN    ${body_json}
-
-Wait For Mon Count
-    [Documentation]    Polls ceph -s on node-wrk0 until at least ${n} mon daemons are reported.
-    [Arguments]    ${n}    ${tries}=30
-    FOR    ${i}    IN RANGE    ${tries}
-        ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s 2>/dev/null | grep -oP 'mon: \\K[0-9]+' || echo 0"    30
-        ${count}=    Set Variable    ${result.stdout.strip()}
-        IF    "${count}" != "" and int("${count}") >= ${n}
-            Log To Console    [ce142] ${count} mon daemons up
-            RETURN
-        END
-        Sleep    5s
-    END
-    Fail    Never reached ${n} mon daemons
-
 *** Test Cases ***
 Test Deferred Join Forms MicroCluster Without Ceph
     [Documentation]    UAT-S1.2: `microceph cluster join --defer-ceph` joins MicroCluster but does
@@ -91,8 +60,9 @@ Test Declarative Control Placement Add
     [Documentation]    UAT-S1.5: PUT /1.0/placement with control:true on node-wrk0 adds MON/MGR/MDS
     ...    there via the declarative placement engine.
     [Tags]    placement
-    ${code}=    Put Placement In Container    node-wrk0    {"mode":"reconcile","members":{"node-wrk0":{"control":true}}}
-    Should Contain    ${code}    "status_code":200    msg=Control placement PUT on node-wrk0 failed: ${code}
+    ${resp}=    MicroCeph API Put In Container    node-wrk0    placement    {"mode":"reconcile","members":{"node-wrk0":{"control":true}}}
+    ${code}=    Response Status Code    ${resp}
+    Should Be Equal As Integers    ${code}    200    msg=Control placement PUT on node-wrk0 failed: ${resp}
     Wait For Mon Count    2
     Run In Container    node-wrk0    microceph.ceph -s    30
 
@@ -104,9 +74,10 @@ Test Declarative Control Placement Keep One Invariant
     [Tags]    placement
     # node-wrk1 has control from bootstrap; node-wrk0 has control from the previous test.
     # Request control:false on BOTH current control members at once -> keep-one refuses the last.
-    ${code}=    Put Placement In Container    node-wrk0    {"mode":"reconcile","members":{"node-wrk0":{"control":false},"node-wrk1":{"control":false}}}
-    Run Keyword And Continue On Failure    Should Not Contain    ${code}    "status_code":200
-        ...    msg=Expected keep-one refusal (non-200), got ${code}
+    ${resp}=    MicroCeph API Put In Container    node-wrk0    placement    {"mode":"reconcile","members":{"node-wrk0":{"control":false},"node-wrk1":{"control":false}}}
+    ${code}=    Response Status Code    ${resp}
+    Run Keyword And Continue On Failure    Should Not Be Equal As Integers    ${code}    200
+        ...    msg=Expected keep-one refusal (non-200), got ${resp}
     # At least one MON must still be present.
-    ${status}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph.ceph -s 2>/dev/null | grep -oP 'mon: \\K[0-9]+' || echo 0"    30
-    Should Be True    int("${status.stdout.strip()}") >= 1    msg=All MONs removed despite keep-one invariant
+    ${mons}=    Get Mon Count
+    Should Be True    ${mons} >= 1    msg=All MONs removed despite keep-one invariant

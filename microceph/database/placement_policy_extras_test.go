@@ -21,6 +21,7 @@ CREATE TABLE placement_policy (
   active      INTEGER NOT NULL DEFAULT 0,
   policy_json TEXT,
   last_refusal TEXT DEFAULT NULL,
+  apply_lock_token INTEGER NOT NULL DEFAULT 0,
   CONSTRAINT singleton CHECK (id = 1)
 );
 INSERT INTO placement_policy (id) VALUES (1);
@@ -84,4 +85,98 @@ func TestClearPlacementPolicy(t *testing.T) {
 	rec, err := GetPlacementPolicy(context.Background(), tx3)
 	require.NoError(t, err)
 	assert.False(t, rec.Active)
+}
+
+// lockTx runs fn inside a committed transaction on db.
+func lockTx(t *testing.T, db *sql.DB, fn func(tx *sql.Tx)) {
+	t.Helper()
+	tx, err := db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	fn(tx)
+	require.NoError(t, tx.Commit())
+}
+
+// TestPlacementApplyLockAcquireAndContention verifies that a free lock is
+// acquired and that a second acquirer is refused while the first holder's
+// lease is live.
+func TestPlacementApplyLockAcquireAndContention(t *testing.T) {
+	db := setupPlacementDB(t)
+	ctx := context.Background()
+
+	const lease = int64(1000)
+	first := int64(5000)
+	second := int64(5100)
+
+	lockTx(t, db, func(tx *sql.Tx) {
+		acquired, err := TryAcquirePlacementApplyLock(ctx, tx, first, first-lease)
+		require.NoError(t, err)
+		assert.True(t, acquired, "a free lock must be acquired")
+	})
+
+	lockTx(t, db, func(tx *sql.Tx) {
+		acquired, err := TryAcquirePlacementApplyLock(ctx, tx, second, second-lease)
+		require.NoError(t, err)
+		assert.False(t, acquired, "a live holder must block a second acquirer")
+	})
+}
+
+// TestPlacementApplyLockStaleReclaim verifies that a lock whose holder's
+// lease has expired is reclaimed by the next acquirer.
+func TestPlacementApplyLockStaleReclaim(t *testing.T) {
+	db := setupPlacementDB(t)
+	ctx := context.Background()
+
+	const lease = int64(1000)
+	stale := int64(5000)
+	// The reclaimer arrives after the stale holder's lease expired.
+	reclaimer := stale + lease + 1
+
+	lockTx(t, db, func(tx *sql.Tx) {
+		acquired, err := TryAcquirePlacementApplyLock(ctx, tx, stale, stale-lease)
+		require.NoError(t, err)
+		require.True(t, acquired)
+	})
+
+	lockTx(t, db, func(tx *sql.Tx) {
+		acquired, err := TryAcquirePlacementApplyLock(ctx, tx, reclaimer, reclaimer-lease)
+		require.NoError(t, err)
+		assert.True(t, acquired, "an expired lease must be reclaimable")
+	})
+}
+
+// TestPlacementApplyLockReleaseOnlyOwnToken verifies that release is
+// conditional on the holder's token: a stale holder cannot clobber a
+// reclaimer's lock, and a proper release frees the lock for the next acquirer.
+func TestPlacementApplyLockReleaseOnlyOwnToken(t *testing.T) {
+	db := setupPlacementDB(t)
+	ctx := context.Background()
+
+	const lease = int64(1000)
+	holder := int64(5000)
+	stranger := int64(4000)
+
+	lockTx(t, db, func(tx *sql.Tx) {
+		acquired, err := TryAcquirePlacementApplyLock(ctx, tx, holder, holder-lease)
+		require.NoError(t, err)
+		require.True(t, acquired)
+	})
+
+	lockTx(t, db, func(tx *sql.Tx) {
+		released, err := ReleasePlacementApplyLock(ctx, tx, stranger)
+		require.NoError(t, err)
+		assert.False(t, released, "release with a foreign token must not free the lock")
+	})
+
+	lockTx(t, db, func(tx *sql.Tx) {
+		released, err := ReleasePlacementApplyLock(ctx, tx, holder)
+		require.NoError(t, err)
+		assert.True(t, released, "release with the holder's token must free the lock")
+	})
+
+	next := int64(5200)
+	lockTx(t, db, func(tx *sql.Tx) {
+		acquired, err := TryAcquirePlacementApplyLock(ctx, tx, next, next-lease)
+		require.NoError(t, err)
+		assert.True(t, acquired, "a released lock must be acquirable again")
+	})
 }
