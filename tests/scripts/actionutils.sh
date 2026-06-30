@@ -901,20 +901,62 @@ function remote_wait_for_rbd_mirror_health() {
     done
 }
 
+# rbd_disable_retry_transient_health disables an RBD replication resource,
+# retrying only while the daemon rejects the request because mirror health is
+# transiently not OK. After a failover the secondary resyncs from the new
+# primary, and pool health flaps to WARNING during that window; the daemon
+# refuses a non-forced pool disable while it is not OK ("pool replication
+# status not OK"). The final command output is echoed so callers can assert on
+# it, and any non-health outcome (success, or a different rejection such as the
+# image-mirroring-mode guard) ends the retry loop immediately.
+function rbd_disable_retry_transient_health() {
+    set -eux
+    local node="$1"
+    local target="$2"
+    local max_attempts=60
+    local out=""
+
+    for i in $(seq 1 $max_attempts); do
+        if out=$(lxc exec "$node" -- sh -c "sudo microceph replication disable rbd $target 2>&1"); then
+            echo "$out"
+            return 0
+        fi
+        if echo "$out" | grep -q "status not OK"; then
+            echo "attempt #$i: '$target' disable blocked by transient mirror health, retrying..." >&2
+            sleep 5
+            continue
+        fi
+        # Non-transient outcome (e.g. the expected image-mode guard); surface it.
+        echo "$out"
+        return 1
+    done
+
+    echo "Timed out waiting for transient mirror health to clear while disabling '$target'" >&2
+    echo "$out"
+    return 1
+}
+
 function remote_disable_rbd_mirroring() {
     set -eux
     # Wait for replication health to be OK before attempting disable operations.
     remote_wait_for_rbd_mirror_health node-wrk2 "pool_one pool_two"
 
+    # Pool-level disables re-validate mirror health in the daemon on every call,
+    # and health can transiently flap to WARNING while the secondary resyncs
+    # after the failover above. A single up-front wait is therefore not enough,
+    # so retry each pool-level disable while it is blocked by that transient
+    # health. Image-level disables are not health gated and are left as-is.
+
     # check disables fail for image mirroring pools with images currently being mirrored
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_two 2>&1 || true"  | grep "in Image mirroring mode"
+    disable_out=$(rbd_disable_retry_transient_health node-wrk2 pool_two || true)
+    echo "$disable_out" | grep "in Image mirroring mode"
     # disable both images in pool_two and then disable pool_two
     lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_two/image_one"
     lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_two/image_two"
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_two"
+    rbd_disable_retry_transient_health node-wrk2 pool_two
 
     # disable pool one
-    lxc exec node-wrk2 -- sh -c "sudo microceph replication disable rbd pool_one"
+    rbd_disable_retry_transient_health node-wrk2 pool_one
 }
 
 function remote_remove_and_verify() {
