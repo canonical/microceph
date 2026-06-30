@@ -1,5 +1,5 @@
-canonical-sphinx[full]
-packaging
-sphinxcontrib-svg2pdfconverter[CairoSVG]
-sphinx-last-updated-by-git
-sphinx-sitemap
+canonical-sphinx[full]==0.6.0
+packaging==26.2
+sphinxcontrib-svg2pdfconverter[CairoSVG]==2.1.0
+sphinx-last-updated-by-git==0.3.8
+sphinx-sitemap==2.9.0
