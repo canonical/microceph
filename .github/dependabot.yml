@@ -1,0 +1,50 @@
+# Dependabot version updates.
+#
+# Dependabot updates dependencies that already declare a version; it never
+# *introduces* a pin. docs/requirements.txt is therefore pinned (==) so that it
+# falls under management; tests/robot/requirements.txt keeps its existing >=
+# floors, which Dependabot raises via versioning-strategy: increase below.
+version: 2
+updates:
+  # Go modules: microceph/go.mod (+ go.sum).
+  - package-ecosystem: gomod
+    directory: /microceph/
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 10
+    groups:
+      go-dependencies: # bundle all Go bumps into a single PR
+        patterns: ["*"]
+
+  # Python requirements.txt files (docs build + robot tests).
+  - package-ecosystem: pip
+    directories: # plural form takes a list (and globs); `directory` does not
+      - /docs # docs/requirements.txt
+      - /tests/robot # tests/robot/requirements.txt
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    versioning-strategy: increase
+    groups:
+      python-requirements:
+        patterns: ["*"]
+
+  # microceph-orch: PEP 621 pyproject.toml + uv.lock (native uv ecosystem).
+  - package-ecosystem: uv
+    directory: /microceph-orch
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      orch-python:
+        patterns: ["*"]
+
+  # GitHub Actions referenced in .github/workflows/*.yml.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      github-actions: # one PR for all action bumps
+        patterns: ["*"]
