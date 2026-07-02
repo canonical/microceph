@@ -61,7 +61,15 @@ spawn() {
             maybe_unlock "${i}/unencrypted.db" "${nr}" "$( get_key "${nr}" ".db" )" ".db"
         fi
 
-        ceph-osd --cluster ceph --id "${nr}"
+        # Start the OSD but tolerate per-OSD failure: a single OSD that
+        # cannot start (e.g. its backing block device was removed without
+        # purging the OSD first) must not abort the loop under `set -e`,
+        # otherwise every later OSD on the node is stranded and the service
+        # enters an endless restart loop. See issue #521.
+        if ! ceph-osd --cluster ceph --id "${nr}"; then
+            echo "osd.${nr} failed to start" >&2
+            continue
+        fi
     done
 
     wait
