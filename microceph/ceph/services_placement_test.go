@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/tests"
@@ -26,6 +27,14 @@ func TestServicesPlacement(t *testing.T) {
 // Set up test suite
 func (s *servicesPlacementSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
+	// Bypass database-dependent ceph.conf rendering: these tests exercise the
+	// placement pipeline (PopulateParams/HospitalityCheck/ServiceInit/...) with
+	// a mock state, not a real cluster database.
+	renderConfigFunc = func(_ context.Context, _ interfaces.StateInterface) error { return nil }
+}
+
+func (s *servicesPlacementSuite) TearDownTest() {
+	renderConfigFunc = UpdateConfig
 }
 
 func addSnapServiceActiveExpectations(r *mocks.Runner, service string, retStr string, retErr error) {

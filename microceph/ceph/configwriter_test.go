@@ -3,6 +3,7 @@ package ceph
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/canonical/microceph/microceph/constants"
@@ -275,4 +276,65 @@ func (s *configWriterSuite) TestWriteGaneshaCephConfig() {
 	assert.Equal(s.T(), nil, err)
 	assert.Contains(s.T(), string(data), "mon host = foo")
 	assert.Contains(s.T(), string(data), "keyring = /foo/lish/keyring")
+}
+
+// TestWriteConfigConcurrentNoRace verifies that concurrent WriteConfig calls
+// targeting the SAME destination file do not collide on a shared temp path:
+// every writer creates its own uniquely-named temp file (os.CreateTemp) so no
+// writer can rename a partially-written file from another writer into place.
+// After all writers finish the destination must exist, hold a complete file
+// (the expected marker is present), and no leftover temp files may remain in
+// the config directory (every temp is either renamed away or removed).
+func (s *configWriterSuite) TestWriteConfigConcurrentNoRace() {
+	config := newRadosGWConfig(s.Tmp)
+	data := map[string]any{
+		"monitors": "foohost",
+		"rgwPort":  80,
+	}
+
+	const n = 20
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errs []error
+
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			err := config.WriteConfig(data, 0644)
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	assert.Empty(s.T(), errs, "no concurrent WriteConfig call must return an error")
+
+	// The destination file must exist, hold a complete render, and have the
+	// requested mode (os.CreateTemp uses 0600; WriteConfig must os.Chmod it back).
+	info, err := os.Stat(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+	assert.Equal(s.T(), os.FileMode(0644), info.Mode().Perm(),
+		"final file must have the requested mode, not the os.CreateTemp default 0600")
+	contents, err := os.ReadFile(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+	assert.Contains(s.T(), string(contents), "foohost",
+		"final file must contain a complete render, not a torn write")
+
+	// No leftover temp files: every temp file is either renamed into place or
+	// removed on an error path. os.CreateTemp names match "<base>.*".
+	entries, err := os.ReadDir(s.Tmp)
+	assert.Equal(s.T(), nil, err)
+	base := filepath.Base(config.GetPath())
+	for _, e := range entries {
+		name := e.Name()
+		if name == base {
+			continue
+		}
+		assert.False(s.T(), len(name) > len(base) && name[:len(base)+1] == base+".",
+			"leftover temp file must not remain: %s", name)
+	}
 }

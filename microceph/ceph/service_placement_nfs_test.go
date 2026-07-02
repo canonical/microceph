@@ -8,6 +8,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
 
@@ -28,6 +29,13 @@ func TestServicesPlacementNFS(t *testing.T) {
 func (s *servicePlacementNFSSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
+	// Bypass database-dependent ceph.conf rendering: these tests exercise the
+	// NFS placement pipeline with a mock state, not a real cluster database.
+	renderConfigFunc = func(_ context.Context, _ interfaces.StateInterface) error { return nil }
+}
+
+func (s *servicePlacementNFSSuite) TearDownTest() {
+	renderConfigFunc = UpdateConfig
 }
 
 func (s *servicePlacementNFSSuite) TestInvalidPayload() {

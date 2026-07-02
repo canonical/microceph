@@ -25,6 +25,11 @@ type BootstrapConfig struct {
 	AdoptFSID     string   // fsid of the existing ceph cluster.
 	AdoptMonHosts []string // slice of exisiting monitor addresses.
 	AdoptAdminKey string   // Admin key for providing microceph with privileges.
+
+	// ### Deferred Ceph Parameters (CE142)
+	// DeferCeph, when true, initializes MicroCluster/dqlite only and defers
+	// Ceph bootstrap to a later Ceph-only bootstrap operation. See spec CE142.
+	DeferCeph bool
 }
 
 func EncodeBootstrapConfig(data BootstrapConfig) map[string]string {
@@ -39,6 +44,7 @@ func EncodeBootstrapConfig(data BootstrapConfig) map[string]string {
 		"AdoptMonHosts":    strings.Join(data.AdoptMonHosts, ","),
 		"AdoptAdminKey":    data.AdoptAdminKey,
 		"AvailabilityZone": data.AvailabilityZone,
+		"DeferCeph":        strconv.FormatBool(data.DeferCeph),
 	}
 }
 
@@ -53,4 +59,5 @@ func DecodeBootstrapConfig(input map[string]string, data *BootstrapConfig) {
 	data.AdoptMonHosts = strings.Split(input["AdoptMonHosts"], ",")
 	data.AdoptAdminKey = input["AdoptAdminKey"]
 	data.AvailabilityZone = input["AvailabilityZone"]
+	data.DeferCeph, _ = strconv.ParseBool(input["DeferCeph"])
 }

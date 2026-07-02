@@ -12,6 +12,7 @@ Run with pytest:
 
 import json
 
+import placement_status
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
 from snap_services import enabled_active_services
@@ -860,3 +861,109 @@ def test_parse_migration_status_requires_two_space_indent():
 def test_parse_migration_status_absent_node_is_false():
     src_ok, dst_ok = parse_migration_status(_MIGRATED_STATUS, "node-wrk7", "node-wrk8")
     assert (src_ok, dst_ok) == (False, False)
+
+
+# ---------------------------------------------------------------------------
+# placement_status (CE142)
+# ---------------------------------------------------------------------------
+
+_SYNC_PLACEMENT_RESPONSE = json.dumps({
+    "type": "sync",
+    "status": "Success",
+    "status_code": 200,
+    "metadata": {
+        "active": True,
+        "observed": None,
+        "ceph_bootstrapped": False,
+        "bootstrap_state": "not_bootstrapped",
+    },
+})
+
+_ERROR_RESPONSE = json.dumps({
+    "type": "error",
+    "error_code": 400,
+    "error": "keep-one invariant: refused to remove last mon on node-a",
+})
+
+
+def test_response_code_sync_success():
+    assert placement_status.response_code(_SYNC_PLACEMENT_RESPONSE) == 200
+
+
+def test_response_code_error_body():
+    assert placement_status.response_code(_ERROR_RESPONSE) == 400
+
+
+def test_response_code_garbage_is_zero():
+    # Fail closed: comparisons against 200 must fail on unparseable bodies.
+    assert placement_status.response_code("curl: (7) connection refused") == 0
+    assert placement_status.response_code("") == 0
+    assert placement_status.response_code(None) == 0
+
+
+def test_response_code_non_dict_json_is_zero():
+    assert placement_status.response_code("[1, 2, 3]") == 0
+
+
+def test_bootstrap_state_from_metadata():
+    assert placement_status.bootstrap_state(_SYNC_PLACEMENT_RESPONSE) == "not_bootstrapped"
+
+
+def test_bootstrap_state_absent_is_empty():
+    assert placement_status.bootstrap_state(_ERROR_RESPONSE) == ""
+    assert placement_status.bootstrap_state("garbage") == ""
+
+
+def test_ceph_bootstrapped_flag():
+    assert placement_status.ceph_bootstrapped(_SYNC_PLACEMENT_RESPONSE) is False
+    bootstrapped = json.dumps({"status_code": 200, "metadata": {"ceph_bootstrapped": True}})
+    assert placement_status.ceph_bootstrapped(bootstrapped) is True
+
+
+def test_placement_active_flag():
+    assert placement_status.placement_active(_SYNC_PLACEMENT_RESPONSE) is True
+    inactive = json.dumps({"status_code": 200, "metadata": {"active": False}})
+    assert placement_status.placement_active(inactive) is False
+    assert placement_status.placement_active("garbage") is False
+
+
+def test_supported_capabilities_list():
+    raw = json.dumps({
+        "status_code": 200,
+        "metadata": {"supported": ["deferred-ceph-bootstrap", "ceph-only-bootstrap"]},
+    })
+    assert placement_status.supported_capabilities(raw) == [
+        "deferred-ceph-bootstrap",
+        "ceph-only-bootstrap",
+    ]
+
+
+def test_supported_capabilities_malformed_is_empty():
+    assert placement_status.supported_capabilities("garbage") == []
+    non_list = json.dumps({"status_code": 200, "metadata": {"supported": "nope"}})
+    assert placement_status.supported_capabilities(non_list) == []
+
+
+def test_mon_count_prefers_monmap_num_mons():
+    raw = json.dumps({"monmap": {"num_mons": 3}, "quorum_names": ["a", "b"]})
+    assert placement_status.mon_count(raw) == 3
+
+
+def test_mon_count_falls_back_to_quorum_names():
+    raw = json.dumps({"quorum_names": ["a", "b"]})
+    assert placement_status.mon_count(raw) == 2
+
+
+def test_mon_count_garbage_is_zero():
+    # Poll loops treat an unreachable/unready cluster as zero mons.
+    assert placement_status.mon_count("Error connecting to cluster") == 0
+    assert placement_status.mon_count("") == 0
+    assert placement_status.mon_count("{}") == 0
+
+
+def test_member_in_ceph_status_substring():
+    status = "  services:\n    mon: 2 daemons, quorum node-wrk0,node-wrk1\n"
+    assert placement_status.member_in_ceph_status(status, "node-wrk1") is True
+    assert placement_status.member_in_ceph_status(status, "node-wrk3") is False
+    assert placement_status.member_in_ceph_status("", "node-wrk0") is False
+    assert placement_status.member_in_ceph_status(None, "node-wrk0") is False

@@ -48,6 +48,10 @@ var Servers = map[string]mcTypes.Server{
 					opsMaintenanceNodeCmd,
 					// Certificate APIs
 					certificatesRGWCmd,
+					// CE142 placement and Ceph-only bootstrap APIs
+					placementCmd,
+					cephBootstrapCmd,
+					capabilitiesCmd,
 				},
 			},
 		},

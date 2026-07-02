@@ -32,23 +32,58 @@ func (c *Config) validateConfigFile() error {
 	return nil
 }
 
-// WriteConfig writes the configuration file given a data bag and a filemode
+// WriteConfig writes the configuration file given a data bag and a filemode.
+// It writes atomically: the template is rendered to a uniquely-named temporary
+// file (created via os.CreateTemp in the same directory as the destination) and
+// then renamed into place. Using a unique temp file name — rather than a fixed
+// ".tmp" path — means concurrent renders of the same config file cannot collide
+// or rename a partially-written file from another writer into place, so the
+// atomic-rename guarantee holds under concurrency (AGENTS.md "Atomic file
+// writes"). A failed write cannot leave partial state on disk: the temp file is
+// removed on every error path.
 func (c *Config) WriteConfig(data map[string]any, mode int) error {
 	err := c.validateConfigFile()
 	if err != nil {
 		return err
 	}
 
-	fd, err := os.OpenFile(c.GetPath(), os.O_CREATE|os.O_TRUNC|os.O_RDWR, os.FileMode(mode))
+	destPath := c.GetPath()
+
+	// os.CreateTemp creates the file with O_RDWR|O_CREATE|O_EXCL and mode 0600,
+	// so two concurrent writers can never pick the same name. Create it in the
+	// same directory as the destination so os.Rename is same-filesystem/atomic.
+	fd, err := os.CreateTemp(filepath.Dir(destPath), filepath.Base(destPath)+".*")
 	if err != nil {
 		return fmt.Errorf("Couldn't write %s: %w", c.configFile, err)
 	}
-	defer fd.Close()
+	tmpPath := fd.Name()
+
+	// os.CreateTemp ignores the requested mode (uses 0600), so apply it now so
+	// the final renamed file has the requested permissions.
+	err = os.Chmod(tmpPath, os.FileMode(mode))
+	if err != nil {
+		fd.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("Couldn't write %s: %w", c.configFile, err)
+	}
 
 	err = c.configTemplate.Execute(fd, data)
+	closeErr := fd.Close()
 	if err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("Couldn't render %s: %w", c.configFile, err)
 	}
+	if closeErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("Couldn't close %s: %w", c.configFile, closeErr)
+	}
+
+	err = os.Rename(tmpPath, destPath)
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("Couldn't rename %s: %w", c.configFile, err)
+	}
+
 	return nil
 }
 

@@ -262,3 +262,41 @@ Run Hurl
     [Arguments]    ${hurl_file}
     Log To Console    [hurl] Running ${hurl_file}...
     Run In VM And Check    sudo hurl --unix-socket /var/snap/microceph/common/state/control.socket --test ${hurl_file}    120
+
+# ---------------------------------------------------------------------------
+# CE142 role-managed / deferred-Ceph helpers
+#
+# The API access, polling, and assertion keywords (MicroCeph API Get/Put/
+# Delete, Assert Lifecycle State, Wait For ..., Assert Member Has Control
+# Services, ...) live in microceph_harness.py, with their parse decisions in
+# placement_status.py. Only linear "do X" lifecycle keywords remain here.
+# ---------------------------------------------------------------------------
+
+Deferred Bootstrap Head Node
+    [Documentation]    Bootstraps MicroCluster only (Ceph deferred) on node-wrk0 over the public network.
+    ...    Mirrors Bootstrap Head Node but adds --defer-ceph and does NOT expect Ceph services.
+    Log To Console    [ce142] Deferred bootstrap on node-wrk0...
+    ${result}=    Run In VM    lxc network list --format=csv | grep 'public' | cut -d, -f4    30
+    ${nw}=    Set Variable    ${result.stdout.strip()}
+    Run In Container    node-wrk0    microceph cluster bootstrap --defer-ceph --public-network=${nw}    120
+    Sleep    5s
+    Run In Container    node-wrk0    microceph status    30
+
+Deferred Join Worker Nodes
+    [Documentation]    Joins node-wrk1..3 to the cluster with --defer-ceph (no Ceph auto-placement).
+    Log To Console    [ce142] Deferred join workers...
+    FOR    ${i}    IN    1    2    3
+        ${tok_result}=    Run In VM    lxc exec node-wrk0 -- microceph cluster add node-wrk${i}    60
+        ${tok}=    Set Variable    ${tok_result.stdout.strip()}
+        Run In Container    node-wrk${i}    microceph cluster join --defer-ceph ${tok}    120
+    END
+    Wait For N Nodes In Cluster    4
+    Run In Container    node-wrk0    microceph status    30
+
+Ceph Only Bootstrap Target
+    [Documentation]    Runs `microceph cluster bootstrap-ceph --target <member>` from node-wrk0 and waits
+    ...    for Ceph to come up on the target. Returns nothing.
+    [Arguments]    ${target}
+    Log To Console    [ce142] Ceph-only bootstrap targeting ${target}...
+    Run In Container    node-wrk0    microceph cluster bootstrap-ceph --target ${target}    300
+    Sleep    5s

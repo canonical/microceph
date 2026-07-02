@@ -157,12 +157,41 @@ func bootstrapDBAddConfigItemOp(ctx context.Context, tx *sql.Tx, Key string, Val
 
 // bootstrapDBAddHostTagOp adds a host tag to the database within a transaction.
 func bootstrapDBAddHostTagOp(ctx context.Context, tx *sql.Tx, member string, key string, value string) error {
-	_, err := database.CreateHostTag(ctx, tx, database.HostTag{Member: member, Key: key, Value: value})
+	err := RecordHostTagFunc(ctx, tx, member, key, value)
 	if err != nil {
 		err = fmt.Errorf("failed to record host tag: Member(%s), Key(%s), Value(%s): %w", member, key, value, err)
 		logger.Error(err.Error())
 		return err
 	}
 
+	return nil
+}
+
+var hostTagExistsFunc = database.HostTagExists
+var getHostTagFunc = database.GetHostTag
+var createHostTagFunc = database.CreateHostTag
+
+// RecordHostTagFunc records a host tag within a database transaction. It is an
+// injectable function (suffixed with Func per project convention) so the
+// deferred bootstrapper can record AZ tags and tests can override it.
+var RecordHostTagFunc = func(ctx context.Context, tx *sql.Tx, member string, key string, value string) error {
+	exists, err := hostTagExistsFunc(ctx, tx, member, key)
+	if err != nil {
+		return fmt.Errorf("failed to check existing host tag: %w", err)
+	}
+	if exists {
+		tag, err := getHostTagFunc(ctx, tx, member, key)
+		if err != nil {
+			return fmt.Errorf("failed to read existing host tag: %w", err)
+		}
+		if tag.Value != value {
+			return fmt.Errorf("host tag mismatch for Member(%s), Key(%s): existing value %q differs from requested value %q", member, key, tag.Value, value)
+		}
+		return nil // idempotent: same tag already recorded (e.g. retry after partial failure)
+	}
+	_, err = createHostTagFunc(ctx, tx, database.HostTag{Member: member, Key: key, Value: value})
+	if err != nil {
+		return fmt.Errorf("failed to record host tag: Member(%s), Key(%s): %w", member, key, err)
+	}
 	return nil
 }
