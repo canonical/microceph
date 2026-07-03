@@ -18,7 +18,7 @@ import (
 // the lifecycle state reflects reality for clusters created after the
 // cluster_lifecycle schema was introduced (CE142). Without this, a fresh
 // non-deferred cluster would be left not_bootstrapped even though Ceph is up,
-// breaking ApplyPlacement's pre-bootstrap guard and CephOnlyBootstrap's
+// breaking ApplyPlacement's pre-bootstrap guard and BootstrapCeph's
 // idempotence.
 //
 // It no-ops when no server certificate is available, mirroring
@@ -79,12 +79,12 @@ var cephBootstrappedFromConfigFunc = func(ctx context.Context, s interfaces.Stat
 	return bootstrapped, err
 }
 
-// cephIsBootstrapped reports whether Ceph has been bootstrapped. The
+// cephIsBootstrappedFunc reports whether Ceph has been bootstrapped. The
 // cluster_lifecycle row is the primary signal; the config-table presence of
 // fsid + admin keyring is a defensive fallback so a stale lifecycle row cannot
 // cause placement to be rejected or a second bootstrap to be attempted over an
 // existing cluster. Injectable for testing.
-var cephIsBootstrapped = func(ctx context.Context, s interfaces.StateInterface) (bool, error) {
+var cephIsBootstrappedFunc = func(ctx context.Context, s interfaces.StateInterface) (bool, error) {
 	lc, err := getClusterLifecycleFunc(ctx, s)
 	if err == nil && (lc.CephBootstrapped || lc.CephBootstrapState == database.CephStateBootstrapped) {
 		return true, nil

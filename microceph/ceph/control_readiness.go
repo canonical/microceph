@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,7 +17,8 @@ import (
 // is viable in Ceph — not merely placed (DB row exists) or snap-locally-active.
 // For MON: the member must be in the quorum. For MGR: active or standby. For
 // MDS: up (active or standby). Returns (false, nil) if the service is not yet
-// viable; (false, err) if the check itself failed (caller treats as not-ready).
+// viable; (false, err) if the check itself failed (caller retries until the
+// deadline, treating transient errors as not-ready rather than aborting).
 //
 // It is injectable for testing.
 var controlServiceReadyFunc = controlServiceReady
@@ -35,10 +38,11 @@ func controlServiceReady(ctx context.Context, service string, member string) (bo
 }
 
 // monInQuorum checks whether a MON daemon on member is in the Ceph quorum.
-// It parses 'ceph mon stat -f json', which on recent Ceph releases (Tentacle)
-// exposes quorum members as a "quorum" array of {"rank":N,"name":"<host>"}
-// objects rather than the legacy "quorum_names" string array. Both shapes are
-// accepted so the check works across Ceph versions.
+// It parses 'ceph mon stat -f json', which exposes quorum members as a "quorum"
+// array of {"rank":N,"name":"<host>"} objects. A legacy "quorum_names" string
+// array (emitted by 'ceph -s'/'ceph quorum_status', not 'mon stat') is also
+// accepted as defense-in-depth so the check works if a future code path feeds
+// quorum_status-shaped output into this helper.
 func monInQuorum(ctx context.Context, member string) (bool, error) {
 	output, err := cephRunContext(ctx, "mon", "stat", "-f", "json")
 	if err != nil {
@@ -50,10 +54,11 @@ func monInQuorum(ctx context.Context, member string) (bool, error) {
 			Name string `json:"name"`
 		} `json:"quorum"`
 	}
-	if err := json.Unmarshal([]byte(output), &stat); err != nil {
+	err = json.Unmarshal([]byte(output), &stat)
+	if err != nil {
 		return false, fmt.Errorf("failed to parse 'ceph mon stat' output: %w", err)
 	}
-	if containsString(stat.QuorumNames, member) {
+	if slices.Contains(stat.QuorumNames, member) {
 		return true, nil
 	}
 	for _, q := range stat.Quorum {
@@ -78,7 +83,8 @@ func mgrActiveOrStandby(ctx context.Context, member string) (bool, error) {
 	var daemons []struct {
 		Name string `json:"name"`
 	}
-	if err := json.Unmarshal([]byte(output), &daemons); err != nil {
+	err = json.Unmarshal([]byte(output), &daemons)
+	if err != nil {
 		return false, fmt.Errorf("failed to parse 'ceph mgr metadata' output: %w", err)
 	}
 	for _, d := range daemons {
@@ -117,7 +123,8 @@ func mdsUp(ctx context.Context, member string) (bool, error) {
 			} `json:"filesystems"`
 		} `json:"fsmap"`
 	}
-	if err := json.Unmarshal([]byte(output), &stat); err != nil {
+	err = json.Unmarshal([]byte(output), &stat)
+	if err != nil {
 		return false, fmt.Errorf("failed to parse 'ceph mds stat' output: %w", err)
 	}
 	for _, s := range stat.FSMap.Standbys {
@@ -135,19 +142,42 @@ func mdsUp(ctx context.Context, member string) (bool, error) {
 	return false, nil
 }
 
+// controlReadinessCheckTimeout bounds each individual ceph CLI invocation
+// during readiness polling. Ceph mon-side commands (mon stat, mgr metadata,
+// mds stat) can block indefinitely when MON quorum is lost; without a per-call
+// timeout a single hung subprocess would consume the entire request budget
+// (placementPutTimeout, 10 min) instead of the 2-minute readiness budget.
+// 30 seconds is generous for a healthy command to return while ensuring a
+// hung invocation does not starve the poll loop.
+const controlReadinessCheckTimeout = 30 * time.Second
+
 // waitForControlServiceReady polls Ceph readiness for a single control service
-// on a member until it is viable or the deadline is reached. Returns true if the
-// service became viable, false otherwise (including check errors, which are
-// treated conservatively as not-ready).
+// on a member until it is viable or the deadline is reached. Returns true if
+// the service became viable, false otherwise. Transient check errors (e.g. a
+// momentary MON election blip, truncated output) are treated as not-ready and
+// the poll continues until the deadline — a single shared transient cause can
+// error every goroutine at the same instant, and aborting immediately would
+// mark all retainers non-viable in one shot. Only parent-context cancellation
+// (the request deadline) causes an immediate bail.
 func waitForControlServiceReady(ctx context.Context, service, member string, deadline time.Time) bool {
 	pollInterval := 5 * time.Second
 	for {
-		ready, err := controlServiceReadyFunc(ctx, service, member)
+		// Bound each individual ceph exec so a hung subprocess cannot consume
+		// the full request budget. The parent ctx (placementPutTimeout) is the
+		// outer lifetime; this per-call timeout ensures a blocked 'ceph mon
+		// stat' is killed well within the 2-minute readiness budget.
+		checkCtx, cancel := context.WithTimeout(ctx, controlReadinessCheckTimeout)
+		ready, err := controlServiceReadyFunc(checkCtx, service, member)
+		cancel()
 		if err != nil {
-			logger.Warnf("readiness check for %s on %s failed: %v; treating as not ready", service, member, err)
-			return false
-		}
-		if ready {
+			// If the parent context was cancelled, bail immediately; otherwise
+			// the error is transient (e.g. MON mid-election, per-call timeout
+			// on a hung command) and we keep polling until the deadline.
+			if ctx.Err() != nil {
+				return false
+			}
+			logger.Warnf("readiness check for %s on %s failed: %v; will retry", service, member, err)
+		} else if ready {
 			return true
 		}
 		if time.Now().After(deadline) {
@@ -253,9 +283,10 @@ func copyObservedControlServices(observedControl map[string]map[string]bool) map
 // formatControlMap renders a service→members map as "mon:[a+ b-],mgr:[a+],mds:[]"
 // for debug logs. A '+' suffix means the entry is true (observed/viable); a '-'
 // suffix means false (e.g. a service marked non-viable by the readiness check).
-// Services are iterated in the stable controlServices order so output is
-// deterministic. Members absent from a service's map are omitted (the service
-// was never observed on them).
+// Services are iterated in the stable controlServices order and member names
+// within each service are sorted so output is deterministic across runs.
+// Members absent from a service's map are omitted (the service was never
+// observed on them).
 func formatControlMap(m map[string]map[string]bool) string {
 	var parts []string
 	for _, svc := range controlServices {
@@ -268,6 +299,7 @@ func formatControlMap(m map[string]map[string]bool) string {
 				names = append(names, name+"-")
 			}
 		}
+		sort.Strings(names)
 		parts = append(parts, fmt.Sprintf("%s:[%s]", svc, strings.Join(names, " ")))
 	}
 	return strings.Join(parts, ",")

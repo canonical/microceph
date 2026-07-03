@@ -17,8 +17,11 @@ type MemberPlacement struct {
 	// Rgw governs RGW placement. nil means untouched.
 	Rgw *bool `json:"rgw,omitempty" yaml:"rgw,omitempty"`
 	// Nfs governs role-driven NFS placement. nil means untouched; an empty
-	// (non-nil) slice means remove role-driven NFS on that member.
-	Nfs []NFSPlacement `json:"nfs,omitempty" yaml:"nfs,omitempty"`
+	// (non-nil) slice means remove role-driven NFS on that member. The json
+	// tag intentionally omits the omitempty modifier so that an empty slice
+	// (remove intent) round-trips through json.Marshal/Unmarshal as "nfs":[]
+	// rather than being silently dropped.
+	Nfs []NFSPlacement `json:"nfs" yaml:"nfs"`
 	// StorageEligible governs OSD enrollment eligibility. nil means untouched.
 	StorageEligible *bool `json:"storage_eligible,omitempty" yaml:"storage_eligible,omitempty"`
 }
@@ -50,6 +53,12 @@ type PlacementObservedMember struct {
 // PlacementStatus is the response body of GET /1.0/placement. It returns the
 // last accepted policy, current observed placement, lifecycle state, and any
 // blocked or in-progress reasons.
+//
+// BootstrapState is one of: "not_bootstrapped", "in_progress",
+// "bootstrapped", or "failed" (see database.CephState* constants).
+// BlockedReason is populated only when BootstrapState is "failed"; it carries
+// the error detail from the failed Ceph-only bootstrap attempt (with cephx
+// key material redacted).
 type PlacementStatus struct {
 	Active           bool                      `json:"active" yaml:"active"`
 	Policy           *PlacementPolicy          `json:"policy,omitempty" yaml:"policy,omitempty"`

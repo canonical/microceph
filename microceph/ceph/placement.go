@@ -105,20 +105,8 @@ func UnlockPlacementApply(ctx context.Context, s interfaces.StateInterface, toke
 	return nil
 }
 
-// ApplyPlacement applies a declarative placement policy (CE142). It is the core
-// of the placement engine: it computes the diff between desired and observed
-// placement, then applies control-service adds before removals, refusing to
-// remove the last viable MON, MGR, or MDS.
-//
-// Rules:
-//   - An empty members map performs no service operations.
-//   - Members absent from the map are not touched for service placement.
-//   - Omitted service fields on present members are not touched.
-//   - control:true adds MON/MGR/MDS; control:false removes them (after safety).
-//   - The engine never removes the last viable MON, MGR, or MDS.
-//   - Unknown members in the map are rejected.
-//
-// ApplyPlacementFunc is the injectable wrapper for testing.
+// ApplyPlacementFunc is the injectable wrapper for ApplyPlacement, used by the
+// API handler so tests can override it.
 var ApplyPlacementFunc = ApplyPlacement
 
 // getClusterLifecycleFunc reads the Ceph lifecycle state for the pre-bootstrap
@@ -133,13 +121,24 @@ var getClusterLifecycleFunc = func(ctx context.Context, s interfaces.StateInterf
 	return lc, err
 }
 
-// ApplyPlacement applies the given placement policy to the cluster. Requested
-// control-service adds are applied first, then removals. If a removal is
-// refused for keep-one safety the adds remain in effect (a partial apply) and
-// the function returns ErrKeepOneInvariant so the caller can surface a clear
-// blocked reason; the API handler is responsible for persisting the policy as
-// the declared intent in that case so GET /placement can report the
-// observed-vs-declared gap.
+// ApplyPlacement applies a declarative placement policy (CE142). It is the core
+// of the placement engine: it computes the diff between desired and observed
+// placement, then applies control-service adds before removals, refusing to
+// remove the last viable MON, MGR, or MDS.
+//
+// Rules:
+//   - An empty members map performs no service operations.
+//   - Members absent from the map are not touched for service placement.
+//   - Omitted service fields on present members are not touched.
+//   - control:true adds MON/MGR/MDS; control:false removes them (after safety).
+//   - The engine never removes the last viable MON, MGR, or MDS.
+//   - Unknown members in the map are rejected.
+//
+// If a removal is refused for keep-one safety the adds remain in effect (a
+// partial apply) and the function returns ErrKeepOneInvariant so the caller can
+// surface a clear blocked reason; the API handler is responsible for persisting
+// the policy as the declared intent in that case so GET /placement can report
+// the observed-vs-declared gap.
 func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
 	if s.ClusterState().ServerCert() == nil {
 		return fmt.Errorf("no server certificate")
@@ -152,7 +151,7 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 	}
 
 	// Pre-bootstrap guard: a non-empty placement policy requires Ceph to be
-	// bootstrapped. cephIsBootstrapped uses the lifecycle row as the primary
+	// bootstrapped. cephIsBootstrappedFunc uses the lifecycle row as the primary
 	// signal and falls back to config-row presence (fsid + admin keyring), so a
 	// stale lifecycle row on a fresh non-deferred cluster does not reject valid
 	// placement. Without this, EnableService -> UpdateConfig fails with an
@@ -161,7 +160,7 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 	//
 	// ErrCephNotBootstrapped is a client-side sentinel so the API handler maps
 	// it to HTTP 400 (BadRequest) rather than the SmartError 500 fallback.
-	bootstrapped, err := cephIsBootstrapped(ctx, s)
+	bootstrapped, err := cephIsBootstrappedFunc(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to determine Ceph bootstrap state: %w", err)
 	}
@@ -204,7 +203,8 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 	for _, svc := range controlServices {
 		for memberName := range desiredControl {
 			if !observedControl[svc][memberName] {
-				if err := addControlServiceFunc(ctx, s, memberName, svc); err != nil {
+				err = addControlServiceFunc(ctx, s, memberName, svc)
+				if err != nil {
 					return fmt.Errorf("failed to add %s on %s: %w", svc, memberName, err)
 				}
 				// Update observed state so the removal loop sees the new service.
@@ -267,7 +267,8 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 				refused = append(refused, fmt.Sprintf("%s on %s", svc, memberName))
 				continue
 			}
-			if err := removeControlServiceFunc(ctx, s, memberName, svc); err != nil {
+			err = removeControlServiceFunc(ctx, s, memberName, svc)
+			if err != nil {
 				return fmt.Errorf("failed to remove %s on %s: %w", svc, memberName, err)
 			}
 			// Update observed and viability state so subsequent keep-one checks are accurate.
@@ -346,8 +347,8 @@ func prodRemoveControlService(ctx context.Context, s interfaces.StateInterface, 
 	return nil
 }
 
-// GetPlacementStatus returns the current placement status: last accepted
-// policy, observed placement, lifecycle state, and blocked reasons.
+// GetPlacementStatusFunc is the injectable wrapper for GetPlacementStatus,
+// used by the API handler so tests can override it.
 var GetPlacementStatusFunc = GetPlacementStatus
 
 // secretPattern matches Ceph cephx key tokens (e.g. "AQAR...==") so key
@@ -380,7 +381,8 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 		status.Active = rec.Active
 		if rec.Active && rec.PolicyJSON != "" {
 			var policy types.PlacementPolicy
-			if err := json.Unmarshal([]byte(rec.PolicyJSON), &policy); err != nil {
+			err = json.Unmarshal([]byte(rec.PolicyJSON), &policy)
+			if err != nil {
 				return fmt.Errorf("failed to unmarshal placement policy: %w", err)
 			}
 			status.Policy = &policy
@@ -449,7 +451,8 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 	return status, nil
 }
 
-// StorePlacementPolicy persists the placement policy to the database.
+// StorePlacementPolicyFunc is the injectable wrapper for StorePlacementPolicy,
+// used by the API handler so tests can override it.
 var StorePlacementPolicyFunc = StorePlacementPolicy
 
 // StorePlacementPolicy stores the given policy as the active placement policy.

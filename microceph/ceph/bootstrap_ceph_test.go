@@ -19,19 +19,19 @@ import (
 	"github.com/canonical/microceph/microceph/tests"
 )
 
-// cephOnlyBootstrapSuite tests CephOnlyBootstrap lifecycle, idempotency,
+// bootstrapCephSuite tests BootstrapCeph lifecycle, idempotency,
 // concurrency, and target validation (CE142 M4 / UAT-S1.3, UAT-S1.4).
-type cephOnlyBootstrapSuite struct {
+type bootstrapCephSuite struct {
 	tests.BaseSuite
 	TestStateInterface *mocks.StateInterface
 	mockDB             *mockLifecycleDB
 }
 
-func TestCephOnlyBootstrap(t *testing.T) {
-	suite.Run(t, new(cephOnlyBootstrapSuite))
+func TestBootstrapCeph(t *testing.T) {
+	suite.Run(t, new(bootstrapCephSuite))
 }
 
-func (s *cephOnlyBootstrapSuite) SetupTest() {
+func (s *bootstrapCephSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
 	s.CopyCephConfigs()
 
@@ -55,16 +55,16 @@ func (s *cephOnlyBootstrapSuite) SetupTest() {
 	s.T().Cleanup(func() { GetClusterMemberNamesFunc = origMembers })
 }
 
-// TestCephOnlyBootstrapSuccess verifies a successful Ceph-only bootstrap records
+// TestBootstrapCephSuccess verifies a successful Ceph-only bootstrap records
 // the bootstrapped state (UAT-S1.3).
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapSuccess() {
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+func (s *bootstrapCephSuite) TestBootstrapCephSuccess() {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.NoError(s.T(), err)
 
 	lc := s.mockDB.get()
@@ -73,30 +73,30 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapSuccess() {
 	assert.Equal(s.T(), "node-b", lc.CephBootstrapTarget)
 }
 
-// TestCephOnlyBootstrapIdempotent verifies that a second call when already
+// TestBootstrapCephIdempotent verifies that a second call when already
 // bootstrapped returns nil (no-op success) and does not run steps (UAT-S1.4).
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapIdempotent() {
+func (s *bootstrapCephSuite) TestBootstrapCephIdempotent() {
 	s.mockDB.set(database.ClusterLifecycle{
 		CephBootstrapped:   true,
 		CephBootstrapState: database.CephStateBootstrapped,
 	})
 
 	stepsCalled := false
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		stepsCalled = true
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.NoError(s.T(), err, "already-bootstrapped must be no-op success, not error")
 	assert.False(s.T(), stepsCalled, "bootstrap steps must not run when already bootstrapped")
 }
 
-// TestCephOnlyBootstrapInProgress verifies that an in-progress bootstrap returns
+// TestBootstrapCephInProgress verifies that an in-progress bootstrap returns
 // a retryable error (UAT-S1.4).
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapInProgress() {
+func (s *bootstrapCephSuite) TestBootstrapCephInProgress() {
 	s.mockDB.set(database.ClusterLifecycle{
 		CephBootstrapped:    false,
 		CephBootstrapState:  database.CephStateInProgress,
@@ -104,44 +104,44 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapInProgress() {
 	})
 
 	stepsCalled := false
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		stepsCalled = true
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.ErrorIs(s.T(), err, ErrCephBootstrapInProgress)
 	assert.False(s.T(), stepsCalled, "bootstrap steps must not run when another bootstrap is in progress")
 }
 
-// TestCephOnlyBootstrapUnknownTarget verifies that an unknown target member is
+// TestBootstrapCephUnknownTarget verifies that an unknown target member is
 // rejected (UAT-S1.3).
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapUnknownTarget() {
+func (s *bootstrapCephSuite) TestBootstrapCephUnknownTarget() {
 	stepsCalled := false
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		stepsCalled = true
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "unknown-node", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "unknown-node", common.BootstrapConfig{}, false)
 	assert.ErrorIs(s.T(), err, ErrUnknownBootstrapTarget)
 	assert.False(s.T(), stepsCalled, "bootstrap steps must not run for unknown target")
 }
 
-// TestCephOnlyBootstrapFailureRecordsDetail verifies that a failed bootstrap
+// TestBootstrapCephFailureRecordsDetail verifies that a failed bootstrap
 // records the error detail in lifecycle state for operator retry (UAT-S1.4).
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapFailureRecordsDetail() {
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+func (s *bootstrapCephSuite) TestBootstrapCephFailureRecordsDetail() {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		return fmt.Errorf("keyring creation failed: permission denied")
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.Error(s.T(), err)
 
 	lc := s.mockDB.get()
@@ -150,22 +150,22 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapFailureRecordsDetail() {
 	assert.Contains(s.T(), lc.Detail, "keyring creation failed")
 }
 
-// TestCephOnlyBootstrapRetryAfterFailure verifies that after a failed bootstrap,
+// TestBootstrapCephRetryAfterFailure verifies that after a failed bootstrap,
 // a retry can proceed (state transitions from failed back to in_progress).
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRetryAfterFailure() {
+func (s *bootstrapCephSuite) TestBootstrapCephRetryAfterFailure() {
 	s.mockDB.set(database.ClusterLifecycle{
 		CephBootstrapped:   false,
 		CephBootstrapState: database.CephStateFailed,
 		Detail:             "previous failure",
 	})
 
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.NoError(s.T(), err)
 
 	lc := s.mockDB.get()
@@ -173,20 +173,20 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRetryAfterFailure() {
 	assert.Equal(s.T(), database.CephStateBootstrapped, lc.CephBootstrapState)
 }
 
-// TestCephOnlyBootstrapRaceGuard (N2) verifies that two concurrent callers
-// cannot both proceed to bootstrap. The first caller blocks CephBootstrapStepsFunc
+// TestBootstrapCephRaceGuard (N2) verifies that two concurrent callers
+// cannot both proceed to bootstrap. The first caller blocks BootstrapCephStepsFunc
 // on a channel; the second caller observes in_progress and returns
 // ErrCephBootstrapInProgress.
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRaceGuard() {
+func (s *bootstrapCephSuite) TestBootstrapCephRaceGuard() {
 	// Channel that blocks the first caller's steps until the second caller
 	// has attempted and returned.
 	firstStarted := make(chan struct{})
 	firstProceed := make(chan struct{})
 
-	origSteps := CephBootstrapStepsFunc
+	origSteps := BootstrapCephStepsFunc
 	callCount := 0
 	var callCountMu sync.Mutex
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		callCountMu.Lock()
 		callCount++
 		isFirst := callCount == 1
@@ -197,7 +197,7 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRaceGuard() {
 		}
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
 	var firstErr, secondErr error
 	var wg sync.WaitGroup
@@ -206,7 +206,7 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRaceGuard() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		firstErr = CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+		firstErr = BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	}()
 
 	// Wait for the first caller to enter the steps function (in_progress set).
@@ -216,7 +216,7 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRaceGuard() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		secondErr = CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+		secondErr = BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	}()
 
 	// Give the second caller time to attempt.
@@ -238,23 +238,23 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRaceGuard() {
 	assert.True(s.T(), lc.CephBootstrapped)
 }
 
-// TestCephOnlyBootstrapForceRecoversStaleInProgress verifies that --force
+// TestBootstrapCephForceRecoversStaleInProgress verifies that --force
 // recovers from a stale in_progress state: it resets in_progress to failed,
 // then the normal retry bootstraps successfully (FIX 1b).
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapForceRecoversStaleInProgress() {
+func (s *bootstrapCephSuite) TestBootstrapCephForceRecoversStaleInProgress() {
 	s.mockDB.set(database.ClusterLifecycle{
 		CephBootstrapped:    false,
 		CephBootstrapState:  database.CephStateInProgress,
 		CephBootstrapTarget: "node-a",
 	})
 
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, true)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, true)
 	assert.NoError(s.T(), err, "force should recover stale in_progress and bootstrap")
 
 	lc := s.mockDB.get()
@@ -262,9 +262,9 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapForceRecoversStaleInProgre
 	assert.Equal(s.T(), database.CephStateBootstrapped, lc.CephBootstrapState)
 }
 
-// TestCephOnlyBootstrapNoForceStaysInProgress verifies that without --force,
+// TestBootstrapCephNoForceStaysInProgress verifies that without --force,
 // a stale in_progress state still returns ErrCephBootstrapInProgress (FIX 1b).
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapNoForceStaysInProgress() {
+func (s *bootstrapCephSuite) TestBootstrapCephNoForceStaysInProgress() {
 	s.mockDB.set(database.ClusterLifecycle{
 		CephBootstrapped:    false,
 		CephBootstrapState:  database.CephStateInProgress,
@@ -272,25 +272,25 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapNoForceStaysInProgress() {
 	})
 
 	stepsCalled := false
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		stepsCalled = true
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.ErrorIs(s.T(), err, ErrCephBootstrapInProgress)
 	assert.False(s.T(), stepsCalled)
 }
 
-// TestCephOnlyBootstrapNoOpWhenConfigBootstrapped verifies the defensive guard:
-// when the lifecycle row is stale (not_bootstrapped) but Ceph config rows
-// exist (fsid + admin keyring) — e.g. a fresh non-deferred bootstrap that
-// failed to mark the lifecycle, or an upgrade edge case — CephOnlyBootstrap must
-// NOT bootstrap over the existing cluster. It self-heals the lifecycle row to
-// bootstrapped and returns a no-op success without running the bootstrap steps.
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapNoOpWhenFullyBootstrapped() {
+// TestBootstrapCephNoOpWhenFullyBootstrapped verifies the defensive guard:
+// when the lifecycle row is already bootstrapped AND Ceph config rows
+// exist (fsid + admin keyring), BootstrapCeph must be a genuine no-op:
+// it returns success without running the bootstrap steps. No self-heal path
+// is taken (the self-heal-from-stale-lifecycle case is covered by
+// TestBootstrapCephRecoversStaleLifecycle).
+func (s *bootstrapCephSuite) TestBootstrapCephNoOpWhenFullyBootstrapped() {
 	// Lifecycle bootstrapped AND config rows exist: genuine no-op success.
 	s.mockDB.set(database.ClusterLifecycle{
 		CephBootstrapped:   true,
@@ -302,25 +302,25 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapNoOpWhenFullyBootstrapped(
 	})
 
 	stepsCalled := false
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		stepsCalled = true
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.NoError(s.T(), err, "must be a no-op when already fully bootstrapped")
 	assert.False(s.T(), stepsCalled, "bootstrap steps must not run over an existing cluster")
 }
 
-// TestCephOnlyBootstrapRefusesPartialBootstrap verifies the retry-safety guard:
+// TestBootstrapCephRefusesPartialBootstrap verifies the retry-safety guard:
 // when config rows exist (fsid + admin keyring) but the lifecycle is NOT
 // bootstrapped and Ceph connectivity cannot be verified, the retry must be
 // REFUSED with ErrPartialBootstrap rather than re-running SimpleBootstrapper
 // (which would generate a divergent FSID and trip duplicate-key INSERT 409s).
 // This makes Ceph-only bootstrap retry safe.
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRefusesPartialBootstrap() {
+func (s *bootstrapCephSuite) TestBootstrapCephRefusesPartialBootstrap() {
 	// Partial state: config rows present, lifecycle failed (not bootstrapped).
 	s.mockDB.set(database.ClusterLifecycle{
 		CephBootstrapped:   false,
@@ -339,14 +339,14 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRefusesPartialBootstrap() 
 	s.T().Cleanup(func() { verifyExistingCephBootstrapFunc = origVerify })
 
 	stepsCalled := false
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		stepsCalled = true
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.ErrorIs(s.T(), err, ErrPartialBootstrap, "retry over a partial bootstrap must be refused")
 	assert.False(s.T(), stepsCalled, "bootstrap steps must not run over a partial bootstrap")
 	assert.Contains(s.T(), err.Error(), "Clean up the partial bootstrap")
@@ -357,13 +357,13 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRefusesPartialBootstrap() 
 	assert.Equal(s.T(), database.CephStateFailed, lc.CephBootstrapState)
 }
 
-// TestCephOnlyBootstrapPartialRefusalHintsRecordedTarget verifies that when a
+// TestBootstrapCephPartialRefusalHintsRecordedTarget verifies that when a
 // partial-bootstrap refusal happens on a retry targeting a DIFFERENT member
 // than the recorded one, the error names the recorded target: the connectivity
 // check runs locally on the serving member, and a member without a rendered
 // ceph.conf cannot see an otherwise healthy cluster, so the operator should
 // retry on the original target before treating the bootstrap as partial.
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapPartialRefusalHintsRecordedTarget() {
+func (s *bootstrapCephSuite) TestBootstrapCephPartialRefusalHintsRecordedTarget() {
 	s.mockDB.set(database.ClusterLifecycle{
 		CephBootstrapped:    false,
 		CephBootstrapState:  database.CephStateFailed,
@@ -381,13 +381,13 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapPartialRefusalHintsRecorde
 	}
 	s.T().Cleanup(func() { verifyExistingCephBootstrapFunc = origVerify })
 
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.ErrorIs(s.T(), err, ErrPartialBootstrap)
 	assert.Contains(s.T(), err.Error(), `recorded on member "node-a"`,
 		"the refusal must name the recorded bootstrap target")
@@ -395,10 +395,10 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapPartialRefusalHintsRecorde
 		"the refusal must suggest retrying on the recorded target")
 }
 
-// TestCephOnlyBootstrapRecoversStaleLifecycle verifies the recovery path for a
+// TestBootstrapCephRecoversStaleLifecycle verifies the recovery path for a
 // successful bootstrap whose final lifecycle write failed: config rows exist,
 // the lifecycle is stale, and a cheap Ceph connectivity check succeeds.
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRecoversStaleLifecycle() {
+func (s *bootstrapCephSuite) TestBootstrapCephRecoversStaleLifecycle() {
 	s.mockDB.set(database.ClusterLifecycle{
 		CephBootstrapped:   false,
 		CephBootstrapState: database.CephStateInProgress,
@@ -416,14 +416,14 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRecoversStaleLifecycle() {
 	s.T().Cleanup(func() { verifyExistingCephBootstrapFunc = origVerify })
 
 	stepsCalled := false
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		stepsCalled = true
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.NoError(s.T(), err)
 	assert.False(s.T(), stepsCalled, "bootstrap steps must not rerun over a verified existing cluster")
 
@@ -433,44 +433,44 @@ func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRecoversStaleLifecycle() {
 	assert.Equal(s.T(), "node-b", lc.CephBootstrapTarget)
 }
 
-// TestCephOnlyBootstrapBootstrapsWhenNoConfig verifies that without config
+// TestBootstrapCephBootstrapsWhenNoConfig verifies that without config
 // rows, the defensive guard does not block a real bootstrap (the normal
 // not_bootstrapped -> bootstrap path is preserved).
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapBootstrapsWhenNoConfig() {
+func (s *bootstrapCephSuite) TestBootstrapCephBootstrapsWhenNoConfig() {
 	// No config rows; lifecycle not_bootstrapped (default mock state).
 	stepsCalled := false
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		stepsCalled = true
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.NoError(s.T(), err)
 	assert.True(s.T(), stepsCalled, "bootstrap steps must run when no existing cluster")
 	lc := s.mockDB.get()
 	assert.True(s.T(), lc.CephBootstrapped)
 }
 
-// TestCephOnlyBootstrapRecordsResultWithCancelledContext verifies that the
+// TestBootstrapCephRecordsResultWithCancelledContext verifies that the
 // result-recording transaction uses a fresh context, so a cancelled request
 // context does not strand the lifecycle in in_progress (FIX 1a).
 //
 // The realistic scenario: the client cancels (timeout) while the bootstrap
 // steps are running. The atomic transition to in_progress has already
 // committed; the result must still be recorded using a fresh context.
-func (s *cephOnlyBootstrapSuite) TestCephOnlyBootstrapRecordsResultWithCancelledContext() {
+func (s *bootstrapCephSuite) TestBootstrapCephRecordsResultWithCancelledContext() {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	origSteps := CephBootstrapStepsFunc
-	CephBootstrapStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
+	origSteps := BootstrapCephStepsFunc
+	BootstrapCephStepsFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig) error {
 		cancel() // simulate client timeout during bootstrap steps
 		return nil
 	}
-	s.T().Cleanup(func() { CephBootstrapStepsFunc = origSteps })
+	s.T().Cleanup(func() { BootstrapCephStepsFunc = origSteps })
 
-	err := CephOnlyBootstrap(ctx, s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
+	err := BootstrapCeph(ctx, s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	assert.NoError(s.T(), err, "result recording must succeed even with a cancelled request context")
 
 	lc := s.mockDB.get()

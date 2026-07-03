@@ -1,4 +1,3 @@
-// Package database provides the database access functions and schema.
 package database
 
 // placement_policy is a singleton table (CHECK(id=1)) that stores the last

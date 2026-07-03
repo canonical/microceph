@@ -483,7 +483,7 @@ func TestPlacementPutLockHeldReturnsRetryableError(t *testing.T) {
 	resp := cmdPlacementPut(nil, req)
 	_ = resp.Render(rec, req)
 
-	assert.NotEqual(t, http.StatusOK, rec.Code, "a held apply lock must fail the PUT")
+	assert.Equal(t, http.StatusConflict, rec.Code, "a held apply lock must fail the PUT with 409 Conflict (retryable)")
 	assert.False(t, applyCalled, "ApplyPlacement must not run while another apply holds the lock")
 	assert.False(t, refusalCalled, "a lock conflict is not a policy refusal and must not overwrite last_refusal")
 	assert.False(t, unlockCalled, "the handler must not release a lock it failed to acquire")
@@ -529,9 +529,11 @@ func TestPlacementPutLockReleasedWithAcquiredToken(t *testing.T) {
 	assert.Equal(t, token, releasedToken, "the lock must be released with the acquired token")
 }
 
-// TestPlacementDeleteSuccess verifies that cmdPlacementDelete calls
-// ClearPlacementPolicy and returns success.
+// TestPlacementDeleteSuccess verifies that cmdPlacementDelete acquires the
+// apply lock, calls ClearPlacementPolicy, releases the lock, and returns
+// success.
 func TestPlacementDeleteSuccess(t *testing.T) {
+	unlockCalls := stubPlacementApplyLock(t)
 	clearCalled := false
 	origClear := ceph.ClearPlacementPolicyFunc
 	ceph.ClearPlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface) error {
@@ -548,6 +550,71 @@ func TestPlacementDeleteSuccess(t *testing.T) {
 
 	assert.True(t, clearCalled)
 	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 1, *unlockCalls, "the apply lock must be released exactly once")
+}
+
+// TestPlacementDeleteLockHeldReturnsRetryableError verifies that DELETE
+// /placement acquires the apply lock and returns a retryable error (not 200)
+// when another apply holds it, without calling ClearPlacementPolicy.
+func TestPlacementDeleteLockHeldReturnsRetryableError(t *testing.T) {
+	clearCalled := false
+	unlockCalled := false
+	origLock := ceph.LockPlacementApplyFunc
+	origUnlock := ceph.UnlockPlacementApplyFunc
+	origClear := ceph.ClearPlacementPolicyFunc
+	ceph.LockPlacementApplyFunc = func(_ context.Context, _ interfaces.StateInterface) (int64, error) {
+		return 0, fmt.Errorf("%w: retry after the current apply completes", ceph.ErrPlacementApplyInProgress)
+	}
+	ceph.UnlockPlacementApplyFunc = func(_ context.Context, _ interfaces.StateInterface, _ int64) error {
+		unlockCalled = true
+		return nil
+	}
+	ceph.ClearPlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface) error {
+		clearCalled = true
+		return nil
+	}
+	defer func() {
+		ceph.LockPlacementApplyFunc = origLock
+		ceph.UnlockPlacementApplyFunc = origUnlock
+		ceph.ClearPlacementPolicyFunc = origClear
+	}()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/1.0/placement", nil)
+
+	resp := cmdPlacementDelete(nil, req)
+	_ = resp.Render(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code, "a held apply lock must fail the DELETE with 409 Conflict (retryable)")
+	assert.False(t, clearCalled, "ClearPlacementPolicy must not run while another apply holds the lock")
+	assert.False(t, unlockCalled, "the handler must not release a lock it failed to acquire")
+}
+
+// TestPlacementPutUnknownFieldRejected verifies that unknown top-level keys in
+// the placement policy body are rejected with BadRequest (M1). Without
+// DisallowUnknownFields a typoed key like "member" (instead of "members")
+// would decode to an empty no-op policy that silently overwrites the active
+// one.
+func TestPlacementPutUnknownFieldRejected(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(`{"member":{"node-a":{"control":true}}}`))
+
+	resp := cmdPlacementPut(nil, req)
+	_ = resp.Render(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "unknown field must be rejected with 400")
+}
+
+// TestCephBootstrapPutUnknownFieldRejected verifies that unknown keys in the
+// Ceph bootstrap request body are rejected with BadRequest (M1).
+func TestCephBootstrapPutUnknownFieldRejected(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/ceph/bootstrap", strings.NewReader(`{"target":"node-b","force_bootstrap":true}`))
+
+	resp := cmdCephBootstrapPut(newTestState("node-b"), req)
+	_ = resp.Render(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "unknown field must be rejected with 400")
 }
 
 // TestPlacementGetSuccess verifies that cmdPlacementGet returns placement status.
@@ -591,13 +658,13 @@ func newTestState(clusterName string) mcTypes.State {
 func TestCephBootstrapPutTargetFromBody(t *testing.T) {
 	var capturedTarget string
 	var capturedBd common.BootstrapConfig
-	origBootstrap := ceph.CephOnlyBootstrapFunc
-	ceph.CephOnlyBootstrapFunc = func(_ context.Context, _ interfaces.StateInterface, target string, bd common.BootstrapConfig, _ bool) error {
+	origBootstrap := ceph.BootstrapCephFunc
+	ceph.BootstrapCephFunc = func(_ context.Context, _ interfaces.StateInterface, target string, bd common.BootstrapConfig, _ bool) error {
 		capturedTarget = target
 		capturedBd = bd
 		return nil
 	}
-	defer func() { ceph.CephOnlyBootstrapFunc = origBootstrap }()
+	defer func() { ceph.BootstrapCephFunc = origBootstrap }()
 
 	body := `{"target":"node-b","mon_ip":"10.0.0.1"}`
 	rec := httptest.NewRecorder()
@@ -616,12 +683,12 @@ func TestCephBootstrapPutTargetFromBody(t *testing.T) {
 // correct target member.
 func TestCephBootstrapPutTargetFromQuery(t *testing.T) {
 	var capturedTarget string
-	origBootstrap := ceph.CephOnlyBootstrapFunc
-	ceph.CephOnlyBootstrapFunc = func(_ context.Context, _ interfaces.StateInterface, target string, _ common.BootstrapConfig, _ bool) error {
+	origBootstrap := ceph.BootstrapCephFunc
+	ceph.BootstrapCephFunc = func(_ context.Context, _ interfaces.StateInterface, target string, _ common.BootstrapConfig, _ bool) error {
 		capturedTarget = target
 		return nil
 	}
-	defer func() { ceph.CephOnlyBootstrapFunc = origBootstrap }()
+	defer func() { ceph.BootstrapCephFunc = origBootstrap }()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/ceph/bootstrap?target=node-c", nil)
@@ -649,12 +716,12 @@ func TestCephBootstrapPutNoTarget(t *testing.T) {
 // rejected with BadRequest because the bootstrap would run on the wrong member.
 func TestCephBootstrapPutTargetMismatch(t *testing.T) {
 	bootstrapCalled := false
-	origBootstrap := ceph.CephOnlyBootstrapFunc
-	ceph.CephOnlyBootstrapFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig, _ bool) error {
+	origBootstrap := ceph.BootstrapCephFunc
+	ceph.BootstrapCephFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig, _ bool) error {
 		bootstrapCalled = true
 		return nil
 	}
-	defer func() { ceph.CephOnlyBootstrapFunc = origBootstrap }()
+	defer func() { ceph.BootstrapCephFunc = origBootstrap }()
 
 	body := `{"target":"node-b"}`
 	rec := httptest.NewRecorder()
@@ -664,19 +731,19 @@ func TestCephBootstrapPutTargetMismatch(t *testing.T) {
 	_ = resp.Render(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "mismatched target must be rejected")
-	assert.False(t, bootstrapCalled, "CephOnlyBootstrap must not run on the wrong member")
+	assert.False(t, bootstrapCalled, "BootstrapCeph must not run on the wrong member")
 }
 
 // TestCephBootstrapPutInProgress verifies that ErrCephBootstrapInProgress is
-// NOT a client-side operator error, so it falls through to SmartError. Since
-// it is an unrecognized sentinel, SmartError returns HTTP 500 (in-progress is a
-// concurrent server-state condition, not a 400 operator-input error).
+// NOT a client-side operator error (400), but a retryable in-progress
+// condition: it maps to HTTP 409 Conflict so an orchestrator can distinguish
+// it from a genuine server fault (500).
 func TestCephBootstrapPutInProgress(t *testing.T) {
-	origBootstrap := ceph.CephOnlyBootstrapFunc
-	ceph.CephOnlyBootstrapFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig, _ bool) error {
+	origBootstrap := ceph.BootstrapCephFunc
+	ceph.BootstrapCephFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig, _ bool) error {
 		return ceph.ErrCephBootstrapInProgress
 	}
-	defer func() { ceph.CephOnlyBootstrapFunc = origBootstrap }()
+	defer func() { ceph.BootstrapCephFunc = origBootstrap }()
 
 	body := `{"target":"node-b"}`
 	rec := httptest.NewRecorder()
@@ -685,17 +752,17 @@ func TestCephBootstrapPutInProgress(t *testing.T) {
 	resp := cmdCephBootstrapPut(newTestState("node-b"), req)
 	_ = resp.Render(rec, req)
 
-	assert.Equal(t, http.StatusInternalServerError, rec.Code, "in-progress is a server-state condition, not a 400 operator error")
+	assert.Equal(t, http.StatusConflict, rec.Code, "in-progress is a retryable condition, mapped to 409 Conflict")
 }
 
 // TestCephBootstrapPutAlreadyBootstrapped verifies that already-bootstrapped
-// (nil from CephOnlyBootstrap) maps to success.
+// (nil from BootstrapCeph) maps to success.
 func TestCephBootstrapPutAlreadyBootstrapped(t *testing.T) {
-	origBootstrap := ceph.CephOnlyBootstrapFunc
-	ceph.CephOnlyBootstrapFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig, _ bool) error {
+	origBootstrap := ceph.BootstrapCephFunc
+	ceph.BootstrapCephFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig, _ bool) error {
 		return nil // no-op success
 	}
-	defer func() { ceph.CephOnlyBootstrapFunc = origBootstrap }()
+	defer func() { ceph.BootstrapCephFunc = origBootstrap }()
 
 	body := `{"target":"node-b"}`
 	rec := httptest.NewRecorder()
@@ -711,11 +778,11 @@ func TestCephBootstrapPutAlreadyBootstrapped(t *testing.T) {
 // to HTTP 400 (BadRequest), mirroring cmdPlacementPut's client-side error
 // mapping.
 func TestCephBootstrapPutUnknownMember(t *testing.T) {
-	origBootstrap := ceph.CephOnlyBootstrapFunc
-	ceph.CephOnlyBootstrapFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig, _ bool) error {
+	origBootstrap := ceph.BootstrapCephFunc
+	ceph.BootstrapCephFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, _ common.BootstrapConfig, _ bool) error {
 		return ceph.ErrUnknownBootstrapTarget
 	}
-	defer func() { ceph.CephOnlyBootstrapFunc = origBootstrap }()
+	defer func() { ceph.BootstrapCephFunc = origBootstrap }()
 
 	body := `{"target":"node-b"}`
 	rec := httptest.NewRecorder()

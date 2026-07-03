@@ -10,23 +10,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupPlacementDB creates an in-memory SQLite database with the placement_policy
-// table and seeds the singleton row.
+// setupPlacementDB creates an in-memory SQLite database with the
+// placement_policy table by running the real schemaUpdate9 migration. This
+// exercises the exact SQL that runs on a deployed cluster's upgrade, including
+// the last_refusal and apply_lock_token columns.
 func setupPlacementDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db := setupLifecycleDB(t) // reuse the sqlite opener
-	_, err := db.Exec(`
-CREATE TABLE placement_policy (
-  id          INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
-  active      INTEGER NOT NULL DEFAULT 0,
-  policy_json TEXT,
-  last_refusal TEXT DEFAULT NULL,
-  apply_lock_token INTEGER NOT NULL DEFAULT 0,
-  CONSTRAINT singleton CHECK (id = 1)
-);
-INSERT INTO placement_policy (id) VALUES (1);
-`)
+	db := setupLifecycleDB(t) // creates config table + cluster_lifecycle via schemaUpdate8
+
+	tx, err := db.BeginTx(context.Background(), nil)
 	require.NoError(t, err)
+	err = schemaUpdate9(context.Background(), tx)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
 	return db
 }
 

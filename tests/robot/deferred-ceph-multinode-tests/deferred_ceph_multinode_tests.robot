@@ -1,22 +1,22 @@
 *** Settings ***
-Documentation    ce142-deferred-multinode
-...    Multi-node CE142 UAT coverage (snap task S1):
+Documentation    deferred-ceph-multinode-tests
+...    Multi-node deferred-Ceph UAT coverage (snap task S1):
 ...      UAT-S1.2 deferred join forms MicroCluster membership without Ceph auto-placement,
 ...      UAT-S1.3 Ceph-only bootstrap targets a non-head member,
 ...      UAT-S1.4 idempotent retry succeeds as a no-op,
 ...      UAT-S1.5 declarative control placement add/migrate + keep-one invariant.
 ...    Each suite creates and destroys its own outer LXD VM with 4 inner MicroCeph nodes.
 Resource        ../resources/microceph_harness.resource
-Suite Setup     CE142 Multinode Suite Setup
+Suite Setup     Deferred Ceph Multinode Suite Setup
 Suite Teardown  Teardown MicroCeph Environment
-Test Tags       ce142    multi-node    deferred    placement    lxd    integration    slow
+Test Tags       multi-node    deferred    placement    lxd    integration    slow
 
 *** Keywords ***
-CE142 Multinode Suite Setup
-    Provision Multinode VM    microceph-ce142-mn-vm    50GiB    public
+Deferred Ceph Multinode Suite Setup
+    Provision Multinode VM    microceph-deferred-mn-vm    50GiB    public
     Deferred Bootstrap Head Node
     Deferred Join Worker Nodes
-    Log To Console    [ce142] Deferred MicroCluster formed (4 members, Ceph unbootstrapped)
+    Log To Console    [deferred-ceph] Deferred MicroCluster formed (4 members, Ceph unbootstrapped)
 
 Assert No Ceph Anywhere
     [Documentation]    UAT-S1.2: no container has a Ceph cluster after deferred bootstrap+join.

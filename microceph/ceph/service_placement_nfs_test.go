@@ -31,11 +31,11 @@ func (s *servicePlacementNFSSuite) SetupTest() {
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
 	// Bypass database-dependent ceph.conf rendering: these tests exercise the
 	// NFS placement pipeline with a mock state, not a real cluster database.
-	renderConfigFunc = func(_ context.Context, _ interfaces.StateInterface) error { return nil }
+	updateConfigFunc = func(_ context.Context, _ interfaces.StateInterface) error { return nil }
 }
 
 func (s *servicePlacementNFSSuite) TearDownTest() {
-	renderConfigFunc = UpdateConfig
+	updateConfigFunc = UpdateConfig
 }
 
 func (s *servicePlacementNFSSuite) TestInvalidPayload() {

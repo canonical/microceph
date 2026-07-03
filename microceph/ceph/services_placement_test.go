@@ -30,11 +30,11 @@ func (s *servicesPlacementSuite) SetupTest() {
 	// Bypass database-dependent ceph.conf rendering: these tests exercise the
 	// placement pipeline (PopulateParams/HospitalityCheck/ServiceInit/...) with
 	// a mock state, not a real cluster database.
-	renderConfigFunc = func(_ context.Context, _ interfaces.StateInterface) error { return nil }
+	updateConfigFunc = func(_ context.Context, _ interfaces.StateInterface) error { return nil }
 }
 
 func (s *servicesPlacementSuite) TearDownTest() {
-	renderConfigFunc = UpdateConfig
+	updateConfigFunc = UpdateConfig
 }
 
 func addSnapServiceActiveExpectations(r *mocks.Runner, service string, retStr string, retErr error) {

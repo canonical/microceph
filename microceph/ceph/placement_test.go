@@ -50,11 +50,11 @@ func (s *placementSuite) SetupTest() {
 	s.T().Cleanup(func() { GetClusterMemberNamesFunc = origMembers })
 
 	// Default: Ceph is bootstrapped so the pre-bootstrap guard does not block.
-	origBootstrapped := cephIsBootstrapped
-	cephIsBootstrapped = func(_ context.Context, _ interfaces.StateInterface) (bool, error) {
+	origBootstrapped := cephIsBootstrappedFunc
+	cephIsBootstrappedFunc = func(_ context.Context, _ interfaces.StateInterface) (bool, error) {
 		return true, nil
 	}
-	s.T().Cleanup(func() { cephIsBootstrapped = origBootstrapped })
+	s.T().Cleanup(func() { cephIsBootstrappedFunc = origBootstrapped })
 
 	// Default: all control services are ready so the keep-one readiness guard
 	// does not block. Tests that exercise the readiness guard override this.
@@ -231,7 +231,7 @@ func (s *placementSuite) TestPlacementKeepOneInvariant() {
 	}
 	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.Error(s.T(), err, "keep-one refusal must be surfaced as an error")
-	assert.Contains(s.T(), err.Error(), "keep-one invariant")
+	assert.ErrorIs(s.T(), err, ErrKeepOneInvariant)
 	assert.Empty(s.T(), rec.removes(), "must not remove last control service")
 }
 
@@ -321,7 +321,7 @@ func (s *placementSuite) TestPlacementUnknownMemberRejected() {
 	}
 	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "unknown cluster member")
+	assert.ErrorIs(s.T(), err, ErrUnknownPlacementMember)
 	assert.Empty(s.T(), rec.adds())
 }
 
@@ -451,11 +451,11 @@ func (s *placementSuite) TestPlacementOmittedControlOnPresentMember() {
 // placement policy is rejected with a clear message when Ceph is not
 // bootstrapped, and no add/remove operations are attempted (FIX 3).
 func (s *placementSuite) TestPlacementPreBootstrapRejectsNonEmptyPolicy() {
-	origBootstrapped := cephIsBootstrapped
-	cephIsBootstrapped = func(_ context.Context, _ interfaces.StateInterface) (bool, error) {
+	origBootstrapped := cephIsBootstrappedFunc
+	cephIsBootstrappedFunc = func(_ context.Context, _ interfaces.StateInterface) (bool, error) {
 		return false, nil
 	}
-	defer func() { cephIsBootstrapped = origBootstrapped }()
+	defer func() { cephIsBootstrappedFunc = origBootstrapped }()
 
 	rec, restore := withAddRemoveRecorder()
 	defer restore()
@@ -468,7 +468,7 @@ func (s *placementSuite) TestPlacementPreBootstrapRejectsNonEmptyPolicy() {
 	}
 	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "not bootstrapped")
+	assert.ErrorIs(s.T(), err, ErrCephNotBootstrapped)
 	assert.Empty(s.T(), rec.adds(), "no service operations must run pre-bootstrap")
 	assert.Empty(s.T(), rec.removes(), "no service operations must run pre-bootstrap")
 }
@@ -476,11 +476,11 @@ func (s *placementSuite) TestPlacementPreBootstrapRejectsNonEmptyPolicy() {
 // TestPlacementPreBootstrapAllowsEmptyPolicy verifies that an empty members
 // map is still accepted pre-bootstrap (it performs no service ops) (FIX 3).
 func (s *placementSuite) TestPlacementPreBootstrapAllowsEmptyPolicy() {
-	origBootstrapped := cephIsBootstrapped
-	cephIsBootstrapped = func(_ context.Context, _ interfaces.StateInterface) (bool, error) {
+	origBootstrapped := cephIsBootstrappedFunc
+	cephIsBootstrappedFunc = func(_ context.Context, _ interfaces.StateInterface) (bool, error) {
 		return false, nil // not bootstrapped, but empty map is the waiting policy
 	}
-	defer func() { cephIsBootstrapped = origBootstrapped }()
+	defer func() { cephIsBootstrappedFunc = origBootstrapped }()
 
 	rec, restore := withAddRemoveRecorder()
 	defer restore()
@@ -526,7 +526,7 @@ func (s *placementSuite) TestPlacementKeepOneReadinessGuard() {
 	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
 	// The add succeeds; the removal is refused because node-b is not viable.
 	assert.Error(s.T(), err, "must refuse to remove old control when replacement not viable")
-	assert.Contains(s.T(), err.Error(), "keep-one invariant")
+	assert.ErrorIs(s.T(), err, ErrKeepOneInvariant)
 	// node-b was added (adds recorded), but node-a was NOT removed.
 	assert.NotEmpty(s.T(), rec.adds(), "replacement must be added before readiness check")
 	assert.Empty(s.T(), rec.removes(), "old service must not be removed when replacement not viable")
@@ -683,5 +683,52 @@ func (s *placementSuite) TestVerifyControlServicesReadySkipsRemovalTargets() {
 	for _, svc := range controlServices {
 		assert.True(s.T(), viableControl[svc]["node-a"],
 			"%s on node-a keeps its copied viability entry (never read for retainer counting)", svc)
+	}
+}
+
+// TestRedactSecrets verifies that redactSecrets masks realistic cephx key
+// material while leaving ordinary refusal/error text intact. This is the sole
+// guard against leaking key material through GET /1.0/placement, so a regex
+// regression would leak keys with nothing to catch it.
+//
+// Note: the short 'AQABfakekey==' fixture used elsewhere in the test suite is
+// intentionally below the {20,} character threshold of secretPattern and is
+// NOT a valid positive-match sample — it must not be used to verify redaction.
+func (s *placementSuite) TestRedactSecrets() {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "realistic cephx key replaced",
+			input:    "AQBHrVFabc123DEFghi456JKLmno789PQRstuvw==",
+			expected: "AQ****REDACTED****==",
+		},
+		{
+			name:     "key embedded in error text masked, rest preserved",
+			input:    "failed to create keyring: AQBHrVFabc123DEFghi456JKLmno789PQRstuvw== for client.admin",
+			expected: "failed to create keyring: AQ****REDACTED****== for client.admin",
+		},
+		{
+			name:     "non-secret refusal text passes through unchanged",
+			input:    "keep-one invariant: refused to remove last mon on node-a",
+			expected: "keep-one invariant: refused to remove last mon on node-a",
+		},
+		{
+			name:     "short fakekey fixture below threshold is not redacted",
+			input:    "AQABfakekey==",
+			expected: "AQABfakekey==",
+		},
+		{
+			name:     "empty string unchanged",
+			input:    "",
+			expected: "",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			assert.Equal(s.T(), tc.expected, redactSecrets(tc.input))
+		})
 	}
 }

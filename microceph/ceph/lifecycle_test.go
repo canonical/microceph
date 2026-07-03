@@ -45,21 +45,21 @@ func TestMarkCephBootstrappedFunc(t *testing.T) {
 }
 
 // TestCephIsBootstrappedLifecycleTrue verifies the lifecycle row is the primary
-// signal: when it says bootstrapped, cephIsBootstrapped returns true without
+// signal: when it says bootstrapped, cephIsBootstrappedFunc returns true without
 // needing config rows.
 func TestCephIsBootstrappedLifecycleTrue(t *testing.T) {
 	mockDB := newMockLifecycleDB()
 	mockDB.set(database.ClusterLifecycle{CephBootstrapped: true, CephBootstrapState: database.CephStateBootstrapped})
 	si, _ := newLifecycleTestState(t, mockDB)
 
-	got, err := cephIsBootstrapped(context.Background(), si)
+	got, err := cephIsBootstrappedFunc(context.Background(), si)
 	assert.NoError(t, err)
 	assert.True(t, got)
 }
 
 // TestCephIsBootstrappedConfigFallback verifies the defensive fallback: when
 // the lifecycle row is stale (not_bootstrapped) but fsid + admin keyring config
-// rows exist, cephIsBootstrapped returns true so placement is not rejected on a
+// rows exist, cephIsBootstrappedFunc returns true so placement is not rejected on a
 // fresh non-deferred cluster whose lifecycle row was not marked.
 func TestCephIsBootstrappedConfigFallback(t *testing.T) {
 	mockDB := newMockLifecycleDB()
@@ -70,18 +70,18 @@ func TestCephIsBootstrappedConfigFallback(t *testing.T) {
 	})
 	si, _ := newLifecycleTestState(t, mockDB)
 
-	got, err := cephIsBootstrapped(context.Background(), si)
+	got, err := cephIsBootstrappedFunc(context.Background(), si)
 	assert.NoError(t, err)
 	assert.True(t, got, "config rows must defensively indicate bootstrapped")
 }
 
 // TestCephIsBootstrappedNeither verifies that with neither a bootstrapped
-// lifecycle row nor config rows, cephIsBootstrapped returns false.
+// lifecycle row nor config rows, cephIsBootstrappedFunc returns false.
 func TestCephIsBootstrappedNeither(t *testing.T) {
 	mockDB := newMockLifecycleDB() // not_bootstrapped, no config rows
 	si, _ := newLifecycleTestState(t, mockDB)
 
-	got, err := cephIsBootstrapped(context.Background(), si)
+	got, err := cephIsBootstrappedFunc(context.Background(), si)
 	assert.NoError(t, err)
 	assert.False(t, got)
 }

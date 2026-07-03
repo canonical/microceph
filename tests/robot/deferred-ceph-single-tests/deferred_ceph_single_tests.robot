@@ -1,27 +1,27 @@
 *** Settings ***
-Documentation    ce142-deferred-single
-...    Single-node CE142 UAT coverage (snap task S1):
+Documentation    deferred-ceph-single-tests
+...    Single-node deferred-Ceph UAT coverage (snap task S1):
 ...      UAT-S1.1 deferred bootstrap leaves MicroCluster up but Ceph not bootstrapped,
 ...      capability markers are advertised, lifecycle state is not_bootstrapped, and
 ...      an empty-members placement policy is accepted as a no-op.
 ...    UAT-S1.6 (legacy bootstrap compatibility) is covered by the existing
 ...    single-system-tests and cluster-tests suites running against the same snap.
 Resource        ../resources/microceph_harness.resource
-Suite Setup     CE142 Single Suite Setup
+Suite Setup     Deferred Ceph Single Suite Setup
 Suite Teardown  Teardown MicroCeph Environment
-Test Tags       ce142    single-node    deferred    lxd    integration
+Test Tags       single-node    deferred    lxd    integration
 
 *** Keywords ***
-CE142 Single Suite Setup
+Deferred Ceph Single Suite Setup
     [Documentation]    Launch VM, install snap, and perform a SINGLE deferred bootstrap.
     ...    All tests assert against this one deferred-cluster state; none re-bootstrap
     ...    (microcluster refuses a second bootstrap with "Database is online").
-    Launch Outer Test VM    vm_name=microceph-ce142-single-vm
+    Launch Outer Test VM    vm_name=microceph-deferred-single-vm
     Copy Scripts To VM
     Copy Snap To VM
     Install Tools
     Install MicroCeph From Local Snap
-    Log To Console    [ce142] Deferred bootstrap (single node)...
+    Log To Console    [deferred-ceph] Deferred bootstrap (single node)...
     Wait For MicroCeph Control Socket
     Run In VM And Check    sudo microceph cluster bootstrap --defer-ceph    120
     Sleep    5s
@@ -49,7 +49,7 @@ Test Lifecycle State Not Bootstrapped
 
 Test Capability Markers Advertised
     [Documentation]    UAT-S1.1/S1.3/S1.5 precondition: GET /1.0/cluster/capabilities advertises
-    ...    the CE142 capability markers so the charm can detect support.
+    ...    the deferred-Ceph / placement capability markers so the charm can detect support.
     [Tags]    api    capabilities
     ${caps}=    Get Supported Capabilities
     List Should Contain Value    ${caps}    deferred-ceph-bootstrap

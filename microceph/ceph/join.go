@@ -66,7 +66,8 @@ var updateConfigFunc = UpdateConfig
 // joining host within a database transaction. It is a var so tests can override it.
 var validateAndRecordAZFunc = func(ctx context.Context, s interfaces.StateInterface, az string) error {
 	return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if err := validateJoinAZ(ctx, tx, az); err != nil {
+		err := validateJoinAZ(ctx, tx, az)
+		if err != nil {
 			return err
 		}
 		return setJoinAZ(ctx, tx, s.ClusterState().Name(), az)

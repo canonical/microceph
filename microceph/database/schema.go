@@ -22,8 +22,6 @@ var SchemaExtensions = []cluster.Update{
 	schemaUpdate7,
 	schemaUpdate8,
 	schemaUpdate9,
-	schemaUpdate10,
-	schemaUpdate11,
 }
 
 // getClusterTableName returns the name of the table that holds the record of cluster members from sqlite_master.
@@ -272,38 +270,30 @@ UPDATE cluster_lifecycle
 
 // schemaUpdate9 adds the placement_policy table (CE142). It is a single-row
 // table storing the last accepted role-managed declarative placement policy as
-// a JSON blob, plus a flag indicating whether a role-managed policy is active.
+// a JSON blob, plus:
+//   - active: whether a role-managed policy is active.
+//   - last_refusal: the most recent placement refusal reason (e.g. keep-one
+//     invariant) so operators and charms polling GET /1.0/placement can inspect
+//     why the last placement PUT was rejected, separately from the bootstrap
+//     lifecycle BlockedReason.
+//   - apply_lock_token: backs the cluster-wide placement apply lock. 0 means
+//     unlocked, any other value is the acquiring writer's token (its
+//     acquisition time in Unix nanoseconds). The token doubles as a lease
+//     timestamp so a lock held by a crashed daemon can be reclaimed once the
+//     lease expires.
 func schemaUpdate9(ctx context.Context, tx *sql.Tx) error {
 	stmt := `
 CREATE TABLE placement_policy (
-  id          INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
-  active      INTEGER NOT NULL DEFAULT 0,
-  policy_json TEXT,
+  id               INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
+  active           INTEGER NOT NULL DEFAULT 0,
+  policy_json      TEXT,
+  last_refusal     TEXT DEFAULT NULL,
+  apply_lock_token INTEGER NOT NULL DEFAULT 0,
   CONSTRAINT singleton CHECK (id = 1)
 );
 INSERT INTO placement_policy (id) VALUES (1);
   `
 	_, err := tx.ExecContext(ctx, stmt)
 
-	return err
-}
-
-// schemaUpdate10 adds the last_refusal column to the placement_policy table
-// (CE142). It persists the most recent placement refusal reason (e.g. keep-one
-// invariant) so operators and charms polling GET /1.0/placement can inspect
-// why the last placement PUT was rejected, separately from the bootstrap
-// lifecycle BlockedReason.
-func schemaUpdate10(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `ALTER TABLE placement_policy ADD COLUMN last_refusal TEXT DEFAULT NULL`)
-	return err
-}
-
-// schemaUpdate11 adds the apply_lock_token column to the placement_policy
-// table (CE142). It backs the cluster-wide placement apply lock: 0 means
-// unlocked, any other value is the acquiring writer's token (its acquisition
-// time in Unix nanoseconds). The token doubles as a lease timestamp so a lock
-// held by a crashed daemon can be reclaimed once the lease expires.
-func schemaUpdate11(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `ALTER TABLE placement_policy ADD COLUMN apply_lock_token INTEGER NOT NULL DEFAULT 0`)
 	return err
 }

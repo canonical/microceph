@@ -31,7 +31,6 @@ func GetClusterLifecycle(ctx context.Context, tx *sql.Tx) (*ClusterLifecycle, er
 	var lc ClusterLifecycle
 	var bootstrapped int64
 	var state, target, detail string
-	state = CephStateNotBootstrapped
 
 	row := tx.QueryRowContext(ctx, `
 SELECT ceph_bootstrapped, ceph_bootstrap_state, coalesce(ceph_bootstrap_target, ''), coalesce(detail, '')
@@ -48,7 +47,8 @@ SELECT ceph_bootstrapped, ceph_bootstrap_state, coalesce(ceph_bootstrap_target, 
 	return &lc, nil
 }
 
-// SetClusterLifecycle upserts the single-row cluster lifecycle record.
+// SetClusterLifecycle updates the single-row cluster lifecycle record (the
+// row is created by the schema migration; a missing row is an error).
 func SetClusterLifecycle(ctx context.Context, tx *sql.Tx, lc ClusterLifecycle) error {
 	bootstrapped := 0
 	if lc.CephBootstrapped {

@@ -432,6 +432,20 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 				continue
 			}
 
+			// If no monitors are registered, Ceph has not been bootstrapped yet
+			// (e.g. a deferred --defer-ceph node waiting for bootstrap-ceph).
+			// Skip UpdateConfig, which would fail on the missing public_network
+			// config and log an error every iteration; retry once monitors appear.
+			if len(monitors) == 0 {
+				logger.Debug("start: no monitors registered, Ceph not bootstrapped, skipping config refresh")
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(10 * time.Second):
+				}
+				continue
+			}
+
 			// Check if we need to update
 			if shouldSkipMonitorRefresh(first, oldMonitors, monitors) {
 				logger.Debugf("start: monitors unchanged, sleeping: %v", monitors)

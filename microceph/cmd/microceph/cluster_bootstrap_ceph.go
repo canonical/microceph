@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/common"
 )
 
 type cmdClusterBootstrapCeph struct {
@@ -29,13 +30,15 @@ func (c *cmdClusterBootstrapCeph) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bootstrap-ceph",
 		Short: "Bootstrap Ceph on an existing MicroCluster member (CE142 role-managed mode)",
+		Args:  cobra.NoArgs,
 		RunE:  c.Run,
 	}
 
 	cmd.Flags().StringVar(&c.flagTarget, "target", "", "Target MicroCluster member name for Ceph bootstrap (required)")
+	_ = cmd.MarkFlagRequired("target")
 	cmd.Flags().StringVar(&c.flagMonIp, "mon-ip", "", "Public address for bootstrapping ceph mon service.")
-	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Public network Ceph daemons bind to.")
-	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Cluster network Ceph daemons bind to.")
+	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).")
+	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).")
 	cmd.Flags().BoolVar(&c.flagV2Only, "v2-only", false, "Whether to support V2 messenger only or both V1 and V2")
 	cmd.Flags().StringVar(&c.flagAvailabilityZone, "availability-zone", "", "Availability zone for the bootstrap target host.")
 	cmd.Flags().BoolVar(&c.flagForce, "force", false, "Recover from a stale in_progress bootstrap state (reset to failed then retry). Not for normal use. Must not be used while a live bootstrap may be running on another member.")
@@ -48,12 +51,32 @@ func (c *cmdClusterBootstrapCeph) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--target is required")
 	}
 
+	// Validate client-side preconditions before round-tripping to the server:
+	// an invalid mon-ip/public-network combination should be rejected locally
+	// rather than mutating cluster state (in_progress -> failed).
+	checkData := common.BootstrapConfig{
+		MonIp:      c.flagMonIp,
+		PublicNet:  c.flagPubNet,
+		ClusterNet: c.flagClusterNet,
+		V2Only:     c.flagV2Only,
+	}
+
+	err := preCheckBootstrapConfig(checkData)
+	if err != nil {
+		return err
+	}
+
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return fmt.Errorf("unable to configure MicroCeph: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*5)
+	fmt.Printf("Bootstrapping Ceph on member %s (this can take several minutes)...\n", c.flagTarget)
+
+	// The client deadline is one minute longer than the server-side 15-minute
+	// bootstrap deadline so a successful server-side bootstrap is not reported
+	// as a client timeout. See ceph.BootstrapCephFunc (15*time.Minute).
+	ctx, cancel := context.WithTimeout(context.Background(), 16*time.Minute)
 	defer cancel()
 
 	err = m.Ready(ctx)
@@ -68,7 +91,7 @@ func (c *cmdClusterBootstrapCeph) Run(cmd *cobra.Command, args []string) error {
 
 	// Target the requested member so microcluster proxies the PUT to that
 	// member's daemon. The handler runs on the target member where
-	// s.Name()==target, so prodCephBootstrapStepsFunc bootstraps Ceph locally
+	// s.Name()==target, so prodBootstrapCephStepsFunc bootstraps Ceph locally
 	// on the correct node. This mirrors how SendServicePlacementReq and
 	// DeleteService target members via UseTarget.
 	cli = cli.UseTarget(c.flagTarget)
@@ -84,7 +107,7 @@ func (c *cmdClusterBootstrapCeph) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("ceph-only bootstrap failed: %w", err)
 	}
 
-	fmt.Printf("Ceph bootstrap initiated on member %s\n", c.flagTarget)
+	fmt.Printf("Ceph bootstrap completed on member %s\n", c.flagTarget)
 	return nil
 }
 

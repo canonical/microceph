@@ -1,6 +1,6 @@
 *** Settings ***
-Documentation    ce142-legacy-placement
-...    UAT for the CE142 S1 blocker fix: a fresh NON-deferred (legacy)
+Documentation    legacy-placement-tests
+...    UAT for the lifecycle S1 blocker fix: a fresh NON-deferred (legacy)
 ...    SimpleBootstrapper bootstrap must mark the cluster_lifecycle row as
 ...    bootstrapped, so that GET /1.0/placement reports bootstrapped and a
 ...    non-empty placement policy is accepted (not rejected with
@@ -8,15 +8,15 @@ Documentation    ce142-legacy-placement
 ...    Covers the regression that schemaUpdate8 only backfills pre-existing
 ...    clusters, leaving fresh legacy clusters reported as not_bootstrapped.
 Resource        ../resources/microceph_harness.resource
-Suite Setup     CE142 Legacy Placement Suite Setup
+Suite Setup     Legacy Placement Suite Setup
 Suite Teardown  Teardown MicroCeph Environment
-Test Tags       ce142    single-node    legacy    placement    lxd    integration
+Test Tags       single-node    legacy    placement    lxd    integration
 
 *** Keywords ***
-CE142 Legacy Placement Suite Setup
+Legacy Placement Suite Setup
     [Documentation]    Launch VM, install snap, and perform a standard (non-deferred)
     ...    bootstrap so the cluster is created on this revision.
-    Launch Outer Test VM    vm_name=microceph-ce142-legacy-vm
+    Launch Outer Test VM    vm_name=microceph-legacy-placement-vm
     Copy Scripts To VM
     Copy Snap To VM
     Install Tools

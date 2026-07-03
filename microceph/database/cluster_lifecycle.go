@@ -1,4 +1,3 @@
-// Package database provides the database access functions and schema.
 package database
 
 // cluster_lifecycle is a singleton table (CHECK(id=1)) that tracks Ceph

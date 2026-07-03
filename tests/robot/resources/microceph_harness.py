@@ -1613,7 +1613,7 @@ class microceph_harness:
             raise AssertionError(f"remote list on {node} has no entry with {field}={value}")
 
     # -----------------------------------------------------------------------
-    # CE142 role-managed / deferred-Ceph keywords
+    # Deferred-Ceph / role-managed placement keywords
     #
     # Keywords fetch raw JSON from the MicroCeph control socket (minimum
     # remote I/O) and decide locally via the pure parsers in
@@ -1688,7 +1688,7 @@ class microceph_harness:
         return self.microceph_api_get("cluster/capabilities")
 
     def get_supported_capabilities(self):
-        """Returns the list of CE142 capability markers advertised by the outer VM snap."""
+        """Returns the list of deferred-Ceph / placement capability markers advertised by the outer VM snap."""
         return placement_status.supported_capabilities(self.get_capabilities_json())
 
     def get_placement_status_json(self):
@@ -1779,7 +1779,7 @@ class microceph_harness:
         def predicate():
             count = self.get_mon_count()
             if count >= int(n):
-                logger.console(f"[ce142] {count} mon daemons up")
+                logger.console(f"[deferred-ceph] {count} mon daemons up")
                 return True
             return False
 

@@ -10,39 +10,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupLifecycleDB creates an in-memory SQLite database with the cluster_lifecycle
-// table and seeds the singleton row, returning a *sql.DB for testing.
+// setupLifecycleDB creates an in-memory SQLite database with the config
+// table (the pre-existing dependency) and runs the real schemaUpdate8
+// migration to create the cluster_lifecycle table and seed the singleton row.
+// This exercises the exact SQL that runs on a deployed cluster's upgrade.
 func setupLifecycleDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite3", ":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
-
-	_, err = db.Exec(`
-CREATE TABLE cluster_lifecycle (
-  id                    INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
-  ceph_bootstrapped     INTEGER NOT NULL DEFAULT 0,
-  ceph_bootstrap_state  TEXT    NOT NULL DEFAULT 'not_bootstrapped',
-  ceph_bootstrap_target TEXT,
-  detail                TEXT,
-  CONSTRAINT singleton CHECK (id = 1)
-);
-INSERT INTO cluster_lifecycle (id) VALUES (1);
-`)
-	require.NoError(t, err)
-	return db
+	return setupLifecycleDBWithConfig(t, false)
 }
 
 // setupLifecycleDBWithConfig creates an in-memory SQLite database with the
-// cluster_lifecycle table, the config table, and seeds the singleton row.
-// If withLegacyConfig is true, it also inserts fsid and keyring.client.admin
-// config rows to simulate a legacy bootstrapped cluster.
+// config table, optionally seeds legacy bootstrapped config rows (fsid +
+// keyring.client.admin), and then runs the real schemaUpdate8 migration.
+// schemaUpdate8 creates the cluster_lifecycle table, seeds the singleton row,
+// and runs the legacy-bootstrapped backfill (which finds the config rows if
+// they were inserted before the migration runs).
 func setupLifecycleDBWithConfig(t *testing.T, withLegacyConfig bool) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 
+	// Create the config table — the pre-existing dependency that
+	// schemaUpdate8's backfill references via EXISTS subqueries.
 	_, err = db.Exec(`
 CREATE TABLE config (
   id    INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -50,15 +40,6 @@ CREATE TABLE config (
   value TEXT NOT NULL,
   UNIQUE(key)
 );
-CREATE TABLE cluster_lifecycle (
-  id                    INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
-  ceph_bootstrapped     INTEGER NOT NULL DEFAULT 0,
-  ceph_bootstrap_state  TEXT    NOT NULL DEFAULT 'not_bootstrapped',
-  ceph_bootstrap_target TEXT,
-  detail                TEXT,
-  CONSTRAINT singleton CHECK (id = 1)
-);
-INSERT INTO cluster_lifecycle (id) VALUES (1);
 `)
 	require.NoError(t, err)
 
@@ -69,25 +50,28 @@ INSERT INTO config (key, value) VALUES ('keyring.client.admin', 'AQABfakekey==')
 `)
 		require.NoError(t, err)
 	}
+
+	// Run the real schemaUpdate8 migration: creates cluster_lifecycle, seeds
+	// the singleton row, and runs the legacy-bootstrapped backfill.
+	tx, err := db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	err = schemaUpdate8(context.Background(), tx)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
 	return db
 }
 
 // TestSchemaUpdate8BackfillLegacyBootstrapped verifies that schemaUpdate8's
 // backfill logic marks the lifecycle row as bootstrapped when legacy config
-// rows (fsid + keyring.client.admin) exist (FIX 2).
+// rows (fsid + keyring.client.admin) exist. The setup runs the real
+// schemaUpdate8 migration, so this exercises the exact shipped SQL.
 func TestSchemaUpdate8BackfillLegacyBootstrapped(t *testing.T) {
 	db := setupLifecycleDBWithConfig(t, true)
 
-	// Run the backfill SQL (same logic as schemaUpdate8's UPDATE).
-	_, err := db.Exec(`
-UPDATE cluster_lifecycle
-   SET ceph_bootstrapped = 1, ceph_bootstrap_state = 'bootstrapped'
- WHERE id = 1
-   AND EXISTS (SELECT 1 FROM config WHERE key = 'fsid')
-   AND EXISTS (SELECT 1 FROM config WHERE key = 'keyring.client.admin');
-`)
-	require.NoError(t, err)
-
+	// schemaUpdate8 (run inside setupLifecycleDBWithConfig) created the
+	// cluster_lifecycle table and ran the backfill UPDATE that marks legacy
+	// bootstrapped clusters. Verify the result.
 	tx, err := db.BeginTx(context.Background(), nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
@@ -99,20 +83,14 @@ UPDATE cluster_lifecycle
 }
 
 // TestSchemaUpdate8NoBackfillWithoutConfig verifies that without legacy config
-// rows, the lifecycle row stays not_bootstrapped (FIX 2 negative case).
+// rows, schemaUpdate8 leaves the lifecycle row as not_bootstrapped. The setup
+// runs the real schemaUpdate8 migration, so this exercises the exact shipped SQL.
 func TestSchemaUpdate8NoBackfillWithoutConfig(t *testing.T) {
 	db := setupLifecycleDBWithConfig(t, false)
 
-	// Run the backfill SQL.
-	_, err := db.Exec(`
-UPDATE cluster_lifecycle
-   SET ceph_bootstrapped = 1, ceph_bootstrap_state = 'bootstrapped'
- WHERE id = 1
-   AND EXISTS (SELECT 1 FROM config WHERE key = 'fsid')
-   AND EXISTS (SELECT 1 FROM config WHERE key = 'keyring.client.admin');
-`)
-	require.NoError(t, err)
-
+	// schemaUpdate8 (run inside setupLifecycleDBWithConfig) created the
+	// cluster_lifecycle table. Without legacy config rows the backfill is a
+	// no-op, so the row stays not_bootstrapped.
 	tx, err := db.BeginTx(context.Background(), nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()

@@ -139,8 +139,9 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 
 	// Mark the Ceph lifecycle as bootstrapped (CE142). Non-fatal: if this
 	// write fails the cluster is still up, and the defensive config-based
-	// check in ApplyPlacement/CephOnlyBootstrap covers a stale lifecycle row.
-	if err := ceph.MarkCephBootstrappedFunc(ctx, state); err != nil {
+	// check in ApplyPlacement/BootstrapCeph covers a stale lifecycle row.
+	err = ceph.MarkCephBootstrappedFunc(ctx, state)
+	if err != nil {
 		logger.Warnf("failed to mark ceph lifecycle as bootstrapped: %v", err)
 	}
 

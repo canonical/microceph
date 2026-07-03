@@ -54,10 +54,23 @@ func isClientSidePlacementError(err error) bool {
 		errors.Is(err, ceph.ErrKeepOneInvariant)
 }
 
+// inProgressResponse maps an "already in progress" sentinel (placement apply or
+// Ceph bootstrap) to HTTP 409 Conflict so an orchestrator can distinguish a
+// transient, retryable in-progress condition from a genuine server fault (500).
+// It returns nil if err is not an in-progress sentinel.
+func inProgressResponse(err error) mcTypes.Response {
+	if errors.Is(err, ceph.ErrPlacementApplyInProgress) || errors.Is(err, ceph.ErrCephBootstrapInProgress) {
+		return mcTypes.ErrorResponse(http.StatusConflict, err.Error())
+	}
+	return nil
+}
+
 // cmdPlacementPut installs and applies a declarative placement policy.
 func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var policy types.PlacementPolicy
-	err := json.NewDecoder(r.Body).Decode(&policy)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	err := dec.Decode(&policy)
 	if err != nil {
 		logger.Errorf("failed decoding placement policy: %v", err)
 		return mcTypes.BadRequest(err)
@@ -76,7 +89,7 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	// cancel the in-flight operation mid-way (e.g. during GetClusterMemberNames
 	// which makes a network call to the leader), producing an opaque "context
 	// canceled" error and leaving the placement partially applied. This mirrors
-	// the CephOnlyBootstrap context detachment pattern.
+	// the BootstrapCeph context detachment pattern.
 	ctx, ctxCancel := context.WithTimeout(context.WithoutCancel(r.Context()), placementPutTimeout)
 	defer ctxCancel()
 
@@ -90,9 +103,14 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	lockToken, err := ceph.LockPlacementApplyFunc(ctx, interfaces.CephState{State: s})
 	if err != nil {
 		logger.Errorf("failed to acquire placement apply lock: %v", err)
-		// ErrPlacementApplyInProgress is retryable, mirroring the Ceph-only
-		// bootstrap in-progress behaviour; it falls through SmartError rather
-		// than 400 because it is not an operator input error.
+		// ErrPlacementApplyInProgress is retryable: return HTTP 409 Conflict so
+		// an orchestrator can distinguish it from a genuine server fault (500)
+		// and key retry logic off the status. Other errors fall through
+		// SmartError.
+		resp := inProgressResponse(err)
+		if resp != nil {
+			return resp
+		}
 		return mcTypes.SmartError(err)
 	}
 	defer func() {
@@ -167,9 +185,34 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 }
 
 // cmdPlacementDelete clears the active role-managed placement policy without
-// adding or removing services.
+// adding or removing services. It acquires the same cluster-wide apply lock as
+// cmdPlacementPut so an in-flight PUT cannot re-write the policy after DELETE
+// returns 200.
 func cmdPlacementDelete(s mcTypes.State, r *http.Request) mcTypes.Response {
-	err := ceph.ClearPlacementPolicyFunc(r.Context(), interfaces.CephState{State: s})
+	ctx, ctxCancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+	defer ctxCancel()
+
+	lockToken, err := ceph.LockPlacementApplyFunc(ctx, interfaces.CephState{State: s})
+	if err != nil {
+		logger.Errorf("failed to acquire placement apply lock: %v", err)
+		// A held lock (in-flight apply) is retryable: return HTTP 409 Conflict
+		// so the caller can distinguish it from a server fault.
+		resp := inProgressResponse(err)
+		if resp != nil {
+			return resp
+		}
+		return mcTypes.SmartError(err)
+	}
+	defer func() {
+		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer releaseCancel()
+		unlockErr := ceph.UnlockPlacementApplyFunc(releaseCtx, interfaces.CephState{State: s}, lockToken)
+		if unlockErr != nil {
+			logger.Warnf("failed to release placement apply lock (a new apply can reclaim it once the lease expires): %v", unlockErr)
+		}
+	}()
+
+	err = ceph.ClearPlacementPolicyFunc(ctx, interfaces.CephState{State: s})
 	if err != nil {
 		logger.Errorf("failed to clear placement policy: %v", err)
 		return mcTypes.InternalError(err)
@@ -186,7 +229,9 @@ var cephBootstrapCmd = mcTypes.Endpoint{
 // cmdCephBootstrapPut bootstraps Ceph on an existing MicroCluster member.
 func cmdCephBootstrapPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var req types.CephBootstrapRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	err := dec.Decode(&req)
 	if err != nil {
 		// Only fall back to empty body for EOF (no body); reject malformed JSON.
 		if err != io.EOF {
@@ -224,16 +269,21 @@ func cmdCephBootstrapPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 		AvailabilityZone: req.AvailabilityZone,
 	}
 
-	err = ceph.CephOnlyBootstrapFunc(r.Context(), interfaces.CephState{State: s}, req.Target, bd, req.Force)
+	err = ceph.BootstrapCephFunc(r.Context(), interfaces.CephState{State: s}, req.Target, bd, req.Force)
 	if err != nil {
 		logger.Errorf("Ceph-only bootstrap failed: %v", err)
 		// Client-side precondition failures (unknown target, partial bootstrap)
 		// return HTTP 400 so callers can distinguish operator errors from genuine
-		// server faults, mirroring cmdPlacementPut. Other errors (e.g. bootstrap
-		// already in progress, internal faults) fall through to SmartError which
-		// maps known sentinels or returns 500.
+		// server faults, mirroring cmdPlacementPut. Other errors fall through to
+		// SmartError which maps known sentinels or returns 500.
 		if isClientSideBootstrapError(err) {
 			return mcTypes.BadRequest(err)
+		}
+		// Bootstrap already in progress is retryable: return HTTP 409 Conflict
+		// so an orchestrator can distinguish it from a genuine server fault.
+		resp := inProgressResponse(err)
+		if resp != nil {
+			return resp
 		}
 		return mcTypes.SmartError(err)
 	}
@@ -241,7 +291,7 @@ func cmdCephBootstrapPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	return mcTypes.SyncResponse(true, nil)
 }
 
-// isClientSideBootstrapError reports whether a CephOnlyBootstrap error is a
+// isClientSideBootstrapError reports whether a BootstrapCeph error is a
 // client-side precondition failure (unknown target member, partial bootstrap
 // state requiring operator cleanup) that should map to HTTP 400 rather than the
 // SmartError 500 fallback. It mirrors isClientSidePlacementError.

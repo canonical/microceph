@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -33,11 +34,11 @@ var ErrUnknownBootstrapTarget = fmt.Errorf("unknown bootstrap target member")
 // the operator cleans up the partial artifacts.
 var ErrPartialBootstrap = fmt.Errorf("partial Ceph bootstrap detected")
 
-// CephBootstrapStepsFunc is the injectable function that performs the actual
+// BootstrapCephStepsFunc is the injectable function that performs the actual
 // Ceph bootstrap steps (FSID, ceph.conf, keyrings, MON/MGR/MDS services). In
 // production the daemon layer sets this to a function that reuses
 // SimpleBootstrapper logic; in tests it is overridden to avoid subprocess calls.
-var CephBootstrapStepsFunc = func(ctx context.Context, s interfaces.StateInterface, target string, bd common.BootstrapConfig) error {
+var BootstrapCephStepsFunc = func(ctx context.Context, s interfaces.StateInterface, target string, bd common.BootstrapConfig) error {
 	return fmt.Errorf("ceph bootstrap steps not configured; the daemon must inject an implementation")
 }
 
@@ -58,11 +59,11 @@ var GetClusterMemberNamesFunc = func(ctx context.Context, s interfaces.StateInte
 	return nil, fmt.Errorf("cluster member listing not configured")
 }
 
-// CephOnlyBootstrapFunc is the injectable wrapper for CephOnlyBootstrap, used
+// BootstrapCephFunc is the injectable wrapper for BootstrapCeph, used
 // by API handlers so tests can override it.
-var CephOnlyBootstrapFunc = CephOnlyBootstrap
+var BootstrapCephFunc = BootstrapCeph
 
-// CephOnlyBootstrap bootstraps Ceph on an existing MicroCluster member (CE142).
+// BootstrapCeph bootstraps Ceph on an existing MicroCluster member (CE142).
 // It is targetable by member name, idempotent on retries, and concurrency-safe.
 //
 //   - If Ceph is already bootstrapped, it succeeds as a no-op (returns nil).
@@ -90,7 +91,7 @@ var CephOnlyBootstrapFunc = CephOnlyBootstrap
 // CLI timeout or proxy deadline) cannot abort the bootstrap mid-way or strand
 // the lifecycle state in in_progress. The request context's values (notably
 // the microcluster logger) are preserved.
-func CephOnlyBootstrap(ctx context.Context, s interfaces.StateInterface, target string, bd common.BootstrapConfig, force bool) error {
+func BootstrapCeph(ctx context.Context, s interfaces.StateInterface, target string, bd common.BootstrapConfig, force bool) error {
 	cephBootstrapMu.Lock()
 	defer cephBootstrapMu.Unlock()
 
@@ -130,7 +131,7 @@ func CephOnlyBootstrap(ctx context.Context, s interfaces.StateInterface, target 
 	}
 
 	// Run the actual Ceph bootstrap steps via the injected function.
-	bootErr := CephBootstrapStepsFunc(opCtx, s, target, bd)
+	bootErr := BootstrapCephStepsFunc(opCtx, s, target, bd)
 
 	// Update lifecycle state based on the result. Reuse the detached opCtx
 	// (carrying the logger, not cancelled with the request) so the result is
@@ -178,7 +179,7 @@ func CephOnlyBootstrap(ctx context.Context, s interfaces.StateInterface, target 
 // conditional UPDATE) so the subsequent failed->in_progress transition
 // succeeds. This is the recovery path for a crashed or stuck bootstrap.
 //
-// It is injectable for testing via the AtomicStartBootstrapFunc var.
+// It is injectable for testing via the atomicStartBootstrapFunc var.
 var atomicStartBootstrapFunc = atomicStartBootstrap
 
 // atomicStartBootstrap is the real implementation of the atomic state transition.
@@ -192,7 +193,7 @@ func atomicStartBootstrap(ctx context.Context, s interfaces.StateInterface, targ
 	if err != nil {
 		return false, fmt.Errorf("failed to list cluster members: %w", err)
 	}
-	if !containsString(members, target) {
+	if !slices.Contains(members, target) {
 		return false, fmt.Errorf("%w: %s", ErrUnknownBootstrapTarget, target)
 	}
 
@@ -211,7 +212,7 @@ func atomicStartBootstrap(ctx context.Context, s interfaces.StateInterface, targ
 		// the subsequent failed->in_progress transition can proceed. This is a
 		// conditional UPDATE (in_progress -> failed). Note: this resets ANY
 		// in_progress row, including a live bootstrap on another member — force
-		// is only safe when no live bootstrap is running. See CephOnlyBootstrap
+		// is only safe when no live bootstrap is running. See BootstrapCeph
 		// doc comment.
 		if force {
 			res, err := tx.ExecContext(ctx, `
@@ -369,14 +370,4 @@ func recoverStaleBootstrappedLifecycle(ctx context.Context, s interfaces.StateIn
 
 	logger.Infof("Recovered stale Ceph lifecycle row for existing bootstrap on %s", target)
 	return true, nil
-}
-
-// containsString returns true if the slice contains the given string.
-func containsString(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

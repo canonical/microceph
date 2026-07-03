@@ -34,7 +34,8 @@ SELECT active, coalesce(policy_json, ''), last_refusal FROM placement_policy WHE
 	return &PlacementPolicyRecord{Active: active != 0, PolicyJSON: policyJSON, LastRefusal: lastRefusal.String}, nil
 }
 
-// SetPlacementPolicy upserts the single-row placement policy record.
+// SetPlacementPolicy updates the single-row placement policy record (the row
+// is created by the schema migration; a missing row is an error).
 func SetPlacementPolicy(ctx context.Context, tx *sql.Tx, active bool, policyJSON string) error {
 	a := 0
 	if active {
