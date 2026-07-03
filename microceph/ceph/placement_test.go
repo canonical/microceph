@@ -595,17 +595,24 @@ func (s *placementSuite) TestPlacementRemovesExistingNonViableTargetWhenRetainer
 	assert.ElementsMatch(s.T(), []string{"mon:node-a", "mgr:node-a", "mds:node-a"}, rec.removes())
 }
 
-// TestVerifyControlServicesReadyPollsConcurrently verifies that pending
+// TestControlServiceViabilityPollsConcurrently verifies that pending
 // (service, member) readiness checks run concurrently against the shared
 // deadline, so no single service can starve later services of the budget (the
 // Medium "shared readiness deadline" finding). With sequential polling the max
 // observed concurrency would be 1; with concurrent polling it must exceed 1.
-func (s *placementSuite) TestVerifyControlServicesReadyPollsConcurrently() {
-	// All three control services on node-a are pending (viable=true).
-	viableControl := map[string]map[string]bool{
-		"mon": {"node-a": true},
-		"mgr": {"node-a": true},
-		"mds": {"node-a": true},
+func (s *placementSuite) TestControlServiceViabilityPollsConcurrently() {
+	// node-a holds all three control services as retainer candidates; node-b is
+	// a pending removal target so the polling gate triggers (node-b itself is
+	// not polled).
+	observedControl := map[string]map[string]bool{
+		"mon": {"node-a": true, "node-b": true},
+		"mgr": {"node-a": true, "node-b": true},
+		"mds": {"node-a": true, "node-b": true},
+	}
+	policy := types.PlacementPolicy{
+		Members: map[string]types.MemberPlacement{
+			"node-b": {Control: boolPtr(false)}, // removal target: triggers polling
+		},
 	}
 
 	var inflight int64
@@ -633,7 +640,7 @@ func (s *placementSuite) TestVerifyControlServicesReadyPollsConcurrently() {
 	controlReadinessTimeout = 5 * time.Second
 	s.T().Cleanup(func() { controlReadinessTimeout = origTimeout })
 
-	verifyControlServicesReady(context.Background(), viableControl, types.PlacementPolicy{})
+	viableControl := controlServiceViability(context.Background(), observedControl, policy)
 
 	assert.Greater(s.T(), int(atomic.LoadInt64(&maxInflight)), 1,
 		"readiness checks must run concurrently; max observed concurrency was %d", maxInflight)
@@ -643,13 +650,13 @@ func (s *placementSuite) TestVerifyControlServicesReadyPollsConcurrently() {
 	}
 }
 
-// TestVerifyControlServicesReadySkipsRemovalTargets verifies that members
+// TestControlServiceViabilitySkipsRemovalTargets verifies that members
 // whose policy entry explicitly sets control:false are not polled for
 // readiness: they can never count as keep-one retainers, and polling them
 // would burn the shared deadline (e.g. waiting the full budget for a dead
 // node that control is being migrated away from).
-func (s *placementSuite) TestVerifyControlServicesReadySkipsRemovalTargets() {
-	viableControl := map[string]map[string]bool{
+func (s *placementSuite) TestControlServiceViabilitySkipsRemovalTargets() {
+	observedControl := map[string]map[string]bool{
 		"mon": {"node-a": true, "node-b": true},
 		"mgr": {"node-a": true, "node-b": true},
 		"mds": {"node-a": true, "node-b": true},
@@ -676,13 +683,102 @@ func (s *placementSuite) TestVerifyControlServicesReadySkipsRemovalTargets() {
 			"node-b": {},                        // omitted control: retainer candidate, polled
 		},
 	}
-	verifyControlServicesReady(context.Background(), viableControl, policy)
+	viableControl := controlServiceViability(context.Background(), observedControl, policy)
 
 	assert.False(s.T(), polled["node-a"], "explicit removal targets must not be polled for readiness")
 	assert.True(s.T(), polled["node-b"], "retainer candidates must be polled for readiness")
 	for _, svc := range controlServices {
 		assert.True(s.T(), viableControl[svc]["node-a"],
 			"%s on node-a keeps its copied viability entry (never read for retainer counting)", svc)
+	}
+}
+
+// TestControlServiceViabilitySkipsPollingWhenNoRemovals verifies the
+// short-circuit when the policy has no pending control removals
+// (hasRemovals=false): polling is skipped entirely and the returned viability
+// map is the existence-seeded copy of observedControl. A fail-if-called stub
+// proves no readiness check runs; it also returns false so a regression that
+// removed the gate would flip viability entries and fail the value assertions.
+func (s *placementSuite) TestControlServiceViabilitySkipsPollingWhenNoRemovals() {
+	observedControl := map[string]map[string]bool{
+		"mon": {"node-a": true, "node-b": true},
+		"mgr": {"node-a": true, "node-b": true},
+		"mds": {"node-a": true, "node-b": true},
+	}
+
+	var mu sync.Mutex
+	called := false
+	origReady := controlServiceReadyFunc
+	controlServiceReadyFunc = func(_ context.Context, _ string, _ string) (bool, error) {
+		mu.Lock()
+		called = true
+		mu.Unlock()
+		return false, fmt.Errorf("readiness check must not run when there are no pending removals")
+	}
+	s.T().Cleanup(func() { controlServiceReadyFunc = origReady })
+
+	origTimeout := controlReadinessTimeout
+	controlReadinessTimeout = 0
+	s.T().Cleanup(func() { controlReadinessTimeout = origTimeout })
+
+	// No control:false anywhere: nothing to keep-one-guard.
+	policy := types.PlacementPolicy{
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Control: boolPtr(true)},
+			"node-b": {}, // omitted control: not a removal target
+		},
+	}
+	viableControl := controlServiceViability(context.Background(), observedControl, policy)
+
+	assert.False(s.T(), called, "readiness must not be polled when there are no pending removals")
+	for _, svc := range controlServices {
+		assert.True(s.T(), viableControl[svc]["node-a"], "%s on node-a must keep its existence-seeded viability", svc)
+		assert.True(s.T(), viableControl[svc]["node-b"], "%s on node-b must keep its existence-seeded viability", svc)
+	}
+}
+
+// TestControlServiceViabilityAllRemovalTargetsNoRetainers verifies the
+// short-circuit when every observed control service sits on an explicit
+// control:false member (hasRemovals=true but len(pending)==0): there are no
+// retainer candidates to poll, so polling is skipped and the viability map is
+// the existence-seeded copy. A fail-if-called stub proves no readiness check
+// runs; it also returns false so a regression that proceeded to poll would flip
+// viability entries and fail the value assertions.
+func (s *placementSuite) TestControlServiceViabilityAllRemovalTargetsNoRetainers() {
+	observedControl := map[string]map[string]bool{
+		"mon": {"node-a": true, "node-b": true},
+		"mgr": {"node-a": true, "node-b": true},
+		"mds": {"node-a": true, "node-b": true},
+	}
+
+	var mu sync.Mutex
+	called := false
+	origReady := controlServiceReadyFunc
+	controlServiceReadyFunc = func(_ context.Context, _ string, _ string) (bool, error) {
+		mu.Lock()
+		called = true
+		mu.Unlock()
+		return false, fmt.Errorf("readiness check must not run when there are no retainer candidates")
+	}
+	s.T().Cleanup(func() { controlServiceReadyFunc = origReady })
+
+	origTimeout := controlReadinessTimeout
+	controlReadinessTimeout = 0
+	s.T().Cleanup(func() { controlReadinessTimeout = origTimeout })
+
+	// Every observed member is an explicit removal target: nothing to poll.
+	policy := types.PlacementPolicy{
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Control: boolPtr(false)},
+			"node-b": {Control: boolPtr(false)},
+		},
+	}
+	viableControl := controlServiceViability(context.Background(), observedControl, policy)
+
+	assert.False(s.T(), called, "readiness must not be polled when there are no retainer candidates")
+	for _, svc := range controlServices {
+		assert.True(s.T(), viableControl[svc]["node-a"], "%s on node-a must keep its existence-seeded viability", svc)
+		assert.True(s.T(), viableControl[svc]["node-b"], "%s on node-b must keep its existence-seeded viability", svc)
 	}
 }
 

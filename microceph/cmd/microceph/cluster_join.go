@@ -32,7 +32,7 @@ func (c *cmdClusterJoin) Command() *cobra.Command {
 
 	cmd.Flags().StringVar(&c.flagMicroCephIp, "microceph-ip", "", "Network address microceph daemon binds to.")
 	cmd.Flags().StringVar(&c.flagAvailabilityZone, "availability-zone", "", "Availability zone for failure domain distribution.")
-	cmd.Flags().BoolVar(&c.flagDeferCeph, "defer-ceph", false, "Join MicroCluster only and defer Ceph join auto-placement (CE142 role-managed mode)")
+	cmd.Flags().BoolVar(&c.flagDeferCeph, "defer-ceph", false, "Join MicroCluster only and defer Ceph join auto-placement")
 	return cmd
 }
 

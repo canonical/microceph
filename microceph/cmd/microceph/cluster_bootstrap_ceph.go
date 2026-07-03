@@ -29,7 +29,7 @@ type cmdClusterBootstrapCeph struct {
 func (c *cmdClusterBootstrapCeph) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bootstrap-ceph",
-		Short: "Bootstrap Ceph on an existing MicroCluster member (CE142 role-managed mode)",
+		Short: "Bootstrap Ceph on an existing MicroCluster member",
 		Args:  cobra.NoArgs,
 		RunE:  c.Run,
 	}

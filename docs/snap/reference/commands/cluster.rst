@@ -71,12 +71,12 @@ Flags:
    --public-network    string Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).
    --cluster-network   string Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).
    --v2-only                  Whether to support V2 messenger only or both V1 and V2.
-   --defer-ceph               Initialize MicroCluster only and defer Ceph bootstrap (CE142 role-managed mode). Ceph network flags (--mon-ip, --public-network, --cluster-network, --v2-only) are ignored with this option; pass them to 'cluster bootstrap-ceph' instead.
+   --defer-ceph               Initialize MicroCluster only and defer Ceph bootstrap. Ceph network flags (--mon-ip, --public-network, --cluster-network, --v2-only) are ignored with this option; pass them to 'cluster bootstrap-ceph' instead.
 
 ``bootstrap-ceph``
 ------------------
 
-Bootstrap Ceph on an existing MicroCluster member (CE142 role-managed mode).
+Bootstrap Ceph on an existing MicroCluster member.
 This is used after a deferred bootstrap (``cluster bootstrap --defer-ceph``) to
 complete the Ceph bootstrap on a specific member.
 
@@ -227,7 +227,7 @@ Flags:
 
    --availability-zone string Availability zone for failure domain distribution.
    --microceph-ip      string Network address microceph daemon binds to.
-   --defer-ceph               Join MicroCluster only and defer Ceph join auto-placement (CE142 role-managed mode).
+   --defer-ceph               Join MicroCluster only and defer Ceph join auto-placement.
 
 
 ``list``

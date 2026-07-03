@@ -76,10 +76,12 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 		return mcTypes.BadRequest(err)
 	}
 
-	// Reject unknown modes; only "reconcile" (or empty, treated as reconcile)
-	// is supported. See types.PlacementModeReconcile.
-	if policy.Mode != "" && policy.Mode != types.PlacementModeReconcile {
-		return mcTypes.BadRequest(fmt.Errorf("unknown placement mode %q; supported mode: %q", policy.Mode, types.PlacementModeReconcile))
+	// Require an explicit mode; only "reconcile" is supported. See
+	// types.PlacementModeReconcile. An omitted mode is rejected (not defaulted)
+	// so a caller cannot accidentally apply a reconcile with an empty body, and a
+	// future mode (e.g. dry-run) sent to an older snap fails loudly.
+	if policy.Mode != types.PlacementModeReconcile {
+		return mcTypes.BadRequest(fmt.Errorf("placement mode is required; supported mode: %q", types.PlacementModeReconcile))
 	}
 
 	// Detach from the request's cancellation while keeping its values (notably

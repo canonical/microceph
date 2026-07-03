@@ -40,7 +40,7 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).")
 	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).")
 	cmd.Flags().BoolVar(&c.flagV2Only, "v2-only", false, "Whether to support V2 messenger only or both V1 and V2")
-	cmd.Flags().BoolVar(&c.flagDeferCeph, "defer-ceph", false, "Initialize MicroCluster only and defer Ceph bootstrap (CE142 role-managed mode). Ceph network flags (--mon-ip, --public-network, --cluster-network, --v2-only) are ignored with this option; pass them to 'cluster bootstrap-ceph' instead.")
+	cmd.Flags().BoolVar(&c.flagDeferCeph, "defer-ceph", false, "Initialize MicroCluster only and defer Ceph bootstrap. Ceph network flags (--mon-ip, --public-network, --cluster-network, --v2-only) are ignored with this option; pass them to 'cluster bootstrap-ceph' instead.")
 	return cmd
 }
 

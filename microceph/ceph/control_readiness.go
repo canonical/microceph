@@ -197,53 +197,78 @@ func waitForControlServiceReady(ctx context.Context, service, member string, dea
 // an immediate single check.
 var controlReadinessTimeout = 2 * time.Minute
 
-// verifyControlServicesReady polls Ceph readiness for observed control
-// services that can act as keep-one retainers and marks non-viable ones as not
-// viable (sets the viability map entry to false). The caller must keep this
-// viability map separate from the observed/existence map: a DB service row or
-// locally-active snap is still a removal target even when it is not viable
-// enough to count as a retainer.
+// controlServiceViability returns a fresh map of which observed control
+// services are viable enough to act as keep-one retainers. It never mutates
+// observedControl; the returned map is a deep copy.
 //
-// Members whose policy entry explicitly sets control:false are not polled:
-// they can never count as retainers (the keep-one keeper check excludes them
-// regardless of viability), so polling them only burns the shared deadline —
-// e.g. migrating control off a dead node would otherwise wait the full budget
-// for the dead node's services. Their viability entries stay at the copied
-// value and are never read for retainer counting.
+// Viability is seeded from observed existence (a DB service row or
+// locally-active snap), then refined by polling Ceph readiness (MON quorum,
+// MGR active/standby, MDS health) for retainer candidates. Non-viable
+// services are marked false so the remove loop never counts them as
+// retainers, while still treating them as removal targets when another viable
+// retainer exists. Keep the returned viability map separate from observed
+// existence at the call site: a non-viable existing service is still a
+// removal target, it just cannot count as a retainer.
 //
-// Only call this when there are pending removals; otherwise it is unnecessary
-// work. All pending (service, member) pairs are polled concurrently against a
-// single shared deadline so that a service which needs most of the budget to
-// become ready (e.g. MON quorum re-forming) cannot starve later services of the
+// Polling is skipped entirely when the policy has no pending control removals
+// (nothing to keep-one-guard). Members whose policy entry explicitly sets
+// control:false are also skipped: they can never count as retainers (the
+// keep-one keeper check excludes them regardless of viability), and polling
+// them would only burn the shared deadline — e.g. migrating control off a
+// dead node would otherwise wait the full budget for the dead node's
+// services. Their viability entries stay at the copied value and are never
+// read for retainer counting.
+//
+// All pending (service, member) pairs are polled concurrently against a single
+// shared deadline so that a service which needs most of the budget to become
+// ready (e.g. MON quorum re-forming) cannot starve later services of the
 // deadline and mark them spuriously non-viable. The ctx already carries the
 // placement request deadline (placementPutTimeout), so in-flight polls cannot
 // leak past the request lifetime. Map writes are confined to this goroutine
 // (the polling goroutines only read existing entries via
 // waitForControlServiceReady and return booleans), so there is no data race on
-// viableControl.
-func verifyControlServicesReady(ctx context.Context, viableControl map[string]map[string]bool, policy types.PlacementPolicy) {
-	deadline := time.Now().Add(controlReadinessTimeout)
+// the returned map.
+func controlServiceViability(ctx context.Context, observedControl map[string]map[string]bool, policy types.PlacementPolicy) map[string]map[string]bool {
+	// Seed viability from observed existence (fresh copy: observedControl is
+	// never mutated, so the removal loop retains service-existence info).
+	viableControl := make(map[string]map[string]bool, len(observedControl))
+	for svc, members := range observedControl {
+		memberViable := make(map[string]bool, len(members))
+		for member, exists := range members {
+			memberViable[member] = exists
+		}
+		viableControl[svc] = memberViable
+	}
 
+	// In a single pass, detect whether any observed service sits on a pending
+	// removal target (the gate for polling) and collect the retainer candidates
+	// to poll (observed services not on an explicit control:false member).
+	deadline := time.Now().Add(controlReadinessTimeout)
 	type pendingCheck struct {
 		service string
 		member  string
 	}
 	var pending []pendingCheck
+	hasRemovals := false
 	for _, svc := range controlServices {
-		for memberName := range viableControl[svc] {
-			if !viableControl[svc][memberName] {
+		for member, exists := range viableControl[svc] {
+			if !exists {
 				continue
 			}
-			mp, inMap := policy.Members[memberName]
+			mp, inMap := policy.Members[member]
 			if inMap && mp.Control != nil && !*mp.Control {
-				// Explicit removal target: never a retainer, skip polling.
+				// Explicit removal target: never a retainer, skip polling it.
+				hasRemovals = true
 				continue
 			}
-			pending = append(pending, pendingCheck{service: svc, member: memberName})
+			pending = append(pending, pendingCheck{service: svc, member: member})
 		}
 	}
-	if len(pending) == 0 {
-		return
+
+	// Skip polling when there is nothing to keep-one-guard, or no retainer
+	// candidates to check: return the existence-seeded viability map as-is.
+	if !hasRemovals || len(pending) == 0 {
+		return viableControl
 	}
 
 	type checkResult struct {
@@ -264,20 +289,7 @@ func verifyControlServicesReady(ctx context.Context, viableControl map[string]ma
 			viableControl[res.service][res.member] = false
 		}
 	}
-}
-
-// copyObservedControlServices returns a deep copy of observed control service
-// placement. ApplyPlacement uses the copy as a viability map so readiness
-// checks cannot erase service-existence information needed for removals.
-func copyObservedControlServices(observedControl map[string]map[string]bool) map[string]map[string]bool {
-	result := make(map[string]map[string]bool, len(observedControl))
-	for svc, members := range observedControl {
-		result[svc] = make(map[string]bool, len(members))
-		for memberName, exists := range members {
-			result[svc][memberName] = exists
-		}
-	}
-	return result
+	return viableControl
 }
 
 // formatControlMap renders a service→members map as "mon:[a+ b-],mgr:[a+],mds:[]"
@@ -303,18 +315,4 @@ func formatControlMap(m map[string]map[string]bool) string {
 		parts = append(parts, fmt.Sprintf("%s:[%s]", svc, strings.Join(names, " ")))
 	}
 	return strings.Join(parts, ",")
-}
-
-// hasPendingControlRemovals reports whether the policy requests control:false
-// on any member that currently has an observed control service. If false, the
-// readiness verification step can be skipped (nothing to remove).
-func hasPendingControlRemovals(policy types.PlacementPolicy, observedControl map[string]map[string]bool) bool {
-	for _, svc := range controlServices {
-		for memberName, mp := range policy.Members {
-			if mp.Control != nil && !*mp.Control && observedControl[svc][memberName] {
-				return true
-			}
-		}
-	}
-	return false
 }

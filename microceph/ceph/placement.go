@@ -213,20 +213,14 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 		}
 	}
 
-	// Verify Ceph readiness before removals (CE142 keep-one safety). A DB
-	// service row or locally-active snap does not prove MON quorum, MGR
-	// active/standby, or MDS health. Only count viable services as retainers
-	// so the remove loop never removes the last viable control service.
-	//
-	// Keep viability separate from observed existence. Non-viable existing
-	// services are still removal targets when another viable retainer exists;
-	// they just cannot count as retainers for keep-one safety.
-	// Skip when there are no pending removals to avoid unnecessary polling.
-	viableControl := copyObservedControlServices(observedControl)
-	if hasPendingControlRemovals(policy, observedControl) {
-		verifyControlServicesReady(ctx, viableControl, policy)
-		logger.Debugf("Placement: viability after readiness check: %s", formatControlMap(viableControl))
-	}
+	// Compute control-service viability for keep-one safety: a DB service row
+	// or locally-active snap does not prove MON quorum, MGR active/standby, or
+	// MDS health, so only viable services count as retainers. Viability is
+	// kept separate from observed existence — a non-viable existing service is
+	// still a removal target, it just cannot count as a retainer.
+	// controlServiceViability never mutates observedControl.
+	viableControl := controlServiceViability(ctx, observedControl, policy)
+	logger.Debugf("Placement: control service viability: %s", formatControlMap(viableControl))
 
 	// Then remove control services from members that have control:false and
 	// are present in the map, subject to keep-one safety.

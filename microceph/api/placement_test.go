@@ -70,7 +70,7 @@ func TestPlacementPutSuccess(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	body := `{"members":{"node-a":{"control":true}}}`
+	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 
@@ -112,7 +112,7 @@ func TestPlacementPutApplyFailureNotStored(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	body := `{"members":{"bad-node":{"control":true}}}`
+	body := `{"mode":"reconcile","members":{"bad-node":{"control":true}}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 
@@ -147,7 +147,7 @@ func TestPlacementPutPreBootstrapReturns400(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	body := `{"members":{"node-a":{"control":true}}}`
+	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 
@@ -179,7 +179,7 @@ func TestPlacementPutKeepOneReturns400(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	body := `{"members":{"node-a":{"control":false}}}`
+	body := `{"mode":"reconcile","members":{"node-a":{"control":false}}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 
@@ -223,7 +223,7 @@ func TestPlacementPutKeepOneStoresPolicyAndRefusal(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	body := `{"members":{"node-a":{"control":false},"node-b":{"control":true}}}`
+	body := `{"mode":"reconcile","members":{"node-a":{"control":false},"node-b":{"control":true}}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 
@@ -238,6 +238,7 @@ func TestPlacementPutKeepOneStoresPolicyAndRefusal(t *testing.T) {
 	ctrlFalse := false
 	ctrlTrue := true
 	assert.Equal(t, types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
 		Members: map[string]types.MemberPlacement{
 			"node-a": {Control: &ctrlFalse},
 			"node-b": {Control: &ctrlTrue},
@@ -275,7 +276,7 @@ func TestPlacementPutKeepOneStoreFailureStillRecordsRefusal(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	body := `{"members":{"node-a":{"control":false},"node-b":{"control":true}}}`
+	body := `{"mode":"reconcile","members":{"node-a":{"control":false},"node-b":{"control":true}}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 
@@ -311,7 +312,7 @@ func TestPlacementPutServerErrorReturns500(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	body := `{"members":{"node-a":{"control":true}}}`
+	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 
@@ -353,7 +354,7 @@ func TestPlacementPutContextDetached(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	body := `{"members":{"node-a":{"control":true}}}`
+	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 
@@ -406,9 +407,9 @@ func TestPlacementPutUnknownModeRejected(t *testing.T) {
 	assert.Equal(t, 0, *unlockCalls, "unknown mode must be rejected before the lock is taken")
 }
 
-// TestPlacementPutReconcileAndEmptyModeAccepted verifies that the supported
-// mode spellings ("reconcile" and empty) pass mode validation.
-func TestPlacementPutReconcileAndEmptyModeAccepted(t *testing.T) {
+// TestPlacementPutReconcileModeAccepted verifies that an explicit "reconcile"
+// mode is accepted (200).
+func TestPlacementPutReconcileModeAccepted(t *testing.T) {
 	stubPlacementApplyLock(t)
 	origApply := ceph.ApplyPlacementFunc
 	origStore := ceph.StorePlacementPolicyFunc
@@ -428,18 +429,39 @@ func TestPlacementPutReconcileAndEmptyModeAccepted(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	for _, body := range []string{
-		`{"mode":"reconcile","members":{}}`,
-		`{"members":{}}`,
-	} {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
+	body := `{"mode":"reconcile","members":{}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 
-		resp := cmdPlacementPut(nil, req)
-		_ = resp.Render(rec, req)
+	resp := cmdPlacementPut(nil, req)
+	_ = resp.Render(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code, "body %s must be accepted", body)
+	assert.Equal(t, http.StatusOK, rec.Code, "body %s must be accepted", body)
+}
+
+// TestPlacementPutMissingModeRejected verifies that an omitted mode is rejected
+// with 400 (mode is required, not defaulted to reconcile) before any apply or
+// lock interaction.
+func TestPlacementPutMissingModeRejected(t *testing.T) {
+	unlockCalls := stubPlacementApplyLock(t)
+	applyCalled := false
+	origApply := ceph.ApplyPlacementFunc
+	ceph.ApplyPlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		applyCalled = true
+		return nil
 	}
+	defer func() { ceph.ApplyPlacementFunc = origApply }()
+
+	body := `{"members":{}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
+
+	resp := cmdPlacementPut(nil, req)
+	_ = resp.Render(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a missing mode must be rejected with 400")
+	assert.False(t, applyCalled, "a missing mode must not be applied")
+	assert.Equal(t, 0, *unlockCalls, "a missing mode must be rejected before the lock is taken")
 }
 
 // TestPlacementPutLockHeldReturnsRetryableError verifies that when another
@@ -476,7 +498,7 @@ func TestPlacementPutLockHeldReturnsRetryableError(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	body := `{"members":{"node-a":{"control":true}}}`
+	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 
@@ -519,7 +541,7 @@ func TestPlacementPutLockReleasedWithAcquiredToken(t *testing.T) {
 		ceph.SetPlacementRefusalFunc = origRefusal
 	}()
 
-	body := `{"members":{"node-a":{"control":true}}}`
+	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
 

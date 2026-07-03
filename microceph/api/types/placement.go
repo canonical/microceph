@@ -26,17 +26,17 @@ type MemberPlacement struct {
 	StorageEligible *bool `json:"storage_eligible,omitempty" yaml:"storage_eligible,omitempty"`
 }
 
-// PlacementModeReconcile is the only supported placement policy mode. An
-// empty Mode is treated as reconcile. Unknown modes are rejected so a future
-// mode (e.g. dry-run) sent to an older snap fails loudly instead of being
-// silently applied as a reconcile.
+// PlacementModeReconcile is the only supported placement policy mode. The
+// mode must be set explicitly on every PUT; an omitted mode is rejected, and
+// unknown modes are rejected, so a future mode (e.g. dry-run) sent to an older
+// snap fails loudly instead of being silently applied as a reconcile.
 const PlacementModeReconcile = "reconcile"
 
 // PlacementPolicy is the body of PUT /1.0/placement. Members maps MicroCeph
 // member names to their desired placement. Members absent from the map are not
 // touched for service placement.
 type PlacementPolicy struct {
-	Mode    string                     `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Mode    string                     `json:"mode" yaml:"mode"`
 	Members map[string]MemberPlacement `json:"members" yaml:"members"`
 }
 
