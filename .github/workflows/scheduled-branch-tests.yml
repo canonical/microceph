@@ -1,0 +1,24 @@
+name: Scheduled branch tests
+
+# GitHub only fires cron on the default branch, so stable branches get
+# their periodic CI via dispatch from here. Dispatched runs count toward
+# the per-branch flaky rate (CE144) on the CI health dashboard.
+on:
+  schedule:
+    - cron: "0 2 * * *" # Nightly dispatch to stable branches for flaky rate data
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ref: [squid]         # future stable branches: add here
+    steps:
+      - name: Dispatch tests.yml on ${{ matrix.ref }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run tests.yml --ref "${{ matrix.ref }}" --repo "${{ github.repository }}"
