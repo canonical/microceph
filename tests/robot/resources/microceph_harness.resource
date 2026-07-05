@@ -273,12 +273,16 @@ Run Hurl
 # ---------------------------------------------------------------------------
 
 Deferred Bootstrap Head Node
-    [Documentation]    Bootstraps MicroCluster only (Ceph deferred) on node-wrk0 over the public network.
+    [Documentation]    Bootstraps MicroCluster only (Ceph deferred) on node-wrk0.
     ...    Mirrors Bootstrap Head Node but adds --defer-ceph and does NOT expect Ceph services.
+    ...    Ceph network flags are rejected with --defer-ceph, so --public-network is NOT passed
+    ...    here; the public network CIDR is captured into ${DEFERRED_PUBLIC_NETWORK} and applied
+    ...    later by `cluster bootstrap-ceph --public-network` (see Ceph Only Bootstrap Target).
     Log To Console    [deferred-ceph] Deferred bootstrap on node-wrk0...
     ${result}=    Run In VM    lxc network list --format=csv | grep 'public' | cut -d, -f4    30
     ${nw}=    Set Variable    ${result.stdout.strip()}
-    Run In Container    node-wrk0    microceph cluster bootstrap --defer-ceph --public-network=${nw}    120
+    Set Suite Variable    ${DEFERRED_PUBLIC_NETWORK}    ${nw}
+    Run In Container    node-wrk0    microceph cluster bootstrap --defer-ceph    120
     Sleep    5s
     Run In Container    node-wrk0    microceph status    30
 
@@ -294,9 +298,11 @@ Deferred Join Worker Nodes
     Run In Container    node-wrk0    microceph status    30
 
 Ceph Only Bootstrap Target
-    [Documentation]    Runs `microceph cluster bootstrap-ceph --target <member>` from node-wrk0 and waits
-    ...    for Ceph to come up on the target. Returns nothing.
+    [Documentation]    Runs `microceph cluster bootstrap-ceph --target <member> --public-network=<nw>`
+    ...    from node-wrk0 and waits for Ceph to come up on the target. Returns nothing.
+    ...    The public network (${DEFERRED_PUBLIC_NETWORK}, captured by Deferred Bootstrap Head Node)
+    ...    is applied here because --defer-ceph rejects Ceph network flags on `cluster bootstrap`.
     [Arguments]    ${target}
     Log To Console    [deferred-ceph] Ceph-only bootstrap targeting ${target}...
-    Run In Container    node-wrk0    microceph cluster bootstrap-ceph --target ${target}    300
+    Run In Container    node-wrk0    microceph cluster bootstrap-ceph --target ${target} --public-network=${DEFERRED_PUBLIC_NETWORK}    300
     Sleep    5s

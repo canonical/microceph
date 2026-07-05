@@ -1,10 +1,10 @@
 *** Settings ***
 Documentation    deferred-ceph-single-tests
-...    Single-node deferred-Ceph UAT coverage (snap task S1):
-...      UAT-S1.1 deferred bootstrap leaves MicroCluster up but Ceph not bootstrapped,
+...    Single-node deferred-Ceph coverage:
+...      deferred bootstrap leaves MicroCluster up but Ceph not bootstrapped,
 ...      capability markers are advertised, lifecycle state is not_bootstrapped, and
 ...      an empty-members placement policy is accepted as a no-op.
-...    UAT-S1.6 (legacy bootstrap compatibility) is covered by the existing
+...    Legacy (non-deferred) bootstrap compatibility is covered by the existing
 ...    single-system-tests and cluster-tests suites running against the same snap.
 Resource        ../resources/microceph_harness.resource
 Suite Setup     Deferred Ceph Single Suite Setup
@@ -29,7 +29,7 @@ Deferred Ceph Single Suite Setup
 
 *** Test Cases ***
 Test Deferred Bootstrap Leaves Ceph Not Bootstrapped
-    [Documentation]    UAT-S1.1: `microceph cluster bootstrap --defer-ceph` brought up MicroCluster/dqlite
+    [Documentation]    `microceph cluster bootstrap --defer-ceph` brought up MicroCluster/dqlite
     ...    and microcephd, but did NOT create FSID, admin keyring, ceph.conf, or MON/MGR/MDS.
     ...    (Bootstrap happened once in Suite Setup.)
     [Tags]    deferred
@@ -42,13 +42,13 @@ Test Deferred Bootstrap Leaves Ceph Not Bootstrapped
     ...    msg=ceph.conf exists but Ceph should not be bootstrapped in deferred mode
 
 Test Lifecycle State Not Bootstrapped
-    [Documentation]    UAT-S1.1: GET /1.0/placement reports bootstrap_state=not_bootstrapped,
+    [Documentation]    GET /1.0/placement reports bootstrap_state=not_bootstrapped,
     ...    ceph_bootstrapped=false before Ceph-only bootstrap.
     [Tags]    deferred    api
     Assert Lifecycle State    not_bootstrapped    bootstrapped=false
 
 Test Capability Markers Advertised
-    [Documentation]    UAT-S1.1/S1.3/S1.5 precondition: GET /1.0/cluster/capabilities advertises
+    [Documentation]    Precondition: GET /1.0/cluster/capabilities advertises
     ...    the deferred-Ceph / placement capability markers so the charm can detect support.
     [Tags]    api    capabilities
     ${caps}=    Get Supported Capabilities
@@ -60,7 +60,7 @@ Test Capability Markers Advertised
     ...    msg=declarative-placement capability missing: ${caps}
 
 Test Placement Policy Empty Members Is No Op
-    [Documentation]    UAT-S1.5 precondition: PUT /1.0/placement with an empty members map performs
+    [Documentation]    Precondition: PUT /1.0/placement with an empty members map performs
     ...    no service operations, is accepted, and is stored as the active policy. Ceph must
     ...    remain unbootstrapped.
     [Tags]    api    placement

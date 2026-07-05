@@ -1,10 +1,9 @@
 *** Settings ***
 Documentation    legacy-placement-tests
-...    UAT for the lifecycle S1 blocker fix: a fresh NON-deferred (legacy)
-...    SimpleBootstrapper bootstrap must mark the cluster_lifecycle row as
-...    bootstrapped, so that GET /1.0/placement reports bootstrapped and a
-...    non-empty placement policy is accepted (not rejected with
-...    "Ceph not bootstrapped") on a newly-created cluster.
+...    Verifies that a fresh NON-deferred (legacy) SimpleBootstrapper bootstrap
+...    marks the cluster_lifecycle row as bootstrapped, so that GET /1.0/placement
+...    reports bootstrapped and a non-empty placement policy is accepted (not
+...    rejected with "Ceph not bootstrapped") on a newly-created cluster.
 ...    Covers the regression that schemaUpdate8 only backfills pre-existing
 ...    clusters, leaving fresh legacy clusters reported as not_bootstrapped.
 Resource        ../resources/microceph_harness.resource

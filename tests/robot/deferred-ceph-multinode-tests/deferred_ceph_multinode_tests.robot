@@ -1,10 +1,10 @@
 *** Settings ***
 Documentation    deferred-ceph-multinode-tests
-...    Multi-node deferred-Ceph UAT coverage (snap task S1):
-...      UAT-S1.2 deferred join forms MicroCluster membership without Ceph auto-placement,
-...      UAT-S1.3 Ceph-only bootstrap targets a non-head member,
-...      UAT-S1.4 idempotent retry succeeds as a no-op,
-...      UAT-S1.5 declarative control placement add/migrate + keep-one invariant.
+...    Multi-node deferred-Ceph coverage:
+...      deferred join forms MicroCluster membership without Ceph auto-placement,
+...      Ceph-only bootstrap targets a non-head member,
+...      idempotent retry succeeds as a no-op,
+...      declarative control placement add/migrate + keep-one invariant.
 ...    Each suite creates and destroys its own outer LXD VM with 4 inner MicroCeph nodes.
 Resource        ../resources/microceph_harness.resource
 Suite Setup     Deferred Ceph Multinode Suite Setup
@@ -19,13 +19,13 @@ Deferred Ceph Multinode Suite Setup
     Log To Console    [deferred-ceph] Deferred MicroCluster formed (4 members, Ceph unbootstrapped)
 
 Assert No Ceph Anywhere
-    [Documentation]    UAT-S1.2: no container has a Ceph cluster after deferred bootstrap+join.
+    [Documentation]    No container has a Ceph cluster after deferred bootstrap+join.
     FOR    ${c}    IN    node-wrk0    node-wrk1    node-wrk2    node-wrk3
         Assert No Ceph Cluster On Container    ${c}
     END
 
 Ceph Only Bootstrap Target And Verify
-    [Documentation]    UAT-S1.3: bootstrap Ceph on a non-head target member and verify Ceph comes up.
+    [Documentation]    Bootstrap Ceph on a non-head target member and verify Ceph comes up.
     [Arguments]    ${target}
     Ceph Only Bootstrap Target    ${target}
     Wait For Ceph Healthy On Container    ${target}
@@ -34,7 +34,7 @@ Ceph Only Bootstrap Target And Verify
 
 *** Test Cases ***
 Test Deferred Join Forms MicroCluster Without Ceph
-    [Documentation]    UAT-S1.2: `microceph cluster join --defer-ceph` joins MicroCluster but does
+    [Documentation]    `microceph cluster join --defer-ceph` joins MicroCluster but does
     ...    not run ceph.Join or auto-place MON/MGR/MDS. All 4 nodes are members; no Ceph cluster.
     [Tags]    deferred
     Assert No Ceph Anywhere
@@ -43,21 +43,23 @@ Test Deferred Join Forms MicroCluster Without Ceph
     Assert Bootstrap State In Container    node-wrk0    not_bootstrapped    bootstrapped=false
 
 Test Ceph Only Bootstrap On Non Head Target
-    [Documentation]    UAT-S1.3: `microceph cluster bootstrap-ceph --target node-wrk1` bootstraps
-    ...    Ceph exactly once on node-wrk1 (a non-head member). Ceph comes up there.
+    [Documentation]    `microceph cluster bootstrap-ceph --target node-wrk1 --public-network=<nw>`
+    ...    bootstraps Ceph exactly once on node-wrk1 (a non-head member). Ceph comes up there.
+    ...    The public network is the one captured during deferred bootstrap (network flags are
+    ...    rejected by `cluster bootstrap --defer-ceph`).
     [Tags]    ceph-only-bootstrap
     Ceph Only Bootstrap Target And Verify    node-wrk1
     Assert Bootstrap State In Container    node-wrk1    bootstrapped    bootstrapped=true
 
 Test Ceph Only Bootstrap Idempotent Retry
-    [Documentation]    UAT-S1.4: re-running `cluster bootstrap-ceph --target node-wrk1` succeeds
+    [Documentation]    Re-running `cluster bootstrap-ceph --target node-wrk1` succeeds
     ...    as a no-op (the cluster is already bootstrapped).
     [Tags]    ceph-only-bootstrap
     Run In Container    node-wrk0    microceph cluster bootstrap-ceph --target node-wrk1    120
     Run In Container    node-wrk0    microceph.ceph -s    30
 
 Test Declarative Control Placement Add
-    [Documentation]    UAT-S1.5: PUT /1.0/placement with control:true on node-wrk0 adds MON/MGR/MDS
+    [Documentation]    PUT /1.0/placement with control:true on node-wrk0 adds MON/MGR/MDS
     ...    there via the declarative placement engine.
     [Tags]    placement
     ${resp}=    MicroCeph API Put In Container    node-wrk0    placement    {"mode":"reconcile","members":{"node-wrk0":{"control":true}}}
@@ -67,7 +69,7 @@ Test Declarative Control Placement Add
     Run In Container    node-wrk0    microceph.ceph -s    30
 
 Test Declarative Control Placement Keep One Invariant
-    [Documentation]    UAT-S1.5: a placement that would remove the last control service must be
+    [Documentation]    A placement that would remove the last control service must be
     ...    rejected with a clear keep-one reason (HTTP non-2xx / error), and the last MON must
     ...    remain. We request control:false on the only control member while no other control
     ...    member exists.

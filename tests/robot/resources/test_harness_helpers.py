@@ -864,7 +864,7 @@ def test_parse_migration_status_absent_node_is_false():
 
 
 # ---------------------------------------------------------------------------
-# placement_status (CE142)
+# placement_status
 # ---------------------------------------------------------------------------
 
 _SYNC_PLACEMENT_RESPONSE = json.dumps({

@@ -1,12 +1,12 @@
-"""Pure parsers for the CE142 placement / lifecycle / capabilities API bodies.
+"""Pure parsers for the placement / lifecycle / capabilities API bodies.
 
-These are the *decision* halves of the CE142 keywords in microceph_harness.py:
-the keywords fetch raw JSON from the MicroCeph control socket (minimum remote
-I/O) and these helpers parse it locally (the "fetch raw, decide in Python"
-rule), replacing the raw-JSON substring assertions and grep pipelines the
-first CE142 suites used. All functions are module-level and pure -- no self,
-no BuiltIn -- so they are unit-testable from test_harness_helpers.py without a
-running Robot context.
+These are the *decision* halves of the placement keywords in
+microceph_harness.py: the keywords fetch raw JSON from the MicroCeph control
+socket (minimum remote I/O) and these helpers parse it locally (the "fetch
+raw, decide in Python" rule), replacing the raw-JSON substring assertions and
+grep pipelines the original suites used. All functions are module-level and
+pure -- no self, no BuiltIn -- so they are unit-testable from
+test_harness_helpers.py without a running Robot context.
 
 This module is imported by microceph_harness.py; it is NOT loaded as a Robot
 library, so its function names never collide with harness keyword names.
