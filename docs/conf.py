@@ -100,9 +100,9 @@ html_context = {
         # TODO: Specify your project's license.
         # For the name, we recommend using the standard shorthand identifier from
         # https://spdx.org/licenses
-        "name": "",
+        "name": "AGPL-3.0",
         # TODO: Link directly to your project's license statement.
-        "url": "",
+        "url": "https://github.com/canonical/microceph/blob/main/COPYING",
     },
 }
 
@@ -292,11 +292,8 @@ html_js_files = ["https://assets.ubuntu.com/v1/287a5e8f-bundle.js"]
 
 
 # Appends extra markup to the end of every document written in reST
-
-rst_epilog = """
-.. include:: /reuse/links.txt
-.. include:: /reuse/substitutions.txt
-"""
+# rst_epilog = """
+# """
 
 # Feedback button at the top; enabled by default
 # TODO: Disable the button if your project is unsuitable for public feedback.
