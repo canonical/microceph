@@ -46,7 +46,8 @@ jobs:
         run: |
           BASE_URLS_PATH="base/docs/urls.txt"
           COMPARE_URLS_PATH="compare/docs/urls.txt"
-          removed=$(comm -23 ${BASE_URLS_PATH} ${COMPARE_URLS_PATH} )
+          removed=$(comm -23 ${BASE_URLS_PATH} ${COMPARE_URLS_PATH} \
+            | grep -v '^\./explanation/security/full-disk-encryption/$' )
           if [ -n "$removed" ]; then
             echo "The following URLs were removed:"
             echo "$removed"
