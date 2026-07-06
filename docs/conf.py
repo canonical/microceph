@@ -1,5 +1,6 @@
 import datetime
 import os
+import textwrap
 import yaml
 
 # Configuration for the Sphinx documentation builder.
@@ -8,232 +9,210 @@ import yaml
 # A complete list of built-in Sphinx configuration values:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 #
-# Our starter pack uses the custom Canonical Sphinx extension
-# to keep all documentation based on it consistent and on brand:
+# The Sphinx Stack uses the Canonical Sphinx theme to keep all documentation consistent
+# and on brand:
 # https://github.com/canonical/canonical-sphinx
-
 
 #######################
 # Project information #
 #######################
 
 # Project name
-
 project = "MicroCeph"
+
+# Author name; used in the default copyright statement in the page footer
 author = "Canonical Ltd."
 
+# The year in the copyright statement
+copyright = f"{datetime.date.today().year}"
 
-# Sidebar documentation title; best kept reasonably short
-#
-# To include a version number, add it here (hardcoded or automated).
-#
-# To disable the title, set to an empty string.
-
+# Sidebar documentation title
+# To disable the title, set it to an empty string.
 html_title = project + " documentation"
 
-
-# Copyright string; shown at the bottom of the page
-#
-# Now, the starter pack uses CC-BY-SA as the license
-# and the current year as the copyright year.
-#
-# If your docs need another license, specify it instead of 'CC-BY-SA'.
-#
-# If your documentation is a part of the code repository of your project,
-# it inherits the code license instead; specify it instead of 'CC-BY-SA'.
-#
-# NOTE: For static works, it is common to provide the first publication year.
-#       Another option is to provide both the first year of publication
-#       and the current year, especially for docs that frequently change,
-#       e.g. 2022–2023 (note the en-dash).
-#
-#       A way to check a repo's creation date is to get a classic GitHub token
-#       with 'repo' permissions; see https://github.com/settings/tokens
-#       Next, use 'curl' and 'jq' to extract the date from the API's output:
-#
-#       curl -H 'Authorization: token <TOKEN>' \
-#         -H 'Accept: application/vnd.github.v3.raw' \
-#         https://api.github.com/repos/canonical/<REPO> | jq '.created_at'
-
-copyright = "%s AGPL-3.0, %s" % (datetime.date.today().year, author)
-
-
 # Documentation website URL
-#
-# Update with the official URL of your docs or leave empty if unsure.
-#
-# NOTE: The Open Graph Protocol (OGP) enhances page display in a social graph
-#       and is used by social media platforms; see https://ogp.me/
-
-ogp_site_url = "https://canonical-microceph.readthedocs-hosted.com/"
-
+ogp_site_url = os.environ.get("READTHEDOCS_CANONICAL_URL", "/")
 
 # Preview name of the documentation website
-#
-# To use a different name for the project in previews, update as needed.
-
+# TODO: To use a different name for the project in previews, update the next line.
 ogp_site_name = project
 
-
 # Preview image URL
-#
-# To customise the preview image, update as needed.
-
-ogp_image = "https://assets.ubuntu.com/v1/253da317-image-document-ubuntudocs.svg"
-
+# TODO: To customise the preview image, update the next line.
+ogp_image = "https://assets.ubuntu.com/v1/cc828679-docs_illustration.svg"
 
 # Product favicon; shown in bookmarks, browser tabs, etc.
-
-# To customise the favicon, uncomment and update as needed.
-
-# html_favicon = '.sphinx/_static/favicon.png'
-
+# TODO: To customise the favicon, uncomment and update the next line.
+# html_favicon = "_static/favicon.png"
 
 # Dictionary of values to pass into the Sphinx context for all pages:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#confval-html_context
-
 html_context = {
     # Product page URL; can be different from product docs URL
-    #
-    # Change to your product website URL,
-    # dropping the 'https://' prefix, e.g. 'ubuntu.com/lxd'.
-    #
-    # TODO: If there's no such website,
-    #       remove the {{ product_page }} link from the page header template
-    #       (usually .sphinx/_templates/header.html; also, see README.rst).
-    "product_page": "",
+    # TODO: Change to your product website URL, dropping the 'https://' prefix (e.g.,
+    #       'ubuntu.com/lxd'). If there's no such website, remove the {{ product_page }}
+    #       link from the _templates/header.html file.
+    "product_page": "canonical.com/ceph",
+
     # Product tag image; the orange part of your logo, shown in the page header
-    #
-    # To add a tag image, uncomment and update as needed.
+    # TODO: To add a tag image, uncomment and update as needed.
     # 'product_tag': '_static/tag.png',
+    
     # Your Discourse instance URL
-    #
-    # Change to your Discourse instance URL or leave empty.
-    #
-    # If set, adding ':discourse: 123' to an .rst file
-    #       will add a link to Discourse topic 123 at the bottom of the page.
+    # TODO: Change to your Discourse instance URL or leave empty.
     "discourse": "",
+
     # Your Mattermost channel URL
-    #
-    # Change to your Mattermost channel URL or leave empty.
+    # TODO: Change to your Mattermost channel URL or leave empty.
     "mattermost": "https://chat.canonical.com/canonical/channels/ceph",
+
     # Your Matrix channel URL
-    #
-    # Change to your Matrix channel URL or leave empty.
+    # TODO: Change to your Matrix channel URL or leave empty.
     "matrix": "https://matrix.to/#/#ceph-general:ubuntu.com",
-    # Your documentation GitHub repository URL
-    #
-    # Change to your documentation GitHub repository URL or leave empty.
-    #
-    # NOTE: If set, links for viewing the documentation source files
-    #       and creating GitHub issues are added at the bottom of each page.
+
+    # Your documentation GitHub repository URL If set, links for viewing the
+    # documentation source files and creating GitHub issues are added at the bottom of
+    # each page.
+    # TODO: Change to your documentation GitHub repository URL or leave empty.
     "github_url": "https://github.com/canonical/microceph",
+
     # Docs branch in the repo; used in links for viewing the source files
-    #
-    # To customise the branch, uncomment and update as needed.
-    'repo_default_branch': 'main',
+    "repo_default_branch": "main",
+
     # Docs location in the repo; used in links for viewing the source files
-    #
-
-
-    # To customise the directory, uncomment and update as needed.
     "repo_folder": "/docs/",
-    # To enable or disable the Previous / Next buttons at the bottom of pages
+
+    # TODO: To enable or disable the Previous / Next buttons at the bottom of pages
     # Valid options: none, prev, next, both
     "sequential_nav": "both",
-    # To enable listing contributors on individual pages, set to True
+
+    # TODO: To enable listing contributors on individual pages, set to True
     "display_contributors": True,
 
-    # Required for feedback button    
-    'github_issues': 'enabled',
+    # Required for feedback button
+    "github_issues": "enabled",
+
+    # Passes the top-level 'author' value to the theme
+    "author": author,
+
+    # Documentation license information
+    "license": {
+        # TODO: Specify your project's license.
+        # For the name, we recommend using the standard shorthand identifier from
+        # https://spdx.org/licenses
+        "name": "",
+        # TODO: Link directly to your project's license statement.
+        "url": "",
+    },
 }
 
-# To enable the edit button on pages, uncomment and change the link to a
+# TODO: To enable the edit button on pages, uncomment and change the link to a
 # public repository on GitHub or Launchpad. Any of the following link domains
 # are accepted:
-# - https://github.com/example-org/example"
+# - https://github.com/canonical/microceph"
 # - https://launchpad.net/example
 # - https://git.launchpad.net/example
-#
 html_theme_options = {
     'source_edit_link': 'https://github.com/canonical/microceph',
 }
 
-# Project slug; see https://meta.discourse.org/t/what-is-category-slug/87897
-#
-# If your documentation is hosted on https://docs.ubuntu.com/,
-# uncomment and update as needed.
-
+# Project slug
+# TODO: If your documentation is hosted on https://documentation.ubuntu.com/,
+#       uncomment and set to the RTD slug.
 # slug = ''
 
-#######################
+###############################################################
 # Sitemap configuration: https://sphinx-sitemap.readthedocs.io/
-#######################
+###############################################################
 
-# Base URL of RTD hosted project
+# Use RTD canonical URL to ensure duplicate pages have a specific canonical URL
+html_baseurl = os.environ.get("READTHEDOCS_CANONICAL_URL", "/")
 
-html_baseurl = 'https://canonical-microceph.readthedocs-hosted.com/'
+# sphinx-sitemap uses html_baseurl to generate the full URL for each page:
+sitemap_url_scheme = "{link}"
 
-# URL scheme. Add language and version scheme elements.
+# Include `lastmod` dates in the sitemap:
+sitemap_show_lastmod = True
+
+# URL scheme. Add language and version scheme elements
 # When configured with RTD variables, check for RTD environment so manual runs succeed:
-
 if 'READTHEDOCS_VERSION' in os.environ:
     version = os.environ["READTHEDOCS_VERSION"]
     sitemap_url_scheme = '{version}{link}'
 else:
     sitemap_url_scheme = 'MANUAL/{link}'
 
-# Template and asset locations
 
-#html_static_path = ["_static"]
+# TODO: Exclude pages that aren't user-facing from the sitemap (e.g., module pages
+# generated by autodoc).
+# Pages excluded from the sitemap:
+sitemap_excludes = [
+    "404/",
+    "genindex/",
+    "search/",
+]
+
+################################
+# Template and asset locations #
+################################
+
+html_static_path = ["_static"]
 templates_path = ["_templates"]
-
 
 #############
 # Redirects #
 #############
 
-# To set up redirects: https://documatt.gitlab.io/sphinx-reredirects/usage.html
-# For example: 'explanation/old-name.html': '../how-to/prettify.html',
+# Add redirects to the 'redirects.txt' file
+# https://sphinxext-rediraffe.readthedocs.io/en/latest/
 
 # To set up redirects in the Read the Docs project dashboard:
 # https://docs.readthedocs.io/en/stable/guides/redirects.html
 
-# NOTE: If undefined, set to None, or empty,
-#       the sphinx_reredirects extension will be disabled.
+rediraffe_redirects = "redirects.txt"
 
-redirects = {
-    # The FDE topic was split to a how-to and explanation; explanation topic was renamed
-    'explanation/security/full-disk-encryption': '../../security/about-fde',
-}
+# Strips '/index.html' from destination URLs when building with 'dirhtml'
+rediraffe_dir_only = True
+
+############################
+# sphinx-llm configuration #
+############################
+
+# This description is included in llms.txt to provide some initial context for your
+# product docs.
+# TODO: Add a description in the form "This is the documentation for <product name>,
+# <first sentence of home page>".
+llms_txt_description = textwrap.dedent(
+    """\
+    This is the official documentation for MicroCeph, an opinionated orchestration tool for Ceph clusters at all scales, and the easiest way to get up and running with Ceph.
+    """
+)
 
 ###########################
 # Link checker exceptions #
 ###########################
 
 # A regex list of URLs that are ignored by 'make linkcheck'
-#
 # Remove or adjust the ACME entry after you update the contributing guide
-
 linkcheck_ignore = [
     "http://127.0.0.1:8000",
     "https://github.com/canonical/ACME/*",
-    "https://matrix.to/#/#ceph-general:ubuntu.com",
-    "https://matrix.to/#/#documentation:ubuntu.com",
-    "https://matrix.to/#/#ceph-devel:ubuntu.com",
-    "https://matrix.to/#/#ubuntu-ceph:matrix.org"
-    ]
+    "https://github.com",
+    "https://matrix\.to/.*",
+    "https://example.com",
+    "https://tracker.ceph.com/.*",
+]
 
-# A regex list of URLs where anchors are ignored by 'make linkcheck'
-
+# A regex list of URLs where anchors are ignored by 'make linkcheck
 linkcheck_anchors_ignore_for_url = [
     r"https://github\.com/.*",
-    r"https://matrix.to/#/#ceph-general:ubuntu.com",
-    r"https://matrix.to/#/#documentation:ubuntu.com",
-    r"https://matrix.to/#/#ceph-devel:ubuntu.com",
-    r"https://matrix.to/#/#ubuntu-ceph:matrix.org"
+    r"https://matrix.to/*",
+    # SourceForge domains often block linkcheck
+    r"https://.*\.sourceforge\.(net|io)/.*",
     ]
 
+# How long the link checker will wait for a response for each request
+# TODO: Decrease to improve run time or increase if links frequently time out.
 # External documentation sites (canonical.com, ubuntu.com, ...) intermittently
 # return 429 (rate limiting), 502 (bad gateway), or read timeouts while the
 # link checker is running. These are transient infra failures, not broken
@@ -251,17 +230,16 @@ linkcheck_rate_limit_timeout = 600
 
 # Custom MyST syntax extensions; see
 # https://myst-parser.readthedocs.io/en/latest/syntax/optional.html
-#
 # NOTE: By default, the following MyST extensions are enabled:
-#       substitution, deflist, linkify
-
+#   - substitution
+#   - deflist
+#   - linkify
 # myst_enable_extensions = set()
-
 
 # Custom Sphinx extensions; see
 # https://www.sphinx-doc.org/en/master/usage/extensions/index.html
 
-# NOTE: The canonical_sphinx extension is required for the starter pack.
+# NOTE: The canonical_sphinx extension is required for the Shinx Stack.
 #       It automatically enables the following extensions:
 #       - custom-rst-roles
 #       - myst_parser
@@ -275,9 +253,24 @@ linkcheck_rate_limit_timeout = 600
 #       - sphinxext.opengraph
 #       - terminal-output
 #       - youtube-links
-
 extensions = [
     "canonical_sphinx",
+    "notfound.extension",
+    "sphinx_design",
+    "sphinx_rerediraffe",
+    "sphinx_reredirects",
+    "sphinx_tabs.tabs",
+    "sphinxcontrib.jquery",
+    "sphinxext.opengraph",
+    "sphinx_config_options",
+    "sphinx_contributor_listing",
+    "sphinx_filtered_toctree",
+    "sphinx_llm.txt",
+    "sphinx_related_links",
+    "sphinx_roles",
+    "sphinx_terminal",
+    "sphinx_ubuntu_images",
+    "sphinx_youtube_links",
     "sphinxcontrib.cairosvgconverter",
     "sphinx_last_updated_by_git",
     "sphinx.ext.intersphinx",
@@ -285,22 +278,20 @@ extensions = [
 ]
 
 # Excludes files or directories from processing
-
 exclude_patterns = [
     "doc-cheat-sheet*",
+    ".venv*",
 ]
 
-# Adds custom CSS files, located under 'html_static_path'
-
+# Adds custom CSS files, located remotely or in 'html_static_path'.
 html_css_files = ["https://assets.ubuntu.com/v1/d86746ef-cookie_banner.css"]
-
 
 # Adds custom JavaScript files, located under 'html_static_path'
 
 html_js_files = ["https://assets.ubuntu.com/v1/287a5e8f-bundle.js"]
 
 
-# Specifies a reST snippet to be appended to each .rst file
+# Appends extra markup to the end of every document written in reST
 
 rst_epilog = """
 .. include:: /reuse/links.txt
@@ -308,29 +299,22 @@ rst_epilog = """
 """
 
 # Feedback button at the top; enabled by default
-#
-# To disable the button, uncomment this.
-
+# TODO: Disable the button if your project is unsuitable for public feedback.
 # disable_feedback_button = True
 
-
 # Your manpage URL
-#
-# To enable manpage links, uncomment and replace {codename} with required
+# TODO: To enable manpage links, uncomment and replace {codename} with required
 #       release, preferably an LTS release (e.g. noble). Do *not* substitute
 #       {section} or {page}; these will be replaced by sphinx at build time
 #
 # NOTE: If set, adding ':manpage:' to an .rst file
 #       adds a link to the corresponding man section at the bottom of the page.
-
 # manpages_url = 'https://manpages.ubuntu.com/manpages/{codename}/en/' + \
 #     'man{section}/{page}.{section}.html'
-
 
 # Specifies a reST snippet to be prepended to each .rst file
 # This defines a :center: role that centers table cell content.
 # This defines a :h2: role that styles content for use with PDF generation.
-
 rst_prolog = """
 .. role:: center
    :class: align-center
@@ -362,6 +346,8 @@ intersphinx_disabled_reftypes = ['*']
 # Keys are short identifiers used in :external+key:ref:`label` roles.
 # The second tuple element (None) means Sphinx fetches objects.inv automatically
 # from the base URL.
+
+# Configuration for Intersphinx projects
 
 intersphinx_mapping = {
     # Upstream Ceph documentation

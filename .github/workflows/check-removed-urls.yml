@@ -1,0 +1,55 @@
+name: Check for removed URLs
+
+on:
+  workflow_call:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v5
+        with:
+          # This implicitly gets the PR branch. Making it explicit causes problems
+          # with private forks, but it is equivalent to the following:
+          # repository: ${{ github.event.pull_request.head.repo.full_name }}
+          # ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          path: compare
+      - name: Checkout base branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          repository: ${{ github.event.pull_request.base.repo.full_name }}
+          fetch-depth: 0
+          path: base
+      - uses: actions/setup-python@v6
+      - name: Build docs
+        run: |
+          for dir in compare base; do
+            pushd ${dir}/docs
+            make html
+            popd
+          done
+      - name: Generate current URLs list
+        run: |
+          for dir in compare base; do
+            pushd ${dir}/docs
+            find ./_build/ -name '*.html' \
+            | sed 's|/_build||;s|/index.html$|/|;s|.html$||' \
+            | sort > urls.txt
+            popd
+          done
+      - name: Compare URLs
+        run: |
+          BASE_URLS_PATH="base/docs/urls.txt"
+          COMPARE_URLS_PATH="compare/docs/urls.txt"
+          removed=$(comm -23 ${BASE_URLS_PATH} ${COMPARE_URLS_PATH} )
+          if [ -n "$removed" ]; then
+            echo "The following URLs were removed:"
+            echo "$removed"
+            echo "Please ensure removed pages are redirected"
+            exit 1
+          fi

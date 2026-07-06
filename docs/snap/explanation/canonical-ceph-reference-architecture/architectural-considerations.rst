@@ -32,7 +32,7 @@ Observability Stack (COS)
 <https://documentation.ubuntu.com/observability/track-2/>`_, and for
 management/patching, we recommend using `Landscape
 <https://ubuntu.com/landscape>`_. These typically require another three-node
-cluster, which can be colocated with the Juju/MAAS infrastructure nodes where
+cluster, which can be collocated with the Juju/MAAS infrastructure nodes where
 applicable, reducing the total infrastructure footprint.
 
 .. _cluster-service-placement:

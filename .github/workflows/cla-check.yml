@@ -1,0 +1,17 @@
+# This workflow checks if the contributor has signed the Canonical Contributor Licence Agreement (CLA)
+name: Canonical Contributor Licence Agreement check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  cla-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if CLA signed
+        uses: canonical/has-signed-canonical-cla@v2

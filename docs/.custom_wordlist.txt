@@ -147,6 +147,7 @@ Permalink
 PKI
 POSIX
 pre
+preboot
 prometheus
 radosgw
 ReadMe
@@ -192,6 +193,7 @@ API
 APIs
 arounds
 Auth
+AZs
 auth
 authorization
 auto-generated
@@ -204,6 +206,7 @@ catalog
 centralized
 Centralized
 ceph
+cephadm
 CephFS
 CephHealthWarning
 Cephx
@@ -280,9 +283,12 @@ manpage
 md
 mds
 MDS
+MDSs
 mees
 mentorship
 MgrReports
+MGRs
+MONs
 MiB
 MicroCeph
 MicroCeph's
@@ -320,6 +326,7 @@ qemu
 radosgw
 rbd
 RBD
+reachability
 readme
 ReadMe
 reST
@@ -328,6 +335,7 @@ reStructuredText
 resync
 rgw
 RGW
+RGWs
 RO
 rsyslog
 RTD
@@ -389,10 +397,13 @@ Hyperconverged
 RadosGW
 NICs
 OOB
+SSDs
 SSD
 SSHing
 unpartitioned
 GateWay
+Gbps
+HDDs
 Certbot
 LetsEncrypt
 utilize
