@@ -28,11 +28,9 @@ extensions = [
     'myst_parser',
     'sphinxcontrib.jquery',
     'notfound.extension',
-<<<<<<< HEAD
-    'versionwarning.extension'
-=======
+    'versionwarning.extension',
     'sphinx_sitemap'
->>>>>>> 348c834 (fix: Add sitemaps to older versions)
+
 ]
 extensions.extend(custom_extensions)
 
