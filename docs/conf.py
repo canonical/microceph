@@ -266,31 +266,11 @@ linkcheck_retries = 3
 #       - youtube-links
 
 extensions = [
-<<<<<<< HEAD
     "canonical_sphinx",
     "sphinxcontrib.cairosvgconverter",
     "sphinx_last_updated_by_git",
     "sphinx.ext.intersphinx",
     "sphinx_sitemap",
-=======
-    'sphinx_design',
-    'sphinx_tabs.tabs',
-    'sphinx_reredirects',
-    'youtube-links',
-    'related-links',
-    'custom-rst-roles',
-    'terminal-output',
-    'sphinx_copybutton',
-    'sphinxext.opengraph',
-    'myst_parser',
-    'sphinxcontrib.jquery',
-    'notfound.extension',
-<<<<<<< HEAD
-    'versionwarning.extension'
-=======
-    'sphinx_sitemap'
->>>>>>> 348c834 (fix: Add sitemaps to older versions)
->>>>>>> 3670054 (fix: Add sitemaps to older versions)
 ]
 
 # Excludes files or directories from processing
