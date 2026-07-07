@@ -63,7 +63,6 @@ type PlacementStatus struct {
 	Active           bool                      `json:"active" yaml:"active"`
 	Policy           *PlacementPolicy          `json:"policy,omitempty" yaml:"policy,omitempty"`
 	Observed         []PlacementObservedMember `json:"observed" yaml:"observed"`
-	CephBootstrapped bool                      `json:"ceph_bootstrapped" yaml:"ceph_bootstrapped"`
 	BootstrapState   string                    `json:"bootstrap_state" yaml:"bootstrap_state"`
 	BootstrapTarget  string                    `json:"bootstrap_target,omitempty" yaml:"bootstrap_target,omitempty"`
 	BlockedReason    string                    `json:"blocked_reason,omitempty" yaml:"blocked_reason,omitempty"`

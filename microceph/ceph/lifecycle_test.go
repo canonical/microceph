@@ -40,7 +40,6 @@ func TestMarkCephBootstrappedFunc(t *testing.T) {
 	assert.NoError(t, err)
 
 	lc := mockDB.get()
-	assert.True(t, lc.CephBootstrapped)
 	assert.Equal(t, database.CephStateBootstrapped, lc.CephBootstrapState)
 }
 
@@ -49,7 +48,7 @@ func TestMarkCephBootstrappedFunc(t *testing.T) {
 // needing config rows.
 func TestCephIsBootstrappedLifecycleTrue(t *testing.T) {
 	mockDB := newMockLifecycleDB()
-	mockDB.set(database.ClusterLifecycle{CephBootstrapped: true, CephBootstrapState: database.CephStateBootstrapped})
+	mockDB.set(database.ClusterLifecycle{CephBootstrapState: database.CephStateBootstrapped})
 	si, _ := newLifecycleTestState(t, mockDB)
 
 	got, err := cephIsBootstrappedFunc(context.Background(), si)

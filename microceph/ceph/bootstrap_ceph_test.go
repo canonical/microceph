@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
@@ -68,7 +69,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephSuccess() {
 	assert.NoError(s.T(), err)
 
 	lc := s.mockDB.get()
-	assert.True(s.T(), lc.CephBootstrapped)
 	assert.Equal(s.T(), database.CephStateBootstrapped, lc.CephBootstrapState)
 	assert.Equal(s.T(), "node-b", lc.CephBootstrapTarget)
 }
@@ -77,7 +77,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephSuccess() {
 // bootstrapped returns nil (no-op success) and does not run steps (UAT-S1.4).
 func (s *bootstrapCephSuite) TestBootstrapCephIdempotent() {
 	s.mockDB.set(database.ClusterLifecycle{
-		CephBootstrapped:   true,
 		CephBootstrapState: database.CephStateBootstrapped,
 	})
 
@@ -98,7 +97,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephIdempotent() {
 // a retryable error (UAT-S1.4).
 func (s *bootstrapCephSuite) TestBootstrapCephInProgress() {
 	s.mockDB.set(database.ClusterLifecycle{
-		CephBootstrapped:    false,
 		CephBootstrapState:  database.CephStateInProgress,
 		CephBootstrapTarget: "node-a",
 	})
@@ -145,7 +143,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephFailureRecordsDetail() {
 	assert.Error(s.T(), err)
 
 	lc := s.mockDB.get()
-	assert.False(s.T(), lc.CephBootstrapped)
 	assert.Equal(s.T(), database.CephStateFailed, lc.CephBootstrapState)
 	assert.Contains(s.T(), lc.Detail, "keyring creation failed")
 }
@@ -154,7 +151,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephFailureRecordsDetail() {
 // a retry can proceed (state transitions from failed back to in_progress).
 func (s *bootstrapCephSuite) TestBootstrapCephRetryAfterFailure() {
 	s.mockDB.set(database.ClusterLifecycle{
-		CephBootstrapped:   false,
 		CephBootstrapState: database.CephStateFailed,
 		Detail:             "previous failure",
 	})
@@ -169,7 +165,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephRetryAfterFailure() {
 	assert.NoError(s.T(), err)
 
 	lc := s.mockDB.get()
-	assert.True(s.T(), lc.CephBootstrapped)
 	assert.Equal(s.T(), database.CephStateBootstrapped, lc.CephBootstrapState)
 }
 
@@ -212,30 +207,34 @@ func (s *bootstrapCephSuite) TestBootstrapCephRaceGuard() {
 	// Wait for the first caller to enter the steps function (in_progress set).
 	<-firstStarted
 
-	// Second caller: should see in_progress and return immediately.
+	// Second caller: should fail fast on the process-local try-lock rather than
+	// blocking until the first bootstrap completes.
+	secondDone := make(chan struct{})
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer close(secondDone)
 		secondErr = BootstrapCeph(context.Background(), s.TestStateInterface, "node-b", common.BootstrapConfig{}, false)
 	}()
 
-	// Give the second caller time to attempt.
-	// Since the in-process mutex serializes calls, the second caller blocks on
-	// the mutex until the first releases. To test the dqlite-level guard, we
-	// need to call atomicStartBootstrapFunc directly.
-	proceed, err := atomicStartBootstrapFunc(context.Background(), s.TestStateInterface, "node-b", false)
-	assert.ErrorIs(s.T(), err, ErrCephBootstrapInProgress)
-	assert.False(s.T(), proceed)
+	select {
+	case <-secondDone:
+	case <-time.After(2 * time.Second):
+		close(firstProceed)
+		wg.Wait()
+		s.T().Fatal("second bootstrap caller blocked instead of returning ErrCephBootstrapInProgress")
+	}
+
+	assert.ErrorIs(s.T(), secondErr, ErrCephBootstrapInProgress)
 
 	// Let the first caller complete.
 	close(firstProceed)
 	wg.Wait()
 
 	assert.NoError(s.T(), firstErr)
-	assert.NoError(s.T(), secondErr) // sees bootstrapped after first completes
 
 	lc := s.mockDB.get()
-	assert.True(s.T(), lc.CephBootstrapped)
+	assert.Equal(s.T(), database.CephStateBootstrapped, lc.CephBootstrapState)
 }
 
 // TestBootstrapCephForceRecoversStaleInProgress verifies that --force
@@ -243,7 +242,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephRaceGuard() {
 // then the normal retry bootstraps successfully (FIX 1b).
 func (s *bootstrapCephSuite) TestBootstrapCephForceRecoversStaleInProgress() {
 	s.mockDB.set(database.ClusterLifecycle{
-		CephBootstrapped:    false,
 		CephBootstrapState:  database.CephStateInProgress,
 		CephBootstrapTarget: "node-a",
 	})
@@ -258,7 +256,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephForceRecoversStaleInProgress() {
 	assert.NoError(s.T(), err, "force should recover stale in_progress and bootstrap")
 
 	lc := s.mockDB.get()
-	assert.True(s.T(), lc.CephBootstrapped)
 	assert.Equal(s.T(), database.CephStateBootstrapped, lc.CephBootstrapState)
 }
 
@@ -266,7 +263,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephForceRecoversStaleInProgress() {
 // a stale in_progress state still returns ErrCephBootstrapInProgress (FIX 1b).
 func (s *bootstrapCephSuite) TestBootstrapCephNoForceStaysInProgress() {
 	s.mockDB.set(database.ClusterLifecycle{
-		CephBootstrapped:    false,
 		CephBootstrapState:  database.CephStateInProgress,
 		CephBootstrapTarget: "node-a",
 	})
@@ -293,7 +289,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephNoForceStaysInProgress() {
 func (s *bootstrapCephSuite) TestBootstrapCephNoOpWhenFullyBootstrapped() {
 	// Lifecycle bootstrapped AND config rows exist: genuine no-op success.
 	s.mockDB.set(database.ClusterLifecycle{
-		CephBootstrapped:   true,
 		CephBootstrapState: database.CephStateBootstrapped,
 	})
 	s.mockDB.setConfig(map[string]string{
@@ -323,7 +318,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephNoOpWhenFullyBootstrapped() {
 func (s *bootstrapCephSuite) TestBootstrapCephRefusesPartialBootstrap() {
 	// Partial state: config rows present, lifecycle failed (not bootstrapped).
 	s.mockDB.set(database.ClusterLifecycle{
-		CephBootstrapped:   false,
 		CephBootstrapState: database.CephStateFailed,
 		Detail:             "prior partial failure",
 	})
@@ -353,7 +347,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephRefusesPartialBootstrap() {
 
 	// Lifecycle must remain failed (not falsely marked bootstrapped).
 	lc := s.mockDB.get()
-	assert.False(s.T(), lc.CephBootstrapped)
 	assert.Equal(s.T(), database.CephStateFailed, lc.CephBootstrapState)
 }
 
@@ -365,7 +358,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephRefusesPartialBootstrap() {
 // retry on the original target before treating the bootstrap as partial.
 func (s *bootstrapCephSuite) TestBootstrapCephPartialRefusalHintsRecordedTarget() {
 	s.mockDB.set(database.ClusterLifecycle{
-		CephBootstrapped:    false,
 		CephBootstrapState:  database.CephStateFailed,
 		CephBootstrapTarget: "node-a",
 		Detail:              "prior partial failure",
@@ -400,7 +392,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephPartialRefusalHintsRecordedTarget(
 // the lifecycle is stale, and a cheap Ceph connectivity check succeeds.
 func (s *bootstrapCephSuite) TestBootstrapCephRecoversStaleLifecycle() {
 	s.mockDB.set(database.ClusterLifecycle{
-		CephBootstrapped:   false,
 		CephBootstrapState: database.CephStateInProgress,
 		Detail:             "recording result failed",
 	})
@@ -428,7 +419,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephRecoversStaleLifecycle() {
 	assert.False(s.T(), stepsCalled, "bootstrap steps must not rerun over a verified existing cluster")
 
 	lc := s.mockDB.get()
-	assert.True(s.T(), lc.CephBootstrapped)
 	assert.Equal(s.T(), database.CephStateBootstrapped, lc.CephBootstrapState)
 	assert.Equal(s.T(), "node-b", lc.CephBootstrapTarget)
 }
@@ -450,7 +440,7 @@ func (s *bootstrapCephSuite) TestBootstrapCephBootstrapsWhenNoConfig() {
 	assert.NoError(s.T(), err)
 	assert.True(s.T(), stepsCalled, "bootstrap steps must run when no existing cluster")
 	lc := s.mockDB.get()
-	assert.True(s.T(), lc.CephBootstrapped)
+	assert.Equal(s.T(), database.CephStateBootstrapped, lc.CephBootstrapState)
 }
 
 // TestBootstrapCephRecordsResultWithCancelledContext verifies that the
@@ -474,7 +464,6 @@ func (s *bootstrapCephSuite) TestBootstrapCephRecordsResultWithCancelledContext(
 	assert.NoError(s.T(), err, "result recording must succeed even with a cancelled request context")
 
 	lc := s.mockDB.get()
-	assert.True(s.T(), lc.CephBootstrapped, "lifecycle must be recorded as bootstrapped")
 	assert.Equal(s.T(), database.CephStateBootstrapped, lc.CephBootstrapState)
 }
 
@@ -490,7 +479,6 @@ type mockLifecycleDB struct {
 func newMockLifecycleDB() *mockLifecycleDB {
 	return &mockLifecycleDB{
 		lc: database.ClusterLifecycle{
-			CephBootstrapped:   false,
 			CephBootstrapState: database.CephStateNotBootstrapped,
 		},
 		configRows: map[string]string{},
@@ -533,7 +521,6 @@ func (m *mockLifecycleDB) Transaction(ctx context.Context, fn func(ctx context.C
 	_, err = db.Exec(`
 CREATE TABLE cluster_lifecycle (
   id                    INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
-  ceph_bootstrapped     INTEGER NOT NULL DEFAULT 0,
   ceph_bootstrap_state  TEXT    NOT NULL DEFAULT 'not_bootstrapped',
   ceph_bootstrap_target TEXT,
   detail                TEXT,
@@ -545,8 +532,8 @@ CREATE TABLE config (
   value TEXT NOT NULL,
   UNIQUE(key)
 );
-INSERT INTO cluster_lifecycle (id, ceph_bootstrapped, ceph_bootstrap_state, ceph_bootstrap_target, detail)
-VALUES (1, ?, ?, ?, ?);`, btoi(m.lc.CephBootstrapped), m.lc.CephBootstrapState, m.lc.CephBootstrapTarget, m.lc.Detail)
+INSERT INTO cluster_lifecycle (id, ceph_bootstrap_state, ceph_bootstrap_target, detail)
+VALUES (1, ?, ?, ?);`, m.lc.CephBootstrapState, m.lc.CephBootstrapTarget, m.lc.Detail)
 	if err != nil {
 		return err
 	}
@@ -572,24 +559,15 @@ VALUES (1, ?, ?, ?, ?);`, btoi(m.lc.CephBootstrapped), m.lc.CephBootstrapState, 
 	}
 
 	// Read back the updated state.
-	row := db.QueryRowContext(ctx, `SELECT ceph_bootstrapped, ceph_bootstrap_state, coalesce(ceph_bootstrap_target,''), coalesce(detail,'') FROM cluster_lifecycle WHERE id = 1`)
-	var bs int
+	row := db.QueryRowContext(ctx, `SELECT ceph_bootstrap_state, coalesce(ceph_bootstrap_target,''), coalesce(detail,'') FROM cluster_lifecycle WHERE id = 1`)
 	var state, target, detail string
-	if err := row.Scan(&bs, &state, &target, &detail); err != nil {
+	if err := row.Scan(&state, &target, &detail); err != nil {
 		return err
 	}
 	m.lc = database.ClusterLifecycle{
-		CephBootstrapped:    bs != 0,
 		CephBootstrapState:  state,
 		CephBootstrapTarget: target,
 		Detail:              detail,
 	}
 	return nil
-}
-
-func btoi(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }

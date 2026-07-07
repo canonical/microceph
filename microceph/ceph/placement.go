@@ -387,7 +387,6 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 		if err != nil {
 			return err
 		}
-		status.CephBootstrapped = lc.CephBootstrapped
 		status.BootstrapState = lc.CephBootstrapState
 		status.BootstrapTarget = lc.CephBootstrapTarget
 		if lc.CephBootstrapState == database.CephStateFailed {

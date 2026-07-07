@@ -30,7 +30,6 @@ var MarkCephBootstrappedFunc = func(ctx context.Context, s interfaces.StateInter
 	}
 	return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return database.SetClusterLifecycle(ctx, tx, database.ClusterLifecycle{
-			CephBootstrapped:   true,
 			CephBootstrapState: database.CephStateBootstrapped,
 		})
 	})
@@ -86,7 +85,7 @@ var cephBootstrappedFromConfigFunc = func(ctx context.Context, s interfaces.Stat
 // existing cluster. Injectable for testing.
 var cephIsBootstrappedFunc = func(ctx context.Context, s interfaces.StateInterface) (bool, error) {
 	lc, err := getClusterLifecycleFunc(ctx, s)
-	if err == nil && (lc.CephBootstrapped || lc.CephBootstrapState == database.CephStateBootstrapped) {
+	if err == nil && lc.CephBootstrapState == database.CephStateBootstrapped {
 		return true, nil
 	}
 	if err != nil {

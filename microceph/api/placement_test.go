@@ -644,9 +644,8 @@ func TestPlacementGetSuccess(t *testing.T) {
 	origGet := ceph.GetPlacementStatusFunc
 	ceph.GetPlacementStatusFunc = func(_ context.Context, _ interfaces.StateInterface) (*types.PlacementStatus, error) {
 		return &types.PlacementStatus{
-			Active:           true,
-			BootstrapState:   "bootstrapped",
-			CephBootstrapped: true,
+			Active:         true,
+			BootstrapState: "bootstrapped",
 		}, nil
 	}
 	defer func() { ceph.GetPlacementStatusFunc = origGet }()
@@ -665,7 +664,7 @@ func TestPlacementGetSuccess(t *testing.T) {
 	err := json.NewDecoder(rec.Body).Decode(&raw)
 	require.NoError(t, err)
 	assert.True(t, raw.Metadata.Active)
-	assert.True(t, raw.Metadata.CephBootstrapped)
+	assert.Equal(t, "bootstrapped", raw.Metadata.BootstrapState)
 }
 
 // newTestState creates a mcTypes.State with the given cluster name for API

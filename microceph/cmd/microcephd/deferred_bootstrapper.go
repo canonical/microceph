@@ -65,7 +65,6 @@ func (db *DeferredBootstrapper) Bootstrap(ctx context.Context, state interfaces.
 	}
 
 	err := setLifecycleStateFunc(ctx, state, database.ClusterLifecycle{
-		CephBootstrapped:   false,
 		CephBootstrapState: database.CephStateNotBootstrapped,
 	})
 	if err != nil {

@@ -42,10 +42,9 @@ Test Deferred Bootstrap Leaves Ceph Not Bootstrapped
     ...    msg=ceph.conf exists but Ceph should not be bootstrapped in deferred mode
 
 Test Lifecycle State Not Bootstrapped
-    [Documentation]    GET /1.0/placement reports bootstrap_state=not_bootstrapped,
-    ...    ceph_bootstrapped=false before Ceph-only bootstrap.
+    [Documentation]    GET /1.0/placement reports bootstrap_state=not_bootstrapped before Ceph-only bootstrap.
     [Tags]    deferred    api
-    Assert Lifecycle State    not_bootstrapped    bootstrapped=false
+    Assert Lifecycle State    not_bootstrapped
 
 Test Capability Markers Advertised
     [Documentation]    Precondition: GET /1.0/cluster/capabilities advertises

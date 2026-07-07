@@ -78,8 +78,7 @@ func TestSchemaUpdate8BackfillLegacyBootstrapped(t *testing.T) {
 
 	lc, err := GetClusterLifecycle(context.Background(), tx)
 	require.NoError(t, err)
-	assert.True(t, lc.CephBootstrapped, "legacy bootstrapped cluster must be backfilled to bootstrapped")
-	assert.Equal(t, CephStateBootstrapped, lc.CephBootstrapState)
+	assert.Equal(t, CephStateBootstrapped, lc.CephBootstrapState, "legacy bootstrapped cluster must be backfilled to bootstrapped")
 }
 
 // TestSchemaUpdate8NoBackfillWithoutConfig verifies that without legacy config
@@ -97,8 +96,7 @@ func TestSchemaUpdate8NoBackfillWithoutConfig(t *testing.T) {
 
 	lc, err := GetClusterLifecycle(context.Background(), tx)
 	require.NoError(t, err)
-	assert.False(t, lc.CephBootstrapped, "cluster without legacy config must stay not_bootstrapped")
-	assert.Equal(t, CephStateNotBootstrapped, lc.CephBootstrapState)
+	assert.Equal(t, CephStateNotBootstrapped, lc.CephBootstrapState, "cluster without legacy config must stay not_bootstrapped")
 }
 
 // TestSetClusterLifecycleDefault verifies the default lifecycle state after schema creation.
@@ -110,7 +108,6 @@ func TestGetClusterLifecycleDefault(t *testing.T) {
 
 	lc, err := GetClusterLifecycle(context.Background(), tx)
 	require.NoError(t, err)
-	assert.False(t, lc.CephBootstrapped)
 	assert.Equal(t, CephStateNotBootstrapped, lc.CephBootstrapState)
 	assert.Empty(t, lc.CephBootstrapTarget)
 	assert.Empty(t, lc.Detail)
@@ -123,7 +120,6 @@ func TestSetClusterLifecycleInProgress(t *testing.T) {
 	require.NoError(t, err)
 
 	err = SetClusterLifecycle(context.Background(), tx, ClusterLifecycle{
-		CephBootstrapped:    false,
 		CephBootstrapState:  CephStateInProgress,
 		CephBootstrapTarget: "node-b",
 	})
@@ -136,7 +132,6 @@ func TestSetClusterLifecycleInProgress(t *testing.T) {
 
 	lc, err := GetClusterLifecycle(context.Background(), tx2)
 	require.NoError(t, err)
-	assert.False(t, lc.CephBootstrapped)
 	assert.Equal(t, CephStateInProgress, lc.CephBootstrapState)
 	assert.Equal(t, "node-b", lc.CephBootstrapTarget)
 }
@@ -148,7 +143,6 @@ func TestSetClusterLifecycleBootstrapped(t *testing.T) {
 	require.NoError(t, err)
 
 	err = SetClusterLifecycle(context.Background(), tx, ClusterLifecycle{
-		CephBootstrapped:   true,
 		CephBootstrapState: CephStateBootstrapped,
 	})
 	require.NoError(t, err)
@@ -160,7 +154,6 @@ func TestSetClusterLifecycleBootstrapped(t *testing.T) {
 
 	lc, err := GetClusterLifecycle(context.Background(), tx2)
 	require.NoError(t, err)
-	assert.True(t, lc.CephBootstrapped)
 	assert.Equal(t, CephStateBootstrapped, lc.CephBootstrapState)
 }
 
@@ -171,7 +164,6 @@ func TestSetClusterLifecycleFailed(t *testing.T) {
 	require.NoError(t, err)
 
 	err = SetClusterLifecycle(context.Background(), tx, ClusterLifecycle{
-		CephBootstrapped:   false,
 		CephBootstrapState: CephStateFailed,
 		Detail:             "keyring creation failed",
 	})
@@ -184,7 +176,6 @@ func TestSetClusterLifecycleFailed(t *testing.T) {
 
 	lc, err := GetClusterLifecycle(context.Background(), tx2)
 	require.NoError(t, err)
-	assert.False(t, lc.CephBootstrapped)
 	assert.Equal(t, CephStateFailed, lc.CephBootstrapState)
 	assert.Contains(t, lc.Detail, "keyring creation failed")
 }
@@ -199,7 +190,6 @@ func TestSetClusterLifecycleSingletonUpsert(t *testing.T) {
 	tx1, err := db.BeginTx(context.Background(), nil)
 	require.NoError(t, err)
 	err = SetClusterLifecycle(context.Background(), tx1, ClusterLifecycle{
-		CephBootstrapped:   false,
 		CephBootstrapState: CephStateInProgress,
 	})
 	require.NoError(t, err)
@@ -209,7 +199,6 @@ func TestSetClusterLifecycleSingletonUpsert(t *testing.T) {
 	tx2, err := db.BeginTx(context.Background(), nil)
 	require.NoError(t, err)
 	err = SetClusterLifecycle(context.Background(), tx2, ClusterLifecycle{
-		CephBootstrapped:   true,
 		CephBootstrapState: CephStateBootstrapped,
 	})
 	require.NoError(t, err)
@@ -227,6 +216,5 @@ func TestSetClusterLifecycleSingletonUpsert(t *testing.T) {
 
 	lc, err := GetClusterLifecycle(context.Background(), tx3)
 	require.NoError(t, err)
-	assert.True(t, lc.CephBootstrapped)
 	assert.Equal(t, CephStateBootstrapped, lc.CephBootstrapState)
 }

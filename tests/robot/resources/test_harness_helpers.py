@@ -874,7 +874,6 @@ _SYNC_PLACEMENT_RESPONSE = json.dumps({
     "metadata": {
         "active": True,
         "observed": None,
-        "ceph_bootstrapped": False,
         "bootstrap_state": "not_bootstrapped",
     },
 })
@@ -912,12 +911,6 @@ def test_bootstrap_state_from_metadata():
 def test_bootstrap_state_absent_is_empty():
     assert placement_status.bootstrap_state(_ERROR_RESPONSE) == ""
     assert placement_status.bootstrap_state("garbage") == ""
-
-
-def test_ceph_bootstrapped_flag():
-    assert placement_status.ceph_bootstrapped(_SYNC_PLACEMENT_RESPONSE) is False
-    bootstrapped = json.dumps({"status_code": 200, "metadata": {"ceph_bootstrapped": True}})
-    assert placement_status.ceph_bootstrapped(bootstrapped) is True
 
 
 def test_placement_active_flag():

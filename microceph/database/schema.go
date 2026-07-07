@@ -240,13 +240,12 @@ CREATE TABLE host_tags (
 //
 // For clusters already bootstrapped via the legacy SimpleBootstrapper path
 // (which writes fsid and keyring.client.admin config rows), the singleton row
-// is backfilled to ceph_bootstrapped=1/state=bootstrapped so GET /placement
-// reports the correct state and a stray bootstrap-ceph is a no-op.
+// is backfilled to state=bootstrapped so GET /placement reports the correct
+// state and a stray bootstrap-ceph is a no-op.
 func schemaUpdate8(ctx context.Context, tx *sql.Tx) error {
 	stmt := `
 CREATE TABLE cluster_lifecycle (
   id                    INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
-  ceph_bootstrapped     INTEGER NOT NULL DEFAULT 0,
   ceph_bootstrap_state  TEXT    NOT NULL DEFAULT 'not_bootstrapped',
   ceph_bootstrap_target TEXT,
   detail                TEXT,
@@ -258,7 +257,7 @@ INSERT INTO cluster_lifecycle (id) VALUES (1);
 -- (fsid + admin keyring exist in the config table), mark the lifecycle row
 -- as bootstrapped so it reflects reality.
 UPDATE cluster_lifecycle
-   SET ceph_bootstrapped = 1, ceph_bootstrap_state = 'bootstrapped'
+   SET ceph_bootstrap_state = 'bootstrapped'
  WHERE id = 1
    AND EXISTS (SELECT 1 FROM config WHERE key = 'fsid')
    AND EXISTS (SELECT 1 FROM config WHERE key = 'keyring.client.admin');

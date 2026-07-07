@@ -14,9 +14,11 @@ import (
 	"github.com/canonical/microceph/microceph/logger"
 )
 
-// cephBootstrapMu serializes Ceph-only bootstrap attempts within a single
-// daemon process. Cross-member serialization is additionally guarded by the
-// lifecycle state in the shared dqlite database.
+// cephBootstrapMu is a process-local fast-fail guard for Ceph-only bootstrap
+// attempts. If another bootstrap is already running in this daemon, callers
+// return ErrCephBootstrapInProgress immediately instead of blocking behind a
+// detached long-running operation. Cross-member serialization is additionally
+// guarded by the lifecycle state in the shared dqlite database.
 var cephBootstrapMu sync.Mutex
 
 // ErrCephBootstrapInProgress is returned when a Ceph-only bootstrap is already
@@ -92,7 +94,11 @@ var BootstrapCephFunc = BootstrapCeph
 // the lifecycle state in in_progress. The request context's values (notably
 // the microcluster logger) are preserved.
 func BootstrapCeph(ctx context.Context, s interfaces.StateInterface, target string, bd common.BootstrapConfig, force bool) error {
-	cephBootstrapMu.Lock()
+	locked := cephBootstrapMu.TryLock()
+	if !locked {
+		logger.Debugf("Ceph-only bootstrap: another bootstrap is already running in this daemon")
+		return ErrCephBootstrapInProgress
+	}
 	defer cephBootstrapMu.Unlock()
 
 	if s.ClusterState().ServerCert() == nil {
@@ -142,14 +148,12 @@ func BootstrapCeph(ctx context.Context, s interfaces.StateInterface, target stri
 		if bootErr != nil {
 			logger.Errorf("Ceph-only bootstrap failed: %v", bootErr)
 			return database.SetClusterLifecycle(ctx, tx, database.ClusterLifecycle{
-				CephBootstrapped:    false,
 				CephBootstrapState:  database.CephStateFailed,
 				CephBootstrapTarget: target,
 				Detail:              bootErr.Error(),
 			})
 		}
 		return database.SetClusterLifecycle(ctx, tx, database.ClusterLifecycle{
-			CephBootstrapped:    true,
 			CephBootstrapState:  database.CephStateBootstrapped,
 			CephBootstrapTarget: target,
 		})
@@ -239,7 +243,7 @@ UPDATE cluster_lifecycle
 		if err != nil {
 			return fmt.Errorf("failed to read lifecycle state: %w", err)
 		}
-		alreadyBootstrapped := lc.CephBootstrapped || lc.CephBootstrapState == database.CephStateBootstrapped
+		alreadyBootstrapped := lc.CephBootstrapState == database.CephStateBootstrapped
 		configBootstrapped, err := configIndicatesBootstrapped(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("failed to check Ceph config for existing bootstrap: %w", err)
@@ -260,7 +264,7 @@ UPDATE cluster_lifecycle
 		// failed to in_progress. This prevents two members from racing.
 		result, err := tx.ExecContext(ctx, `
 UPDATE cluster_lifecycle
-   SET ceph_bootstrap_state = ?, ceph_bootstrap_target = ?, ceph_bootstrapped = 0, detail = ''
+   SET ceph_bootstrap_state = ?, ceph_bootstrap_target = ?, detail = ''
  WHERE id = 1
    AND (ceph_bootstrap_state = ? OR ceph_bootstrap_state = ?)`,
 			database.CephStateInProgress, target,
@@ -287,7 +291,7 @@ UPDATE cluster_lifecycle
 			return err
 		}
 
-		if lc.CephBootstrapped || lc.CephBootstrapState == database.CephStateBootstrapped {
+		if lc.CephBootstrapState == database.CephStateBootstrapped {
 			// Already bootstrapped: no-op success.
 			proceed = false
 			return nil
@@ -326,7 +330,7 @@ func recoverStaleBootstrappedLifecycle(ctx context.Context, s interfaces.StateIn
 			return fmt.Errorf("failed to read lifecycle state: %w", err)
 		}
 		recordedTarget = lc.CephBootstrapTarget
-		alreadyBootstrapped := lc.CephBootstrapped || lc.CephBootstrapState == database.CephStateBootstrapped
+		alreadyBootstrapped := lc.CephBootstrapState == database.CephStateBootstrapped
 		if alreadyBootstrapped {
 			logger.Debugf("Ceph-only bootstrap: lifecycle already bootstrapped (recorded target=%s); no recovery needed", recordedTarget)
 			return nil
@@ -359,7 +363,6 @@ func recoverStaleBootstrappedLifecycle(ctx context.Context, s interfaces.StateIn
 
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return database.SetClusterLifecycle(ctx, tx, database.ClusterLifecycle{
-			CephBootstrapped:    true,
 			CephBootstrapState:  database.CephStateBootstrapped,
 			CephBootstrapTarget: target,
 		})

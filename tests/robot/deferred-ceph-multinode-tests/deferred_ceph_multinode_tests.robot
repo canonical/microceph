@@ -40,7 +40,7 @@ Test Deferred Join Forms MicroCluster Without Ceph
     Assert No Ceph Anywhere
     ${status}=    Run In VM And Check    lxc exec node-wrk0 -- microceph status    30
     Should Contain    ${status.stdout}    node-wrk3    msg=Not all 4 members present after deferred join
-    Assert Bootstrap State In Container    node-wrk0    not_bootstrapped    bootstrapped=false
+    Assert Bootstrap State In Container    node-wrk0    not_bootstrapped
 
 Test Ceph Only Bootstrap On Non Head Target
     [Documentation]    `microceph cluster bootstrap-ceph --target node-wrk1 --public-network=<nw>`
@@ -49,7 +49,7 @@ Test Ceph Only Bootstrap On Non Head Target
     ...    rejected by `cluster bootstrap --defer-ceph`).
     [Tags]    ceph-only-bootstrap
     Ceph Only Bootstrap Target And Verify    node-wrk1
-    Assert Bootstrap State In Container    node-wrk1    bootstrapped    bootstrapped=true
+    Assert Bootstrap State In Container    node-wrk1    bootstrapped
 
 Test Ceph Only Bootstrap Idempotent Retry
     [Documentation]    Re-running `cluster bootstrap-ceph --target node-wrk1` succeeds

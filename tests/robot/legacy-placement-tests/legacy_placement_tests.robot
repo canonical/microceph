@@ -24,10 +24,9 @@ Legacy Placement Suite Setup
 *** Test Cases ***
 Test Legacy Bootstrap Reports Bootstrapped
     [Documentation]    A fresh non-deferred bootstrap must set cluster_lifecycle to
-    ...    bootstrapped. GET /1.0/placement reports bootstrap_state=bootstrapped,
-    ...    ceph_bootstrapped=true.
+    ...    bootstrapped. GET /1.0/placement reports bootstrap_state=bootstrapped.
     [Tags]    legacy    placement
-    Assert Lifecycle State    bootstrapped    bootstrapped=true
+    Assert Lifecycle State    bootstrapped
 
 Test Placement Accepted On Fresh Legacy Cluster
     [Documentation]    A non-empty placement policy PUT on a freshly-bootstrapped

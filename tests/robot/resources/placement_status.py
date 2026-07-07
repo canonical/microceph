@@ -53,11 +53,6 @@ def bootstrap_state(raw):
     return str(response_metadata(raw).get("bootstrap_state", ""))
 
 
-def ceph_bootstrapped(raw):
-    """Return the ``ceph_bootstrapped`` flag from a GET /1.0/placement body."""
-    return bool(response_metadata(raw).get("ceph_bootstrapped", False))
-
-
 def placement_active(raw):
     """Return the ``active`` flag from a GET /1.0/placement body."""
     return bool(response_metadata(raw).get("active", False))

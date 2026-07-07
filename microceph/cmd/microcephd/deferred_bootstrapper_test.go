@@ -89,7 +89,6 @@ func (s *deferredBootstrapSuite) TestDeferredBootstrapperBootstrapRecordsNotBoot
 	err := db.Bootstrap(context.Background(), s.TestStateInterface)
 	assert.NoError(s.T(), err)
 
-	assert.False(s.T(), captured.CephBootstrapped)
 	assert.Equal(s.T(), database.CephStateNotBootstrapped, captured.CephBootstrapState)
 }
 

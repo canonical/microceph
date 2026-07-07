@@ -1703,12 +1703,11 @@ class microceph_harness:
         """Returns True when the outer VM snap reports an active placement policy."""
         return placement_status.placement_active(self.get_placement_status_json())
 
-    def assert_lifecycle_state(self, expected_state, bootstrapped="", container=""):
+    def assert_lifecycle_state(self, expected_state, container=""):
         """Asserts the ceph bootstrap lifecycle state in the placement status JSON.
 
         Runs on the outer VM by default; pass container= to assert inside an
-        inner container. bootstrapped compares the ceph_bootstrapped flag when
-        given ('true'/'false').
+        inner container.
         """
         if container == "":
             raw = self.get_placement_status_json()
@@ -1721,17 +1720,10 @@ class microceph_harness:
             raise AssertionError(
                 f"Expected bootstrap_state={expected_state} on {where}, got {state or '<absent>'}: {raw}"
             )
-        if bootstrapped != "":
-            want = str(bootstrapped).strip().lower() == "true"
-            got = placement_status.ceph_bootstrapped(raw)
-            if got != want:
-                raise AssertionError(
-                    f"Expected ceph_bootstrapped={bootstrapped} on {where}, got {got}: {raw}"
-                )
 
-    def assert_bootstrap_state_in_container(self, container, expected_state, bootstrapped=""):
+    def assert_bootstrap_state_in_container(self, container, expected_state):
         """Asserts the lifecycle bootstrap_state in the placement status JSON on a container."""
-        self.assert_lifecycle_state(expected_state, bootstrapped, container)
+        self.assert_lifecycle_state(expected_state, container)
 
     def wait_for_microceph_control_socket(self, tries=24):
         """Polls until the microceph control socket exists in the outer VM."""
