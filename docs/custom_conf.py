@@ -95,6 +95,7 @@ slug = 'ceph/docs'
 
 # Base URL and sitemap configuration
 html_baseurl = f"https://canonical.com/ceph/docs/{version_slug}/"
+sitemap_filename = "doc-sitemap.xml"
 
 if 'READTHEDOCS_VERSION' in os.environ:
     sitemap_url_scheme = '{version}{link}'
