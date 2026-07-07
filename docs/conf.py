@@ -27,7 +27,8 @@ extensions = [
     'sphinxext.opengraph',
     'myst_parser',
     'sphinxcontrib.jquery',
-    'notfound.extension'
+    'notfound.extension',
+    'sphinx_sitemap'
 ]
 extensions.extend(custom_extensions)
 
