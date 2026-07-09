@@ -73,16 +73,22 @@ func (c *cmdClusterBootstrapCeph) Run(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Bootstrapping Ceph on member %s (this can take several minutes)...\n", c.flagTarget)
 
+	// m.Ready only waits for the local microcluster daemon to become available,
+	// which should take seconds; bound it with a short dedicated timeout so a
+	// down daemon fails fast instead of hanging for the full bootstrap budget.
+	readyCtx, readyCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer readyCancel()
+
+	err = m.Ready(readyCtx)
+	if err != nil {
+		return fmt.Errorf("fault while waiting for App readiness: %w", err)
+	}
+
 	// The client deadline is one minute longer than the server-side 15-minute
 	// bootstrap deadline so a successful server-side bootstrap is not reported
 	// as a client timeout. See ceph.BootstrapCephFunc (15*time.Minute).
 	ctx, cancel := context.WithTimeout(context.Background(), 16*time.Minute)
 	defer cancel()
-
-	err = m.Ready(ctx)
-	if err != nil {
-		return fmt.Errorf("fault while waiting for App readiness: %w", err)
-	}
 
 	cli, err := m.LocalClient()
 	if err != nil {

@@ -109,11 +109,13 @@ func BootstrapCeph(ctx context.Context, s interfaces.StateInterface, target stri
 	// (notably the microcluster logger the DB layer reads via
 	// log.LoggerFromContext). The Ceph-only bootstrap is a server-side
 	// operation that must run to completion and record its result even if the
-	// client (CLI 5-min timeout) or the proxy gives up mid-way; aborting it
+	// client (CLI 16-min timeout) or the proxy gives up mid-way; aborting it
 	// would leave Ceph half-bootstrapped or the lifecycle stranded in
-	// in_progress. A generous server-side deadline bounds the whole operation;
-	// the CLI retains its own shorter client-side timeout. WithoutCancel keeps
-	// the parent's values but is not cancelled when the parent is.
+	// in_progress. This 15-minute server-side deadline bounds the whole
+	// operation and is intentionally one minute shorter than the CLI's 16-min
+	// client-side timeout, so a successful server-side bootstrap is not reported
+	// as a client timeout. WithoutCancel keeps the parent's values but is not
+	// cancelled when the parent is.
 	opCtx, opCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
 	defer opCancel()
 
