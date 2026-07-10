@@ -45,6 +45,8 @@ layout:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph
   /usr/lib/ganesha:
     symlink: $SNAP/lib/ganesha
+  /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba:
+    symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/rados-classes:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/rados-classes
   /etc/ceph:
@@ -115,6 +117,18 @@ apps:
     plugs:
       - network
       - network-bind
+      - process-control
+  smbd:
+    command: commands/smbd.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+    plugs:
+      - account-control
+      - network
+      - network-bind
+      - network-control
       - process-control
   osd:
     command: commands/osd.start
@@ -462,6 +476,24 @@ parts:
       - lib/*/libntirpc.so*
       - lib/*/liburcu-bp.so*
       - lib/*/libwbclient.so*
+
+  samba:
+    plugin: nil
+    stage-packages:
+      - samba
+      - samba-vfs-modules
+      - ctdb
+    organize:
+      sbin/: bin/
+      usr/bin/: bin/
+      usr/sbin/: bin/
+      usr/lib/: lib/
+      usr/libexec/: libexec/
+    prime:
+      - -lib/systemd
+      - -lib/tmpfiles.d
+      - -lib/sysusers.d
+      - -lib/*/avahi
 
   logrotate:
     plugin: nil
