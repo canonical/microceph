@@ -960,3 +960,99 @@ def test_member_in_ceph_status_substring():
     assert placement_status.member_in_ceph_status(status, "node-wrk3") is False
     assert placement_status.member_in_ceph_status("", "node-wrk0") is False
     assert placement_status.member_in_ceph_status(None, "node-wrk0") is False
+
+
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# _poll_until failure semantics
+# ---------------------------------------------------------------------------
+
+def test_poll_until_callable_fail_msg_folds_in_last_value():
+    seen = {"n": 0}
+
+    def predicate():
+        seen["n"] = 2
+        return False
+
+    with pytest.raises(AssertionError) as exc:
+        H._poll_until(predicate, attempts=1, interval=0,
+                      fail_msg=lambda: f"never reached 3 (last saw {seen['n']})")
+    assert "last saw 2" in str(exc.value)
+
+
+def test_poll_until_string_fail_msg_still_works():
+    with pytest.raises(AssertionError) as exc:
+        H._poll_until(lambda: False, attempts=1, interval=0, fail_msg="static message")
+    assert str(exc.value) == "static message"
+
+
+def test_poll_until_raising_on_fail_does_not_replace_fail_msg():
+    def raising_on_fail():
+        raise AssertionError("ceph -s cannot connect to cluster")
+
+    with pytest.raises(AssertionError) as exc:
+        H._poll_until(lambda: False, attempts=1, interval=0,
+                      fail_msg="Never reached 3 OSD(s)", on_fail=raising_on_fail)
+    assert str(exc.value) == "Never reached 3 OSD(s)"
+
+
+def test_poll_until_success_never_evaluates_fail_msg_or_on_fail():
+    calls = {"on_fail": 0}
+    H._poll_until(lambda: True, attempts=3, interval=0,
+                  fail_msg=lambda: 1 / 0, on_fail=lambda: calls.__setitem__("on_fail", 1))
+    assert calls["on_fail"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _log_exec -- command tracing routes to console (bash -x style) unless quiet
+# ---------------------------------------------------------------------------
+
+import microceph_harness as _mh
+from collections import namedtuple as _nt
+
+_Res = _nt("Res", ["rc", "stdout", "stderr"])
+
+
+class _CapLogger:
+    def __init__(self):
+        self.console_lines = []
+        self.info_lines = []
+
+    def console(self, s):
+        self.console_lines.append(s)
+
+    def info(self, s):
+        self.info_lines.append(s)
+
+    def warn(self, s):
+        self.info_lines.append("WARN:" + s)
+
+
+def _with_logger(monkeypatch):
+    cap = _CapLogger()
+    monkeypatch.setattr(_mh, "logger", cap)
+    return cap
+
+
+def test_log_exec_echoes_command_and_output_to_console(monkeypatch):
+    cap = _with_logger(monkeypatch)
+    H()._log_exec("microceph.ceph -s", _Res(0, "  cluster:\n    health: HEALTH_OK\n", ""), quiet=False)
+    joined = "\n".join(cap.console_lines)
+    assert "+ microceph.ceph -s" in joined
+    assert "health: HEALTH_OK" in joined
+
+
+def test_log_exec_quiet_keeps_console_clean(monkeypatch):
+    cap = _with_logger(monkeypatch)
+    H()._log_exec("microceph.ceph -s -f json", _Res(0, '{"osdmap": {}}', ""), quiet=True)
+    assert cap.console_lines == []
+    # still captured in log.html (logger.info)
+    assert any("microceph.ceph -s -f json" in s for s in cap.info_lines)
+
+
+def test_log_exec_no_output_prints_only_command(monkeypatch):
+    cap = _with_logger(monkeypatch)
+    H()._log_exec("mkdir -p ~/x", _Res(0, "", ""), quiet=False)
+    assert cap.console_lines == ["+ mkdir -p ~/x"]
