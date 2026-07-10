@@ -2527,21 +2527,42 @@ function run_dsl_shared_suite() {
 
         dsl_reset_test_tracking
         dsl_set_suite_context "suite: $suite_name"
-        while read -r test_function; do
+
+        # Read the planned cases ONCE into an array. Iterating an array rather than a
+        # `while read` fed by a process substitution keeps each case's stdin free:
+        # dsl_run_test reaches the VM through `lxc exec`, which reads stdin to EOF and
+        # would otherwise consume the remaining case names from the process
+        # substitution, ending the loop after the first case. run_dsl_case guards the
+        # isolated path against the same hazard with `</dev/null`.
+        local -a shared_tests=()
+        local test_function
+        mapfile -t shared_tests < <(dsl_suite_shared_tests "$suite_name")
+
+        for test_function in "${shared_tests[@]}"; do
             [[ -n "$test_function" ]] || continue
             dsl_plan_test "$test_function"
-        done < <(dsl_suite_shared_tests "$suite_name")
+        done
 
         setup_dsl_test
         install_microceph_in_vm
 
         log "=== Running $title ==="
-        while read -r test_function; do
+        for test_function in "${shared_tests[@]}"; do
             [[ -n "$test_function" ]] || continue
             dsl_run_test "$test_function"
-        done < <(dsl_suite_shared_tests "$suite_name")
+        done
 
         show_dsl_final_status
+
+        # A shared suite that silently skipped planned cases must fail the job rather
+        # than report green. Failed cases already exit non-zero via `fail`; this guards
+        # the "planned but never executed" case so a future stdin regression is caught.
+        local not_run
+        not_run=$(dsl_count_not_run_tests)
+        if (( not_run > 0 )); then
+            log "ERROR: ${not_run} planned test(s) did not run in suite '${suite_name}'"
+            return 1
+        fi
     )
 }
 
