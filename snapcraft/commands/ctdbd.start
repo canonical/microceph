@@ -11,10 +11,23 @@ wait_for_config
 export CTDB_BASE="${SNAP_DATA}/conf/ctdb"
 export CTDB_SOCKET="${SNAP_DATA}/run/ctdb/ctdbd.socket"
 
+# ctdbd and its event scripts spawn helpers at the compiled-in
+# /usr/libexec/ctdb path, which does not exist inside the snap.
+export CTDB_EVENTD="${SNAP}/libexec/ctdb/ctdb-eventd"
+export CTDB_LOCK_HELPER="${SNAP}/libexec/ctdb/ctdb_lock_helper"
+export CTDB_RECOVERY_HELPER="${SNAP}/libexec/ctdb/ctdb_recovery_helper"
+export CTDB_TAKEOVER_HELPER="${SNAP}/libexec/ctdb/ctdb_takeover_helper"
+export CTDB_HELPER_BINDIR="${SNAP}/libexec/ctdb"
+
 mkdir -p \
     "${CTDB_BASE}" \
     "${SNAP_DATA}/run/ctdb" \
     "${SNAP_COMMON}/logs/ctdb" \
     "${SNAP_COMMON}/data/ctdb"
+
+# The PID file path is compiled in and has no override; the run dir is
+# writable under devmode and will need the smb-support interface under
+# strict confinement.
+mkdir -p /run/ctdb
 
 exec ctdbd --interactive

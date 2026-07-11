@@ -74,8 +74,11 @@ func resolveSMBIface(cidr string) (string, error) {
 }
 
 // smbOrderedNodeIPs returns the group members' host addresses in row-id
-// order: stable and append-only, as the CTDB nodes file requires.
-func smbOrderedNodeIPs(ctx context.Context, s interfaces.StateInterface, clusterID string) ([]string, error) {
+// order: stable and append-only, as the CTDB nodes file requires. The
+// local node is appended when its own row does not exist yet: during
+// enable, rendering runs before DbUpdate records this node, and the
+// membership row lands next (so appending preserves row-id order).
+func smbOrderedNodeIPs(ctx context.Context, s interfaces.StateInterface, clusterID, hostname string) ([]string, error) {
 	records, err := database.GroupedServicesQuery.GetGroupMemberRecords(ctx, s, "smb", clusterID)
 	if err != nil {
 		return nil, err
@@ -84,6 +87,16 @@ func smbOrderedNodeIPs(ctx context.Context, s interfaces.StateInterface, cluster
 	// CTDB node numbers are nodes-file line indices: the order must be
 	// stable and append-only, which row ids provide.
 	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+
+	selfRecorded := false
+	for _, record := range records {
+		if record.Member == hostname {
+			selfRecorded = true
+		}
+	}
+	if !selfRecorded {
+		records = append(records, database.GroupedService{Member: hostname})
+	}
 
 	addresses, err := smbMemberAddressesFunc(s)
 	if err != nil {
@@ -132,9 +145,11 @@ func populateCTDBBase(ctdbDir, snapPath string) error {
 		return err
 	}
 
-	err = relink(filepath.Join(snapPath, "etc", "ctdb", "functions"), filepath.Join(ctdbDir, "functions"))
-	if err != nil {
-		return err
+	for _, file := range []string{"functions", "notify.sh"} {
+		err = relink(filepath.Join(snapPath, "etc", "ctdb", file), filepath.Join(ctdbDir, file))
+		if err != nil {
+			return err
+		}
 	}
 
 	options, err := os.ReadFile(filepath.Join(snapPath, "ctdb", "script.options"))
@@ -152,15 +167,19 @@ func smbNodeDirs(p SMBRenderParams) map[string]os.FileMode {
 	runDir := filepath.Join(p.Paths.Run, "samba", p.ClusterID)
 
 	return map[string]os.FileMode{
-		p.Paths.Conf:                                     0755,
-		filepath.Join(p.Paths.Conf, "samba"):             0755,
-		filepath.Join(dataDir, "private"):                0700,
-		filepath.Join(dataDir, "lock"):                   0755,
-		filepath.Join(dataDir, "state"):                  0755,
-		filepath.Join(dataDir, "cache"):                  0755,
-		filepath.Join(runDir, "ncalrpc"):                 0755,
-		filepath.Join(p.Paths.Run, "ctdb"):               0755,
-		filepath.Join(p.Paths.Log, "samba", p.ClusterID): 0755,
+		p.Paths.Conf:                                      0755,
+		filepath.Join(p.Paths.Conf, "samba"):              0755,
+		filepath.Join(dataDir, "private"):                 0700,
+		filepath.Join(dataDir, "lock"):                    0755,
+		filepath.Join(dataDir, "state"):                   0755,
+		filepath.Join(dataDir, "cache"):                   0755,
+		filepath.Join(runDir, "ncalrpc"):                  0755,
+		filepath.Join(p.Paths.Run, "ctdb"):                0755,
+		filepath.Join(p.Paths.Log, "samba", p.ClusterID):  0755,
+		filepath.Join(p.Paths.Data, "ctdb", "volatile"):   0700,
+		filepath.Join(p.Paths.Data, "ctdb", "persistent"): 0700,
+		filepath.Join(p.Paths.Data, "ctdb", "state"):      0700,
+		filepath.Join(p.Paths.Log, "ctdb"):                0755,
 	}
 }
 
@@ -180,7 +199,7 @@ func enableSMBNodeLocal(ctx context.Context, s interfaces.StateInterface, spec *
 		return err
 	}
 
-	ips, err := smbOrderedNodeIPs(ctx, s, spec.ClusterID)
+	ips, err := smbOrderedNodeIPs(ctx, s, spec.ClusterID, p.Hostname)
 	if err != nil {
 		return err
 	}
@@ -263,6 +282,7 @@ func disableSMBLocal(ctx context.Context, s interfaces.StateInterface, clusterID
 		filepath.Join(p.Paths.Run, "samba", clusterID),
 		filepath.Join(p.Paths.Run, "ctdb"),
 		filepath.Join(p.Paths.Data, "samba", clusterID),
+		filepath.Join(p.Paths.Data, "ctdb"),
 	} {
 		err = os.RemoveAll(dir)
 		if err != nil {
@@ -287,7 +307,7 @@ func regenerateSMBNodeLocal(ctx context.Context, s interfaces.StateInterface, cl
 		return fmt.Errorf("cannot parse stored spec for smb cluster '%s': %w", clusterID, err)
 	}
 
-	ips, err := smbOrderedNodeIPs(ctx, s, clusterID)
+	ips, err := smbOrderedNodeIPs(ctx, s, clusterID, p.Hostname)
 	if err != nil {
 		return err
 	}

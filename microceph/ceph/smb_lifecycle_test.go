@@ -229,7 +229,22 @@ func (s *smbLifecycleSuite) TestOrderedNodeIPsFollowsRowIDs() {
 		{ID: 1, Member: "host1"},
 	}, nil).Once()
 
-	ips, err := smbOrderedNodeIPs(ctx, s.TestStateInterface, "dev")
+	ips, err := smbOrderedNodeIPs(ctx, s.TestStateInterface, "dev", "host1")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{"10.0.0.1", "10.0.0.2"}, ips)
+}
+
+func (s *smbLifecycleSuite) TestOrderedNodeIPsIncludesUnrecordedSelf() {
+	ctx := context.Background()
+
+	// During enable, rendering happens before DbUpdate records this node:
+	// the local node must still appear in its own nodes file.
+	db := s.withDB()
+	db.On("GetGroupMemberRecords", ctx, s.TestStateInterface, "smb", "dev").Return([]database.GroupedService{
+		{ID: 1, Member: "host1"},
+	}, nil).Once()
+
+	ips, err := smbOrderedNodeIPs(ctx, s.TestStateInterface, "dev", "host2")
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), []string{"10.0.0.1", "10.0.0.2"}, ips)
 }

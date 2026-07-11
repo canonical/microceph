@@ -196,13 +196,26 @@ func RenderCTDBConf(p SMBRenderParams, lockURI string) (string, error) {
 
 	helper := filepath.Join(p.Paths.Snap, "libexec", "ctdb", "ctdb_mutex_ceph_rados_helper")
 	object := smbReclockObject + p.ClusterID
+	dbDir := filepath.Join(p.Paths.Data, "ctdb")
 
+	// The [database] paths and the logging location override ctdbd's
+	// compiled-in /var/lib/ctdb and /var/log defaults, which do not exist
+	// inside the snap (the event daemon dies at init without a usable
+	// logging location).
 	return fmt.Sprintf(`[logging]
+    location = file:%s
     log level = NOTICE
+
+[database]
+    volatile database directory = %s
+    persistent database directory = %s
+    state database directory = %s
 
 [cluster]
     cluster lock = !%s ceph %s %s %s
-`, helper, p.Entity, pool, object), nil
+`, filepath.Join(p.Paths.Log, "ctdb", "log.ctdb"),
+		filepath.Join(dbDir, "volatile"), filepath.Join(dbDir, "persistent"), filepath.Join(dbDir, "state"),
+		helper, p.Entity, pool, object), nil
 }
 
 // RenderCTDBNodes renders the nodes file: one private address per line.
