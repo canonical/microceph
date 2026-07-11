@@ -50,9 +50,9 @@ func (smb *SMBServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 		case "domain":
 			return fmt.Errorf("features: 'domain' (AD membership) is not supported in Phase 1")
 		case "cephfs-proxy":
-			return fmt.Errorf("features: 'cephfs-proxy' is not supported; create shares with " +
-				"--provider=samba-vfs/new (the default 'samba-vfs' provider expands to the " +
-				"proxied variant, which microceph does not deploy)")
+			return fmt.Errorf("features: 'cephfs-proxy' is not supported; microceph does not " +
+				"deploy the cephfs proxy daemon (use the default samba-vfs or samba-vfs/new " +
+				"share provider instead of samba-vfs/proxied)")
 		default:
 			return fmt.Errorf("features: '%s' is not supported", feature)
 		}

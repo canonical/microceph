@@ -1,0 +1,35 @@
+From: MicroCeph maintainers
+Subject: [PATCH] mgr/smb: expand the default provider to the non-proxied VFS
+
+Upstream expands the abbreviated share provider 'samba-vfs' to
+'samba-vfs/proxied', which assumes the orchestrator co-deploys the
+cephfs-proxy daemon (libcephfsd). MicroCeph serves CephFS from smbd
+via direct libcephfs and deploys no proxy, so specs carrying the
+cephfs-proxy feature are rejected by microcephd and the plain
+`ceph smb share create` CLI would always fail.
+
+Expand the default to 'samba-vfs/new' instead. The stored resource
+keeps the abbreviated provider, so the same document remains portable
+to cephadm (where it still expands to the proxied variant). Requesting
+'samba-vfs/proxied' explicitly keeps its upstream meaning and is still
+rejected by microcephd.
+
+Drop this patch if mgr/smb ever makes the default expansion
+configurable.
+---
+
+--- a/share/ceph/mgr/smb/enums.py
++++ b/share/ceph/mgr/smb/enums.py
+@@ -23,8 +23,11 @@
+     def expand(self) -> 'CephFSStorageProvider':
+         """Expand abbreviated/default values into the full/expanded form."""
+         if self is self.SAMBA_VFS:
++            # MicroCeph serves CephFS from smbd via direct libcephfs and
++            # deploys no cephfs-proxy daemon, so the abbreviated provider
++            # expands to the non-proxied VFS here.
+             # mypy gets confused by enums
+-            return self.__class__(self.SAMBA_VFS_PROXIED)
++            return self.__class__(self.SAMBA_VFS_NEW)
+         return self
+ 
+     def is_vfs(self) -> bool:
