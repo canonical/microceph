@@ -1,0 +1,20 @@
+#!/bin/bash
+
+. "${SNAP}/commands/common"
+
+limits
+
+wait_for_config
+
+# ctdbd reads ctdb.conf, script.options and events/ from CTDB_BASE; the
+# deployment engine renders per-cluster configs there before starting us.
+export CTDB_BASE="${SNAP_DATA}/conf/ctdb"
+export CTDB_SOCKET="${SNAP_DATA}/run/ctdb/ctdbd.socket"
+
+mkdir -p \
+    "${CTDB_BASE}" \
+    "${SNAP_DATA}/run/ctdb" \
+    "${SNAP_COMMON}/logs/ctdb" \
+    "${SNAP_COMMON}/data/ctdb"
+
+exec ctdbd --interactive

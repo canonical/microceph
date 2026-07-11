@@ -1,0 +1,5 @@
+# Options for CTDB event scripts in the microceph snap.
+# The stock 50.samba share check fails on vfs-backed (virtual) share
+# paths; the snapctl replacement script ignores it, but keep the knob set
+# for anything that still consults it.
+CTDB_SAMBA_SKIP_SHARE_CHECK=yes
