@@ -13,7 +13,6 @@ import (
 // This is useful for mocking in unit tests
 type ClientInterface interface {
 	GetClusterMembers(mcTypes.Client) ([]string, error)
-	GetClusterMemberAddresses(mcTypes.Client) (map[string]string, error)
 	GetDisks(mcTypes.Client) (types.Disks, error)
 	GetServices(mcTypes.Client) (types.Services, error)
 	DeleteService(mcTypes.Client, string, string) error
@@ -21,23 +20,6 @@ type ClientInterface interface {
 }
 
 type ClientImpl struct{}
-
-// GetClusterMemberAddresses gets a member name to host address mapping
-// (ports stripped).
-func (c ClientImpl) GetClusterMemberAddresses(cli mcTypes.Client) (map[string]string, error) {
-	var members []mcTypes.ClusterMember
-	err := cli.Query(context.Background(), "GET", mcTypes.PublicEndpoint, &api.NewURL().Path("cluster").URL, nil, &members)
-	if err != nil {
-		return nil, err
-	}
-
-	addresses := make(map[string]string, len(members))
-	for _, member := range members {
-		addresses[member.Name] = member.Address.Addr().String()
-	}
-
-	return addresses, nil
-}
 
 // GetClusterMembers gets the cluster member names
 // We return names only here because the Member type is internal to microclient

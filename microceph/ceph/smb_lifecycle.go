@@ -10,7 +10,6 @@ import (
 	"sort"
 
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
@@ -32,13 +31,15 @@ var smbStockCTDBScripts = []string{
 	"10.interface.script",
 }
 
-// smbMemberAddresses maps cluster member names to their host addresses.
+// smbMemberAddresses maps cluster member names to their host addresses
+// from the local trust store (no network round trip).
 func smbMemberAddresses(s interfaces.StateInterface) (map[string]string, error) {
-	cli, err := s.ClusterState().Connect().Leader(false)
-	if err != nil {
-		return nil, err
+	remotes := s.ClusterState().Truststore().RemoteAddresses()
+	addresses := make(map[string]string, len(remotes))
+	for name, addrPort := range remotes {
+		addresses[name] = addrPort.Addr().String()
 	}
-	return client.MClient.GetClusterMemberAddresses(cli)
+	return addresses, nil
 }
 
 // resolveSMBIface returns the local interface whose subnet contains the

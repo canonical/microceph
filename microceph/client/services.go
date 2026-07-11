@@ -79,7 +79,7 @@ func SendServicePlacementReq(ctx context.Context, c mcTypes.Client, data *types.
 
 // ApplySMBSpec submits an SMBSpec JSON document for cluster-wide apply.
 func ApplySMBSpec(ctx context.Context, c mcTypes.Client, spec []byte) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*900)
 	defer cancel()
 
 	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb").URL, json.RawMessage(spec), nil)
@@ -92,7 +92,7 @@ func ApplySMBSpec(ctx context.Context, c mcTypes.Client, spec []byte) error {
 
 // RemoveSMBService removes an smb cluster from all its member nodes.
 func RemoveSMBService(ctx context.Context, c mcTypes.Client, svc *types.SMBService) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*900)
 	defer cancel()
 
 	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb").URL, svc, nil)
@@ -120,7 +120,7 @@ func GetSMBServices(ctx context.Context, c mcTypes.Client) ([]types.SMBServiceSt
 
 // EnableSMBNodeService requests the target node run the smb placement flow.
 func EnableSMBNodeService(ctx context.Context, c mcTypes.Client, target string, data *types.EnableService) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*300)
 	defer cancel()
 
 	// Send this request to target.
@@ -137,7 +137,7 @@ func EnableSMBNodeService(ctx context.Context, c mcTypes.Client, target string, 
 // RegenerateSMBNodeService requests the target node re-render its smb
 // configs and restart ctdbd.
 func RegenerateSMBNodeService(ctx context.Context, c mcTypes.Client, target string, svc *types.SMBService) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*300)
 	defer cancel()
 
 	// Send this request to target.
@@ -154,7 +154,7 @@ func RegenerateSMBNodeService(ctx context.Context, c mcTypes.Client, target stri
 // DeleteSMBNodeService requests the target node tear down its smb cluster
 // membership.
 func DeleteSMBNodeService(ctx context.Context, c mcTypes.Client, target string, svc *types.SMBService) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*300)
 	defer cancel()
 
 	// Send this request to target.

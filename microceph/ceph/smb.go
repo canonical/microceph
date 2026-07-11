@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/canonical/lxd/shared/api"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
@@ -264,13 +265,29 @@ func DisableSMB(ctx context.Context, s interfaces.StateInterface, clusterID stri
 	return disableSMBLocal(ctx, s, clusterID, NewSMBRenderParams(clusterID, hostname, true))
 }
 
-// smbClusterMembers lists the cluster member names.
+// smbClusterMembers lists the cluster member names from the local trust
+// store (updated on heartbeats; no network round trip).
 func smbClusterMembers(s interfaces.StateInterface) ([]string, error) {
-	cli, err := s.ClusterState().Connect().Leader(false)
-	if err != nil {
-		return nil, err
+	addresses := s.ClusterState().Truststore().RemoteAddresses()
+	members := make([]string, 0, len(addresses))
+	for name := range addresses {
+		members = append(members, name)
 	}
-	return client.MClient.GetClusterMembers(cli)
+	sort.Strings(members)
+	return members, nil
+}
+
+// smbNodeClient returns a client connected directly to the named member.
+// Direct connections avoid proxy legs, whose cancellation poisoned
+// long-running enable chains when fanned out through the leader.
+func smbNodeClient(s interfaces.StateInterface, node string) (mcTypes.Client, error) {
+	addr, ok := s.ClusterState().Truststore().RemoteAddresses()[node]
+	if !ok {
+		return nil, fmt.Errorf("no address known for cluster member '%s'", node)
+	}
+
+	url := api.NewURL().Scheme("https").Host(addr.String())
+	return s.ClusterState().Connect().Member(&url.URL, false, nil)
 }
 
 // smbEnableNode runs the smb placement flow on the given node, locally or
@@ -281,7 +298,7 @@ func smbEnableNode(ctx context.Context, s interfaces.StateInterface, node, paylo
 		return ServicePlacementHandler(ctx, s, data)
 	}
 
-	cli, err := s.ClusterState().Connect().Leader(false)
+	cli, err := smbNodeClient(s, node)
 	if err != nil {
 		return err
 	}
@@ -295,7 +312,7 @@ func smbRegenerateNode(ctx context.Context, s interfaces.StateInterface, node, c
 		return RegenerateSMBNode(ctx, s, clusterID)
 	}
 
-	cli, err := s.ClusterState().Connect().Leader(false)
+	cli, err := smbNodeClient(s, node)
 	if err != nil {
 		return err
 	}
@@ -309,7 +326,7 @@ func smbDisableNode(ctx context.Context, s interfaces.StateInterface, node, clus
 		return DisableSMB(ctx, s, clusterID)
 	}
 
-	cli, err := s.ClusterState().Connect().Leader(false)
+	cli, err := smbNodeClient(s, node)
 	if err != nil {
 		return err
 	}
