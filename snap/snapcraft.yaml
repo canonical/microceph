@@ -504,56 +504,66 @@ parts:
       usr/sbin/: bin/
       usr/lib/: lib/
       usr/libexec/: libexec/
+    # Negative-list pruning only: a whitelist here silently drops files
+    # this part stages that OTHER parts also stage and prime (snapcraft
+    # resolves shared staged files against every owner's filter), which
+    # broke ceph-mgr's libpython and the dashboard's python deps. Only
+    # samba-owned paths are excluded.
     prime:
-      # daemons and tools
-      - bin/smbd
-      - bin/smbpasswd
-      - bin/pdbedit
-      - bin/testparm
-      - bin/ctdb
-      - bin/ctdbd
-      - bin/ltdbtool
-      - bin/onnode
-      # ctdb helpers, incl. ctdb_mutex_ceph_rados_helper
-      - libexec/ctdb
-      # smbd's on-demand DCE-RPC helpers (samba-dcerpcd, rpcd_*)
-      - libexec/samba
-      # samba private libs + vfs/ldb/auth/gensec modules
-      - lib/*/samba
-      # ELF NEEDED closure resolved inside this part (absent from core24
-      # and from every other part's prime list)
-      - lib/*/libavahi-client.so*
-      - lib/*/libavahi-common.so*
-      - lib/*/libcups.so*
-      - lib/*/libdcerpc-binding.so*
-      - lib/*/libdcerpc-server-core.so*
-      - lib/*/libdcerpc-server.so*
-      - lib/*/libdcerpc.so*
-      - lib/*/libjansson.so*
-      - lib/*/libldb.so*
-      - lib/*/libndr-krb5pac.so*
-      - lib/*/libndr-nbt.so*
-      - lib/*/libndr-standard.so*
-      - lib/*/libndr.so*
-      - lib/*/libnetapi.so*
-      - lib/*/libpyldb-util*.so*
-      - lib/*/libpytalloc-util*.so*
-      - lib/*/libsamba-credentials.so*
-      - lib/*/libsamba-errors.so*
-      - lib/*/libsamba-hostconfig.so*
-      - lib/*/libsamba-passdb.so*
-      - lib/*/libsamba-util.so*
-      - lib/*/libsamdb.so*
-      - lib/*/libsmbconf.so*
-      - lib/*/libsmbldap.so*
-      - lib/*/libtalloc.so*
-      - lib/*/libtdb.so*
-      - lib/*/libtevent-util.so*
-      - lib/*/libtevent.so*
-      - lib/*/liburing.so*
-      # ctdb runtime data (event scripts + config templates)
-      - etc/ctdb
-      - usr/share/ctdb
+      - -lib/systemd
+      - -lib/tmpfiles.d
+      - -lib/sysusers.d
+      - -lib/*/avahi
+      - -usr/share/doc
+      - -usr/share/man
+      - -usr/share/samba
+      # AD/DC, NetBIOS and registry tooling not used by Phase 1
+      - -bin/samba
+      - -bin/samba-gpupdate
+      - -bin/samba-tool
+      - -bin/samba_dnsupdate
+      - -bin/samba_downgrade_db
+      - -bin/samba_kcc
+      - -bin/samba_spnupdate
+      - -bin/samba_upgradedns
+      - -bin/samba-regedit
+      - -bin/samba-log-parser
+      - -bin/nmbd
+      - -bin/nmblookup
+      - -bin/net
+      - -bin/oLschema2ldif
+      - -bin/dumpmscat
+      - -bin/eventlogadm
+      - -bin/profiles
+      - -bin/sharesec
+      - -bin/mvxattr
+
+  # Real upstream mgr/smb module, built from the ceph tag matching the
+  # staged PPA debs (asserted at build time). Replaces the retired stub
+  # patch 0003.
+  mgr-smb:
+    plugin: nil
+    build-packages:
+      - git
+    override-pull: |
+      craftctl default
+      git clone --branch v20.2.1 --depth 1 --filter=blob:none --sparse https://github.com/ceph/ceph.git ceph-src
+      git -C ceph-src sparse-checkout set src/pybind/mgr/smb
+    override-build: |
+      craftctl default
+      pkg_version=$(apt-cache policy ceph-common | awk '/Candidate:/{ print $2 }')
+      src_tag=$(git -C ceph-src describe --tags --exact-match)
+      case "${pkg_version}" in
+        "${src_tag#v}"-*|"${src_tag#v}"~*|"${src_tag#v}"+*)
+          ;;
+        *)
+          echo "mgr/smb source ${src_tag} does not match staged ceph ${pkg_version}" >&2
+          exit 1
+          ;;
+      esac
+      mkdir -p "${CRAFT_PART_INSTALL}/share/ceph/mgr"
+      cp -r ceph-src/src/pybind/mgr/smb "${CRAFT_PART_INSTALL}/share/ceph/mgr/"
+      rm -rf "${CRAFT_PART_INSTALL}/share/ceph/mgr/smb/tests"
 
   sambacc:
     plugin: nil
