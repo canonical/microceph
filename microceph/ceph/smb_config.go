@@ -13,12 +13,15 @@ import (
 )
 
 // SMBPaths carries the snap path roots the renderers embed in configs.
+// Snap is the revision-specific $SNAP dir; SnapStable is the /snap/<name>/
+// current alias for content that must be identical across nodes.
 type SMBPaths struct {
-	Conf string
-	Run  string
-	Data string
-	Log  string
-	Snap string
+	Conf       string
+	Run        string
+	Data       string
+	Log        string
+	Snap       string
+	SnapStable string
 }
 
 // SMBRenderParams carries per-node, per-cluster rendering inputs.
@@ -40,11 +43,12 @@ func NewSMBRenderParams(clusterID, hostname string, clustered bool) SMBRenderPar
 		Entity:    SMBDaemonEntity(clusterID, hostname),
 		Clustered: clustered,
 		Paths: SMBPaths{
-			Conf: pathConsts.ConfPath,
-			Run:  pathConsts.RunPath,
-			Data: pathConsts.DataPath,
-			Log:  pathConsts.LogPath,
-			Snap: strings.TrimRight(pathConsts.SnapPath, "/"),
+			Conf:       pathConsts.ConfPath,
+			Run:        pathConsts.RunPath,
+			Data:       pathConsts.DataPath,
+			Log:        pathConsts.LogPath,
+			Snap:       strings.TrimRight(pathConsts.SnapPath, "/"),
+			SnapStable: filepath.Join("/snap", os.Getenv("SNAP_NAME"), "current"),
 		},
 	}
 }
@@ -194,7 +198,11 @@ func RenderCTDBConf(p SMBRenderParams, lockURI string) (string, error) {
 		return "", fmt.Errorf("cannot derive cluster lock from cluster_lock_uri: %w", err)
 	}
 
-	helper := filepath.Join(p.Paths.Snap, "libexec", "ctdb", "ctdb_mutex_ceph_rados_helper")
+	// CTDB refuses to run when the cluster lock command line differs
+	// between nodes, so it must avoid anything node-specific: the shared
+	// per-cluster entity (not the per-node daemon key) and the
+	// revision-independent snap path ($SNAP embeds the local revision).
+	helper := filepath.Join(p.Paths.SnapStable, "libexec", "ctdb", "ctdb_mutex_ceph_rados_helper")
 	object := smbReclockObject + p.ClusterID
 	dbDir := filepath.Join(p.Paths.Data, "ctdb")
 
@@ -215,7 +223,7 @@ func RenderCTDBConf(p SMBRenderParams, lockURI string) (string, error) {
     cluster lock = !%s ceph %s %s %s
 `, filepath.Join(p.Paths.Log, "ctdb", "log.ctdb"),
 		filepath.Join(dbDir, "volatile"), filepath.Join(dbDir, "persistent"), filepath.Join(dbDir, "state"),
-		helper, p.Entity, pool, object), nil
+		helper, SMBClusterEntity(p.ClusterID), pool, object), nil
 }
 
 // RenderCTDBNodes renders the nodes file: one private address per line.

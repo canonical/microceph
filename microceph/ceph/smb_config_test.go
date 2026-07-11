@@ -43,11 +43,12 @@ func testRenderParams() SMBRenderParams {
 		Entity:    "client.smb.dev.host1",
 		Clustered: true,
 		Paths: SMBPaths{
-			Conf: "/var/snap/microceph/current/conf",
-			Run:  "/var/snap/microceph/current/run",
-			Data: "/var/snap/microceph/common/data",
-			Log:  "/var/snap/microceph/common/logs",
-			Snap: "/snap/microceph/current",
+			Conf:       "/var/snap/microceph/current/conf",
+			Run:        "/var/snap/microceph/current/run",
+			Data:       "/var/snap/microceph/common/data",
+			Log:        "/var/snap/microceph/common/logs",
+			Snap:       "/snap/microceph/x1",
+			SnapStable: "/snap/microceph/current",
 		},
 	}
 }

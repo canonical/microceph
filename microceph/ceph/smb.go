@@ -217,6 +217,12 @@ func RemoveSMB(ctx context.Context, s interfaces.StateInterface, clusterID strin
 		}
 	}
 
+	// All nodes are gone: retire the shared cluster lock entity.
+	_, err = cephRun("auth", "del", SMBClusterEntity(clusterID))
+	if err != nil {
+		logger.Warnf("failed to delete cephx entity '%s': %v", SMBClusterEntity(clusterID), err)
+	}
+
 	return nil
 }
 

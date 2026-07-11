@@ -25,6 +25,18 @@ func SMBDaemonEntity(clusterID, hostname string) string {
 	return fmt.Sprintf("client.smb.%s.%s", clusterID, hostname)
 }
 
+// SMBClusterEntity returns the shared cephx entity all of a cluster's
+// nodes use for the CTDB cluster lock: CTDB refuses to run when the lock
+// command line differs between nodes, so it cannot embed per-node names.
+func SMBClusterEntity(clusterID string) string {
+	return fmt.Sprintf("client.smb.%s", clusterID)
+}
+
+// smbLockCaps returns the caps for the shared cluster lock entity.
+func smbLockCaps(lockPool string) (string, string) {
+	return "allow r", fmt.Sprintf("allow rwx pool=%s object_prefix %s", lockPool, smbReclockObject)
+}
+
 // smbPoolCapsFromURI mirrors cephadm's SMBService._pool_caps_from_uri:
 // read access for foreign pools, and for the smb pool additionally rwx on
 // the cluster.meta. object prefix (the x perm locks the CTDB reclock
@@ -70,16 +82,6 @@ func smbOSDCaps(spec *types.SMBSpec) string {
 	for _, uri := range uris {
 		for _, cap := range smbPoolCapsFromURI(uri) {
 			capSet[cap] = true
-		}
-	}
-
-	for _, feature := range spec.Features {
-		if feature != "clustered" {
-			continue
-		}
-		lockPool, _, _, err := parseRADOSURI(spec.ClusterLockURI)
-		if err == nil {
-			capSet[fmt.Sprintf("allow rwx pool=%s object_prefix %s", lockPool, smbReclockObject)] = true
 		}
 	}
 
@@ -172,6 +174,33 @@ func EnsureSMBKeyrings(spec *types.SMBSpec, hostname, confDir string) error {
 		return err
 	}
 
+	// Clustered specs share one lock entity across all nodes (the CTDB
+	// cluster lock command line must be identical cluster-wide).
+	for _, feature := range spec.Features {
+		if feature != "clustered" {
+			continue
+		}
+		lockPool, _, _, err := parseRADOSURI(spec.ClusterLockURI)
+		if err != nil {
+			return fmt.Errorf("cannot derive lock pool from cluster_lock_uri: %w", err)
+		}
+
+		lockEntity := SMBClusterEntity(spec.ClusterID)
+		_, err = cephRun("auth", "get-or-create", lockEntity)
+		if err != nil {
+			return fmt.Errorf("failed to ensure cephx entity '%s': %w", lockEntity, err)
+		}
+		monCaps, osdCaps := smbLockCaps(lockPool)
+		_, err = cephRun("auth", "caps", lockEntity, "mon", monCaps, "osd", osdCaps)
+		if err != nil {
+			return fmt.Errorf("failed to set caps for '%s': %w", lockEntity, err)
+		}
+		err = fetchSMBKeyring(confDir, lockEntity)
+		if err != nil {
+			return err
+		}
+	}
+
 	for _, user := range spec.IncludeCephUsers {
 		err = fetchSMBKeyring(confDir, user)
 		if err != nil {
@@ -198,7 +227,11 @@ func RemoveSMBKeyrings(spec *types.SMBSpec, hostname, confDir string) error {
 		return fmt.Errorf("failed to delete cephx entity '%s': %w", entity, err)
 	}
 
-	for _, name := range append([]string{entity}, spec.IncludeCephUsers...) {
+	// The shared lock entity stays in ceph while other nodes may use it
+	// (RemoveSMB deletes it after the last node leaves); only this node's
+	// fetched keyring files are removed.
+	names := append([]string{entity, SMBClusterEntity(spec.ClusterID)}, spec.IncludeCephUsers...)
+	for _, name := range names {
 		err = os.Remove(smbKeyringPath(confDir, name))
 		if err != nil && !os.IsNotExist(err) {
 			return err

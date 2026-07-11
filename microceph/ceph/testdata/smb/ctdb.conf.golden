@@ -8,4 +8,4 @@
     state database directory = /var/snap/microceph/common/data/ctdb/state
 
 [cluster]
-    cluster lock = !/snap/microceph/current/libexec/ctdb/ctdb_mutex_ceph_rados_helper ceph client.smb.dev.host1 .smb microceph.reclock.dev
+    cluster lock = !/snap/microceph/current/libexec/ctdb/ctdb_mutex_ceph_rados_helper ceph client.smb.dev .smb microceph.reclock.dev

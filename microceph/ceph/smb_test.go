@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -259,6 +260,10 @@ func (s *smbSuite) TestApplyUnknownHost() {
 func (s *smbSuite) TestRemoveSMB() {
 	db := s.withDB()
 	db.On("GetGroupMembers", context.Background(), s.TestStateInterface, "smb", "dev").Return([]string{"m1", "m2"}, nil).Once()
+
+	r := mocks.NewRunner(s.T())
+	r.On("RunCommand", "ceph", "auth", "del", "client.smb.dev").Return("", nil).Once()
+	common.ProcessExec = r
 
 	err := RemoveSMB(context.Background(), s.TestStateInterface, "dev")
 	assert.NoError(s.T(), err)

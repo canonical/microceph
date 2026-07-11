@@ -70,11 +70,12 @@ func (s *smbLifecycleSuite) lifecycleEnv() SMBRenderParams {
 		Entity:    "client.smb.dev.host1",
 		Clustered: true,
 		Paths: SMBPaths{
-			Conf: filepath.Join(root, "conf"),
-			Run:  filepath.Join(root, "run"),
-			Data: filepath.Join(root, "data"),
-			Log:  filepath.Join(root, "logs"),
-			Snap: snapDir,
+			Conf:       filepath.Join(root, "conf"),
+			Run:        filepath.Join(root, "run"),
+			Data:       filepath.Join(root, "data"),
+			Log:        filepath.Join(root, "logs"),
+			Snap:       snapDir,
+			SnapStable: snapDir,
 		},
 	}
 }
@@ -113,6 +114,12 @@ func (s *smbLifecycleSuite) TestEnableSMBNodeLocal() {
 		"mon", smbMonCaps("dev"), "osd", smbOSDCaps(&spec)).Return("", nil).Once()
 	r.On("RunCommand", "ceph", "auth", "get", "client.smb.dev.host1", "-o", mock.Anything).Run(func(args mock.Arguments) {
 		assert.NoError(s.T(), os.WriteFile(args.Get(5).(string), []byte("[client]\nkey=x\n"), 0600))
+	}).Return("", nil).Once()
+	r.On("RunCommand", "ceph", "auth", "get-or-create", "client.smb.dev").Return("", nil).Once()
+	r.On("RunCommand", "ceph", "auth", "caps", "client.smb.dev",
+		"mon", "allow r", "osd", "allow rwx pool=.smb object_prefix microceph.reclock.").Return("", nil).Once()
+	r.On("RunCommand", "ceph", "auth", "get", "client.smb.dev", "-o", mock.Anything).Run(func(args mock.Arguments) {
+		assert.NoError(s.T(), os.WriteFile(args.Get(5).(string), []byte("[client]\nkey=l\n"), 0600))
 	}).Return("", nil).Once()
 	r.On("RunCommand", "rados", "get", "--pool", ".smb", "-N", "dev", "scc.dev.json", "-").
 		Return(string(configJSON), nil).Once()

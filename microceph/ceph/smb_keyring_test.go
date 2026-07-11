@@ -66,17 +66,15 @@ func (s *smbKeyringSuite) TestOSDCaps() {
 	caps := smbOSDCaps(spec)
 	assert.Equal(s.T(),
 		"allow r pool=.smb, allow r pool=users, "+
-			"allow rwx pool=.smb namespace=dev object_prefix cluster.meta., "+
-			"allow rwx pool=.smb object_prefix microceph.reclock.",
+			"allow rwx pool=.smb namespace=dev object_prefix cluster.meta.",
 		caps)
 }
 
-func (s *smbKeyringSuite) TestOSDCapsUnclustered() {
-	spec := s.spec()
-	spec.Features = nil
-
-	caps := smbOSDCaps(spec)
-	assert.NotContains(s.T(), caps, "microceph.reclock.")
+func (s *smbKeyringSuite) TestClusterEntityAndLockCaps() {
+	assert.Equal(s.T(), "client.smb.dev", SMBClusterEntity("dev"))
+	monCaps, osdCaps := smbLockCaps(".smb")
+	assert.Equal(s.T(), "allow r", monCaps)
+	assert.Equal(s.T(), "allow rwx pool=.smb object_prefix microceph.reclock.", osdCaps)
 }
 
 func (s *smbKeyringSuite) TestMonCaps() {
@@ -106,13 +104,17 @@ func (s *smbKeyringSuite) TestEnsureSMBKeyrings() {
 	r.On("RunCommand", "ceph", "auth", "caps", entity,
 		"mon", smbMonCaps("dev"), "osd", smbOSDCaps(spec)).Return("", nil).Once()
 	writeKeyringOnGet(s, r, entity)
+	r.On("RunCommand", "ceph", "auth", "get-or-create", "client.smb.dev").Return("", nil).Once()
+	r.On("RunCommand", "ceph", "auth", "caps", "client.smb.dev",
+		"mon", "allow r", "osd", "allow rwx pool=.smb object_prefix microceph.reclock.").Return("", nil).Once()
+	writeKeyringOnGet(s, r, "client.smb.dev")
 	writeKeyringOnGet(s, r, "client.data1")
 	common.ProcessExec = r
 
 	err := EnsureSMBKeyrings(spec, "host1", confDir)
 	assert.NoError(s.T(), err)
 
-	for _, name := range []string{"ceph.client.smb.dev.host1.keyring", "ceph.client.data1.keyring"} {
+	for _, name := range []string{"ceph.client.smb.dev.host1.keyring", "ceph.client.smb.dev.keyring", "ceph.client.data1.keyring"} {
 		info, err := os.Stat(filepath.Join(confDir, name))
 		assert.NoError(s.T(), err, name)
 		assert.Equal(s.T(), os.FileMode(0600), info.Mode().Perm(), name)
@@ -136,7 +138,7 @@ func (s *smbKeyringSuite) TestRemoveSMBKeyrings() {
 	spec := s.spec()
 	spec.IncludeCephUsers = []string{"client.data1"}
 
-	for _, name := range []string{"ceph.client.smb.dev.host1.keyring", "ceph.client.data1.keyring"} {
+	for _, name := range []string{"ceph.client.smb.dev.host1.keyring", "ceph.client.smb.dev.keyring", "ceph.client.data1.keyring"} {
 		err := os.WriteFile(filepath.Join(confDir, name), []byte("k"), 0600)
 		assert.NoError(s.T(), err)
 	}
