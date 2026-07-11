@@ -25,6 +25,14 @@ mkdir -p \
     "${SNAP_COMMON}/logs/ctdb" \
     "${SNAP_COMMON}/data/ctdb"
 
+# Idle until the deployment engine has rendered our config: ctdbd is
+# enabled once a node joins an smb cluster, and a start before rendering
+# (snap refresh, reboot) must not crashloop into systemd's rate limit.
+while [ ! -f "${CTDB_BASE}/ctdb.conf" ]; do
+    echo "ctdbd: waiting for ${CTDB_BASE}/ctdb.conf"
+    sleep 5
+done
+
 # The PID file path is compiled in and has no override; the run dir is
 # writable under devmode and will need the smb-support interface under
 # strict confinement.
