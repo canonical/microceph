@@ -74,24 +74,17 @@ three nodes, listing one public address per node:
 Create the share
 ----------------
 
-Shares are declared against the cluster. Use the declarative interface
-with the ``samba-vfs/new`` provider; the imperative
-``ceph smb share create`` defaults to a proxied provider that MicroCeph
-does not deploy:
-
 .. code-block:: none
 
-    $ cat share1.yaml
-    resource_type: ceph.smb.share
-    cluster_id: dev
-    share_id: share1
-    cephfs:
-      volume: newfs
-      subvolume: s1
-      path: /
-      provider: samba-vfs/new
+    $ sudo microceph.ceph smb share create dev share1 newfs / --subvolume=s1
 
-    $ sudo microceph.ceph smb apply -i share1.yaml
+.. note::
+
+   MicroCeph serves shares from ``smbd`` via direct libcephfs, so its
+   build of the ``smb`` module expands the default share provider to
+   the non-proxied ``samba-vfs/new`` variant. Shares explicitly
+   requesting ``samba-vfs/proxied`` are rejected: MicroCeph does not
+   deploy the cephfs-proxy daemon.
 
 Inspect the deployment:
 
