@@ -276,6 +276,22 @@ func (s *startSuite) TestReEnableGroupedServiceRestarted() {
 	reEnableServices(context.Background(), s.newState())
 }
 
+func (s *startSuite) TestReEnableSMBGroupStartsCtdbd() {
+	r := s.setupReEnable(
+		[]database.Service{{Service: "mon", Member: "node1"}},
+		[]database.GroupedService{
+			{Service: "smb", GroupID: "dev", Member: "node1"},
+		},
+	)
+	r.On("RunCommand", "snapctl", "services", "microceph.mon").Return("active", nil).Once()
+	r.On("RunCommand", "snapctl", "services", "microceph.osd").Return("active", nil).Once()
+	// The smb group maps to the ctdbd snap app (there is no microceph.smb).
+	r.On("RunCommand", "snapctl", "services", "microceph.ctdbd").Return("inactive", nil).Once()
+	r.On("RunCommand", "snapctl", "start", "microceph.ctdbd", "--enable").Return("ok", nil).Once()
+
+	reEnableServices(context.Background(), s.newState())
+}
+
 // TestShouldSkipMonitorRefresh is a regression test for issue #556.
 func (s *startSuite) TestShouldSkipMonitorRefresh() {
 	// First run should always trigger UpdateConfig.
