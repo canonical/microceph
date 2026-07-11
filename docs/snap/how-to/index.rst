@@ -87,6 +87,7 @@ Follow these guides to learn how to make use of the storage provided by your clu
 
    mount-block-device
    mount-cephfs-share
+   Serve SMB shares <enable-smb>
 
 
 Contact us
