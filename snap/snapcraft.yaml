@@ -564,6 +564,10 @@ parts:
       mkdir -p "${CRAFT_PART_INSTALL}/share/ceph/mgr"
       cp -r ceph-src/src/pybind/mgr/smb "${CRAFT_PART_INSTALL}/share/ceph/mgr/"
       rm -rf "${CRAFT_PART_INSTALL}/share/ceph/mgr/smb/tests"
+      # Patched here, not in the ceph part's patch loop: that loop runs
+      # against $CRAFT_STAGE and cannot see this part's files reliably
+      # (stage order); a part patches only what it installs itself.
+      patch -p1 -d "${CRAFT_PART_INSTALL}" < "${CRAFT_PROJECT_DIR}/patches/mgr-smb/0001-default-provider-vfs-new.patch"
 
   sambacc:
     plugin: nil
