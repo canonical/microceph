@@ -1,0 +1,5 @@
+[logging]
+    log level = NOTICE
+
+[cluster]
+    cluster lock = !/snap/microceph/current/libexec/ctdb/ctdb_mutex_ceph_rados_helper ceph client.smb.dev.host1 .smb microceph.reclock.dev

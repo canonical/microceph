@@ -65,8 +65,18 @@ func (s *smbKeyringSuite) TestOSDCaps() {
 
 	caps := smbOSDCaps(spec)
 	assert.Equal(s.T(),
-		"allow r pool=.smb, allow r pool=users, allow rwx pool=.smb namespace=dev object_prefix cluster.meta.",
+		"allow r pool=.smb, allow r pool=users, "+
+			"allow rwx pool=.smb namespace=dev object_prefix cluster.meta., "+
+			"allow rwx pool=.smb object_prefix microceph.reclock.",
 		caps)
+}
+
+func (s *smbKeyringSuite) TestOSDCapsUnclustered() {
+	spec := s.spec()
+	spec.Features = nil
+
+	caps := smbOSDCaps(spec)
+	assert.NotContains(s.T(), caps, "microceph.reclock.")
 }
 
 func (s *smbKeyringSuite) TestMonCaps() {

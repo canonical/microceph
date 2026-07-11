@@ -1,0 +1,65 @@
+{
+  "configs": {
+    "dev": {
+      "globals": [
+        "default",
+        "dev",
+        "microceph"
+      ],
+      "instance_features": [
+        "ctdb"
+      ],
+      "instance_name": "dev",
+      "shares": [
+        "share1"
+      ]
+    }
+  },
+  "globals": {
+    "default": {
+      "options": {
+        "disable spoolss": "Yes",
+        "load printers": "No",
+        "printcap name": "/dev/null",
+        "printing": "bsd",
+        "smbd profiling level": "on"
+      }
+    },
+    "dev": {
+      "options": {}
+    },
+    "microceph": {
+      "options": {
+        "cache directory": "/var/snap/microceph/common/data/samba/dev/cache",
+        "clustering": "yes",
+        "ctdbd socket": "/var/snap/microceph/current/run/ctdb/ctdbd.socket",
+        "lock directory": "/var/snap/microceph/common/data/samba/dev/lock",
+        "log file": "/var/snap/microceph/common/logs/samba/dev/log.%m",
+        "ncalrpc dir": "/var/snap/microceph/current/run/samba/dev/ncalrpc",
+        "netbios name": "DEV",
+        "pid directory": "/var/snap/microceph/current/run/samba/dev",
+        "private dir": "/var/snap/microceph/common/data/samba/dev/private",
+        "security": "user",
+        "state directory": "/var/snap/microceph/common/data/samba/dev/state"
+      }
+    }
+  },
+  "samba-container-config": "v0",
+  "shares": {
+    "share1": {
+      "options": {
+        "acl_xattr:security_acl_name": "user.NTACL",
+        "browseable": "Yes",
+        "ceph:config_file": "/etc/ceph/ceph.conf",
+        "ceph:filesystem": "newfs",
+        "ceph:user_id": "smb.fs.cluster.dev",
+        "kernel share modes": "no",
+        "path": "/volumes/_nogroup/s1/uuid",
+        "read only": "No",
+        "smbd profiling share": "yes",
+        "vfs objects": "acl_xattr ceph_snapshots ceph",
+        "x:ceph:id": "dev.share1"
+      }
+    }
+  }
+}

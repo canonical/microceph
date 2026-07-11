@@ -58,7 +58,10 @@ func smbPoolCapsFromURI(uri string) []string {
 }
 
 // smbOSDCaps unions the pool caps over every RADOS URI in the spec,
-// deduplicated and sorted for stable comparisons.
+// deduplicated and sorted for stable comparisons. Clustered specs also
+// get access to the per-cluster CTDB reclock object (see RenderCTDBConf:
+// the 4.19 rados mutex helper is namespace-blind, so the lock lives in
+// the lock pool's default namespace under our own prefix).
 func smbOSDCaps(spec *types.SMBSpec) string {
 	uris := []string{spec.ConfigURI}
 	uris = append(uris, spec.UserSources...)
@@ -67,6 +70,16 @@ func smbOSDCaps(spec *types.SMBSpec) string {
 	for _, uri := range uris {
 		for _, cap := range smbPoolCapsFromURI(uri) {
 			capSet[cap] = true
+		}
+	}
+
+	for _, feature := range spec.Features {
+		if feature != "clustered" {
+			continue
+		}
+		lockPool, _, _, err := parseRADOSURI(spec.ClusterLockURI)
+		if err == nil {
+			capSet[fmt.Sprintf("allow rwx pool=%s object_prefix %s", lockPool, smbReclockObject)] = true
 		}
 	}
 
