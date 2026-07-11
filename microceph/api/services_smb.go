@@ -31,6 +31,32 @@ var smbNodeServiceCmd = mcTypes.Endpoint{
 	Delete: mcTypes.EndpointAction{Handler: cmdSMBNodeDelete, ProxyTarget: true},
 }
 
+// /1.0/services/smb/users endpoint: node-scoped passdb user seeding,
+// invoked on one placed member per cluster-level apply (the passdb is
+// CTDB-replicated).
+var smbUsersServiceCmd = mcTypes.Endpoint{
+	Path: "services/smb/users",
+	Put:  mcTypes.EndpointAction{Handler: cmdSMBUsersPut, ProxyTarget: true},
+}
+
+// cmdSMBUsersPut seeds this node's clustered passdb from the SMBSpec
+// (JSON body) user_sources.
+func cmdSMBUsersPut(s mcTypes.State, r *http.Request) mcTypes.Response {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		logger.Errorf("failed reading smb users spec body: %v", err)
+		return mcTypes.InternalError(err)
+	}
+
+	err = ceph.SeedSMBUsersNode(string(body))
+	if err != nil {
+		logger.Errorf("failed seeding smb users on node: %v", err)
+		return mcTypes.SmartError(err)
+	}
+
+	return mcTypes.EmptySyncResponse
+}
+
 // cmdSMBNodePost regenerates this node's smb configs from the stored
 // spec and restarts ctdbd.
 func cmdSMBNodePost(s mcTypes.State, r *http.Request) mcTypes.Response {

@@ -35,6 +35,7 @@ type smbSuite struct {
 	enabled     []string
 	disabled    []string
 	regenerated []string
+	seeded      []string
 }
 
 func TestSMBSuite(t *testing.T) {
@@ -50,16 +51,19 @@ func (s *smbSuite) SetupTest() {
 	s.enabled = nil
 	s.disabled = nil
 	s.regenerated = nil
+	s.seeded = nil
 
 	originalMembers := smbClusterMembersFunc
 	originalEnable := smbEnableNodeFunc
 	originalDisable := smbDisableNodeFunc
 	originalRegenerate := smbRegenerateNodeFunc
+	originalSeed := smbSeedUsersNodeFunc
 	s.T().Cleanup(func() {
 		smbClusterMembersFunc = originalMembers
 		smbEnableNodeFunc = originalEnable
 		smbDisableNodeFunc = originalDisable
 		smbRegenerateNodeFunc = originalRegenerate
+		smbSeedUsersNodeFunc = originalSeed
 	})
 
 	smbClusterMembersFunc = func(s interfaces.StateInterface) ([]string, error) {
@@ -75,6 +79,10 @@ func (s *smbSuite) SetupTest() {
 	}
 	smbRegenerateNodeFunc = func(ctx context.Context, st interfaces.StateInterface, node, clusterID string) error {
 		s.regenerated = append(s.regenerated, node)
+		return nil
+	}
+	smbSeedUsersNodeFunc = func(ctx context.Context, st interfaces.StateInterface, node, payload string) error {
+		s.seeded = append(s.seeded, node)
 		return nil
 	}
 }
@@ -240,6 +248,33 @@ func (s *smbSuite) TestApplyConfigChange() {
 	assert.Empty(s.T(), s.disabled)
 	// Spec content changed with steady membership: every member re-renders.
 	assert.Equal(s.T(), []string{"m1", "m2"}, s.regenerated)
+}
+
+func (s *smbSuite) TestApplySeedsUsersOnEveryApply() {
+	// Steady state, no config change: user seeding still runs, on the
+	// first placed member only.
+	payload := `{"service_type": "smb", "service_id": "dev", "cluster_id": "dev", ` +
+		`"placement": {"hosts": ["m1", "m2"]}, ` +
+		`"user_sources": ["rados:mon-config-key:smb/config/dev/users-groups.0.json"]}`
+	canonical := mustCompactJSON(payload)
+
+	db := s.withDB()
+	db.On("GetGroupMembers", context.Background(), s.TestStateInterface, "smb", "dev").Return([]string{"m1", "m2"}, nil).Once()
+	db.On("GetGroupConfig", context.Background(), s.TestStateInterface, "smb", "dev").Return(canonical, nil).Once()
+
+	err := ApplySMB(context.Background(), s.TestStateInterface, payload)
+	assert.NoError(s.T(), err)
+	assert.Empty(s.T(), s.regenerated)
+	assert.Equal(s.T(), []string{"m1"}, s.seeded)
+}
+
+func (s *smbSuite) TestApplyNoUserSourcesSkipsSeeding() {
+	db := s.withDB()
+	db.On("GetGroupMembers", context.Background(), s.TestStateInterface, "smb", "dev").Return([]string{}, nil).Once()
+
+	err := ApplySMB(context.Background(), s.TestStateInterface, smbPayload(`"m1"`, 0))
+	assert.NoError(s.T(), err)
+	assert.Empty(s.T(), s.seeded)
 }
 
 func (s *smbSuite) TestApplyInvalidSpec() {

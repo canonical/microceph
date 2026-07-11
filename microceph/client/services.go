@@ -151,6 +151,24 @@ func RegenerateSMBNodeService(ctx context.Context, c mcTypes.Client, target stri
 	return nil
 }
 
+// SeedSMBUsersNodeService requests the target node seed its clustered
+// passdb from the spec's user_sources. Sized to cover the import retry
+// window while CTDB settles.
+func SeedSMBUsersNodeService(ctx context.Context, c mcTypes.Client, target string, spec string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	// Send this request to target.
+	c = c.UseTarget(target)
+
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb", "users").URL, json.RawMessage(spec), nil)
+	if err != nil {
+		return fmt.Errorf("failed seeding smb users on %s: %w", target, err)
+	}
+
+	return nil
+}
+
 // DeleteSMBNodeService requests the target node tear down its smb cluster
 // membership.
 func DeleteSMBNodeService(ctx context.Context, c mcTypes.Client, target string, svc *types.SMBService) error {

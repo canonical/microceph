@@ -30,6 +30,7 @@ var (
 	smbEnableNodeFunc     = smbEnableNode
 	smbDisableNodeFunc    = smbDisableNode
 	smbRegenerateNodeFunc = smbRegenerateNode
+	smbSeedUsersNodeFunc  = smbSeedUsersNode
 )
 
 // ResolveSMBPlacement resolves the spec placement to a sorted set of
@@ -194,6 +195,17 @@ func ApplySMB(ctx context.Context, s interfaces.StateInterface, payload string) 
 		}
 	}
 
+	// Seed passdb users on every apply, not just on spec changes: the
+	// documents behind user_sources URIs can change while the URIs (and
+	// so the spec) stay identical. The passdb is CTDB-replicated, so one
+	// member seeding covers the cluster.
+	if len(sp.Spec.UserSources) > 0 && len(desired) > 0 {
+		err = smbSeedUsersNodeFunc(ctx, s, desired[0], canonical)
+		if err != nil {
+			return fmt.Errorf("failed to seed smb users for cluster '%s' on node '%s': %w", sp.Spec.ClusterID, desired[0], err)
+		}
+	}
+
 	return nil
 }
 
@@ -323,6 +335,20 @@ func smbRegenerateNode(ctx context.Context, s interfaces.StateInterface, node, c
 		return err
 	}
 	return client.RegenerateSMBNodeService(ctx, cli, node, &types.SMBService{ClusterID: clusterID})
+}
+
+// smbSeedUsersNode imports the spec's users into the clustered passdb on
+// the given node, locally or via the node-scoped endpoint.
+func smbSeedUsersNode(ctx context.Context, s interfaces.StateInterface, node, payload string) error {
+	if node == s.ClusterState().Name() {
+		return SeedSMBUsersNode(payload)
+	}
+
+	cli, err := smbNodeClient(s, node)
+	if err != nil {
+		return err
+	}
+	return client.SeedSMBUsersNodeService(ctx, cli, node, payload)
 }
 
 // smbDisableNode tears down smb membership on the given node, locally or
