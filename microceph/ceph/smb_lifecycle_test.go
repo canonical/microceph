@@ -213,7 +213,27 @@ func (s *smbLifecycleSuite) TestRegenerateSMBNodeLocal() {
 	db.On("GetGroupConfig", ctx, s.TestStateInterface, "smb", "dev").Return(canonical, nil).Once()
 	db.On("GetGroupMemberRecords", ctx, s.TestStateInterface, "smb", "dev").Return(s.memberRecords(), nil).Once()
 
+	var spec types.SMBSpec
+	assert.NoError(s.T(), json.Unmarshal([]byte(validSMBPayload), &spec))
+
+	// Regenerate assumes the node dirs from enable already exist.
+	assert.NoError(s.T(), os.MkdirAll(filepath.Join(p.Paths.Conf, "samba"), 0755))
+
 	r := mocks.NewRunner(s.T())
+	// Keyrings converge on regenerate too (spec changes can add
+	// include_ceph_users or alter URI-derived caps).
+	r.On("RunCommand", "ceph", "auth", "get-or-create", "client.smb.dev.host1").Return("", nil).Once()
+	r.On("RunCommand", "ceph", "auth", "caps", "client.smb.dev.host1",
+		"mon", smbMonCaps("dev"), "osd", smbOSDCaps(&spec)).Return("", nil).Once()
+	r.On("RunCommand", "ceph", "auth", "get", "client.smb.dev.host1", "-o", mock.Anything).Run(func(args mock.Arguments) {
+		assert.NoError(s.T(), os.WriteFile(args.Get(5).(string), []byte("[client]\nkey=x\n"), 0600))
+	}).Return("", nil).Once()
+	r.On("RunCommand", "ceph", "auth", "get-or-create", "client.smb.dev").Return("", nil).Once()
+	r.On("RunCommand", "ceph", "auth", "caps", "client.smb.dev",
+		"mon", "allow r", "osd", "allow rwx pool=.smb object_prefix microceph.reclock.").Return("", nil).Once()
+	r.On("RunCommand", "ceph", "auth", "get", "client.smb.dev", "-o", mock.Anything).Run(func(args mock.Arguments) {
+		assert.NoError(s.T(), os.WriteFile(args.Get(5).(string), []byte("[client]\nkey=l\n"), 0600))
+	}).Return("", nil).Once()
 	r.On("RunCommand", "rados", "get", "--pool", ".smb", "-N", "dev", "scc.dev.json", "-").
 		Return(string(configJSON), nil).Once()
 	r.On("RunCommand", "python3", "-m", "sambacc.commands.main",

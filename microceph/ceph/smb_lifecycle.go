@@ -336,6 +336,14 @@ func regenerateSMBNodeLocal(ctx context.Context, s interfaces.StateInterface, cl
 		return fmt.Errorf("cannot parse stored spec for smb cluster '%s': %w", clusterID, err)
 	}
 
+	// Spec changes can add include_ceph_users entities (e.g. the first
+	// share creating the cluster's cephfs user) or alter URI-derived
+	// caps, so keyrings must converge on regenerate, not just enable.
+	err = EnsureSMBKeyrings(&spec, p.Hostname, p.Paths.Conf)
+	if err != nil {
+		return err
+	}
+
 	ips, err := smbOrderedNodeIPs(ctx, s, clusterID, p.Hostname)
 	if err != nil {
 		return err
