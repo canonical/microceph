@@ -88,6 +88,12 @@ func (s *servicePlacementSMBSuite) TestDomainFeatureRejected() {
 	assert.ErrorContains(s.T(), err, "domain")
 }
 
+func (s *servicePlacementSMBSuite) TestCephfsProxyFeatureRejectedWithHint() {
+	smb := &SMBServicePlacement{}
+	err := smb.PopulateParams(s.TestStateInterface, `{"cluster_id":"dev","features":["clustered","cephfs-proxy"]}`)
+	assert.ErrorContains(s.T(), err, "samba-vfs/new")
+}
+
 func (s *servicePlacementSMBSuite) TestUnknownFeatureRejected() {
 	smb := &SMBServicePlacement{}
 	err := smb.PopulateParams(s.TestStateInterface, `{"cluster_id":"dev","features":["wormholes"]}`)

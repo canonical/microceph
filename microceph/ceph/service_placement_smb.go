@@ -49,6 +49,10 @@ func (smb *SMBServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 			// CTDB clustering is the Phase 1 deployment model.
 		case "domain":
 			return fmt.Errorf("features: 'domain' (AD membership) is not supported in Phase 1")
+		case "cephfs-proxy":
+			return fmt.Errorf("features: 'cephfs-proxy' is not supported; create shares with " +
+				"--provider=samba-vfs/new (the default 'samba-vfs' provider expands to the " +
+				"proxied variant, which microceph does not deploy)")
 		default:
 			return fmt.Errorf("features: '%s' is not supported", feature)
 		}
