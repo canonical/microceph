@@ -16,6 +16,7 @@ from ceph.deployment.service_spec import (
     MONSpec,
     MDSSpec,
     NFSServiceSpec,
+    SMBSpec,
 )
 
 from mgr_module import MgrModule
@@ -221,6 +222,9 @@ class MicroCephOrchestrator(Orchestrator,
                 info = json.loads(svc['info'])
                 svc_ip = None if "0.0.0.0" in info['bind_address'] else info['bind_address']
                 svc_ports = [info['bind_port']]
+
+            if svc_daemon_type == 'smb':
+                svc_ports = [445]
             
             descriptions.append(DaemonDescription(
                 service_name=svc_name,
@@ -255,6 +259,28 @@ class MicroCephOrchestrator(Orchestrator,
             ))
 
         return inventory
+
+    @handle_orch_error
+    def apply_smb(self, spec: SMBSpec) -> str:
+        """Deploy the smb cluster described by an mgr/smb SMBSpec."""
+        logger.info(f"applying smb spec for cluster {spec.cluster_id}")
+        # ServiceSpec.to_json() nests subclass fields (cluster_id, config_uri,
+        # ...) under a "spec" key; microcephd's SMBSpec wire format is flat.
+        data = dict(spec.to_json())
+        data.update(data.pop('spec', {}))
+        self.microceph.services.apply_smb(json.dumps(data))
+        return f"Scheduled smb.{spec.service_id} update..."
+
+    @handle_orch_error
+    def remove_service(self, service_name: str, force: bool = False) -> str:
+        """Remove a service; only smb.<cluster_id> services are supported."""
+        svc_type, svc_id = self._elaborate_service(service_name)
+        if svc_type != 'smb' or not svc_id:
+            raise NotImplementedError(f"removing service {service_name} is not supported")
+
+        logger.info(f"removing smb cluster {svc_id}")
+        self.microceph.services.remove_smb(svc_id)
+        return f"Removed service {service_name}"
 
     def apply_rbd_mirror(self, spec: ServiceSpec) -> OrchResult[str]:
         logger.info(f"Received Apply Request for RBD Mirror: Spec: {vars(spec).items()}")
