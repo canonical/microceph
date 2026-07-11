@@ -70,11 +70,13 @@ func (s *smbLifecycleSuite) lifecycleEnv() SMBRenderParams {
 		Entity:    "client.smb.dev.host1",
 		Clustered: true,
 		Paths: SMBPaths{
-			Conf:       filepath.Join(root, "conf"),
-			Run:        filepath.Join(root, "run"),
-			Data:       filepath.Join(root, "data"),
-			Log:        filepath.Join(root, "logs"),
-			Snap:       snapDir,
+			Conf: filepath.Join(root, "conf"),
+			Run:  filepath.Join(root, "run"),
+			Data: filepath.Join(root, "data"),
+			Log:  filepath.Join(root, "logs"),
+			// Distinct on purpose: CTDB_BASE symlinks must target the
+			// stable path, so only SnapStable holds the fake snap tree.
+			Snap:       filepath.Join(root, "snap-revisioned"),
 			SnapStable: snapDir,
 		},
 	}

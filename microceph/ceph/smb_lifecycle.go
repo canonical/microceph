@@ -230,7 +230,10 @@ func enableSMBNodeLocal(ctx context.Context, s interfaces.StateInterface, spec *
 		return err
 	}
 
-	err = populateCTDBBase(filepath.Join(p.Paths.Conf, "ctdb"), p.Paths.Snap)
+	// Symlink targets must ride the current symlink, not the revisioned
+	// $SNAP dir: snapd garbage-collects old revisions on refresh, which
+	// would strand every CTDB_BASE link and crash-loop ctdbd.
+	err = populateCTDBBase(filepath.Join(p.Paths.Conf, "ctdb"), p.Paths.SnapStable)
 	if err != nil {
 		return err
 	}
