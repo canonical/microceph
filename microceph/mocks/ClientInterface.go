@@ -43,6 +43,32 @@ func (_m *ClientInterface) DeleteService(_a0 mcTypes.Client, _a1 string, _a2 str
 	return r0
 }
 
+// GetClusterMemberAddresses provides a mock function with given fields: _a0
+func (_m *ClientInterface) GetClusterMemberAddresses(_a0 mcTypes.Client) (map[string]string, error) {
+	ret := _m.Called(_a0)
+
+	var r0 map[string]string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(mcTypes.Client) (map[string]string, error)); ok {
+		return rf(_a0)
+	}
+	if rf, ok := ret.Get(0).(func(mcTypes.Client) map[string]string); ok {
+		r0 = rf(_a0)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[string]string)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(mcTypes.Client) error); ok {
+		r1 = rf(_a0)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // GetClusterMembers provides a mock function with given fields: _a0
 func (_m *ClientInterface) GetClusterMembers(_a0 mcTypes.Client) ([]string, error) {
 	ret := _m.Called(_a0)

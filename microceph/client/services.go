@@ -134,6 +134,23 @@ func EnableSMBNodeService(ctx context.Context, c mcTypes.Client, target string, 
 	return nil
 }
 
+// RegenerateSMBNodeService requests the target node re-render its smb
+// configs and restart ctdbd.
+func RegenerateSMBNodeService(ctx context.Context, c mcTypes.Client, target string, svc *types.SMBService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	// Send this request to target.
+	c = c.UseTarget(target)
+
+	err := c.Query(queryCtx, "POST", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb", "node").URL, svc, nil)
+	if err != nil {
+		return fmt.Errorf("failed regenerating smb service on %s: %w", target, err)
+	}
+
+	return nil
+}
+
 // DeleteSMBNodeService requests the target node tear down its smb cluster
 // membership.
 func DeleteSMBNodeService(ctx context.Context, c mcTypes.Client, target string, svc *types.SMBService) error {

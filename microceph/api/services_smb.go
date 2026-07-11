@@ -27,7 +27,28 @@ var smbServiceCmd = mcTypes.Endpoint{
 var smbNodeServiceCmd = mcTypes.Endpoint{
 	Path:   "services/smb/node",
 	Put:    mcTypes.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Post:   mcTypes.EndpointAction{Handler: cmdSMBNodePost, ProxyTarget: true},
 	Delete: mcTypes.EndpointAction{Handler: cmdSMBNodeDelete, ProxyTarget: true},
+}
+
+// cmdSMBNodePost regenerates this node's smb configs from the stored
+// spec and restarts ctdbd.
+func cmdSMBNodePost(s mcTypes.State, r *http.Request) mcTypes.Response {
+	var svc types.SMBService
+
+	err := json.NewDecoder(r.Body).Decode(&svc)
+	if err != nil {
+		logger.Errorf("failed decoding smb node regenerate request: %v", err)
+		return mcTypes.InternalError(err)
+	}
+
+	err = ceph.RegenerateSMBNode(r.Context(), interfaces.CephState{State: s}, svc.ClusterID)
+	if err != nil {
+		logger.Errorf("failed regenerating smb on node: %v", err)
+		return mcTypes.SmartError(err)
+	}
+
+	return mcTypes.EmptySyncResponse
 }
 
 // cmdSMBServiceGet lists every smb cluster with its spec and placement.

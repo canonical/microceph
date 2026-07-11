@@ -24,6 +24,7 @@ type SMBPaths struct {
 // SMBRenderParams carries per-node, per-cluster rendering inputs.
 type SMBRenderParams struct {
 	ClusterID string
+	Hostname  string
 	// Entity is the node's daemon cephx entity (client. prefixed).
 	Entity    string
 	Clustered bool
@@ -35,6 +36,7 @@ func NewSMBRenderParams(clusterID, hostname string, clustered bool) SMBRenderPar
 	pathConsts := constants.GetPathConst()
 	return SMBRenderParams{
 		ClusterID: clusterID,
+		Hostname:  hostname,
 		Entity:    SMBDaemonEntity(clusterID, hostname),
 		Clustered: clustered,
 		Paths: SMBPaths{

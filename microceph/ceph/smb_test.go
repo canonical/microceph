@@ -31,8 +31,9 @@ type smbSuite struct {
 	tests.BaseSuite
 	TestStateInterface *mocks.StateInterface
 
-	enabled  []string
-	disabled []string
+	enabled     []string
+	disabled    []string
+	regenerated []string
 }
 
 func TestSMBSuite(t *testing.T) {
@@ -47,14 +48,17 @@ func (s *smbSuite) SetupTest() {
 
 	s.enabled = nil
 	s.disabled = nil
+	s.regenerated = nil
 
 	originalMembers := smbClusterMembersFunc
 	originalEnable := smbEnableNodeFunc
 	originalDisable := smbDisableNodeFunc
+	originalRegenerate := smbRegenerateNodeFunc
 	s.T().Cleanup(func() {
 		smbClusterMembersFunc = originalMembers
 		smbEnableNodeFunc = originalEnable
 		smbDisableNodeFunc = originalDisable
+		smbRegenerateNodeFunc = originalRegenerate
 	})
 
 	smbClusterMembersFunc = func(s interfaces.StateInterface) ([]string, error) {
@@ -66,6 +70,10 @@ func (s *smbSuite) SetupTest() {
 	}
 	smbDisableNodeFunc = func(ctx context.Context, st interfaces.StateInterface, node, clusterID string) error {
 		s.disabled = append(s.disabled, node)
+		return nil
+	}
+	smbRegenerateNodeFunc = func(ctx context.Context, st interfaces.StateInterface, node, clusterID string) error {
+		s.regenerated = append(s.regenerated, node)
 		return nil
 	}
 }
@@ -181,6 +189,9 @@ func (s *smbSuite) TestApplyFresh() {
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), []string{"m1", "m2", "m3"}, s.enabled)
 	assert.Empty(s.T(), s.disabled)
+	// A fresh apply regenerates every member so all nodes files carry the
+	// complete membership (early joiners rendered before later rows).
+	assert.Equal(s.T(), []string{"m1", "m2", "m3"}, s.regenerated)
 }
 
 func (s *smbSuite) TestApplyIdempotent() {
@@ -195,6 +206,7 @@ func (s *smbSuite) TestApplyIdempotent() {
 	assert.NoError(s.T(), err)
 	assert.Empty(s.T(), s.enabled)
 	assert.Empty(s.T(), s.disabled)
+	assert.Empty(s.T(), s.regenerated)
 }
 
 func (s *smbSuite) TestApplyMemberChange() {
@@ -209,6 +221,7 @@ func (s *smbSuite) TestApplyMemberChange() {
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), []string{"m1"}, s.enabled)
 	assert.Equal(s.T(), []string{"m3"}, s.disabled)
+	assert.Equal(s.T(), []string{"m1", "m2"}, s.regenerated)
 }
 
 func (s *smbSuite) TestApplyConfigChange() {
@@ -224,6 +237,8 @@ func (s *smbSuite) TestApplyConfigChange() {
 	assert.NoError(s.T(), err)
 	assert.Empty(s.T(), s.enabled)
 	assert.Empty(s.T(), s.disabled)
+	// Spec content changed with steady membership: every member re-renders.
+	assert.Equal(s.T(), []string{"m1", "m2"}, s.regenerated)
 }
 
 func (s *smbSuite) TestApplyInvalidSpec() {

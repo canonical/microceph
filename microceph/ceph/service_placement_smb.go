@@ -120,16 +120,15 @@ func (smb *SMBServicePlacement) HospitalityCheck(ctx context.Context, s interfac
 	return nil
 }
 
-// ServiceInit is a no-op in Phase 1 milestone M2: config rendering and
-// ctdbd lifecycle land with M3.
+// ServiceInit brings the node into the smb cluster: keyrings, rendered
+// configs, CTDB_BASE and the ctdbd service.
 func (smb *SMBServicePlacement) ServiceInit(ctx context.Context, s interfaces.StateInterface) error {
-	return nil
+	return EnableSMB(ctx, s, &smb.Spec)
 }
 
-// PostPlacementCheck is a no-op until ServiceInit starts services (M3),
-// after which it will verify ctdbd health.
+// PostPlacementCheck verifies ctdbd stays up after placement.
 func (smb *SMBServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {
-	return nil
+	return genericPostPlacementCheck("ctdbd")
 }
 
 // DbUpdate records the group membership, storing the SMBSpec JSON verbatim

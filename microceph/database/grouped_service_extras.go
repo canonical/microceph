@@ -29,6 +29,7 @@ type GroupedServiceQueryIntf interface {
 
 	// Group Methods
 	GetGroupMembers(ctx context.Context, s interfaces.StateInterface, service, groupID string) ([]string, error)
+	GetGroupMemberRecords(ctx context.Context, s interfaces.StateInterface, service, groupID string) ([]GroupedService, error)
 	GetGroupConfig(ctx context.Context, s interfaces.StateInterface, service, groupID string) (string, error)
 	UpdateGroupConfig(ctx context.Context, s interfaces.StateInterface, service, groupID, config string) error
 
@@ -188,6 +189,38 @@ func (g GroupedServiceQueryImpl) GetGroupMembers(ctx context.Context, s interfac
 
 	sort.Strings(members)
 	return members, nil
+}
+
+// GetGroupMemberRecords returns the group's rows in row-id (insertion)
+// order, for consumers that need a stable, append-only ordering such as
+// the CTDB nodes file.
+func (g GroupedServiceQueryImpl) GetGroupMemberRecords(ctx context.Context, s interfaces.StateInterface, service, groupID string) ([]GroupedService, error) {
+	if s.ClusterState().ServerCert() == nil {
+		return nil, fmt.Errorf("no server certificate")
+	}
+
+	var services []GroupedService
+
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		filter := GroupedServiceFilter{
+			Service: &service,
+			GroupID: &groupID,
+		}
+
+		var err error
+		services, err = GetGroupedServices(ctx, tx, filter)
+		if err != nil {
+			return fmt.Errorf("failed to get grouped services records: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(services, func(i, j int) bool { return services[i].ID < services[j].ID })
+	return services, nil
 }
 
 // GetGroupConfig returns the stored config of a service group.

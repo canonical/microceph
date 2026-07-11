@@ -170,6 +170,36 @@ func (_m *GroupedServiceQueryIntf) GetGroupMembers(ctx context.Context, s interf
 	return r0, r1
 }
 
+// GetGroupMemberRecords provides a mock function with given fields: ctx, s, service, groupID
+func (_m *GroupedServiceQueryIntf) GetGroupMemberRecords(ctx context.Context, s interfaces.StateInterface, service string, groupID string) ([]database.GroupedService, error) {
+	ret := _m.Called(ctx, s, service, groupID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetGroupMemberRecords")
+	}
+
+	var r0 []database.GroupedService
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string) ([]database.GroupedService, error)); ok {
+		return rf(ctx, s, service, groupID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string) []database.GroupedService); ok {
+		r0 = rf(ctx, s, service, groupID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]database.GroupedService)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, interfaces.StateInterface, string, string) error); ok {
+		r1 = rf(ctx, s, service, groupID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // GetGroupConfig provides a mock function with given fields: ctx, s, service, groupID
 func (_m *GroupedServiceQueryIntf) GetGroupConfig(ctx context.Context, s interfaces.StateInterface, service string, groupID string) (string, error) {
 	ret := _m.Called(ctx, s, service, groupID)

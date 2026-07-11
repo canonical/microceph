@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 
 	"github.com/canonical/lxd/shared/api"
@@ -27,6 +28,7 @@ var (
 	smbClusterMembersFunc = smbClusterMembers
 	smbEnableNodeFunc     = smbEnableNode
 	smbDisableNodeFunc    = smbDisableNode
+	smbRegenerateNodeFunc = smbRegenerateNode
 )
 
 // ResolveSMBPlacement resolves the spec placement to a sorted set of
@@ -146,8 +148,8 @@ func ApplySMB(ctx context.Context, s interfaces.StateInterface, payload string) 
 	}
 
 	// Refresh the stored spec on re-apply so joining nodes render from the
-	// latest config. Rolling regeneration of already placed members lands
-	// with M3 lifecycle.
+	// latest config.
+	configChanged := false
 	if len(current) > 0 {
 		existing, err := database.GroupedServicesQuery.GetGroupConfig(ctx, s, "smb", sp.Spec.ClusterID)
 		if err != nil {
@@ -158,6 +160,7 @@ func ApplySMB(ctx context.Context, s interfaces.StateInterface, payload string) 
 			if err != nil {
 				return fmt.Errorf("failed to update smb cluster config: %w", err)
 			}
+			configChanged = true
 		}
 	}
 
@@ -175,6 +178,18 @@ func ApplySMB(ctx context.Context, s interfaces.StateInterface, payload string) 
 		err = smbDisableNodeFunc(ctx, s, node, sp.Spec.ClusterID)
 		if err != nil {
 			return fmt.Errorf("failed to disable smb cluster '%s' on node '%s': %w", sp.Spec.ClusterID, node, err)
+		}
+	}
+
+	// Membership or spec changes invalidate every member's rendered
+	// configs (the nodes file must be identical cluster-wide), so
+	// regenerate all desired members, one node at a time.
+	if len(toEnable) > 0 || len(toDisable) > 0 || configChanged {
+		for _, node := range desired {
+			err = smbRegenerateNodeFunc(ctx, s, node, sp.Spec.ClusterID)
+			if err != nil {
+				return fmt.Errorf("failed to regenerate smb cluster '%s' on node '%s': %w", sp.Spec.ClusterID, node, err)
+			}
 		}
 	}
 
@@ -239,10 +254,14 @@ func ListSMB(ctx context.Context, s interfaces.StateInterface) ([]types.SMBServi
 	return statuses, nil
 }
 
-// DisableSMB removes this node from the smb cluster's records. Service
-// teardown (ctdbd stop, config cleanup) lands with M3 lifecycle.
+// DisableSMB tears this node out of an smb cluster and removes its
+// records.
 func DisableSMB(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
-	return database.GroupedServicesQuery.RemoveForHost(ctx, s, "smb", clusterID)
+	hostname, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+	return disableSMBLocal(ctx, s, clusterID, NewSMBRenderParams(clusterID, hostname, true))
 }
 
 // smbClusterMembers lists the cluster member names.
@@ -267,6 +286,20 @@ func smbEnableNode(ctx context.Context, s interfaces.StateInterface, node, paylo
 		return err
 	}
 	return client.EnableSMBNodeService(ctx, cli, node, &data)
+}
+
+// smbRegenerateNode re-renders configs and restarts ctdbd on the given
+// node, locally or via the node-scoped endpoint.
+func smbRegenerateNode(ctx context.Context, s interfaces.StateInterface, node, clusterID string) error {
+	if node == s.ClusterState().Name() {
+		return RegenerateSMBNode(ctx, s, clusterID)
+	}
+
+	cli, err := s.ClusterState().Connect().Leader(false)
+	if err != nil {
+		return err
+	}
+	return client.RegenerateSMBNodeService(ctx, cli, node, &types.SMBService{ClusterID: clusterID})
 }
 
 // smbDisableNode tears down smb membership on the given node, locally or
