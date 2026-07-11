@@ -167,6 +167,17 @@ class MicroCephOrchestrator(Orchestrator,
         recorded_services = self.microceph.services.list_services()
         service_hostlist = self._get_service_hostlist(recorded_services)
 
+        # smb specs are stored verbatim in microcephd; reuse them so the
+        # description carries a valid SMBSpec (a generic ServiceSpec with
+        # service_type='smb' dispatches to SMBSpec and fails validation
+        # without cluster_id).
+        smb_specs = {}
+        if any(name.split('.')[0] == 'smb' for name in service_hostlist):
+            try:
+                smb_specs = {st['cluster_id']: st['spec'] for st in self.microceph.services.list_smb()}
+            except RemoteException as e:
+                logger.warning(f"failed to fetch smb specs: {e}")
+
         service_descs = []
         for svc_name, hostlist in service_hostlist.items():
             spec = None
@@ -177,7 +188,12 @@ class MicroCephOrchestrator(Orchestrator,
             if service_type and svc_type != service_type:
                 continue
 
-            if svc_type in daemon_spec_map:
+            if svc_type == 'smb':
+                if svc_id not in smb_specs:
+                    logger.warning(f"no stored spec for smb cluster '{svc_id}'; skipping")
+                    continue
+                spec = ServiceSpec.from_json(smb_specs[svc_id])
+            elif svc_type in daemon_spec_map:
                 spec = daemon_spec_map[svc_type](
                     service_id=svc_id, service_type=svc_type, placement=PlacementSpec(hosts=hostlist, count=len(hostlist))
                 )

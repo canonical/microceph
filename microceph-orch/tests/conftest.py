@@ -33,6 +33,9 @@ def _cls(name):
             "__init__": __init__,
             # Tolerate generic annotations like OrchResult[str].
             "__class_getitem__": classmethod(lambda cls, item: cls),
+            # Mirror ServiceSpec.from_json: build an instance carrying the
+            # document's keys as attributes.
+            "from_json": classmethod(lambda cls, data: cls(**data)),
         },
     )
 

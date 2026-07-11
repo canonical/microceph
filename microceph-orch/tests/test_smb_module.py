@@ -58,6 +58,47 @@ def test_remove_service_rejects_other_services(orch):
     with pytest.raises(NotImplementedError):
         orch.remove_service("nfs.foo")
 
+
+def test_describe_service_uses_stored_smb_spec(orch):
+    orch.microceph.services.list_services.return_value = [
+        {"service": "smb", "group_id": "dev", "location": "m1", "info": "{}"},
+        {"service": "smb", "group_id": "dev", "location": "m2", "info": "{}"},
+    ]
+    orch.microceph.services.list_smb.return_value = [
+        {
+            "cluster_id": "dev",
+            "spec": {
+                "service_type": "smb",
+                "service_id": "dev",
+                "cluster_id": "dev",
+                "config_uri": "rados://.smb/dev/config.smb",
+                "placement": {"count": 2},
+            },
+            "placed_on": ["m1", "m2"],
+        }
+    ]
+
+    descs = orch.describe_service()
+
+    assert len(descs) == 1
+    desc = descs[0]
+    # A generic ServiceSpec with service_type='smb' dispatches to SMBSpec
+    # and fails validation; the stored spec must be used instead.
+    assert desc.spec.cluster_id == "dev"
+    assert desc.spec.config_uri == "rados://.smb/dev/config.smb"
+    assert desc.running == 2
+
+
+def test_describe_service_skips_smb_without_stored_spec(orch):
+    orch.microceph.services.list_services.return_value = [
+        {"service": "smb", "group_id": "ghost", "location": "m1", "info": "{}"},
+    ]
+    orch.microceph.services.list_smb.return_value = []
+
+    descs = orch.describe_service()
+
+    assert descs == []
+
     with pytest.raises(NotImplementedError):
         orch.remove_service("smb")
 
