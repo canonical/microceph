@@ -59,22 +59,3 @@ def ctdb_vip_pnn(ip_output, vip):
             except ValueError:
                 return -1
     return -1
-
-
-def smb_share_spec_yaml(cluster_id, share_id, volume, subvolume):
-    """Return a declarative ceph.smb.share document for ``ceph smb apply``.
-
-    The provider must be spelled samba-vfs/new: the imperative
-    ``ceph smb share create`` defaults to plain samba-vfs, which mgr/smb
-    expands to the proxied variant that microceph rejects.
-    """
-    return (
-        "resource_type: ceph.smb.share\n"
-        f"cluster_id: {cluster_id}\n"
-        f"share_id: {share_id}\n"
-        "cephfs:\n"
-        f"  volume: {volume}\n"
-        f"  subvolume: {subvolume}\n"
-        "  path: /\n"
-        "  provider: samba-vfs/new\n"
-    )

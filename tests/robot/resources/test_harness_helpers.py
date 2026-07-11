@@ -18,7 +18,6 @@ from cluster_ops import parse_migration_status
 from smb_ops import (
     ctdb_ok_node_count,
     ctdb_vip_pnn,
-    smb_share_spec_yaml,
     smb_vip_addresses,
 )
 from snap_services import enabled_active_services
@@ -1024,9 +1023,3 @@ def test_smb_vip_addresses_rejects_offsets_outside_network():
     else:
         raise AssertionError("expected ValueError for /28 with offset 200")
 
-
-def test_smb_share_spec_yaml_provider_is_non_proxied():
-    doc = smb_share_spec_yaml("dev", "share1", "smbfs", "s1")
-    assert "provider: samba-vfs/new" in doc
-    assert "cluster_id: dev" in doc
-    assert "subvolume: s1" in doc

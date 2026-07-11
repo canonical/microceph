@@ -71,13 +71,10 @@ Create SMB Cluster Via Mgr
     ...    900
 
 Create SMB Share Via Mgr
-    [Documentation]    Applies the share declaratively: the imperative create
-    ...    defaults to the proxied vfs provider, which microceph rejects.
-    ${yaml}=    Smb Share Spec Yaml    ${SMB_CLUSTER}    ${SMB_SHARE}    ${SMB_VOLUME}    ${SMB_SUBVOLUME}
-    # No stdin plumbing through the nested lxc exec: ship the document base64ed.
-    ${b64}=    Evaluate    base64.b64encode($yaml.encode()).decode()    modules=base64
-    Run In Container And Check    node-wrk0    printf '%s' ${b64} | base64 -d > /root/${SMB_SHARE}.yaml    30
-    Run In Head Node And Check    microceph.ceph smb apply -i /root/${SMB_SHARE}.yaml    900
+    [Documentation]    Creates the share with the plain imperative CLI: the
+    ...    snap patches mgr/smb's default provider to the non-proxied VFS,
+    ...    so no provider flag or declarative workaround is needed.
+    Run In Head Node And Check    microceph.ceph smb share create ${SMB_CLUSTER} ${SMB_SHARE} ${SMB_VOLUME} / --subvolume=${SMB_SUBVOLUME}    900
 
 SMB Roundtrip Via Address
     [Documentation]    put + get via smbclient from the outer VM and compares content.
