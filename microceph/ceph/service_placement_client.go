@@ -22,7 +22,7 @@ func (gsp *ClientServicePlacement) PopulateParams(s interfaces.StateInterface, p
 	return nil
 }
 
-func (gsp *ClientServicePlacement) HospitalityCheck(s interfaces.StateInterface) error {
+func (gsp *ClientServicePlacement) HospitalityCheck(ctx context.Context, s interfaces.StateInterface) error {
 	return genericHospitalityCheck(gsp.Name)
 }
 

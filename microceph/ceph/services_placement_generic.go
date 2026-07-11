@@ -37,7 +37,7 @@ func (gsp *GenericServicePlacement) PopulateParams(s interfaces.StateInterface, 
 	return nil
 }
 
-func (gsp *GenericServicePlacement) HospitalityCheck(s interfaces.StateInterface) error {
+func (gsp *GenericServicePlacement) HospitalityCheck(ctx context.Context, s interfaces.StateInterface) error {
 	return genericHospitalityCheck(gsp.Name)
 }
 

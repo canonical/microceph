@@ -15,7 +15,7 @@ type PlacementIntf interface {
 	// Populate json payload data to the service object.
 	PopulateParams(interfaces.StateInterface, string) error
 	// Check if host is hospitable to the new service to be enabled.
-	HospitalityCheck(interfaces.StateInterface) error
+	HospitalityCheck(context.Context, interfaces.StateInterface) error
 	// Initialise the new service.
 	ServiceInit(context.Context, interfaces.StateInterface) error
 	// Perform Post Placement checks for the service
@@ -100,7 +100,7 @@ func EnableService(ctx context.Context, s interfaces.StateInterface, payload typ
 	}
 
 	// Check if host is hospitable to the new service to be enabled.
-	err = item.HospitalityCheck(s)
+	err = item.HospitalityCheck(ctx, s)
 	if err != nil {
 		retErr := fmt.Errorf("host failed hospitality check for %s enablement: %v", payload.Name, err)
 		logger.Error(retErr.Error())

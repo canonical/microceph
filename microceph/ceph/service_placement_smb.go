@@ -93,7 +93,7 @@ func checkSMBUnsupportedFields(payload []byte) error {
 // HospitalityCheck verifies the SMB port is free and the node is not
 // already part of an smb cluster (smb clusters are node-disjoint: one
 // ctdb/smbd instance per node).
-func (smb *SMBServicePlacement) HospitalityCheck(s interfaces.StateInterface) error {
+func (smb *SMBServicePlacement) HospitalityCheck(ctx context.Context, s interfaces.StateInterface) error {
 	address := fmt.Sprintf("0.0.0.0:%d", smbPort)
 	available, err := isAddressAvailableFunc(address)
 	if err != nil {
@@ -102,7 +102,7 @@ func (smb *SMBServicePlacement) HospitalityCheck(s interfaces.StateInterface) er
 		return fmt.Errorf("address '%s' is currently in use.", address)
 	}
 
-	services, err := database.GroupedServicesQuery.GetGroupedServicesOnHost(context.Background(), s)
+	services, err := database.GroupedServicesQuery.GetGroupedServicesOnHost(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to fetch smb group membership: %w", err)
 	}

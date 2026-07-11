@@ -20,7 +20,7 @@ func (msp *MonServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 }
 
 // Check if host is hospitable to the new service to be enabled.
-func (msp *MonServicePlacement) HospitalityCheck(s interfaces.StateInterface) error {
+func (msp *MonServicePlacement) HospitalityCheck(ctx context.Context, s interfaces.StateInterface) error {
 	return genericHospitalityCheck(msp.Name)
 }
 

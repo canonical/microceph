@@ -143,7 +143,7 @@ func (s *servicePlacementSMBSuite) TestHospitalityFreeNode() {
 	defer restore()
 
 	smb := s.populated(validSMBPayload)
-	assert.NoError(s.T(), smb.HospitalityCheck(s.TestStateInterface))
+	assert.NoError(s.T(), smb.HospitalityCheck(context.Background(), s.TestStateInterface))
 }
 
 func (s *servicePlacementSMBSuite) TestHospitalityPortBusy() {
@@ -151,7 +151,7 @@ func (s *servicePlacementSMBSuite) TestHospitalityPortBusy() {
 	defer restore()
 
 	smb := s.populated(validSMBPayload)
-	assert.ErrorContains(s.T(), smb.HospitalityCheck(s.TestStateInterface), "445")
+	assert.ErrorContains(s.T(), smb.HospitalityCheck(context.Background(), s.TestStateInterface), "445")
 }
 
 func (s *servicePlacementSMBSuite) TestHospitalityNodeInOtherGroup() {
@@ -161,7 +161,7 @@ func (s *servicePlacementSMBSuite) TestHospitalityNodeInOtherGroup() {
 	defer restore()
 
 	smb := s.populated(validSMBPayload)
-	assert.ErrorContains(s.T(), smb.HospitalityCheck(s.TestStateInterface), "node-disjoint")
+	assert.ErrorContains(s.T(), smb.HospitalityCheck(context.Background(), s.TestStateInterface), "node-disjoint")
 }
 
 func (s *servicePlacementSMBSuite) TestHospitalityReApplySameGroup() {
@@ -171,7 +171,7 @@ func (s *servicePlacementSMBSuite) TestHospitalityReApplySameGroup() {
 	defer restore()
 
 	smb := s.populated(validSMBPayload)
-	assert.ErrorContains(s.T(), smb.HospitalityCheck(s.TestStateInterface), "already a member of smb cluster 'dev'")
+	assert.ErrorContains(s.T(), smb.HospitalityCheck(context.Background(), s.TestStateInterface), "already a member of smb cluster 'dev'")
 }
 
 func (s *servicePlacementSMBSuite) TestHospitalityIgnoresOtherServices() {
@@ -181,7 +181,7 @@ func (s *servicePlacementSMBSuite) TestHospitalityIgnoresOtherServices() {
 	defer restore()
 
 	smb := s.populated(validSMBPayload)
-	assert.NoError(s.T(), smb.HospitalityCheck(s.TestStateInterface))
+	assert.NoError(s.T(), smb.HospitalityCheck(context.Background(), s.TestStateInterface))
 }
 
 func (s *servicePlacementSMBSuite) TestDBUpdate() {

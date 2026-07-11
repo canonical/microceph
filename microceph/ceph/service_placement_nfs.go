@@ -52,7 +52,7 @@ func (nfs *NFSServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 	return nil
 }
 
-func (nfs *NFSServicePlacement) HospitalityCheck(s interfaces.StateInterface) error {
+func (nfs *NFSServicePlacement) HospitalityCheck(ctx context.Context, s interfaces.StateInterface) error {
 	address := fmt.Sprintf("%s:%d", nfs.BindAddress, nfs.BindPort)
 	available, err := isAddressAvailable(address)
 	if err != nil {
