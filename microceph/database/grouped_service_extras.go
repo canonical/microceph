@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 
 	"github.com/canonical/microceph/microceph/interfaces"
 
@@ -25,6 +26,11 @@ type GroupedServiceQueryIntf interface {
 
 	// Exists Methods
 	ExistsOnHost(ctx context.Context, s interfaces.StateInterface, service, groupID string) (bool, error)
+
+	// Group Methods
+	GetGroupMembers(ctx context.Context, s interfaces.StateInterface, service, groupID string) ([]string, error)
+	GetGroupConfig(ctx context.Context, s interfaces.StateInterface, service, groupID string) (string, error)
+	UpdateGroupConfig(ctx context.Context, s interfaces.StateInterface, service, groupID, config string) error
 
 	// Delete Methods
 	RemoveForHost(ctx context.Context, s interfaces.StateInterface, service, groupID string) error
@@ -149,6 +155,75 @@ func (g GroupedServiceQueryImpl) ExistsOnHost(ctx context.Context, s interfaces.
 	})
 
 	return exists, err
+}
+
+// GetGroupMembers returns the sorted member names of a service group.
+func (g GroupedServiceQueryImpl) GetGroupMembers(ctx context.Context, s interfaces.StateInterface, service, groupID string) ([]string, error) {
+	if s.ClusterState().ServerCert() == nil {
+		return nil, fmt.Errorf("no server certificate")
+	}
+
+	var members []string
+
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		filter := GroupedServiceFilter{
+			Service: &service,
+			GroupID: &groupID,
+		}
+
+		services, err := GetGroupedServices(ctx, tx, filter)
+		if err != nil {
+			return fmt.Errorf("failed to get grouped services records: %w", err)
+		}
+
+		for _, service := range services {
+			members = append(members, service.Member)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Strings(members)
+	return members, nil
+}
+
+// GetGroupConfig returns the stored config of a service group.
+func (g GroupedServiceQueryImpl) GetGroupConfig(ctx context.Context, s interfaces.StateInterface, service, groupID string) (string, error) {
+	if s.ClusterState().ServerCert() == nil {
+		return "", fmt.Errorf("no server certificate")
+	}
+
+	var config string
+
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		serviceGroup, err := GetServiceGroup(ctx, tx, service, groupID)
+		if err != nil {
+			return err
+		}
+
+		config = serviceGroup.Config
+		return nil
+	})
+
+	return config, err
+}
+
+// UpdateGroupConfig replaces the stored config of a service group.
+func (g GroupedServiceQueryImpl) UpdateGroupConfig(ctx context.Context, s interfaces.StateInterface, service, groupID, config string) error {
+	if s.ClusterState().ServerCert() == nil {
+		return fmt.Errorf("no server certificate")
+	}
+
+	return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return UpdateServiceGroup(ctx, tx, service, groupID, ServiceGroup{
+			Service: service,
+			GroupID: groupID,
+			Config:  config,
+		})
+	})
 }
 
 // RemoveForHost deletes the given service record in the grouped_service database, and deletes the

@@ -76,6 +76,39 @@ func SendServicePlacementReq(ctx context.Context, c mcTypes.Client, data *types.
 	return nil
 }
 
+// EnableSMBNodeService requests the target node run the smb placement flow.
+func EnableSMBNodeService(ctx context.Context, c mcTypes.Client, target string, data *types.EnableService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	// Send this request to target.
+	c = c.UseTarget(target)
+
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb", "node").URL, data, nil)
+	if err != nil {
+		return fmt.Errorf("failed placing smb service on %s: %w", target, err)
+	}
+
+	return nil
+}
+
+// DeleteSMBNodeService requests the target node tear down its smb cluster
+// membership.
+func DeleteSMBNodeService(ctx context.Context, c mcTypes.Client, target string, svc *types.SMBService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	// Send this request to target.
+	c = c.UseTarget(target)
+
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb", "node").URL, svc, nil)
+	if err != nil {
+		return fmt.Errorf("failed deleting smb service on %s: %w", target, err)
+	}
+
+	return nil
+}
+
 // Sends a request to the host to restart the provided service.
 func RestartService(ctx context.Context, c mcTypes.Client, data *types.Services) error {
 	// 120 second timeout for waiting.
