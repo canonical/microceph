@@ -159,6 +159,26 @@ func populateCTDBBase(ctdbDir, snapPath string) error {
 	return atomicWriteFile(filepath.Join(ctdbDir, "script.options"), options, 0644)
 }
 
+// removeDirContents deletes everything inside dir but keeps dir itself.
+func removeDirContents(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		err = os.RemoveAll(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // smbNodeDirs returns the per-cluster directories the daemons need, with
 // their modes. Everything is root-owned: confined daemons have no
 // dac_override, so a foreign-owned dir would be unreadable.
@@ -277,8 +297,16 @@ func disableSMBLocal(ctx context.Context, s interfaces.StateInterface, clusterID
 		}
 	}
 
+	// conf/ctdb is the target of the /etc/ctdb layout bind: removing the
+	// directory itself leaves the snap namespace bound to a dead inode
+	// (services then read an empty ghost dir until the ns is rebuilt), so
+	// only its contents are cleared.
+	err = removeDirContents(filepath.Join(p.Paths.Conf, "ctdb"))
+	if err != nil {
+		return err
+	}
+
 	for _, dir := range []string{
-		filepath.Join(p.Paths.Conf, "ctdb"),
 		filepath.Join(p.Paths.Run, "samba", clusterID),
 		filepath.Join(p.Paths.Run, "ctdb"),
 		filepath.Join(p.Paths.Data, "samba", clusterID),

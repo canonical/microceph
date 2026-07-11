@@ -185,8 +185,12 @@ func (s *smbLifecycleSuite) TestDisableSMBLocal() {
 
 	assert.NoFileExists(s.T(), filepath.Join(p.Paths.Conf, "samba", "smb.conf"))
 	assert.NoFileExists(s.T(), filepath.Join(p.Paths.Conf, "ceph.client.smb.dev.host1.keyring"))
-	assert.NoDirExists(s.T(), filepath.Join(p.Paths.Conf, "ctdb"))
 	assert.NoDirExists(s.T(), filepath.Join(p.Paths.Data, "samba", "dev"))
+
+	// conf/ctdb is a layout bind target: the dir must survive, emptied.
+	entries, err := os.ReadDir(filepath.Join(p.Paths.Conf, "ctdb"))
+	assert.NoError(s.T(), err)
+	assert.Empty(s.T(), entries)
 }
 
 func (s *smbLifecycleSuite) TestRegenerateSMBNodeLocal() {
