@@ -3,6 +3,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -74,6 +75,47 @@ func SendServicePlacementReq(ctx context.Context, c mcTypes.Client, data *types.
 	}
 
 	return nil
+}
+
+// ApplySMBSpec submits an SMBSpec JSON document for cluster-wide apply.
+func ApplySMBSpec(ctx context.Context, c mcTypes.Client, spec []byte) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb").URL, json.RawMessage(spec), nil)
+	if err != nil {
+		return fmt.Errorf("failed applying smb spec: %w", err)
+	}
+
+	return nil
+}
+
+// RemoveSMBService removes an smb cluster from all its member nodes.
+func RemoveSMBService(ctx context.Context, c mcTypes.Client, svc *types.SMBService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb").URL, svc, nil)
+	if err != nil {
+		return fmt.Errorf("failed removing smb cluster: %w", err)
+	}
+
+	return nil
+}
+
+// GetSMBServices lists every smb cluster with its spec and placement.
+func GetSMBServices(ctx context.Context, c mcTypes.Client) ([]types.SMBServiceStatus, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+
+	statuses := []types.SMBServiceStatus{}
+
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb").URL, nil, &statuses)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing smb services: %w", err)
+	}
+
+	return statuses, nil
 }
 
 // EnableSMBNodeService requests the target node run the smb placement flow.
