@@ -15,6 +15,12 @@ import json
 import placement_status
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
+from smb_ops import (
+    ctdb_ok_node_count,
+    ctdb_vip_pnn,
+    smb_share_spec_yaml,
+    smb_vip_addresses,
+)
 from snap_services import enabled_active_services
 from cephfs_replication import cephfs_replication_list_has_volume, verify_cephfs_list_entry_types
 from rbd_replication import (
@@ -960,3 +966,67 @@ def test_member_in_ceph_status_substring():
     assert placement_status.member_in_ceph_status(status, "node-wrk3") is False
     assert placement_status.member_in_ceph_status("", "node-wrk0") is False
     assert placement_status.member_in_ceph_status(None, "node-wrk0") is False
+
+
+# --- smb_ops -----------------------------------------------------------
+
+_CTDB_XSTATUS = (
+    "|Node|IP|Disconnected|Unknown|Banned|Disabled|Unhealthy|Stopped"
+    "|Inactive|PartiallyOnline|ThisNode|\n"
+    "|0|10.0.0.11|0|0|0|0|0|0|0|0|Y|\n"
+    "|1|10.0.0.12|0|0|0|0|0|0|0|0|N|\n"
+    "|2|10.0.0.13|0|0|0|0|0|0|0|0|N|\n"
+)
+
+
+def test_ctdb_ok_node_count_all_healthy():
+    assert ctdb_ok_node_count(_CTDB_XSTATUS) == 3
+
+
+def test_ctdb_ok_node_count_skips_flagged_nodes():
+    text = _CTDB_XSTATUS.replace("|1|10.0.0.12|0|0|", "|1|10.0.0.12|1|0|")
+    assert ctdb_ok_node_count(text) == 2
+
+
+def test_ctdb_ok_node_count_empty_output():
+    # Connection-refused output has no table rows: count is 0, not an error.
+    assert ctdb_ok_node_count("connect() failed, errno=111\n") == 0
+
+
+def test_ctdb_vip_pnn_finds_holder():
+    text = "Public IPs on node 0\n10.0.0.201 1\n10.0.0.202 2\n10.0.0.203 0\n"
+    assert ctdb_vip_pnn(text, "10.0.0.202/24") == 2
+    assert ctdb_vip_pnn(text, "10.0.0.203") == 0
+
+
+def test_ctdb_vip_pnn_missing_vip_is_minus_one():
+    assert ctdb_vip_pnn("Public IPs on node 0\n", "10.0.0.201/24") == -1
+
+
+def test_smb_vip_addresses_from_cidr():
+    assert smb_vip_addresses("10.0.0.0/24", 3) == [
+        "10.0.0.200/24",
+        "10.0.0.201/24",
+        "10.0.0.202/24",
+    ]
+
+
+def test_smb_vip_addresses_accepts_host_cidr():
+    # Callers pass the network as reported with a host address in it.
+    assert smb_vip_addresses("10.0.0.7/24", 1) == ["10.0.0.200/24"]
+
+
+def test_smb_vip_addresses_rejects_offsets_outside_network():
+    try:
+        smb_vip_addresses("10.0.0.0/28", 1)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for /28 with offset 200")
+
+
+def test_smb_share_spec_yaml_provider_is_non_proxied():
+    doc = smb_share_spec_yaml("dev", "share1", "smbfs", "s1")
+    assert "provider: samba-vfs/new" in doc
+    assert "cluster_id: dev" in doc
+    assert "subvolume: s1" in doc
