@@ -113,7 +113,7 @@ This is reconnect-based failover, not transparent state migration: open
 sessions against a failed node drop, and clients re-establish them
 against the same address once it is re-hosted (typically well under two
 minutes with default timers). Applications should treat an SMB session
-drop as retryable.
+drop as transient and retry the connection.
 
 Remove the cluster
 ------------------
