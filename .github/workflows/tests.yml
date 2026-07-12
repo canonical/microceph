@@ -635,6 +635,57 @@ jobs:
         run: |
           sudo snap logs microceph -n 1000
 
+  multi-subnet-tests:
+    name: Multi subnet public and cluster networks
+    runs-on: ubuntu-22.04
+    needs: build-microceph
+    steps:
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: snaps
+          path: /home/runner
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
+
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
+
+      - name: Free disk
+        run: ~/actionutils.sh free_runner_disk
+
+      - name: Install dependencies
+        run: ~/actionutils.sh setup_lxd
+
+      - name: Create containers with loopback devices
+        run: ~/actionutils.sh create_containers public
+
+      - name: Install local microceph snap
+        run: ~/actionutils.sh install_multinode
+
+      - name: Bootstrap across two subnets with mon-ip on the second
+        run: ~/actionutils.sh bootstrap_multi_subnet_head
+
+      - name: Test public network list is rendered verbatim
+        run: ~/actionutils.sh test_multi_subnet_public_network
+
+      - name: Test cluster network list is stored
+        run: ~/actionutils.sh test_multi_subnet_cluster_network
+
+      - name: Test mon binds on the second listed subnet
+        run: ~/actionutils.sh test_multi_subnet_mon_binding
+
+      - name: Print logs for failure
+        if: failure()
+        run: |
+          sudo snap logs microceph -n 1000
+
   test-sequential-mon-host-refresh:
     name: Regression test for sequential join mon host refresh (issue #556)
     runs-on: ubuntu-22.04
