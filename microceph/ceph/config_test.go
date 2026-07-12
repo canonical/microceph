@@ -4,17 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/canonical/microceph/microceph/common"
+	"os"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/interfaces"
-	"github.com/canonical/microceph/microceph/tests"
-
-	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/mocks"
+	"github.com/canonical/microceph/microceph/tests"
 )
 
 type configSuite struct {
@@ -254,4 +256,59 @@ func (s *configSuite) TestBackwardCompatPubnetInsertFails() {
 
 	err := backwardCompatPubnet(context.Background(), s.newMockState())
 	assert.ErrorIs(s.T(), err, dbErr)
+}
+
+// TestBackwardCompatPubnetMonitorsPresentPublicNetMultiSubnet verifies that the
+// shim treats a stored comma-delimited multi-subnet public_network as valid
+// and does not re-detect / overwrite.
+func (s *configSuite) TestBackwardCompatPubnetMonitorsPresentPublicNetMultiSubnet() {
+	s.overrideGetMonitorCount(1, nil)
+
+	origFetch := fetchConfigDb
+	s.T().Cleanup(func() { fetchConfigDb = origFetch })
+	fetchConfigDb = func(_ context.Context, _ interfaces.StateInterface) (map[string]string, error) {
+		return map[string]string{"public_network": "10.0.0.0/24,172.16.0.0/16"}, nil
+	}
+
+	net := mocks.NewNetworkIntf(s.T())
+	origNetwork := common.Network
+	s.T().Cleanup(func() { common.Network = origNetwork })
+	common.Network = net
+
+	err := backwardCompatPubnet(context.Background(), nil)
+	assert.NoError(s.T(), err)
+	net.AssertNotCalled(s.T(), "FindNetworkAddress")
+}
+
+// TestCephConfFileRendersMultiSubnetPublicNetwork verifies that a
+// comma-delimited public_network value is written verbatim into the rendered
+// ceph.conf. It exercises CephConfFile.Render, which renders via the same
+// NewCephConfig template that UpdateConfig uses.
+func (s *configSuite) TestCephConfFileRendersMultiSubnetPublicNetwork() {
+	s.CopyCephConfigs()
+
+	// Redirect GetPathConst to the temp dir that CopyCephConfigs prepared.
+	origGetPathConst := constants.GetPathConst
+	s.T().Cleanup(func() { constants.GetPathConst = origGetPathConst })
+	constants.GetPathConst = func() constants.PathConst {
+		return constants.PathConst{
+			ConfPath: s.Tmp + "/SNAP_DATA/conf",
+		}
+	}
+
+	const multiSubnet = "10.0.0.0/24,172.16.0.0/16"
+
+	ccf := CephConfFile{
+		FsID:     "aabbccdd-1234-5678-abcd-000000000000",
+		RunDir:   "/tmp/testrun",
+		Monitors: []string{"1.1.1.1"},
+		PubNet:   multiSubnet,
+	}
+	err := ccf.Render(constants.CephConfFileName)
+	assert.NoError(s.T(), err)
+
+	// Read back the rendered file and assert the multi-subnet value is present verbatim.
+	rendered, err := os.ReadFile(constants.GetPathConst().ConfPath + "/" + constants.CephConfFileName)
+	assert.NoError(s.T(), err)
+	assert.Contains(s.T(), string(rendered), "public_network = "+multiSubnet)
 }
