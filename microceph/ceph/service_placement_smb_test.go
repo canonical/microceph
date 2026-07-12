@@ -9,6 +9,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
 
@@ -45,6 +46,13 @@ func TestServicesPlacementSMB(t *testing.T) {
 func (s *servicePlacementSMBSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
+	// Bypass database-dependent ceph.conf rendering: these tests exercise the
+	// SMB placement pipeline with a mock state, not a real cluster database.
+	updateConfigFunc = func(_ context.Context, _ interfaces.StateInterface) error { return nil }
+}
+
+func (s *servicePlacementSMBSuite) TearDownTest() {
+	updateConfigFunc = UpdateConfig
 }
 
 // populated returns an SMBServicePlacement loaded from a payload that must
