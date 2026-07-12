@@ -67,8 +67,8 @@ Flags:
    --availability-zone string Availability zone for failure domain distribution.
    --microceph-ip      string Network address microceph daemon binds to.
    --mon-ip            string Public address for bootstrapping ceph mon service.
-   --public-network    string Public network Ceph daemons bind to.
-   --cluster-network   string Cluster network Ceph daemons bind to.
+   --public-network    string Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).
+   --cluster-network   string Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).
 
 ``config``
 ----------
