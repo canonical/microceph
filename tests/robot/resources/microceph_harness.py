@@ -28,6 +28,7 @@ from rbd_replication import (
     rbd_primary_image_count,
     rbd_synced_image_count,
 )
+from smb_ops import ctdb_ok_node_count
 from snap_services import enabled_active_services
 from streaming_process import run_streaming_process
 
@@ -893,6 +894,59 @@ class microceph_harness:
             interval=5,
             fail_msg=f"CephFS snaps_synced for {vol} never reached {threshold} after {attempts} attempts",
         )
+
+    # -----------------------------------------------------------------------
+    # SMB / CTDB helpers
+    # -----------------------------------------------------------------------
+
+    # The snap ships no ctdb CLI app, so the binary needs the snap's library
+    # path and the revision-stable socket location spelled out.
+    _CTDB_ENV = (
+        "LD_LIBRARY_PATH=/snap/microceph/current/lib"
+        ":/snap/microceph/current/lib/x86_64-linux-gnu"
+        ":/snap/microceph/current/lib/x86_64-linux-gnu/samba"
+        " CTDB_SOCKET=/var/snap/microceph/current/run/ctdb/ctdbd.socket"
+    )
+
+    def run_ctdb_in_node(self, container, args):
+        """Runs ``ctdb <args>`` inside *container* against the snap's ctdbd.
+
+        Returns the result OBJECT (non-raising): callers decide on rc/stdout,
+        and pollers treat a connection failure as "not ready yet".
+        """
+        cmd = f"{self._CTDB_ENV} /snap/microceph/current/bin/ctdb {args}"
+        return self.run_in_container_unchecked(container, cmd, 30)
+
+    def wait_for_ctdb_healthy(self, container, expected_nodes, attempts=30):
+        """Polls until ``ctdb -X status`` on *container* reports *expected_nodes* healthy nodes."""
+        def predicate():
+            out = self.run_ctdb_in_node(container, "-X status").stdout
+            return ctdb_ok_node_count(out) >= int(expected_nodes)
+
+        self._poll_until(
+            predicate,
+            attempts=attempts,
+            interval=10,
+            fail_msg=f"CTDB never reached {expected_nodes} healthy nodes after {attempts} attempts",
+        )
+
+    def get_ctdb_vip_output(self, container):
+        """Returns the stdout of ``ctdb ip`` on *container* (VIP -> pnn table)."""
+        return self.run_ctdb_in_node(container, "ip").stdout
+
+    def reinstall_snap_devmode_on_all_nodes(self):
+        """Re-installs the pre-baked local snap with --devmode on all inner nodes.
+
+        Confined smbd panics on setgroups (no smb-support interface yet), so
+        the smb suite runs the snap in devmode; see the Phase 1 design doc.
+        """
+        logger.console("[smb] Re-installing snap in devmode on all nodes...")
+        for container in NODES:
+            self.run_in_container_and_check(
+                container, f"sudo snap install --dangerous --devmode {MNT_SNAP_GLOB}", 600
+            )
+        # Give the daemons a moment to settle before the suite polls health.
+        time.sleep(15)
 
     # -----------------------------------------------------------------------
     # File / snap-mount helpers

@@ -3,6 +3,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -71,6 +72,115 @@ func SendServicePlacementReq(ctx context.Context, c mcTypes.Client, data *types.
 	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("services", data.Name).URL, data, nil)
 	if err != nil {
 		return fmt.Errorf("failed placing service %s: %w", data.Name, err)
+	}
+
+	return nil
+}
+
+// ApplySMBSpec submits an SMBSpec JSON document for cluster-wide apply.
+func ApplySMBSpec(ctx context.Context, c mcTypes.Client, spec []byte) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*900)
+	defer cancel()
+
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb").URL, json.RawMessage(spec), nil)
+	if err != nil {
+		return fmt.Errorf("failed applying smb spec: %w", err)
+	}
+
+	return nil
+}
+
+// RemoveSMBService removes an smb cluster from all its member nodes.
+func RemoveSMBService(ctx context.Context, c mcTypes.Client, svc *types.SMBService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*900)
+	defer cancel()
+
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb").URL, svc, nil)
+	if err != nil {
+		return fmt.Errorf("failed removing smb cluster: %w", err)
+	}
+
+	return nil
+}
+
+// GetSMBServices lists every smb cluster with its spec and placement.
+func GetSMBServices(ctx context.Context, c mcTypes.Client) ([]types.SMBServiceStatus, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+
+	statuses := []types.SMBServiceStatus{}
+
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb").URL, nil, &statuses)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing smb services: %w", err)
+	}
+
+	return statuses, nil
+}
+
+// EnableSMBNodeService requests the target node run the smb placement flow.
+func EnableSMBNodeService(ctx context.Context, c mcTypes.Client, target string, data *types.EnableService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*300)
+	defer cancel()
+
+	// Send this request to target.
+	c = c.UseTarget(target)
+
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb", "node").URL, data, nil)
+	if err != nil {
+		return fmt.Errorf("failed placing smb service on %s: %w", target, err)
+	}
+
+	return nil
+}
+
+// RegenerateSMBNodeService requests the target node re-render its smb
+// configs and restart ctdbd.
+func RegenerateSMBNodeService(ctx context.Context, c mcTypes.Client, target string, svc *types.SMBService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*300)
+	defer cancel()
+
+	// Send this request to target.
+	c = c.UseTarget(target)
+
+	err := c.Query(queryCtx, "POST", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb", "node").URL, svc, nil)
+	if err != nil {
+		return fmt.Errorf("failed regenerating smb service on %s: %w", target, err)
+	}
+
+	return nil
+}
+
+// SeedSMBUsersNodeService requests the target node seed its clustered
+// passdb from the spec's user_sources. Sized to cover the import retry
+// window while CTDB settles.
+func SeedSMBUsersNodeService(ctx context.Context, c mcTypes.Client, target string, spec string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	defer cancel()
+
+	// Send this request to target.
+	c = c.UseTarget(target)
+
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb", "users").URL, json.RawMessage(spec), nil)
+	if err != nil {
+		return fmt.Errorf("failed seeding smb users on %s: %w", target, err)
+	}
+
+	return nil
+}
+
+// DeleteSMBNodeService requests the target node tear down its smb cluster
+// membership.
+func DeleteSMBNodeService(ctx context.Context, c mcTypes.Client, target string, svc *types.SMBService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*300)
+	defer cancel()
+
+	// Send this request to target.
+	c = c.UseTarget(target)
+
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb", "node").URL, svc, nil)
+	if err != nil {
+		return fmt.Errorf("failed deleting smb service on %s: %w", target, err)
 	}
 
 	return nil

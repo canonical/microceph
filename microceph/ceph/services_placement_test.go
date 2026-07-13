@@ -12,6 +12,7 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -45,20 +46,20 @@ func addSnapServiceActiveExpectations(r *mocks.Runner, service string, retStr st
 
 func addPlacementServiceInitFailExpectation(sp *mocks.PlacementIntf, s *mocks.StateInterface, payload types.EnableService) {
 	sp.On("PopulateParams", s, payload.Payload).Return(nil).Once()
-	sp.On("HospitalityCheck", s).Return(nil).Once()
+	sp.On("HospitalityCheck", mock.Anything, s).Return(nil).Once()
 	sp.On("ServiceInit", s).Return(fmt.Errorf("ERROR")).Once()
 }
 
 func addPostPlacementCheckFailExpectation(sp *mocks.PlacementIntf, s *mocks.StateInterface, payload types.EnableService) {
 	sp.On("PopulateParams", s, payload.Payload).Return(nil).Once()
-	sp.On("HospitalityCheck", s).Return(nil).Once()
+	sp.On("HospitalityCheck", mock.Anything, s).Return(nil).Once()
 	sp.On("ServiceInit", s).Return(nil).Once()
 	sp.On("PostPlacementCheck", s).Return(fmt.Errorf("ERROR")).Once()
 }
 
 func addDbUpdateFailExpectation(sp *mocks.PlacementIntf, s *mocks.StateInterface, payload types.EnableService) {
 	sp.On("PopulateParams", s, payload.Payload).Return(nil).Once()
-	sp.On("HospitalityCheck", s).Return(nil).Once()
+	sp.On("HospitalityCheck", mock.Anything, s).Return(nil).Once()
 	sp.On("ServiceInit", s).Return(nil).Once()
 	sp.On("PostPlacementCheck", s).Return(nil).Once()
 	sp.On("DbUpdate", s).Return(fmt.Errorf("ERROR")).Once()

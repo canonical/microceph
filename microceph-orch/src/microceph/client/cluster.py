@@ -67,6 +67,18 @@ class ExtendedAPIService(service.BaseService):
         disks = self._get("/1.0/disks")
         return disks.get("metadata")
 
+    def apply_smb(self, spec_json: str) -> None:
+        """Apply an SMBSpec JSON document cluster-wide."""
+        self._put("/1.0/services/smb", data=spec_json)
+
+    def remove_smb(self, cluster_id: str) -> None:
+        """Remove an smb cluster from all its member nodes."""
+        self._delete("/1.0/services/smb", json={"cluster_id": cluster_id})
+
+    def list_smb(self) -> list[dict]:
+        """List smb clusters with their specs and placement."""
+        return self._get("/1.0/services/smb").get("metadata")
+
     def get_status(self) -> dict[str, dict]:
         """Get status of the cluster."""
         cluster = self._get("/1.0/status")

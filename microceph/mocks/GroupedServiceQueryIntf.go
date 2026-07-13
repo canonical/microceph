@@ -140,6 +140,112 @@ func (_m *GroupedServiceQueryIntf) RemoveForHost(ctx context.Context, s interfac
 	return r0
 }
 
+// GetGroupMembers provides a mock function with given fields: ctx, s, service, groupID
+func (_m *GroupedServiceQueryIntf) GetGroupMembers(ctx context.Context, s interfaces.StateInterface, service string, groupID string) ([]string, error) {
+	ret := _m.Called(ctx, s, service, groupID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetGroupMembers")
+	}
+
+	var r0 []string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string) ([]string, error)); ok {
+		return rf(ctx, s, service, groupID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string) []string); ok {
+		r0 = rf(ctx, s, service, groupID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]string)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, interfaces.StateInterface, string, string) error); ok {
+		r1 = rf(ctx, s, service, groupID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// GetGroupMemberRecords provides a mock function with given fields: ctx, s, service, groupID
+func (_m *GroupedServiceQueryIntf) GetGroupMemberRecords(ctx context.Context, s interfaces.StateInterface, service string, groupID string) ([]database.GroupedService, error) {
+	ret := _m.Called(ctx, s, service, groupID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetGroupMemberRecords")
+	}
+
+	var r0 []database.GroupedService
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string) ([]database.GroupedService, error)); ok {
+		return rf(ctx, s, service, groupID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string) []database.GroupedService); ok {
+		r0 = rf(ctx, s, service, groupID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]database.GroupedService)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, interfaces.StateInterface, string, string) error); ok {
+		r1 = rf(ctx, s, service, groupID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// GetGroupConfig provides a mock function with given fields: ctx, s, service, groupID
+func (_m *GroupedServiceQueryIntf) GetGroupConfig(ctx context.Context, s interfaces.StateInterface, service string, groupID string) (string, error) {
+	ret := _m.Called(ctx, s, service, groupID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetGroupConfig")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string) (string, error)); ok {
+		return rf(ctx, s, service, groupID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string) string); ok {
+		r0 = rf(ctx, s, service, groupID)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, interfaces.StateInterface, string, string) error); ok {
+		r1 = rf(ctx, s, service, groupID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// UpdateGroupConfig provides a mock function with given fields: ctx, s, service, groupID, config
+func (_m *GroupedServiceQueryIntf) UpdateGroupConfig(ctx context.Context, s interfaces.StateInterface, service string, groupID string, config string) error {
+	ret := _m.Called(ctx, s, service, groupID, config)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateGroupConfig")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string, string) error); ok {
+		r0 = rf(ctx, s, service, groupID, config)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // NewGroupedServiceQueryIntf creates a new instance of GroupedServiceQueryIntf. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewGroupedServiceQueryIntf(t interface {

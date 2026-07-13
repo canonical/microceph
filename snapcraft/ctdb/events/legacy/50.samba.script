@@ -1,0 +1,19 @@
+#!/bin/sh
+# Replacement for CTDB's stock 50.samba event script: inside the snap,
+# smbd is managed through snapd, not systemd. The deployment engine links
+# this into $CTDB_BASE/events/legacy/ when rendering node configs.
+
+case "$1" in
+startup)
+    snapctl start microceph.smbd
+    ;;
+shutdown)
+    snapctl stop microceph.smbd
+    ;;
+monitor)
+    # Stock share checks assume /etc/samba paths and real directories;
+    # vfs-backed shares are virtual, so smbd health is left to snapd.
+    ;;
+esac
+
+exit 0

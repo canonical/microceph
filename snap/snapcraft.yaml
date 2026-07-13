@@ -45,6 +45,12 @@ layout:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph
   /usr/lib/ganesha:
     symlink: $SNAP/lib/ganesha
+  /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba:
+    symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba
+  /usr/share/ctdb:
+    symlink: $SNAP/usr/share/ctdb
+  /etc/ctdb:
+    bind: $SNAP_DATA/conf/ctdb
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/rados-classes:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/rados-classes
   /etc/ceph:
@@ -115,6 +121,29 @@ apps:
     plugs:
       - network
       - network-bind
+      - process-control
+  smbd:
+    command: commands/smbd.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+    plugs:
+      - account-control
+      - network
+      - network-bind
+      - network-control
+      - process-control
+  ctdbd:
+    command: commands/ctdbd.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+    plugs:
+      - network
+      - network-bind
+      - network-control
       - process-control
   osd:
     command: commands/osd.start
@@ -462,6 +491,91 @@ parts:
       - lib/*/libntirpc.so*
       - lib/*/liburcu-bp.so*
       - lib/*/libwbclient.so*
+
+  samba:
+    plugin: nil
+    stage-packages:
+      - samba
+      - samba-vfs-modules
+      - ctdb
+    organize:
+      sbin/: bin/
+      usr/bin/: bin/
+      usr/sbin/: bin/
+      usr/lib/: lib/
+      usr/libexec/: libexec/
+    # Negative-list pruning only: a whitelist here silently drops files
+    # this part stages that OTHER parts also stage and prime (snapcraft
+    # resolves shared staged files against every owner's filter), which
+    # broke ceph-mgr's libpython and the dashboard's python deps. Only
+    # samba-owned paths are excluded.
+    prime:
+      - -lib/systemd
+      - -lib/tmpfiles.d
+      - -lib/sysusers.d
+      - -lib/*/avahi
+      - -usr/share/doc
+      - -usr/share/man
+      - -usr/share/samba
+      # AD/DC, NetBIOS and registry tooling not used by Phase 1
+      - -bin/samba
+      - -bin/samba-gpupdate
+      - -bin/samba-tool
+      - -bin/samba_dnsupdate
+      - -bin/samba_downgrade_db
+      - -bin/samba_kcc
+      - -bin/samba_spnupdate
+      - -bin/samba_upgradedns
+      - -bin/samba-regedit
+      - -bin/samba-log-parser
+      - -bin/nmbd
+      - -bin/nmblookup
+      - -bin/net
+      - -bin/oLschema2ldif
+      - -bin/dumpmscat
+      - -bin/eventlogadm
+      - -bin/profiles
+      - -bin/sharesec
+      - -bin/mvxattr
+
+  # Real upstream mgr/smb module, built from the ceph tag matching the
+  # staged PPA debs (asserted at build time). Replaces the retired stub
+  # patch 0003.
+  mgr-smb:
+    plugin: nil
+    build-packages:
+      - git
+    override-pull: |
+      craftctl default
+      git clone --branch v20.2.1 --depth 1 --filter=blob:none --sparse https://github.com/ceph/ceph.git ceph-src
+      git -C ceph-src sparse-checkout set src/pybind/mgr/smb
+    override-build: |
+      craftctl default
+      pkg_version=$(apt-cache policy ceph-common | awk '/Candidate:/{ print $2 }')
+      src_tag=$(git -C ceph-src describe --tags --exact-match)
+      case "${pkg_version}" in
+        "${src_tag#v}"-*|"${src_tag#v}"~*|"${src_tag#v}"+*)
+          ;;
+        *)
+          echo "mgr/smb source ${src_tag} does not match staged ceph ${pkg_version}" >&2
+          exit 1
+          ;;
+      esac
+      mkdir -p "${CRAFT_PART_INSTALL}/share/ceph/mgr"
+      cp -r ceph-src/src/pybind/mgr/smb "${CRAFT_PART_INSTALL}/share/ceph/mgr/"
+      rm -rf "${CRAFT_PART_INSTALL}/share/ceph/mgr/smb/tests"
+      # Patched here, not in the ceph part's patch loop: that loop runs
+      # against $CRAFT_STAGE and cannot see this part's files reliably
+      # (stage order); a part patches only what it installs itself.
+      patch -p1 -d "${CRAFT_PART_INSTALL}" < "${CRAFT_PROJECT_DIR}/patches/mgr-smb/0001-default-provider-vfs-new.patch"
+
+  sambacc:
+    plugin: nil
+    build-packages:
+      - python3-pip
+    override-build: |
+      craftctl default
+      pip3 install --target="${CRAFT_PART_INSTALL}/lib/python3/dist-packages" sambacc==0.9
 
   logrotate:
     plugin: nil

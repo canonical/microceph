@@ -28,13 +28,13 @@ func (_m *PlacementIntf) DbUpdate(ctx context.Context, _a0 interfaces.StateInter
 	return r0
 }
 
-// HospitalityCheck provides a mock function with given fields: _a0
-func (_m *PlacementIntf) HospitalityCheck(_a0 interfaces.StateInterface) error {
-	ret := _m.Called(_a0)
+// HospitalityCheck provides a mock function with given fields: ctx, _a0
+func (_m *PlacementIntf) HospitalityCheck(ctx context.Context, _a0 interfaces.StateInterface) error {
+	ret := _m.Called(ctx, _a0)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(interfaces.StateInterface) error); ok {
-		r0 = rf(_a0)
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface) error); ok {
+		r0 = rf(ctx, _a0)
 	} else {
 		r0 = ret.Error(0)
 	}

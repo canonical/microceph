@@ -57,6 +57,9 @@ func main() {
 	cmdDisable := cmdDisable{common: &commonCmd}
 	app.AddCommand(cmdDisable.Command())
 
+	cmdSMBTop := cmdSMB{common: &commonCmd}
+	app.AddCommand(cmdSMBTop.Command())
+
 	cmdInit := cmdInit{common: &commonCmd}
 	app.AddCommand(cmdInit.Command())
 

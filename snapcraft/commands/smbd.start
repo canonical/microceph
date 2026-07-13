@@ -1,0 +1,19 @@
+#!/bin/bash
+
+. "${SNAP}/commands/common"
+
+limits
+
+wait_for_config
+
+conf="${SNAP_DATA}/conf/samba/smb.conf"
+
+mkdir -p \
+    "${SNAP_DATA}/run/samba" \
+    "${SNAP_COMMON}/logs/samba" \
+    "${SNAP_COMMON}/data/samba/private" \
+    "${SNAP_COMMON}/data/samba/lock" \
+    "${SNAP_COMMON}/data/samba/state" \
+    "${SNAP_COMMON}/data/samba/cache"
+
+exec smbd --foreground --no-process-group --configfile="${conf}"

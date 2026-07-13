@@ -1,0 +1,11 @@
+[logging]
+    location = file:/var/snap/microceph/common/logs/ctdb/log.ctdb
+    log level = NOTICE
+
+[database]
+    volatile database directory = /var/snap/microceph/common/data/ctdb/volatile
+    persistent database directory = /var/snap/microceph/common/data/ctdb/persistent
+    state database directory = /var/snap/microceph/common/data/ctdb/state
+
+[cluster]
+    cluster lock = !/snap/microceph/current/libexec/ctdb/ctdb_mutex_ceph_rados_helper ceph client.smb.dev .smb microceph.reclock.dev

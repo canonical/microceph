@@ -16,6 +16,7 @@ from ceph.deployment.service_spec import (
     MONSpec,
     MDSSpec,
     NFSServiceSpec,
+    SMBSpec,
 )
 
 from mgr_module import MgrModule
@@ -166,6 +167,17 @@ class MicroCephOrchestrator(Orchestrator,
         recorded_services = self.microceph.services.list_services()
         service_hostlist = self._get_service_hostlist(recorded_services)
 
+        # smb specs are stored verbatim in microcephd; reuse them so the
+        # description carries a valid SMBSpec (a generic ServiceSpec with
+        # service_type='smb' dispatches to SMBSpec and fails validation
+        # without cluster_id).
+        smb_specs = {}
+        if any(name.split('.')[0] == 'smb' for name in service_hostlist):
+            try:
+                smb_specs = {st['cluster_id']: st['spec'] for st in self.microceph.services.list_smb()}
+            except RemoteException as e:
+                logger.warning(f"failed to fetch smb specs: {e}")
+
         service_descs = []
         for svc_name, hostlist in service_hostlist.items():
             spec = None
@@ -176,7 +188,12 @@ class MicroCephOrchestrator(Orchestrator,
             if service_type and svc_type != service_type:
                 continue
 
-            if svc_type in daemon_spec_map:
+            if svc_type == 'smb':
+                if svc_id not in smb_specs:
+                    logger.warning(f"no stored spec for smb cluster '{svc_id}'; skipping")
+                    continue
+                spec = ServiceSpec.from_json(smb_specs[svc_id])
+            elif svc_type in daemon_spec_map:
                 spec = daemon_spec_map[svc_type](
                     service_id=svc_id, service_type=svc_type, placement=PlacementSpec(hosts=hostlist, count=len(hostlist))
                 )
@@ -221,6 +238,9 @@ class MicroCephOrchestrator(Orchestrator,
                 info = json.loads(svc['info'])
                 svc_ip = None if "0.0.0.0" in info['bind_address'] else info['bind_address']
                 svc_ports = [info['bind_port']]
+
+            if svc_daemon_type == 'smb':
+                svc_ports = [445]
             
             descriptions.append(DaemonDescription(
                 service_name=svc_name,
@@ -255,6 +275,28 @@ class MicroCephOrchestrator(Orchestrator,
             ))
 
         return inventory
+
+    @handle_orch_error
+    def apply_smb(self, spec: SMBSpec) -> str:
+        """Deploy the smb cluster described by an mgr/smb SMBSpec."""
+        logger.info(f"applying smb spec for cluster {spec.cluster_id}")
+        # ServiceSpec.to_json() nests subclass fields (cluster_id, config_uri,
+        # ...) under a "spec" key; microcephd's SMBSpec wire format is flat.
+        data = dict(spec.to_json())
+        data.update(data.pop('spec', {}))
+        self.microceph.services.apply_smb(json.dumps(data))
+        return f"Scheduled smb.{spec.service_id} update..."
+
+    @handle_orch_error
+    def remove_service(self, service_name: str, force: bool = False) -> str:
+        """Remove a service; only smb.<cluster_id> services are supported."""
+        svc_type, svc_id = self._elaborate_service(service_name)
+        if svc_type != 'smb' or not svc_id:
+            raise NotImplementedError(f"removing service {service_name} is not supported")
+
+        logger.info(f"removing smb cluster {svc_id}")
+        self.microceph.services.remove_smb(svc_id)
+        return f"Removed service {service_name}"
 
     def apply_rbd_mirror(self, spec: ServiceSpec) -> OrchResult[str]:
         logger.info(f"Received Apply Request for RBD Mirror: Spec: {vars(spec).items()}")

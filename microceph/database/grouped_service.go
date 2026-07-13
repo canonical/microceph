@@ -37,6 +37,11 @@ type GroupedServiceFilter struct {
 	Member  *string
 }
 
+// SMBServiceInfo is a struct containing per-node GroupedService information
+// for SMB. Empty in Phase 1: the SMBSpec stored as group config carries all
+// state, and nothing is node-specific yet.
+type SMBServiceInfo struct{}
+
 // NFSServiceInfo is a struct containing GroupedService information.
 type NFSServiceInfo struct {
 	BindAddress string `json:"bind_address"`

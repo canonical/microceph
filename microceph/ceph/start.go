@@ -370,9 +370,17 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 			continue
 		}
 		seen[gs.Service] = true
-		if err := snapCheckActive(gs.Service); err != nil {
+		// The smb group has no snap app of its own: ctdbd is the unit to
+		// (re)start, and it brings up smbd via its event script.
+		snapSvc := gs.Service
+		if gs.Service == "smb" {
+			snapSvc = "ctdbd"
+		}
+		err := snapCheckActive(snapSvc)
+		if err != nil {
 			logger.Infof("start: re-enabling inactive grouped service %q", gs.Service)
-			if err := snapStart(gs.Service, true); err != nil {
+			err = snapStart(snapSvc, true)
+			if err != nil {
 				logger.Warnf("start: failed to re-enable grouped service %q: %v", gs.Service, err)
 			}
 		}

@@ -1,0 +1,43 @@
+{
+  "samba-container-config": "v0",
+  "configs": {
+    "dev": {
+      "instance_name": "dev",
+      "instance_features": ["ctdb"],
+      "globals": ["default", "dev"],
+      "shares": ["share1"]
+    }
+  },
+  "globals": {
+    "default": {
+      "options": {
+        "load printers": "No",
+        "printing": "bsd",
+        "printcap name": "/dev/null",
+        "disable spoolss": "Yes",
+        "smbd profiling level": "on"
+      }
+    },
+    "dev": {
+      "options": {}
+    }
+  },
+  "shares": {
+    "share1": {
+      "options": {
+        "path": "/volumes/_nogroup/s1/uuid",
+        "vfs objects": "acl_xattr ceph_snapshots ceph_new",
+        "acl_xattr:security_acl_name": "user.NTACL",
+        "ceph_new:config_file": "/etc/ceph/ceph.conf",
+        "ceph_new:filesystem": "newfs",
+        "ceph_new:user_id": "smb.fs.cluster.dev",
+        "read only": "No",
+        "browseable": "Yes",
+        "kernel share modes": "no",
+        "x:ceph:id": "dev.share1",
+        "smbd profiling share": "yes",
+        "ceph_new:proxy": "yes"
+      }
+    }
+  }
+}

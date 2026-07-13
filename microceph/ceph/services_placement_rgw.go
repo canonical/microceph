@@ -25,7 +25,7 @@ func (rgw *RgwServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 	return nil
 }
 
-func (rgw *RgwServicePlacement) HospitalityCheck(s interfaces.StateInterface) error {
+func (rgw *RgwServicePlacement) HospitalityCheck(ctx context.Context, s interfaces.StateInterface) error {
 	return genericHospitalityCheck("rgw")
 }
 
