@@ -212,20 +212,33 @@ class microceph_harness:
     # bash CI produced, restored at the one layer all exec helpers funnel through
     # so no call site can be silent. Poll-loop probes and value getters pass
     # quiet=True to keep the console readable; their output still lands in log.html.
+    #
+    # The command is echoed BEFORE it runs (_echo_cmd) and its output after
+    # (_log_exec), as set -x does. A command that hangs therefore names itself on
+    # the console while it hangs; echoing only after the call returns would leave
+    # the console silent until the timeout expires -- or forever, if the CI job's
+    # own timeout kills the run first.
     # -----------------------------------------------------------------------
 
-    def _log_exec(self, label, res, quiet):
-        """Echoes *label* (a command line) and its stdout to the console, set -x style.
+    def _echo_cmd(self, label, quiet):
+        """Echoes "+ <label>" to the console before *label* is executed.
 
         *label* is the logical command (e.g. "microceph disk add ..." or
-        "[node-wrk0] microceph status"), not the raw nested lxc argv. The full result
-        always goes to log.html via logger.info; the console gets "+ <label>" plus the
-        command's stdout unless *quiet* is set (poll-loop probes, bulk getters).
+        "[node-wrk0] microceph status"), not the raw nested lxc argv.
+        """
+        if not quiet:
+            logger.console(f"+ {label}")
+
+    def _log_exec(self, label, res, quiet):
+        """Logs the result of *label* once it has run.
+
+        The full result always goes to log.html via logger.info; the console gets the
+        command's stdout unless *quiet* is set (poll-loop probes, bulk getters). The
+        "+ <label>" line itself was already printed by _echo_cmd before the command ran.
         """
         logger.info(f"+ {label} rc={res.rc}: {res.stdout}")
         logger.info(f"STDERR: {res.stderr}")
         if not quiet:
-            logger.console(f"+ {label}")
             body = res.stdout.rstrip()
             if body:
                 logger.console(body)
@@ -244,6 +257,7 @@ class microceph_harness:
         commands that read stdin to EOF when it is not a tty -- notably lxc init / lxc launch,
         which slurp instance config YAML from stdin -- block forever on a tty that never EOFs.
         """
+        self._echo_cmd(bash_cmd, quiet)
         res = self._exec(self._vm_argv("bash", "-eo", "pipefail", "-c", bash_cmd), timeout)
         self._log_exec(bash_cmd, res, quiet)
         return res
@@ -273,6 +287,9 @@ class microceph_harness:
         bash -eo pipefail: mirrors set -e semantics so any failing command or pipe stage
         inside the container fails the keyword immediately.
         """
+        # Echoed before the pushes, not just before the exec, so a hang in either
+        # lxc file push is attributed to the command it was staging.
+        self._echo_cmd(f"[{container}] {cmd}", quiet)
         name = f"rf_cmd_{uuid.uuid4().hex[:8]}.sh"
         remote = f"/tmp/{name}"
         with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as f:
@@ -313,8 +330,10 @@ class microceph_harness:
         default; pass check=True to fail on non-zero rc. Use this instead of
         hand-building 'lxc exec <node> -- <cmd>' strings.
         """
+        label = f"[{container}] {' '.join(str(a) for a in argv)}"
+        self._echo_cmd(label, quiet)
         res = self._exec(self._ct_argv(container, *argv), timeout)
-        self._log_exec(f"[{container}] {' '.join(str(a) for a in argv)}", res, quiet)
+        self._log_exec(label, res, quiet)
         if check and res.rc != 0:
             raise AssertionError(f"Command failed (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}")
         return res
@@ -327,6 +346,7 @@ class microceph_harness:
         errexit/pipefail would abort a 'grep -c' that finds nothing before the trailing '|| echo ...'
         and change the captured stdout. One round-trip (no temp-file push), so it is safe in poll loops.
         """
+        self._echo_cmd(f"[{container}] {cmd}", quiet)
         res = self._exec(self._ct_argv(container, shell, "-c", cmd), timeout)
         self._log_exec(f"[{container}] {cmd}", res, quiet)
         return res

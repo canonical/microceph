@@ -1006,7 +1006,8 @@ def test_poll_until_success_never_evaluates_fail_msg_or_on_fail():
 
 
 # ---------------------------------------------------------------------------
-# _log_exec -- command tracing routes to console (bash -x style) unless quiet
+# _echo_cmd / _log_exec -- command tracing routes to console (bash -x style)
+# unless quiet: the command before it runs, its output after.
 # ---------------------------------------------------------------------------
 
 import microceph_harness as _mh
@@ -1036,12 +1037,22 @@ def _with_logger(monkeypatch):
     return cap
 
 
-def test_log_exec_echoes_command_and_output_to_console(monkeypatch):
+def test_echo_cmd_prints_the_command(monkeypatch):
+    cap = _with_logger(monkeypatch)
+    H()._echo_cmd("microceph.ceph -s", quiet=False)
+    assert cap.console_lines == ["+ microceph.ceph -s"]
+
+
+def test_echo_cmd_quiet_prints_nothing(monkeypatch):
+    cap = _with_logger(monkeypatch)
+    H()._echo_cmd("microceph.ceph -s -f json", quiet=True)
+    assert cap.console_lines == []
+
+
+def test_log_exec_echoes_output_to_console(monkeypatch):
     cap = _with_logger(monkeypatch)
     H()._log_exec("microceph.ceph -s", _Res(0, "  cluster:\n    health: HEALTH_OK\n", ""), quiet=False)
-    joined = "\n".join(cap.console_lines)
-    assert "+ microceph.ceph -s" in joined
-    assert "health: HEALTH_OK" in joined
+    assert "health: HEALTH_OK" in "\n".join(cap.console_lines)
 
 
 def test_log_exec_quiet_keeps_console_clean(monkeypatch):
@@ -1052,7 +1063,7 @@ def test_log_exec_quiet_keeps_console_clean(monkeypatch):
     assert any("microceph.ceph -s -f json" in s for s in cap.info_lines)
 
 
-def test_log_exec_no_output_prints_only_command(monkeypatch):
+def test_log_exec_no_output_prints_nothing(monkeypatch):
     cap = _with_logger(monkeypatch)
     H()._log_exec("mkdir -p ~/x", _Res(0, "", ""), quiet=False)
-    assert cap.console_lines == ["+ mkdir -p ~/x"]
+    assert cap.console_lines == []
