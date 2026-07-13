@@ -448,6 +448,26 @@ function get_lxd_network() {
     echo "$nw"
 }
 
+# host_address <cidr> <host_offset>
+# Prints the address at <host_offset> hosts into <cidr>'s network.
+# Does arithmetic on the network address rather than string-appending to the
+# gateway (as "${gw}${i}" elsewhere does), which could overflow an octet: a
+# gateway whose host part is not .1 would otherwise turn into an invalid
+# address such as 10.0.0.2490. For '10.0.0.1/24' with an offset of 10 this
+# prints '10.0.0.10'. strict=False tolerates the host bits set on the LXD
+# gateway CIDR.
+function host_address() {
+    local cidr="${1?missing}"
+    local host_offset="${2?missing}"
+    python3 -c '
+import ipaddress
+import sys
+
+network = ipaddress.ip_network(sys.argv[1], strict=False)
+print(network.network_address + int(sys.argv[2]))
+' "${cidr}" "${host_offset}"
+}
+
 function create_vms() {
   set -eux
   # print useful information about the system
@@ -1207,6 +1227,119 @@ function bootstrap_head() {
     lxc exec node-wrk0 -- sh -c 'microceph.ceph -s | egrep "mon: 1 daemons, quorum node-wrk0"'
 }
 
+# get_ceph_conf_value <node> <key>
+# Prints the value of the "key = value" line in <node>'s ceph.conf, else "".
+# The remote command only does I/O (cat); the parse happens here. ceph.conf
+# carries "name = value" lines under section headers, so this prints the
+# right-hand side of the first line whose key -- the text left of the first
+# "=", stripped -- equals <key>. Section headers and blank lines have no "="
+# and are skipped. Keeps a comma-delimited public_network value intact so the
+# multi-subnet tests can compare it verbatim.
+function get_ceph_conf_value() {
+    local node="${1?missing}"
+    local key="${2?missing}"
+
+    lxc exec "${node}" -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf" | \
+        awk -v key="${key}" '
+            { eq = index($0, "=") }
+            eq == 0 { next }
+            {
+                name = substr($0, 1, eq - 1)
+                gsub(/^[ \t]+|[ \t]+$/, "", name)
+                if (name != key) next
+                value = substr($0, eq + 1)
+                gsub(/^[ \t]+|[ \t]+$/, "", value)
+                print value
+                exit
+            }'
+}
+
+# multi_subnet_networks prints the comma-delimited CIDR list the head is
+# bootstrapped with: the "public" network followed by the second, "subnetb".
+function multi_subnet_networks() {
+    echo "$(get_lxd_network public),$(get_lxd_network subnetb)"
+}
+
+# multi_subnet_mon_ip prints the head's address on "subnetb", i.e. the address
+# on the SECOND subnet of the list the head is bootstrapped with.
+function multi_subnet_mon_ip() {
+    host_address "$(get_lxd_network subnetb)" 10
+}
+
+# bootstrap_multi_subnet_head bootstraps node-wrk0 across two subnets, with
+# --mon-ip on the SECOND listed one.
+#
+# Reproduces issue #734: the head already has an address on the "public"
+# network (eth2, from create_containers). This creates a second LXD network
+# ("subnetb"), attaches it as an extra NIC, assigns the head an address on it,
+# and bootstraps with a comma-delimited --public-network / --cluster-network
+# plus --mon-ip set to the address on the SECOND listed subnet -- the exact
+# case that previously failed with "provided mon-ip ... is not available on
+# provided public network ...".
+function bootstrap_multi_subnet_head() {
+    set -ex
+
+    lxc network create subnetb
+
+    local second_cidr=$(get_lxd_network subnetb)
+    local mask=$(echo "${second_cidr}" | cut -d/ -f2)
+    local networks=$(multi_subnet_networks)
+    local mon_ip=$(multi_subnet_mon_ip)
+
+    lxc network attach subnetb node-wrk0 eth3
+    sleep 2
+
+    # Allocate the mon address on the newly attached NIC.
+    local dev_name=$(lxc exec node-wrk0 -- sh -c "ip a | grep ': eth' | tail -n 1 | cut -d@ -f1 | cut -d ' ' -f2")
+    lxc exec node-wrk0 -- sh -c "ip a add ${mon_ip}/${mask} dev ${dev_name}"
+
+    lxc exec node-wrk0 -- sh -c "microceph cluster bootstrap --public-network=${networks} --cluster-network=${networks} --mon-ip=${mon_ip}"
+    sleep 5
+    lxc exec node-wrk0 -- sh -c "microceph status"
+}
+
+# test_multi_subnet_public_network checks the comma-delimited public_network is
+# written to ceph.conf unchanged.
+function test_multi_subnet_public_network() {
+    set -eux
+
+    local networks=$(multi_subnet_networks)
+    local pub_net=$(get_ceph_conf_value node-wrk0 public_network)
+
+    if [[ "${pub_net}" != "${networks}" ]]; then
+        lxc exec node-wrk0 -- sh -c "cat /var/snap/microceph/current/conf/ceph.conf"
+        echo "expected public_network '${networks}' in ceph.conf, got '${pub_net}'"
+        exit 1
+    fi
+}
+
+# test_multi_subnet_cluster_network checks the comma-delimited cluster_network
+# is stored in the cluster config.
+function test_multi_subnet_cluster_network() {
+    set -eux
+
+    local networks=$(multi_subnet_networks)
+    local cluster_net=$(lxc exec node-wrk0 -- sh -c "microceph.ceph config get osd cluster_network")
+
+    if [[ "${cluster_net}" != "${networks}" ]]; then
+        echo "expected cluster_network '${networks}', got '${cluster_net}'"
+        exit 1
+    fi
+}
+
+# test_multi_subnet_mon_binding checks the mon-ip on the non-first listed
+# subnet is accepted, written to ceph.conf, and reaches single-node quorum.
+function test_multi_subnet_mon_binding() {
+    set -eux
+
+    local mon_ip=$(multi_subnet_mon_ip)
+    local mon_host=$(get_ceph_conf_value node-wrk0 "mon host")
+
+    assert_output_contains "${mon_host}" "${mon_ip}" \
+        "mon-ip ${mon_ip} not present in the ceph.conf mon host list"
+
+    lxc exec node-wrk0 -- sh -c 'microceph.ceph -s | grep "mon: 1 daemons, quorum node-wrk0"'
+}
 
 function cluster_nodes() {
     set -ex

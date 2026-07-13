@@ -9,23 +9,23 @@ type NetworkIntf struct {
 	mock.Mock
 }
 
-// FindIpOnSubnet provides a mock function with given fields: subnet
-func (_m *NetworkIntf) FindIpOnSubnet(subnet string) (string, error) {
-	ret := _m.Called(subnet)
+// FindIpOnSubnet provides a mock function with given fields: subnets
+func (_m *NetworkIntf) FindIpOnSubnet(subnets string) (string, error) {
+	ret := _m.Called(subnets)
 
 	var r0 string
 	var r1 error
 	if rf, ok := ret.Get(0).(func(string) (string, error)); ok {
-		return rf(subnet)
+		return rf(subnets)
 	}
 	if rf, ok := ret.Get(0).(func(string) string); ok {
-		r0 = rf(subnet)
+		r0 = rf(subnets)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
 	if rf, ok := ret.Get(1).(func(string) error); ok {
-		r1 = rf(subnet)
+		r1 = rf(subnets)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -81,13 +81,13 @@ func (_m *NetworkIntf) FindIpForPeers(peers []string) (string, error) {
 	return r0, r1
 }
 
-// IsIpOnSubnet provides a mock function with given fields: address, subnet
-func (_m *NetworkIntf) IsIpOnSubnet(address string, subnet string) bool {
-	ret := _m.Called(address, subnet)
+// IsIpOnSubnet provides a mock function with given fields: address, subnets
+func (_m *NetworkIntf) IsIpOnSubnet(address string, subnets string) bool {
+	ret := _m.Called(address, subnets)
 
 	var r0 bool
 	if rf, ok := ret.Get(0).(func(string, string) bool); ok {
-		r0 = rf(address, subnet)
+		r0 = rf(address, subnets)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
