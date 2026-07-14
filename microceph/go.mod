@@ -4,12 +4,14 @@ go 1.25.10
 
 require (
 	github.com/Rican7/retry v0.3.1
+	github.com/canonical/go-dqlite/v3 v3.0.4
 	github.com/canonical/lxd v0.0.0-20260224152359-d936c90d47cf
 	github.com/canonical/microcluster/v3 v3.0.2
 	github.com/djherbis/times v1.6.0
 	github.com/google/go-cmp v0.7.0
 	github.com/gorilla/mux v1.8.1
 	github.com/jedib0t/go-pretty/v6 v6.6.1
+	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pborman/uuid v1.2.1
 	github.com/qmuntal/stateless v1.7.1
@@ -23,7 +25,6 @@ require (
 )
 
 require (
-	github.com/canonical/go-dqlite/v3 v3.0.4 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -44,7 +45,6 @@ require (
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattn/go-runewidth v0.0.20 // indirect
-	github.com/mattn/go-sqlite3 v1.14.34 // indirect
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pkg/sftp v1.13.10 // indirect
