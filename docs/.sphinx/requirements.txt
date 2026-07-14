@@ -13,3 +13,4 @@ sphinx-tabs
 sphinxcontrib-jquery
 sphinxext-opengraph
 sphinx-version-warning
+sphinx_sitemap
