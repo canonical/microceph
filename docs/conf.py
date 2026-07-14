@@ -136,12 +136,6 @@ slug = 'ceph/docs'
 # Sitemap configuration: https://sphinx-sitemap.readthedocs.io/
 ###############################################################
 
-# Use RTD canonical URL to ensure duplicate pages have a specific canonical URL
-html_baseurl = os.environ.get("READTHEDOCS_CANONICAL_URL", "/")
-
-# sphinx-sitemap uses html_baseurl to generate the full URL for each page:
-sitemap_url_scheme = "{link}"
-
 # Include `lastmod` dates in the sitemap:
 sitemap_show_lastmod = True
 
