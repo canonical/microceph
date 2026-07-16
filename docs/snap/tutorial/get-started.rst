@@ -60,7 +60,10 @@ Disable the default automatic Snap upgrades to prevent MicroCeph from being upda
 Initialise your cluster
 -----------------------
 
-Next, bootstrap your new Ceph storage cluster:
+Next, bootstrap your new Ceph storage cluster. During bootstrap,
+MicroCeph creates the initial cluster configuration and keys, registers
+the first node, and starts the core Ceph services that the rest of the
+cluster will build on:
 
 .. code-block:: none
     
