@@ -1,0 +1,53 @@
+{
+    "sync_status": {
+        "info": {
+            "status": "sync",
+            "num_shards": 64,
+            "period": "9b9a5a4f-ecb4-42a1-b2ff-b31fc0ef5b1b",
+            "realm_epoch": 2
+        },
+        "markers": [
+            {
+                "key": 0,
+                "val": {
+                    "state": 1,
+                    "marker": "",
+                    "next_step_marker": "",
+                    "total_entries": 1,
+                    "pos": 0,
+                    "timestamp": "0.000000",
+                    "realm_epoch": 2
+                }
+            },
+            {
+                "key": 1,
+                "val": {
+                    "state": 1,
+                    "marker": "",
+                    "next_step_marker": "",
+                    "total_entries": 0,
+                    "pos": 0,
+                    "timestamp": "0.000000",
+                    "realm_epoch": 2
+                }
+            },
+            {
+                "key": 2,
+                "val": {
+                    "state": 1,
+                    "marker": "",
+                    "next_step_marker": "",
+                    "total_entries": 0,
+                    "pos": 0,
+                    "timestamp": "0.000000",
+                    "realm_epoch": 2
+                }
+            }
+        ]
+    },
+    "full_sync": {
+        "total": 1,
+        "complete": 1
+    },
+    "current_time": "2026-07-23T00:22:24Z"
+}
