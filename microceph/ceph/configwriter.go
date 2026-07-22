@@ -121,7 +121,7 @@ NFS_CORE_PARAM {
 
 NFSv4 {
 	Delegations = false;
-	RecoveryBackend = 'rados_cluster';
+	RecoveryBackend = rados_cluster;
 	Minor_Versions = {{.minorVersions}};
 	UseGetpwnam = true;
 }

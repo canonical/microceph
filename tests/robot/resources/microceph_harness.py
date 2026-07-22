@@ -1185,7 +1185,8 @@ class microceph_harness:
                 continue
             self.run_in_container_unchecked(
                 node,
-                "microceph status; microceph.ceph -s; snap logs microceph -n 200",
+                "microceph status; microceph.ceph -s; snap logs microceph -n 200; "
+                "tail -n 50 /var/snap/microceph/common/logs/ganesha/ganesha.log 2>/dev/null",
                 60,
                 quiet=quiet,
             )
