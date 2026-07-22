@@ -279,6 +279,8 @@ parts:
       - fdisk
       - uuid-runtime
       - python3-setuptools
+      - python3-minimal
+      - python3.14
       - python3-packaging
       - libatomic1
       - python3-ceph-common # used by microceph-orch
@@ -312,6 +314,8 @@ parts:
       - bin/sfdisk
       - bin/partx
       - bin/blockdev
+      - bin/python3
+      - bin/python3.14
       - lib/*/ceph
       - lib/*/libaio.so*
       - lib/*/libasn1.so*
@@ -360,6 +364,7 @@ parts:
       - lib/*/libwind.so*
       - lib/*/libxml2.so*
       - lib/python3
+      - lib/python3.14
       - lib/*/rados-classes
       - lib/*/libtcmalloc.so*
       - lib/*/libunwind.so*
