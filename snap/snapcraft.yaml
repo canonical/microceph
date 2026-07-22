@@ -208,16 +208,22 @@ apps:
 
 parts:
   microceph-orch:
-    plugin: python
-    # build-snaps:
-    #   - astral-uv
+    # core26 ships no python in the base, so the python plugin's venv
+    # cannot symlink a base interpreter; install with pip directly.
+    plugin: nil
     source: ./microceph-orch
     after:
       - microceph
       - ceph
+    build-packages:
+      - python3-pip
+    override-build: |
+      set -eux
+      craftctl default
+      pip install --break-system-packages --no-compile \
+        --target=$CRAFT_PART_INSTALL/lib/python3.14/site-packages .
     override-prime: |
       set -eux
-      a=$(pwd)
       craftctl default
       mkdir -p share/ceph/mgr/microceph
       # Force copy to overwrite.
