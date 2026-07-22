@@ -281,6 +281,8 @@ parts:
       - cephfs-mirror
       # Utilities
       - coreutils
+      - coreutils-from-uutils
+      - rust-coreutils
       - util-linux
       - fdisk
       - uuid-runtime
@@ -315,6 +317,7 @@ parts:
       - bin/rbd-mirror
       - bin/cephfs-mirror
       - bin/truncate
+      - lib/cargo/bin/coreutils/truncate
       - bin/uuidgen
       - bin/findmnt
       - bin/sfdisk
