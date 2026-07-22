@@ -334,6 +334,7 @@ parts:
       - lib/*/libboost_iostreams.so*
       - lib/*/libboost_locale.so*
       - lib/*/libboost_program_options.so*
+      - lib/*/libboost_process.so*
       - lib/*/libboost_python314.so*
       - lib/*/libboost_thread.so*
       - lib/*/libboost_url.so*
@@ -370,6 +371,7 @@ parts:
       - lib/*/libsasl2.so*
       - lib/*/libsnappy.so*
       - lib/*/libssh.so*
+      - lib/*/libssh2.so*
       - lib/*/libwind.so*
       - lib/*/libxml2.so*
       - lib/python3
