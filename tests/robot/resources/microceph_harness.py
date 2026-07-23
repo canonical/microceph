@@ -61,11 +61,7 @@ SNAP_APPARMOR_PROFILE = "/var/lib/snapd/apparmor/profiles/snap.microceph.daemon"
 # --- snap interfaces / tools ---
 SNAP_INTERFACES = ("block-devices", "hardware-observe", "mount-observe", "load-rbd",
                    "microceph-support", "network-bind", "process-control")
-# process-control is required by ganesha 6.x (PR_SET_IO_FLUSHER needs
-# CAP_SYS_RESOURCE); the remaining full-set interfaces cannot connect in
-# nested containers (kernel-module-load).
-SNAP_INTERFACES_MINIMAL = ("block-devices", "hardware-observe", "mount-observe",
-                           "process-control")
+SNAP_INTERFACES_MINIMAL = ("block-devices", "hardware-observe", "mount-observe")
 VM_APT_TOOLS = ("s3cmd", "jq")
 
 # --- images / builder ---
