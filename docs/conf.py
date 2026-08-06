@@ -352,7 +352,7 @@ intersphinx_mapping = {
     # Snap packaging documentation
     'snapcraft': ('https://snapcraft.io/docs/', None),
     # MicroCloud documentation
-    'microcloud': ('https://documentation.ubuntu.com/microcloud/latest/', None),
+    'microcloud': ('https://canonical.com/microcloud/docs/latest/', None),
     # Juju documentation (relevant for the MicroCeph charm)
     'juju': ('https://documentation.ubuntu.com/juju/latest/', None),
     # Ubuntu release notes
