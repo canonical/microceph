@@ -11,9 +11,11 @@ import (
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
@@ -780,6 +782,84 @@ func (s *placementSuite) TestControlServiceViabilityAllRemovalTargetsNoRetainers
 		assert.True(s.T(), viableControl[svc]["node-a"], "%s on node-a must keep its existence-seeded viability", svc)
 		assert.True(s.T(), viableControl[svc]["node-b"], "%s on node-b must keep its existence-seeded viability", svc)
 	}
+}
+
+// TestPolicyForStorageStripsSSLMaterial verifies that PolicyForStorage returns a
+// copy of the policy with the RGW SSL certificate and private key removed,
+// while enabled/port/ssl_port are retained for declared-intent reporting. The
+// original policy must be untouched so the apply path still has the material.
+func (s *placementSuite) TestPolicyForStorageStripsSSLMaterial() {
+	policy := types.PlacementPolicy{
+		Mode: "reconcile",
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: true, Port: 80, SSLPort: 443, SSLCertificate: "Y2VydA==", SSLPrivateKey: "a2V5"}},
+			"node-b": {Control: boolPtr(true)}, // no rgw: untouched
+		},
+	}
+	stored := PolicyForStorage(policy)
+
+	require.Contains(s.T(), stored.Members, "node-a")
+	require.NotNil(s.T(), stored.Members["node-a"].Rgw)
+	assert.Empty(s.T(), stored.Members["node-a"].Rgw.SSLCertificate, "cert must be stripped before storage")
+	assert.Empty(s.T(), stored.Members["node-a"].Rgw.SSLPrivateKey, "key must be stripped before storage")
+	assert.True(s.T(), stored.Members["node-a"].Rgw.Enabled, "enabled must be retained")
+	assert.Equal(s.T(), 80, stored.Members["node-a"].Rgw.Port, "port must be retained")
+	assert.Equal(s.T(), 443, stored.Members["node-a"].Rgw.SSLPort, "ssl_port must be retained")
+
+	// Original policy untouched: the apply path still needs the material.
+	assert.Equal(s.T(), "Y2VydA==", policy.Members["node-a"].Rgw.SSLCertificate)
+	assert.Equal(s.T(), "a2V5", policy.Members["node-a"].Rgw.SSLPrivateKey)
+}
+
+// TestPopulateRGWFrontends verifies the pure helper maps recorded rgw_frontends
+// rows onto observed members that host RGW, and ignores rows for members not
+// observed with RGW (the services row is the presence authority).
+func (s *placementSuite) TestPopulateRGWFrontends() {
+	observed := map[string]*types.PlacementObservedMember{
+		"node-a": {Member: "node-a", Rgw: true},
+		"node-b": {Member: "node-b", Rgw: true},
+		"node-c": {Member: "node-c", Rgw: false},
+	}
+	frontends := []database.RgwFrontend{
+		{Member: "node-a", Port: 80, SSLPort: 0, SSL: false},
+		{Member: "node-b", Port: 0, SSLPort: 443, SSL: true},
+		{Member: "node-c", Port: 80, SSL: false}, // not observed with RGW
+		{Member: "node-d", Port: 80, SSL: false}, // not in observed at all
+	}
+	populateRGWFrontends(observed, frontends)
+
+	require.NotNil(s.T(), observed["node-a"].RgwFrontend)
+	assert.Equal(s.T(), 80, observed["node-a"].RgwFrontend.Port)
+	assert.False(s.T(), observed["node-a"].RgwFrontend.SSL)
+
+	require.NotNil(s.T(), observed["node-b"].RgwFrontend)
+	assert.Equal(s.T(), 443, observed["node-b"].RgwFrontend.SSLPort)
+	assert.True(s.T(), observed["node-b"].RgwFrontend.SSL)
+
+	assert.Nil(s.T(), observed["node-c"].RgwFrontend, "member without observed RGW gets no frontend")
+}
+
+// TestRedactStoredPolicy verifies the GET defense-in-depth redaction blanks the
+// RGW SSL certificate and private key from the declared policy while retaining
+// non-secret fields, and that a nil policy is a no-op.
+func (s *placementSuite) TestRedactStoredPolicy() {
+	policy := &types.PlacementPolicy{
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: true, Port: 80, SSLPort: 443, SSLCertificate: "Y2VydA==", SSLPrivateKey: "a2V5"}},
+			"node-b": {Control: boolPtr(true)},
+		},
+	}
+	redactStoredPolicy(policy)
+
+	require.NotNil(s.T(), policy.Members["node-a"].Rgw)
+	assert.Empty(s.T(), policy.Members["node-a"].Rgw.SSLCertificate, "cert must be redacted on GET")
+	assert.Empty(s.T(), policy.Members["node-a"].Rgw.SSLPrivateKey, "key must be redacted on GET")
+	assert.True(s.T(), policy.Members["node-a"].Rgw.Enabled, "enabled must be retained")
+	assert.Equal(s.T(), 80, policy.Members["node-a"].Rgw.Port, "port must be retained")
+	assert.Equal(s.T(), 443, policy.Members["node-a"].Rgw.SSLPort, "ssl_port must be retained")
+
+	// nil policy must not panic.
+	redactStoredPolicy(nil)
 }
 
 // TestRedactSecrets verifies that redactSecrets masks realistic cephx key

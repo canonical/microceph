@@ -38,6 +38,12 @@ var ErrKeepOneInvariant = fmt.Errorf("keep-one invariant")
 // ErrCephBootstrapInProgress.
 var ErrPlacementApplyInProgress = fmt.Errorf("placement apply already in progress")
 
+// ErrRgwFrontendInvalid is returned when the RGW frontend configuration in a
+// placement policy is malformed (e.g. bad base64 SSL material). It is a
+// client-side sentinel so the API handler maps it to HTTP 400 rather than the
+// SmartError 500 fallback.
+var ErrRgwFrontendInvalid = fmt.Errorf("invalid RGW frontend configuration")
+
 // placementApplyLease bounds how long a placement apply may hold the
 // cluster-wide dqlite lock before it is considered abandoned (daemon crashed
 // mid-apply) and reclaimable by the next writer. It must comfortably exceed
@@ -341,6 +347,73 @@ func prodRemoveControlService(ctx context.Context, s interfaces.StateInterface, 
 	return nil
 }
 
+// PolicyForStorage returns a copy of policy with the RGW SSL certificate and
+// private key stripped from every member's rgw entry. SSL key material must
+// never be persisted in dqlite (CE142 Option B secrets posture): it travels
+// over the authenticated API to the member that needs it, then is dropped
+// before the policy is stored. enabled/port/ssl_port are retained so
+// GET /placement still reports the declared frontend intent. The original
+// policy is untouched so the apply path retains the material.
+func PolicyForStorage(policy types.PlacementPolicy) types.PlacementPolicy {
+	out := policy
+	out.Members = make(map[string]types.MemberPlacement, len(policy.Members))
+	for name, mp := range policy.Members {
+		if mp.Rgw != nil {
+			stripped := *mp.Rgw
+			stripped.SSLCertificate = ""
+			stripped.SSLPrivateKey = ""
+			mp.Rgw = &stripped
+		}
+		out.Members[name] = mp
+	}
+	return out
+}
+
+// redactStoredPolicy blanks the RGW SSL certificate and private key from every
+// member's rgw entry in a declared policy before it is returned via
+// GET /placement. It is defense-in-depth: the stored policy is already stripped
+// at PUT time (PolicyForStorage), but this protects against any future code
+// path that stores the raw policy. A nil policy is a no-op. The observed
+// frontend (RgwObservedFrontend) carries ports + a TLS flag only, so it needs no
+// redaction.
+func redactStoredPolicy(policy *types.PlacementPolicy) {
+	if policy == nil {
+		return
+	}
+	for _, mp := range policy.Members {
+		if mp.Rgw != nil {
+			mp.Rgw.SSLCertificate = ""
+			mp.Rgw.SSLPrivateKey = ""
+		}
+	}
+}
+
+// populateRGWFrontends sets each observed member's RgwFrontend from the
+// recorded rgw_frontends rows (CE142 placement-rgw). Only members observed to
+// host RGW (Rgw=true) get a frontend; a recorded row for a member not observed
+// with RGW is ignored because the services row is the presence authority. The
+// frontend reports ports + a TLS flag only, never cert/key bytes.
+func populateRGWFrontends(observedByMember map[string]*types.PlacementObservedMember, frontends []database.RgwFrontend) {
+	byName := make(map[string]database.RgwFrontend, len(frontends))
+	for _, f := range frontends {
+		byName[f.Member] = f
+	}
+	for member, om := range observedByMember {
+		if !om.Rgw {
+			continue
+		}
+		f, ok := byName[member]
+		if !ok {
+			continue
+		}
+		om.RgwFrontend = &types.RgwObservedFrontend{
+			Port:    f.Port,
+			SSLPort: f.SSLPort,
+			SSL:     f.SSL,
+		}
+	}
+}
+
 // GetPlacementStatusFunc is the injectable wrapper for GetPlacementStatus,
 // used by the API handler so tests can override it.
 var GetPlacementStatusFunc = GetPlacementStatus
@@ -379,6 +452,10 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 			if err != nil {
 				return fmt.Errorf("failed to unmarshal placement policy: %w", err)
 			}
+			// Defense-in-depth: the stored policy is already stripped at PUT time,
+			// but redact again so a future code path that stores the raw policy
+			// cannot leak SSL material via GET /placement.
+			redactStoredPolicy(&policy)
 			status.Policy = &policy
 		}
 		status.PlacementRefusal = redactSecrets(rec.LastRefusal)
@@ -431,6 +508,15 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 			}
 			om.Nfs = append(om.Nfs, gs.GroupID)
 		}
+
+		// Observed RGW frontends: ports + TLS flag from the rgw_frontends table
+		// (CE142 placement-rgw), read in the same transaction as the rest of the
+		// observed state. Never cert/key bytes.
+		rgwFrontends, err := database.GetRGWFrontends(ctx, tx)
+		if err != nil {
+			return err
+		}
+		populateRGWFrontends(observedByMember, rgwFrontends)
 
 		for _, om := range observedByMember {
 			status.Observed = append(status.Observed, *om)
