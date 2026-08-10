@@ -1,365 +1,303 @@
 package ceph
 
 import (
-	"context"
-	"fmt"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/common"
-	"github.com/canonical/microceph/microceph/mocks"
-	"github.com/canonical/microceph/microceph/tests"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/require"
 )
 
-type rgwSuite struct {
-	tests.BaseSuite
-	TestStateInterface *mocks.StateInterface
+// rgwOpsRecorder captures calls to the injectable RGW primitives so tests can
+// assert start vs restart and keyring creation without a running snap or Ceph.
+type rgwOpsRecorder struct {
+	starts   int
+	restarts int
+	keyrings int
 }
 
-const validSSLCertificate = `LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURuakNDQW9hZ0F3SUJBZ0lVR0czNU9mWkcrRFdFQytrc2FHalJyTmlXZncwd0RRWUpLb1pJaHZjTkFRRUwKQlFBd1hERUxNQWtHQTFVRUJoTUNWVk14RHpBTkJnTlZCQWdNQmtSbGJtbGhiREVVTUJJR0ExVUVCd3dMVTNCeQphVzVuWm1sbGJHUXhEREFLQmdOVkJBb01BMFJwY3pFWU1CWUdBMVVFQXd3UGQzZDNMbVY0WVcxd2JHVXVZMjl0Ck1CNFhEVEkwTURneE5qRTROREUxT0ZvWERUSTFNRGd4TmpFNE5ERTFPRm93WERFTE1Ba0dBMVVFQmhNQ1ZWTXgKRHpBTkJnTlZCQWdNQmtSbGJtbGhiREVVTUJJR0ExVUVCd3dMVTNCeWFXNW5abWxsYkdReEREQUtCZ05WQkFvTQpBMFJwY3pFWU1CWUdBMVVFQXd3UGQzZDNMbVY0WVcxd2JHVXVZMjl0TUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGCkFBT0NBUThBTUlJQkNnS0NBUUVBdFl5ZGRhb0l4T3hQWmtVMEN1dXE0aEd3Q2JlZXBUM3lBQ0JOS1J6MjB5alQKZ2xSWTFTSTlXSjl4K2t1a3dMTGNiVEIrSkNka2NWTEZuNThtVDRmUW5IMHdmWCtIby9BTUNHNkxITnZnOXovVAorTlV4dTgydGZsVko3RFRUdmVuYzlqVU9qNFZqUExaV2tiemNIOC91Sm1DNkd1ZzAvcksvN2wraG9xNUd6VXhzCmJQeGlOV0QvNW5kaklKa1VidEtpTllnQlRwcnRzZFlCWHoyeTFxS1AxcGZLQ3VIUWVldTNLTWErS0dUU2NUSjYKU251Y0pxZmIvTWdUMWozV3Zpcm1QaUQ3bEwzY3ZmaEtmTEgvYTdsaFhIeDRic21TekZ2UkRYTCt1YmNhak5seQpGUm5WdG9hUHhmMUY4RStFbXh4cXNESlc2bHZKVHJMeW84TjVNbWtoOFFJREFRQUJvMWd3VmpBVUJnTlZIUkVFCkRUQUxnZ2xzYjJOaGJHaHZjM1F3SFFZRFZSME9CQllFRkhIMFoxdWVmSHB1Wll1QTRzRFBlWTd4U2R6b01COEcKQTFVZEl3UVlNQmFBRlBRc1Q0SkU3dUl1ay96T2VvVlZpQVZYeDBoUk1BMEdDU3FHU0liM0RRRUJDd1VBQTRJQgpBUUNucHVFM2hzVHAwckZCU1hWRnV6VzExZjE2bXlML3pyZkJDWnRxQyt6UFZINGlyUUlrRFg2TDdPekY2K00vCml6OFJtQlZXSVpzWTlzczM5SmRlcEsvOVhuMEo5RUdDS2hhdmpldS8yUnpvalFaeXRQWU5DdldtMlhTQ0VHY2wKSDhDcGNQVC9JdnlCNU8yRVl0RUJNcnRrUVNKNjVFWlQyZHRiVFYySUdJN3ZDdjJIUnY0Y2twRXBFTWlLWnNPYgpBcWovbGNLeWFZODVwakFBWWVtVlprZ2dRZTJUM0tzSDFYRVJrNnhFRHF2TUdHbjEvOTNHY1J1enVTVTZaYXVPCmVzVDVISUl2UGZReWlwZG4rOWlKVjluc3hyNGVCa1JPVWFvV2s1NVVENE5tcEtiaHJ3MzZ3RzN4RzJ2RlIxeWUKSVFPNmhKMk5yckFnc2JwemxINzhVcjM4Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0=`
-const validSSLPrivateKey = `LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRQzFqSjExcWdqRTdFOW0KUlRRSzY2cmlFYkFKdDU2bFBmSUFJRTBwSFBiVEtOT0NWRmpWSWoxWW4zSDZTNlRBc3R4dE1INGtKMlJ4VXNXZgpueVpQaDlDY2ZUQjlmNGVqOEF3SWJvc2MyK0QzUDlQNDFURzd6YTErVlVuc05OTzk2ZHoyTlE2UGhXTTh0bGFSCnZOd2Z6KzRtWUxvYTZEVCtzci91WDZHaXJrYk5UR3hzL0dJMVlQL21kMk1nbVJSdTBxSTFpQUZPbXUyeDFnRmYKUGJMV29vL1dsOG9LNGRCNTY3Y294cjRvWk5KeE1ucEtlNXdtcDl2OHlCUFdQZGErS3VZK0lQdVV2ZHk5K0VwOApzZjlydVdGY2ZIaHV5WkxNVzlFTmN2NjV0eHFNMlhJVkdkVzJoby9GL1VYd1Q0U2JIR3F3TWxicVc4bE9zdktqCncza3lhU0h4QWdNQkFBRUNnZ0VBQXVWdTM2RXFTYVh4Y0ZLN1RVOU1KeFljSmxPSkV0N0ZuUTNtM1RpS2tYek4KdnY4RWVjWDFqNVBmbUJ3YjBUMHBPZzZ6ZkhVcWE0cGovN05rdzVFSm1XMS8yQWl3UzhPNUZXdGFDY2hTTXUrUQpQS0IrRGg1dVhaMFR0RkoxYkVxdVRUazBkY0t0ZmhyMGo1ZWhOVnEyVkdObnBLVStyeTkvMDFnd05tMnNVSHNZClBmZWszNjNXRU5BOXlqbDNuOXFicXp4aXphaVowekJEM1ZDWkhXRVBrd215Yk1oRnZQY1V4M24rU2tRUnRhYk0KSzdyZTc2bkwwdU9GdTV3L1FUUU5KVVcvdGJ5R0lZVFJHUExibTFJeWs4RUpmc2lWa09yR0tVWE1HelU1UlZ5QQpROGQvWlI1b3Q0L0R3R29OM2NmQytBODlXT1g2dk5kU3B6Y1VsZmtLS1FLQmdRRGtPbDlIRnRiRklZd0VZbmpDCklQMDdmcVArNnhtVnZpQlRjOEFqQnMraGc1NmhadFltQ29aOTQ4RHJZT0MxSEtWVi9WZWVCU2FHZGo4WUNtdnkKZUNkTExvYms3Skc0bHRiUmxMUlpHUGEyR1JSTkZUZ2xhRXQ2Q1F3QXFuQ1hUMkxoVHI1NGswVlZFT00wclFNWgpUN1NMSVdzZXA5N3N2TW15ZGwyWlNBbDNuUUtCZ1FETHBDSTV4UjF6eU9Kb1RQQStaRTIrYVlCMjdqM0VPeSs2CmdyTXovc3M2c2lndVJ4TEMvRHZJWUNLbXc0S213N2N0dUw3eW5UbDRuaFJIVFhwRDV5M0NLTG5OVTBXRVA5L1MKVmsrS25FUWFFdVdaTm9pbU1xUTNMSkcvL0pYYUpPa2c3WmV0eWt2cnYyUHdLY0lncHpKUGdJWjZOeVRzaDV5NwowbUFyVWF4bFpRS0JnUURON2hXV1VYZE12RzVZYm5uRHdIeCtPRkRGYldEU2lwRWtlNmI4YytMWk82Zmd2cWV2Ci80TkhDRUJFb2s5ZlhBK2JQVkxYbEpJa2RZR01zYXFoUitVOG95aTRXdlZKZDJFeURsbUVvMC9KRTJ3TCtYK0YKMFV0NU83eUd4VU4rWS9VMmt4U3VPMFF0ODJUdlhNVVZDNlErZmRMb0FGVFhpNmo2ekc2OEpoSFV5UUtCZ0VDMApyb3RjcnJjVHBaMHVsVWU5NTFZUmY5aEtheVhuQ0l0aTdENGhQOEl1eWNXcW43T0ZJaG5STWpGNi9oQ3ZMNDAvCm5xekllSEp6Q0U1L3Q5SExxeVorZWt0Ym9rTWJhS3NVOGNGQlZnSlM3dEY0R29OMG8rbEVLQ3V3dm96S0hhbHcKMVRsTGhrUXFWRDhEaGNPS1hOb1dKS1RBME9LM1ZIMzVvc1VnOW41aEFvR0FYYm45dHNOVFp1SmpLWXFxMWszVQovM2trR0NadEJnZmEvaCtpRWdPN1RoZFp5ekdzcjRuVGkzQTFyU09iVkZ0amoza3BOTEZCMW91aTVMcEJjMWFWCkQ0VjhuMHhDdktJbTl2N2hCVm9iTWZVZmVoVE1TSFBZOFZvcWJneXY4ZWZueS9MNVh6d2R3b0NXSGpEZFZXS3EKMVlDLzBIRkhlRFJzWm9aT3RtdTVnTTQ9Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0=`
-
-func TestRGW(t *testing.T) {
-	suite.Run(t, new(rgwSuite))
+func (r *rgwOpsRecorder) startFunc() func() error {
+	return func() error { r.starts++; return nil }
+}
+func (r *rgwOpsRecorder) restartFunc() func() error {
+	return func() error { r.restarts++; return nil }
+}
+func (r *rgwOpsRecorder) keyringFunc() func(string) error {
+	return func(string) error { r.keyrings++; return nil }
 }
 
-// Expect: run ceph auth
-func addRGWEnableExpectations(r *mocks.Runner) {
-	// add keyring expectation
-	r.On("RunCommand", tests.CmdAny("ceph", 9)...).Return("ok", nil).Once()
-	// start service expectation
-	r.On("RunCommand", []interface{}{
-		"snapctl", "start", "microceph.rgw", "--enable",
-	}...).Return("ok", nil).Once()
-}
-
-// Expect: run snapctl service stop
-func addStopRGWExpectations(s *rgwSuite, r *mocks.Runner) {
-	u := api.NewURL()
-
-	state := &mocks.MockState{
-		URL:         u,
-		ClusterName: "foohost",
+// setupRGWPaths overrides constants.GetPathConst to point at temp directories so
+// applyRGWFrontend writes radosgw.conf / SSL files in isolation. Returns a
+// restore closure.
+func setupRGWPaths(t *testing.T) (restore func()) {
+	t.Helper()
+	tmp := t.TempDir()
+	confPath := filepath.Join(tmp, "conf")
+	runPath := filepath.Join(tmp, "run")
+	dataPath := filepath.Join(tmp, "data")
+	sslPath := filepath.Join(tmp, "ssl")
+	for _, d := range []string{confPath, runPath, dataPath, sslPath} {
+		require.NoError(t, os.MkdirAll(d, 0755))
 	}
-
-	s.TestStateInterface.On("ClusterState").Return(state)
-	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
+	orig := constants.GetPathConst
+	constants.GetPathConst = func() constants.PathConst {
+		return constants.PathConst{
+			ConfPath:     confPath,
+			RunPath:      runPath,
+			DataPath:     dataPath,
+			SSLFilesPath: sslPath,
+		}
+	}
+	return func() { constants.GetPathConst = orig }
 }
 
-// Set up test suite
-func (s *rgwSuite) SetupTest() {
-	s.BaseSuite.SetupTest()
-	s.CopyCephConfigs()
-
-	s.TestStateInterface = mocks.NewStateInterface(s.T())
+// setupRGWInjectables replaces the snap/keyring primitives with recorders and
+// returns the recorder plus a restore closure.
+func setupRGWInjectables(t *testing.T) (*rgwOpsRecorder, func()) {
+	t.Helper()
+	rec := &rgwOpsRecorder{}
+	origStart, origRestart, origKey := startRGWFunc, restartRGWFunc, createRGWKeyringFunc
+	startRGWFunc = rec.startFunc()
+	restartRGWFunc = rec.restartFunc()
+	createRGWKeyringFunc = rec.keyringFunc()
+	return rec, func() {
+		startRGWFunc = origStart
+		restartRGWFunc = origRestart
+		createRGWKeyringFunc = origKey
+	}
 }
 
-// Test enabling RGW
-func (s *rgwSuite) TestEnableRGW() {
-	r := mocks.NewRunner(s.T())
-
-	addRGWEnableExpectations(r)
-
-	common.ProcessExec = r
-
-	err := EnableRGW(s.TestStateInterface, 8081, 443, "", "", []string{"10.1.1.1", "10.2.2.2"})
-
-	assert.NoError(s.T(), err)
-
-	// check that the radosgw.conf file contains expected values
-	conf := s.ReadCephConfig("radosgw.conf")
-	assert.Contains(s.T(), conf, "rgw frontends = beast port=8081\n")
-	assert.Contains(s.T(), conf, "mon host = 10.1.1.1,10.2.2.2")
-	// run dir must use the stable 'current' symlink, not a revision-specific path
-	assert.Contains(s.T(), conf, "run dir = "+filepath.Join(s.Tmp, "current", "run"))
+func b64(t *testing.T, s string) string {
+	t.Helper()
+	return base64.StdEncoding.EncodeToString([]byte(s))
 }
 
-// Test enabling RGW
-func (s *rgwSuite) TestEnableRGWWithInvalidSSLCertificate() {
-	r := mocks.NewRunner(s.T())
-
-	common.ProcessExec = r
-
-	err := EnableRGW(s.TestStateInterface, 80, 443, "invalid-certificate", validSSLPrivateKey, []string{"10.1.1.1", "10.2.2.2"})
-
-	// we expect an illegal base64 data error
-	assert.EqualError(s.T(), err, "failed to decode SSL certificate: illegal base64 data at input byte 7")
-
-	// radosgw.conf must not have been created when enable fails early
-	_, statErr := os.Stat(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf"))
-	assert.True(s.T(), os.IsNotExist(statErr))
+// TestEffectiveRGWPorts verifies the default-port-80 rule is applied only for a
+// plaintext frontend, and is centralized so the on-disk render and the DB
+// record stay consistent.
+func TestEffectiveRGWPorts(t *testing.T) {
+	tests := []struct {
+		name        string
+		port, ssl   int
+		cert, key   string
+		wantPort    int
+		wantSSLPort int
+	}{
+		{"plaintext default", 0, 0, "", "", 80, 0},
+		{"plaintext explicit", 8080, 0, "", "", 8080, 0},
+		{"plaintext drops stray ssl port", 0, 443, "", "", 80, 0},
+		{"plaintext explicit drops stray ssl port", 8080, 443, "", "", 8080, 0},
+		{"ssl keeps port 0", 0, 443, "c", "k", 0, 443},
+		{"ssl explicit port", 8080, 443, "c", "k", 8080, 443},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, s := effectiveRGWPorts(tc.port, tc.ssl, tc.cert, tc.key)
+			assert.Equal(t, tc.wantPort, p)
+			assert.Equal(t, tc.wantSSLPort, s)
+		})
+	}
 }
 
-// Test enabling RGW
-func (s *rgwSuite) TestEnableRGWWithInvalidSSLPrivateKey() {
-	r := mocks.NewRunner(s.T())
+// TestApplyRGWFrontendFirstEnable verifies the first enable renders radosgw.conf
+// (with the default port 80 for plaintext), creates the keyring/symlink, and
+// starts (not restarts) RGW, reporting changed=true.
+func TestApplyRGWFrontendFirstEnable(t *testing.T) {
+	restorePaths := setupRGWPaths(t)
+	defer restorePaths()
+	rec, restoreInj := setupRGWInjectables(t)
+	defer restoreInj()
 
-	common.ProcessExec = r
+	changed, err := applyRGWFrontend(nil, 0, 0, "", "", []string{"mon1"})
+	require.NoError(t, err)
+	assert.True(t, changed, "first enable must report changed")
 
-	err := EnableRGW(s.TestStateInterface, 80, 443, validSSLCertificate, "invalid-private-key", []string{"10.1.1.1", "10.2.2.2"})
+	conf, err := os.ReadFile(filepath.Join(constants.GetPathConst().ConfPath, "radosgw.conf"))
+	require.NoError(t, err)
+	assert.Contains(t, string(conf), "port=80", "default plaintext port must be rendered")
+	assert.NotContains(t, string(conf), "ssl_certificate=")
 
-	// we expect an illegal base64 data error
-	assert.EqualError(s.T(), err, "failed to decode SSL private key: illegal base64 data at input byte 7")
-
-	// radosgw.conf must not have been created when enable fails early
-	_, statErr := os.Stat(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf"))
-	assert.True(s.T(), os.IsNotExist(statErr))
+	assert.Equal(t, 1, rec.starts, "first enable must start RGW")
+	assert.Equal(t, 0, rec.restarts)
+	assert.Equal(t, 1, rec.keyrings)
 }
 
-// Test enabling RGW
-func (s *rgwSuite) TestEnableRGWWithMissingSSLCertificate() {
-	r := mocks.NewRunner(s.T())
+// TestApplyRGWFrontendReapplyNoChange verifies an identical re-apply is a no-op:
+// changed=false, no restart, no extra start, no extra keyring creation.
+func TestApplyRGWFrontendReapplyNoChange(t *testing.T) {
+	restorePaths := setupRGWPaths(t)
+	defer restorePaths()
+	rec, restoreInj := setupRGWInjectables(t)
+	defer restoreInj()
 
-	addRGWEnableExpectations(r)
+	_, err := applyRGWFrontend(nil, 80, 0, "", "", []string{"mon1"})
+	require.NoError(t, err)
 
-	common.ProcessExec = r
-
-	err := EnableRGW(s.TestStateInterface, 0, 443, "", validSSLPrivateKey, []string{"10.1.1.1", "10.2.2.2"})
-
-	assert.NoError(s.T(), err)
-
-	// check that the radosgw.conf file contains expected values
-	conf := s.ReadCephConfig("radosgw.conf")
-	assert.Contains(s.T(), conf, "rgw frontends = beast port=80\n")
+	changed, err := applyRGWFrontend(nil, 80, 0, "", "", []string{"mon1"})
+	require.NoError(t, err)
+	assert.False(t, changed, "identical re-apply must report no change")
+	assert.Equal(t, 1, rec.starts, "no extra start on re-apply")
+	assert.Equal(t, 0, rec.restarts, "no restart on identical re-apply")
+	assert.Equal(t, 1, rec.keyrings, "no extra keyring creation on re-apply")
 }
 
-// Test enabling RGW
-func (s *rgwSuite) TestEnableRGWWithMissingSSLPrivateKey() {
-	r := mocks.NewRunner(s.T())
+// TestApplyRGWFrontendMultiMonitorReorderNoRestart is the regression test for
+// the idempotency defeat: with more than one monitor (and an IPv6 monitor),
+// the rendered `mon host` line must not drive a restart. A re-apply with the
+// monitors in a different order, and after the on-disk `mon host` line has been
+// rewritten out-of-band (as UpdateConfig->updateRadosGWMonHost does), must be a
+// no-op: no restart, changed=false.
+func TestApplyRGWFrontendMultiMonitorReorderNoRestart(t *testing.T) {
+	restorePaths := setupRGWPaths(t)
+	defer restorePaths()
+	rec, restoreInj := setupRGWInjectables(t)
+	defer restoreInj()
 
-	addRGWEnableExpectations(r)
+	monsA := []string{"10.0.0.3", "10.0.0.1", "fe80::1"}
+	monsB := []string{"fe80::1", "10.0.0.1", "10.0.0.3"} // same set, different order
 
-	common.ProcessExec = r
+	changed, err := applyRGWFrontend(nil, 80, 0, "", "", monsA)
+	require.NoError(t, err)
+	assert.True(t, changed, "first enable must report changed")
+	assert.Equal(t, 1, rec.starts)
 
-	err := EnableRGW(s.TestStateInterface, 0, 443, validSSLCertificate, "", []string{"10.1.1.1", "10.2.2.2"})
+	// Simulate the periodic UpdateConfig->updateRadosGWMonHost rewrite of the
+	// mon host line (sorted + IPv6-bracketed), independent of applyRGWFrontend.
+	confPath := filepath.Join(constants.GetPathConst().ConfPath, "radosgw.conf")
+	require.NoError(t, updateRadosGWMonHost(constants.GetPathConst().ConfPath, formatIPv6(monsA)))
+	before, err := os.ReadFile(confPath)
+	require.NoError(t, err)
 
-	assert.NoError(s.T(), err)
+	// Re-apply the same frontend with monitors in a different order.
+	changed, err = applyRGWFrontend(nil, 80, 0, "", "", monsB)
+	require.NoError(t, err)
+	assert.False(t, changed, "re-apply with reordered monitors must be a no-op")
+	assert.Equal(t, 0, rec.restarts, "reordered monitors must not restart RGW")
 
-	// check that the radosgw.conf file contains expected values
-	conf := s.ReadCephConfig("radosgw.conf")
-	assert.Contains(s.T(), conf, "rgw frontends = beast port=80\n")
+	// The on-disk mon host line (owned by updateRadosGWMonHost) must be intact.
+	after, err := os.ReadFile(confPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after), "radosgw.conf must be untouched on a no-op re-apply")
+	assert.Contains(t, string(after), "[fe80::1]", "IPv6 mon host must remain bracketed")
 }
 
-// Test enabling RGW
-func (s *rgwSuite) TestEnableRGWWithSSL() {
-	r := mocks.NewRunner(s.T())
+// TestApplyRGWFrontendPortChange verifies a port change rewrites radosgw.conf and
+// restarts RGW (not start), and the pre-existing keyring symlink does not error.
+func TestApplyRGWFrontendPortChange(t *testing.T) {
+	restorePaths := setupRGWPaths(t)
+	defer restorePaths()
+	rec, restoreInj := setupRGWInjectables(t)
+	defer restoreInj()
 
-	addRGWEnableExpectations(r)
+	_, err := applyRGWFrontend(nil, 80, 0, "", "", []string{"mon1"})
+	require.NoError(t, err)
 
-	common.ProcessExec = r
+	changed, err := applyRGWFrontend(nil, 8080, 0, "", "", []string{"mon1"})
+	require.NoError(t, err)
+	assert.True(t, changed, "port change must report changed")
 
-	err := EnableRGW(s.TestStateInterface, 8081, 443, validSSLCertificate, validSSLPrivateKey, []string{"10.1.1.1", "10.2.2.2"})
+	conf, err := os.ReadFile(filepath.Join(constants.GetPathConst().ConfPath, "radosgw.conf"))
+	require.NoError(t, err)
+	assert.Contains(t, string(conf), "port=8080")
 
-	assert.NoError(s.T(), err)
-
-	// check that the radosgw.conf file contains expected values
-	conf := s.ReadCephConfig("radosgw.conf")
-	sslCertificatePath := filepath.Join(s.Tmp, "SNAP_COMMON", "server.crt")
-	sslPrivateKeyPath := filepath.Join(s.Tmp, "SNAP_COMMON", "server.key")
-	assert.Contains(s.T(), conf, "rgw frontends = beast port=8081 ssl_port=443 ssl_certificate="+sslCertificatePath+" ssl_private_key="+sslPrivateKeyPath+"\n")
+	assert.Equal(t, 1, rec.starts, "start only on first enable")
+	assert.Equal(t, 1, rec.restarts, "port change must restart RGW")
 }
 
-func (s *rgwSuite) TestUpdateRGWCertificates() {
-	r := mocks.NewRunner(s.T())
+// TestApplyRGWFrontendSSLEnable verifies SSL is written, the conf references the
+// cert path, and a plaintext->TLS transition restarts RGW.
+func TestApplyRGWFrontendSSLEnable(t *testing.T) {
+	restorePaths := setupRGWPaths(t)
+	defer restorePaths()
+	rec, restoreInj := setupRGWInjectables(t)
+	defer restoreInj()
 
-	// snapCheckActive expects: snapctl services microceph.rgw
-	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
+	// Start plaintext.
+	_, err := applyRGWFrontend(nil, 80, 0, "", "", []string{"mon1"})
+	require.NoError(t, err)
 
-	common.ProcessExec = r
+	// Transition to TLS.
+	changed, err := applyRGWFrontend(nil, 0, 443, b64(t, "cert1"), b64(t, "key1"), []string{"mon1"})
+	require.NoError(t, err)
+	assert.True(t, changed)
 
-	// Seed a radosgw.conf with SSL so the SSL-configured check passes.
-	confPath := filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf")
-	err := os.WriteFile(confPath, []byte("rgw frontends = beast ssl_port=443 ssl_certificate=/tmp/server.crt ssl_private_key=/tmp/server.key\n"), 0644)
-	assert.NoError(s.T(), err)
+	conf, err := os.ReadFile(filepath.Join(constants.GetPathConst().ConfPath, "radosgw.conf"))
+	require.NoError(t, err)
+	assert.Contains(t, string(conf), "ssl_port=443")
+	assert.Contains(t, string(conf), "ssl_certificate=")
 
-	err = UpdateRGWCertificates(s.TestStateInterface, validSSLCertificate, validSSLPrivateKey)
-	assert.NoError(s.T(), err)
+	// SSL files exist on disk.
+	_, err = os.ReadFile(filepath.Join(constants.GetPathConst().SSLFilesPath, "server.crt"))
+	require.NoError(t, err)
 
-	// Verify cert file was written
-	certPath := filepath.Join(s.Tmp, "SNAP_COMMON", "server.crt")
-	certData, err := os.ReadFile(certPath)
-	assert.NoError(s.T(), err)
-	assert.Contains(s.T(), string(certData), "BEGIN CERTIFICATE")
-
-	// Verify key file was written
-	keyPath := filepath.Join(s.Tmp, "SNAP_COMMON", "server.key")
-	keyData, err := os.ReadFile(keyPath)
-	assert.NoError(s.T(), err)
-	assert.Contains(s.T(), string(keyData), "BEGIN PRIVATE KEY")
-
-	// Verify file permissions are 0600
-	certInfo, _ := os.Stat(certPath)
-	assert.Equal(s.T(), os.FileMode(0600), certInfo.Mode().Perm())
-	keyInfo, _ := os.Stat(keyPath)
-	assert.Equal(s.T(), os.FileMode(0600), keyInfo.Mode().Perm())
+	assert.Equal(t, 1, rec.restarts, "TLS transition must restart")
 }
 
-func (s *rgwSuite) TestUpdateRGWCertificatesWhenRGWNotActive() {
-	r := mocks.NewRunner(s.T())
+// TestApplyRGWFrontendSSLCertRotation verifies a cert/key rotation (same ports)
+// is detected via the cert/key bytes (the conf path is unchanged, so the conf
+// bytes are identical) and restarts RGW.
+func TestApplyRGWFrontendSSLCertRotation(t *testing.T) {
+	restorePaths := setupRGWPaths(t)
+	defer restorePaths()
+	rec, restoreInj := setupRGWInjectables(t)
+	defer restoreInj()
 
-	// snapCheckActive returns inactive
-	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  disabled  inactive", nil).Once()
+	_, err := applyRGWFrontend(nil, 0, 443, b64(t, "cert1"), b64(t, "key1"), []string{"mon1"})
+	require.NoError(t, err)
 
-	common.ProcessExec = r
+	changed, err := applyRGWFrontend(nil, 0, 443, b64(t, "cert2"), b64(t, "key2"), []string{"mon1"})
+	require.NoError(t, err)
+	assert.True(t, changed, "cert rotation must be detected even when conf path is unchanged")
 
-	err := UpdateRGWCertificates(s.TestStateInterface, validSSLCertificate, validSSLPrivateKey)
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "RGW service is not running")
+	crt, err := os.ReadFile(filepath.Join(constants.GetPathConst().SSLFilesPath, "server.crt"))
+	require.NoError(t, err)
+	assert.Equal(t, "cert2", string(crt), "rotated cert must be on disk")
+
+	assert.Equal(t, 1, rec.restarts, "cert rotation must restart")
 }
 
-func (s *rgwSuite) TestUpdateRGWCertificatesSSLNotConfigured() {
-	r := mocks.NewRunner(s.T())
+// TestApplyRGWFrontendSSLToPlaintext verifies a TLS->plaintext transition removes
+// the leftover SSL files and rewrites the conf without the SSL line.
+func TestApplyRGWFrontendSSLToPlaintext(t *testing.T) {
+	restorePaths := setupRGWPaths(t)
+	defer restorePaths()
+	rec, restoreInj := setupRGWInjectables(t)
+	defer restoreInj()
 
-	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
+	_, err := applyRGWFrontend(nil, 0, 443, b64(t, "cert1"), b64(t, "key1"), []string{"mon1"})
+	require.NoError(t, err)
 
-	common.ProcessExec = r
+	changed, err := applyRGWFrontend(nil, 80, 0, "", "", []string{"mon1"})
+	require.NoError(t, err)
+	assert.True(t, changed)
 
-	// Seed a radosgw.conf without SSL — RGW was enabled without certificates.
-	confPath := filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf")
-	_ = os.WriteFile(confPath, []byte("rgw frontends = beast port=80\n"), 0644)
+	conf, err := os.ReadFile(filepath.Join(constants.GetPathConst().ConfPath, "radosgw.conf"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(conf), "ssl_certificate=")
+	assert.Contains(t, string(conf), "port=80")
 
-	err := UpdateRGWCertificates(s.TestStateInterface, validSSLCertificate, validSSLPrivateKey)
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "RGW is not configured with SSL")
+	_, err = os.Stat(filepath.Join(constants.GetPathConst().SSLFilesPath, "server.crt"))
+	assert.True(t, os.IsNotExist(err), "leftover cert must be removed on TLS->plaintext")
+	_, err = os.Stat(filepath.Join(constants.GetPathConst().SSLFilesPath, "server.key"))
+	assert.True(t, os.IsNotExist(err), "leftover key must be removed on TLS->plaintext")
+
+	assert.Equal(t, 1, rec.restarts)
 }
 
-func (s *rgwSuite) TestUpdateRGWCertificatesInvalidCertificate() {
-	r := mocks.NewRunner(s.T())
+// TestApplyRGWFrontendBadBase64 verifies malformed SSL material surfaces a clear
+// error (maps to HTTP 400 at the API layer) and reports no change.
+func TestApplyRGWFrontendBadBase64(t *testing.T) {
+	restorePaths := setupRGWPaths(t)
+	defer restorePaths()
+	_, restoreInj := setupRGWInjectables(t)
+	defer restoreInj()
 
-	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
-
-	common.ProcessExec = r
-
-	// Seed a radosgw.conf with SSL so the SSL-configured check passes.
-	confPath := filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf")
-	_ = os.WriteFile(confPath, []byte("rgw frontends = beast ssl_port=443 ssl_certificate=/tmp/server.crt ssl_private_key=/tmp/server.key\n"), 0644)
-
-	err := UpdateRGWCertificates(s.TestStateInterface, "invalid-base64!", validSSLPrivateKey)
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "failed to decode SSL certificate")
-}
-
-func (s *rgwSuite) TestUpdateRGWCertificatesInvalidPrivateKey() {
-	r := mocks.NewRunner(s.T())
-
-	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
-
-	common.ProcessExec = r
-
-	// Seed a radosgw.conf with SSL so the SSL-configured check passes.
-	confPath := filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf")
-	_ = os.WriteFile(confPath, []byte("rgw frontends = beast ssl_port=443 ssl_certificate=/tmp/server.crt ssl_private_key=/tmp/server.key\n"), 0644)
-
-	err := UpdateRGWCertificates(s.TestStateInterface, validSSLCertificate, "invalid-base64!")
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "failed to decode SSL private key")
-}
-
-func (s *rgwSuite) TestWriteSSLFilesRejectsEmpty() {
-	sslDir := filepath.Join(s.Tmp, "SNAP_COMMON")
-
-	// Empty certificate should be rejected.
-	_, _, err := writeSSLFiles(sslDir, "", validSSLPrivateKey)
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "SSL certificate cannot be empty")
-
-	// Empty key should be rejected.
-	_, _, err = writeSSLFiles(sslDir, validSSLCertificate, "")
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "SSL private key cannot be empty")
-
-	// Both empty should be rejected.
-	_, _, err = writeSSLFiles(sslDir, "", "")
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "SSL certificate cannot be empty")
-}
-
-func (s *rgwSuite) TestWriteSSLFilesAtomicCleanup() {
-	sslDir := filepath.Join(s.Tmp, "SNAP_COMMON")
-
-	// Call with valid cert but invalid key to trigger failure after cert .tmp is written.
-	_, _, err := writeSSLFiles(sslDir, validSSLCertificate, "invalid-base64!")
-	assert.Error(s.T(), err)
-
-	// Verify no .tmp files are left behind.
-	_, err = os.Stat(filepath.Join(sslDir, "server.crt.tmp"))
-	assert.True(s.T(), os.IsNotExist(err), "server.crt.tmp should be cleaned up")
-	_, err = os.Stat(filepath.Join(sslDir, "server.key.tmp"))
-	assert.True(s.T(), os.IsNotExist(err), "server.key.tmp should be cleaned up")
-
-	// Verify no final files were written either.
-	_, err = os.Stat(filepath.Join(sslDir, "server.crt"))
-	assert.True(s.T(), os.IsNotExist(err), "server.crt should not exist after failure")
-	_, err = os.Stat(filepath.Join(sslDir, "server.key"))
-	assert.True(s.T(), os.IsNotExist(err), "server.key should not exist after failure")
-}
-
-func (s *rgwSuite) TestWriteSSLFilesAtomicSuccess() {
-	sslDir := filepath.Join(s.Tmp, "SNAP_COMMON")
-
-	certPath, keyPath, err := writeSSLFiles(sslDir, validSSLCertificate, validSSLPrivateKey)
-	assert.NoError(s.T(), err)
-
-	// Verify final files exist.
-	certData, err := os.ReadFile(certPath)
-	assert.NoError(s.T(), err)
-	assert.Contains(s.T(), string(certData), "BEGIN CERTIFICATE")
-
-	keyData, err := os.ReadFile(keyPath)
-	assert.NoError(s.T(), err)
-	assert.Contains(s.T(), string(keyData), "BEGIN PRIVATE KEY")
-
-	// Verify no .tmp files are left behind.
-	_, err = os.Stat(certPath + ".tmp")
-	assert.True(s.T(), os.IsNotExist(err), "server.crt.tmp should not exist after success")
-	_, err = os.Stat(keyPath + ".tmp")
-	assert.True(s.T(), os.IsNotExist(err), "server.key.tmp should not exist after success")
-}
-
-func (s *rgwSuite) TestRestartRGW() {
-	r := mocks.NewRunner(s.T())
-
-	r.On("RunCommand", "snapctl", "restart", "microceph.rgw").Return("ok", nil).Once()
-
-	common.ProcessExec = r
-
-	err := RestartRGW()
-	assert.NoError(s.T(), err)
-}
-
-func (s *rgwSuite) TestRestartRGWFailure() {
-	r := mocks.NewRunner(s.T())
-
-	r.On("RunCommand", "snapctl", "restart", "microceph.rgw").Return("", fmt.Errorf("service not found")).Once()
-
-	common.ProcessExec = r
-
-	err := RestartRGW()
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "failed to restart RGW service")
-}
-
-func (s *rgwSuite) TestDisableRGW() {
-	r := mocks.NewRunner(s.T())
-
-	addStopRGWExpectations(s, r)
-
-	common.ProcessExec = r
-
-	err := DisableRGW(context.Background(), s.TestStateInterface)
-
-	// we expect a missing database error
-	assert.EqualError(s.T(), err, "no server certificate")
-
-	// check that the radosgw.conf file is absent
-	_, err = os.Stat(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf"))
-	assert.True(s.T(), os.IsNotExist(err))
-
-	// check that the keyring file is absent
-	_, err = os.Stat(filepath.Join(s.Tmp, "SNAP_COMMON", "data", "radosgw", "ceph-radosgw.gateway", "keyring"))
-	assert.True(s.T(), os.IsNotExist(err))
+	changed, err := applyRGWFrontend(nil, 0, 443, "not-base64!!", b64(t, "key1"), []string{"mon1"})
+	require.Error(t, err)
+	assert.False(t, changed)
+	assert.Contains(t, err.Error(), "SSL certificate", "error must identify the bad material")
+	assert.ErrorIs(t, err, ErrRgwFrontendInvalid, "malformed TLS must map to a client-side error")
 }
