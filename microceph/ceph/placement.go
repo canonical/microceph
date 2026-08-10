@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -277,6 +278,16 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 		}
 	}
 
+	// RGW pass (CE142 Option B): reconcile role-managed RGW placement after the
+	// control pass so control quorum is established first. RGW has no keep-one
+	// invariant (scale-to-zero is allowed); it follows add-before-remove so a
+	// migration keeps a gateway serving. An omitted rgw field (nil) leaves the
+	// member untouched; enabled:false removes RGW only where it is observed.
+	err = applyRgwPlacement(ctx, s, policy)
+	if err != nil {
+		return err
+	}
+
 	if len(refused) > 0 {
 		return fmt.Errorf("%w: refused to remove last control service(s): %s", ErrKeepOneInvariant, strings.Join(refused, ", "))
 	}
@@ -343,6 +354,138 @@ func prodAddControlService(ctx context.Context, s interfaces.StateInterface, mem
 func prodRemoveControlService(ctx context.Context, s interfaces.StateInterface, member string, service string) error {
 	if ProdRemoveControlServiceFunc != nil {
 		return ProdRemoveControlServiceFunc(ctx, s, member, service)
+	}
+	return nil
+}
+
+// applyRgwPlacement reconciles role-managed RGW placement (CE142 Option B). It
+// runs after the control pass and follows add-before-remove: desired members
+// are enabled first (with their frontend config), then RGW is removed from
+// members that should not have it, but only where it is observed. RGW has no
+// keep-one invariant, so scale-to-zero (all enabled:false / omitted) is
+// honoured. Member iteration is sorted for deterministic ordering and tests.
+func applyRgwPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
+	// Short-circuit when the policy carries no RGW intent: every member's rgw
+	// is omitted (nil), so there is nothing to enable or remove, and an observed
+	// RGW read is unnecessary. This keeps control-only applies from touching RGW
+	// and lets control-only tests skip the RGW observer stub.
+	hasRgwIntent := false
+	for _, mp := range policy.Members {
+		if mp.Rgw != nil {
+			hasRgwIntent = true
+			break
+		}
+	}
+	if !hasRgwIntent {
+		return nil
+	}
+
+	observedRgw, err := getObservedRgwFunc(ctx, s)
+	if err != nil {
+		return fmt.Errorf("failed to get observed RGW services: %w", err)
+	}
+
+	var desiredEnable []string
+	desiredDisable := make(map[string]bool)
+	for memberName, mp := range policy.Members {
+		if mp.Rgw == nil {
+			continue // omitted: untouched
+		}
+		if mp.Rgw.Enabled {
+			desiredEnable = append(desiredEnable, memberName)
+		} else {
+			desiredDisable[memberName] = true
+		}
+	}
+	sort.Strings(desiredEnable)
+
+	// Add-before-remove: enable desired members first so a migration keeps a
+	// gateway serving while the old one is torn down.
+	for _, memberName := range desiredEnable {
+		err = enableRgwServiceFunc(ctx, s, memberName, *policy.Members[memberName].Rgw)
+		if err != nil {
+			return fmt.Errorf("failed to enable RGW on %s: %w", memberName, err)
+		}
+	}
+
+	// Then remove RGW from members that should not have it, but only where it is
+	// observed (DisableRGW is idempotent either way; this avoids needless dispatch).
+	disableMembers := make([]string, 0, len(desiredDisable))
+	for m := range desiredDisable {
+		disableMembers = append(disableMembers, m)
+	}
+	sort.Strings(disableMembers)
+	for _, memberName := range disableMembers {
+		if !observedRgw[memberName] {
+			continue
+		}
+		err = removeRgwServiceFunc(ctx, s, memberName)
+		if err != nil {
+			return fmt.Errorf("failed to remove RGW from %s: %w", memberName, err)
+		}
+	}
+	return nil
+}
+
+// getObservedRgwFunc returns the set of members currently running RGW (from the
+// services table). It reports presence only, which is all the reconcile pass
+// needs; the observed frontend ports/TLS come from the rgw_frontends table in
+// the status path, not here. Injectable for testing.
+var getObservedRgwFunc = func(ctx context.Context, s interfaces.StateInterface) (map[string]bool, error) {
+	result := make(map[string]bool)
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		services, err := database.GetServices(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for _, svc := range services {
+			if svc.Service == "rgw" {
+				result[svc.Member] = true
+			}
+		}
+		return nil
+	})
+	return result, err
+}
+
+// enableRgwServiceFunc enables/reconciles RGW (with frontend config) on a
+// member. Injectable for testing; the production implementation dispatches via
+// the service API to the target member.
+var enableRgwServiceFunc = func(ctx context.Context, s interfaces.StateInterface, member string, rgw types.RgwPlacement) error {
+	logger.Infof("Placement: enabling RGW on %s (port=%d, ssl_port=%d, ssl=%v)", member, rgw.Port, rgw.SSLPort, rgw.SSLCertificate != "")
+	return prodEnableRgwService(ctx, s, member, rgw)
+}
+
+// removeRgwServiceFunc disables RGW on a member. Injectable for testing.
+var removeRgwServiceFunc = func(ctx context.Context, s interfaces.StateInterface, member string) error {
+	logger.Infof("Placement: removing RGW from %s", member)
+	return prodRemoveRgwService(ctx, s, member)
+}
+
+// ProdEnableRgwServiceFunc is the injectable hook for the production RGW enable
+// implementation. The daemon package sets this at init time; the default is nil
+// (no-op for tests that don't need real service placement).
+var ProdEnableRgwServiceFunc func(ctx context.Context, s interfaces.StateInterface, member string, rgw types.RgwPlacement) error
+
+// ProdRemoveRgwServiceFunc is the injectable hook for the production RGW remove
+// implementation. The daemon package sets this at init time; the default is nil
+// (no-op for tests that don't need real service removal).
+var ProdRemoveRgwServiceFunc func(ctx context.Context, s interfaces.StateInterface, member string) error
+
+// prodEnableRgwService delegates to the injected production function, or is a
+// no-op when no production function is wired (e.g. in unit tests).
+func prodEnableRgwService(ctx context.Context, s interfaces.StateInterface, member string, rgw types.RgwPlacement) error {
+	if ProdEnableRgwServiceFunc != nil {
+		return ProdEnableRgwServiceFunc(ctx, s, member, rgw)
+	}
+	return nil
+}
+
+// prodRemoveRgwService delegates to the injected production function, or is a
+// no-op when no production function is wired (e.g. in unit tests).
+func prodRemoveRgwService(ctx context.Context, s interfaces.StateInterface, member string) error {
+	if ProdRemoveRgwServiceFunc != nil {
+		return ProdRemoveRgwServiceFunc(ctx, s, member)
 	}
 	return nil
 }
