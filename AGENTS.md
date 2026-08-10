@@ -96,6 +96,24 @@ if err != nil {
 }
 ```
 
+### Config files: microcephd is the sole writer, dqlite is the source of truth
+
+All on-disk config files (`ceph.conf`, keyrings, `radosgw.conf`, NFS
+`ganesha.conf`, etc.) are written **solely by `microcephd`**, and **dqlite is the
+source of truth** for their contents. A config file is a projection of cluster
+state held in the database, not an input to it. Consequences:
+
+- Persist every setting that ends up in a config file in the database (config
+  table, service records, or a dedicated table), then **render the file from the
+  database**. Do not let a value live only on disk.
+- Config files must be reproducible: a member must be able to regenerate an
+  identical file from dqlite after a restart, snap refresh, or rejoin.
+- Never treat an on-disk config file as authoritative state to read back. If you
+  need to know a member's current setting, read it from the database.
+- Operator hand-edits to config files are out of scope and unsupported; the
+  daemon may overwrite them on the next reconcile.
+
+
 ## Building and installing locally
 
 Build the snap:
