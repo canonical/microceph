@@ -639,6 +639,124 @@ func TestCephBootstrapPutUnknownFieldRejected(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "unknown field must be rejected with 400")
 }
 
+// TestPlacementPutStripsSSLMaterialOnStore verifies that cmdPlacementPut stores
+// the policy with the RGW SSL certificate and private key stripped (via
+// ceph.PolicyForStorage), while enabled/port/ssl_port are retained so GET
+// /placement still reports the declared frontend intent.
+func TestPlacementPutStripsSSLMaterialOnStore(t *testing.T) {
+	stubPlacementApplyLock(t)
+	var storedPolicy types.PlacementPolicy
+	storeCalled := false
+	origApply := ceph.ApplyPlacementFunc
+	origStore := ceph.StorePlacementPolicyFunc
+	origRefusal := ceph.SetPlacementRefusalFunc
+	ceph.ApplyPlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+	ceph.StorePlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface, p types.PlacementPolicy) error {
+		storeCalled = true
+		storedPolicy = p
+		return nil
+	}
+	ceph.SetPlacementRefusalFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) error { return nil }
+	defer func() {
+		ceph.ApplyPlacementFunc = origApply
+		ceph.StorePlacementPolicyFunc = origStore
+		ceph.SetPlacementRefusalFunc = origRefusal
+	}()
+
+	body := `{"mode":"reconcile","members":{"node-a":{"rgw":{"enabled":true,"port":8080,"ssl_port":443,"ssl_certificate":"Y2VydA==","ssl_private_key":"a2V5"}}}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
+
+	resp := cmdPlacementPut(nil, req)
+	_ = resp.Render(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.True(t, storeCalled)
+	require.NotNil(t, storedPolicy.Members["node-a"].Rgw, "rgw entry must be stored")
+	assert.Empty(t, storedPolicy.Members["node-a"].Rgw.SSLCertificate, "cert must be stripped before storage")
+	assert.Empty(t, storedPolicy.Members["node-a"].Rgw.SSLPrivateKey, "key must be stripped before storage")
+	assert.True(t, storedPolicy.Members["node-a"].Rgw.Enabled, "enabled must be retained")
+	assert.Equal(t, 8080, storedPolicy.Members["node-a"].Rgw.Port, "port must be retained")
+	assert.Equal(t, 443, storedPolicy.Members["node-a"].Rgw.SSLPort, "ssl_port must be retained")
+}
+
+// TestPlacementPutRGWObjectDecodes verifies that an object-shaped rgw field
+// decodes and reaches ApplyPlacement with the full frontend payload (clean
+// break: the wire type is the object, not a bool).
+func TestPlacementPutRGWObjectDecodes(t *testing.T) {
+	stubPlacementApplyLock(t)
+	var appliedPolicy types.PlacementPolicy
+	origApply := ceph.ApplyPlacementFunc
+	origStore := ceph.StorePlacementPolicyFunc
+	origRefusal := ceph.SetPlacementRefusalFunc
+	ceph.ApplyPlacementFunc = func(_ context.Context, _ interfaces.StateInterface, p types.PlacementPolicy) error {
+		appliedPolicy = p
+		return nil
+	}
+	ceph.StorePlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error { return nil }
+	ceph.SetPlacementRefusalFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) error { return nil }
+	defer func() {
+		ceph.ApplyPlacementFunc = origApply
+		ceph.StorePlacementPolicyFunc = origStore
+		ceph.SetPlacementRefusalFunc = origRefusal
+	}()
+
+	body := `{"mode":"reconcile","members":{"node-a":{"rgw":{"enabled":true,"port":80,"ssl_port":443,"ssl_certificate":"Y2VydA==","ssl_private_key":"a2V5"}}}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
+
+	resp := cmdPlacementPut(nil, req)
+	_ = resp.Render(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code, "object-shaped rgw must decode and apply")
+	require.NotNil(t, appliedPolicy.Members["node-a"].Rgw)
+	assert.True(t, appliedPolicy.Members["node-a"].Rgw.Enabled)
+	assert.Equal(t, "Y2VydA==", appliedPolicy.Members["node-a"].Rgw.SSLCertificate, "SSL material reaches the apply path")
+}
+
+// TestPlacementPutRGWBareBoolRejected verifies the clean break: a bare rgw
+// bool no longer decodes and is rejected with BadRequest.
+func TestPlacementPutRGWBareBoolRejected(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(`{"mode":"reconcile","members":{"node-a":{"rgw":true}}}`))
+
+	resp := cmdPlacementPut(nil, req)
+	_ = resp.Render(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a bare rgw bool must be rejected (clean break)")
+}
+
+// TestPlacementPutMalformedTLSReturns400 verifies that an RGW frontend error
+// (ErrRgwFrontendInvalid, e.g. bad base64 TLS material surfaced from
+// applyRGWFrontend) maps to HTTP 400 rather than the 500 fallback.
+func TestPlacementPutMalformedTLSReturns400(t *testing.T) {
+	stubPlacementApplyLock(t)
+	origApply := ceph.ApplyPlacementFunc
+	origStore := ceph.StorePlacementPolicyFunc
+	origRefusal := ceph.SetPlacementRefusalFunc
+	ceph.ApplyPlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return fmt.Errorf("%w: failed to decode SSL certificate: illegal base64", ceph.ErrRgwFrontendInvalid)
+	}
+	ceph.StorePlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error { return nil }
+	ceph.SetPlacementRefusalFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) error { return nil }
+	defer func() {
+		ceph.ApplyPlacementFunc = origApply
+		ceph.StorePlacementPolicyFunc = origStore
+		ceph.SetPlacementRefusalFunc = origRefusal
+	}()
+
+	body := `{"mode":"reconcile","members":{"node-a":{"rgw":{"enabled":true,"port":80}}}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
+
+	resp := cmdPlacementPut(nil, req)
+	_ = resp.Render(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "malformed TLS must map to 400")
+}
+
 // TestPlacementGetSuccess verifies that cmdPlacementGet returns placement status.
 func TestPlacementGetSuccess(t *testing.T) {
 	origGet := ceph.GetPlacementStatusFunc
