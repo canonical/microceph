@@ -31,7 +31,16 @@ copyright = f"{datetime.date.today().year}"
 html_title = project + " documentation"
 
 # Documentation website URL
-ogp_site_url = os.environ.get("READTHEDOCS_CANONICAL_URL", "/")
+#
+# Update with the official URL of your docs or leave empty if unsure.
+#
+# NOTE: The Open Graph Protocol (OGP) enhances page display in a social graph
+#       and is used by social media platforms; see https://ogp.me/
+
+version_slug = f"{os.environ.get('READTHEDOCS_VERSION', 'local')}"
+
+ogp_site_url = f"https://canonical.com/ceph/docs/{version_slug}/"
+
 
 # Preview name of the documentation website
 # TODO: To use a different name for the project in previews, update the next line.
@@ -116,31 +125,34 @@ html_theme_options = {
     'source_edit_link': 'https://github.com/canonical/microceph',
 }
 
-# Project slug
-# TODO: If your documentation is hosted on https://documentation.ubuntu.com/,
-#       uncomment and set to the RTD slug.
-# slug = ''
+# Project slug; see https://meta.discourse.org/t/what-is-category-slug/87897
+#
+# If your documentation is hosted on https://docs.ubuntu.com/,
+# uncomment and update as needed.
+
+slug = 'ceph/docs'
 
 ###############################################################
 # Sitemap configuration: https://sphinx-sitemap.readthedocs.io/
 ###############################################################
-
-# Use RTD canonical URL to ensure duplicate pages have a specific canonical URL
-html_baseurl = os.environ.get("READTHEDOCS_CANONICAL_URL", "/")
-
-# sphinx-sitemap uses html_baseurl to generate the full URL for each page:
-sitemap_url_scheme = "{link}"
 
 # Include `lastmod` dates in the sitemap:
 sitemap_show_lastmod = True
 
 # URL scheme. Add language and version scheme elements
 # When configured with RTD variables, check for RTD environment so manual runs succeed:
+sitemap_filename = "doc-sitemap.xml"
+
+# Base URL of RTD hosted project
+
+html_baseurl = f"https://canonical.com/ceph/docs/{version_slug}/"
+
+# URL scheme for sitemap generation
+
 if 'READTHEDOCS_VERSION' in os.environ:
-    version = os.environ["READTHEDOCS_VERSION"]
     sitemap_url_scheme = '{version}{link}'
 else:
-    sitemap_url_scheme = 'MANUAL/{link}'
+    sitemap_url_scheme = '{link}'
 
 
 # TODO: Exclude pages that aren't user-facing from the sitemap (e.g., module pages
@@ -288,8 +300,9 @@ html_css_files = ["https://assets.ubuntu.com/v1/d86746ef-cookie_banner.css"]
 
 # Adds custom JavaScript files, located under 'html_static_path'
 
-html_js_files = ["https://assets.ubuntu.com/v1/287a5e8f-bundle.js"]
-
+html_js_files = [
+    "https://assets.ubuntu.com/v1/287a5e8f-bundle.js",
+]
 
 # Appends extra markup to the end of every document written in reST
 # rst_epilog = """

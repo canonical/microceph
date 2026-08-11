@@ -33,7 +33,7 @@ NVMe and SSD devices have a durability characteristic, Drive Writes per Day
 Since Ceph is designed to work with more nodes, each with less storage, it is
 recommended to limit the Ceph raw storage to the allowance per object storage
 daemon (OSD) node as defined in the `Ubuntu Pro service description
-<https://ubuntu.com/legal/ubuntu-advantage-service-description#uasd-storage-support>`_.
+<https://ubuntu.com/legal/ubuntu-advantage-service-description>`_.
 OSDs should always be distributed equally across all available OSD nodes in
 the cluster for predictable performance, higher resilience and sustainable
 maintenance.
