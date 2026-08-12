@@ -56,13 +56,28 @@ const placementApplyLease = 15 * time.Minute
 // used by the API handler so tests can override it.
 var LockPlacementApplyFunc = LockPlacementApply
 
-// LockPlacementApply acquires the cluster-wide placement apply lock (CE142).
-// ApplyPlacement reads observed service state and then mutates services over
-// minutes; two overlapping applies (possibly served by different members)
-// could each count the other's removal targets as keep-one retainers and
-// together remove the last viable control service. The dqlite-backed lock
-// makes the read-modify cycle mutually exclusive across all cluster members.
+// LockPlacementApply acquires the cluster-wide placement apply lock.
+// The dqlite-backed lock makes the whole apply-then-store cycle mutually
+// exclusive across all cluster members. It serves two distinct purposes, and
+// both must hold before it can be narrowed or removed:
 //
+//  1. Control-service safety. ApplyPlacement reads observed service state and
+//     then mutates services over minutes; two overlapping applies (possibly
+//     served by different members) could each count the other's removal
+//     targets as keep-one retainers and together remove the last viable
+//     control service. This rationale is specific to control: the keep-one
+//     decision reads *other* members' state, so a stale snapshot is unsafe.
+//
+//  2. Apply/store atomicity, for every service class. The API handler stores
+//     the policy inside this lock (see cmdPlacementPut), so the stored intent
+//     always matches the apply that ran last. Without it, two overlapping PUTs
+//     could apply in one order and store in the other, leaving GET /placement
+//     reporting a declared policy that contradicts what was actually applied.
+//
+// Non-quorum services such as RGW have no keep-one invariant and decide each
+// member independently, so reason 1 does not apply to them — they ride along
+// on this lock for reason 2 (atomicity), not for safety.
+// 
 // The returned token must be passed to UnlockPlacementApply. If another apply
 // holds the lock, ErrPlacementApplyInProgress is returned; a lock older than
 // placementApplyLease is treated as abandoned and reclaimed.

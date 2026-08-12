@@ -2,6 +2,7 @@
 backend
 backends
 bitmask
+boolean
 Charmcraft
 cjk
 cryptographically
