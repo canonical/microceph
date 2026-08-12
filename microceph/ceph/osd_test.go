@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -1505,4 +1506,119 @@ func (s *osdSuite) TestGetStorageWithRetryExhausted() {
 	_, err := osdmgr.getStorageWithRetry()
 
 	require.ErrorIs(s.T(), err, persistentErr)
+}
+
+// TestCheckStorageEligibility verifies that CheckStorageEligibility enforces OSD enrollment restrictions based on the declarative placement policy.
+func (s *osdSuite) TestCheckStorageEligibility() {
+	ctx := context.Background()
+
+	// Case 1: State is nil. Any member is allowed.
+	{
+		osdmgr := NewOSDManager(nil)
+		err := osdmgr.checkStorageEligibility(ctx)
+		assert.NoError(s.T(), err)
+	}
+
+	// Helper to create a mock state with in-memory SQLite and populate the placement policy table.
+	createTestState := func(active bool, policyJSON string) (*mocks.MockState, func()) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		require.NoError(s.T(), err)
+
+		_, err = db.Exec(`
+CREATE TABLE placement_policy (
+  id               INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+  active           INTEGER NOT NULL DEFAULT 0,
+  policy_json      TEXT,
+  last_refusal     TEXT,
+  apply_lock_token INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO placement_policy (id, active, policy_json) VALUES (1, 0, '');
+`)
+		require.NoError(s.T(), err)
+
+		activeInt := 0
+		if active {
+			activeInt = 1
+		}
+		_, err = db.Exec("UPDATE placement_policy SET active = ?, policy_json = ? WHERE id = 1", activeInt, policyJSON)
+		require.NoError(s.T(), err)
+
+		txFn := func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+			tx, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				return err
+			}
+			err = f(ctx, tx)
+			if err != nil {
+				_ = tx.Rollback()
+				return err
+			}
+			return tx.Commit()
+		}
+
+		mockDB := &mocks.MockDB{TxFn: txFn}
+		state := &mocks.MockState{
+			ClusterName: "node-a",
+			DBObj:       mockDB,
+		}
+
+		cleanup := func() {
+			db.Close()
+		}
+
+		return state, cleanup
+	}
+
+	// Case 2. Active is false, thus there's no enforcement. Allow.
+	{
+		state, cleanup := createTestState(false, "")
+		defer cleanup()
+
+		osdmgr := NewOSDManager(state)
+		err := osdmgr.checkStorageEligibility(ctx)
+		assert.NoError(s.T(), err)
+	}
+
+	// Case 3: Active is true and policy is empty. Reject.
+	{
+		state, cleanup := createTestState(true, "")
+		defer cleanup()
+
+		osdmgr := NewOSDManager(state)
+		err := osdmgr.checkStorageEligibility(ctx)
+		assert.Error(s.T(), err)
+	}
+
+	// Case 4: Active is true and member has storage eligibility. Allow.
+	{
+		policyJSON := `{"members":{"node-a":{"storage_eligible":true}}}`
+		state, cleanup := createTestState(true, policyJSON)
+		defer cleanup()
+
+		osdmgr := NewOSDManager(state)
+		err := osdmgr.checkStorageEligibility(ctx)
+		assert.NoError(s.T(), err)
+	}
+
+	// Case 5: Active is true but member has no storage eligibility. Reject.
+	{
+		policyJSON := `{"members":{"node-a":{"storage_eligible":false}}}`
+		state, cleanup := createTestState(true, policyJSON)
+		defer cleanup()
+
+		osdmgr := NewOSDManager(state)
+		err := osdmgr.checkStorageEligibility(ctx)
+		assert.Error(s.T(), err)
+	}
+
+	// Case 6: Active is true but member is omitted. Reject.
+	{
+		policyJSON := `{"members":{"node-b":{"storage_eligible":true}}}`
+		state, cleanup := createTestState(true, policyJSON)
+		defer cleanup()
+
+		osdmgr := NewOSDManager(state)
+		err := osdmgr.checkStorageEligibility(ctx)
+		assert.Error(s.T(), err)
+	}
 }
