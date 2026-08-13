@@ -666,6 +666,11 @@ func (m *OSDManager) addLoopBackOSDs(ctx context.Context, spec string) error {
 	if err != nil {
 		return err
 	}
+	err = m.checkStorageEligibility(ctx)
+	if err != nil {
+		return err
+	}
+
 	// check available capacity for backing files under $SNAP_COMMON
 	freeSpace, err := getFreeSpace(os.Getenv("SNAP_COMMON"))
 	if err != nil {
@@ -918,7 +923,12 @@ func (m *OSDManager) addSingleDisk(ctx context.Context, disk types.DiskParameter
 		}
 	} else {
 		// Add physical disk based OSD.
-		err := m.doAddOSD(ctx, disk, wal, db)
+		err := m.checkStorageEligibility(ctx)
+		if err != nil {
+			return types.DiskAddReport{Path: disk.Path, Report: "Failure", Error: err.Error()}
+		}
+
+		err = m.doAddOSD(ctx, disk, wal, db)
 		if err != nil {
 			logger.Errorf("failed to add disk: path %s, err %v", disk.Path, err)
 			// return failure as response.
