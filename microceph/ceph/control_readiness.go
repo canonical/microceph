@@ -44,29 +44,11 @@ func controlServiceReady(ctx context.Context, service string, member string) (bo
 // accepted as defense-in-depth so the check works if a future code path feeds
 // quorum_status-shaped output into this helper.
 func monInQuorum(ctx context.Context, member string) (bool, error) {
-	output, err := cephRunContext(ctx, "mon", "stat", "-f", "json")
+	quorum, err := getMonQuorumNames(ctx)
 	if err != nil {
-		return false, fmt.Errorf("failed to run 'ceph mon stat': %w", err)
+		return false, err
 	}
-	var stat struct {
-		QuorumNames []string `json:"quorum_names"`
-		Quorum      []struct {
-			Name string `json:"name"`
-		} `json:"quorum"`
-	}
-	err = json.Unmarshal([]byte(output), &stat)
-	if err != nil {
-		return false, fmt.Errorf("failed to parse 'ceph mon stat' output: %w", err)
-	}
-	if slices.Contains(stat.QuorumNames, member) {
-		return true, nil
-	}
-	for _, q := range stat.Quorum {
-		if q.Name == member {
-			return true, nil
-		}
-	}
-	return false, nil
+	return slices.Contains(quorum, member), nil
 }
 
 // mgrActiveOrStandby checks whether a MGR daemon on member is active or

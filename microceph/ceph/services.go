@@ -207,29 +207,50 @@ func removeServiceDatabase(ctx context.Context, s interfaces.StateInterface, ser
 	return err
 }
 
+// Delete-service phases are injectable so tests can verify their ordering and
+// failure boundaries without mutating snap, Ceph, filesystem, or dqlite state.
+var (
+	ensureMonAbsentFunc       = ensureMonAbsent
+	snapStopFunc              = snapStop
+	cleanServiceFunc          = cleanService
+	removeServiceDatabaseFunc = removeServiceDatabase
+)
+
 // DeleteService deletes a service from the node.
 func DeleteService(ctx context.Context, s interfaces.StateInterface, service string) error {
-	err := snapStop(service, true)
+	// Serialize teardown with bootstrap, join, service enablement, and startup
+	// re-enablement. In particular, reEnableServices must not observe the service
+	// DB row mid-delete and restart a MON that was already removed from the
+	// monmap.
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+
+	hostname := s.ClusterState().Name()
+
+	if service == "mon" {
+		// Commit membership removal while the source MON is still running. With
+		// two MONs, stopping one first loses the majority needed by `ceph mon rm`.
+		// ensureMonAbsent is idempotent, so retries after a later phase failed
+		// resume local teardown rather than trying to recreate membership.
+		err := ensureMonAbsentFunc(ctx, hostname)
+		if err != nil {
+			return fmt.Errorf("failed to remove monitor membership %q: %w", hostname, err)
+		}
+	}
+
+	err := snapStopFunc(service, true)
 	if err != nil {
 		logger.Errorf("failed to stop daemon %q: %v", service, err)
 		return fmt.Errorf("failed to stop daemon %q: %w", service, err)
 	}
 
-	if service == "mon" {
-		err = removeMon(s.ClusterState().Name())
-		if err != nil {
-			return err
-		}
-	}
-
-	err = cleanService(s.ClusterState().Name(), service)
+	err = cleanServiceFunc(hostname, service)
 	if err != nil {
 		return fmt.Errorf("failed to clean service %q: %w", service, err)
 	}
-	err = removeServiceDatabase(ctx, s, service)
+	err = removeServiceDatabaseFunc(ctx, s, service)
 	if err != nil {
 		return fmt.Errorf("failed to remove service %q from database: %w", service, err)
 	}
 	return nil
-
 }

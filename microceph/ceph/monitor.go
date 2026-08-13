@@ -1,9 +1,12 @@
 package ceph
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -97,14 +100,185 @@ func joinMon(hostname string, path string) error {
 	return bootstrapMon(hostname, path, monmap, keyring)
 }
 
-// removeMon removes a monitor from the cluster.
-func removeMon(hostname string) error {
-	_, err := cephRun("mon", "rm", hostname)
+// monRemovalVerifyTimeout bounds the detached postcondition check after
+// `ceph mon rm`. The command may have committed just as its caller's context
+// expired, so checking with the cancelled context would turn a successful
+// removal into an ambiguous failure.
+const monRemovalVerifyTimeout = 30 * time.Second
+
+// getMonmapNames returns the monitor names in the committed monmap.
+func getMonmapNames(ctx context.Context) ([]string, error) {
+	output, err := cephRunContext(ctx, "mon", "dump", "-f", "json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read monitor map: %w", err)
+	}
+
+	var dump struct {
+		Mons json.RawMessage `json:"mons"`
+	}
+	if err := json.Unmarshal([]byte(output), &dump); err != nil {
+		return nil, fmt.Errorf("failed to parse monitor map: %w", err)
+	}
+	if len(dump.Mons) == 0 {
+		return nil, fmt.Errorf("failed to parse monitor map: missing %q field", "mons")
+	}
+
+	var mons *[]struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(dump.Mons, &mons); err != nil {
+		return nil, fmt.Errorf("failed to parse monitor map: invalid %q field: %w", "mons", err)
+	}
+	if mons == nil {
+		return nil, fmt.Errorf("failed to parse monitor map: %q must be a non-null array", "mons")
+	}
+	if len(*mons) == 0 {
+		return nil, fmt.Errorf("failed to parse monitor map: %q must contain at least one monitor", "mons")
+	}
+
+	names := make([]string, 0, len(*mons))
+	for i, mon := range *mons {
+		if mon.Name == "" {
+			return nil, fmt.Errorf("failed to parse monitor map: monitor at index %d has no name", i)
+		}
+		names = append(names, mon.Name)
+	}
+	return names, nil
+}
+
+// monInMonmap reports whether hostname is present in the committed monmap.
+func monInMonmap(ctx context.Context, hostname string) (bool, error) {
+	names, err := getMonmapNames(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, name := range names {
+		if name == hostname {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// getMonQuorumNames returns the monitor names in the current Ceph quorum.
+func getMonQuorumNames(ctx context.Context) ([]string, error) {
+	output, err := cephRunContext(ctx, "mon", "stat", "-f", "json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to run 'ceph mon stat': %w", err)
+	}
+
+	var stat struct {
+		QuorumNames []string `json:"quorum_names"`
+		Quorum      []struct {
+			Name string `json:"name"`
+		} `json:"quorum"`
+	}
+	if err := json.Unmarshal([]byte(output), &stat); err != nil {
+		return nil, fmt.Errorf("failed to parse 'ceph mon stat' output: %w", err)
+	}
+	if len(stat.QuorumNames) > 0 {
+		return stat.QuorumNames, nil
+	}
+
+	names := make([]string, 0, len(stat.Quorum))
+	for _, mon := range stat.Quorum {
+		names = append(names, mon.Name)
+	}
+	return names, nil
+}
+
+// removeMon removes a monitor from the committed monmap while respecting the
+// caller's deadline.
+func removeMon(ctx context.Context, hostname string) error {
+	_, err := cephRunContext(ctx, "mon", "rm", hostname)
 	if err != nil {
 		logger.Errorf("failed to remove monitor %q: %v", hostname, err)
 		return fmt.Errorf("failed to remove monitor %q: %w", hostname, err)
 	}
 	return nil
+}
+
+// verifyMonAbsent checks the monmap with a fresh, bounded context. This makes
+// an ambiguous `ceph mon rm` outcome resumable even when the original request
+// was cancelled while the command response was in flight.
+func verifyMonAbsent(ctx context.Context, hostname string) (bool, error) {
+	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), monRemovalVerifyTimeout)
+	defer cancel()
+
+	present, err := monInMonmap(verifyCtx, hostname)
+	return !present, err
+}
+
+// ensureMonAbsent commits MON membership removal before the local daemon is
+// stopped. Stopping first can destroy quorum in a two-to-one migration and
+// leave the quorum-dependent `ceph mon rm` command unable to complete.
+//
+// The operation is deliberately idempotent. If an earlier attempt committed
+// the monmap change but failed during local teardown, the still-present service
+// database row causes reconciliation to call this again; an already-absent MON
+// then proceeds directly to stop, cleanup, and database removal.
+func ensureMonAbsent(ctx context.Context, hostname string) error {
+	monmap, err := getMonmapNames(ctx)
+	if err != nil {
+		return err
+	}
+	present := false
+	monmapSet := make(map[string]bool, len(monmap))
+	for _, name := range monmap {
+		monmapSet[name] = true
+		if name == hostname {
+			present = true
+		}
+	}
+	if !present {
+		return nil
+	}
+
+	quorum, err := getMonQuorumNames(ctx)
+	if err != nil {
+		return err
+	}
+	// The committed post-removal monmap has len(monmap)-1 members and needs a
+	// majority of those members to remain in quorum. Merely finding one other
+	// quorum member is insufficient for a degraded larger monmap: removing A
+	// from map {A,B,C} with quorum {A,B} would leave {B,C}, which needs both B
+	// and C but has only B available.
+	remainingMons := len(monmap) - 1
+	requiredQuorum := remainingMons/2 + 1
+	remainingInQuorum := 0
+	for _, name := range quorum {
+		if name != hostname && monmapSet[name] {
+			remainingInQuorum++
+		}
+	}
+	if remainingInQuorum < requiredQuorum {
+		return fmt.Errorf(
+			"%w: refusing to remove monitor %q: %d remaining monitor(s) in quorum, need %d for the resulting %d-monitor map",
+			ErrKeepOneInvariant,
+			hostname,
+			remainingInQuorum,
+			requiredQuorum,
+			remainingMons,
+		)
+	}
+
+	removeErr := removeMon(ctx, hostname)
+	absent, verifyErr := verifyMonAbsent(ctx, hostname)
+	if verifyErr != nil {
+		if removeErr != nil {
+			return fmt.Errorf("%w; failed to verify monitor removal: %v", removeErr, verifyErr)
+		}
+		return fmt.Errorf("monitor %q removal could not be verified: %w", hostname, verifyErr)
+	}
+	if absent {
+		// This also handles an ambiguous command error after the monmap change
+		// committed successfully.
+		return nil
+	}
+	if removeErr != nil {
+		return removeErr
+	}
+	return fmt.Errorf("monitor %q remains in the monitor map after removal", hostname)
 }
 
 func getActiveMons() ([]string, error) {

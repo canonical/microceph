@@ -89,11 +89,99 @@ def mon_count(raw):
     return 0
 
 
+def mon_quorum_names(raw):
+    """Return MON names in quorum from ``ceph quorum_status -f json``.
+
+    Current Ceph output includes ``quorum_names`` directly. On schemas where
+    that field is absent, ``quorum`` contains numeric monitor ranks; resolve
+    those ranks through ``monmap.mons``. Malformed or incomplete responses
+    return an empty list so assertions fail closed.
+    """
+    data = _parse(raw)
+    if not isinstance(data, dict):
+        return []
+
+    if "quorum_names" in data:
+        quorum_names = data["quorum_names"]
+        if not isinstance(quorum_names, list):
+            return []
+        if not all(isinstance(name, str) and name for name in quorum_names):
+            return []
+        return quorum_names
+
+    quorum = data.get("quorum")
+    monmap = data.get("monmap")
+    if not isinstance(quorum, list) or not isinstance(monmap, dict):
+        return []
+    mons = monmap.get("mons")
+    if not isinstance(mons, list):
+        return []
+
+    names_by_rank = {}
+    for mon in mons:
+        if not isinstance(mon, dict):
+            return []
+        rank = mon.get("rank")
+        name = mon.get("name")
+        if type(rank) is not int or not isinstance(name, str) or not name:
+            return []
+        names_by_rank[rank] = name
+
+    names = []
+    for rank in quorum:
+        if type(rank) is not int or rank not in names_by_rank:
+            return []
+        names.append(names_by_rank[rank])
+    return names
+
+
+def control_service_presence(mon_raw, mgr_raw, mds_raw, member):
+    """Return explicit MON/MGR/MDS membership for *member* from Ceph JSON.
+
+    Invalid responses fail closed for each service. This is stricter than a
+    substring search over ``ceph -s``: a hostname appearing anywhere in status
+    does not prove that all three role-managed control services are present.
+    """
+    mgr = _parse(mgr_raw)
+    mds = _parse(mds_raw)
+
+    mon_names = mon_quorum_names(mon_raw)
+
+    mgr_names = []
+    if isinstance(mgr, list):
+        mgr_names = [entry.get("name") for entry in mgr if isinstance(entry, dict)]
+
+    mds_names = []
+    if isinstance(mds, dict) and isinstance(mds.get("fsmap"), dict):
+        fsmap = mds["fsmap"]
+        standbys = fsmap.get("standbys", [])
+        if isinstance(standbys, list):
+            mds_names.extend(
+                entry.get("name") for entry in standbys if isinstance(entry, dict)
+            )
+        filesystems = fsmap.get("filesystems", [])
+        if isinstance(filesystems, list):
+            for filesystem in filesystems:
+                if not isinstance(filesystem, dict):
+                    continue
+                mdsmap = filesystem.get("mdsmap", {})
+                info = mdsmap.get("info", {}) if isinstance(mdsmap, dict) else {}
+                if isinstance(info, dict):
+                    mds_names.extend(
+                        entry.get("name") for entry in info.values() if isinstance(entry, dict)
+                    )
+
+    return {
+        "mon": member in mon_names,
+        "mgr": member in mgr_names,
+        "mds": member in mds_names,
+    }
+
+
 def member_in_ceph_status(status_text, member):
     """Return True when *member* appears in ``ceph -s`` output.
 
-    Preserves the original suite decision (a substring check over the status
-    text: MON/MGR/MDS entries name their host) while keeping it local and
-    unit-testable instead of embedded in a remote shell pipeline.
+    Retained for callers that explicitly need the historical broad status-text
+    check. Control-placement assertions use :func:`control_service_presence`.
     """
     return member in (status_text or "")

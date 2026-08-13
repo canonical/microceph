@@ -954,6 +954,99 @@ def test_mon_count_garbage_is_zero():
     assert placement_status.mon_count("{}") == 0
 
 
+def test_mon_quorum_names_prefers_explicit_names():
+    raw = json.dumps(
+        {
+            "quorum_names": ["node-a", "node-b"],
+            "quorum": [1],
+            "monmap": {"mons": [{"rank": 1, "name": "wrong-fallback"}]},
+        }
+    )
+    assert placement_status.mon_quorum_names(raw) == ["node-a", "node-b"]
+
+
+def test_mon_quorum_names_maps_numeric_ranks_through_monmap():
+    raw = json.dumps(
+        {
+            "quorum": [2, 0],
+            "monmap": {
+                "mons": [
+                    {"rank": 0, "name": "node-a"},
+                    {"rank": 1, "name": "node-b"},
+                    {"rank": 2, "name": "node-c"},
+                ]
+            },
+        }
+    )
+    assert placement_status.mon_quorum_names(raw) == ["node-c", "node-a"]
+
+
+def test_mon_quorum_names_malformed_fails_closed():
+    malformed = [
+        "bad",
+        "[]",
+        "{}",
+        json.dumps({"quorum": [0]}),
+        json.dumps({"quorum": [0], "monmap": {"mons": []}}),
+        json.dumps(
+            {
+                "quorum": [1],
+                "monmap": {"mons": [{"rank": 0, "name": "node-a"}]},
+            }
+        ),
+        json.dumps({"quorum_names": ["node-a", 1]}),
+        json.dumps(
+            {
+                "quorum_names": None,
+                "quorum": [0],
+                "monmap": {"mons": [{"rank": 0, "name": "node-a"}]},
+            }
+        ),
+    ]
+    for raw in malformed:
+        assert placement_status.mon_quorum_names(raw) == []
+
+
+def test_control_service_presence_requires_each_explicit_service():
+    mon = json.dumps({"quorum_names": ["node-a", "node-b"]})
+    mgr = json.dumps([{"name": "node-a"}, {"name": "node-b"}])
+    mds = json.dumps(
+        {
+            "fsmap": {
+                "standbys": [{"name": "node-b", "state": "up:standby"}],
+                "filesystems": [
+                    {
+                        "mdsmap": {
+                            "info": {
+                                "1": {"name": "node-a", "state": "up:active"}
+                            }
+                        }
+                    }
+                ],
+            }
+        }
+    )
+
+    assert placement_status.control_service_presence(mon, mgr, mds, "node-a") == {
+        "mon": True,
+        "mgr": True,
+        "mds": True,
+    }
+    assert placement_status.control_service_presence(mon, mgr, mds, "node-c") == {
+        "mon": False,
+        "mgr": False,
+        "mds": False,
+    }
+
+
+def test_control_service_presence_malformed_fails_closed():
+    assert placement_status.control_service_presence("bad", "bad", "bad", "node-a") == {
+        "mon": False,
+        "mgr": False,
+        "mds": False,
+    }
+
+
 def test_member_in_ceph_status_substring():
     status = "  services:\n    mon: 2 daemons, quorum node-wrk0,node-wrk1\n"
     assert placement_status.member_in_ceph_status(status, "node-wrk1") is True
