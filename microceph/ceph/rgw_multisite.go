@@ -336,12 +336,16 @@ func GetRgwDatalogStatus(cluster string, client string) ([]RgwLogShard, error) {
 // same as one still doing its first full copy and cannot read as caught
 // up. This matches upstream's own total_behind arithmetic.
 //
+// PeriodMismatch and PeerLogUnavailable both mean the comparison could not
+// be made at all, so neither is a claim about how far behind the zone is.
+//
 // Known gap: log trimming can briefly make a level shard look behind.
 type RgwSyncVerdict struct {
-	CaughtUp       bool
-	BehindShards   []int
-	FullSyncShards int
-	PeriodMismatch bool
+	CaughtUp           bool
+	BehindShards       []int
+	FullSyncShards     int
+	PeriodMismatch     bool
+	PeerLogUnavailable bool
 }
 
 // ComputeRgwMetadataSyncVerdict compares a secondary's metadata markers
@@ -352,6 +356,14 @@ func ComputeRgwMetadataSyncVerdict(local RgwMetadataSyncStatus, masterLog []RgwL
 
 	if local.Info.Period != "" && currentPeriod != "" && local.Info.Period != currentPeriod {
 		verdict.PeriodMismatch = true
+		return verdict
+	}
+
+	// A nil peer log means the fetch failed - the wrapper returns a
+	// non-nil slice even for an empty log - so there is nothing to
+	// compare against and no basis for saying caught up.
+	if masterLog == nil {
+		verdict.PeerLogUnavailable = true
 		return verdict
 	}
 
@@ -378,6 +390,11 @@ func ComputeRgwMetadataSyncVerdict(local RgwMetadataSyncStatus, masterLog []RgwL
 // zone with that source's datalog heads.
 func ComputeRgwDataSyncVerdict(local RgwDataSyncStatus, sourceLog []RgwLogShard) RgwSyncVerdict {
 	verdict := RgwSyncVerdict{}
+
+	if sourceLog == nil {
+		verdict.PeerLogUnavailable = true
+		return verdict
+	}
 
 	numIncremental := 0
 	for _, shard := range local.Markers {

@@ -296,6 +296,55 @@ func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictMissingShards() {
 	assert.Equal(s.T(), 2, verdict.FullSyncShards)
 }
 
+func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictPeerLogUnavailable() {
+	// GetRgwMdlogStatus returns nil when it cannot reach the peer. Every
+	// shard here is healthy and incremental, so comparing against nothing
+	// would find no problems and wrongly read as caught up.
+	markers := []RgwMetadataSyncShard{}
+	for i := 0; i < 64; i++ {
+		markers = append(markers, RgwMetadataSyncShard{
+			Key: i,
+			Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: "1_100_5.1"},
+		})
+	}
+	local := RgwMetadataSyncStatus{
+		Info:    RgwSyncInfo{Status: "sync", NumShards: 64, Period: "p1"},
+		Markers: markers,
+	}
+
+	verdict := ComputeRgwMetadataSyncVerdict(local, nil, "p1")
+	assert.False(s.T(), verdict.CaughtUp)
+	assert.True(s.T(), verdict.PeerLogUnavailable)
+	assert.Empty(s.T(), verdict.BehindShards)
+}
+
+func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictEmptyPeerLogIsNotUnavailable() {
+	// The whole fix rests on nil and empty being different: a peer that
+	// genuinely has no log shards returns an empty non-nil slice, which
+	// must still be compared rather than reported unavailable.
+	local := RgwMetadataSyncStatus{
+		Info:    RgwSyncInfo{Status: "sync", NumShards: 0, Period: "p1"},
+		Markers: []RgwMetadataSyncShard{},
+	}
+
+	verdict := ComputeRgwMetadataSyncVerdict(local, []RgwLogShard{}, "p1")
+	assert.False(s.T(), verdict.PeerLogUnavailable)
+}
+
+func (s *RgwMultisiteSuite) TestComputeRgwDataSyncVerdictPeerLogUnavailable() {
+	local := RgwDataSyncStatus{
+		Info: RgwSyncInfo{Status: "sync", NumShards: 3},
+		Markers: []RgwDataSyncShard{
+			{Key: 0, Val: RgwDataSyncMarker{Status: "incremental-sync", Marker: "1_50_1.1"}},
+		},
+	}
+
+	verdict := ComputeRgwDataSyncVerdict(local, nil)
+	assert.False(s.T(), verdict.CaughtUp)
+	assert.True(s.T(), verdict.PeerLogUnavailable)
+	assert.Empty(s.T(), verdict.BehindShards)
+}
+
 func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictPeriodMismatch() {
 	local := RgwMetadataSyncStatus{
 		Info: RgwSyncInfo{Status: "sync", NumShards: 1, Period: "p-old"},
