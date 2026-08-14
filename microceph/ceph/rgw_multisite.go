@@ -129,11 +129,19 @@ type RgwSyncInfo struct {
 	RealmEpoch int    `json:"realm_epoch"`
 }
 
-// RgwMetadataSyncMarker is one shard's metadata sync position. State is
-// numeric in this output: 0 = full sync, 1 = incremental sync.
+// RgwMetadataSyncState is one shard's metadata sync state. radosgw-admin
+// reports it as a plain number.
+type RgwMetadataSyncState int
+
+const (
+	RgwMetadataSyncStateFullSync RgwMetadataSyncState = iota
+	RgwMetadataSyncStateIncremental
+)
+
+// RgwMetadataSyncMarker is one shard's metadata sync position.
 type RgwMetadataSyncMarker struct {
-	State  int    `json:"state"`
-	Marker string `json:"marker"`
+	State  RgwMetadataSyncState `json:"state"`
+	Marker string               `json:"marker"`
 }
 
 // RgwMetadataSyncShard pairs a shard id with its metadata sync marker.
@@ -298,7 +306,7 @@ func ComputeRgwMetadataSyncVerdict(local RgwMetadataSyncStatus, masterLog []RgwL
 	}
 
 	for _, shard := range local.Markers {
-		if shard.Val.State != 1 {
+		if shard.Val.State != RgwMetadataSyncStateIncremental {
 			verdict.FullSyncShards++
 			continue
 		}

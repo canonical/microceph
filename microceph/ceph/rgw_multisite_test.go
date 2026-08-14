@@ -1,5 +1,9 @@
 package ceph
 
+// Tests for the RGW multisite read wrappers. The radosgw-admin wrappers
+// run against a mocked command runner and captured JSON in test_assets/;
+// the pure verdict and validation helpers are tested with inline data.
+
 import (
 	"fmt"
 	"os"
@@ -121,7 +125,7 @@ func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusSecondary() {
 	assert.NotEmpty(s.T(), status.Info.Period)
 	assert.Equal(s.T(), 2, status.Info.RealmEpoch)
 	assert.NotEmpty(s.T(), status.Markers)
-	assert.Equal(s.T(), 1, status.Markers[0].Val.State) // incremental
+	assert.Equal(s.T(), RgwMetadataSyncStateIncremental, status.Markers[0].Val.State)
 }
 
 func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusMaster() {
@@ -190,9 +194,9 @@ func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictCaughtUp() {
 	local := RgwMetadataSyncStatus{
 		Info: RgwSyncInfo{Status: "sync", NumShards: 3, Period: "p1"},
 		Markers: []RgwMetadataSyncShard{
-			{Key: 0, Val: RgwMetadataSyncMarker{State: 1, Marker: ""}},
-			{Key: 1, Val: RgwMetadataSyncMarker{State: 1, Marker: "1_100_5.1"}},
-			{Key: 2, Val: RgwMetadataSyncMarker{State: 1, Marker: "1_200_7.1"}},
+			{Key: 0, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: ""}},
+			{Key: 1, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: "1_100_5.1"}},
+			{Key: 2, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: "1_200_7.1"}},
 		},
 	}
 	masterLog := []RgwLogShard{{Marker: ""}, {Marker: "1_100_5.1"}, {Marker: "1_200_7.1"}}
@@ -208,9 +212,9 @@ func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictBehind() {
 	local := RgwMetadataSyncStatus{
 		Info: RgwSyncInfo{Status: "sync", NumShards: 3, Period: "p1"},
 		Markers: []RgwMetadataSyncShard{
-			{Key: 0, Val: RgwMetadataSyncMarker{State: 0, Marker: ""}},          // still full sync
-			{Key: 1, Val: RgwMetadataSyncMarker{State: 1, Marker: "1_100_5.1"}}, // behind
-			{Key: 2, Val: RgwMetadataSyncMarker{State: 1, Marker: "1_200_7.1"}}, // caught up
+			{Key: 0, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateFullSync, Marker: ""}},
+			{Key: 1, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: "1_100_5.1"}}, // behind
+			{Key: 2, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: "1_200_7.1"}}, // caught up
 		},
 	}
 	masterLog := []RgwLogShard{{Marker: ""}, {Marker: "1_150_6.1"}, {Marker: "1_200_7.1"}}
@@ -225,7 +229,7 @@ func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictPeriodMismatch() {
 	local := RgwMetadataSyncStatus{
 		Info: RgwSyncInfo{Status: "sync", NumShards: 1, Period: "p-old"},
 		Markers: []RgwMetadataSyncShard{
-			{Key: 0, Val: RgwMetadataSyncMarker{State: 1, Marker: "x"}},
+			{Key: 0, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: "x"}},
 		},
 	}
 
