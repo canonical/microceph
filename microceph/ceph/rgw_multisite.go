@@ -350,8 +350,10 @@ func GetRgwDatalogStatus(cluster string, client string) ([]RgwLogShard, error) {
 // be made at all, so neither is a claim about how far behind the zone is.
 //
 // Known gaps: a shard the peer does not report is logged and skipped
-// rather than counted, as upstream also does, and log trimming can
-// briefly make a level shard look behind.
+// rather than counted, as upstream also does; log trimming can briefly
+// make a level shard look behind; and a data shard busy retrying failed
+// objects still reads as caught up, because reading that state costs one
+// radosgw-admin call per shard.
 type RgwSyncVerdict struct {
 	CaughtUp           bool
 	BehindShards       []int

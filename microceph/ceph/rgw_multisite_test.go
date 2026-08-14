@@ -403,6 +403,23 @@ func (s *RgwMultisiteSuite) TestComputeRgwDataSyncVerdict() {
 	assert.Equal(s.T(), 1, verdict.FullSyncShards)
 }
 
+func (s *RgwMultisiteSuite) TestComputeRgwDataSyncVerdictIgnoresRecoveringShards() {
+	// Pins a known, deliberate gap: radosgw-admin would not call this
+	// caught up if the shard were retrying failed objects, but reading
+	// that costs one call per shard so we do not fetch it. If someone
+	// wires it in, this test should fail and be updated on purpose.
+	local := RgwDataSyncStatus{
+		Info: RgwSyncInfo{Status: "sync", NumShards: 1},
+		Markers: []RgwDataSyncShard{
+			{Key: 0, Val: RgwDataSyncMarker{Status: "incremental-sync", Marker: "1_50_1.1"}},
+		},
+	}
+	sourceLog := []RgwLogShard{{Marker: "1_50_1.1"}}
+
+	verdict := ComputeRgwDataSyncVerdict(local, sourceLog)
+	assert.True(s.T(), verdict.CaughtUp)
+}
+
 func (s *RgwMultisiteSuite) TestComputeRgwDataSyncVerdictMissingShards() {
 	// Same idea on the data side: 5 shards claimed, 1 reported and level.
 	local := RgwDataSyncStatus{
