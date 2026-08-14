@@ -286,6 +286,11 @@ func GetRgwDatalogStatus(cluster string, client string) ([]RgwLogShard, error) {
 // peer? It compares local sync markers against the peer's log heads using
 // the same per-shard rule radosgw-admin applies.
 //
+// FullSyncShards is the shard count the zone reports minus the shards
+// confirmed incremental, so a shard missing from the response counts the
+// same as one still doing its first full copy and cannot read as caught
+// up. This matches upstream's own total_behind arithmetic.
+//
 // Known gap: log trimming can briefly make a level shard look behind.
 type RgwSyncVerdict struct {
 	CaughtUp       bool
@@ -305,16 +310,21 @@ func ComputeRgwMetadataSyncVerdict(local RgwMetadataSyncStatus, masterLog []RgwL
 		return verdict
 	}
 
+	numIncremental := 0
 	for _, shard := range local.Markers {
 		if shard.Val.State != RgwMetadataSyncStateIncremental {
-			verdict.FullSyncShards++
 			continue
 		}
+		numIncremental++
 		if shard.Key < len(masterLog) && masterLog[shard.Key].Marker > shard.Val.Marker {
 			verdict.BehindShards = append(verdict.BehindShards, shard.Key)
 		}
 	}
 
+	verdict.FullSyncShards = local.Info.NumShards - numIncremental
+	if verdict.FullSyncShards < 0 {
+		verdict.FullSyncShards = 0
+	}
 	verdict.CaughtUp = len(verdict.BehindShards) == 0 && verdict.FullSyncShards == 0
 	return verdict
 }
@@ -324,16 +334,21 @@ func ComputeRgwMetadataSyncVerdict(local RgwMetadataSyncStatus, masterLog []RgwL
 func ComputeRgwDataSyncVerdict(local RgwDataSyncStatus, sourceLog []RgwLogShard) RgwSyncVerdict {
 	verdict := RgwSyncVerdict{}
 
+	numIncremental := 0
 	for _, shard := range local.Markers {
 		if shard.Val.Status != "incremental-sync" {
-			verdict.FullSyncShards++
 			continue
 		}
+		numIncremental++
 		if shard.Key < len(sourceLog) && sourceLog[shard.Key].Marker > shard.Val.Marker {
 			verdict.BehindShards = append(verdict.BehindShards, shard.Key)
 		}
 	}
 
+	verdict.FullSyncShards = local.Info.NumShards - numIncremental
+	if verdict.FullSyncShards < 0 {
+		verdict.FullSyncShards = 0
+	}
 	verdict.CaughtUp = len(verdict.BehindShards) == 0 && verdict.FullSyncShards == 0
 	return verdict
 }

@@ -225,6 +225,25 @@ func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictBehind() {
 	assert.Equal(s.T(), 1, verdict.FullSyncShards)
 }
 
+func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictMissingShards() {
+	// The zone claims 5 shards but only reported 3, all of them level.
+	// The 2 it did not mention must still block a caught-up verdict.
+	local := RgwMetadataSyncStatus{
+		Info: RgwSyncInfo{Status: "sync", NumShards: 5, Period: "p1"},
+		Markers: []RgwMetadataSyncShard{
+			{Key: 0, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: ""}},
+			{Key: 1, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: "1_100_5.1"}},
+			{Key: 2, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: "1_200_7.1"}},
+		},
+	}
+	masterLog := []RgwLogShard{{Marker: ""}, {Marker: "1_100_5.1"}, {Marker: "1_200_7.1"}}
+
+	verdict := ComputeRgwMetadataSyncVerdict(local, masterLog, "p1")
+	assert.False(s.T(), verdict.CaughtUp)
+	assert.Empty(s.T(), verdict.BehindShards)
+	assert.Equal(s.T(), 2, verdict.FullSyncShards)
+}
+
 func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictPeriodMismatch() {
 	local := RgwMetadataSyncStatus{
 		Info: RgwSyncInfo{Status: "sync", NumShards: 1, Period: "p-old"},
@@ -254,4 +273,20 @@ func (s *RgwMultisiteSuite) TestComputeRgwDataSyncVerdict() {
 	assert.False(s.T(), verdict.CaughtUp)
 	assert.Equal(s.T(), []int{0}, verdict.BehindShards) // shard 5 out of bounds: not counted
 	assert.Equal(s.T(), 1, verdict.FullSyncShards)
+}
+
+func (s *RgwMultisiteSuite) TestComputeRgwDataSyncVerdictMissingShards() {
+	// Same idea on the data side: 5 shards claimed, 1 reported and level.
+	local := RgwDataSyncStatus{
+		Info: RgwSyncInfo{Status: "sync", NumShards: 5},
+		Markers: []RgwDataSyncShard{
+			{Key: 0, Val: RgwDataSyncMarker{Status: "incremental-sync", Marker: "1_50_1.1"}},
+		},
+	}
+	sourceLog := []RgwLogShard{{Marker: "1_50_1.1"}}
+
+	verdict := ComputeRgwDataSyncVerdict(local, sourceLog)
+	assert.False(s.T(), verdict.CaughtUp)
+	assert.Empty(s.T(), verdict.BehindShards)
+	assert.Equal(s.T(), 4, verdict.FullSyncShards)
 }
