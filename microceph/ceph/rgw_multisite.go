@@ -20,8 +20,7 @@ func radosgwAdminRunRemote(cluster string, client string, args ...string) (strin
 	return radosgwAdminRun(args...)
 }
 
-// RgwRealm holds the subset of `radosgw-admin realm get` output consumed by
-// RGW replication.
+// RgwRealm is the subset of `realm get` output RGW replication uses.
 type RgwRealm struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
@@ -37,8 +36,7 @@ type RgwZoneGroupZone struct {
 	ReadOnly  bool     `json:"read_only"`
 }
 
-// RgwZoneGroup holds the subset of `radosgw-admin zonegroup get` output
-// consumed by RGW replication.
+// RgwZoneGroup is the subset of `zonegroup get` output we use.
 type RgwZoneGroup struct {
 	ID         string             `json:"id"`
 	Name       string             `json:"name"`
@@ -55,18 +53,16 @@ type RgwZoneSystemKey struct {
 	SecretKey string `json:"secret_key"`
 }
 
-// RgwZone holds the subset of `radosgw-admin zone get` output consumed by
-// RGW replication.
+// RgwZone is the subset of `zone get` output we use.
 type RgwZone struct {
 	ID        string           `json:"id"`
 	Name      string           `json:"name"`
 	SystemKey RgwZoneSystemKey `json:"system_key"`
 }
 
-// GetRgwRealm fetches the default realm. Pass a non-empty cluster/client
-// pair to target an imported remote cluster instead of the local one.
-// A failing command (e.g. no realm configured) yields a zero-value realm
-// with a nil error
+// GetRgwRealm fetches the default realm. A non-empty cluster/client pair
+// targets a remote cluster. A failing command yields a zero value and a
+// nil error, so an unconfigured gateway reads as ordinary empty state.
 func GetRgwRealm(cluster string, client string) (RgwRealm, error) {
 	response := RgwRealm{}
 
@@ -84,10 +80,9 @@ func GetRgwRealm(cluster string, client string) (RgwRealm, error) {
 	return response, nil
 }
 
-// GetRgwZoneGroup fetches the default zonegroup. Pass a non-empty
-// cluster/client pair to target an imported remote cluster instead of the
-// local one. A failing command yields a zero-value zonegroup with a nil
-// error
+// GetRgwZoneGroup fetches the default zonegroup. A non-empty
+// cluster/client pair targets a remote cluster. A failing command yields
+// a zero value and a nil error.
 func GetRgwZoneGroup(cluster string, client string) (RgwZoneGroup, error) {
 	response := RgwZoneGroup{}
 
@@ -105,9 +100,9 @@ func GetRgwZoneGroup(cluster string, client string) (RgwZoneGroup, error) {
 	return response, nil
 }
 
-// GetRgwZone fetches the default zone. Pass a non-empty cluster/client pair
-// to target an imported remote cluster instead of the local one. A failing
-// command yields a zero-value zone with a nil error
+// GetRgwZone fetches the default zone. A non-empty cluster/client pair
+// targets a remote cluster. A failing command yields a zero value and a
+// nil error.
 func GetRgwZone(cluster string, client string) (RgwZone, error) {
 	response := RgwZone{}
 
@@ -147,9 +142,8 @@ type RgwMetadataSyncShard struct {
 	Val RgwMetadataSyncMarker `json:"val"`
 }
 
-// RgwMetadataSyncStatus is the parsed form of `radosgw-admin metadata sync
-// status`. On the metadata master the command reports Status "init" with
-// zero shards - the master runs no metadata sync.
+// RgwMetadataSyncStatus is the parsed form of `metadata sync status`. A
+// metadata master reports "init" with zero shards - it syncs from no one.
 type RgwMetadataSyncStatus struct {
 	Info    RgwSyncInfo
 	Markers []RgwMetadataSyncShard
@@ -168,8 +162,8 @@ type RgwDataSyncShard struct {
 	Val RgwDataSyncMarker `json:"val"`
 }
 
-// RgwDataSyncStatus is the parsed form of `radosgw-admin data sync status
-// --source-zone=<zone>` for one sync source.
+// RgwDataSyncStatus is the parsed form of `data sync status` for one
+// source zone.
 type RgwDataSyncStatus struct {
 	Info    RgwSyncInfo
 	Markers []RgwDataSyncShard
@@ -189,10 +183,10 @@ type rgwDataSyncEnvelope struct {
 	} `json:"sync_status"`
 }
 
-// GetRgwMetadataSyncStatus fetches the typed metadata sync state (JSON,
-// local sync markers only - no peer comparison). Pass a non-empty
-// cluster/client pair to target an imported remote cluster. A failing
-// command yields a zero-value status with a nil error
+// GetRgwMetadataSyncStatus fetches this zone's own metadata sync markers -
+// local progress only, no peer contact. A non-empty cluster/client pair
+// targets a remote cluster. A failing command yields a zero value and a
+// nil error.
 func GetRgwMetadataSyncStatus(cluster string, client string) (RgwMetadataSyncStatus, error) {
 	envelope := rgwMetadataSyncEnvelope{}
 
@@ -210,11 +204,10 @@ func GetRgwMetadataSyncStatus(cluster string, client string) (RgwMetadataSyncSta
 	return RgwMetadataSyncStatus{Info: envelope.SyncStatus.Info, Markers: envelope.SyncStatus.Markers}, nil
 }
 
-// GetRgwDataSyncStatus fetches the typed data sync state for one source
-// zone (JSON, local sync markers only - no peer comparison). Pass a
-// non-empty cluster/client pair to target an imported remote cluster. A
-// failing command yields a zero-value status with a nil error, mirroring
-// the RBD wrapper contract.
+// GetRgwDataSyncStatus fetches this zone's own data sync markers for one
+// source zone - local progress only, no contact with the source. A
+// non-empty cluster/client pair targets a remote cluster. A failing
+// command yields a zero value and a nil error.
 func GetRgwDataSyncStatus(sourceZone string, cluster string, client string) (RgwDataSyncStatus, error) {
 	envelope := rgwDataSyncEnvelope{}
 
@@ -232,18 +225,17 @@ func GetRgwDataSyncStatus(sourceZone string, cluster string, client string) (Rgw
 	return RgwDataSyncStatus{Info: envelope.SyncStatus.Info, Markers: envelope.SyncStatus.Markers}, nil
 }
 
-// RgwLogShard is one shard entry of `mdlog status` or `datalog status`
-// output: the log head position on the cluster that owns the log. The
-// array index is the shard id.
+// RgwLogShard is one shard of `mdlog status` or `datalog status` output:
+// the log head on the cluster that owns it. Array index is the shard id.
 type RgwLogShard struct {
 	Marker     string `json:"marker"`
 	LastUpdate string `json:"last_update"`
 }
 
-// GetRgwMdlogStatus fetches the metadata log head markers, one entry per
-// shard. Run it against the metadata master (via the cluster/client pair)
-// when computing a secondary's catch-up verdict. A failing command yields
-// nil with a nil error
+// GetRgwMdlogStatus fetches the metadata log head for every shard. Point
+// it at the metadata master to check a secondary's progress against it.
+// A failing command returns nil; a successful one always returns a slice,
+// empty log or not.
 func GetRgwMdlogStatus(cluster string, client string) ([]RgwLogShard, error) {
 	shards := []RgwLogShard{}
 
@@ -261,10 +253,10 @@ func GetRgwMdlogStatus(cluster string, client string) ([]RgwLogShard, error) {
 	return shards, nil
 }
 
-// GetRgwDatalogStatus fetches the data log head markers, one entry per
-// shard. Run it against the source zone's cluster (via the cluster/client
-// pair) when computing the catch-up verdict for sync from that source. A
-// failing command yields nil with a nil error
+// GetRgwDatalogStatus fetches the data log head for every shard. Point it
+// at the source zone to check progress syncing from that zone. A failing
+// command returns nil; a successful one always returns a slice, empty log
+// or not.
 func GetRgwDatalogStatus(cluster string, client string) ([]RgwLogShard, error) {
 	shards := []RgwLogShard{}
 
@@ -282,13 +274,11 @@ func GetRgwDatalogStatus(cluster string, client string) ([]RgwLogShard, error) {
 	return shards, nil
 }
 
-// RgwSyncVerdict is the deterministically computed catch-up verdict for one
-// sync relationship: local sync markers compared against the peer's log
-// heads, using the same per-shard rule radosgw-admin's own `sync status`
-// applies (a shard still in full sync, or an incremental shard whose peer
-// head is past the local marker, counts as behind). It omits upstream's
-// entry-listing prune step, so a shard whose peer log was trimmed may
-// transiently over-report as behind.
+// RgwSyncVerdict answers one question: has this zone caught up with its
+// peer? It compares local sync markers against the peer's log heads using
+// the same per-shard rule radosgw-admin applies.
+//
+// Known gap: log trimming can briefly make a level shard look behind.
 type RgwSyncVerdict struct {
 	CaughtUp       bool
 	BehindShards   []int
@@ -296,10 +286,9 @@ type RgwSyncVerdict struct {
 	PeriodMismatch bool
 }
 
-// ComputeRgwMetadataSyncVerdict compares a secondary's metadata sync
-// markers with the master's mdlog heads. currentPeriod is the realm's
-// current period id; a secondary syncing an older period is reported as
-// PeriodMismatch without a per-shard comparison, as upstream does.
+// ComputeRgwMetadataSyncVerdict compares a secondary's metadata markers
+// with the master's mdlog heads. A secondary on an older realm period is
+// reported as PeriodMismatch without comparing shards, as upstream does.
 func ComputeRgwMetadataSyncVerdict(local RgwMetadataSyncStatus, masterLog []RgwLogShard, currentPeriod string) RgwSyncVerdict {
 	verdict := RgwSyncVerdict{}
 
