@@ -112,11 +112,15 @@ func (s *servicesSuite) TestCleanService() {
 // records their exact order. The originals are restored after each test.
 func installDeleteServiceRecorder(t *testing.T, stopErr error) *[]string {
 	origEnsureMonAbsent := ensureMonAbsentFunc
+	origEnsureMgrAbsent := ensureMgrAbsentFunc
+	origEnsureMdsAbsent := ensureMdsAbsentFunc
 	origSnapStop := snapStopFunc
 	origCleanService := cleanServiceFunc
 	origRemoveServiceDatabase := removeServiceDatabaseFunc
 	t.Cleanup(func() {
 		ensureMonAbsentFunc = origEnsureMonAbsent
+		ensureMgrAbsentFunc = origEnsureMgrAbsent
+		ensureMdsAbsentFunc = origEnsureMdsAbsent
 		snapStopFunc = origSnapStop
 		cleanServiceFunc = origCleanService
 		removeServiceDatabaseFunc = origRemoveServiceDatabase
@@ -125,6 +129,14 @@ func installDeleteServiceRecorder(t *testing.T, stopErr error) *[]string {
 	events := []string{}
 	ensureMonAbsentFunc = func(_ context.Context, hostname string) error {
 		events = append(events, "monmap:"+hostname)
+		return nil
+	}
+	ensureMgrAbsentFunc = func(_ context.Context, hostname string) error {
+		events = append(events, "mgrmap:"+hostname)
+		return nil
+	}
+	ensureMdsAbsentFunc = func(_ context.Context, hostname string) error {
+		events = append(events, "mdsmap:"+hostname)
 		return nil
 	}
 	snapStopFunc = func(service string, disable bool) error {
@@ -198,14 +210,46 @@ func (s *servicesSuite) TestDeleteMonResumesAfterStopFailure() {
 	}, *events)
 }
 
-func (s *servicesSuite) TestDeleteNonMonRetainsStopFirstOrder() {
+func (s *servicesSuite) TestDeleteMgrEvictsMapAfterStoppingDaemon() {
 	events := installDeleteServiceRecorder(s.T(), nil)
 
 	err := DeleteService(context.Background(), s.TestStateInterface, "mgr")
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), []string{
 		"stop:mgr:true",
+		"mgrmap:foohost",
 		"clean:mgr:foohost",
 		"db:mgr",
+	}, *events)
+}
+
+func (s *servicesSuite) TestDeleteMdsEvictsMapAfterStoppingDaemon() {
+	events := installDeleteServiceRecorder(s.T(), nil)
+
+	err := DeleteService(context.Background(), s.TestStateInterface, "mds")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{
+		"stop:mds:true",
+		"mdsmap:foohost",
+		"clean:mds:foohost",
+		"db:mds",
+	}, *events)
+}
+
+func (s *servicesSuite) TestDeleteMgrMapFailureLeavesCleanupPending() {
+	events := installDeleteServiceRecorder(s.T(), nil)
+	mapErr := errors.New("mgr map unavailable")
+	ensureMgrAbsentFunc = func(_ context.Context, hostname string) error {
+		*events = append(*events, "mgrmap:"+hostname)
+		return mapErr
+	}
+
+	err := DeleteService(context.Background(), s.TestStateInterface, "mgr")
+	assert.ErrorIs(s.T(), err, mapErr)
+	// The daemon is stopped and eviction attempted, but on-disk and DB cleanup
+	// must not run so a retry resumes teardown.
+	assert.Equal(s.T(), []string{
+		"stop:mgr:true",
+		"mgrmap:foohost",
 	}, *events)
 }

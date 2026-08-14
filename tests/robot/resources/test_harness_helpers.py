@@ -1160,3 +1160,53 @@ def test_log_exec_no_output_prints_nothing(monkeypatch):
     cap = _with_logger(monkeypatch)
     H()._log_exec("mkdir -p ~/x", _Res(0, "", ""), quiet=False)
     assert cap.console_lines == []
+
+# ---------------------------------------------------------------------------
+# wait_for_member_control_services (polling absence/presence with convergence)
+# ---------------------------------------------------------------------------
+
+def _harness_with_observations(monkeypatch, observations):
+    """Return a harness whose _observe_control_services yields *observations*
+    in order (the last value repeats once exhausted), counting calls."""
+    h = H()
+    seq = list(observations)
+    state = {"calls": 0}
+
+    def fake_observe(member):
+        idx = min(state["calls"], len(seq) - 1)
+        state["calls"] += 1
+        return seq[idx]
+
+    monkeypatch.setattr(h, "_observe_control_services", fake_observe)
+    # Avoid real sleeps between probes.
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    return h, state
+
+
+def test_wait_for_control_services_absent_after_convergence(monkeypatch):
+    # mgr lingers for the first two probes, then converges to fully absent.
+    observations = [
+        {"mon": False, "mgr": True, "mds": False},
+        {"mon": False, "mgr": True, "mds": False},
+        {"mon": False, "mgr": False, "mds": False},
+    ]
+    h, state = _harness_with_observations(monkeypatch, observations)
+    h.wait_for_member_control_services("node-wrk1", "no", tries=10, interval=0)
+    assert state["calls"] == 3
+
+
+def test_wait_for_control_services_present_immediately(monkeypatch):
+    observations = [{"mon": True, "mgr": True, "mds": True}]
+    h, state = _harness_with_observations(monkeypatch, observations)
+    h.wait_for_member_control_services("node-wrk0", "yes", tries=5, interval=0)
+    assert state["calls"] == 1
+
+
+def test_wait_for_control_services_absent_timeout_folds_last_observed(monkeypatch):
+    observations = [{"mon": False, "mgr": True, "mds": False}]
+    h, _ = _harness_with_observations(monkeypatch, observations)
+    with pytest.raises(AssertionError) as exc:
+        h.wait_for_member_control_services("node-wrk1", "no", tries=3, interval=0)
+    msg = str(exc.value)
+    assert "never became absent" in msg
+    assert "'mgr': True" in msg

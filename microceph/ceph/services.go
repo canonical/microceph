@@ -216,6 +216,11 @@ var (
 	removeServiceDatabaseFunc = removeServiceDatabase
 )
 
+// ensureMgrAbsentFunc / ensureMdsAbsentFunc are declared alongside their
+// implementations in manager.go and metadata.go respectively; DeleteService
+// invokes them through those injectable vars so teardown ordering and failure
+// boundaries stay unit-testable.
+
 // DeleteService deletes a service from the node.
 func DeleteService(ctx context.Context, s interfaces.StateInterface, service string) error {
 	// Serialize teardown with bootstrap, join, service enablement, and startup
@@ -242,6 +247,27 @@ func DeleteService(ctx context.Context, s interfaces.StateInterface, service str
 	if err != nil {
 		logger.Errorf("failed to stop daemon %q: %v", service, err)
 		return fmt.Errorf("failed to stop daemon %q: %w", service, err)
+	}
+
+	// After the local daemon is stopped, actively evict MGR/MDS from their
+	// Ceph maps and verify convergence. Stopping alone only halts the daemon's
+	// beacon; without an explicit fail the stopped daemon lingers in
+	// `ceph mgr metadata` / `ceph mds stat` for the beacon-aging window, so a
+	// reconcile would report success while the map still shows the removed
+	// member. MON is handled above (before stop) because its removal needs
+	// quorum. All ensure*Absent helpers are idempotent, so a retry after a
+	// later phase failed resumes cleanly.
+	switch service {
+	case "mgr":
+		err = ensureMgrAbsentFunc(ctx, hostname)
+		if err != nil {
+			return fmt.Errorf("failed to remove mgr map membership %q: %w", hostname, err)
+		}
+	case "mds":
+		err = ensureMdsAbsentFunc(ctx, hostname)
+		if err != nil {
+			return fmt.Errorf("failed to remove mds map membership %q: %w", hostname, err)
+		}
 	}
 
 	err = cleanServiceFunc(hostname, service)

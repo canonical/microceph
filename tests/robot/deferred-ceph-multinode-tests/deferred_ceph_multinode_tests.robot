@@ -81,7 +81,12 @@ Test Declarative Control Placement Migration Preserves Quorum
     Should Be Equal As Integers    ${mons}    1    msg=Expected destination-only monmap after migration
     Assert Mon Quorum Members    node-wrk0
     Assert Member Has Control Services    node-wrk0    yes
-    Assert Member Has Control Services    node-wrk1    no
+    # The source's MON/MDS/MGR teardown commits the daemon stop, map eviction,
+    # and DB removal, but the mgrmap/fsmap may take a moment to converge (or up
+    # to the beacon-aging window if an eviction was a no-op). Poll for absence
+    # rather than asserting a single-shot snapshot, mirroring the add path's
+    # Wait For Mon Count.
+    Wait For Member Control Services    node-wrk1    no
 
     # A second reconcile must observe the completed migration as a no-op.
     ${retry}=    MicroCeph API Put In Container    node-wrk0    placement    ${policy}

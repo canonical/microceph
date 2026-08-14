@@ -1888,8 +1888,12 @@ class microceph_harness:
                 f"Expected MON quorum {expected}, got {actual}. quorum_status: {res.stdout}"
             )
 
-    def assert_member_has_control_services(self, member, expected="yes"):
-        """Assert explicit MON, MGR, and MDS presence or absence on *member*."""
+    def _observe_control_services(self, member):
+        """Return the explicit MON/MGR/MDS presence dict for *member* from Ceph.
+
+        Raises AssertionError if any of the three Ceph queries fail, so callers
+        can distinguish an unreadable cluster from a genuine presence result.
+        """
         commands = {
             "mon": ("quorum_status", "-f", "json"),
             "mgr": ("mgr", "metadata", "-f", "json"),
@@ -1911,12 +1915,16 @@ class microceph_harness:
             )
             raise AssertionError(f"Unable to inspect control services: {detail}")
 
-        present = placement_status.control_service_presence(
+        return placement_status.control_service_presence(
             results["mon"].stdout,
             results["mgr"].stdout,
             results["mds"].stdout,
             member,
         )
+
+    def assert_member_has_control_services(self, member, expected="yes"):
+        """Assert explicit MON, MGR, and MDS presence or absence on *member*."""
+        present = self._observe_control_services(member)
         want_present = str(expected).strip().lower() == "yes"
         mismatched = [
             service for service, is_present in present.items() if is_present != want_present
@@ -1926,6 +1934,36 @@ class microceph_harness:
             raise AssertionError(
                 f"Expected {mismatched} to be {expectation} on {member}; observed {present}"
             )
+
+    def wait_for_member_control_services(self, member, expected="yes", tries=24, interval=5):
+        """Poll until MON, MGR, and MDS presence on *member* matches *expected*.
+
+        Control-service teardown commits the daemon stop, map eviction, and DB
+        removal, but Ceph's mgrmap/fsmap can still take a moment to converge
+        (and, if an eviction is a partial no-op, up to the beacon-aging grace
+        window). This poller absorbs that convergence lag so an immediately
+        following absence assertion is not racy, mirroring how the add path
+        polls with Wait For Mon Count. The final observed state is folded into
+        the failure message on timeout.
+        """
+        want_present = str(expected).strip().lower() == "yes"
+        expectation = "present" if want_present else "absent"
+        last = {}
+
+        def predicate():
+            nonlocal last
+            last = self._observe_control_services(member)
+            return all(is_present == want_present for is_present in last.values())
+
+        self._poll_until(
+            predicate,
+            attempts=tries,
+            interval=interval,
+            fail_msg=lambda: (
+                f"Control services on {member} never became {expectation}; "
+                f"last observed {last}"
+            ),
+        )
 
     def assert_no_ceph_cluster_on_container(self, container):
         """Asserts that *container* has NOT bootstrapped Ceph: ceph status fails
