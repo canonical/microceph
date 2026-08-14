@@ -349,7 +349,9 @@ func GetRgwDatalogStatus(cluster string, client string) ([]RgwLogShard, error) {
 // PeriodMismatch and PeerLogUnavailable both mean the comparison could not
 // be made at all, so neither is a claim about how far behind the zone is.
 //
-// Known gap: log trimming can briefly make a level shard look behind.
+// Known gaps: a shard the peer does not report is logged and skipped
+// rather than counted, as upstream also does, and log trimming can
+// briefly make a level shard look behind.
 type RgwSyncVerdict struct {
 	CaughtUp           bool
 	BehindShards       []int
@@ -383,7 +385,9 @@ func ComputeRgwMetadataSyncVerdict(local RgwMetadataSyncStatus, masterLog []RgwL
 			continue
 		}
 		numIncremental++
-		if shard.Key < len(masterLog) && masterLog[shard.Key].Marker > shard.Val.Marker {
+		if shard.Key >= len(masterLog) {
+			logger.Warnf("REPRGW: metadata shard %d is missing from the peer mdlog (peer reported %d shard(s)); its sync state cannot be confirmed", shard.Key, len(masterLog))
+		} else if masterLog[shard.Key].Marker > shard.Val.Marker {
 			verdict.BehindShards = append(verdict.BehindShards, shard.Key)
 		}
 	}
@@ -413,7 +417,9 @@ func ComputeRgwDataSyncVerdict(local RgwDataSyncStatus, sourceLog []RgwLogShard)
 			continue
 		}
 		numIncremental++
-		if shard.Key < len(sourceLog) && sourceLog[shard.Key].Marker > shard.Val.Marker {
+		if shard.Key >= len(sourceLog) {
+			logger.Warnf("REPRGW: data shard %d is missing from the source datalog (source reported %d shard(s)); its sync state cannot be confirmed", shard.Key, len(sourceLog))
+		} else if sourceLog[shard.Key].Marker > shard.Val.Marker {
 			verdict.BehindShards = append(verdict.BehindShards, shard.Key)
 		}
 	}
