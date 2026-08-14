@@ -10,6 +10,7 @@ import glob
 import ipaddress
 import json
 import re
+import shlex
 import subprocess
 import tempfile
 import time
@@ -28,6 +29,7 @@ from rbd_replication import (
     rbd_primary_image_count,
     rbd_synced_image_count,
 )
+from rgw_admin_ops import rgw_user_s3_credentials
 from snap_services import enabled_active_services
 from streaming_process import run_streaming_process
 
@@ -847,6 +849,90 @@ class microceph_harness:
         # space or shell metacharacter in it cannot be reinterpreted by an inner shell.
         # Non-raising (check=False), matching the previous run_in_container_unchecked call.
         return self.exec_in_container(container, "sudo", "base64", "-w0", path, timeout=30, quiet=True).stdout.strip()
+
+    # -----------------------------------------------------------------------
+    # RGW admin-ops API
+    # -----------------------------------------------------------------------
+
+    def create_rgw_system_user(self, uid, display_name):
+        """Creates a system RGW user on the outer VM, returning its S3 key pair.
+
+        A system user is what the /admin/ endpoints need. RGW checks the per-op
+        cap first but falls back to is_admin() when it is absent, and is_admin()
+        is true for a --system user, so no --caps argument is required. An
+        already-existing uid is reused rather than failing the keyword.
+
+        Runs quiet: the secret key still reaches log.html but is kept off the
+        CI console.
+        """
+        existing = self.run_in_vm(
+            f"sudo microceph.radosgw-admin user info --uid={uid}", 60, quiet=True)
+        if existing.rc == 0:
+            return rgw_user_s3_credentials(existing.stdout)
+        created = self.run_in_vm_and_check(
+            f"sudo microceph.radosgw-admin user create --uid={uid} "
+            f"--display-name={display_name} --system",
+            60, quiet=True)
+        return rgw_user_s3_credentials(created.stdout)
+
+    def send_signed_rgw_admin_request(self, access_key, secret_key, query, timeout=60):
+        """Issues one SigV4-signed GET against the outer VM's RGW admin-ops API.
+
+        *query* is the query string appended to /admin/log?. Returns the raw
+        exec result; callers split its stdout with Curl Body And Status.
+
+        Deliberately non-raising: a radosgw that dies mid-request makes curl
+        exit 52 ("Empty reply from server"), and that outcome has to reach the
+        assertions rather than abort the keyword. The command is a single curl
+        with no pipeline, so bash's -e/-o pipefail cannot alter the rc that
+        curl itself returns.
+
+        The credential is shell-quoted rather than interpolated: RGW secrets
+        are drawn from an alphabet that includes '/' and '+', and Ceph's JSON
+        formatter escapes the slashes, so nothing here should depend on the
+        generated key happening to be free of shell metacharacters.
+        """
+        credential = shlex.quote(f"{access_key}:{secret_key}")
+        return self.run_in_vm(
+            f"curl -sS --max-time 20 -w '\\n%{{http_code}}' "
+            f'--aws-sigv4 "aws:amz:us-east-1:s3" --user {credential} '
+            f'"http://localhost:80/admin/log?{query}"',
+            timeout,
+        )
+
+    # -----------------------------------------------------------------------
+    # Daemon crash forensics
+    # -----------------------------------------------------------------------
+
+    def get_snap_service_restart_count(self, service):
+        """Returns systemd's NRestarts counter for snap.microceph.<service>.service.
+
+        A daemon killed by a signal is restarted by systemd, so this counter
+        moving across a narrow window corroborates a crash independently of any
+        log wording.
+        """
+        result = self.run_in_vm(
+            f"systemctl show snap.microceph.{service}.service --property=NRestarts",
+            30, quiet=True)
+        return self._safe_int(result.stdout.partition("=")[2])
+
+    def get_vm_file_size(self, path):
+        """Returns the size of *path* in the outer VM in bytes, or 0 if absent."""
+        result = self.run_in_vm(f"sudo stat -c %s -- {path}", 30, quiet=True)
+        if result.rc != 0:
+            return 0
+        return self._safe_int(result.stdout)
+
+    def read_vm_file_from_offset(self, path, offset):
+        """Returns the contents of *path* in the outer VM from byte *offset* on.
+
+        Lets a test look at only what a daemon logged since a known point, so a
+        stale banner from an earlier crash cannot match. tail counts bytes from
+        1, hence the +1.
+        """
+        result = self.run_in_vm_and_check(
+            f"sudo tail -c +{int(offset) + 1} -- {path}", 30, quiet=True)
+        return result.stdout
 
     # -----------------------------------------------------------------------
     # OSD pollers
