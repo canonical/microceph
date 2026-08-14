@@ -296,6 +296,33 @@ func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictMissingShards() {
 	assert.Equal(s.T(), 2, verdict.FullSyncShards)
 }
 
+func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictInitStateNotCaughtUp() {
+	// What a master reports, and what a secondary reports before sync
+	// starts: nothing to check, so nothing was found wrong.
+	local := RgwMetadataSyncStatus{
+		Info:    RgwSyncInfo{Status: "init", NumShards: 0},
+		Markers: nil,
+	}
+
+	verdict := ComputeRgwMetadataSyncVerdict(local, []RgwLogShard{{Marker: "1_100_5.1"}}, "")
+	assert.False(s.T(), verdict.CaughtUp)
+}
+
+func (s *RgwMultisiteSuite) TestComputeRgwDataSyncVerdictBuildingFullSyncNotCaughtUp() {
+	// A zone still building its full sync maps is not caught up either,
+	// even though every marker it does have lines up with the source.
+	local := RgwDataSyncStatus{
+		Info: RgwSyncInfo{Status: "building-full-sync-maps", NumShards: 1},
+		Markers: []RgwDataSyncShard{
+			{Key: 0, Val: RgwDataSyncMarker{Status: "incremental-sync", Marker: "1_50_1.1"}},
+		},
+	}
+
+	verdict := ComputeRgwDataSyncVerdict(local, []RgwLogShard{{Marker: "1_50_1.1"}})
+	assert.False(s.T(), verdict.CaughtUp)
+	assert.Empty(s.T(), verdict.BehindShards)
+}
+
 func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictPeerLogUnavailable() {
 	// GetRgwMdlogStatus returns nil when it cannot reach the peer. Every
 	// shard here is healthy and incremental, so comparing against nothing

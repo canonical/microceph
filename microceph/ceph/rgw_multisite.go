@@ -129,6 +129,11 @@ type RgwSyncInfo struct {
 	RealmEpoch int    `json:"realm_epoch"`
 }
 
+// rgwSyncStateSync is the Status value meaning the zone is actively
+// syncing. The other two radosgw-admin reports are "init" and
+// "building-full-sync-maps".
+const rgwSyncStateSync = "sync"
+
 // RgwMetadataSyncState is one shard's metadata sync state. radosgw-admin
 // reports it as a plain number.
 type RgwMetadataSyncState int
@@ -336,6 +341,11 @@ func GetRgwDatalogStatus(cluster string, client string) ([]RgwLogShard, error) {
 // same as one still doing its first full copy and cannot read as caught
 // up. This matches upstream's own total_behind arithmetic.
 //
+// CaughtUp also requires the zone to be actively syncing. A master, and a
+// secondary that has not started, both report "init" with no markers, and
+// neither is caught up. Skip this call entirely for a master rather than
+// reading the resulting false as behind.
+//
 // PeriodMismatch and PeerLogUnavailable both mean the comparison could not
 // be made at all, so neither is a claim about how far behind the zone is.
 //
@@ -382,7 +392,8 @@ func ComputeRgwMetadataSyncVerdict(local RgwMetadataSyncStatus, masterLog []RgwL
 	if verdict.FullSyncShards < 0 {
 		verdict.FullSyncShards = 0
 	}
-	verdict.CaughtUp = len(verdict.BehindShards) == 0 && verdict.FullSyncShards == 0
+	verdict.CaughtUp = local.Info.Status == rgwSyncStateSync &&
+		len(verdict.BehindShards) == 0 && verdict.FullSyncShards == 0
 	return verdict
 }
 
@@ -411,6 +422,7 @@ func ComputeRgwDataSyncVerdict(local RgwDataSyncStatus, sourceLog []RgwLogShard)
 	if verdict.FullSyncShards < 0 {
 		verdict.FullSyncShards = 0
 	}
-	verdict.CaughtUp = len(verdict.BehindShards) == 0 && verdict.FullSyncShards == 0
+	verdict.CaughtUp = local.Info.Status == rgwSyncStateSync &&
+		len(verdict.BehindShards) == 0 && verdict.FullSyncShards == 0
 	return verdict
 }
