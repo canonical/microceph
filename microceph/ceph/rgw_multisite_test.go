@@ -128,6 +128,19 @@ func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusSecondary() {
 	assert.Equal(s.T(), RgwMetadataSyncStateIncremental, status.Markers[0].Val.State)
 }
 
+func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusInvalidResponse() {
+	r := mocks.NewRunner(s.T())
+
+	// num_shards says 2 but the only marker claims shard 5.
+	output := `{"sync_status":{"info":{"status":"sync","num_shards":2},"markers":[{"key":5,"val":{"state":1,"marker":""}}]}}`
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "metadata", "sync", "status"}...).Return(output, nil).Once()
+	common.ProcessExec = r
+
+	_, err := GetRgwMetadataSyncStatus("", "")
+	assert.Error(s.T(), err)
+}
+
 func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusMaster() {
 	r := mocks.NewRunner(s.T())
 
@@ -161,6 +174,18 @@ func (s *RgwMultisiteSuite) TestGetRgwDataSyncStatus() {
 	assert.Equal(s.T(), "incremental-sync", status.Markers[0].Val.Status)
 }
 
+func (s *RgwMultisiteSuite) TestGetRgwDataSyncStatusInvalidResponse() {
+	r := mocks.NewRunner(s.T())
+
+	output := `{"sync_status":{"info":{"status":"sync","num_shards":2},"markers":[{"key":5,"val":{"status":"incremental-sync","marker":""}}]}}`
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "data", "sync", "status", "--source-zone", "sitea"}...).Return(output, nil).Once()
+	common.ProcessExec = r
+
+	_, err := GetRgwDataSyncStatus("sitea", "", "")
+	assert.Error(s.T(), err)
+}
+
 func (s *RgwMultisiteSuite) TestGetRgwMdlogStatus() {
 	r := mocks.NewRunner(s.T())
 
@@ -188,6 +213,33 @@ func (s *RgwMultisiteSuite) TestGetRgwDatalogStatusRemote() {
 	assert.NoError(s.T(), err)
 	assert.Len(s.T(), shards, 3)
 	assert.NotEmpty(s.T(), shards[2].Marker)
+}
+
+func (s *RgwMultisiteSuite) TestValidateRgwSyncShards() {
+	assert.NoError(s.T(), validateRgwSyncShards(3, []int{0, 1, 2}))
+	assert.NoError(s.T(), validateRgwSyncShards(0, nil))
+	assert.Error(s.T(), validateRgwSyncShards(-1, nil))
+	assert.Error(s.T(), validateRgwSyncShards(0, []int{0}))
+	assert.Error(s.T(), validateRgwSyncShards(3, []int{3}))
+	assert.Error(s.T(), validateRgwSyncShards(3, []int{-1}))
+}
+
+func (s *RgwMultisiteSuite) TestValidateRgwMetadataSyncShards() {
+	assert.NoError(s.T(), validateRgwMetadataSyncShards(2, []RgwMetadataSyncShard{
+		{Key: 0}, {Key: 1},
+	}))
+	assert.Error(s.T(), validateRgwMetadataSyncShards(2, []RgwMetadataSyncShard{
+		{Key: 5},
+	}))
+}
+
+func (s *RgwMultisiteSuite) TestValidateRgwDataSyncShards() {
+	assert.NoError(s.T(), validateRgwDataSyncShards(2, []RgwDataSyncShard{
+		{Key: 0}, {Key: 1},
+	}))
+	assert.Error(s.T(), validateRgwDataSyncShards(2, []RgwDataSyncShard{
+		{Key: 5},
+	}))
 }
 
 func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictCaughtUp() {

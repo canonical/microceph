@@ -191,6 +191,41 @@ type rgwDataSyncEnvelope struct {
 	} `json:"sync_status"`
 }
 
+// validateRgwSyncShards rejects a sync status response that contradicts
+// itself, since callers index a peer's log by these shard keys.
+func validateRgwSyncShards(numShards int, keys []int) error {
+	if numShards < 0 {
+		return fmt.Errorf("num_shards is negative: %d", numShards)
+	}
+	if numShards == 0 && len(keys) > 0 {
+		return fmt.Errorf("num_shards is 0 but %d marker(s) were reported", len(keys))
+	}
+	for _, key := range keys {
+		if key < 0 || key >= numShards {
+			return fmt.Errorf("marker key %d is out of range for num_shards %d", key, numShards)
+		}
+	}
+	return nil
+}
+
+// validateRgwMetadataSyncShards checks the metadata markers' shard keys.
+func validateRgwMetadataSyncShards(numShards int, markers []RgwMetadataSyncShard) error {
+	keys := make([]int, len(markers))
+	for i, marker := range markers {
+		keys[i] = marker.Key
+	}
+	return validateRgwSyncShards(numShards, keys)
+}
+
+// validateRgwDataSyncShards checks the data markers' shard keys.
+func validateRgwDataSyncShards(numShards int, markers []RgwDataSyncShard) error {
+	keys := make([]int, len(markers))
+	for i, marker := range markers {
+		keys[i] = marker.Key
+	}
+	return validateRgwSyncShards(numShards, keys)
+}
+
 // GetRgwMetadataSyncStatus fetches this zone's own metadata sync markers -
 // local progress only, no peer contact. A non-empty cluster/client pair
 // targets a remote cluster. A failing command yields a zero value and a
@@ -207,6 +242,11 @@ func GetRgwMetadataSyncStatus(cluster string, client string) (RgwMetadataSyncSta
 	err = json.Unmarshal([]byte(output), &envelope)
 	if err != nil {
 		return RgwMetadataSyncStatus{}, fmt.Errorf("cannot unmarshal metadata sync status output: %w", err)
+	}
+
+	err = validateRgwMetadataSyncShards(envelope.SyncStatus.Info.NumShards, envelope.SyncStatus.Markers)
+	if err != nil {
+		return RgwMetadataSyncStatus{}, fmt.Errorf("metadata sync status response failed validation: %w", err)
 	}
 
 	return RgwMetadataSyncStatus{Info: envelope.SyncStatus.Info, Markers: envelope.SyncStatus.Markers}, nil
@@ -228,6 +268,11 @@ func GetRgwDataSyncStatus(sourceZone string, cluster string, client string) (Rgw
 	err = json.Unmarshal([]byte(output), &envelope)
 	if err != nil {
 		return RgwDataSyncStatus{}, fmt.Errorf("cannot unmarshal data sync status output: %w", err)
+	}
+
+	err = validateRgwDataSyncShards(envelope.SyncStatus.Info.NumShards, envelope.SyncStatus.Markers)
+	if err != nil {
+		return RgwDataSyncStatus{}, fmt.Errorf("data sync status response failed validation: %w", err)
 	}
 
 	return RgwDataSyncStatus{Info: envelope.SyncStatus.Info, Markers: envelope.SyncStatus.Markers}, nil
