@@ -285,6 +285,17 @@ func GetRgwDataSyncStatus(sourceZone string, cluster string, client string) (Rgw
 
 // RgwLogShard is one shard of `mdlog status` or `datalog status` output:
 // the log head on the cluster that owns it. Array index is the shard id.
+//
+// Marker is compared against a local sync marker with a plain string
+// comparison. That is deliberate, not an oversight: radosgw-admin does
+// exactly the same (get_md_sync_status and get_data_sync_status in
+// src/rgw/rgw_admin.cc), and every RGW marker format is zero padded to a
+// fixed width, so byte order is time order. cls_log markers are "1_"
+// followed by a 10 digit second and a 6 digit microsecond field; FIFO
+// markers are two 20 digit fields; a datalog generation above 0 prefixes
+// "G" and a 20 digit id, which sorts above any digit leading generation 0
+// marker. Do not "fix" this into a numeric or timestamp comparison - it
+// would break the ordering these formats exist to provide.
 type RgwLogShard struct {
 	Marker     string `json:"marker"`
 	LastUpdate string `json:"last_update"`
@@ -387,8 +398,14 @@ func ComputeRgwMetadataSyncVerdict(local RgwMetadataSyncStatus, masterLog []RgwL
 			continue
 		}
 		numIncremental++
-		if shard.Key >= len(masterLog) {
-			logger.Warnf("REPRGW: metadata shard %d is missing from the peer mdlog (peer reported %d shard(s)); its sync state cannot be confirmed", shard.Key, len(masterLog))
+		// The key indexes the peer log, so both ends of its range are
+		// checked here rather than trusted from the parse step: this
+		// function is exported and takes the struct directly, so a
+		// caller that did not come through GetRgwMetadataSyncStatus
+		// never ran validateRgwSyncShards. The marker comparison below
+		// is a string comparison on purpose - see RgwLogShard.Marker.
+		if shard.Key < 0 || shard.Key >= len(masterLog) {
+			logger.Warnf("REPRGW: metadata shard key %d is out of range for the peer mdlog (peer reported %d shard(s)); its sync state cannot be confirmed", shard.Key, len(masterLog))
 		} else if masterLog[shard.Key].Marker > shard.Val.Marker {
 			verdict.BehindShards = append(verdict.BehindShards, shard.Key)
 		}
@@ -419,8 +436,11 @@ func ComputeRgwDataSyncVerdict(local RgwDataSyncStatus, sourceLog []RgwLogShard)
 			continue
 		}
 		numIncremental++
-		if shard.Key >= len(sourceLog) {
-			logger.Warnf("REPRGW: data shard %d is missing from the source datalog (source reported %d shard(s)); its sync state cannot be confirmed", shard.Key, len(sourceLog))
+		// Both ends of the key range are checked for the same reason as
+		// in ComputeRgwMetadataSyncVerdict, and the marker comparison is
+		// likewise a deliberate string comparison.
+		if shard.Key < 0 || shard.Key >= len(sourceLog) {
+			logger.Warnf("REPRGW: data shard key %d is out of range for the source datalog (source reported %d shard(s)); its sync state cannot be confirmed", shard.Key, len(sourceLog))
 		} else if sourceLog[shard.Key].Marker > shard.Val.Marker {
 			verdict.BehindShards = append(verdict.BehindShards, shard.Key)
 		}

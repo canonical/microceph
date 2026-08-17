@@ -435,3 +435,46 @@ func (s *RgwMultisiteSuite) TestComputeRgwDataSyncVerdictMissingShards() {
 	assert.Empty(s.T(), verdict.BehindShards)
 	assert.Equal(s.T(), 4, verdict.FullSyncShards)
 }
+
+func (s *RgwMultisiteSuite) TestComputeRgwMetadataSyncVerdictNegativeShardKey() {
+	// The compute functions are exported and take the parsed struct, so
+	// they cannot assume validateRgwSyncShards rejected a negative key.
+	// A negative key clears the upper bound check, so without a lower
+	// bound it would index the peer log at -1 and panic. An out of range
+	// key still counts toward the incremental total, as the high side
+	// case does.
+	local := RgwMetadataSyncStatus{
+		Info: RgwSyncInfo{Status: "sync", NumShards: 2, Period: "p1"},
+		Markers: []RgwMetadataSyncShard{
+			{Key: -1, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: ""}},
+			{Key: 0, Val: RgwMetadataSyncMarker{State: RgwMetadataSyncStateIncremental, Marker: "1_100_5.1"}},
+		},
+	}
+	masterLog := []RgwLogShard{{Marker: "1_200_7.1"}, {Marker: ""}}
+
+	verdict := RgwSyncVerdict{}
+	assert.NotPanics(s.T(), func() {
+		verdict = ComputeRgwMetadataSyncVerdict(local, masterLog, "p1")
+	})
+	assert.False(s.T(), verdict.CaughtUp)
+	assert.Equal(s.T(), []int{0}, verdict.BehindShards) // shard -1 skipped, not reported behind
+}
+
+func (s *RgwMultisiteSuite) TestComputeRgwDataSyncVerdictNegativeShardKey() {
+	// Same lower bound guard on the data side.
+	local := RgwDataSyncStatus{
+		Info: RgwSyncInfo{Status: "sync", NumShards: 2},
+		Markers: []RgwDataSyncShard{
+			{Key: -1, Val: RgwDataSyncMarker{Status: "incremental-sync", Marker: ""}},
+			{Key: 0, Val: RgwDataSyncMarker{Status: "incremental-sync", Marker: "1_50_1.1"}},
+		},
+	}
+	sourceLog := []RgwLogShard{{Marker: "1_60_2.1"}, {Marker: ""}}
+
+	verdict := RgwSyncVerdict{}
+	assert.NotPanics(s.T(), func() {
+		verdict = ComputeRgwDataSyncVerdict(local, sourceLog)
+	})
+	assert.False(s.T(), verdict.CaughtUp)
+	assert.Equal(s.T(), []int{0}, verdict.BehindShards) // shard -1 skipped, not reported behind
+}
