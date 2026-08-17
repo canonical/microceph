@@ -133,6 +133,10 @@ jobs:
             name: Test MicroCeph Cluster features.
             suite: cluster-tests
 
+          - id: rgw-datalog-crash-tests
+            name: Regression test for RGW datalog admin request segfault (issue #810)
+            suite: rgw-datalog-crash-tests
+
           - id: rbd-replication-test
             name: Test MicroCeph RBD Remote Replication features.
             suite: rbd-replication-test

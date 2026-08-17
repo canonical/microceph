@@ -9,6 +9,7 @@ Library         microceph_harness.py
 Library         streaming_process.py
 Library         snap_services.py
 Library         cephfs_replication.py
+Library         rgw_admin_ops.py
 
 *** Variables ***
 ${SNAP_PATH}          ${EMPTY}

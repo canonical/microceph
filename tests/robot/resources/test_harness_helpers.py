@@ -22,6 +22,14 @@ from rbd_replication import (
     rbd_primary_image_count,
     rbd_synced_image_count,
 )
+from rgw_admin_ops import (
+    curl_body_and_status,
+    datalog_crash_signature,
+    datalog_list_entry_count,
+    datalog_num_objects,
+    datalog_shard_info_marker,
+    rgw_user_s3_credentials,
+)
 from streaming_process import run_streaming_process
 
 
@@ -1067,3 +1075,140 @@ def test_log_exec_no_output_prints_nothing(monkeypatch):
     cap = _with_logger(monkeypatch)
     H()._log_exec("mkdir -p ~/x", _Res(0, "", ""), quiet=False)
     assert cap.console_lines == []
+
+
+# ---------------------------------------------------------------------------
+# rgw_admin_ops -- RGW admin-ops responses and the issue #810 crash signature
+# ---------------------------------------------------------------------------
+
+def test_curl_body_and_status_splits_trailing_code():
+    assert curl_body_and_status('{"num_objects":128}\n200') == ('{"num_objects":128}', "200")
+
+
+def test_curl_body_and_status_empty_body_on_dropped_connection():
+    # curl still writes its -w output when the server dies mid-request.
+    assert curl_body_and_status("\n000") == ("", "000")
+
+
+def test_curl_body_and_status_body_containing_newlines():
+    assert curl_body_and_status('{\n  "info": {}\n}\n200') == ('{\n  "info": {}\n}', "200")
+
+
+def test_rgw_user_s3_credentials_takes_first_key():
+    doc = '{"user_id": "u", "keys": [{"access_key": "AK", "secret_key": "SK"}]}'
+    assert rgw_user_s3_credentials(doc) == ("AK", "SK")
+
+
+def test_rgw_user_s3_credentials_rejects_keyless_user():
+    with pytest.raises(AssertionError) as exc:
+        rgw_user_s3_credentials('{"user_id": "u", "keys": []}')
+    assert "no S3 keys" in str(exc.value)
+
+
+def test_datalog_num_objects_reads_shard_count():
+    assert datalog_num_objects('{"num_objects":128}') == 128
+
+
+def test_datalog_num_objects_rejects_wrong_document():
+    with pytest.raises(AssertionError) as exc:
+        datalog_num_objects('{"info": {}}')
+    assert "num_objects" in str(exc.value)
+
+
+def test_datalog_shard_info_marker_reads_marker():
+    # encode_json("info", ...) is the root section, whose name Ceph's formatter
+    # drops, so the fields are top level and not nested under "info".
+    body = '{"marker":"1_1755000000.1_5","last_update":"2026-08-14T18:00:00.0Z"}'
+    assert datalog_shard_info_marker(body) == "1_1755000000.1_5"
+
+
+def test_datalog_shard_info_marker_allows_empty_marker_on_idle_shard():
+    # Verbatim from radosgw 20.2.1 on a freshly enabled gateway.
+    assert datalog_shard_info_marker('{"marker":"","last_update":"0.000000"}') == ""
+
+
+def test_datalog_shard_info_marker_rejects_missing_field():
+    with pytest.raises(AssertionError) as exc:
+        datalog_shard_info_marker('{"marker":""}')
+    assert "last_update" in str(exc.value)
+
+
+def test_datalog_shard_info_marker_rejects_empty_body():
+    # What a crashed gateway leaves behind: no response at all.
+    with pytest.raises(AssertionError) as exc:
+        datalog_shard_info_marker("")
+    assert "nothing came back" in str(exc.value)
+
+
+def test_datalog_shard_info_marker_rejects_html_error_page():
+    with pytest.raises(AssertionError) as exc:
+        datalog_shard_info_marker("<html><body>502 Bad Gateway</body></html>")
+    assert "not JSON" in str(exc.value)
+
+
+def test_datalog_list_entry_count_counts_entries():
+    body = '{"marker":"m","last_update":"0.000000","truncated":false,"entries":[1,2,3]}'
+    assert datalog_list_entry_count(body) == 3
+
+
+def test_datalog_list_entry_count_zero_on_idle_shard():
+    # Verbatim from radosgw 20.2.1 on a freshly enabled gateway.
+    body = '{"marker":"","last_update":"0.000000","truncated":false,"entries":[]}'
+    assert datalog_list_entry_count(body) == 0
+
+
+def test_datalog_shard_info_and_list_shapes_do_not_collide():
+    # List is ShardInfo's document plus truncated/entries, so the shard-info
+    # check must not accidentally accept a list response as its own shape being
+    # the whole story -- each parser asserts on the field it actually needs.
+    list_body = '{"marker":"m","last_update":"0.000000","truncated":false,"entries":[]}'
+    assert datalog_shard_info_marker(list_body) == "m"
+    with pytest.raises(AssertionError):
+        datalog_list_entry_count('{"marker":"m","last_update":"0.000000"}')
+
+
+def test_datalog_list_entry_count_rejects_missing_entries():
+    with pytest.raises(AssertionError) as exc:
+        datalog_list_entry_count('{"marker":"m"}')
+    assert "entries" in str(exc.value)
+
+
+CRASH_LOG = """2026-08-14T18:00:00.000+0000 7f0 -1 *** Caught signal (Segmentation fault) **
+ in thread 7f0 thread_name:radosgw
+ ceph version 20.2.1 (6a49aff47758778a5f5951e731d437c317f72fb2) tentacle (stable)
+ 1: /lib/x86_64-linux-gnu/libc.so.6(+0x45330) [0x7f0]
+ 2: (std::rethrow_exception(std::__exception_ptr::exception_ptr)+0x0) [0x7f0]
+ 3: (int rgw::run_coro<RGWDataChangesLogInfo>(DoutPrefixProvider*, ...)+0x1a1) [0x7f0]
+ 4: (RGWOp_DATALog_ShardInfo::execute(optional_yield)+0x9d) [0x7f0]
+ 5: (rgw_process_authenticated(RGWHandler_REST*, RGWOp*&, ...)+0x8a1) [0x7f0]
+"""
+
+
+def test_datalog_crash_signature_matches_banner_with_frames():
+    excerpt = datalog_crash_signature(CRASH_LOG)
+    assert "Caught signal (Segmentation fault)" in excerpt
+    assert "RGWOp_DATALog_ShardInfo" in excerpt
+
+
+def test_datalog_crash_signature_ignores_unrelated_segfault():
+    # A segfault elsewhere in radosgw must not be reported as issue #810.
+    other = """*** Caught signal (Segmentation fault) **
+ 1: (RGWPutObj::execute(optional_yield)+0x10) [0x7f0]
+ 2: (rgw_process_authenticated(...)+0x8a1) [0x7f0]
+"""
+    assert datalog_crash_signature(other) == ""
+
+
+def test_datalog_crash_signature_ignores_frames_without_banner():
+    # run_coro appears in ordinary debug output; on its own it means nothing.
+    assert datalog_crash_signature("3: (int rgw::run_coro<...>) returned 0\n") == ""
+
+
+def test_datalog_crash_signature_empty_on_clean_log():
+    assert datalog_crash_signature("2026-08-14T18:00:00.000+0000 7f0 1 civetweb: 0x0: GET /\n") == ""
+
+
+def test_datalog_crash_signature_ignores_frames_beyond_context_window():
+    # The frame must belong to *this* backtrace, not one further down the log.
+    log = "*** Caught signal (Segmentation fault) **\n" + ("padding\n" * 30) + "run_coro\n"
+    assert datalog_crash_signature(log, context_lines=20) == ""
