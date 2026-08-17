@@ -1,0 +1,49 @@
+{
+    "sync_status": {
+        "info": {
+            "status": "sync",
+            "num_shards": 128,
+            "instance_id": 8413746528885553131
+        },
+        "markers": [
+            {
+                "key": 0,
+                "val": {
+                    "status": "incremental-sync",
+                    "marker": "",
+                    "next_step_marker": "",
+                    "total_entries": 0,
+                    "pos": 0,
+                    "timestamp": "0.000000"
+                }
+            },
+            {
+                "key": 1,
+                "val": {
+                    "status": "incremental-sync",
+                    "marker": "",
+                    "next_step_marker": "",
+                    "total_entries": 0,
+                    "pos": 0,
+                    "timestamp": "0.000000"
+                }
+            },
+            {
+                "key": 2,
+                "val": {
+                    "status": "incremental-sync",
+                    "marker": "",
+                    "next_step_marker": "",
+                    "total_entries": 0,
+                    "pos": 0,
+                    "timestamp": "0.000000"
+                }
+            }
+        ]
+    },
+    "full_sync": {
+        "total": 0,
+        "complete": 0
+    },
+    "current_time": "2026-07-23T00:22:24Z"
+}
