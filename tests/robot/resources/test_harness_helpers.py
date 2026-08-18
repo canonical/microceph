@@ -937,6 +937,61 @@ def test_supported_capabilities_malformed_is_empty():
     assert placement_status.supported_capabilities(non_list) == []
 
 
+# GET /1.0/placement body carrying an observed RGW member with a frontend, plus
+# a stored policy whose rgw entry has been stripped/redacted (no key material).
+_RGW_PLACEMENT_RESPONSE = json.dumps({
+    "status_code": 200,
+    "metadata": {
+        "active": True,
+        "policy": {
+            "mode": "reconcile",
+            "members": {
+                "node-a": {"rgw": {"enabled": True, "port": 8080, "ssl_port": 443}},
+            },
+        },
+        "observed": [
+            {"member": "node-a", "rgw": True,
+             "rgw_frontend": {"port": 8080, "ssl_port": 443, "ssl": True}},
+            {"member": "node-b", "control": True},
+        ],
+    },
+})
+
+
+def test_member_rgw_frontend_reports_ports_and_tls():
+    fe = placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-a")
+    assert fe == {"port": 8080, "ssl_port": 443, "ssl": True}
+
+
+def test_member_rgw_frontend_absent_member_is_empty():
+    assert placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-b") == {}
+    assert placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-z") == {}
+    assert placement_status.member_rgw_frontend("garbage", "node-a") == {}
+
+
+def test_placement_leaks_rgw_secrets_false_when_stripped():
+    # The stored policy carries port/ssl_port but no cert/key: no leak.
+    assert placement_status.placement_leaks_rgw_secrets(_RGW_PLACEMENT_RESPONSE) is False
+    assert placement_status.placement_leaks_rgw_secrets("garbage") is False
+
+
+def test_placement_leaks_rgw_secrets_true_when_present():
+    leaky = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {
+            "node-a": {"rgw": {"enabled": True, "ssl_certificate": "Y2VydA=="}},
+        }}},
+    })
+    assert placement_status.placement_leaks_rgw_secrets(leaky) is True
+    leaky_key = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {
+            "node-a": {"rgw": {"enabled": True, "ssl_private_key": "a2V5"}},
+        }}},
+    })
+    assert placement_status.placement_leaks_rgw_secrets(leaky_key) is True
+
+
 def test_mon_count_prefers_monmap_num_mons():
     raw = json.dumps({"monmap": {"num_mons": 3}, "quorum_names": ["a", "b"]})
     assert placement_status.mon_count(raw) == 3

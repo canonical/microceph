@@ -202,6 +202,15 @@ func removeServiceDatabase(ctx context.Context, s interfaces.StateInterface, ser
 			}
 		}
 
+		// Drop the recorded RGW frontend so observed state does not outlive the
+		// service row. Both are removed in the same transaction.
+		if service == "rgw" {
+			err = database.DeleteRGWFrontendByMember(ctx, tx, s.ClusterState().Name())
+			if err != nil {
+				return fmt.Errorf("failed to remove rgw frontend from db: %w", err)
+			}
+		}
+
 		return nil
 	})
 	return err

@@ -15,6 +15,11 @@ var CapabilitiesSupported = []string{
 	"deferred-ceph-bootstrap",
 	"ceph-only-bootstrap",
 	"declarative-placement",
+	// placement-rgw: object-shaped rgw placement (enabled/port/ssl_port/SSL
+	// material) plus an observed rgw_frontend in GET /placement (CE142 Option B).
+	// The charm gates role-managed RGW on this marker; a snap without it would
+	// 400 on the object payload via DisallowUnknownFields.
+	"placement-rgw",
 }
 
 // capabilitiesCmd is the cluster capabilities endpoint (CE142).

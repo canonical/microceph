@@ -7,6 +7,20 @@ type NFSPlacement struct {
 	BindAddress string `json:"bind_address" yaml:"bind_address"`
 }
 
+// RgwPlacement carries RGW placement intent plus charm-derived frontend
+// configuration (CE142 Option B). Enabled toggles placement; Port/SSLPort and
+// the base64 PEM SSLCertificate/SSLPrivateKey configure the beast frontend.
+// The certificate and key are charm-derived deployment context (from the
+// charm's certificates relation), NOT Provider-furnished; the snap MUST redact
+// them from GET /1.0/placement and MUST NOT persist them in the stored policy.
+type RgwPlacement struct {
+	Enabled        bool   `json:"enabled" yaml:"enabled"`
+	Port           int    `json:"port,omitempty" yaml:"port,omitempty"`
+	SSLPort        int    `json:"ssl_port,omitempty" yaml:"ssl_port,omitempty"`
+	SSLCertificate string `json:"ssl_certificate,omitempty" yaml:"ssl_certificate,omitempty"`
+	SSLPrivateKey  string `json:"ssl_private_key,omitempty" yaml:"ssl_private_key,omitempty"`
+}
+
 // MemberPlacement describes the desired placement for a single MicroCeph member.
 // Pointer fields distinguish "explicitly false/empty" (remove) from "omitted"
 // (leave untouched). This is the generic, non-OS106 payload consumed by the
@@ -14,8 +28,9 @@ type NFSPlacement struct {
 type MemberPlacement struct {
 	// Control governs MON, MGR, and MDS placement. nil means untouched.
 	Control *bool `json:"control,omitempty" yaml:"control,omitempty"`
-	// Rgw governs RGW placement. nil means untouched.
-	Rgw *bool `json:"rgw,omitempty" yaml:"rgw,omitempty"`
+	// Rgw governs RGW placement and frontend config. nil means untouched; a
+	// non-nil value with Enabled false means remove RGW from the member.
+	Rgw *RgwPlacement `json:"rgw,omitempty" yaml:"rgw,omitempty"`
 	// Nfs governs role-driven NFS placement. nil means untouched; an empty
 	// (non-nil) slice means remove role-driven NFS on that member. The json
 	// tag intentionally omits the omitempty modifier so that an empty slice
@@ -40,14 +55,26 @@ type PlacementPolicy struct {
 	Members map[string]MemberPlacement `json:"members" yaml:"members"`
 }
 
+// RgwObservedFrontend is the observed RGW beast frontend on a member. It
+// reports ports and whether TLS is configured, but never the cert/key bytes.
+// Sourced from the rgw_frontends DB table (see CE142 placement-rgw).
+type RgwObservedFrontend struct {
+	Port    int  `json:"port,omitempty" yaml:"port,omitempty"`
+	SSLPort int  `json:"ssl_port,omitempty" yaml:"ssl_port,omitempty"`
+	SSL     bool `json:"ssl" yaml:"ssl"`
+}
+
 // PlacementObservedMember captures the observed service placement for a member.
 // Control is true when the member hosts any of MON, MGR, or MDS. Nfs lists the
 // NFS group IDs placed on the member (from the grouped-services records).
+// Rgw is true when the member hosts RGW; RgwFrontend reports its observed beast
+// frontend (ports + TLS flag, never key material) when Rgw is true.
 type PlacementObservedMember struct {
-	Member  string   `json:"member" yaml:"member"`
-	Control bool     `json:"control" yaml:"control"`
-	Rgw     bool     `json:"rgw" yaml:"rgw"`
-	Nfs     []string `json:"nfs" yaml:"nfs"`
+	Member      string               `json:"member" yaml:"member"`
+	Control     bool                 `json:"control" yaml:"control"`
+	Rgw         bool                 `json:"rgw" yaml:"rgw"`
+	RgwFrontend *RgwObservedFrontend `json:"rgw_frontend,omitempty" yaml:"rgw_frontend,omitempty"`
+	Nfs         []string             `json:"nfs" yaml:"nfs"`
 }
 
 // PlacementStatus is the response body of GET /1.0/placement. It returns the

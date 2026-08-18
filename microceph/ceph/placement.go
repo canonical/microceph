@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -38,6 +39,12 @@ var ErrKeepOneInvariant = fmt.Errorf("keep-one invariant")
 // ErrCephBootstrapInProgress.
 var ErrPlacementApplyInProgress = fmt.Errorf("placement apply already in progress")
 
+// ErrRgwFrontendInvalid is returned when the RGW frontend configuration in a
+// placement policy is malformed (e.g. bad base64 SSL material). It is a
+// client-side sentinel so the API handler maps it to HTTP 400 rather than the
+// SmartError 500 fallback.
+var ErrRgwFrontendInvalid = fmt.Errorf("invalid RGW frontend configuration")
+
 // placementApplyLease bounds how long a placement apply may hold the
 // cluster-wide dqlite lock before it is considered abandoned (daemon crashed
 // mid-apply) and reclaimable by the next writer. It must comfortably exceed
@@ -49,13 +56,28 @@ const placementApplyLease = 15 * time.Minute
 // used by the API handler so tests can override it.
 var LockPlacementApplyFunc = LockPlacementApply
 
-// LockPlacementApply acquires the cluster-wide placement apply lock (CE142).
-// ApplyPlacement reads observed service state and then mutates services over
-// minutes; two overlapping applies (possibly served by different members)
-// could each count the other's removal targets as keep-one retainers and
-// together remove the last viable control service. The dqlite-backed lock
-// makes the read-modify cycle mutually exclusive across all cluster members.
+// LockPlacementApply acquires the cluster-wide placement apply lock.
+// The dqlite-backed lock makes the whole apply-then-store cycle mutually
+// exclusive across all cluster members. It serves two distinct purposes, and
+// both must hold before it can be narrowed or removed:
 //
+//  1. Control-service safety. ApplyPlacement reads observed service state and
+//     then mutates services over minutes; two overlapping applies (possibly
+//     served by different members) could each count the other's removal
+//     targets as keep-one retainers and together remove the last viable
+//     control service. This rationale is specific to control: the keep-one
+//     decision reads *other* members' state, so a stale snapshot is unsafe.
+//
+//  2. Apply/store atomicity, for every service class. The API handler stores
+//     the policy inside this lock (see cmdPlacementPut), so the stored intent
+//     always matches the apply that ran last. Without it, two overlapping PUTs
+//     could apply in one order and store in the other, leaving GET /placement
+//     reporting a declared policy that contradicts what was actually applied.
+//
+// Non-quorum services such as RGW have no keep-one invariant and decide each
+// member independently, so reason 1 does not apply to them — they ride along
+// on this lock for reason 2 (atomicity), not for safety.
+// 
 // The returned token must be passed to UnlockPlacementApply. If another apply
 // holds the lock, ErrPlacementApplyInProgress is returned; a lock older than
 // placementApplyLease is treated as abandoned and reclaimed.
@@ -271,6 +293,16 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 		}
 	}
 
+	// RGW pass (CE142 Option B): reconcile role-managed RGW placement after the
+	// control pass so control quorum is established first. RGW has no keep-one
+	// invariant (scale-to-zero is allowed); it follows add-before-remove so a
+	// migration keeps a gateway serving. An omitted rgw field (nil) leaves the
+	// member untouched; enabled:false removes RGW only where it is observed.
+	err = applyRgwPlacement(ctx, s, policy)
+	if err != nil {
+		return err
+	}
+
 	if len(refused) > 0 {
 		return fmt.Errorf("%w: refused to remove last control service(s): %s", ErrKeepOneInvariant, strings.Join(refused, ", "))
 	}
@@ -341,6 +373,205 @@ func prodRemoveControlService(ctx context.Context, s interfaces.StateInterface, 
 	return nil
 }
 
+// applyRgwPlacement reconciles role-managed RGW placement (CE142 Option B). It
+// runs after the control pass and follows add-before-remove: desired members
+// are enabled first (with their frontend config), then RGW is removed from
+// members that should not have it, but only where it is observed. RGW has no
+// keep-one invariant, so scale-to-zero (all enabled:false / omitted) is
+// honoured. Member iteration is sorted for deterministic ordering and tests.
+func applyRgwPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
+	// Short-circuit when the policy carries no RGW intent: every member's rgw
+	// is omitted (nil), so there is nothing to enable or remove, and an observed
+	// RGW read is unnecessary. This keeps control-only applies from touching RGW
+	// and lets control-only tests skip the RGW observer stub.
+	hasRgwIntent := false
+	for _, mp := range policy.Members {
+		if mp.Rgw != nil {
+			hasRgwIntent = true
+			break
+		}
+	}
+	if !hasRgwIntent {
+		return nil
+	}
+
+	observedRgw, err := getObservedRgwFunc(ctx, s)
+	if err != nil {
+		return fmt.Errorf("failed to get observed RGW services: %w", err)
+	}
+
+	var desiredEnable []string
+	desiredDisable := make(map[string]bool)
+	for memberName, mp := range policy.Members {
+		if mp.Rgw == nil {
+			continue // omitted: untouched
+		}
+		if mp.Rgw.Enabled {
+			desiredEnable = append(desiredEnable, memberName)
+		} else {
+			desiredDisable[memberName] = true
+		}
+	}
+	sort.Strings(desiredEnable)
+
+	// Add-before-remove: enable desired members first so a migration keeps a
+	// gateway serving while the old one is torn down.
+	for _, memberName := range desiredEnable {
+		err = enableRgwServiceFunc(ctx, s, memberName, *policy.Members[memberName].Rgw)
+		if err != nil {
+			return fmt.Errorf("failed to enable RGW on %s: %w", memberName, err)
+		}
+	}
+
+	// Then remove RGW from members that should not have it, but only where it is
+	// observed (DisableRGW is idempotent either way; this avoids needless dispatch).
+	disableMembers := make([]string, 0, len(desiredDisable))
+	for m := range desiredDisable {
+		disableMembers = append(disableMembers, m)
+	}
+	sort.Strings(disableMembers)
+	for _, memberName := range disableMembers {
+		if !observedRgw[memberName] {
+			continue
+		}
+		err = removeRgwServiceFunc(ctx, s, memberName)
+		if err != nil {
+			return fmt.Errorf("failed to remove RGW from %s: %w", memberName, err)
+		}
+	}
+	return nil
+}
+
+// getObservedRgwFunc returns the set of members currently running RGW (from the
+// services table). It reports presence only, which is all the reconcile pass
+// needs; the observed frontend ports/TLS come from the rgw_frontends table in
+// the status path, not here. Injectable for testing.
+var getObservedRgwFunc = func(ctx context.Context, s interfaces.StateInterface) (map[string]bool, error) {
+	result := make(map[string]bool)
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		services, err := database.GetServices(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for _, svc := range services {
+			if svc.Service == "rgw" {
+				result[svc.Member] = true
+			}
+		}
+		return nil
+	})
+	return result, err
+}
+
+// enableRgwServiceFunc enables/reconciles RGW (with frontend config) on a
+// member. Injectable for testing; the production implementation dispatches via
+// the service API to the target member.
+var enableRgwServiceFunc = func(ctx context.Context, s interfaces.StateInterface, member string, rgw types.RgwPlacement) error {
+	logger.Infof("Placement: enabling RGW on %s (port=%d, ssl_port=%d, ssl=%v)", member, rgw.Port, rgw.SSLPort, rgw.SSLCertificate != "")
+	return prodEnableRgwService(ctx, s, member, rgw)
+}
+
+// removeRgwServiceFunc disables RGW on a member. Injectable for testing.
+var removeRgwServiceFunc = func(ctx context.Context, s interfaces.StateInterface, member string) error {
+	logger.Infof("Placement: removing RGW from %s", member)
+	return prodRemoveRgwService(ctx, s, member)
+}
+
+// ProdEnableRgwServiceFunc is the injectable hook for the production RGW enable
+// implementation. The daemon package sets this at init time; the default is nil
+// (no-op for tests that don't need real service placement).
+var ProdEnableRgwServiceFunc func(ctx context.Context, s interfaces.StateInterface, member string, rgw types.RgwPlacement) error
+
+// ProdRemoveRgwServiceFunc is the injectable hook for the production RGW remove
+// implementation. The daemon package sets this at init time; the default is nil
+// (no-op for tests that don't need real service removal).
+var ProdRemoveRgwServiceFunc func(ctx context.Context, s interfaces.StateInterface, member string) error
+
+// prodEnableRgwService delegates to the injected production function, or is a
+// no-op when no production function is wired (e.g. in unit tests).
+func prodEnableRgwService(ctx context.Context, s interfaces.StateInterface, member string, rgw types.RgwPlacement) error {
+	if ProdEnableRgwServiceFunc != nil {
+		return ProdEnableRgwServiceFunc(ctx, s, member, rgw)
+	}
+	return nil
+}
+
+// prodRemoveRgwService delegates to the injected production function, or is a
+// no-op when no production function is wired (e.g. in unit tests).
+func prodRemoveRgwService(ctx context.Context, s interfaces.StateInterface, member string) error {
+	if ProdRemoveRgwServiceFunc != nil {
+		return ProdRemoveRgwServiceFunc(ctx, s, member)
+	}
+	return nil
+}
+
+// PolicyForStorage returns a copy of policy with the RGW SSL certificate and
+// private key stripped from every member's rgw entry. SSL key material must
+// never be persisted in dqlite (CE142 Option B secrets posture): it travels
+// over the authenticated API to the member that needs it, then is dropped
+// before the policy is stored. enabled/port/ssl_port are retained so
+// GET /placement still reports the declared frontend intent. The original
+// policy is untouched so the apply path retains the material.
+func PolicyForStorage(policy types.PlacementPolicy) types.PlacementPolicy {
+	out := policy
+	out.Members = make(map[string]types.MemberPlacement, len(policy.Members))
+	for name, mp := range policy.Members {
+		if mp.Rgw != nil {
+			stripped := *mp.Rgw
+			stripped.SSLCertificate = ""
+			stripped.SSLPrivateKey = ""
+			mp.Rgw = &stripped
+		}
+		out.Members[name] = mp
+	}
+	return out
+}
+
+// redactStoredPolicy blanks the RGW SSL certificate and private key from every
+// member's rgw entry in a declared policy before it is returned via
+// GET /placement. It is defense-in-depth: the stored policy is already stripped
+// at PUT time (PolicyForStorage), but this protects against any future code
+// path that stores the raw policy. A nil policy is a no-op. The observed
+// frontend (RgwObservedFrontend) carries ports + a TLS flag only, so it needs no
+// redaction.
+func redactStoredPolicy(policy *types.PlacementPolicy) {
+	if policy == nil {
+		return
+	}
+	for _, mp := range policy.Members {
+		if mp.Rgw != nil {
+			mp.Rgw.SSLCertificate = ""
+			mp.Rgw.SSLPrivateKey = ""
+		}
+	}
+}
+
+// populateRGWFrontends sets each observed member's RgwFrontend from the
+// recorded rgw_frontends rows (CE142 placement-rgw). Only members observed to
+// host RGW (Rgw=true) get a frontend; a recorded row for a member not observed
+// with RGW is ignored because the services row is the presence authority. The
+// frontend reports ports + a TLS flag only, never cert/key bytes.
+func populateRGWFrontends(observedByMember map[string]*types.PlacementObservedMember, frontends []database.RgwFrontend) {
+	byName := make(map[string]database.RgwFrontend, len(frontends))
+	for _, f := range frontends {
+		byName[f.Member] = f
+	}
+	for member, om := range observedByMember {
+		if !om.Rgw {
+			continue
+		}
+		f, ok := byName[member]
+		if !ok {
+			continue
+		}
+		om.RgwFrontend = &types.RgwObservedFrontend{
+			Port:    f.Port,
+			SSLPort: f.SSLPort,
+			SSL:     f.SSL,
+		}
+	}
+}
+
 // GetPlacementStatusFunc is the injectable wrapper for GetPlacementStatus,
 // used by the API handler so tests can override it.
 var GetPlacementStatusFunc = GetPlacementStatus
@@ -379,6 +610,10 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 			if err != nil {
 				return fmt.Errorf("failed to unmarshal placement policy: %w", err)
 			}
+			// Defense-in-depth: the stored policy is already stripped at PUT time,
+			// but redact again so a future code path that stores the raw policy
+			// cannot leak SSL material via GET /placement.
+			redactStoredPolicy(&policy)
 			status.Policy = &policy
 		}
 		status.PlacementRefusal = redactSecrets(rec.LastRefusal)
@@ -431,6 +666,15 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 			}
 			om.Nfs = append(om.Nfs, gs.GroupID)
 		}
+
+		// Observed RGW frontends: ports + TLS flag from the rgw_frontends table
+		// (CE142 placement-rgw), read in the same transaction as the rest of the
+		// observed state. Never cert/key bytes.
+		rgwFrontends, err := database.GetRGWFrontends(ctx, tx)
+		if err != nil {
+			return err
+		}
+		populateRGWFrontends(observedByMember, rgwFrontends)
 
 		for _, om := range observedByMember {
 			status.Observed = append(status.Observed, *om)

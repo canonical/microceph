@@ -51,7 +51,8 @@ const placementPutTimeout = 10 * time.Minute
 func isClientSidePlacementError(err error) bool {
 	return errors.Is(err, ceph.ErrCephNotBootstrapped) ||
 		errors.Is(err, ceph.ErrUnknownPlacementMember) ||
-		errors.Is(err, ceph.ErrKeepOneInvariant)
+		errors.Is(err, ceph.ErrKeepOneInvariant) ||
+		errors.Is(err, ceph.ErrRgwFrontendInvalid)
 }
 
 // inProgressResponse maps an "already in progress" sentinel (placement apply or
@@ -147,7 +148,7 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 		// intent, and last_refusal records what failed so the caller can retry
 		// the same policy to converge.
 		if errors.Is(applyErr, ceph.ErrKeepOneInvariant) {
-			storeErr := ceph.StorePlacementPolicyFunc(ctx, interfaces.CephState{State: s}, policy)
+			storeErr := ceph.StorePlacementPolicyFunc(ctx, interfaces.CephState{State: s}, ceph.PolicyForStorage(policy))
 			if storeErr != nil {
 				logger.Warnf("failed to store placement policy after keep-one refusal: %v", storeErr)
 			}
@@ -176,8 +177,11 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 		logger.Warnf("failed to clear placement refusal: %v", clearErr)
 	}
 
-	// Persist the policy only after successful application.
-	err = ceph.StorePlacementPolicyFunc(ctx, interfaces.CephState{State: s}, policy)
+	// Persist the policy only after successful application. Strip RGW SSL key
+	// material before storage (CE142 Option B secrets posture): the cert/key
+	// travel over the authenticated API to the member that needs them, then are
+	// dropped so they are never persisted in dqlite.
+	err = ceph.StorePlacementPolicyFunc(ctx, interfaces.CephState{State: s}, ceph.PolicyForStorage(policy))
 	if err != nil {
 		logger.Errorf("failed to store placement policy: %v", err)
 		return mcTypes.InternalError(err)

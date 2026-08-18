@@ -24,6 +24,19 @@ with ``microceph help``.
    commands/index
 
 
+Declarative placement
+---------------------
+
+The declarative placement section describes the API used by an orchestrator,
+such as the MicroCeph charm, to control which cluster members run which
+services, and the ownership model that applies when it is in use.
+
+.. toctree::
+   :maxdepth: 1
+
+   declarative-placement
+
+
 Release Notes
 -------------
 

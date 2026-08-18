@@ -69,6 +69,60 @@ def supported_capabilities(raw):
     return [str(s) for s in supported]
 
 
+def observed_member(raw, member):
+    """Return the observed placement dict for *member* from a GET /1.0/placement
+    body, or {} when the member is absent or the body is malformed.
+    """
+    observed = response_metadata(raw).get("observed")
+    if not isinstance(observed, list):
+        return {}
+    for entry in observed:
+        if isinstance(entry, dict) and entry.get("member") == member:
+            return entry
+    return {}
+
+
+def member_rgw_frontend(raw, member):
+    """Return *member*'s observed ``rgw_frontend`` object from a GET
+    /1.0/placement body, or {} when absent.
+
+    The frontend reports ``port``/``ssl_port``/``ssl`` only; a suite asserts
+    these match the requested port/TLS, proving observed state is sourced from
+    the rgw_frontends table rather than fanned out.
+    """
+    frontend = observed_member(raw, member).get("rgw_frontend")
+    if not isinstance(frontend, dict):
+        return {}
+    return frontend
+
+
+def placement_leaks_rgw_secrets(raw):
+    """Return True when a GET /1.0/placement body contains any RGW SSL key
+    material, i.e. a non-empty ``ssl_certificate`` or ``ssl_private_key`` under
+    the stored policy's members.
+
+    The snap MUST strip these before storage and redact them on GET; a suite
+    asserts this returns False. Fails safe: a body it cannot parse as the
+    expected shape reports no leak (there is nothing to leak), but a present
+    non-empty secret string is always detected.
+    """
+    policy = response_metadata(raw).get("policy")
+    if not isinstance(policy, dict):
+        return False
+    members = policy.get("members")
+    if not isinstance(members, dict):
+        return False
+    for entry in members.values():
+        if not isinstance(entry, dict):
+            continue
+        rgw = entry.get("rgw")
+        if not isinstance(rgw, dict):
+            continue
+        if rgw.get("ssl_certificate") or rgw.get("ssl_private_key"):
+            return True
+    return False
+
+
 def mon_count(raw):
     """Return the monmap daemon count from ``ceph -s -f json`` output.
 

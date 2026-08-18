@@ -22,6 +22,7 @@ var SchemaExtensions = []cluster.Update{
 	schemaUpdate7,
 	schemaUpdate8,
 	schemaUpdate9,
+	schemaUpdate10,
 }
 
 // getClusterTableName returns the name of the table that holds the record of cluster members from sqlite_master.
@@ -291,6 +292,32 @@ CREATE TABLE placement_policy (
   CONSTRAINT singleton CHECK (id = 1)
 );
 INSERT INTO placement_policy (id) VALUES (1);
+  `
+	_, err := tx.ExecContext(ctx, stmt)
+
+	return err
+}
+
+// schemaUpdate10 adds the rgw_frontends table (CE142 placement-rgw). It records
+// the observed RGW beast frontend (port, ssl_port, and a TLS on/off flag) for
+// each member hosting RGW, so GET /1.0/placement can report observed frontend
+// state from dqlite alongside the rest of its observed state, without a
+// per-member fan-out. Only ports and the TLS flag are stored — never cert/key
+// bytes, which remain on disk in server.crt/server.key (0600). The row is
+// cascade-deleted when the cluster member is removed, mirroring the services
+// and host_tags tables. At most one row per member is enforced by UNIQUE on
+// member_id.
+func schemaUpdate10(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE rgw_frontends (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  member_id  INTEGER NOT NULL,
+  port       INTEGER NOT NULL DEFAULT 0,
+  ssl_port   INTEGER NOT NULL DEFAULT 0,
+  ssl        INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE,
+  UNIQUE(member_id)
+);
   `
 	_, err := tx.ExecContext(ctx, stmt)
 
