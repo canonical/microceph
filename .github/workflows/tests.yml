@@ -186,7 +186,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: snaps
-          path: /home/runner
+          path: ${{ runner.temp }}
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -216,7 +216,7 @@ jobs:
         run: pipx install tox
 
       - name: Run Robot suite
-        run: tox -e robot -- --test-suite ${{ matrix.suite }} --snap-path '/home/runner/*.snap' ${{ matrix.args }}
+        run: tox -e robot -- --test-suite ${{ matrix.suite }} --snap-path '${{ runner.temp }}/*.snap' ${{ matrix.args }}
 
       - name: Upload Robot logs
         if: always()
