@@ -207,29 +207,76 @@ func removeServiceDatabase(ctx context.Context, s interfaces.StateInterface, ser
 	return err
 }
 
+// Delete-service phases are injectable so tests can verify their ordering and
+// failure boundaries without mutating snap, Ceph, filesystem, or dqlite state.
+var (
+	ensureMonAbsentFunc       = ensureMonAbsent
+	snapStopFunc              = snapStop
+	cleanServiceFunc          = cleanService
+	removeServiceDatabaseFunc = removeServiceDatabase
+)
+
+// ensureMgrAbsentFunc / ensureMdsAbsentFunc are declared alongside their
+// implementations in manager.go and metadata.go respectively; DeleteService
+// invokes them through those injectable vars so teardown ordering and failure
+// boundaries stay unit-testable.
+
 // DeleteService deletes a service from the node.
 func DeleteService(ctx context.Context, s interfaces.StateInterface, service string) error {
-	err := snapStop(service, true)
+	// Serialize teardown with bootstrap, join, service enablement, and startup
+	// re-enablement. In particular, reEnableServices must not observe the service
+	// DB row mid-delete and restart a MON that was already removed from the
+	// monmap.
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+
+	hostname := s.ClusterState().Name()
+
+	if service == "mon" {
+		// Commit membership removal while the source MON is still running. With
+		// two MONs, stopping one first loses the majority needed by `ceph mon rm`.
+		// ensureMonAbsent is idempotent, so retries after a later phase failed
+		// resume local teardown rather than trying to recreate membership.
+		err := ensureMonAbsentFunc(ctx, hostname)
+		if err != nil {
+			return fmt.Errorf("failed to remove monitor membership %q: %w", hostname, err)
+		}
+	}
+
+	err := snapStopFunc(service, true)
 	if err != nil {
 		logger.Errorf("failed to stop daemon %q: %v", service, err)
 		return fmt.Errorf("failed to stop daemon %q: %w", service, err)
 	}
 
-	if service == "mon" {
-		err = removeMon(s.ClusterState().Name())
+	// After the local daemon is stopped, actively evict MGR/MDS from their
+	// Ceph maps and verify convergence. Stopping alone only halts the daemon's
+	// beacon; without an explicit fail the stopped daemon lingers in
+	// `ceph mgr metadata` / `ceph mds stat` for the beacon-aging window, so a
+	// reconcile would report success while the map still shows the removed
+	// member. MON is handled above (before stop) because its removal needs
+	// quorum. All ensure*Absent helpers are idempotent, so a retry after a
+	// later phase failed resumes cleanly.
+	switch service {
+	case "mgr":
+		err = ensureMgrAbsentFunc(ctx, hostname)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to remove mgr map membership %q: %w", hostname, err)
+		}
+	case "mds":
+		err = ensureMdsAbsentFunc(ctx, hostname)
+		if err != nil {
+			return fmt.Errorf("failed to remove mds map membership %q: %w", hostname, err)
 		}
 	}
 
-	err = cleanService(s.ClusterState().Name(), service)
+	err = cleanServiceFunc(hostname, service)
 	if err != nil {
 		return fmt.Errorf("failed to clean service %q: %w", service, err)
 	}
-	err = removeServiceDatabase(ctx, s, service)
+	err = removeServiceDatabaseFunc(ctx, s, service)
 	if err != nil {
 		return fmt.Errorf("failed to remove service %q from database: %w", service, err)
 	}
 	return nil
-
 }

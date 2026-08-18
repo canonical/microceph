@@ -2,14 +2,15 @@ package ceph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
-	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microcluster/v3/microcluster"
 	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microceph/microceph/logger"
 )
 
 // PreRemove cleans up the underlying ceph services before the node is removed from the dqlite cluster.
@@ -131,6 +132,8 @@ func deleteNodeServices(cli mcTypes.Client, name string) error {
 	if err != nil {
 		return err
 	}
+
+	deleteErrors := []error{}
 	for _, service := range services {
 		logger.Debugf("Check for deletion: %s", service)
 		if service.Location == name {
@@ -138,8 +141,10 @@ func deleteNodeServices(cli mcTypes.Client, name string) error {
 			err = client.MClient.DeleteService(cli, service.Location, service.Service)
 			if err != nil {
 				logger.Warnf("Fault deleting service %v on node %v: %v", service.Service, service.Location, err)
+				deleteErrors = append(deleteErrors, fmt.Errorf("failed to delete service %q on node %q: %w", service.Service, service.Location, err))
 			}
 		}
 	}
-	return nil
+
+	return errors.Join(deleteErrors...)
 }

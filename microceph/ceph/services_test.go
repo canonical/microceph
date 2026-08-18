@@ -1,12 +1,16 @@
 package ceph
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/canonical/microceph/microceph/common"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/api/types"
@@ -36,7 +40,7 @@ func (s *servicesSuite) SetupTest() {
 		URL:         u,
 		ClusterName: "foohost",
 	}
-	s.TestStateInterface.On("ClusterState").Return(state).Maybe()
+	s.TestStateInterface.On("ClusterState").Return(&state).Maybe()
 }
 
 func addOsdDumpExpectations(r *mocks.Runner) {
@@ -102,4 +106,150 @@ func (s *servicesSuite) TestCleanService() {
 	_ = os.MkdirAll(svcPath, 0770)
 	_ = cleanService("foo-host", "mon")
 	assert.NoDirExists(s.T(), svcPath)
+}
+
+// installDeleteServiceRecorder replaces the external deletion phases and
+// records their exact order. The originals are restored after each test.
+func installDeleteServiceRecorder(t *testing.T, stopErr error) *[]string {
+	origEnsureMonAbsent := ensureMonAbsentFunc
+	origEnsureMgrAbsent := ensureMgrAbsentFunc
+	origEnsureMdsAbsent := ensureMdsAbsentFunc
+	origSnapStop := snapStopFunc
+	origCleanService := cleanServiceFunc
+	origRemoveServiceDatabase := removeServiceDatabaseFunc
+	t.Cleanup(func() {
+		ensureMonAbsentFunc = origEnsureMonAbsent
+		ensureMgrAbsentFunc = origEnsureMgrAbsent
+		ensureMdsAbsentFunc = origEnsureMdsAbsent
+		snapStopFunc = origSnapStop
+		cleanServiceFunc = origCleanService
+		removeServiceDatabaseFunc = origRemoveServiceDatabase
+	})
+
+	events := []string{}
+	ensureMonAbsentFunc = func(_ context.Context, hostname string) error {
+		events = append(events, "monmap:"+hostname)
+		return nil
+	}
+	ensureMgrAbsentFunc = func(_ context.Context, hostname string) error {
+		events = append(events, "mgrmap:"+hostname)
+		return nil
+	}
+	ensureMdsAbsentFunc = func(_ context.Context, hostname string) error {
+		events = append(events, "mdsmap:"+hostname)
+		return nil
+	}
+	snapStopFunc = func(service string, disable bool) error {
+		events = append(events, fmt.Sprintf("stop:%s:%t", service, disable))
+		return stopErr
+	}
+	cleanServiceFunc = func(hostname, service string) error {
+		events = append(events, "clean:"+service+":"+hostname)
+		return nil
+	}
+	removeServiceDatabaseFunc = func(_ context.Context, _ interfaces.StateInterface, service string) error {
+		events = append(events, "db:"+service)
+		return nil
+	}
+	return &events
+}
+
+func (s *servicesSuite) TestDeleteMonRemovesMembershipBeforeStoppingDaemon() {
+	events := installDeleteServiceRecorder(s.T(), nil)
+
+	err := DeleteService(context.Background(), s.TestStateInterface, "mon")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{
+		"monmap:foohost",
+		"stop:mon:true",
+		"clean:mon:foohost",
+		"db:mon",
+	}, *events)
+}
+
+func (s *servicesSuite) TestDeleteMonMembershipFailureLeavesDaemonRunning() {
+	events := installDeleteServiceRecorder(s.T(), nil)
+	membershipErr := errors.New("monmap unavailable")
+	ensureMonAbsentFunc = func(_ context.Context, hostname string) error {
+		*events = append(*events, "monmap:"+hostname)
+		return membershipErr
+	}
+
+	err := DeleteService(context.Background(), s.TestStateInterface, "mon")
+	assert.ErrorIs(s.T(), err, membershipErr)
+	assert.Equal(s.T(), []string{"monmap:foohost"}, *events)
+}
+
+func (s *servicesSuite) TestDeleteMonResumesAfterStopFailure() {
+	events := installDeleteServiceRecorder(s.T(), nil)
+	stopErr := errors.New("snap stop failed")
+	stopAttempts := 0
+	snapStopFunc = func(service string, disable bool) error {
+		*events = append(*events, fmt.Sprintf("stop:%s:%t", service, disable))
+		stopAttempts++
+		if stopAttempts == 1 {
+			return stopErr
+		}
+		return nil
+	}
+
+	// The first pass models a committed monmap update followed by a local stop
+	// failure. The retained DB row causes a retry; ensureMonAbsent is idempotent
+	// and local teardown then finishes.
+	err := DeleteService(context.Background(), s.TestStateInterface, "mon")
+	assert.ErrorIs(s.T(), err, stopErr)
+	err = DeleteService(context.Background(), s.TestStateInterface, "mon")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{
+		"monmap:foohost",
+		"stop:mon:true",
+		"monmap:foohost",
+		"stop:mon:true",
+		"clean:mon:foohost",
+		"db:mon",
+	}, *events)
+}
+
+func (s *servicesSuite) TestDeleteMgrEvictsMapAfterStoppingDaemon() {
+	events := installDeleteServiceRecorder(s.T(), nil)
+
+	err := DeleteService(context.Background(), s.TestStateInterface, "mgr")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{
+		"stop:mgr:true",
+		"mgrmap:foohost",
+		"clean:mgr:foohost",
+		"db:mgr",
+	}, *events)
+}
+
+func (s *servicesSuite) TestDeleteMdsEvictsMapAfterStoppingDaemon() {
+	events := installDeleteServiceRecorder(s.T(), nil)
+
+	err := DeleteService(context.Background(), s.TestStateInterface, "mds")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{
+		"stop:mds:true",
+		"mdsmap:foohost",
+		"clean:mds:foohost",
+		"db:mds",
+	}, *events)
+}
+
+func (s *servicesSuite) TestDeleteMgrMapFailureLeavesCleanupPending() {
+	events := installDeleteServiceRecorder(s.T(), nil)
+	mapErr := errors.New("mgr map unavailable")
+	ensureMgrAbsentFunc = func(_ context.Context, hostname string) error {
+		*events = append(*events, "mgrmap:"+hostname)
+		return mapErr
+	}
+
+	err := DeleteService(context.Background(), s.TestStateInterface, "mgr")
+	assert.ErrorIs(s.T(), err, mapErr)
+	// The daemon is stopped and eviction attempted, but on-disk and DB cleanup
+	// must not run so a retry resumes teardown.
+	assert.Equal(s.T(), []string{
+		"stop:mgr:true",
+		"mgrmap:foohost",
+	}, *events)
 }

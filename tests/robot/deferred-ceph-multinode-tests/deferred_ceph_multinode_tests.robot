@@ -68,14 +68,40 @@ Test Declarative Control Placement Add
     Wait For Mon Count    2
     Run In Container    node-wrk0    microceph.ceph -s    30
 
+Test Declarative Control Placement Migration Preserves Quorum
+    [Documentation]    Moving the only desired control placement from the bootstrap member
+    ...    to its replacement must commit MON membership removal before stopping the source.
+    ...    The destination remains a one-MON quorum and repeating the policy is idempotent.
+    [Tags]    placement    migration
+    ${policy}=    Set Variable    {"mode":"reconcile","members":{"node-wrk0":{"control":true},"node-wrk1":{"control":false}}}
+    ${resp}=    MicroCeph API Put In Container    node-wrk0    placement    ${policy}
+    ${code}=    Response Status Code    ${resp}
+    Should Be Equal As Integers    ${code}    200    msg=Control migration failed: ${resp}
+    ${mons}=    Get Mon Count
+    Should Be Equal As Integers    ${mons}    1    msg=Expected destination-only monmap after migration
+    Assert Mon Quorum Members    node-wrk0
+    Assert Member Has Control Services    node-wrk0    yes
+    # The source's MON/MDS/MGR teardown commits the daemon stop, map eviction,
+    # and DB removal, but the mgrmap/fsmap may take a moment to converge (or up
+    # to the beacon-aging window if an eviction was a no-op). Poll for absence
+    # rather than asserting a single-shot snapshot, mirroring the add path's
+    # Wait For Mon Count.
+    Wait For Member Control Services    node-wrk1    no
+
+    # A second reconcile must observe the completed migration as a no-op.
+    ${retry}=    MicroCeph API Put In Container    node-wrk0    placement    ${policy}
+    ${retry_code}=    Response Status Code    ${retry}
+    Should Be Equal As Integers    ${retry_code}    200    msg=Idempotent migration retry failed: ${retry}
+    Assert Mon Quorum Members    node-wrk0
+
 Test Declarative Control Placement Keep One Invariant
     [Documentation]    A placement that would remove the last control service must be
     ...    rejected with a clear keep-one reason (HTTP non-2xx / error), and the last MON must
     ...    remain. We request control:false on the only control member while no other control
     ...    member exists.
     [Tags]    placement
-    # node-wrk1 has control from bootstrap; node-wrk0 has control from the previous test.
-    # Request control:false on BOTH current control members at once -> keep-one refuses the last.
+    # node-wrk0 is the only control member after the preceding migration.
+    # Include the already-drained bootstrap member as false as an idempotency check.
     ${resp}=    MicroCeph API Put In Container    node-wrk0    placement    {"mode":"reconcile","members":{"node-wrk0":{"control":false},"node-wrk1":{"control":false}}}
     ${code}=    Response Status Code    ${resp}
     Run Keyword And Continue On Failure    Should Not Be Equal As Integers    ${code}    200

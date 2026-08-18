@@ -1872,24 +1872,112 @@ class microceph_harness:
             fail_msg=f"Never reached {n} mon daemons",
         )
 
-    def assert_member_has_control_services(self, member, expected="yes"):
-        """Asserts that mon/mgr/mds are present on *member* via ceph -s on the head node.
+    def assert_mon_quorum_members(self, *expected_members):
+        """Assert that the Ceph MON quorum contains exactly *expected_members*."""
+        res = self.exec_in_container(
+            HEAD_NODE, "microceph.ceph", "quorum_status", "-f", "json", timeout=30
+        )
+        if res.rc != 0:
+            raise AssertionError(
+                f"Unable to read MON quorum (rc={res.rc}): {res.stderr or res.stdout}"
+            )
+        actual = sorted(placement_status.mon_quorum_names(res.stdout))
+        expected = sorted(str(name) for name in expected_members)
+        if actual != expected:
+            raise AssertionError(
+                f"Expected MON quorum {expected}, got {actual}. quorum_status: {res.stdout}"
+            )
 
-        *expected* is 'yes' or 'no'.
+    def _observe_control_services(self, member):
+        """Return the explicit MON/MGR/MDS presence dict for *member* from Ceph.
+
+        Raises AssertionError if any of the three Ceph queries fail, so callers
+        can distinguish an unreadable cluster from a genuine presence result.
         """
-        res = self.exec_in_container(HEAD_NODE, "microceph.ceph", "-s", timeout=30)
-        status = res.stdout if res.rc == 0 else ""
-        present = placement_status.member_in_ceph_status(status, member)
-        if str(expected).strip().lower() == "yes":
-            if not present:
-                raise AssertionError(
-                    f"{member} not found in ceph status; expected control services there. Status: {status}"
-                )
-        else:
-            if present:
-                raise AssertionError(
-                    f"{member} unexpectedly in ceph status; expected no control services there. Status: {status}"
-                )
+        commands = {
+            "mon": ("quorum_status", "-f", "json"),
+            "mgr": ("mgr", "metadata", "-f", "json"),
+            "mds": ("mds", "stat", "-f", "json"),
+        }
+        results = {
+            service: self.exec_in_container(HEAD_NODE, "microceph.ceph", *args, timeout=30)
+            for service, args in commands.items()
+        }
+        failed = {
+            service: result
+            for service, result in results.items()
+            if result.rc != 0
+        }
+        if failed:
+            detail = "; ".join(
+                f"{service}: rc={result.rc}, output={result.stderr or result.stdout}"
+                for service, result in failed.items()
+            )
+            raise AssertionError(f"Unable to inspect control services: {detail}")
+
+        return placement_status.control_service_presence(
+            results["mon"].stdout,
+            results["mgr"].stdout,
+            results["mds"].stdout,
+            member,
+        )
+
+    def assert_member_has_control_services(self, member, expected="yes"):
+        """Assert explicit MON, MGR, and MDS presence or absence on *member*."""
+        try:
+            present = self._observe_control_services(member)
+        except ValueError as exc:
+            # Unparseable Ceph output cannot prove presence *or* absence; fail
+            # rather than silently treating garbage as "service absent".
+            raise AssertionError(
+                f"Unable to determine control services on {member}: {exc}"
+            )
+        want_present = str(expected).strip().lower() == "yes"
+        mismatched = [
+            service for service, is_present in present.items() if is_present != want_present
+        ]
+        if mismatched:
+            expectation = "present" if want_present else "absent"
+            raise AssertionError(
+                f"Expected {mismatched} to be {expectation} on {member}; observed {present}"
+            )
+
+    def wait_for_member_control_services(self, member, expected="yes", tries=24, interval=5):
+        """Poll until MON, MGR, and MDS presence on *member* matches *expected*.
+
+        Control-service teardown commits the daemon stop, map eviction, and DB
+        removal, but Ceph's mgrmap/fsmap can still take a moment to converge
+        (and, if an eviction is a partial no-op, up to the beacon-aging grace
+        window). This poller absorbs that convergence lag so an immediately
+        following absence assertion is not racy, mirroring how the add path
+        polls with Wait For Mon Count. The final observed state is folded into
+        the failure message on timeout.
+        """
+        want_present = str(expected).strip().lower() == "yes"
+        expectation = "present" if want_present else "absent"
+        last = {}
+
+        def predicate():
+            nonlocal last
+            try:
+                last = self._observe_control_services(member)
+            except ValueError as exc:
+                # Bad or empty Ceph output does not confirm the target state.
+                # Record it and keep polling so an absence check never passes
+                # on garbage; if it persists, the timeout surfaces the error.
+                last = {"error": str(exc)}
+                return False
+            return all(is_present == want_present for is_present in last.values())
+
+        self._poll_until(
+            predicate,
+            attempts=tries,
+            interval=interval,
+            fail_msg=lambda: (
+                f"Control services on {member} never became {expectation}; "
+                f"last observed {last}"
+            ),
+        )
 
     def assert_no_ceph_cluster_on_container(self, container):
         """Asserts that *container* has NOT bootstrapped Ceph: ceph status fails

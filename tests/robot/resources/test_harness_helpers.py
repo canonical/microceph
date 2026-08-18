@@ -954,6 +954,112 @@ def test_mon_count_garbage_is_zero():
     assert placement_status.mon_count("{}") == 0
 
 
+def test_mon_quorum_names_prefers_explicit_names():
+    raw = json.dumps(
+        {
+            "quorum_names": ["node-a", "node-b"],
+            "quorum": [1],
+            "monmap": {"mons": [{"rank": 1, "name": "wrong-fallback"}]},
+        }
+    )
+    assert placement_status.mon_quorum_names(raw) == ["node-a", "node-b"]
+
+
+def test_mon_quorum_names_maps_numeric_ranks_through_monmap():
+    raw = json.dumps(
+        {
+            "quorum": [2, 0],
+            "monmap": {
+                "mons": [
+                    {"rank": 0, "name": "node-a"},
+                    {"rank": 1, "name": "node-b"},
+                    {"rank": 2, "name": "node-c"},
+                ]
+            },
+        }
+    )
+    assert placement_status.mon_quorum_names(raw) == ["node-c", "node-a"]
+
+
+def test_mon_quorum_names_malformed_fails_closed():
+    malformed = [
+        "bad",
+        "[]",
+        "{}",
+        json.dumps({"quorum": [0]}),
+        json.dumps({"quorum": [0], "monmap": {"mons": []}}),
+        json.dumps(
+            {
+                "quorum": [1],
+                "monmap": {"mons": [{"rank": 0, "name": "node-a"}]},
+            }
+        ),
+        json.dumps({"quorum_names": ["node-a", 1]}),
+        json.dumps(
+            {
+                "quorum_names": None,
+                "quorum": [0],
+                "monmap": {"mons": [{"rank": 0, "name": "node-a"}]},
+            }
+        ),
+    ]
+    for raw in malformed:
+        assert placement_status.mon_quorum_names(raw) == []
+
+
+def test_control_service_presence_requires_each_explicit_service():
+    mon = json.dumps({"quorum_names": ["node-a", "node-b"]})
+    mgr = json.dumps([{"name": "node-a"}, {"name": "node-b"}])
+    mds = json.dumps(
+        {
+            "fsmap": {
+                "standbys": [{"name": "node-b", "state": "up:standby"}],
+                "filesystems": [
+                    {
+                        "mdsmap": {
+                            "info": {
+                                "1": {"name": "node-a", "state": "up:active"}
+                            }
+                        }
+                    }
+                ],
+            }
+        }
+    )
+
+    assert placement_status.control_service_presence(mon, mgr, mds, "node-a") == {
+        "mon": True,
+        "mgr": True,
+        "mds": True,
+    }
+    assert placement_status.control_service_presence(mon, mgr, mds, "node-c") == {
+        "mon": False,
+        "mgr": False,
+        "mds": False,
+    }
+
+
+def test_control_service_presence_malformed_raises():
+    # Unparseable output must not be reported as "service absent": an absence
+    # assertion would otherwise pass on garbage rather than a genuine removal.
+    import pytest as _pytest
+
+    mon = json.dumps({"quorum_names": ["node-a"]})
+    mgr = json.dumps([{"name": "node-a"}])
+    mds = json.dumps({"fsmap": {"standbys": [], "filesystems": []}})
+
+    for bad_mon, bad_mgr, bad_mds in (
+        ("bad", mgr, mds),
+        (mon, "bad", mds),
+        (mon, mgr, "bad"),
+        ("", "", ""),
+    ):
+        with _pytest.raises(ValueError):
+            placement_status.control_service_presence(
+                bad_mon, bad_mgr, bad_mds, "node-a"
+            )
+
+
 def test_member_in_ceph_status_substring():
     status = "  services:\n    mon: 2 daemons, quorum node-wrk0,node-wrk1\n"
     assert placement_status.member_in_ceph_status(status, "node-wrk1") is True
@@ -1067,3 +1173,94 @@ def test_log_exec_no_output_prints_nothing(monkeypatch):
     cap = _with_logger(monkeypatch)
     H()._log_exec("mkdir -p ~/x", _Res(0, "", ""), quiet=False)
     assert cap.console_lines == []
+
+# ---------------------------------------------------------------------------
+# wait_for_member_control_services (polling absence/presence with convergence)
+# ---------------------------------------------------------------------------
+
+def _harness_with_observations(monkeypatch, observations):
+    """Return a harness whose _observe_control_services yields *observations*
+    in order (the last value repeats once exhausted), counting calls."""
+    h = H()
+    seq = list(observations)
+    state = {"calls": 0}
+
+    def fake_observe(member):
+        idx = min(state["calls"], len(seq) - 1)
+        state["calls"] += 1
+        return seq[idx]
+
+    monkeypatch.setattr(h, "_observe_control_services", fake_observe)
+    # Avoid real sleeps between probes.
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    return h, state
+
+
+def test_wait_for_control_services_absent_after_convergence(monkeypatch):
+    # mgr lingers for the first two probes, then converges to fully absent.
+    observations = [
+        {"mon": False, "mgr": True, "mds": False},
+        {"mon": False, "mgr": True, "mds": False},
+        {"mon": False, "mgr": False, "mds": False},
+    ]
+    h, state = _harness_with_observations(monkeypatch, observations)
+    h.wait_for_member_control_services("node-wrk1", "no", tries=10, interval=0)
+    assert state["calls"] == 3
+
+
+def test_wait_for_control_services_present_immediately(monkeypatch):
+    observations = [{"mon": True, "mgr": True, "mds": True}]
+    h, state = _harness_with_observations(monkeypatch, observations)
+    h.wait_for_member_control_services("node-wrk0", "yes", tries=5, interval=0)
+    assert state["calls"] == 1
+
+
+def test_wait_for_control_services_absent_timeout_folds_last_observed(monkeypatch):
+    observations = [{"mon": False, "mgr": True, "mds": False}]
+    h, _ = _harness_with_observations(monkeypatch, observations)
+    with pytest.raises(AssertionError) as exc:
+        h.wait_for_member_control_services("node-wrk1", "no", tries=3, interval=0)
+    msg = str(exc.value)
+    assert "never became absent" in msg
+    assert "'mgr': True" in msg
+
+
+def test_wait_for_control_services_absent_ignores_unparseable_then_converges(monkeypatch):
+    # Bad/empty Ceph output (ValueError) must NOT be treated as absence: the
+    # poll keeps going until a genuine all-absent reading arrives.
+    h = H()
+    seq = [
+        ValueError("unparseable mds stat output: ''"),
+        {"mon": False, "mgr": True, "mds": False},
+        {"mon": False, "mgr": False, "mds": False},
+    ]
+    state = {"calls": 0}
+
+    def fake_observe(member):
+        idx = min(state["calls"], len(seq) - 1)
+        state["calls"] += 1
+        result = seq[idx]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(h, "_observe_control_services", fake_observe)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    h.wait_for_member_control_services("node-wrk1", "no", tries=10, interval=0)
+    assert state["calls"] == 3
+
+
+def test_wait_for_control_services_absent_timeout_on_persistent_bad_output(monkeypatch):
+    # Unparseable output that never recovers must time out (fail), never pass.
+    h = H()
+
+    def fake_observe(member):
+        raise ValueError("unparseable mds stat output: ''")
+
+    monkeypatch.setattr(h, "_observe_control_services", fake_observe)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    with pytest.raises(AssertionError) as exc:
+        h.wait_for_member_control_services("node-wrk1", "no", tries=3, interval=0)
+    msg = str(exc.value)
+    assert "never became absent" in msg
+    assert "unparseable" in msg
