@@ -213,7 +213,13 @@ jobs:
           sudo lxd init --auto
 
       - name: Install tox
-        run: pipx install tox
+        run: |
+          if ! command -v pipx >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y pipx
+          fi
+          pipx install tox
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run Robot suite
         run: tox -e robot -- --test-suite ${{ matrix.suite }} --snap-path '${{ runner.temp }}/*.snap' ${{ matrix.args }}
