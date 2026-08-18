@@ -1924,7 +1924,14 @@ class microceph_harness:
 
     def assert_member_has_control_services(self, member, expected="yes"):
         """Assert explicit MON, MGR, and MDS presence or absence on *member*."""
-        present = self._observe_control_services(member)
+        try:
+            present = self._observe_control_services(member)
+        except ValueError as exc:
+            # Unparseable Ceph output cannot prove presence *or* absence; fail
+            # rather than silently treating garbage as "service absent".
+            raise AssertionError(
+                f"Unable to determine control services on {member}: {exc}"
+            )
         want_present = str(expected).strip().lower() == "yes"
         mismatched = [
             service for service, is_present in present.items() if is_present != want_present
@@ -1952,7 +1959,14 @@ class microceph_harness:
 
         def predicate():
             nonlocal last
-            last = self._observe_control_services(member)
+            try:
+                last = self._observe_control_services(member)
+            except ValueError as exc:
+                # Bad or empty Ceph output does not confirm the target state.
+                # Record it and keep polling so an absence check never passes
+                # on garbage; if it persists, the timeout surfaces the error.
+                last = {"error": str(exc)}
+                return False
             return all(is_present == want_present for is_present in last.values())
 
         self._poll_until(

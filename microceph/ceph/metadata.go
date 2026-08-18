@@ -19,11 +19,18 @@ var ensureMdsAbsentFunc = ensureMdsAbsent
 // testing.
 var evictMdsFunc = evictMds
 
-// evictMds runs `ceph mds fail <hostname>`, which removes a standby MDS from
-// the fsmap (or fails the active MDS so a standby takes over) instead of
-// waiting out the beacon-aging window.
+// evictMds runs `ceph mds fail <hostname> --yes-i-really-mean-it`, which
+// removes a standby MDS from the fsmap (or fails the active MDS so a standby
+// takes over) instead of waiting out the beacon-aging window.
+//
+// The confirmation flag is required: since Ceph tracker #61866 (backported to
+// reef/squid) the monitor rejects `ceph mds fail` with -EPERM when the cluster
+// carries MDS_HEALTH_TRIM or MDS_HEALTH_CACHE_OVERSIZED warnings unless the flag
+// is passed. Without it the fast-path eviction would silently fail under those
+// warnings and teardown would fall back entirely to beacon aging. The local
+// daemon is already stopped by the time this runs, so forcing the fail is safe.
 func evictMds(ctx context.Context, hostname string) error {
-	_, err := cephRunContext(ctx, "mds", "fail", hostname)
+	_, err := cephRunContext(ctx, "mds", "fail", hostname, "--yes-i-really-mean-it")
 	if err != nil {
 		logger.Errorf("failed to fail mds %q: %v", hostname, err)
 		return fmt.Errorf("failed to fail mds %q: %w", hostname, err)

@@ -6,12 +6,21 @@ import (
 )
 
 // controlDaemonRemovalVerifyTimeout bounds the post-eviction verification poll
-// for MGR/MDS map convergence. It comfortably exceeds the default Ceph beacon
-// grace (mon_mgr_beacon_grace, 30s) so that even when the active eviction
-// command is a partial no-op for a standby daemon, verification still succeeds
+// for MGR/MDS map convergence. It must comfortably exceed the worst-case
+// beacon-aging fallback so that even when the active eviction command is a
+// partial no-op (a standby daemon) or is rejected, verification still succeeds
 // via beacon aging within the bounded window rather than returning a spurious
-// error. It is a var (not a const) so unit tests can shrink it.
-var controlDaemonRemovalVerifyTimeout = 60 * time.Second
+// error.
+//
+// The window is sized with generous margin over that fallback, not merely equal
+// to it: the default grace periods are mon_mgr_beacon_grace (30s) and
+// mds_beacon_grace (15s), but MDS teardown runs right after a MON is removed,
+// and a MON quorum/leader change resets the monitor's beacon last-seen timers,
+// so the effective aging window can restart from the new election. A timeout
+// equal to a single grace period could therefore expire just before Ceph ages a
+// stopped daemon out, skipping cleanup. 120s leaves clear headroom above the
+// stacked worst case. It is a var (not a const) so unit tests can shrink it.
+var controlDaemonRemovalVerifyTimeout = 120 * time.Second
 
 // controlDaemonRemovalVerifyInterval is the poll cadence for the verification
 // loop above. It is a var so unit tests can shrink it.

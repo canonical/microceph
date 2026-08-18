@@ -184,7 +184,7 @@ func TestEnsureMdsAbsentEvictsAndConfirms(t *testing.T) {
 	r := withMockRunner(t)
 	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "stat", "-f", "json").
 		Return(mdsStandbys("node-a", "node-b"), nil).Once()
-	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "fail", "node-a").
+	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "fail", "node-a", "--yes-i-really-mean-it").
 		Return("", nil).Once()
 	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "stat", "-f", "json").
 		Return(mdsStandbys("node-b"), nil).Once()
@@ -199,7 +199,7 @@ func TestEnsureMdsAbsentPreservesEvictionFailureWhenStillPresent(t *testing.T) {
 	evictErr := errors.New("mds fail rejected")
 	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "stat", "-f", "json").
 		Return(mdsStandbys("node-a", "node-b"), nil).Once()
-	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "fail", "node-a").
+	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "fail", "node-a", "--yes-i-really-mean-it").
 		Return("", evictErr).Once()
 	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "stat", "-f", "json").
 		Return(mdsStandbys("node-a", "node-b"), nil)

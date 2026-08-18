@@ -138,38 +138,49 @@ def mon_quorum_names(raw):
 def control_service_presence(mon_raw, mgr_raw, mds_raw, member):
     """Return explicit MON/MGR/MDS membership for *member* from Ceph JSON.
 
-    Invalid responses fail closed for each service. This is stricter than a
-    substring search over ``ceph -s``: a hostname appearing anywhere in status
-    does not prove that all three role-managed control services are present.
+    This is stricter than a substring search over ``ceph -s``: a hostname
+    appearing anywhere in status does not prove that all three role-managed
+    control services are present.
+
+    Raises :class:`ValueError` when any of the three raw bodies is not
+    parseable into its expected shape (bad or empty output). Treating an
+    unparseable body as "service absent" would let an absence assertion pass on
+    garbage rather than on a genuine removal, so callers must decide explicitly
+    whether to fail or retry -- see :meth:`wait_for_member_control_services`,
+    which retries, and :meth:`assert_member_has_control_services`, which fails.
     """
+    mon = _parse(mon_raw)
+    if not isinstance(mon, dict):
+        raise ValueError(f"unparseable mon quorum_status output: {mon_raw!r}")
     mgr = _parse(mgr_raw)
+    if not isinstance(mgr, list):
+        raise ValueError(f"unparseable mgr metadata output: {mgr_raw!r}")
     mds = _parse(mds_raw)
+    if not isinstance(mds, dict) or not isinstance(mds.get("fsmap"), dict):
+        raise ValueError(f"unparseable mds stat output: {mds_raw!r}")
 
     mon_names = mon_quorum_names(mon_raw)
 
-    mgr_names = []
-    if isinstance(mgr, list):
-        mgr_names = [entry.get("name") for entry in mgr if isinstance(entry, dict)]
+    mgr_names = [entry.get("name") for entry in mgr if isinstance(entry, dict)]
 
     mds_names = []
-    if isinstance(mds, dict) and isinstance(mds.get("fsmap"), dict):
-        fsmap = mds["fsmap"]
-        standbys = fsmap.get("standbys", [])
-        if isinstance(standbys, list):
-            mds_names.extend(
-                entry.get("name") for entry in standbys if isinstance(entry, dict)
-            )
-        filesystems = fsmap.get("filesystems", [])
-        if isinstance(filesystems, list):
-            for filesystem in filesystems:
-                if not isinstance(filesystem, dict):
-                    continue
-                mdsmap = filesystem.get("mdsmap", {})
-                info = mdsmap.get("info", {}) if isinstance(mdsmap, dict) else {}
-                if isinstance(info, dict):
-                    mds_names.extend(
-                        entry.get("name") for entry in info.values() if isinstance(entry, dict)
-                    )
+    fsmap = mds["fsmap"]
+    standbys = fsmap.get("standbys", [])
+    if isinstance(standbys, list):
+        mds_names.extend(
+            entry.get("name") for entry in standbys if isinstance(entry, dict)
+        )
+    filesystems = fsmap.get("filesystems", [])
+    if isinstance(filesystems, list):
+        for filesystem in filesystems:
+            if not isinstance(filesystem, dict):
+                continue
+            mdsmap = filesystem.get("mdsmap", {})
+            info = mdsmap.get("info", {}) if isinstance(mdsmap, dict) else {}
+            if isinstance(info, dict):
+                mds_names.extend(
+                    entry.get("name") for entry in info.values() if isinstance(entry, dict)
+                )
 
     return {
         "mon": member in mon_names,

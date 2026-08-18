@@ -1039,12 +1039,25 @@ def test_control_service_presence_requires_each_explicit_service():
     }
 
 
-def test_control_service_presence_malformed_fails_closed():
-    assert placement_status.control_service_presence("bad", "bad", "bad", "node-a") == {
-        "mon": False,
-        "mgr": False,
-        "mds": False,
-    }
+def test_control_service_presence_malformed_raises():
+    # Unparseable output must not be reported as "service absent": an absence
+    # assertion would otherwise pass on garbage rather than a genuine removal.
+    import pytest as _pytest
+
+    mon = json.dumps({"quorum_names": ["node-a"]})
+    mgr = json.dumps([{"name": "node-a"}])
+    mds = json.dumps({"fsmap": {"standbys": [], "filesystems": []}})
+
+    for bad_mon, bad_mgr, bad_mds in (
+        ("bad", mgr, mds),
+        (mon, "bad", mds),
+        (mon, mgr, "bad"),
+        ("", "", ""),
+    ):
+        with _pytest.raises(ValueError):
+            placement_status.control_service_presence(
+                bad_mon, bad_mgr, bad_mds, "node-a"
+            )
 
 
 def test_member_in_ceph_status_substring():
@@ -1210,3 +1223,44 @@ def test_wait_for_control_services_absent_timeout_folds_last_observed(monkeypatc
     msg = str(exc.value)
     assert "never became absent" in msg
     assert "'mgr': True" in msg
+
+
+def test_wait_for_control_services_absent_ignores_unparseable_then_converges(monkeypatch):
+    # Bad/empty Ceph output (ValueError) must NOT be treated as absence: the
+    # poll keeps going until a genuine all-absent reading arrives.
+    h = H()
+    seq = [
+        ValueError("unparseable mds stat output: ''"),
+        {"mon": False, "mgr": True, "mds": False},
+        {"mon": False, "mgr": False, "mds": False},
+    ]
+    state = {"calls": 0}
+
+    def fake_observe(member):
+        idx = min(state["calls"], len(seq) - 1)
+        state["calls"] += 1
+        result = seq[idx]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(h, "_observe_control_services", fake_observe)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    h.wait_for_member_control_services("node-wrk1", "no", tries=10, interval=0)
+    assert state["calls"] == 3
+
+
+def test_wait_for_control_services_absent_timeout_on_persistent_bad_output(monkeypatch):
+    # Unparseable output that never recovers must time out (fail), never pass.
+    h = H()
+
+    def fake_observe(member):
+        raise ValueError("unparseable mds stat output: ''")
+
+    monkeypatch.setattr(h, "_observe_control_services", fake_observe)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    with pytest.raises(AssertionError) as exc:
+        h.wait_for_member_control_services("node-wrk1", "no", tries=3, interval=0)
+    msg = str(exc.value)
+    assert "never became absent" in msg
+    assert "unparseable" in msg
