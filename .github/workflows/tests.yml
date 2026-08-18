@@ -176,6 +176,7 @@ jobs:
           - id: deferred-ceph-multinode-tests
             name: Deferred-Ceph lifecycle and placement multi node
             suite: deferred-ceph-multinode-tests
+            runner: self-hosted-linux-amd64-jammy-xlarge
 
           - id: legacy-placement-tests
             name: Legacy bootstrap placement regression
