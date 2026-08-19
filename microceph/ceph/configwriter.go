@@ -112,6 +112,7 @@ func newGaneshaConfig(configDir string) *Config {
 
 NFS_CORE_PARAM {
 	Enable_NLM = false;
+	Allow_Set_Io_Flusher_Fail = true;
 	Enable_RQUOTA = false;
 	Protocols = 4;
 	Bind_Addr = {{.bindAddr}};
@@ -121,7 +122,7 @@ NFS_CORE_PARAM {
 
 NFSv4 {
 	Delegations = false;
-	RecoveryBackend = 'rados_cluster';
+	RecoveryBackend = rados_cluster;
 	Minor_Versions = {{.minorVersions}};
 	UseGetpwnam = true;
 }

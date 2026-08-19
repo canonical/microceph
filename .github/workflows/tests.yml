@@ -9,7 +9,7 @@ on:
 jobs:
   build-microceph:
     name: Build microceph snap
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       SNAPCRAFT_BUILD_ENVIRONMENT: "lxd"
     steps:
