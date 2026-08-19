@@ -28,16 +28,210 @@ func TestPlacement(t *testing.T) {
 	suite.Run(t, new(placementSuite))
 }
 
-// applyPlacement runs the validate-then-reconcile sequence that cmdPlacementPut
-// drives, minus the persistence phase between them. Engine tests use it so they
-// exercise the two phases in the order the handler does; the handler's own
-// ordering (including where the policy is stored) is covered by the API tests.
+// applyPlacement runs validation before the package-private reconciliation
+// phase. Reconciliation tests use it without exercising policy persistence;
+// ApplyPlacementPolicy's full validate-store-reconcile ordering is covered by
+// dedicated orchestration tests below.
 func applyPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
 	err := ValidatePlacement(ctx, s, policy)
 	if err != nil {
 		return err
 	}
-	return ReconcilePlacement(ctx, s, policy)
+	return reconcilePlacement(ctx, s, policy)
+}
+
+// TestApplyPlacementPolicyOrdering verifies that the exported placement entry
+// point enforces validate-store-reconcile ordering, stops at the failing phase,
+// records failures, and clears an old refusal only after successful convergence.
+func TestApplyPlacementPolicyOrdering(t *testing.T) {
+	validationErr := fmt.Errorf("%w: node-z", ErrUnknownPlacementMember)
+	storeErr := fmt.Errorf("database unavailable")
+	reconcileErr := fmt.Errorf("%w: mon on node-a", ErrKeepOneInvariant)
+
+	tests := []struct {
+		name          string
+		validationErr error
+		storeErr      error
+		reconcileErr  error
+		wantOrder     []string
+	}{
+		{
+			name:      "success",
+			wantOrder: []string{"validate", "store", "reconcile", "refusal:"},
+		},
+		{
+			name:          "validation failure",
+			validationErr: validationErr,
+			wantOrder:     []string{"validate", "refusal:" + validationErr.Error()},
+		},
+		{
+			name:      "store failure",
+			storeErr:  storeErr,
+			wantOrder: []string{"validate", "store", "refusal:" + storeErr.Error()},
+		},
+		{
+			name:         "reconcile failure",
+			reconcileErr: reconcileErr,
+			wantOrder:    []string{"validate", "store", "reconcile", "refusal:" + reconcileErr.Error()},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var order []string
+			var storedPolicy types.PlacementPolicy
+			origValidate := validatePlacementFunc
+			origStore := storePlacementPolicyFunc
+			origReconcile := reconcilePlacementFunc
+			origRefusal := setPlacementRefusalFunc
+			validatePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+				order = append(order, "validate")
+				return tt.validationErr
+			}
+			storePlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface, policy types.PlacementPolicy) error {
+				order = append(order, "store")
+				storedPolicy = policy
+				return tt.storeErr
+			}
+			reconcilePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+				order = append(order, "reconcile")
+				return tt.reconcileErr
+			}
+			setPlacementRefusalFunc = func(_ context.Context, _ interfaces.StateInterface, reason string) error {
+				order = append(order, "refusal:"+reason)
+				return nil
+			}
+			t.Cleanup(func() {
+				validatePlacementFunc = origValidate
+				storePlacementPolicyFunc = origStore
+				reconcilePlacementFunc = origReconcile
+				setPlacementRefusalFunc = origRefusal
+			})
+
+			control := true
+			policy := types.PlacementPolicy{
+				Mode: types.PlacementModeReconcile,
+				Members: map[string]types.MemberPlacement{
+					"node-a": {Control: &control},
+				},
+			}
+			err := ApplyPlacementPolicy(context.Background(), nil, policy)
+
+			wantErr := tt.validationErr
+			if wantErr == nil {
+				wantErr = tt.storeErr
+			}
+			if wantErr == nil {
+				wantErr = tt.reconcileErr
+			}
+			if wantErr == nil {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorIs(t, err, wantErr)
+			}
+			assert.Equal(t, tt.wantOrder, order)
+			if tt.validationErr == nil {
+				assert.Equal(t, policy, storedPolicy)
+			} else {
+				assert.Equal(t, types.PlacementPolicy{}, storedPolicy,
+					"a policy rejected by validation must not displace desired state")
+			}
+		})
+	}
+}
+
+// TestApplyPlacementPolicyRefusalPersistenceBestEffort verifies that refusal
+// bookkeeping cannot hide either the original apply error or a successful
+// convergence result.
+func TestApplyPlacementPolicyRefusalPersistenceBestEffort(t *testing.T) {
+	origValidate := validatePlacementFunc
+	origStore := storePlacementPolicyFunc
+	origReconcile := reconcilePlacementFunc
+	origRefusal := setPlacementRefusalFunc
+	t.Cleanup(func() {
+		validatePlacementFunc = origValidate
+		storePlacementPolicyFunc = origStore
+		reconcilePlacementFunc = origReconcile
+		setPlacementRefusalFunc = origRefusal
+	})
+
+	applyErr := fmt.Errorf("apply failed")
+	refusalErr := fmt.Errorf("refusal write failed")
+	validatePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return applyErr
+	}
+	setPlacementRefusalFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) error {
+		return refusalErr
+	}
+
+	err := ApplyPlacementPolicy(context.Background(), nil, types.PlacementPolicy{})
+	assert.ErrorIs(t, err, applyErr)
+
+	validatePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+	storePlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+	reconcilePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+
+	err = ApplyPlacementPolicy(context.Background(), nil, types.PlacementPolicy{})
+	assert.NoError(t, err)
+}
+
+// TestApplyPlacementPolicyRefusalContextDetached verifies that an expired apply
+// context cannot prevent recording a failure or clearing a stale refusal.
+func TestApplyPlacementPolicyRefusalContextDetached(t *testing.T) {
+	origValidate := validatePlacementFunc
+	origStore := storePlacementPolicyFunc
+	origReconcile := reconcilePlacementFunc
+	origRefusal := setPlacementRefusalFunc
+	t.Cleanup(func() {
+		validatePlacementFunc = origValidate
+		storePlacementPolicyFunc = origStore
+		reconcilePlacementFunc = origReconcile
+		setPlacementRefusalFunc = origRefusal
+	})
+
+	applyErr := fmt.Errorf("apply failed after deadline")
+	validatePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return applyErr
+	}
+	storePlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+	reconcilePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+
+	var reasons []string
+	var contextErrors []error
+	var contextsHaveDeadline []bool
+	setPlacementRefusalFunc = func(ctx context.Context, _ interfaces.StateInterface, reason string) error {
+		reasons = append(reasons, reason)
+		contextErrors = append(contextErrors, ctx.Err())
+		_, hasDeadline := ctx.Deadline()
+		contextsHaveDeadline = append(contextsHaveDeadline, hasDeadline)
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := ApplyPlacementPolicy(ctx, nil, types.PlacementPolicy{})
+	assert.ErrorIs(t, err, applyErr)
+
+	validatePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+	err = ApplyPlacementPolicy(ctx, nil, types.PlacementPolicy{})
+	assert.NoError(t, err)
+
+	assert.Equal(t, []string{applyErr.Error(), ""}, reasons)
+	assert.Equal(t, []error{nil, nil}, contextErrors)
+	assert.Equal(t, []bool{true, true}, contextsHaveDeadline)
 }
 
 func (s *placementSuite) SetupTest() {

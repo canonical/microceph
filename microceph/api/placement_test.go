@@ -44,95 +44,44 @@ func stubPlacementApplyLock(t *testing.T) *int {
 	return &unlockCalls
 }
 
-// placementRecorder captures how cmdPlacementPut drove the placement engine:
-// which phases ran and in what order, the policy handed to the store, and every
-// refusal written. Phase names recorded in order are "validate", "store",
-// "reconcile", and "refusal:<reason>".
-type placementRecorder struct {
-	order        []string
-	storedPolicy types.PlacementPolicy
-	refusals     []string
+// placementApplyRecorder captures the policy and context handed from the HTTP
+// handler to the placement package's single orchestration entry point.
+type placementApplyRecorder struct {
+	calls            int
+	policy           types.PlacementPolicy
+	contextCancelled bool
 }
 
-// ran reports whether the named phase executed.
-func (r *placementRecorder) ran(phase string) bool {
-	for _, p := range r.order {
-		if p == phase {
-			return true
-		}
-	}
-	return false
-}
-
-// placementHooks lets a test fail one phase of the handler's validate-store-
-// reconcile sequence. A nil hook makes that phase a recorded success.
-type placementHooks struct {
-	validate  func(context.Context) error
-	store     func(context.Context) error
-	reconcile func(context.Context) error
-	refusal   func(context.Context, string) error
-}
-
-// stubPlacementEngine replaces the three engine phases cmdPlacementPut drives,
-// plus the refusal writer, and restores them on cleanup. The returned recorder
-// exposes the resulting call sequence so tests can assert not just that a phase
-// ran but that it ran in the right order -- notably that the desired policy is
-// stored before reconciliation, not after it.
-func stubPlacementEngine(t *testing.T, h placementHooks) *placementRecorder {
+// stubPlacementApply replaces ApplyPlacementPolicy for handler tests and
+// restores it on cleanup. Validate-store-reconcile ordering is tested in the
+// ceph package, where those phases are deliberately package-private.
+func stubPlacementApply(t *testing.T, apply func(context.Context, types.PlacementPolicy) error) *placementApplyRecorder {
 	t.Helper()
-	rec := &placementRecorder{}
-
-	origValidate := ceph.ValidatePlacementFunc
-	origStore := ceph.StorePlacementPolicyFunc
-	origReconcile := ceph.ReconcilePlacementFunc
-	origRefusal := ceph.SetPlacementRefusalFunc
-
-	ceph.ValidatePlacementFunc = func(ctx context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
-		rec.order = append(rec.order, "validate")
-		if h.validate != nil {
-			return h.validate(ctx)
+	rec := &placementApplyRecorder{}
+	origApply := ceph.ApplyPlacementPolicyFunc
+	ceph.ApplyPlacementPolicyFunc = func(ctx context.Context, _ interfaces.StateInterface, policy types.PlacementPolicy) error {
+		rec.calls++
+		rec.policy = policy
+		select {
+		case <-ctx.Done():
+			rec.contextCancelled = true
+		default:
+		}
+		if apply != nil {
+			return apply(ctx, policy)
 		}
 		return nil
 	}
-	ceph.StorePlacementPolicyFunc = func(ctx context.Context, _ interfaces.StateInterface, p types.PlacementPolicy) error {
-		rec.order = append(rec.order, "store")
-		rec.storedPolicy = p
-		if h.store != nil {
-			return h.store(ctx)
-		}
-		return nil
-	}
-	ceph.ReconcilePlacementFunc = func(ctx context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
-		rec.order = append(rec.order, "reconcile")
-		if h.reconcile != nil {
-			return h.reconcile(ctx)
-		}
-		return nil
-	}
-	ceph.SetPlacementRefusalFunc = func(ctx context.Context, _ interfaces.StateInterface, reason string) error {
-		rec.order = append(rec.order, "refusal:"+reason)
-		rec.refusals = append(rec.refusals, reason)
-		if h.refusal != nil {
-			return h.refusal(ctx, reason)
-		}
-		return nil
-	}
-
-	t.Cleanup(func() {
-		ceph.ValidatePlacementFunc = origValidate
-		ceph.StorePlacementPolicyFunc = origStore
-		ceph.ReconcilePlacementFunc = origReconcile
-		ceph.SetPlacementRefusalFunc = origRefusal
-	})
+	t.Cleanup(func() { ceph.ApplyPlacementPolicyFunc = origApply })
 	return rec
 }
 
-// TestPlacementPutSuccess verifies that cmdPlacementPut decodes the policy and
-// drives the three phases in order -- validate, store, reconcile -- then clears
-// any stale refusal, releases the apply lock, and returns success.
+// TestPlacementPutSuccess verifies that cmdPlacementPut decodes the policy,
+// passes it to the placement package's orchestration entry point, releases the
+// apply lock, and returns success.
 func TestPlacementPutSuccess(t *testing.T) {
 	unlockCalls := stubPlacementApplyLock(t)
-	rec := stubPlacementEngine(t, placementHooks{})
+	rec := stubPlacementApply(t, nil)
 
 	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
 	w := httptest.NewRecorder()
@@ -142,23 +91,23 @@ func TestPlacementPutSuccess(t *testing.T) {
 	_ = resp.Render(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, []string{"validate", "store", "reconcile", "refusal:"}, rec.order,
-		"the handler must validate, then persist the desired policy, then reconcile")
+	assert.Equal(t, 1, rec.calls)
+	control := true
+	assert.Equal(t, types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Control: &control},
+		},
+	}, rec.policy)
 	assert.Equal(t, 1, *unlockCalls, "the apply lock must be released exactly once")
 }
 
-// TestPlacementPutValidationFailureNotStored (N3) verifies that a policy
-// rejected in the validate phase (e.g. unknown member) never reaches the store:
-// the previously stored desired policy must survive a bad request untouched, so
-// an invalid PUT cannot revoke the grants of the policy already in effect.
-// Reconciliation is skipped and the response is HTTP 400 because the error is a
-// client-side sentinel.
-func TestPlacementPutValidationFailureNotStored(t *testing.T) {
+// TestPlacementPutValidationFailureReturns400 verifies that a validation
+// sentinel returned by the placement orchestration maps to HTTP 400.
+func TestPlacementPutValidationFailureReturns400(t *testing.T) {
 	stubPlacementApplyLock(t)
-	rec := stubPlacementEngine(t, placementHooks{
-		validate: func(context.Context) error {
-			return fmt.Errorf("%w: bad-node", ceph.ErrUnknownPlacementMember)
-		},
+	rec := stubPlacementApply(t, func(context.Context, types.PlacementPolicy) error {
+		return fmt.Errorf("%w: bad-node", ceph.ErrUnknownPlacementMember)
 	})
 
 	body := `{"mode":"reconcile","members":{"bad-node":{"control":true}}}`
@@ -168,21 +117,16 @@ func TestPlacementPutValidationFailureNotStored(t *testing.T) {
 	resp := cmdPlacementPut(nil, req)
 	_ = resp.Render(w, req)
 
-	assert.False(t, rec.ran("store"), "a policy that fails validation must not replace the stored desired policy")
-	assert.False(t, rec.ran("reconcile"), "reconciliation must not run for a policy that failed validation")
-	require.Len(t, rec.refusals, 1, "the rejection reason must be recorded")
-	assert.Contains(t, rec.refusals[0], "bad-node")
+	assert.Equal(t, 1, rec.calls)
 	assert.Equal(t, http.StatusBadRequest, w.Code, "client-side placement error must return 400")
 }
 
-// TestPlacementPutPreBootstrapReturns400 verifies that the ErrCephNotBootstrapped
-// sentinel maps to HTTP 400 (not 500) and that the policy is not stored.
+// TestPlacementPutPreBootstrapReturns400 verifies that the
+// ErrCephNotBootstrapped sentinel maps to HTTP 400 rather than 500.
 func TestPlacementPutPreBootstrapReturns400(t *testing.T) {
 	stubPlacementApplyLock(t)
-	rec := stubPlacementEngine(t, placementHooks{
-		validate: func(context.Context) error {
-			return fmt.Errorf("%w: run bootstrap-ceph first", ceph.ErrCephNotBootstrapped)
-		},
+	stubPlacementApply(t, func(context.Context, types.PlacementPolicy) error {
+		return fmt.Errorf("%w: run bootstrap-ceph first", ceph.ErrCephNotBootstrapped)
 	})
 
 	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
@@ -193,17 +137,14 @@ func TestPlacementPutPreBootstrapReturns400(t *testing.T) {
 	_ = resp.Render(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code, "pre-bootstrap rejection must return 400 not 500")
-	assert.False(t, rec.ran("store"), "a pre-bootstrap rejection must not replace the stored desired policy")
 }
 
 // TestPlacementPutKeepOneReturns400 verifies that the ErrKeepOneInvariant
 // sentinel maps to HTTP 400 (not 500).
 func TestPlacementPutKeepOneReturns400(t *testing.T) {
 	stubPlacementApplyLock(t)
-	stubPlacementEngine(t, placementHooks{
-		reconcile: func(context.Context) error {
-			return fmt.Errorf("%w: refused to remove last mon on node-a", ceph.ErrKeepOneInvariant)
-		},
+	stubPlacementApply(t, func(context.Context, types.PlacementPolicy) error {
+		return fmt.Errorf("%w: refused to remove last mon on node-a", ceph.ErrKeepOneInvariant)
 	})
 
 	body := `{"mode":"reconcile","members":{"node-a":{"control":false}}}`
@@ -216,114 +157,12 @@ func TestPlacementPutKeepOneReturns400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code, "keep-one refusal must return 400 not 500")
 }
 
-// TestPlacementPutKeepOneStoresPolicyAndRefusal verifies that a keep-one
-// refusal leaves the requested snapshot as the desired policy: it was persisted
-// before reconciliation ran, so GET /placement reports the desired-vs-observed
-// gap with last_refusal explaining it. The response is HTTP 400.
-func TestPlacementPutKeepOneStoresPolicyAndRefusal(t *testing.T) {
-	stubPlacementApplyLock(t)
-	rec := stubPlacementEngine(t, placementHooks{
-		reconcile: func(context.Context) error {
-			return fmt.Errorf("%w: refused to remove last mon on node-a", ceph.ErrKeepOneInvariant)
-		},
-	})
-
-	body := `{"mode":"reconcile","members":{"node-a":{"control":false},"node-b":{"control":true}}}`
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
-
-	resp := cmdPlacementPut(nil, req)
-	_ = resp.Render(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code, "keep-one refusal must return 400 not 500")
-	require.Len(t, rec.refusals, 1, "the refusal reason must be recorded")
-	assert.Contains(t, rec.refusals[0], "keep-one invariant")
-	assert.Equal(t, []string{"validate", "store", "reconcile", "refusal:" + rec.refusals[0]}, rec.order,
-		"the policy must be stored before reconciliation, so a refusal cannot discard it")
-
-	// The stored policy must be the submitted snapshot verbatim.
-	ctrlFalse := false
-	ctrlTrue := true
-	assert.Equal(t, types.PlacementPolicy{
-		Mode: types.PlacementModeReconcile,
-		Members: map[string]types.MemberPlacement{
-			"node-a": {Control: &ctrlFalse},
-			"node-b": {Control: &ctrlTrue},
-		},
-	}, rec.storedPolicy)
-}
-
-// TestPlacementPutReconcileFailureStoresDesiredPolicy verifies that a
-// mid-reconcile server-side failure still leaves the submitted snapshot as the
-// canonical desired policy. Persisting before reconciling is what makes the
-// failure observable: the operator's intent survives as desired state and
-// last_refusal records what stopped it, instead of the superseded policy
-// silently remaining in effect as though the PUT never happened.
-func TestPlacementPutReconcileFailureStoresDesiredPolicy(t *testing.T) {
-	stubPlacementApplyLock(t)
-	rec := stubPlacementEngine(t, placementHooks{
-		reconcile: func(context.Context) error {
-			return errors.New("failed to add mon on node-b: connection refused")
-		},
-	})
-
-	body := `{"mode":"reconcile","members":{"node-a":{"control":true},"node-b":{"control":true}}}`
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
-
-	resp := cmdPlacementPut(nil, req)
-	_ = resp.Render(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code, "a mid-reconcile failure is a server fault")
-	assert.True(t, rec.ran("store"), "the desired policy must survive a reconciliation failure")
-	ctrlTrue := true
-	assert.Equal(t, types.PlacementPolicy{
-		Mode: types.PlacementModeReconcile,
-		Members: map[string]types.MemberPlacement{
-			"node-a": {Control: &ctrlTrue},
-			"node-b": {Control: &ctrlTrue},
-		},
-	}, rec.storedPolicy, "the whole submitted snapshot must be stored, not the part that converged")
-	require.Len(t, rec.refusals, 1, "the failure reason must be recorded alongside the desired policy")
-	assert.Contains(t, rec.refusals[0], "connection refused")
-}
-
-// TestPlacementPutStoreFailureSkipsReconcile verifies that when the desired
-// policy cannot be persisted the handler stops before reconciling: mutating
-// services with no durable record of the intent behind them is exactly the gap
-// the store-before-reconcile ordering exists to close. The failure reason is
-// still recorded and the response is HTTP 500.
-func TestPlacementPutStoreFailureSkipsReconcile(t *testing.T) {
-	unlockCalls := stubPlacementApplyLock(t)
-	rec := stubPlacementEngine(t, placementHooks{
-		store: func(context.Context) error {
-			return errors.New("database unavailable")
-		},
-	})
-
-	body := `{"mode":"reconcile","members":{"node-a":{"control":false},"node-b":{"control":true}}}`
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
-
-	resp := cmdPlacementPut(nil, req)
-	_ = resp.Render(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code, "an unpersistable policy must return 500")
-	assert.False(t, rec.ran("reconcile"), "services must not be mutated when the desired policy could not be stored")
-	require.Len(t, rec.refusals, 1, "the store failure must be recorded")
-	assert.Contains(t, rec.refusals[0], "database unavailable")
-	assert.Equal(t, 1, *unlockCalls, "the apply lock must be released when the store fails")
-}
-
-// TestPlacementPutServerErrorReturns500 verifies that a non-client-side
-// reconcile error (e.g. DB failure) does NOT map to 400 but falls through to
-// SmartError which returns 500, and that the apply lock is still released.
+// TestPlacementPutServerErrorReturns500 verifies that a non-client-side apply
+// error falls through to SmartError as HTTP 500 and still releases the lock.
 func TestPlacementPutServerErrorReturns500(t *testing.T) {
 	unlockCalls := stubPlacementApplyLock(t)
-	stubPlacementEngine(t, placementHooks{
-		reconcile: func(context.Context) error {
-			return errors.New("database connection refused")
-		},
+	stubPlacementApply(t, func(context.Context, types.PlacementPolicy) error {
+		return errors.New("database connection refused")
 	})
 
 	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
@@ -337,29 +176,12 @@ func TestPlacementPutServerErrorReturns500(t *testing.T) {
 	assert.Equal(t, 1, *unlockCalls, "the apply lock must be released even when the apply fails")
 }
 
-// TestPlacementPutContextDetached verifies that cmdPlacementPut uses a context
-// detached from the request's cancellation: even when the request context is
-// cancelled, every engine phase receives a non-cancelled context. This prevents
-// the "context canceled" error during multi-minute readiness polling.
+// TestPlacementPutContextDetached verifies that cmdPlacementPut passes the
+// orchestration entry point a context detached from request cancellation. This
+// prevents context-canceled failures during multi-minute readiness polling.
 func TestPlacementPutContextDetached(t *testing.T) {
 	stubPlacementApplyLock(t)
-	cancelled := map[string]bool{}
-	noteCancelled := func(phase string) func(context.Context) error {
-		return func(ctx context.Context) error {
-			select {
-			case <-ctx.Done():
-				cancelled[phase] = true
-			default:
-				cancelled[phase] = false
-			}
-			return nil
-		}
-	}
-	stubPlacementEngine(t, placementHooks{
-		validate:  noteCancelled("validate"),
-		store:     noteCancelled("store"),
-		reconcile: noteCancelled("reconcile"),
-	})
+	rec := stubPlacementApply(t, nil)
 
 	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
 	w := httptest.NewRecorder()
@@ -374,8 +196,8 @@ func TestPlacementPutContextDetached(t *testing.T) {
 	_ = resp.Render(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code, "handler must succeed despite cancelled request context")
-	assert.Equal(t, map[string]bool{"validate": false, "store": false, "reconcile": false}, cancelled,
-		"every engine phase must receive a context detached from the request's cancellation")
+	assert.False(t, rec.contextCancelled,
+		"placement apply must receive a context detached from the request's cancellation")
 }
 
 // TestPlacementPutBadJSON verifies that malformed JSON returns BadRequest.
@@ -390,12 +212,11 @@ func TestPlacementPutBadJSON(t *testing.T) {
 }
 
 // TestPlacementPutUnknownModeRejected verifies that a policy with an unknown
-// mode is rejected with BadRequest before any lock, validate, store, or
-// reconcile happens, so a future mode (e.g. dry-run) sent to an older snap
-// fails loudly instead of being silently applied as a reconcile.
+// mode is rejected with BadRequest before any lock or placement apply, so a
+// future mode sent to an older snap fails loudly.
 func TestPlacementPutUnknownModeRejected(t *testing.T) {
 	unlockCalls := stubPlacementApplyLock(t)
-	rec := stubPlacementEngine(t, placementHooks{})
+	rec := stubPlacementApply(t, nil)
 
 	body := `{"mode":"dry-run","members":{"node-a":{"control":true}}}`
 	w := httptest.NewRecorder()
@@ -405,7 +226,7 @@ func TestPlacementPutUnknownModeRejected(t *testing.T) {
 	_ = resp.Render(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code, "unknown mode must be rejected with 400")
-	assert.Empty(t, rec.order, "unknown mode must not touch the placement engine or the policy store")
+	assert.Equal(t, 0, rec.calls, "unknown mode must not apply a placement policy")
 	assert.Equal(t, 0, *unlockCalls, "unknown mode must be rejected before the lock is taken")
 }
 
@@ -413,7 +234,7 @@ func TestPlacementPutUnknownModeRejected(t *testing.T) {
 // mode is accepted (200).
 func TestPlacementPutReconcileModeAccepted(t *testing.T) {
 	stubPlacementApplyLock(t)
-	stubPlacementEngine(t, placementHooks{})
+	stubPlacementApply(t, nil)
 
 	body := `{"mode":"reconcile","members":{}}`
 	w := httptest.NewRecorder()
@@ -425,14 +246,12 @@ func TestPlacementPutReconcileModeAccepted(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "body %s must be accepted", body)
 }
 
-// TestPlacementPutWaitingPolicyStored verifies that the CE142 waiting policy
-// (an empty members map) is persisted as the desired policy rather than treated
-// as a no-op request. Storing it is the point: an empty members map is an empty
-// storage allow-list, which is how the charm withholds OSD enrollment while it
-// has no valid role assignments to publish.
-func TestPlacementPutWaitingPolicyStored(t *testing.T) {
+// TestPlacementPutWaitingPolicyApplied verifies that the CE142 waiting policy
+// (an empty members map) is passed to the placement orchestration rather than
+// treated as a no-op request.
+func TestPlacementPutWaitingPolicyApplied(t *testing.T) {
 	stubPlacementApplyLock(t)
-	rec := stubPlacementEngine(t, placementHooks{})
+	rec := stubPlacementApply(t, nil)
 
 	body := `{"mode":"reconcile","members":{}}`
 	w := httptest.NewRecorder()
@@ -442,11 +261,11 @@ func TestPlacementPutWaitingPolicyStored(t *testing.T) {
 	_ = resp.Render(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, rec.ran("store"), "the waiting policy must be stored as the desired policy")
+	assert.Equal(t, 1, rec.calls)
 	assert.Equal(t, types.PlacementPolicy{
 		Mode:    types.PlacementModeReconcile,
 		Members: map[string]types.MemberPlacement{},
-	}, rec.storedPolicy)
+	}, rec.policy)
 }
 
 // TestPlacementPutMissingModeRejected verifies that an omitted mode is rejected
@@ -454,7 +273,7 @@ func TestPlacementPutWaitingPolicyStored(t *testing.T) {
 // lock interaction.
 func TestPlacementPutMissingModeRejected(t *testing.T) {
 	unlockCalls := stubPlacementApplyLock(t)
-	rec := stubPlacementEngine(t, placementHooks{})
+	rec := stubPlacementApply(t, nil)
 
 	body := `{"members":{}}`
 	w := httptest.NewRecorder()
@@ -464,14 +283,13 @@ func TestPlacementPutMissingModeRejected(t *testing.T) {
 	_ = resp.Render(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code, "a missing mode must be rejected with 400")
-	assert.Empty(t, rec.order, "a missing mode must not touch the placement engine or the policy store")
+	assert.Equal(t, 0, rec.calls, "a missing mode must not apply a placement policy")
 	assert.Equal(t, 0, *unlockCalls, "a missing mode must be rejected before the lock is taken")
 }
 
 // TestPlacementPutLockHeldReturnsRetryableError verifies that when another
 // placement apply holds the cluster-wide lock, the handler returns an error
-// without validating, storing, reconciling, recording a refusal, or releasing
-// the other holder's lock.
+// without applying the policy or releasing the other holder's lock.
 func TestPlacementPutLockHeldReturnsRetryableError(t *testing.T) {
 	unlockCalled := false
 	origLock := ceph.LockPlacementApplyFunc
@@ -487,7 +305,7 @@ func TestPlacementPutLockHeldReturnsRetryableError(t *testing.T) {
 		ceph.LockPlacementApplyFunc = origLock
 		ceph.UnlockPlacementApplyFunc = origUnlock
 	})
-	rec := stubPlacementEngine(t, placementHooks{})
+	rec := stubPlacementApply(t, nil)
 
 	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`
 	w := httptest.NewRecorder()
@@ -497,8 +315,7 @@ func TestPlacementPutLockHeldReturnsRetryableError(t *testing.T) {
 	_ = resp.Render(w, req)
 
 	assert.Equal(t, http.StatusConflict, w.Code, "a held apply lock must fail the PUT with 409 Conflict (retryable)")
-	assert.Empty(t, rec.order, "no placement work may run while another apply holds the lock")
-	assert.Empty(t, rec.refusals, "a lock conflict is not a policy refusal and must not overwrite last_refusal")
+	assert.Equal(t, 0, rec.calls, "no placement work may run while another apply holds the lock")
 	assert.False(t, unlockCalled, "the handler must not release a lock it failed to acquire")
 }
 
@@ -521,8 +338,8 @@ func TestPlacementPutLockReleasedWithAcquiredToken(t *testing.T) {
 		ceph.LockPlacementApplyFunc = origLock
 		ceph.UnlockPlacementApplyFunc = origUnlock
 	})
-	stubPlacementEngine(t, placementHooks{
-		reconcile: func(context.Context) error { return errors.New("apply blew up") },
+	stubPlacementApply(t, func(context.Context, types.PlacementPolicy) error {
+		return errors.New("apply blew up")
 	})
 
 	body := `{"mode":"reconcile","members":{"node-a":{"control":true}}}`

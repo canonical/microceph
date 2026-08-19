@@ -46,11 +46,10 @@ func cmdPlacementGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 // operation completes and records its result even if the client disconnects.
 const placementPutTimeout = 10 * time.Minute
 
-// isClientSidePlacementError reports whether a placement engine error is a
-// client-side precondition failure (not bootstrapped, unknown member,
+// isClientSidePlacementError reports whether a placement apply error is a
+// client-side precondition failure (not bootstrapped, unknown member, or a
 // keep-one refusal) that should map to HTTP 400 rather than the SmartError 500
-// fallback. It covers both engine phases: the first two sentinels come from
-// ValidatePlacement, the keep-one refusal from ReconcilePlacement.
+// fallback.
 func isClientSidePlacementError(err error) bool {
 	return errors.Is(err, ceph.ErrCephNotBootstrapped) ||
 		errors.Is(err, ceph.ErrUnknownPlacementMember) ||
@@ -105,12 +104,12 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	ctx, ctxCancel := context.WithTimeout(context.WithoutCancel(r.Context()), placementPutTimeout)
 	defer ctxCancel()
 
-	// Serialize placement applies cluster-wide (CE142). ReconcilePlacement reads
+	// Serialize placement applies cluster-wide (CE142). Applying a policy reads
 	// observed service state and then mutates services over minutes; two
 	// overlapping PUTs (possibly served by different members) could each count
 	// the other's removal targets as keep-one retainers and together remove the
 	// last viable control service. The dqlite-backed conditional-UPDATE lock
-	// makes the whole read-modify-store cycle mutually exclusive across
+	// makes the whole apply cycle mutually exclusive across
 	// members; a lease reclaims the lock if a holder crashes mid-apply.
 	lockToken, err := ceph.LockPlacementApplyFunc(ctx, interfaces.CephState{State: s})
 	if err != nil {
@@ -136,79 +135,16 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 		}
 	}()
 
-	// Phase 1 -- validate. Check the complete incoming snapshot against cluster
-	// preconditions before it displaces the stored desired state. A policy that
-	// can never apply (Ceph not bootstrapped, unknown member) is rejected here
-	// without any service operation and without disturbing the currently stored
-	// policy, so a bad request cannot revoke the grants of a good one.
-	validateErr := ceph.ValidatePlacementFunc(ctx, interfaces.CephState{State: s}, policy)
-	if validateErr != nil {
-		logger.Errorf("rejected placement policy: %v", validateErr)
-		recordPlacementRefusal(ctx, s, validateErr)
-		if isClientSidePlacementError(validateErr) {
-			return mcTypes.BadRequest(validateErr)
-		}
-		return mcTypes.SmartError(validateErr)
-	}
-
-	// Phase 2 -- persist. The validated snapshot becomes the canonical desired
-	// policy BEFORE reconciliation runs, replacing the previous one wholesale.
-	// Storing first is what makes a reconciliation failure observable: the
-	// operator's intent survives as the desired state and GET /placement reports
-	// the desired-vs-observed gap alongside last_refusal, instead of the
-	// superseded policy silently remaining in effect as though the PUT never
-	// happened. It also means storage eligibility follows the new snapshot
-	// immediately, which is the point -- the allow-list is desired state, not a
-	// result of convergence.
-	err = ceph.StorePlacementPolicyFunc(ctx, interfaces.CephState{State: s}, policy)
+	err = ceph.ApplyPlacementPolicyFunc(ctx, interfaces.CephState{State: s}, policy)
 	if err != nil {
-		// The desired state could not be recorded, so do not reconcile: mutating
-		// services with no durable record of the intent behind them is exactly
-		// the gap this ordering exists to close.
-		logger.Errorf("failed to store placement policy: %v", err)
-		recordPlacementRefusal(ctx, s, err)
-		return mcTypes.InternalError(err)
-	}
-
-	// Phase 3 -- reconcile. Converge observed placement onto the stored policy.
-	reconcileErr := ceph.ReconcilePlacementFunc(ctx, interfaces.CephState{State: s}, policy)
-	if reconcileErr != nil {
-		// The policy stays stored: whether the failure is a keep-one refusal
-		// (adds applied, removals refused) or a mid-reconcile error (an add that
-		// failed partway), the desired state is a coherent intent the caller can
-		// converge by retrying the same policy, and last_refusal records what
-		// stopped it.
-		logger.Errorf("failed to reconcile placement policy: %v", reconcileErr)
-		recordPlacementRefusal(ctx, s, reconcileErr)
-		// Client-side precondition failures (keep-one) return HTTP 400 so callers
-		// can distinguish operator errors from genuine server faults. Other
-		// errors (DB failures, etc.) fall through to SmartError which maps known
-		// sentinels or returns 500.
-		if isClientSidePlacementError(reconcileErr) {
-			return mcTypes.BadRequest(reconcileErr)
+		logger.Errorf("failed to apply placement policy: %v", err)
+		if isClientSidePlacementError(err) {
+			return mcTypes.BadRequest(err)
 		}
-		return mcTypes.SmartError(reconcileErr)
-	}
-
-	// Clear any previous refusal now that the policy is stored and converged.
-	clearErr := ceph.SetPlacementRefusalFunc(ctx, interfaces.CephState{State: s}, "")
-	if clearErr != nil {
-		logger.Warnf("failed to clear placement refusal: %v", clearErr)
+		return mcTypes.SmartError(err)
 	}
 
 	return mcTypes.SyncResponse(true, nil)
-}
-
-// recordPlacementRefusal persists why a placement PUT did not fully succeed so
-// operators and charms polling GET /1.0/placement can inspect it. It is
-// best-effort: a failure to record is logged and swallowed, because the caller
-// is already returning the underlying error. ctx must be the detached request
-// context so the refusal is recorded even if the client has disconnected.
-func recordPlacementRefusal(ctx context.Context, s mcTypes.State, cause error) {
-	err := ceph.SetPlacementRefusalFunc(ctx, interfaces.CephState{State: s}, cause.Error())
-	if err != nil {
-		logger.Warnf("failed to persist placement refusal: %v", err)
-	}
 }
 
 // cmdPlacementDelete clears the canonical desired placement policy in full,

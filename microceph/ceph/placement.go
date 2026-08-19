@@ -45,12 +45,17 @@ var ErrPlacementApplyInProgress = fmt.Errorf("placement apply already in progres
 // so a live apply can never have its lock reclaimed underneath it.
 const placementApplyLease = 15 * time.Minute
 
+// placementRefusalWriteTimeout bounds best-effort refusal bookkeeping. Writes
+// use a detached context so an apply deadline does not prevent recording the
+// failure that caused it or clearing an old refusal after convergence.
+const placementRefusalWriteTimeout = 30 * time.Second
+
 // LockPlacementApplyFunc is the injectable wrapper for LockPlacementApply,
 // used by the API handler so tests can override it.
 var LockPlacementApplyFunc = LockPlacementApply
 
 // LockPlacementApply acquires the cluster-wide placement apply lock (CE142).
-// ReconcilePlacement reads observed service state and then mutates services
+// ApplyPlacementPolicy reads observed service state and then mutates services
 // over minutes; two overlapping applies (possibly served by different members)
 // could each count the other's removal targets as keep-one retainers and
 // together remove the last viable control service. The dqlite-backed lock
@@ -105,13 +110,15 @@ func UnlockPlacementApply(ctx context.Context, s interfaces.StateInterface, toke
 	return nil
 }
 
-// ValidatePlacementFunc is the injectable wrapper for ValidatePlacement, used
-// by the API handler so tests can override it.
-var ValidatePlacementFunc = ValidatePlacement
+// ApplyPlacementPolicyFunc is the injectable wrapper for ApplyPlacementPolicy,
+// used by the API handler so tests can override it.
+var ApplyPlacementPolicyFunc = ApplyPlacementPolicy
 
-// ReconcilePlacementFunc is the injectable wrapper for ReconcilePlacement, used
-// by the API handler so tests can override it.
-var ReconcilePlacementFunc = ReconcilePlacement
+// validatePlacementFunc and reconcilePlacementFunc are the injectable phases
+// used by ApplyPlacementPolicy. Keeping them package-private prevents callers
+// from bypassing the validate-store-reconcile orchestration.
+var validatePlacementFunc = ValidatePlacement
+var reconcilePlacementFunc = reconcilePlacement
 
 // getClusterLifecycleFunc reads the Ceph lifecycle state for the pre-bootstrap
 // guard. It is injectable for testing.
@@ -128,7 +135,7 @@ var getClusterLifecycleFunc = func(ctx context.Context, s interfaces.StateInterf
 // ValidatePlacement checks a desired placement snapshot against cluster
 // preconditions without touching any service or the stored policy (CE142).
 //
-// It is the first of the three phases the API handler drives -- validate,
+// It is the first of the three phases ApplyPlacementPolicy drives -- validate,
 // store, reconcile -- and exists as a separate phase so that a policy which can
 // never apply is rejected before it replaces the stored desired state, while a
 // policy that merely fails to converge is still persisted and observable.
@@ -190,7 +197,61 @@ func ValidatePlacement(ctx context.Context, s interfaces.StateInterface, policy 
 	return nil
 }
 
-// ReconcilePlacement converges observed service placement onto a desired
+// ApplyPlacementPolicy validates, stores, and reconciles a complete desired
+// placement snapshot (CE142). The caller must hold the cluster-wide placement
+// apply lock for the duration of this call.
+//
+// Validation runs before persistence so a policy that can never apply does not
+// replace the current desired state. Persistence runs before reconciliation so
+// a convergence failure leaves the new intent observable through placement
+// status. Every failure is recorded as the latest refusal on a best-effort
+// basis; a successful apply clears any previous refusal.
+func ApplyPlacementPolicy(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
+	err := validatePlacementFunc(ctx, s, policy)
+	if err != nil {
+		recordPlacementRefusal(ctx, s, err)
+		return err
+	}
+
+	err = storePlacementPolicyFunc(ctx, s, policy)
+	if err != nil {
+		recordPlacementRefusal(ctx, s, err)
+		return err
+	}
+
+	err = reconcilePlacementFunc(ctx, s, policy)
+	if err != nil {
+		recordPlacementRefusal(ctx, s, err)
+		return err
+	}
+
+	err = writePlacementRefusal(ctx, s, "")
+	if err != nil {
+		logger.Warnf("failed to clear placement refusal: %v", err)
+	}
+
+	return nil
+}
+
+// recordPlacementRefusal persists why a placement policy did not fully apply.
+// It is best-effort because the original apply error is more useful to callers.
+func recordPlacementRefusal(ctx context.Context, s interfaces.StateInterface, cause error) {
+	err := writePlacementRefusal(ctx, s, cause.Error())
+	if err != nil {
+		logger.Warnf("failed to persist placement refusal: %v", err)
+	}
+}
+
+// writePlacementRefusal uses a fresh bounded context detached from apply
+// cancellation. In particular, a deadline-exceeded apply must still be able to
+// persist that failure for placement status consumers.
+func writePlacementRefusal(ctx context.Context, s interfaces.StateInterface, reason string) error {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), placementRefusalWriteTimeout)
+	defer cancel()
+	return setPlacementRefusalFunc(writeCtx, s, reason)
+}
+
+// reconcilePlacement converges observed service placement onto a desired
 // placement snapshot (CE142). It is the core of the placement engine: it
 // computes the diff between the desired snapshot and observed placement, then
 // applies control-service adds before removals, refusing to remove the last
@@ -212,18 +273,18 @@ func ValidatePlacement(ctx context.Context, s interfaces.StateInterface, policy 
 //   - The engine never removes the last viable MON, MGR, or MDS.
 //
 // Reconciliation is deliberately a no-op for unmanaged fields, but that does
-// not make the stored policy a delta: StorePlacementPolicy replaces the whole
+// not make the stored policy a delta: storePlacementPolicy replaces the whole
 // desired snapshot regardless of which fields caused work here.
 //
-// The caller must have run ValidatePlacement on the same policy first;
-// ReconcilePlacement does not re-check bootstrap state or member membership.
+// ApplyPlacementPolicy is the only production entry point: it validates and
+// stores the same policy before calling this package-private phase.
 //
 // If a removal is refused for keep-one safety the adds remain in effect (a
 // partial convergence) and the function returns ErrKeepOneInvariant so the
 // caller can surface a clear blocked reason. The desired policy has already
 // been stored by then, so GET /placement reports the observed-vs-desired gap
 // with last_refusal explaining it.
-func ReconcilePlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
+func reconcilePlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
 	if s.ClusterState().ServerCert() == nil {
 		return fmt.Errorf("no server certificate")
 	}
@@ -500,17 +561,17 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 	return status, nil
 }
 
-// StorePlacementPolicyFunc is the injectable wrapper for StorePlacementPolicy,
-// used by the API handler so tests can override it.
-var StorePlacementPolicyFunc = StorePlacementPolicy
+// storePlacementPolicyFunc is the injectable persistence phase used by
+// ApplyPlacementPolicy.
+var storePlacementPolicyFunc = storePlacementPolicy
 
-// StorePlacementPolicy replaces the stored canonical desired placement policy
+// storePlacementPolicy replaces the stored canonical desired placement policy
 // with the given snapshot and marks a policy active. The write is a full
 // replacement: the previously stored policy is discarded rather than merged, so
 // a member or field the caller omitted is not carried forward. Consumers read
 // this record as the authoritative statement of desired placement --
 // OSDManager.checkStorageEligibility gates OSD enrollment on it.
-func StorePlacementPolicy(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
+func storePlacementPolicy(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
 	data, err := json.Marshal(policy)
 	if err != nil {
 		return fmt.Errorf("failed to marshal placement policy: %w", err)
@@ -524,13 +585,13 @@ func StorePlacementPolicy(ctx context.Context, s interfaces.StateInterface, poli
 // ClearPlacementPolicyFunc clears the active placement policy.
 var ClearPlacementPolicyFunc = ClearPlacementPolicy
 
-// SetPlacementRefusalFunc persists (or clears) the last placement refusal
-// reason. Injectable for testing.
-var SetPlacementRefusalFunc = SetPlacementRefusal
+// setPlacementRefusalFunc is the injectable refusal writer used by
+// ApplyPlacementPolicy.
+var setPlacementRefusalFunc = setPlacementRefusal
 
-// SetPlacementRefusal persists (or clears, if reason is empty) the last
+// setPlacementRefusal persists (or clears, if reason is empty) the last
 // placement refusal reason in the placement_policy table.
-func SetPlacementRefusal(ctx context.Context, s interfaces.StateInterface, reason string) error {
+func setPlacementRefusal(ctx context.Context, s interfaces.StateInterface, reason string) error {
 	return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return database.SetPlacementRefusal(ctx, tx, reason)
 	})
