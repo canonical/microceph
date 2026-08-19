@@ -50,8 +50,8 @@ const placementApplyLease = 15 * time.Minute
 var LockPlacementApplyFunc = LockPlacementApply
 
 // LockPlacementApply acquires the cluster-wide placement apply lock (CE142).
-// ApplyPlacement reads observed service state and then mutates services over
-// minutes; two overlapping applies (possibly served by different members)
+// ReconcilePlacement reads observed service state and then mutates services
+// over minutes; two overlapping applies (possibly served by different members)
 // could each count the other's removal targets as keep-one retainers and
 // together remove the last viable control service. The dqlite-backed lock
 // makes the read-modify cycle mutually exclusive across all cluster members.
@@ -105,9 +105,13 @@ func UnlockPlacementApply(ctx context.Context, s interfaces.StateInterface, toke
 	return nil
 }
 
-// ApplyPlacementFunc is the injectable wrapper for ApplyPlacement, used by the
-// API handler so tests can override it.
-var ApplyPlacementFunc = ApplyPlacement
+// ValidatePlacementFunc is the injectable wrapper for ValidatePlacement, used
+// by the API handler so tests can override it.
+var ValidatePlacementFunc = ValidatePlacement
+
+// ReconcilePlacementFunc is the injectable wrapper for ReconcilePlacement, used
+// by the API handler so tests can override it.
+var ReconcilePlacementFunc = ReconcilePlacement
 
 // getClusterLifecycleFunc reads the Ceph lifecycle state for the pre-bootstrap
 // guard. It is injectable for testing.
@@ -121,32 +125,35 @@ var getClusterLifecycleFunc = func(ctx context.Context, s interfaces.StateInterf
 	return lc, err
 }
 
-// ApplyPlacement applies a declarative placement policy (CE142). It is the core
-// of the placement engine: it computes the diff between desired and observed
-// placement, then applies control-service adds before removals, refusing to
-// remove the last viable MON, MGR, or MDS.
+// ValidatePlacement checks a desired placement snapshot against cluster
+// preconditions without touching any service or the stored policy (CE142).
 //
-// Rules:
-//   - An empty members map performs no service operations.
-//   - Members absent from the map are not touched for service placement.
-//   - Omitted service fields on present members are not touched.
-//   - control:true adds MON/MGR/MDS; control:false removes them (after safety).
-//   - The engine never removes the last viable MON, MGR, or MDS.
-//   - Unknown members in the map are rejected.
+// It is the first of the three phases the API handler drives -- validate,
+// store, reconcile -- and exists as a separate phase so that a policy which can
+// never apply is rejected before it replaces the stored desired state, while a
+// policy that merely fails to converge is still persisted and observable.
 //
-// If a removal is refused for keep-one safety the adds remain in effect (a
-// partial apply) and the function returns ErrKeepOneInvariant so the caller can
-// surface a clear blocked reason; the API handler is responsible for persisting
-// the policy as the declared intent in that case so GET /placement can report
-// the observed-vs-declared gap.
-func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
+// Rejections:
+//   - Ceph is not bootstrapped and the policy is non-empty
+//     (ErrCephNotBootstrapped).
+//   - The policy names a member that is not a known cluster member
+//     (ErrUnknownPlacementMember).
+//
+// Both are client-side sentinels so the API handler maps them to HTTP 400
+// rather than the SmartError 500 fallback. An empty members map (the CE142
+// waiting policy) always validates, including before Ceph is bootstrapped.
+func ValidatePlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
 	if s.ClusterState().ServerCert() == nil {
 		return fmt.Errorf("no server certificate")
 	}
 
-	// Empty members map: no service operations.
+	// Empty members map: the CE142 waiting policy. It is accepted before the
+	// pre-bootstrap guard below so the charm can install it while Ceph is still
+	// unbootstrapped (relation missing, no assignments published, or only
+	// pending/error entries). Storing it is not inert: an empty members map is
+	// an empty storage allow-list, so once active it denies new OSD enrollment
+	// on every member (see OSDManager.checkStorageEligibility).
 	if len(policy.Members) == 0 {
-		logger.Debug("Placement policy has empty members map: no service operations")
 		return nil
 	}
 
@@ -157,9 +164,6 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 	// placement. Without this, EnableService -> UpdateConfig fails with an
 	// obscure 'failed to locate IP on public network' error because no Ceph
 	// config exists yet.
-	//
-	// ErrCephNotBootstrapped is a client-side sentinel so the API handler maps
-	// it to HTTP 400 (BadRequest) rather than the SmartError 500 fallback.
 	bootstrapped, err := cephIsBootstrappedFunc(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to determine Ceph bootstrap state: %w", err)
@@ -181,6 +185,55 @@ func ApplyPlacement(ctx context.Context, s interfaces.StateInterface, policy typ
 		if !memberSet[memberName] {
 			return fmt.Errorf("%w: %s", ErrUnknownPlacementMember, memberName)
 		}
+	}
+
+	return nil
+}
+
+// ReconcilePlacement converges observed service placement onto a desired
+// placement snapshot (CE142). It is the core of the placement engine: it
+// computes the diff between the desired snapshot and observed placement, then
+// applies control-service adds before removals, refusing to remove the last
+// viable MON, MGR, or MDS.
+//
+// The policy is a complete desired-state snapshot, not a delta (see
+// types.PlacementPolicy): every decision below is taken from this policy alone,
+// and the previously stored policy is never consulted or merged.
+//
+// Rules:
+//   - An empty members map performs no service operations (the waiting policy).
+//   - A member absent from the map is unmanaged: no service is added to or
+//     removed from it. Absence is not a grant -- it also leaves that member off
+//     the storage_eligible allow-list once the policy is stored.
+//   - A nil service field on a present member is unmanaged for that service
+//     class: no operation is performed, and the field is not inherited from the
+//     policy this one replaces.
+//   - control:true adds MON/MGR/MDS; control:false removes them (after safety).
+//   - The engine never removes the last viable MON, MGR, or MDS.
+//
+// Reconciliation is deliberately a no-op for unmanaged fields, but that does
+// not make the stored policy a delta: StorePlacementPolicy replaces the whole
+// desired snapshot regardless of which fields caused work here.
+//
+// The caller must have run ValidatePlacement on the same policy first;
+// ReconcilePlacement does not re-check bootstrap state or member membership.
+//
+// If a removal is refused for keep-one safety the adds remain in effect (a
+// partial convergence) and the function returns ErrKeepOneInvariant so the
+// caller can surface a clear blocked reason. The desired policy has already
+// been stored by then, so GET /placement reports the observed-vs-desired gap
+// with last_refusal explaining it.
+func ReconcilePlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
+	if s.ClusterState().ServerCert() == nil {
+		return fmt.Errorf("no server certificate")
+	}
+
+	// Empty members map (the waiting policy): no service operations. The policy
+	// still governs storage eligibility once stored; it is only reconciliation
+	// that has nothing to do.
+	if len(policy.Members) == 0 {
+		logger.Debug("Placement policy has empty members map: no service operations")
+		return nil
 	}
 
 	// Get current observed control services.
@@ -358,8 +411,11 @@ func redactSecrets(s string) string {
 	return secretPattern.ReplaceAllString(s, "AQ****REDACTED****==")
 }
 
-// GetPlacementStatus reads the placement policy and lifecycle state from the
-// database and returns a PlacementStatus response.
+// GetPlacementStatus reads the canonical desired placement policy and the
+// lifecycle state from the database and returns a PlacementStatus response.
+// The returned Policy is the complete desired snapshot as stored, so callers
+// can compare it against Observed without reconstructing it from earlier
+// requests.
 func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*types.PlacementStatus, error) {
 	if s.ClusterState().ServerCert() == nil {
 		return nil, fmt.Errorf("no server certificate")
@@ -448,7 +504,12 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 // used by the API handler so tests can override it.
 var StorePlacementPolicyFunc = StorePlacementPolicy
 
-// StorePlacementPolicy stores the given policy as the active placement policy.
+// StorePlacementPolicy replaces the stored canonical desired placement policy
+// with the given snapshot and marks a policy active. The write is a full
+// replacement: the previously stored policy is discarded rather than merged, so
+// a member or field the caller omitted is not carried forward. Consumers read
+// this record as the authoritative statement of desired placement --
+// OSDManager.checkStorageEligibility gates OSD enrollment on it.
 func StorePlacementPolicy(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
 	data, err := json.Marshal(policy)
 	if err != nil {
@@ -475,8 +536,10 @@ func SetPlacementRefusal(ctx context.Context, s interfaces.StateInterface, reaso
 	})
 }
 
-// ClearPlacementPolicy clears the active role-managed placement policy without
-// adding or removing services.
+// ClearPlacementPolicy clears the canonical desired placement policy and marks
+// role-managed placement inactive, without adding or removing services. It is
+// the stand-down path: with no active policy, storage eligibility is unmanaged
+// again and OSD enrollment is no longer gated.
 func ClearPlacementPolicy(ctx context.Context, s interfaces.StateInterface) error {
 	return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return database.ClearPlacementPolicy(ctx, tx)

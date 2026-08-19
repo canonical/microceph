@@ -28,6 +28,18 @@ func TestPlacement(t *testing.T) {
 	suite.Run(t, new(placementSuite))
 }
 
+// applyPlacement runs the validate-then-reconcile sequence that cmdPlacementPut
+// drives, minus the persistence phase between them. Engine tests use it so they
+// exercise the two phases in the order the handler does; the handler's own
+// ordering (including where the policy is stored) is covered by the API tests.
+func applyPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
+	err := ValidatePlacement(ctx, s, policy)
+	if err != nil {
+		return err
+	}
+	return ReconcilePlacement(ctx, s, policy)
+}
+
 func (s *placementSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
 	s.CopyCephConfigs()
@@ -163,7 +175,7 @@ func (s *placementSuite) TestPlacementEmptyMapNoOps() {
 	defer restore()
 
 	policy := types.PlacementPolicy{Mode: "reconcile", Members: map[string]types.MemberPlacement{}}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.Empty(s.T(), rec.adds())
 	assert.Empty(s.T(), rec.removes())
@@ -183,7 +195,7 @@ func (s *placementSuite) TestPlacementAddControl() {
 			"node-a": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.ElementsMatch(s.T(), []string{"mon:node-a", "mgr:node-a", "mds:node-a"}, rec.adds())
 	assert.Empty(s.T(), rec.removes())
@@ -207,7 +219,7 @@ func (s *placementSuite) TestPlacementRemoveControl() {
 			"node-b": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.ElementsMatch(s.T(), []string{"mon:node-a", "mgr:node-a", "mds:node-a"}, rec.removes())
 }
@@ -229,7 +241,7 @@ func (s *placementSuite) TestPlacementKeepOneInvariant() {
 			"node-a": {Control: boolPtr(false)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.Error(s.T(), err, "keep-one refusal must be surfaced as an error")
 	assert.ErrorIs(s.T(), err, ErrKeepOneInvariant)
 	assert.Empty(s.T(), rec.removes(), "must not remove last control service")
@@ -253,7 +265,7 @@ func (s *placementSuite) TestPlacementMigrateControl() {
 			"node-b": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 
 	// All adds must precede all removes in the ordered event log.
@@ -277,9 +289,12 @@ func (s *placementSuite) TestPlacementMigrateControl() {
 	assert.True(s.T(), removeSet["mds:node-a"])
 }
 
-// TestPlacementOmittedFieldsUntouched verifies that omitted service fields and
-// omitted members are not touched (UAT-S1.5 / precedence rule 8).
-func (s *placementSuite) TestPlacementOmittedFieldsUntouched() {
+// TestPlacementAbsentMemberUnmanaged verifies that a member absent from the
+// desired snapshot is unmanaged: reconciliation neither adds services to it nor
+// removes services from it (UAT-S1.5 / precedence rule 8). Absence is not an
+// instruction to strip the member, and it is not an inherited declaration from
+// whatever policy this one replaced.
+func (s *placementSuite) TestPlacementAbsentMemberUnmanaged() {
 	defer withObservedControl(map[string]map[string]bool{
 		"mon": {"node-c": true},
 		"mgr": {"node-c": true},
@@ -295,7 +310,7 @@ func (s *placementSuite) TestPlacementOmittedFieldsUntouched() {
 			"node-a": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 
 	// node-c should not be touched (no adds or removes for node-c).
@@ -319,7 +334,7 @@ func (s *placementSuite) TestPlacementUnknownMemberRejected() {
 			"unknown-node": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.Error(s.T(), err)
 	assert.ErrorIs(s.T(), err, ErrUnknownPlacementMember)
 	assert.Empty(s.T(), rec.adds())
@@ -342,7 +357,7 @@ func (s *placementSuite) TestPlacementIdempotent() {
 			"node-a": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.Empty(s.T(), rec.adds())
 	assert.Empty(s.T(), rec.removes())
@@ -366,7 +381,7 @@ func (s *placementSuite) TestPlacementControlFalseOnMemberWithNoService() {
 			"node-b": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.Empty(s.T(), rec.removes(), "no removals for a member without services")
 }
@@ -392,7 +407,7 @@ func (s *placementSuite) TestPlacementMultiRemovalConvergence() {
 			"node-c": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 
 	// node-c should get mon/mgr/mds added.
@@ -435,7 +450,7 @@ func (s *placementSuite) TestPlacementOmittedControlOnPresentMember() {
 			"node-b": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 
 	// node-a must not be touched (no adds or removes for node-a).
@@ -466,7 +481,7 @@ func (s *placementSuite) TestPlacementPreBootstrapRejectsNonEmptyPolicy() {
 			"node-a": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.Error(s.T(), err)
 	assert.ErrorIs(s.T(), err, ErrCephNotBootstrapped)
 	assert.Empty(s.T(), rec.adds(), "no service operations must run pre-bootstrap")
@@ -486,7 +501,7 @@ func (s *placementSuite) TestPlacementPreBootstrapAllowsEmptyPolicy() {
 	defer restore()
 
 	policy := types.PlacementPolicy{Mode: "reconcile", Members: map[string]types.MemberPlacement{}}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err, "empty policy must be accepted pre-bootstrap")
 	assert.Empty(s.T(), rec.adds())
 	assert.Empty(s.T(), rec.removes())
@@ -523,7 +538,7 @@ func (s *placementSuite) TestPlacementKeepOneReadinessGuard() {
 			"node-b": {Control: boolPtr(true)},  // add new (not ready)
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	// The add succeeds; the removal is refused because node-b is not viable.
 	assert.Error(s.T(), err, "must refuse to remove old control when replacement not viable")
 	assert.ErrorIs(s.T(), err, ErrKeepOneInvariant)
@@ -558,7 +573,7 @@ func (s *placementSuite) TestPlacementRemovalAllowedWhenReplacementReady() {
 			"node-b": {Control: boolPtr(true)},  // add new (ready)
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.NotEmpty(s.T(), rec.adds(), "replacement must be added")
 	assert.NotEmpty(s.T(), rec.removes(), "old service must be removed when replacement is viable")
@@ -590,7 +605,7 @@ func (s *placementSuite) TestPlacementRemovesExistingNonViableTargetWhenRetainer
 			"node-b": {},                        // omitted control retains viable services
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.ElementsMatch(s.T(), []string{"mon:node-a", "mgr:node-a", "mds:node-a"}, rec.removes())
 }

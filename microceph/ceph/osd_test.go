@@ -1521,51 +1521,7 @@ func (s *osdSuite) TestCheckStorageEligibility() {
 
 	// Helper to create a mock state with in-memory SQLite and populate the placement policy table.
 	createTestState := func(active bool, policyJSON string) (*mocks.MockState, func()) {
-		db, err := sql.Open("sqlite3", ":memory:")
-		require.NoError(s.T(), err)
-
-		_, err = db.Exec(`
-CREATE TABLE placement_policy (
-  id               INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
-  active           INTEGER NOT NULL DEFAULT 0,
-  policy_json      TEXT,
-  last_refusal     TEXT,
-  apply_lock_token INTEGER NOT NULL DEFAULT 0
-);
-INSERT INTO placement_policy (id, active, policy_json) VALUES (1, 0, '');
-`)
-		require.NoError(s.T(), err)
-
-		activeInt := 0
-		if active {
-			activeInt = 1
-		}
-		_, err = db.Exec("UPDATE placement_policy SET active = ?, policy_json = ? WHERE id = 1", activeInt, policyJSON)
-		require.NoError(s.T(), err)
-
-		txFn := func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
-			tx, err := db.BeginTx(ctx, nil)
-			if err != nil {
-				return err
-			}
-			err = f(ctx, tx)
-			if err != nil {
-				_ = tx.Rollback()
-				return err
-			}
-			return tx.Commit()
-		}
-
-		mockDB := &mocks.MockDB{TxFn: txFn}
-		state := &mocks.MockState{
-			ClusterName: "node-a",
-			DBObj:       mockDB,
-		}
-
-		cleanup := func() {
-			db.Close()
-		}
-
+		state, _, cleanup := newPlacementPolicyTestState(s.T(), active, policyJSON)
 		return state, cleanup
 	}
 
@@ -1621,4 +1577,122 @@ INSERT INTO placement_policy (id, active, policy_json) VALUES (1, 0, '');
 		err := osdmgr.checkStorageEligibility(ctx)
 		assert.Error(s.T(), err)
 	}
+
+	// Case 7: Active is true, member is present, but storage_eligible is
+	// omitted. Reject: storage is the fail-closed dimension, so an unmanaged
+	// eligibility is not a grant. Because PUT replaces the whole policy, this
+	// is also how a snapshot that drops a previous grant revokes it -- the
+	// omitted field is never inherited from the superseded policy.
+	{
+		policyJSON := `{"members":{"node-a":{"control":true}}}`
+		state, cleanup := createTestState(true, policyJSON)
+		defer cleanup()
+
+		osdmgr := NewOSDManager(state)
+		err := osdmgr.checkStorageEligibility(ctx)
+		assert.Error(s.T(), err)
+	}
+
+	// Case 8: Active is true with the CE142 waiting policy (an empty members
+	// map). Reject: an empty map is an empty storage allow-list, not an absent
+	// policy, so no member may enroll new OSDs.
+	{
+		policyJSON := `{"mode":"reconcile","members":{}}`
+		state, cleanup := createTestState(true, policyJSON)
+		defer cleanup()
+
+		osdmgr := NewOSDManager(state)
+		err := osdmgr.checkStorageEligibility(ctx)
+		assert.Error(s.T(), err)
+	}
+}
+
+// TestCheckStorageEligibilityPolicyReplacementRevokesGrant verifies that
+// storing a second policy replaces the first rather than merging with it: a
+// grant made by the first snapshot does not survive into a second snapshot that
+// omits it. This is the enforcement-point expression of the PUT-is-replacement
+// contract documented on types.PlacementPolicy.
+func (s *osdSuite) TestCheckStorageEligibilityPolicyReplacementRevokesGrant() {
+	ctx := context.Background()
+
+	state, db, cleanup := newPlacementPolicyTestState(s.T(), false, "")
+	defer cleanup()
+
+	osdmgr := NewOSDManager(state)
+
+	storePolicy := func(policyJSON string) {
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(s.T(), err)
+		err = database.SetPlacementPolicy(ctx, tx, true, policyJSON)
+		require.NoError(s.T(), err)
+		require.NoError(s.T(), tx.Commit())
+	}
+
+	// First snapshot grants storage on the local member.
+	storePolicy(`{"mode":"reconcile","members":{"node-a":{"storage_eligible":true}}}`)
+	assert.NoError(s.T(), osdmgr.checkStorageEligibility(ctx))
+
+	// Second snapshot keeps node-a but declares only control. The omitted
+	// storage_eligible is unmanaged under the new policy, not inherited, so the
+	// grant is gone.
+	storePolicy(`{"mode":"reconcile","members":{"node-a":{"control":true}}}`)
+	assert.Error(s.T(), osdmgr.checkStorageEligibility(ctx))
+
+	// Third snapshot drops node-a entirely. An absent member is likewise not on
+	// the allow-list.
+	storePolicy(`{"mode":"reconcile","members":{"node-b":{"storage_eligible":true}}}`)
+	assert.Error(s.T(), osdmgr.checkStorageEligibility(ctx))
+
+	// A fresh grant re-enables enrollment, proving the denials above came from
+	// the replacement policy rather than sticky state.
+	storePolicy(`{"mode":"reconcile","members":{"node-a":{"storage_eligible":true}}}`)
+	assert.NoError(s.T(), osdmgr.checkStorageEligibility(ctx))
+}
+
+// newPlacementPolicyTestState builds a MockState backed by an in-memory SQLite
+// database carrying the placement_policy singleton row, seeded with the given
+// active flag and policy JSON. It returns the state, the underlying handle so
+// callers can rewrite the row mid-test, and a cleanup function.
+func newPlacementPolicyTestState(t require.TestingT, active bool, policyJSON string) (*mocks.MockState, *sql.DB, func()) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+CREATE TABLE placement_policy (
+  id               INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+  active           INTEGER NOT NULL DEFAULT 0,
+  policy_json      TEXT,
+  last_refusal     TEXT,
+  apply_lock_token INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO placement_policy (id, active, policy_json) VALUES (1, 0, '');
+`)
+	require.NoError(t, err)
+
+	activeInt := 0
+	if active {
+		activeInt = 1
+	}
+	_, err = db.Exec("UPDATE placement_policy SET active = ?, policy_json = ? WHERE id = 1", activeInt, policyJSON)
+	require.NoError(t, err)
+
+	txFn := func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		err = f(ctx, tx)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		return tx.Commit()
+	}
+
+	state := &mocks.MockState{
+		ClusterName: "node-a",
+		DBObj:       &mocks.MockDB{TxFn: txFn},
+	}
+
+	return state, db, func() { db.Close() }
 }
