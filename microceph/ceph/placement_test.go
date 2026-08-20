@@ -28,6 +28,212 @@ func TestPlacement(t *testing.T) {
 	suite.Run(t, new(placementSuite))
 }
 
+// applyPlacement runs validation before the package-private reconciliation
+// phase. Reconciliation tests use it without exercising policy persistence;
+// ApplyPlacementPolicy's full validate-store-reconcile ordering is covered by
+// dedicated orchestration tests below.
+func applyPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
+	err := ValidatePlacement(ctx, s, policy)
+	if err != nil {
+		return err
+	}
+	return reconcilePlacement(ctx, s, policy)
+}
+
+// TestApplyPlacementPolicyOrdering verifies that the exported placement entry
+// point enforces validate-store-reconcile ordering, stops at the failing phase,
+// records failures, and clears an old refusal only after successful convergence.
+func TestApplyPlacementPolicyOrdering(t *testing.T) {
+	validationErr := fmt.Errorf("%w: node-z", ErrUnknownPlacementMember)
+	storeErr := fmt.Errorf("database unavailable")
+	reconcileErr := fmt.Errorf("%w: mon on node-a", ErrKeepOneInvariant)
+
+	tests := []struct {
+		name          string
+		validationErr error
+		storeErr      error
+		reconcileErr  error
+		wantOrder     []string
+	}{
+		{
+			name:      "success",
+			wantOrder: []string{"validate", "store", "reconcile", "refusal:"},
+		},
+		{
+			name:          "validation failure",
+			validationErr: validationErr,
+			wantOrder:     []string{"validate", "refusal:" + validationErr.Error()},
+		},
+		{
+			name:      "store failure",
+			storeErr:  storeErr,
+			wantOrder: []string{"validate", "store", "refusal:" + storeErr.Error()},
+		},
+		{
+			name:         "reconcile failure",
+			reconcileErr: reconcileErr,
+			wantOrder:    []string{"validate", "store", "reconcile", "refusal:" + reconcileErr.Error()},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var order []string
+			var storedPolicy types.PlacementPolicy
+			origValidate := validatePlacementFunc
+			origStore := storePlacementPolicyFunc
+			origReconcile := reconcilePlacementFunc
+			origRefusal := setPlacementRefusalFunc
+			validatePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+				order = append(order, "validate")
+				return tt.validationErr
+			}
+			storePlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface, policy types.PlacementPolicy) error {
+				order = append(order, "store")
+				storedPolicy = policy
+				return tt.storeErr
+			}
+			reconcilePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+				order = append(order, "reconcile")
+				return tt.reconcileErr
+			}
+			setPlacementRefusalFunc = func(_ context.Context, _ interfaces.StateInterface, reason string) error {
+				order = append(order, "refusal:"+reason)
+				return nil
+			}
+			t.Cleanup(func() {
+				validatePlacementFunc = origValidate
+				storePlacementPolicyFunc = origStore
+				reconcilePlacementFunc = origReconcile
+				setPlacementRefusalFunc = origRefusal
+			})
+
+			control := true
+			policy := types.PlacementPolicy{
+				Mode: types.PlacementModeReconcile,
+				Members: map[string]types.MemberPlacement{
+					"node-a": {Control: &control},
+				},
+			}
+			err := ApplyPlacementPolicy(context.Background(), nil, policy)
+
+			wantErr := tt.validationErr
+			if wantErr == nil {
+				wantErr = tt.storeErr
+			}
+			if wantErr == nil {
+				wantErr = tt.reconcileErr
+			}
+			if wantErr == nil {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorIs(t, err, wantErr)
+			}
+			assert.Equal(t, tt.wantOrder, order)
+			if tt.validationErr == nil {
+				assert.Equal(t, policy, storedPolicy)
+			} else {
+				assert.Equal(t, types.PlacementPolicy{}, storedPolicy,
+					"a policy rejected by validation must not displace desired state")
+			}
+		})
+	}
+}
+
+// TestApplyPlacementPolicyRefusalPersistenceBestEffort verifies that refusal
+// bookkeeping cannot hide either the original apply error or a successful
+// convergence result.
+func TestApplyPlacementPolicyRefusalPersistenceBestEffort(t *testing.T) {
+	origValidate := validatePlacementFunc
+	origStore := storePlacementPolicyFunc
+	origReconcile := reconcilePlacementFunc
+	origRefusal := setPlacementRefusalFunc
+	t.Cleanup(func() {
+		validatePlacementFunc = origValidate
+		storePlacementPolicyFunc = origStore
+		reconcilePlacementFunc = origReconcile
+		setPlacementRefusalFunc = origRefusal
+	})
+
+	applyErr := fmt.Errorf("apply failed")
+	refusalErr := fmt.Errorf("refusal write failed")
+	validatePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return applyErr
+	}
+	setPlacementRefusalFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) error {
+		return refusalErr
+	}
+
+	err := ApplyPlacementPolicy(context.Background(), nil, types.PlacementPolicy{})
+	assert.ErrorIs(t, err, applyErr)
+
+	validatePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+	storePlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+	reconcilePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+
+	err = ApplyPlacementPolicy(context.Background(), nil, types.PlacementPolicy{})
+	assert.NoError(t, err)
+}
+
+// TestApplyPlacementPolicyRefusalContextDetached verifies that an expired apply
+// context cannot prevent recording a failure or clearing a stale refusal.
+func TestApplyPlacementPolicyRefusalContextDetached(t *testing.T) {
+	origValidate := validatePlacementFunc
+	origStore := storePlacementPolicyFunc
+	origReconcile := reconcilePlacementFunc
+	origRefusal := setPlacementRefusalFunc
+	t.Cleanup(func() {
+		validatePlacementFunc = origValidate
+		storePlacementPolicyFunc = origStore
+		reconcilePlacementFunc = origReconcile
+		setPlacementRefusalFunc = origRefusal
+	})
+
+	applyErr := fmt.Errorf("apply failed after deadline")
+	validatePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return applyErr
+	}
+	storePlacementPolicyFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+	reconcilePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+
+	var reasons []string
+	var contextErrors []error
+	var contextsHaveDeadline []bool
+	setPlacementRefusalFunc = func(ctx context.Context, _ interfaces.StateInterface, reason string) error {
+		reasons = append(reasons, reason)
+		contextErrors = append(contextErrors, ctx.Err())
+		_, hasDeadline := ctx.Deadline()
+		contextsHaveDeadline = append(contextsHaveDeadline, hasDeadline)
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := ApplyPlacementPolicy(ctx, nil, types.PlacementPolicy{})
+	assert.ErrorIs(t, err, applyErr)
+
+	validatePlacementFunc = func(_ context.Context, _ interfaces.StateInterface, _ types.PlacementPolicy) error {
+		return nil
+	}
+	err = ApplyPlacementPolicy(ctx, nil, types.PlacementPolicy{})
+	assert.NoError(t, err)
+
+	assert.Equal(t, []string{applyErr.Error(), ""}, reasons)
+	assert.Equal(t, []error{nil, nil}, contextErrors)
+	assert.Equal(t, []bool{true, true}, contextsHaveDeadline)
+}
+
 func (s *placementSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
 	s.CopyCephConfigs()
@@ -163,7 +369,7 @@ func (s *placementSuite) TestPlacementEmptyMapNoOps() {
 	defer restore()
 
 	policy := types.PlacementPolicy{Mode: "reconcile", Members: map[string]types.MemberPlacement{}}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.Empty(s.T(), rec.adds())
 	assert.Empty(s.T(), rec.removes())
@@ -183,7 +389,7 @@ func (s *placementSuite) TestPlacementAddControl() {
 			"node-a": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.ElementsMatch(s.T(), []string{"mon:node-a", "mgr:node-a", "mds:node-a"}, rec.adds())
 	assert.Empty(s.T(), rec.removes())
@@ -207,7 +413,7 @@ func (s *placementSuite) TestPlacementRemoveControl() {
 			"node-b": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.ElementsMatch(s.T(), []string{"mon:node-a", "mgr:node-a", "mds:node-a"}, rec.removes())
 }
@@ -229,7 +435,7 @@ func (s *placementSuite) TestPlacementKeepOneInvariant() {
 			"node-a": {Control: boolPtr(false)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.Error(s.T(), err, "keep-one refusal must be surfaced as an error")
 	assert.ErrorIs(s.T(), err, ErrKeepOneInvariant)
 	assert.Empty(s.T(), rec.removes(), "must not remove last control service")
@@ -253,7 +459,7 @@ func (s *placementSuite) TestPlacementMigrateControl() {
 			"node-b": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 
 	// All adds must precede all removes in the ordered event log.
@@ -277,9 +483,12 @@ func (s *placementSuite) TestPlacementMigrateControl() {
 	assert.True(s.T(), removeSet["mds:node-a"])
 }
 
-// TestPlacementOmittedFieldsUntouched verifies that omitted service fields and
-// omitted members are not touched (UAT-S1.5 / precedence rule 8).
-func (s *placementSuite) TestPlacementOmittedFieldsUntouched() {
+// TestPlacementAbsentMemberUnmanaged verifies that a member absent from the
+// desired snapshot is unmanaged: reconciliation neither adds services to it nor
+// removes services from it (UAT-S1.5 / precedence rule 8). Absence is not an
+// instruction to strip the member, and it is not an inherited declaration from
+// whatever policy this one replaced.
+func (s *placementSuite) TestPlacementAbsentMemberUnmanaged() {
 	defer withObservedControl(map[string]map[string]bool{
 		"mon": {"node-c": true},
 		"mgr": {"node-c": true},
@@ -295,7 +504,7 @@ func (s *placementSuite) TestPlacementOmittedFieldsUntouched() {
 			"node-a": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 
 	// node-c should not be touched (no adds or removes for node-c).
@@ -319,7 +528,7 @@ func (s *placementSuite) TestPlacementUnknownMemberRejected() {
 			"unknown-node": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.Error(s.T(), err)
 	assert.ErrorIs(s.T(), err, ErrUnknownPlacementMember)
 	assert.Empty(s.T(), rec.adds())
@@ -342,7 +551,7 @@ func (s *placementSuite) TestPlacementIdempotent() {
 			"node-a": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.Empty(s.T(), rec.adds())
 	assert.Empty(s.T(), rec.removes())
@@ -366,7 +575,7 @@ func (s *placementSuite) TestPlacementControlFalseOnMemberWithNoService() {
 			"node-b": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.Empty(s.T(), rec.removes(), "no removals for a member without services")
 }
@@ -392,7 +601,7 @@ func (s *placementSuite) TestPlacementMultiRemovalConvergence() {
 			"node-c": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 
 	// node-c should get mon/mgr/mds added.
@@ -435,7 +644,7 @@ func (s *placementSuite) TestPlacementOmittedControlOnPresentMember() {
 			"node-b": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 
 	// node-a must not be touched (no adds or removes for node-a).
@@ -466,7 +675,7 @@ func (s *placementSuite) TestPlacementPreBootstrapRejectsNonEmptyPolicy() {
 			"node-a": {Control: boolPtr(true)},
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.Error(s.T(), err)
 	assert.ErrorIs(s.T(), err, ErrCephNotBootstrapped)
 	assert.Empty(s.T(), rec.adds(), "no service operations must run pre-bootstrap")
@@ -486,7 +695,7 @@ func (s *placementSuite) TestPlacementPreBootstrapAllowsEmptyPolicy() {
 	defer restore()
 
 	policy := types.PlacementPolicy{Mode: "reconcile", Members: map[string]types.MemberPlacement{}}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err, "empty policy must be accepted pre-bootstrap")
 	assert.Empty(s.T(), rec.adds())
 	assert.Empty(s.T(), rec.removes())
@@ -523,7 +732,7 @@ func (s *placementSuite) TestPlacementKeepOneReadinessGuard() {
 			"node-b": {Control: boolPtr(true)},  // add new (not ready)
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	// The add succeeds; the removal is refused because node-b is not viable.
 	assert.Error(s.T(), err, "must refuse to remove old control when replacement not viable")
 	assert.ErrorIs(s.T(), err, ErrKeepOneInvariant)
@@ -558,7 +767,7 @@ func (s *placementSuite) TestPlacementRemovalAllowedWhenReplacementReady() {
 			"node-b": {Control: boolPtr(true)},  // add new (ready)
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.NotEmpty(s.T(), rec.adds(), "replacement must be added")
 	assert.NotEmpty(s.T(), rec.removes(), "old service must be removed when replacement is viable")
@@ -590,7 +799,7 @@ func (s *placementSuite) TestPlacementRemovesExistingNonViableTargetWhenRetainer
 			"node-b": {},                        // omitted control retains viable services
 		},
 	}
-	err := ApplyPlacement(context.Background(), s.TestStateInterface, policy)
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
 	assert.NoError(s.T(), err)
 	assert.ElementsMatch(s.T(), []string{"mon:node-a", "mgr:node-a", "mds:node-a"}, rec.removes())
 }

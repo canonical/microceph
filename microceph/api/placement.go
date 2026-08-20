@@ -26,7 +26,9 @@ var placementCmd = mcTypes.Endpoint{
 	Delete: mcTypes.EndpointAction{Handler: cmdPlacementDelete, ProxyTarget: true},
 }
 
-// cmdPlacementGet returns the current placement status.
+// cmdPlacementGet returns the current placement status: the canonical desired
+// policy as stored (the complete snapshot from the last accepted PUT), the
+// observed placement, and the lifecycle/refusal state.
 func cmdPlacementGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 	status, err := ceph.GetPlacementStatusFunc(r.Context(), interfaces.CephState{State: s})
 	if err != nil {
@@ -44,8 +46,8 @@ func cmdPlacementGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 // operation completes and records its result even if the client disconnects.
 const placementPutTimeout = 10 * time.Minute
 
-// isClientSidePlacementError reports whether an ApplyPlacement error is a
-// client-side precondition failure (not bootstrapped, unknown member,
+// isClientSidePlacementError reports whether a placement apply error is a
+// client-side precondition failure (not bootstrapped, unknown member, or a
 // keep-one refusal) that should map to HTTP 400 rather than the SmartError 500
 // fallback.
 func isClientSidePlacementError(err error) bool {
@@ -66,6 +68,13 @@ func inProgressResponse(err error) mcTypes.Response {
 }
 
 // cmdPlacementPut installs and applies a declarative placement policy.
+//
+// PUT is a full replacement of the canonical desired policy, not a delta: the
+// submitted document is applied and stored as the complete desired state, and
+// nothing is merged in from the policy it replaces. A member or field the
+// caller omits is therefore unmanaged under the new policy rather than
+// inheriting its previous declaration -- which, for storage_eligible, means an
+// omitted grant is revoked (see ceph.OSDManager.checkStorageEligibility).
 func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var policy types.PlacementPolicy
 	dec := json.NewDecoder(r.Body)
@@ -95,12 +104,12 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	ctx, ctxCancel := context.WithTimeout(context.WithoutCancel(r.Context()), placementPutTimeout)
 	defer ctxCancel()
 
-	// Serialize placement applies cluster-wide (CE142). ApplyPlacement reads
+	// Serialize placement applies cluster-wide (CE142). Applying a policy reads
 	// observed service state and then mutates services over minutes; two
 	// overlapping PUTs (possibly served by different members) could each count
 	// the other's removal targets as keep-one retainers and together remove the
 	// last viable control service. The dqlite-backed conditional-UPDATE lock
-	// makes the whole read-modify-store cycle mutually exclusive across
+	// makes the whole apply cycle mutually exclusive across
 	// members; a lease reclaims the lock if a holder crashes mid-apply.
 	lockToken, err := ceph.LockPlacementApplyFunc(ctx, interfaces.CephState{State: s})
 	if err != nil {
@@ -126,70 +135,27 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 		}
 	}()
 
-	// Apply (validate + apply) FIRST; only store the policy if apply succeeds.
-	// This prevents a rejected policy (e.g. unknown member) from being stored
-	// as active.
-	applyErr := ceph.ApplyPlacementFunc(ctx, interfaces.CephState{State: s}, policy)
-	if applyErr != nil {
-		logger.Errorf("failed to apply placement policy: %v", applyErr)
-
-		// A keep-one refusal is a well-defined partial apply: all requested
-		// control-service adds have already taken effect in Ceph, and only
-		// removals were refused for keep-one safety. Persist the policy as the
-		// active declared intent so GET /placement reports the
-		// observed-vs-declared gap with last_refusal explaining it, rather than
-		// leaving the declared policy stale while the observed services have
-		// moved. Other errors do not persist the policy: client-side
-		// precondition failures (not bootstrapped, unknown member) fail before
-		// any service operation, and a mid-apply server-side failure (e.g. an
-		// add that errors partway) also leaves the previously declared policy
-		// in place — its partial state is arbitrary rather than a coherent
-		// intent, and last_refusal records what failed so the caller can retry
-		// the same policy to converge.
-		if errors.Is(applyErr, ceph.ErrKeepOneInvariant) {
-			storeErr := ceph.StorePlacementPolicyFunc(ctx, interfaces.CephState{State: s}, policy)
-			if storeErr != nil {
-				logger.Warnf("failed to store placement policy after keep-one refusal: %v", storeErr)
-			}
-		}
-
-		// Persist the refusal reason so operators/charms polling GET /placement
-		// can inspect why the last PUT was rejected. Use the detached context so
-		// the refusal is recorded even if the client already disconnected.
-		refusalErr := ceph.SetPlacementRefusalFunc(ctx, interfaces.CephState{State: s}, applyErr.Error())
-		if refusalErr != nil {
-			logger.Warnf("failed to persist placement refusal: %v", refusalErr)
-		}
-		// Client-side precondition failures (not bootstrapped, unknown member,
-		// keep-one) return HTTP 400 so callers can distinguish operator errors
-		// from genuine server faults. Other errors (DB failures, etc.) fall
-		// through to SmartError which maps known sentinels or returns 500.
-		if isClientSidePlacementError(applyErr) {
-			return mcTypes.BadRequest(applyErr)
-		}
-		return mcTypes.SmartError(applyErr)
-	}
-
-	// Clear any previous refusal now that the policy applied successfully.
-	clearErr := ceph.SetPlacementRefusalFunc(ctx, interfaces.CephState{State: s}, "")
-	if clearErr != nil {
-		logger.Warnf("failed to clear placement refusal: %v", clearErr)
-	}
-
-	// Persist the policy only after successful application.
-	err = ceph.StorePlacementPolicyFunc(ctx, interfaces.CephState{State: s}, policy)
+	err = ceph.ApplyPlacementPolicyFunc(ctx, interfaces.CephState{State: s}, policy)
 	if err != nil {
-		logger.Errorf("failed to store placement policy: %v", err)
-		return mcTypes.InternalError(err)
+		logger.Errorf("failed to apply placement policy: %v", err)
+		if isClientSidePlacementError(err) {
+			return mcTypes.BadRequest(err)
+		}
+		return mcTypes.SmartError(err)
 	}
 
 	return mcTypes.SyncResponse(true, nil)
 }
 
-// cmdPlacementDelete clears the active role-managed placement policy without
-// adding or removing services. It acquires the same cluster-wide apply lock as
-// cmdPlacementPut so an in-flight PUT cannot re-write the policy after DELETE
-// returns 200.
+// cmdPlacementDelete clears the canonical desired placement policy in full,
+// without adding or removing services. It is the stand-down path: afterwards no
+// desired placement state remains for a later PUT to inherit, and storage
+// eligibility is unmanaged again so OSD enrollment is no longer gated. To keep
+// role management active while granting nothing, PUT the waiting policy
+// {"mode":"reconcile","members":{}} instead.
+//
+// It acquires the same cluster-wide apply lock as cmdPlacementPut so an
+// in-flight PUT cannot re-write the policy after DELETE returns 200.
 func cmdPlacementDelete(s mcTypes.State, r *http.Request) mcTypes.Response {
 	ctx, ctxCancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 	defer ctxCancel()

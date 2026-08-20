@@ -3,7 +3,8 @@ Documentation    deferred-ceph-single-tests
 ...    Single-node deferred-Ceph coverage:
 ...      deferred bootstrap leaves MicroCluster up but Ceph not bootstrapped,
 ...      capability markers are advertised, lifecycle state is not_bootstrapped, and
-...      an empty-members placement policy is accepted as a no-op.
+...      an empty-members placement policy is accepted and stored as active,
+...      performing no service operations.
 ...    Legacy (non-deferred) bootstrap compatibility is covered by the existing
 ...    single-system-tests and cluster-tests suites running against the same snap.
 Resource        ../resources/microceph_harness.resource
@@ -61,7 +62,8 @@ Test Capability Markers Advertised
 Test Placement Policy Empty Members Is No Op
     [Documentation]    Precondition: PUT /1.0/placement with an empty members map performs
     ...    no service operations, is accepted, and is stored as the active policy. Ceph must
-    ...    remain unbootstrapped.
+    ...    remain unbootstrapped. Storing it is not inert: this is the CE142 waiting policy,
+    ...    an empty storage allow-list that denies new OSD enrollment on every member.
     [Tags]    api    placement
     ${resp}=    MicroCeph API Put    placement    {"mode":"reconcile","members":{}}    timeout=30
     ${code}=    Response Status Code    ${resp}

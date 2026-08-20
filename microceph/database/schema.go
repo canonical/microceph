@@ -268,8 +268,9 @@ UPDATE cluster_lifecycle
 }
 
 // schemaUpdate9 adds the placement_policy table (CE142). It is a single-row
-// table storing the last accepted role-managed declarative placement policy as
-// a JSON blob, plus:
+// table storing the canonical desired role-managed declarative placement policy
+// as a JSON blob -- each accepted PUT replaces it in full rather than amending
+// it -- plus:
 //   - active: whether a role-managed policy is active.
 //   - last_refusal: the most recent placement refusal reason (e.g. keep-one
 //     invariant) so operators and charms polling GET /1.0/placement can inspect
