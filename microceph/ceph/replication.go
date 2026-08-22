@@ -43,10 +43,10 @@ type ReplicationHandlerInterface interface {
 }
 
 func GetReplicationHandler(name string) ReplicationHandlerInterface {
-	// Add RGW and CephFs Replication handlers here.
 	table := map[string]ReplicationHandlerInterface{
 		"rbd":    &RbdReplicationHandler{},
 		"cephfs": &CephfsReplicationHandler{},
+		"rgw":    &RgwReplicationHandler{},
 	}
 
 	rh, ok := table[name]
