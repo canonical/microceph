@@ -36,7 +36,12 @@ func (rgw *RgwServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 		return fmt.Errorf("failed to get config db: %w", err)
 	}
 
-	return EnableRGW(s, rgw.Port, rgw.SSLPort, rgw.SSLCertificate, rgw.SSLPrivateKey, getMonitorsFromConfig(config))
+	activeMonitorMembers, err := getActiveMonitorMembersFunc(ctx, s)
+	if err != nil {
+		return fmt.Errorf("failed to get active monitor members: %w", err)
+	}
+
+	return EnableRGW(s, rgw.Port, rgw.SSLPort, rgw.SSLCertificate, rgw.SSLPrivateKey, getMonitorsFromConfig(config, activeMonitorMembers))
 }
 
 func (rgw *RgwServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {

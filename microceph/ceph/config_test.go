@@ -135,6 +135,32 @@ func (s *configSuite) TestListConfig() {
 	assert.Equal(s.T(), configs[0].Value, t.Value)
 }
 
+func (s *configSuite) TestGetMonitorsFromConfigIgnoresOrphanedMemberEntry() {
+	configs := map[string]string{
+		"mon.host.node-a": "10.0.0.1",
+		"mon.host.node-b": "10.0.0.2",
+		"mon.host.1":      "192.0.2.1",
+		"other.mon.host":  "192.0.2.2",
+	}
+	activeMembers := map[string]struct{}{
+		"node-a": {},
+	}
+
+	monitorAddresses := getMonitorsFromConfig(configs, activeMembers)
+
+	assert.ElementsMatch(s.T(), []string{"10.0.0.1", "192.0.2.1"}, monitorAddresses)
+}
+
+func (s *configSuite) TestGetMonitorsFromConfigRetainsLargeNumericAdoptedEntry() {
+	configs := map[string]string{
+		"mon.host.18446744073709551616": "192.0.2.1",
+	}
+
+	monitorAddresses := getMonitorsFromConfig(configs, map[string]struct{}{})
+
+	assert.Equal(s.T(), []string{"192.0.2.1"}, monitorAddresses)
+}
+
 // --- UpdateConfig / radosgw.conf mon host refresh tests (issue #766) ---
 
 // setupUpdateConfigMocks wires the injectable seams that UpdateConfig relies on
@@ -156,6 +182,12 @@ func (s *configSuite) setupUpdateConfigMocks(configMap map[string]string) *mocks
 	s.T().Cleanup(func() { fetchConfigDb = origFetch })
 	fetchConfigDb = func(_ context.Context, _ interfaces.StateInterface) (map[string]string, error) {
 		return configMap, nil
+	}
+
+	origActiveMonitors := getActiveMonitorMembersFunc
+	s.T().Cleanup(func() { getActiveMonitorMembersFunc = origActiveMonitors })
+	getActiveMonitorMembersFunc = func(_ context.Context, _ interfaces.StateInterface) (map[string]struct{}, error) {
+		return map[string]struct{}{}, nil
 	}
 
 	// Network: claim the host has an IP on the configured public network.

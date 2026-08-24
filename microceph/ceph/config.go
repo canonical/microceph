@@ -286,6 +286,31 @@ var getMonitorCountFunc = func(ctx context.Context, s interfaces.StateInterface)
 // Extracted as a variable to allow overriding in tests.
 var fetchConfigDb = GetConfigDb
 
+// getActiveMonitorMembersFunc returns the members with an active monitor
+// service record. It is extracted as a variable to allow overriding in tests.
+var getActiveMonitorMembersFunc = func(ctx context.Context, s interfaces.StateInterface) (map[string]struct{}, error) {
+	serviceName := "mon"
+	members := map[string]struct{}{}
+
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		monitors, err := database.GetServices(ctx, tx, database.ServiceFilter{Service: &serviceName})
+		if err != nil {
+			return err
+		}
+
+		for _, monitor := range monitors {
+			members[monitor.Member] = struct{}{}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return members, nil
+}
+
 // insertPubnetRecord writes the detected public_network value to the database.
 // Extracted as a variable to allow overriding in tests.
 var insertPubnetRecord = func(ctx context.Context, s interfaces.StateInterface, pubNet string) error {
@@ -386,10 +411,15 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 		return fmt.Errorf("failed to get config db: %w", err)
 	}
 
+	activeMonitorMembers, err := getActiveMonitorMembersFunc(ctx, s)
+	if err != nil {
+		return fmt.Errorf("failed to get active monitor members: %w", err)
+	}
+
 	// REF: https://docs.ceph.com/en/quincy/rados/configuration/network-config-ref/#ceph-daemons
 	// The mon host configuration option only needs to be sufficiently up to date such that a
 	// client can reach one monitor that is currently online.
-	monitorAddresses := getMonitorsFromConfig(config)
+	monitorAddresses := getMonitorsFromConfig(config, activeMonitorMembers)
 
 	// backward compat: if no mon hosts found, get them from the node addresses but don't
 	// insert into db, as the join logic will take care of that.
@@ -497,7 +527,12 @@ func GetMonitorAddresses(ctx context.Context, s interfaces.StateInterface) ([]st
 		return nil, fmt.Errorf("failed to get config db: %w", err)
 	}
 
-	monitorAddresses := getMonitorsFromConfig(config)
+	activeMonitorMembers, err := getActiveMonitorMembersFunc(ctx, s)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active monitor members: %w", err)
+	}
+
+	monitorAddresses := getMonitorsFromConfig(config, activeMonitorMembers)
 
 	if len(monitorAddresses) == 0 {
 		monitorAddresses, err = backwardCompatMonitors(ctx, s)
@@ -511,15 +546,43 @@ func GetMonitorAddresses(ctx context.Context, s interfaces.StateInterface) ([]st
 	return monitorAddresses, nil
 }
 
-// getMonitorsFromConfig scans a provided config key/value map and returns a list of mon hosts found.
-func getMonitorsFromConfig(configs map[string]string) []string {
+// getMonitorsFromConfig returns monitor addresses for active MicroCeph members
+// and numeric adopted-Ceph monitor entries. Member-named config entries with no
+// active monitor service are stale and must not be rendered into ceph.conf.
+func getMonitorsFromConfig(configs map[string]string, activeMembers map[string]struct{}) []string {
 	monHosts := []string{}
-	for k, v := range configs {
-		if strings.Contains(k, "mon.host.") {
-			monHosts = append(monHosts, v)
+	for key, value := range configs {
+		member, found := strings.CutPrefix(key, "mon.host.")
+		if !found || member == "" {
+			continue
+		}
+
+		if isAdoptedMonitorConfigKey(member) {
+			monHosts = append(monHosts, value)
+			continue
+		}
+
+		_, found = activeMembers[member]
+		if found {
+			monHosts = append(monHosts, value)
 		}
 	}
+
 	return monHosts
+}
+
+func isAdoptedMonitorConfigKey(member string) bool {
+	if member == "" {
+		return false
+	}
+
+	for _, character := range member {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // formatIPv6 returns a slice in which all IPv6 addresses are formatted with square brackets.
