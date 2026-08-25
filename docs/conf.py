@@ -27,7 +27,8 @@ extensions = [
     'sphinxext.opengraph',
     'myst_parser',
     'sphinxcontrib.jquery',
-    'notfound.extension'
+    'notfound.extension',
+    'sphinx_sitemap'
 ]
 extensions.extend(custom_extensions)
 
@@ -123,7 +124,7 @@ if html_title == '':
 ### Additional files
 ############################################################
 
-html_static_path = ['.sphinx/_static']
+html_static_path = ['.sphinx/_static', '_static']
 
 html_css_files = [
     'custom.css',
