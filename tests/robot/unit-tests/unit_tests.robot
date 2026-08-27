@@ -1,6 +1,6 @@
 *** Settings ***
 Documentation    unit-tests
-...    Runs Go unit tests on the host runner. Go and libdqlite are installed by the
+...    Runs host-only Go, Python, and shell unit tests. Go and libdqlite are installed by the
 ...    CI YAML before Robot runs; no VM or snap needed.
 Resource        ../resources/microceph_harness.resource
 Suite Setup     Check Host Dependencies
@@ -19,6 +19,14 @@ Run Go Unit Tests
     Log    ${result.stdout}
     Log    STDERR: ${result.stderr}
     Should Be Equal As Integers    ${result.rc}    0    msg=make check-unit failed:\n${result.stderr}
+
+Run Adoptutils Shell Unit Tests
+    [Documentation]    Exercises cephadm bootstrap readiness and image selection with mocked host commands.
+    [Tags]    unit    fast    smoke    shell
+    ${result}=    Run Process    bash    ${REPO_ROOT}/tests/scripts/test_adoptutils.sh    timeout=60
+    Log    ${result.stdout}
+    Log    STDERR: ${result.stderr}
+    Should Be Equal As Integers    ${result.rc}    0    msg=adoptutils shell tests failed:\n${result.stderr}
 
 Run Python Helper Unit Tests
     [Documentation]    Runs pytest over the pure Python harness helpers (parsers + _poll_until).
