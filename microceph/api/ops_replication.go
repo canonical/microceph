@@ -117,6 +117,22 @@ func cmdOpsReplication(s mcTypes.State, r *http.Request, overwriteType types.Rep
 		// If the request is not WorkloadReplicationRequest, set the request type.
 		data.OverwriteRequestType(overwriteType)
 		req = data
+	case string(types.RgwWorkload):
+		var data types.RgwReplicationRequest
+		err := json.NewDecoder(r.Body).Decode(&data)
+		if err != nil {
+			logger.Errorf("REPOPS: failed to decode request data: %v", err.Error())
+			return mcTypes.InternalError(err)
+		}
+
+		// carry RgwReplicationRequest in interface object.
+		err = data.SetAPIObjectID(resource)
+		if err != nil {
+			return mcTypes.InternalError(err)
+		}
+		// If the request is not WorkloadReplicationRequest, set the request type.
+		data.OverwriteRequestType(overwriteType)
+		req = data
 	default:
 		return mcTypes.SmartError(fmt.Errorf("unknown workload %s, resource %s", wl, resource))
 	}
