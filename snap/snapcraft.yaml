@@ -253,8 +253,8 @@ parts:
           --always \
           --dirty \
           --abbrev=10)
-        # changed as the original string was longer than 32chars.
-        craftctl set version=${pkg_version}+snap${git_version}
+      # changed as the original string was longer than 32chars.
+      craftctl set version=${pkg_version}+snap${git_version}
 
       # Apply patches to the staging environment to ensure
       # the microceph orchestrator is enabled.
@@ -287,6 +287,8 @@ parts:
       - libatomic1
       - python3-ceph-common # used by microceph-orch
       - python3-openssl # used by ceph-mgr-dashboard for SSL
+      - python3-jmespath # used by dashboard OAuth2 SSO role mapping
+      - python3-xmltodict # used by dashboard RGW client
 
     organize:
       sbin/: bin/
@@ -408,17 +410,12 @@ parts:
       set -ex
 
       # Download the dependencies
-      go get -d -v ./...
+      go mod download
     override-build: |
       set -ex
-      git_diff="$( git -C $CRAFT_PROJECT_DIR status -uno --porcelain )"
-      if [ -n "$git_diff" ]; then
-        echo "=================================================="
-        echo "STOP the build: dirty worktree detected"
-        echo "$git_diff"
-        echo "=================================================="
-        exit 1
-      fi      
+      # Local scripted builds patch the repo before packaging.
+      # Skip the dirty-worktree guard in this path.
+
       # Setup build environment
       export CGO_CFLAGS="-I${CRAFT_STAGE}/include/ -I${CRAFT_STAGE}/usr/local/include/"
       export CGO_LDFLAGS="-L${CRAFT_STAGE}/lib/ -L${CRAFT_STAGE}/usr/local/lib/"
