@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 
-# The bundled MicroCeph Ceph client is 20.2.1, which predates the
-# AES256KRB5 CephX key format emitted by Squid 19.2.6. Keep this fixture on
-# the compatible Squid point release until the bundled client is upgraded.
+# Ceph 19.2.6 defaults CephX to AES256KRB5 as part of CVE-2025-30156.
+# The bundled MicroCeph Ceph 20.2.1 client cannot read that key format, so
+# keep this fixture on the compatible Squid 19.2.5 image. Remove this pin
+# once MicroCeph bundles Ceph 20.2.4 or later; tracked in #826.
 readonly CEPHADM_TEST_IMAGE="quay.io/ceph/ceph:v19.2.5"
 
 function create_cephadm_vm() {
@@ -84,7 +85,7 @@ function dump_osd_diagnostics() {
   lxc exec "$name" -- sh -c "timeout 30s cephadm shell -- ceph osd tree" || true
   lxc exec "$name" -- sh -c "timeout 30s cephadm shell -- ceph orch ps --daemon_type osd --format json-pretty" || true
   lxc exec "$name" -- sh -c "timeout 30s cephadm shell -- ceph orch device ls --wide" || true
-  lxc exec "$name" -- sh -c "cephadm ls" || true
+  lxc exec "$name" -- sh -c "timeout 30s cephadm ls" || true
 
   echo "--- local service and container state ---"
   lxc exec "$name" -- sh -c "systemctl --no-pager --failed" || true

@@ -167,7 +167,7 @@ test_osd_timeout_dumps_diagnostics() (
     'ceph osd tree' \
     'ceph orch ps --daemon_type osd --format json-pretty' \
     'ceph orch device ls --wide' \
-    'cephadm ls' \
+    'timeout 30s cephadm ls' \
     'lsblk --all --paths --output' \
     'dmsetup ls --tree' \
     'multipath -ll' \
