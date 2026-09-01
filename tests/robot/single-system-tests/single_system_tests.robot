@@ -247,6 +247,14 @@ Test Orchestrator Module
     Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mds" | grep -F ${hn}    30
     Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mgr" | grep -F ${hn}    30
 
+Test Mgr Remote Module Call
+    [Documentation]    Verifies that a mgr remote call returns its serialized result.
+    [Tags]    mgr
+    Install MicroCeph From Local Snap
+    Bootstrap MicroCeph Cluster
+    Run In VM And Check    sudo microceph.ceph mgr module enable selftest    30
+    Run In VM And Check    sudo microceph.ceph mgr self-test eval "mgr.remote('selftest', 'python_version')" | grep -F "(0,"    30
+
 Add OSD With Failure
     [Documentation]    Verifies adding an encrypted OSD fails without dm-crypt,
     ...    and batch disk add fails with wal/db device flags.
