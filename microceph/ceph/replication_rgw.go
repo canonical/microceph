@@ -288,10 +288,14 @@ func (rh *RgwReplicationHandler) zoneBriefs() []types.RgwReplicationZoneBrief {
 	return briefs
 }
 
-// isMasterZone reports whether the local zone is the zonegroup's master. The
-// zonegroup names its master by id, never by name.
+// isMasterZone reports whether the local zone is the realm's metadata
+// master: the master zone of the realm's master zonegroup. Being master of
+// a non-master zonegroup is not enough, since such a zone still syncs its
+// metadata from the realm's master. Mirrors RGWSI_Zone::is_meta_master in
+// Ceph's src/rgw/services/svc_zone.cc. The zonegroup names its master by
+// id, never by name.
 func (rh *RgwReplicationHandler) isMasterZone() bool {
-	return len(rh.Zone.ID) != 0 && rh.ZoneGroup.MasterZone == rh.Zone.ID
+	return rh.ZoneGroup.IsMaster && len(rh.Zone.ID) != 0 && rh.ZoneGroup.MasterZone == rh.Zone.ID
 }
 
 // isZoneGroupMember reports whether the local zone belongs to the zonegroup.

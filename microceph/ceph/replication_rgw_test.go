@@ -64,6 +64,7 @@ func masterHandler() *RgwReplicationHandler {
 		Realm: RgwRealm{Name: "microceph", CurrentPeriod: "period-1", Epoch: 2},
 		ZoneGroup: RgwZoneGroup{
 			Name:       "microceph",
+			IsMaster:   true,
 			MasterZone: siteAZoneID,
 			Zones: []RgwZoneGroupZone{
 				{ID: siteBZoneID, Name: "siteb", Endpoints: []string{"http://10.85.32.128:80"}},
@@ -228,6 +229,16 @@ func (s *RgwReplicationSuite) TestTopologyHelpers() {
 	peers := rh.peerZones()
 	assert.Len(s.T(), peers, 1)
 	assert.Equal(s.T(), "siteb", peers[0].Name)
+}
+
+// A zone can be the master of its own zonegroup while the realm's metadata
+// master lives in a different zonegroup. Such a zone still syncs metadata
+// and must not present itself as a master.
+func (s *RgwReplicationSuite) TestIsMasterZoneOfNonMasterZoneGroup() {
+	rh := masterHandler()
+	rh.ZoneGroup.IsMaster = false
+
+	assert.False(s.T(), rh.isMasterZone())
 }
 
 func (s *RgwReplicationSuite) TestZoneBriefs() {
