@@ -26,11 +26,56 @@ import (
 const (
 	siteAZoneID = "7b7a8b32-3e1e-4bab-9965-e756fbe29aa7"
 	siteBZoneID = "58a9f4ec-c0b7-415d-93a5-8eb1c03818ae"
+	siteCZoneID = "9c151f92-d92b-4c28-a5a1-4f0f4dd2ea11"
+
+	microcephZoneGroupID = "67be86c9-2912-4ce2-835d-9bdf91915363"
+	euZoneGroupID        = "d6d1a03a-40c5-4f4a-9ce6-3b4c2f04a1de"
 )
 
 // siteBZoneGet is a `zone get` response trimmed to the fields the handler
 // reads, standing in for the secondary side of the captured two site pair.
 const siteBZoneGet = `{"id": "58a9f4ec-c0b7-415d-93a5-8eb1c03818ae", "name": "siteb"}`
+
+// siteCZoneGet is the local zone of a second, non-master zonegroup in the
+// same realm the captured fixtures describe.
+const siteCZoneGet = `{"id": "9c151f92-d92b-4c28-a5a1-4f0f4dd2ea11", "name": "sitec"}`
+
+// euZoneGroupGet is a `zonegroup get` response for that second zonegroup:
+// not the realm's master, with sitec as its own master and only member.
+const euZoneGroupGet = `{
+	"id": "d6d1a03a-40c5-4f4a-9ce6-3b4c2f04a1de",
+	"name": "eu",
+	"is_master": false,
+	"master_zone": "9c151f92-d92b-4c28-a5a1-4f0f4dd2ea11",
+	"zones": [{"id": "9c151f92-d92b-4c28-a5a1-4f0f4dd2ea11", "name": "sitec", "endpoints": ["http://10.85.33.10:80"]}],
+	"realm_id": "cf90947b-b444-488d-abd3-779c3c6062d7"
+}`
+
+// euPeriodGet is the realm period as sitec sees it: both zonegroups, with
+// the master zonegroup being the captured microceph one holding sitea.
+const euPeriodGet = `{
+	"master_zonegroup": "67be86c9-2912-4ce2-835d-9bdf91915363",
+	"master_zone": "7b7a8b32-3e1e-4bab-9965-e756fbe29aa7",
+	"period_map": {"zonegroups": [
+		{
+			"id": "67be86c9-2912-4ce2-835d-9bdf91915363",
+			"name": "microceph",
+			"is_master": true,
+			"master_zone": "7b7a8b32-3e1e-4bab-9965-e756fbe29aa7",
+			"zones": [
+				{"id": "7b7a8b32-3e1e-4bab-9965-e756fbe29aa7", "name": "sitea"},
+				{"id": "58a9f4ec-c0b7-415d-93a5-8eb1c03818ae", "name": "siteb"}
+			]
+		},
+		{
+			"id": "d6d1a03a-40c5-4f4a-9ce6-3b4c2f04a1de",
+			"name": "eu",
+			"is_master": false,
+			"master_zone": "9c151f92-d92b-4c28-a5a1-4f0f4dd2ea11",
+			"zones": [{"id": "9c151f92-d92b-4c28-a5a1-4f0f4dd2ea11", "name": "sitec"}]
+		}
+	]}
+}`
 
 type RgwReplicationSuite struct {
 	tests.BaseSuite
@@ -131,6 +176,38 @@ func (s *RgwReplicationSuite) TestPreFillSecondaryZone() {
 	assert.False(s.T(), rh.isMasterZone())
 	assert.Equal(s.T(), 64, rh.MetadataSync.Info.NumShards)
 	assert.Contains(s.T(), rh.DataSync, "sitea")
+}
+
+// A zone that is master of its own, non-master zonegroup is the exact
+// topology the realm-wide master check exists for: it must still read its
+// own metadata sync markers, and the metadata master it names lives in a
+// zonegroup only the realm period can see.
+func (s *RgwReplicationSuite) TestPreFillMasterOfNonMasterZoneGroup() {
+	r := mocks.NewRunner(s.T())
+	realm, _ := os.ReadFile("./test_assets/rgw_realm_get.json")
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "realm", "get"}...).Return(string(realm), nil).Once()
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "zonegroup", "get"}...).Return(euZoneGroupGet, nil).Once()
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "zone", "get"}...).Return(siteCZoneGet, nil).Once()
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "period", "get"}...).Return(euPeriodGet, nil).Once()
+	metaSync, _ := os.ReadFile("./test_assets/rgw_metadata_sync_status_secondary.json")
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "metadata", "sync", "status"}...).Return(string(metaSync), nil).Once()
+	common.ProcessExec = r
+
+	rh := &RgwReplicationHandler{}
+	err := rh.PreFill(context.Background(), types.RgwReplicationRequest{
+		RequestType:  types.StatusReplicationRequest,
+		ResourceType: types.RgwResourceSite,
+	})
+
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), rh.isMasterZone())
+	assert.Equal(s.T(), 64, rh.MetadataSync.Info.NumShards)
+	assert.Equal(s.T(), "sitea", rh.masterZoneName())
 }
 
 // A gateway with no realm stops the prefill dead: there is no topology to
@@ -239,6 +316,40 @@ func (s *RgwReplicationSuite) TestIsMasterZoneOfNonMasterZoneGroup() {
 	rh.ZoneGroup.IsMaster = false
 
 	assert.False(s.T(), rh.isMasterZone())
+}
+
+// In a non-master zonegroup the metadata master's name comes from the realm
+// period, since the local zonegroup listing cannot contain it.
+func (s *RgwReplicationSuite) TestMasterZoneNameAcrossZoneGroups() {
+	rh := masterHandler()
+	rh.ZoneGroup.IsMaster = false
+	rh.Period = RgwPeriod{
+		MasterZonegroup: euZoneGroupID,
+		MasterZone:      siteCZoneID,
+		PeriodMap: RgwPeriodMap{
+			ZoneGroups: []RgwZoneGroup{
+				rh.ZoneGroup,
+				{
+					ID:         euZoneGroupID,
+					Name:       "eu",
+					IsMaster:   true,
+					MasterZone: siteCZoneID,
+					Zones:      []RgwZoneGroupZone{{ID: siteCZoneID, Name: "sitec"}},
+				},
+			},
+		},
+	}
+
+	assert.Equal(s.T(), "sitec", rh.masterZoneName())
+}
+
+// Without a period the cross-zonegroup master cannot be named at all, which
+// must read as empty rather than as the local zonegroup's own master.
+func (s *RgwReplicationSuite) TestMasterZoneNameNonMasterZoneGroupNoPeriod() {
+	rh := masterHandler()
+	rh.ZoneGroup.IsMaster = false
+
+	assert.Empty(s.T(), rh.masterZoneName())
 }
 
 func (s *RgwReplicationSuite) TestZoneBriefs() {

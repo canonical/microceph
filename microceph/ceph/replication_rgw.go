@@ -30,6 +30,10 @@ type RgwReplicationHandler struct {
 	Request types.RgwReplicationRequest
 
 	// Only populated during status requests.
+	// The realm period, read only when the local zonegroup is not the
+	// realm's master zonegroup: it is the one read that can name the
+	// metadata master across zonegroups (see masterZoneName).
+	Period RgwPeriod
 	// Metadata sync markers, left zero valued on the metadata master.
 	MetadataSync RgwMetadataSyncStatus
 	// Data sync markers for each source zone, keyed by source zone name.
@@ -76,6 +80,15 @@ func (rh *RgwReplicationHandler) PreFill(ctx context.Context, request types.Repl
 	// Sync markers are only needed to answer a status request (the CephFS
 	// precedent), and reading them costs one radosgw-admin call per source.
 	if req.RequestType == types.StatusReplicationRequest {
+		// The metadata master's name can only be resolved through the
+		// realm period when it lives outside the local zonegroup.
+		if !rh.ZoneGroup.IsMaster {
+			rh.Period, err = GetRgwPeriod("", "")
+			if err != nil {
+				return err
+			}
+		}
+
 		err = rh.preFillSyncStatus()
 		if err != nil {
 			return err
@@ -313,11 +326,31 @@ func (rh *RgwReplicationHandler) isZoneGroupMember() bool {
 	return false
 }
 
-// masterZoneName resolves the zonegroup's master zone id to a zone name.
+// masterZoneName resolves the realm's metadata master - the master zone of
+// the realm's master zonegroup - to a zone name. When the local zonegroup
+// is the master zonegroup the answer is one of its own members; otherwise
+// the master lives in a zonegroup a plain zonegroup get can never see, and
+// the realm period, which carries every zonegroup, answers instead.
 func (rh *RgwReplicationHandler) masterZoneName() string {
-	for _, zone := range rh.ZoneGroup.Zones {
-		if zone.ID == rh.ZoneGroup.MasterZone {
-			return zone.Name
+	if rh.ZoneGroup.IsMaster {
+		for _, zone := range rh.ZoneGroup.Zones {
+			if zone.ID == rh.ZoneGroup.MasterZone {
+				return zone.Name
+			}
+		}
+
+		return ""
+	}
+
+	for _, zonegroup := range rh.Period.PeriodMap.ZoneGroups {
+		if zonegroup.ID != rh.Period.MasterZonegroup {
+			continue
+		}
+
+		for _, zone := range zonegroup.Zones {
+			if zone.ID == rh.Period.MasterZone {
+				return zone.Name
+			}
 		}
 	}
 
