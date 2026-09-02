@@ -109,8 +109,11 @@ func (rh *RgwReplicationHandler) PreFill(ctx context.Context, request types.Repl
 
 // preFillSyncStatus reads this zone's own sync markers: its metadata progress,
 // and its data progress against every source zone it is configured to pull
-// from. All of it is local progress with no peer contact, so it is safe to
-// read before the state machine has decided anything.
+// from. The metadata read is purely local, but `data sync status` first
+// fetches the source zone's datalog shard info over HTTP: a source that
+// refuses connections fails the read immediately (surfaced per stream
+// below), while a blackholed one blocks it for radosgw-admin's full 300s
+// curl timeout.
 //
 // A read whose command failed outright is recorded per stream rather than
 // failing the whole request, mirroring how an unreadable peer log is already
