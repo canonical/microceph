@@ -120,6 +120,45 @@ func GetRgwZone(cluster string, client string) (RgwZone, error) {
 	return response, nil
 }
 
+// RgwPeriodMap is the subset of the period's zonegroup directory RGW
+// replication uses: every zonegroup in the realm, each with its own zone
+// list, not just the one the local zone belongs to.
+type RgwPeriodMap struct {
+	ZoneGroups []RgwZoneGroup `json:"zonegroups"`
+}
+
+// RgwPeriod is the subset of `period get` output RGW replication uses.
+// MasterZone is the realm's metadata master - the master zone of the
+// realm's master zonegroup - which differs from the local zonegroup's own
+// master_zone whenever the local zonegroup is not the realm's master.
+type RgwPeriod struct {
+	MasterZonegroup string       `json:"master_zonegroup"`
+	MasterZone      string       `json:"master_zone"`
+	PeriodMap       RgwPeriodMap `json:"period_map"`
+}
+
+// GetRgwPeriod fetches the realm's current period, the one topology read
+// that describes every zonegroup in the realm rather than only the local
+// one. A non-empty cluster/client pair targets a remote cluster. A failing
+// command yields a zero value and a nil error, so an unconfigured gateway
+// reads as ordinary empty state.
+func GetRgwPeriod(cluster string, client string) (RgwPeriod, error) {
+	response := RgwPeriod{}
+
+	output, err := radosgwAdminRunRemote(cluster, client, "period", "get")
+	if err != nil {
+		logger.Warnf("REPRGW: failed period get operation: %v", err)
+		return response, nil
+	}
+
+	err = json.Unmarshal([]byte(output), &response)
+	if err != nil {
+		return response, fmt.Errorf("cannot unmarshal period get output: %w", err)
+	}
+
+	return response, nil
+}
+
 // RgwSyncInfo is the info block shared by `metadata sync status` and
 // `data sync status` output. Period and RealmEpoch are metadata-only.
 type RgwSyncInfo struct {

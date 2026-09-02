@@ -110,6 +110,51 @@ func (s *RgwMultisiteSuite) TestGetRgwZone() {
 	assert.NotEmpty(s.T(), zone.SystemKey.SecretKey)
 }
 
+func (s *RgwMultisiteSuite) TestGetRgwPeriod() {
+	r := mocks.NewRunner(s.T())
+
+	output, _ := os.ReadFile("./test_assets/rgw_period_get.json")
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "period", "get"}...).Return(string(output), nil).Once()
+	common.ProcessExec = r
+
+	period, err := GetRgwPeriod("", "")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), "67be86c9-2912-4ce2-835d-9bdf91915363", period.MasterZonegroup)
+	assert.Equal(s.T(), "7b7a8b32-3e1e-4bab-9965-e756fbe29aa7", period.MasterZone)
+	assert.Len(s.T(), period.PeriodMap.ZoneGroups, 1)
+	assert.Equal(s.T(), "microceph", period.PeriodMap.ZoneGroups[0].Name)
+	assert.Len(s.T(), period.PeriodMap.ZoneGroups[0].Zones, 2)
+}
+
+func (s *RgwMultisiteSuite) TestGetRgwPeriodRemote() {
+	r := mocks.NewRunner(s.T())
+
+	output, _ := os.ReadFile("./test_assets/rgw_period_get.json")
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "period", "get", "--cluster", "siteb", "--id", "sitea"}...).Return(string(output), nil).Once()
+	common.ProcessExec = r
+
+	period, err := GetRgwPeriod("siteb", "sitea")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), "7b7a8b32-3e1e-4bab-9965-e756fbe29aa7", period.MasterZone)
+}
+
+func (s *RgwMultisiteSuite) TestGetRgwPeriodUnconfigured() {
+	r := mocks.NewRunner(s.T())
+
+	// A realm-less gateway fails period get; the wrapper swallows the exec
+	// error into a zero-value period like the other topology reads.
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "period", "get"}...).Return("", fmt.Errorf("failed to load realm: (2) No such file or directory")).Once()
+	common.ProcessExec = r
+
+	period, err := GetRgwPeriod("", "")
+	assert.NoError(s.T(), err)
+	assert.Empty(s.T(), period.MasterZone)
+	assert.Empty(s.T(), period.PeriodMap.ZoneGroups)
+}
+
 func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusSecondary() {
 	r := mocks.NewRunner(s.T())
 
