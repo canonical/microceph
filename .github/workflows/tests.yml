@@ -93,6 +93,11 @@ jobs:
             suite: api-tests
             args: --variable XTRACE:True
 
+          - id: rgw-replication-status-test
+            name: RGW replication status API
+            suite: rgw-replication-status-test
+            args: --variable XTRACE:True
+
           - id: single-system-tests
             name: Single node with encryption
             suite: single-system-tests

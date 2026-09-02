@@ -28,6 +28,7 @@ from rbd_replication import (
     rbd_primary_image_count,
     rbd_synced_image_count,
 )
+from rgw_replication import parse_rgw_replication_status
 from snap_services import enabled_active_services
 from streaming_process import run_streaming_process
 
@@ -1717,6 +1718,23 @@ class microceph_harness:
             f"sudo curl -s --unix-socket {MICROCEPH_CONTROL_SOCKET} http://localhost/1.0/{path}", 30
         )
         return res.stdout
+
+    def get_rgw_replication_status(self):
+        """GETs the site-scoped RGW replication status from the control socket
+        on the outer VM and returns the parsed status document.
+
+        The ops/replication endpoints decode a JSON request body even on GET,
+        so one is always sent; the envelope's string-encoded metadata is
+        decoded by the pure parser in rgw_replication.py.
+        """
+        body = '{"resource_type": "site", "request_type": ""}'
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s --unix-socket {MICROCEPH_CONTROL_SOCKET}"
+            f" -X GET -H 'Content-Type: application/json' -d '{body}'"
+            " http://localhost/1.0/ops/replication/rgw/site",
+            60,
+        )
+        return parse_rgw_replication_status(res.stdout)
 
     def microceph_api_put(self, path, body, timeout=120):
         """PUTs a JSON body to a path on the MicroCeph control socket on the outer VM.

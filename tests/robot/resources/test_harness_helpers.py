@@ -22,6 +22,7 @@ from rbd_replication import (
     rbd_primary_image_count,
     rbd_synced_image_count,
 )
+from rgw_replication import parse_rgw_replication_status, rgw_data_sync_states
 from streaming_process import run_streaming_process
 
 
@@ -1264,3 +1265,48 @@ def test_wait_for_control_services_absent_timeout_on_persistent_bad_output(monke
     msg = str(exc.value)
     assert "never became absent" in msg
     assert "unparseable" in msg
+
+
+# ---------------------------------------------------------------------------
+# rgw_replication.py pure helpers
+# ---------------------------------------------------------------------------
+
+
+def test_parse_rgw_replication_status_string_metadata():
+    # The ops API wraps the handler's JSON document as a string in the
+    # microcluster envelope; both decodes must happen.
+    doc = {"realm": "verify", "zone": "us-east", "data_sync": []}
+    raw = json.dumps({"type": "sync", "status": "Success", "metadata": json.dumps(doc)})
+    assert parse_rgw_replication_status(raw) == doc
+
+
+def test_parse_rgw_replication_status_dict_metadata():
+    # Tolerate a future server that stops string-encoding the document.
+    doc = {"realm": "verify"}
+    raw = json.dumps({"metadata": doc})
+    assert parse_rgw_replication_status(raw) == doc
+
+
+def test_parse_rgw_replication_status_rejects_no_document():
+    # An error envelope or non-JSON body must fail, never read as empty status.
+    with pytest.raises(AssertionError):
+        parse_rgw_replication_status(json.dumps({"error": "boom", "metadata": ""}))
+    with pytest.raises(AssertionError):
+        parse_rgw_replication_status("not json at all")
+    with pytest.raises(AssertionError):
+        parse_rgw_replication_status(json.dumps({"metadata": "not json either"}))
+
+
+def test_rgw_data_sync_states():
+    status = {
+        "data_sync": [
+            {"source_zone": "us-west", "state": "local-unavailable"},
+            {"source_zone": "us-archive", "state": "not-a-source"},
+        ]
+    }
+    assert rgw_data_sync_states(status) == {
+        "us-west": "local-unavailable",
+        "us-archive": "not-a-source",
+    }
+    assert rgw_data_sync_states({}) == {}
+    assert rgw_data_sync_states({"data_sync": None}) == {}

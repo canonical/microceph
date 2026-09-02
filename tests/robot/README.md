@@ -71,8 +71,8 @@ Each directory under `tests/robot/` is a suite:
 
 ```
 api-tests                          nfs-test
-availability-zone-tests            nfs-multinode-test
-cephadm-adopt-test                 rbd-replication-test
+availability-zone-tests            rbd-replication-test
+cephadm-adopt-test                 rgw-replication-status-test
 cephfs-replication-test            single-system-tests
 cluster-tests                      static-checks
 dsl-functional-tests               test-maintenance-modes
@@ -81,7 +81,7 @@ messenger-v2-tests                 unit-tests
 multi-node-tests                   upgrade-reef-tests
 multi-node-tests-with-custom-microceph-ip
                                    wal-db-tests
-                                   wiping-test
+nfs-multinode-test                 wiping-test
 ```
 
 ## Harness conventions
