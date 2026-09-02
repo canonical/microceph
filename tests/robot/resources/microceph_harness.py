@@ -28,7 +28,7 @@ from rbd_replication import (
     rbd_primary_image_count,
     rbd_synced_image_count,
 )
-from rgw_replication import parse_rgw_replication_status
+from rgw_replication import parse_rgw_replication_status, rgw_data_sync_states
 from snap_services import enabled_active_services
 from streaming_process import run_streaming_process
 
@@ -1735,6 +1735,92 @@ class microceph_harness:
             60,
         )
         return parse_rgw_replication_status(res.stdout)
+
+    def get_rgw_replication_status_in_container(self, container):
+        """GETs the site-scoped RGW replication status from the control socket
+        inside an inner container and returns the parsed status document. The
+        ops/replication endpoints decode a JSON request body even on GET, so
+        one is always sent."""
+        res = self.exec_in_container(
+            container, "curl", "-s", "--unix-socket", MICROCEPH_CONTROL_SOCKET,
+            "-X", "GET", "-H", "Content-Type: application/json",
+            "-d", '{"resource_type": "site", "request_type": ""}',
+            "http://localhost/1.0/ops/replication/rgw/site",
+            timeout=60, check=True,
+        )
+        return parse_rgw_replication_status(res.stdout)
+
+    def _observe_rgw_sync_state(self, container, source_zone=None):
+        """Returns the current metadata sync state - or, with *source_zone*, that
+        source's data sync state - from the status API in *container*. Returns
+        None when the status cannot be read yet, so pollers keep probing while
+        a daemon restarts instead of aborting."""
+        try:
+            status = self.get_rgw_replication_status_in_container(container)
+        except AssertionError:
+            return None
+        if source_zone is None:
+            return (status.get("metadata_sync") or {}).get("state")
+        return rgw_data_sync_states(status).get(source_zone)
+
+    def wait_for_rgw_metadata_sync_state(self, container, expected, attempts=60, interval=15):
+        """Polls the status API in *container* until metadata_sync.state equals
+        *expected*. Initial sync of even an empty realm takes a while: every
+        shard must finish its first full sync before caught-up is possible."""
+        last = {"state": None}
+
+        def probe():
+            last["state"] = self._observe_rgw_sync_state(container)
+            return last["state"] == expected
+
+        self._poll_until(
+            probe, attempts, interval,
+            lambda: f"metadata sync on {container} never reached {expected!r} (last seen: {last['state']!r})",
+        )
+
+    def wait_for_rgw_data_sync_state(self, container, source_zone, expected, attempts=60, interval=15):
+        """Polls the status API in *container* until the data sync brief for
+        *source_zone* reports *expected*."""
+        last = {"state": None}
+
+        def probe():
+            last["state"] = self._observe_rgw_sync_state(container, source_zone)
+            return last["state"] == expected
+
+        self._poll_until(
+            probe, attempts, interval,
+            lambda: f"data sync from {source_zone} on {container} never reached {expected!r} (last seen: {last['state']!r})",
+        )
+
+    def wait_for_rgw_endpoint(self, container, url, attempts=30, interval=5):
+        """Polls until the RGW endpoint at *url* answers HTTP from inside
+        *container* - radosgw takes a few seconds to listen after enable, and
+        a realm pull against a not-yet-listening master would fail."""
+        def probe():
+            res = self.exec_in_container(
+                container, "curl", "-s", "-o", "/dev/null", url, timeout=15,
+            )
+            return res.rc == 0
+
+        self._poll_until(
+            probe, attempts, interval,
+            f"rgw endpoint {url} never answered from {container}",
+        )
+
+    def wait_for_rgw_user_in_container(self, container, uid, attempts=40, interval=15):
+        """Polls until radosgw-admin in *container* can see user *uid*, i.e. the
+        user's metadata has replicated to that site."""
+        def probe():
+            res = self.exec_in_container(
+                container, "microceph.radosgw-admin", "user", "info", f"--uid={uid}",
+                timeout=60,
+            )
+            return res.rc == 0
+
+        self._poll_until(
+            probe, attempts, interval,
+            f"user {uid!r} never replicated to {container}",
+        )
 
     def microceph_api_put(self, path, body, timeout=120):
         """PUTs a JSON body to a path on the MicroCeph control socket on the outer VM.
