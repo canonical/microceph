@@ -103,9 +103,9 @@ func (req *RgwReplicationRequest) OverwriteRequestType(overwriteRequestType Repl
 // ################################## RGW Replication Response ##################################
 
 // RgwReplicationSyncState is one sync stream's verdict, rendered for an
-// operator. The three inconclusive outcomes are deliberately distinct from
-// each other and from being behind: a peer that could not be read is not a
-// claim about how far behind this zone is.
+// operator. The four inconclusive outcomes are deliberately distinct from
+// each other and from being behind: a peer or local status that could not
+// be read is not a claim about how far behind this zone is.
 type RgwReplicationSyncState string
 
 const (
@@ -118,6 +118,9 @@ const (
 	// RgwSyncStatePeerUnavailable means the peer's log head could not be
 	// read, so no comparison was possible.
 	RgwSyncStatePeerUnavailable RgwReplicationSyncState = "peer-unavailable"
+	// RgwSyncStateLocalUnavailable means this zone's own sync markers could
+	// not be read locally, so no comparison was even attempted.
+	RgwSyncStateLocalUnavailable RgwReplicationSyncState = "local-unavailable"
 	// RgwSyncStatePeriodMismatch means this zone is on an older realm
 	// period, so its markers cannot be compared with the peer's log.
 	RgwSyncStatePeriodMismatch RgwReplicationSyncState = "period-mismatch"

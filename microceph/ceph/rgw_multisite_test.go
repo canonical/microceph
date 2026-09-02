@@ -184,6 +184,31 @@ func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusInvalidResponse() {
 
 	_, err := GetRgwMetadataSyncStatus("", "")
 	assert.Error(s.T(), err)
+	assert.NotErrorIs(s.T(), err, ErrRgwSyncStatusUnreadable)
+}
+
+// A command that cannot run at all is a different failure from a malformed
+// response, and the sentinel is what lets callers tell them apart.
+func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusCommandFailure() {
+	r := mocks.NewRunner(s.T())
+
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "metadata", "sync", "status"}...).Return("", fmt.Errorf("exit status 5")).Once()
+	common.ProcessExec = r
+
+	_, err := GetRgwMetadataSyncStatus("", "")
+	assert.ErrorIs(s.T(), err, ErrRgwSyncStatusUnreadable)
+}
+
+func (s *RgwMultisiteSuite) TestGetRgwDataSyncStatusCommandFailure() {
+	r := mocks.NewRunner(s.T())
+
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "data", "sync", "status", "--source-zone", "sitea"}...).Return("", fmt.Errorf("exit status 5")).Once()
+	common.ProcessExec = r
+
+	_, err := GetRgwDataSyncStatus("sitea", "", "")
+	assert.ErrorIs(s.T(), err, ErrRgwSyncStatusUnreadable)
 }
 
 func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusMaster() {
@@ -229,6 +254,7 @@ func (s *RgwMultisiteSuite) TestGetRgwDataSyncStatusInvalidResponse() {
 
 	_, err := GetRgwDataSyncStatus("sitea", "", "")
 	assert.Error(s.T(), err)
+	assert.NotErrorIs(s.T(), err, ErrRgwSyncStatusUnreadable)
 }
 
 func (s *RgwMultisiteSuite) TestGetRgwMdlogStatus() {

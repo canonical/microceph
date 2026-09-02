@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -36,8 +37,15 @@ type RgwReplicationHandler struct {
 	Period RgwPeriod
 	// Metadata sync markers, left zero valued on the metadata master.
 	MetadataSync RgwMetadataSyncStatus
+	// MetadataSyncUnavailable records that the local metadata sync status
+	// read failed, leaving MetadataSync a placeholder rather than an
+	// answer. Check it before reading MetadataSync anywhere.
+	MetadataSyncUnavailable bool
 	// Data sync markers for each source zone, keyed by source zone name.
 	DataSync map[string]RgwDataSyncStatus
+	// DataSyncUnavailable records the source zones whose local data sync
+	// status read failed; their DataSync entries are placeholders too.
+	DataSyncUnavailable map[string]bool
 }
 
 // PreFill populates the handler struct with the local multisite topology.
@@ -102,24 +110,40 @@ func (rh *RgwReplicationHandler) PreFill(ctx context.Context, request types.Repl
 // and its data progress against every other zone in the zonegroup. All of it
 // is local progress with no peer contact, so it is safe to read before the
 // state machine has decided anything.
+//
+// A read whose command failed outright is recorded per stream rather than
+// failing the whole request, mirroring how an unreadable peer log is already
+// handled: one broken stream must not blank out the healthy ones. A malformed
+// or self-contradictory response still fails the request, since it means the
+// gateway answered and the answer cannot be trusted.
 func (rh *RgwReplicationHandler) preFillSyncStatus() error {
-	var err error
-
 	// The metadata master syncs from no one and reports an empty "init"
 	// status. Reading it would only invite that emptiness to be mistaken for
 	// a stalled secondary.
 	if !rh.isMasterZone() {
-		rh.MetadataSync, err = GetRgwMetadataSyncStatus("", "")
+		status, err := GetRgwMetadataSyncStatus("", "")
 		if err != nil {
-			return err
+			if !errors.Is(err, ErrRgwSyncStatusUnreadable) {
+				return err
+			}
+			logger.Warnf("REPRGW: %v", err)
+			rh.MetadataSyncUnavailable = true
+		} else {
+			rh.MetadataSync = status
 		}
 	}
 
 	rh.DataSync = map[string]RgwDataSyncStatus{}
+	rh.DataSyncUnavailable = map[string]bool{}
 	for _, zone := range rh.peerZones() {
 		status, err := GetRgwDataSyncStatus(zone.Name, "", "")
 		if err != nil {
-			return err
+			if !errors.Is(err, ErrRgwSyncStatusUnreadable) {
+				return err
+			}
+			logger.Warnf("REPRGW: %v", err)
+			rh.DataSyncUnavailable[zone.Name] = true
+			continue
 		}
 
 		rh.DataSync[zone.Name] = status
@@ -234,6 +258,13 @@ func (rh *RgwReplicationHandler) metadataSyncBrief(remotes map[string]types.Remo
 		}
 	}
 
+	if rh.MetadataSyncUnavailable {
+		// The local read failed outright, so there is no comparison to
+		// make: neither caught up nor behind, and not the peer's fault.
+		remote := remotes[masterZone]
+		return summariseRgwSyncVerdict(masterZone, remote.Name, rh.MetadataSync.Info, RgwSyncVerdict{LocalUnavailable: true})
+	}
+
 	remote, ok := remotes[masterZone]
 	if !ok {
 		// Without a remote for the master cluster its metadata log cannot
@@ -260,6 +291,14 @@ func (rh *RgwReplicationHandler) dataSyncBriefs(remotes map[string]types.RemoteR
 
 	for _, zone := range peers {
 		local := rh.DataSync[zone.Name]
+
+		if rh.DataSyncUnavailable[zone.Name] {
+			// The local read for this stream failed outright: nothing was
+			// measured, which must not fall through to a real verdict.
+			remote := remotes[zone.Name]
+			briefs = append(briefs, summariseRgwSyncVerdict(zone.Name, remote.Name, local.Info, RgwSyncVerdict{LocalUnavailable: true}))
+			continue
+		}
 
 		remote, ok := remotes[zone.Name]
 		if !ok {
@@ -396,12 +435,13 @@ func getRgwRemotesByZone(ctx context.Context, st interfaces.CephState) (map[stri
 
 // summariseRgwSyncVerdict renders one sync verdict for an operator.
 //
-// The three inconclusive outcomes stay distinct from each other and from being
-// behind. A peer whose log could not be read and a period that could not be
-// compared are not claims about how far behind this zone is, and neither is a
-// claim that it is caught up. Shard counts are only carried when the
-// comparison actually ran, because a verdict that short circuited leaves them
-// at zero, which would otherwise read as fully synced.
+// The four inconclusive outcomes stay distinct from each other and from being
+// behind. A peer whose log could not be read, a local status that could not
+// be read and a period that could not be compared are not claims about how
+// far behind this zone is, and none of them is a claim that it is caught up.
+// Shard counts are only carried when the comparison actually ran, because a
+// verdict that short circuited leaves them at zero, which would otherwise
+// read as fully synced.
 func summariseRgwSyncVerdict(sourceZone string, remoteName string, info RgwSyncInfo, verdict RgwSyncVerdict) types.RgwReplicationSyncBrief {
 	brief := types.RgwReplicationSyncBrief{
 		SourceZone:   sourceZone,
@@ -412,6 +452,9 @@ func summariseRgwSyncVerdict(sourceZone string, remoteName string, info RgwSyncI
 	}
 
 	switch {
+	case verdict.LocalUnavailable:
+		brief.State = types.RgwSyncStateLocalUnavailable
+		return brief
 	case verdict.PeriodMismatch:
 		brief.State = types.RgwSyncStatePeriodMismatch
 		return brief

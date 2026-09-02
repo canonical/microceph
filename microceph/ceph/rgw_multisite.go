@@ -2,11 +2,18 @@ package ceph
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/logger"
 )
+
+// ErrRgwSyncStatusUnreadable marks a sync status read whose radosgw-admin
+// command failed outright. Callers use it to tell "the command could not
+// run at all" apart from a malformed or self-contradictory response, which
+// keeps propagating as an ordinary error.
+var ErrRgwSyncStatusUnreadable = errors.New("rgw sync status could not be read")
 
 // radosgwAdminRun runs radosgw-admin with the given arguments.
 func radosgwAdminRun(args ...string) (string, error) {
@@ -272,15 +279,15 @@ func validateRgwDataSyncShards(numShards int, markers []RgwDataSyncShard) error 
 
 // GetRgwMetadataSyncStatus fetches this zone's own metadata sync markers -
 // local progress only, no peer contact. A non-empty cluster/client pair
-// targets a remote cluster. A failing command yields a zero value and a
-// nil error.
+// targets a remote cluster. A failing command returns an error wrapping
+// ErrRgwSyncStatusUnreadable rather than a zero value: a zero value would
+// later compare as behind, which is a claim this read never made.
 func GetRgwMetadataSyncStatus(cluster string, client string) (RgwMetadataSyncStatus, error) {
 	envelope := rgwMetadataSyncEnvelope{}
 
 	output, err := radosgwAdminRunRemote(cluster, client, "metadata", "sync", "status")
 	if err != nil {
-		logger.Warnf("REPRGW: failed metadata sync status operation: %v", err)
-		return RgwMetadataSyncStatus{}, nil
+		return RgwMetadataSyncStatus{}, fmt.Errorf("%w: failed metadata sync status operation: %w", ErrRgwSyncStatusUnreadable, err)
 	}
 
 	err = json.Unmarshal([]byte(output), &envelope)
@@ -299,14 +306,14 @@ func GetRgwMetadataSyncStatus(cluster string, client string) (RgwMetadataSyncSta
 // GetRgwDataSyncStatus fetches this zone's own data sync markers for one
 // source zone - local progress only, no contact with the source. A
 // non-empty cluster/client pair targets a remote cluster. A failing
-// command yields a zero value and a nil error.
+// command returns an error wrapping ErrRgwSyncStatusUnreadable rather than
+// a zero value, for the same reason as GetRgwMetadataSyncStatus.
 func GetRgwDataSyncStatus(sourceZone string, cluster string, client string) (RgwDataSyncStatus, error) {
 	envelope := rgwDataSyncEnvelope{}
 
 	output, err := radosgwAdminRunRemote(cluster, client, "data", "sync", "status", "--source-zone", sourceZone)
 	if err != nil {
-		logger.Warnf("REPRGW: failed data sync status operation for source(%s): %v", sourceZone, err)
-		return RgwDataSyncStatus{}, nil
+		return RgwDataSyncStatus{}, fmt.Errorf("%w: failed data sync status operation for source %q: %w", ErrRgwSyncStatusUnreadable, sourceZone, err)
 	}
 
 	err = json.Unmarshal([]byte(output), &envelope)
@@ -396,8 +403,13 @@ func GetRgwDatalogStatus(cluster string, client string) ([]RgwLogShard, error) {
 // neither is caught up. Skip this call entirely for a master rather than
 // reading the resulting false as behind.
 //
-// PeriodMismatch and PeerLogUnavailable both mean the comparison could not
-// be made at all, so neither is a claim about how far behind the zone is.
+// PeriodMismatch, PeerLogUnavailable and LocalUnavailable all mean the
+// comparison could not be made at all - the first two because the peer's
+// side could not be used, the last because this zone's own markers were
+// never read - so none of them is a claim about how far behind the zone
+// is. LocalUnavailable is never set by the compute functions, which are
+// only called with a local status that was actually read; the handler sets
+// it in their place when the local read failed.
 //
 // Known gaps: a shard the peer does not report is logged and skipped
 // rather than counted, as upstream also does; log trimming can briefly
@@ -410,6 +422,7 @@ type RgwSyncVerdict struct {
 	FullSyncShards     int
 	PeriodMismatch     bool
 	PeerLogUnavailable bool
+	LocalUnavailable   bool
 }
 
 // ComputeRgwMetadataSyncVerdict compares a secondary's metadata markers

@@ -178,6 +178,74 @@ func (s *RgwReplicationSuite) TestPreFillSecondaryZone() {
 	assert.Contains(s.T(), rh.DataSync, "sitea")
 }
 
+// A local metadata sync status command that cannot run is a per stream
+// outage: the rest of the prefill must survive it and the failure must be
+// recorded rather than left as a convincing zero value.
+func (s *RgwReplicationSuite) TestPreFillMetadataSyncUnavailable() {
+	r := mocks.NewRunner(s.T())
+	s.expectTopologyReads(r, "", siteBZoneGet)
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "metadata", "sync", "status"}...).Return("", fmt.Errorf("exit status 5")).Once()
+	dataSync, _ := os.ReadFile("./test_assets/rgw_data_sync_status.json")
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "data", "sync", "status", "--source-zone", "sitea"}...).Return(string(dataSync), nil).Once()
+	common.ProcessExec = r
+
+	rh := &RgwReplicationHandler{}
+	err := rh.PreFill(context.Background(), types.RgwReplicationRequest{
+		RequestType:  types.StatusReplicationRequest,
+		ResourceType: types.RgwResourceSite,
+	})
+
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), rh.MetadataSyncUnavailable)
+	assert.Empty(s.T(), rh.MetadataSync.Info.Status)
+	assert.Equal(s.T(), 128, rh.DataSync["sitea"].Info.NumShards)
+}
+
+// The same outage on one data stream must leave the metadata stream and the
+// map bookkeeping intact.
+func (s *RgwReplicationSuite) TestPreFillDataSyncUnavailable() {
+	r := mocks.NewRunner(s.T())
+	s.expectTopologyReads(r, "", siteBZoneGet)
+	metaSync, _ := os.ReadFile("./test_assets/rgw_metadata_sync_status_secondary.json")
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "metadata", "sync", "status"}...).Return(string(metaSync), nil).Once()
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "data", "sync", "status", "--source-zone", "sitea"}...).Return("", fmt.Errorf("exit status 5")).Once()
+	common.ProcessExec = r
+
+	rh := &RgwReplicationHandler{}
+	err := rh.PreFill(context.Background(), types.RgwReplicationRequest{
+		RequestType:  types.StatusReplicationRequest,
+		ResourceType: types.RgwResourceSite,
+	})
+
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), rh.DataSyncUnavailable["sitea"])
+	assert.NotContains(s.T(), rh.DataSync, "sitea")
+	assert.Equal(s.T(), 64, rh.MetadataSync.Info.NumShards)
+}
+
+// A gateway that answers with a self-contradictory sync status is corrupt
+// data rather than an outage, and must keep failing the whole request.
+func (s *RgwReplicationSuite) TestPreFillMalformedSyncStatusStillFails() {
+	r := mocks.NewRunner(s.T())
+	s.expectTopologyReads(r, "", siteBZoneGet)
+	invalid := `{"sync_status":{"info":{"status":"sync","num_shards":2},"markers":[{"key":5,"val":{"state":1,"marker":""}}]}}`
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "metadata", "sync", "status"}...).Return(invalid, nil).Once()
+	common.ProcessExec = r
+
+	rh := &RgwReplicationHandler{}
+	err := rh.PreFill(context.Background(), types.RgwReplicationRequest{
+		RequestType:  types.StatusReplicationRequest,
+		ResourceType: types.RgwResourceSite,
+	})
+
+	assert.Error(s.T(), err)
+}
+
 // A zone that is master of its own, non-master zonegroup is the exact
 // topology the realm-wide master check exists for: it must still read its
 // own metadata sync markers, and the metadata master it names lives in a
@@ -395,6 +463,18 @@ func (s *RgwReplicationSuite) TestSummariseRgwSyncVerdictPeerUnavailable() {
 	assert.Equal(s.T(), 0, brief.FullSyncShards)
 }
 
+// A local status that was never read carries no shard counts or sync state
+// worth showing, and must not fall through to a real verdict.
+func (s *RgwReplicationSuite) TestSummariseRgwSyncVerdictLocalUnavailable() {
+	brief := summariseRgwSyncVerdict("sitea", "sitea", RgwSyncInfo{}, RgwSyncVerdict{LocalUnavailable: true})
+
+	assert.Equal(s.T(), types.RgwSyncStateLocalUnavailable, brief.State)
+	assert.Empty(s.T(), brief.SyncStatus)
+	assert.Equal(s.T(), 0, brief.ShardCount)
+	assert.Empty(s.T(), brief.BehindShards)
+	assert.Equal(s.T(), 0, brief.FullSyncShards)
+}
+
 func (s *RgwReplicationSuite) TestSummariseRgwSyncVerdictPeriodMismatch() {
 	verdict := RgwSyncVerdict{PeriodMismatch: true}
 	brief := summariseRgwSyncVerdict("sitea", "sitea", RgwSyncInfo{Status: "sync", NumShards: 64}, verdict)
@@ -478,6 +558,43 @@ func (s *RgwReplicationSuite) TestMetadataSyncBriefPeriodMismatch() {
 	assert.Equal(s.T(), types.RgwSyncStatePeriodMismatch, brief.State)
 	assert.Empty(s.T(), brief.BehindShards)
 	assert.Equal(s.T(), 0, brief.FullSyncShards)
+}
+
+// A failed local metadata read renders as local-unavailable without ever
+// touching the peer: no command may run here.
+func (s *RgwReplicationSuite) TestMetadataSyncBriefLocalUnavailable() {
+	common.ProcessExec = mocks.NewRunner(s.T())
+
+	rh := secondaryHandler()
+	rh.MetadataSyncUnavailable = true
+
+	brief := rh.metadataSyncBrief(map[string]types.RemoteRecord{
+		"sitea": {Name: "sitea", LocalName: "siteb"},
+	})
+
+	assert.Equal(s.T(), types.RgwSyncStateLocalUnavailable, brief.State)
+	assert.Equal(s.T(), "sitea", brief.SourceZone)
+	assert.Equal(s.T(), "sitea", brief.RemoteName)
+	assert.Empty(s.T(), brief.SyncStatus)
+	assert.Equal(s.T(), 0, brief.ShardCount)
+}
+
+// The same rendering per data stream.
+func (s *RgwReplicationSuite) TestDataSyncBriefsLocalUnavailable() {
+	common.ProcessExec = mocks.NewRunner(s.T())
+
+	rh := masterHandler()
+	rh.DataSync = map[string]RgwDataSyncStatus{}
+	rh.DataSyncUnavailable = map[string]bool{"siteb": true}
+
+	briefs := rh.dataSyncBriefs(map[string]types.RemoteRecord{
+		"siteb": {Name: "siteb", LocalName: "sitea"},
+	})
+
+	assert.Len(s.T(), briefs, 1)
+	assert.Equal(s.T(), types.RgwSyncStateLocalUnavailable, briefs[0].State)
+	assert.Equal(s.T(), "siteb", briefs[0].SourceZone)
+	assert.Equal(s.T(), "siteb", briefs[0].RemoteName)
 }
 
 func (s *RgwReplicationSuite) TestDataSyncBriefsWithoutRemote() {
