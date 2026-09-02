@@ -41,6 +41,29 @@ type RgwZoneGroupZone struct {
 	Name      string   `json:"name"`
 	Endpoints []string `json:"endpoints"`
 	ReadOnly  bool     `json:"read_only"`
+	// SyncFromAll and SyncFrom say which peers this zone pulls data from:
+	// every peer when SyncFromAll is set, and only the zones named in
+	// SyncFrom otherwise. Mirrors RGWZone::syncs_from in Ceph's
+	// src/rgw/rgw_zone_types.h.
+	SyncFromAll bool     `json:"sync_from_all"`
+	SyncFrom    []string `json:"sync_from"`
+}
+
+// UnmarshalJSON decodes a zonegroup zone entry with sync_from_all
+// defaulting to true when the field is absent, as radosgw-admin's own
+// decoder does (RGWZone::decode_json in Ceph's src/rgw/rgw_zone.cc). A
+// plain bool would read an absent field as false and invert the topology.
+func (z *RgwZoneGroupZone) UnmarshalJSON(data []byte) error {
+	type rgwZoneGroupZoneAlias RgwZoneGroupZone
+	decoded := rgwZoneGroupZoneAlias{SyncFromAll: true}
+
+	err := json.Unmarshal(data, &decoded)
+	if err != nil {
+		return err
+	}
+
+	*z = RgwZoneGroupZone(decoded)
+	return nil
 }
 
 // RgwZoneGroup is the subset of `zonegroup get` output we use.
@@ -409,7 +432,9 @@ func GetRgwDatalogStatus(cluster string, client string) ([]RgwLogShard, error) {
 // never read - so none of them is a claim about how far behind the zone
 // is. LocalUnavailable is never set by the compute functions, which are
 // only called with a local status that was actually read; the handler sets
-// it in their place when the local read failed.
+// it in their place when the local read failed. NotSource likewise never
+// comes from the compute functions: it says no stream from the peer is
+// configured at all, so there was nothing to compute.
 //
 // Known gaps: a shard the peer does not report is logged and skipped
 // rather than counted, as upstream also does; log trimming can briefly
@@ -423,6 +448,7 @@ type RgwSyncVerdict struct {
 	PeriodMismatch     bool
 	PeerLogUnavailable bool
 	LocalUnavailable   bool
+	NotSource          bool
 }
 
 // ComputeRgwMetadataSyncVerdict compares a secondary's metadata markers

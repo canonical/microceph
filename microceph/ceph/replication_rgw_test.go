@@ -112,8 +112,8 @@ func masterHandler() *RgwReplicationHandler {
 			IsMaster:   true,
 			MasterZone: siteAZoneID,
 			Zones: []RgwZoneGroupZone{
-				{ID: siteBZoneID, Name: "siteb", Endpoints: []string{"http://10.85.32.128:80"}},
-				{ID: siteAZoneID, Name: "sitea", Endpoints: []string{"http://10.85.32.250:80"}},
+				{ID: siteBZoneID, Name: "siteb", Endpoints: []string{"http://10.85.32.128:80"}, SyncFromAll: true},
+				{ID: siteAZoneID, Name: "sitea", Endpoints: []string{"http://10.85.32.250:80"}, SyncFromAll: true},
 			},
 		},
 		Zone: RgwZone{ID: siteAZoneID, Name: "sitea"},
@@ -124,6 +124,18 @@ func masterHandler() *RgwReplicationHandler {
 func secondaryHandler() *RgwReplicationHandler {
 	rh := masterHandler()
 	rh.Zone = RgwZone{ID: siteBZoneID, Name: "siteb"}
+	return rh
+}
+
+// threeZoneHandler is masterHandler plus a third zone sitec, with the local
+// zone sitea restricted to pulling data from siteb only.
+func threeZoneHandler() *RgwReplicationHandler {
+	rh := masterHandler()
+	rh.ZoneGroup.Zones = []RgwZoneGroupZone{
+		{ID: siteBZoneID, Name: "siteb", SyncFromAll: true},
+		{ID: siteAZoneID, Name: "sitea", SyncFromAll: false, SyncFrom: []string{"siteb"}},
+		{ID: siteCZoneID, Name: "sitec", SyncFromAll: true},
+	}
 	return rh
 }
 
@@ -386,6 +398,36 @@ func (s *RgwReplicationSuite) TestIsMasterZoneOfNonMasterZoneGroup() {
 	assert.False(s.T(), rh.isMasterZone())
 }
 
+// Data sync is directional: with sync_from_all off, only the peers named in
+// sync_from are sources, exactly as RGWZone::syncs_from decides it.
+func (s *RgwReplicationSuite) TestDataSyncSourceZones() {
+	rh := threeZoneHandler()
+
+	assert.True(s.T(), rh.isDataSyncSource(RgwZoneGroupZone{ID: siteBZoneID, Name: "siteb"}))
+	assert.False(s.T(), rh.isDataSyncSource(RgwZoneGroupZone{ID: siteCZoneID, Name: "sitec"}))
+
+	sources := rh.dataSyncSourceZones()
+	assert.Len(s.T(), sources, 1)
+	assert.Equal(s.T(), "siteb", sources[0].Name)
+}
+
+// A non-source peer must not be queried at all: the strict mock proves no
+// data sync status command runs for sitec.
+func (s *RgwReplicationSuite) TestPreFillSkipsNonSourcePeers() {
+	r := mocks.NewRunner(s.T())
+	dataSync, _ := os.ReadFile("./test_assets/rgw_data_sync_status.json")
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "data", "sync", "status", "--source-zone", "siteb"}...).Return(string(dataSync), nil).Once()
+	common.ProcessExec = r
+
+	rh := threeZoneHandler()
+	err := rh.preFillSyncStatus()
+
+	assert.NoError(s.T(), err)
+	assert.Contains(s.T(), rh.DataSync, "siteb")
+	assert.NotContains(s.T(), rh.DataSync, "sitec")
+}
+
 // In a non-master zonegroup the metadata master's name comes from the realm
 // period, since the local zonegroup listing cannot contain it.
 func (s *RgwReplicationSuite) TestMasterZoneNameAcrossZoneGroups() {
@@ -459,6 +501,18 @@ func (s *RgwReplicationSuite) TestSummariseRgwSyncVerdictPeerUnavailable() {
 	brief := summariseRgwSyncVerdict("sitea", "", RgwSyncInfo{Status: "sync", NumShards: 64}, RgwSyncVerdict{PeerLogUnavailable: true})
 
 	assert.Equal(s.T(), types.RgwSyncStatePeerUnavailable, brief.State)
+	assert.Empty(s.T(), brief.BehindShards)
+	assert.Equal(s.T(), 0, brief.FullSyncShards)
+}
+
+// A stream that is not configured carries no counts, no sync state and no
+// remote: it is a topology fact, not a measurement.
+func (s *RgwReplicationSuite) TestSummariseRgwSyncVerdictNotSource() {
+	brief := summariseRgwSyncVerdict("sitec", "", RgwSyncInfo{}, RgwSyncVerdict{NotSource: true})
+
+	assert.Equal(s.T(), types.RgwSyncStateNotSource, brief.State)
+	assert.Empty(s.T(), brief.SyncStatus)
+	assert.Equal(s.T(), 0, brief.ShardCount)
 	assert.Empty(s.T(), brief.BehindShards)
 	assert.Equal(s.T(), 0, brief.FullSyncShards)
 }
@@ -595,6 +649,29 @@ func (s *RgwReplicationSuite) TestDataSyncBriefsLocalUnavailable() {
 	assert.Equal(s.T(), types.RgwSyncStateLocalUnavailable, briefs[0].State)
 	assert.Equal(s.T(), "siteb", briefs[0].SourceZone)
 	assert.Equal(s.T(), "siteb", briefs[0].RemoteName)
+}
+
+// Every zonegroup peer still gets exactly one brief; a non-source peer's is
+// the explicit not-a-source one, and it outranks every other outcome, even
+// a recorded local read failure for the same zone.
+func (s *RgwReplicationSuite) TestDataSyncBriefsNotSource() {
+	common.ProcessExec = mocks.NewRunner(s.T())
+
+	rh := threeZoneHandler()
+	rh.DataSync = map[string]RgwDataSyncStatus{
+		"siteb": {Info: RgwSyncInfo{Status: "sync", NumShards: 128}},
+	}
+	rh.DataSyncUnavailable = map[string]bool{"sitec": true}
+
+	briefs := rh.dataSyncBriefs(map[string]types.RemoteRecord{})
+
+	assert.Len(s.T(), briefs, 2)
+	assert.Equal(s.T(), "siteb", briefs[0].SourceZone)
+	assert.Equal(s.T(), types.RgwSyncStatePeerUnavailable, briefs[0].State)
+	assert.Equal(s.T(), "sitec", briefs[1].SourceZone)
+	assert.Equal(s.T(), types.RgwSyncStateNotSource, briefs[1].State)
+	assert.Empty(s.T(), briefs[1].RemoteName)
+	assert.Empty(s.T(), briefs[1].SyncStatus)
 }
 
 func (s *RgwReplicationSuite) TestDataSyncBriefsWithoutRemote() {

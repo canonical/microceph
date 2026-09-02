@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
@@ -107,9 +108,9 @@ func (rh *RgwReplicationHandler) PreFill(ctx context.Context, request types.Repl
 }
 
 // preFillSyncStatus reads this zone's own sync markers: its metadata progress,
-// and its data progress against every other zone in the zonegroup. All of it
-// is local progress with no peer contact, so it is safe to read before the
-// state machine has decided anything.
+// and its data progress against every source zone it is configured to pull
+// from. All of it is local progress with no peer contact, so it is safe to
+// read before the state machine has decided anything.
 //
 // A read whose command failed outright is recorded per stream rather than
 // failing the whole request, mirroring how an unreadable peer log is already
@@ -135,7 +136,7 @@ func (rh *RgwReplicationHandler) preFillSyncStatus() error {
 
 	rh.DataSync = map[string]RgwDataSyncStatus{}
 	rh.DataSyncUnavailable = map[string]bool{}
-	for _, zone := range rh.peerZones() {
+	for _, zone := range rh.dataSyncSourceZones() {
 		status, err := GetRgwDataSyncStatus(zone.Name, "", "")
 		if err != nil {
 			if !errors.Is(err, ErrRgwSyncStatusUnreadable) {
@@ -284,12 +285,23 @@ func (rh *RgwReplicationHandler) metadataSyncBrief(remotes map[string]types.Remo
 }
 
 // dataSyncBriefs compares this zone's data markers against each source zone's
-// data log, one brief per peer zone in the zonegroup.
+// data log, one brief per peer zone in the zonegroup. A peer the local zone
+// is not configured to sync from still gets a brief, an explicit not-a-source
+// one, so the response's peer coverage stays predictable.
 func (rh *RgwReplicationHandler) dataSyncBriefs(remotes map[string]types.RemoteRecord) []types.RgwReplicationSyncBrief {
 	peers := rh.peerZones()
 	briefs := make([]types.RgwReplicationSyncBrief, 0, len(peers))
 
 	for _, zone := range peers {
+		if !rh.isDataSyncSource(zone) {
+			// No stream from this peer is configured, so there is no
+			// progress to fabricate a verdict about. This outranks the
+			// other outcomes: even "unavailable" would be an answer about
+			// a stream that does not exist.
+			briefs = append(briefs, summariseRgwSyncVerdict(zone.Name, "", RgwSyncInfo{}, RgwSyncVerdict{NotSource: true}))
+			continue
+		}
+
 		local := rh.DataSync[zone.Name]
 
 		if rh.DataSyncUnavailable[zone.Name] {
@@ -410,6 +422,49 @@ func (rh *RgwReplicationHandler) peerZones() []RgwZoneGroupZone {
 	return peers
 }
 
+// localZoneGroupZone finds the local zone's own entry in the zonegroup,
+// which is where its sync_from configuration lives.
+func (rh *RgwReplicationHandler) localZoneGroupZone() (RgwZoneGroupZone, bool) {
+	for _, zone := range rh.ZoneGroup.Zones {
+		if zone.ID == rh.Zone.ID {
+			return zone, true
+		}
+	}
+
+	return RgwZoneGroupZone{}, false
+}
+
+// isDataSyncSource reports whether the local zone pulls data from the given
+// peer: every peer when sync_from_all is set, and only the zones named in
+// sync_from otherwise. radosgw-admin's own sync status applies exactly this
+// check (RGWZone::syncs_from) before reporting a data stream.
+func (rh *RgwReplicationHandler) isDataSyncSource(peer RgwZoneGroupZone) bool {
+	local, ok := rh.localZoneGroupZone()
+	if !ok {
+		// An orphaned zone is already reported as disabled replication;
+		// hiding every peer here would dress that up as topology instead.
+		return true
+	}
+
+	return local.SyncFromAll || slices.Contains(local.SyncFrom, peer.Name)
+}
+
+// dataSyncSourceZones lists the peers the local zone actually pulls data
+// from. A peer outside this set has no sync stream to report on.
+func (rh *RgwReplicationHandler) dataSyncSourceZones() []RgwZoneGroupZone {
+	peers := rh.peerZones()
+	sources := make([]RgwZoneGroupZone, 0, len(peers))
+	for _, zone := range peers {
+		if !rh.isDataSyncSource(zone) {
+			continue
+		}
+
+		sources = append(sources, zone)
+	}
+
+	return sources
+}
+
 // getRgwRemotesByZone indexes the imported remotes by the zone name each one
 // reaches.
 //
@@ -435,13 +490,13 @@ func getRgwRemotesByZone(ctx context.Context, st interfaces.CephState) (map[stri
 
 // summariseRgwSyncVerdict renders one sync verdict for an operator.
 //
-// The four inconclusive outcomes stay distinct from each other and from being
+// The short circuited outcomes stay distinct from each other and from being
 // behind. A peer whose log could not be read, a local status that could not
 // be read and a period that could not be compared are not claims about how
-// far behind this zone is, and none of them is a claim that it is caught up.
-// Shard counts are only carried when the comparison actually ran, because a
-// verdict that short circuited leaves them at zero, which would otherwise
-// read as fully synced.
+// far behind this zone is, and a stream that is not configured at all makes
+// no claim about progress either. Shard counts are only carried when the
+// comparison actually ran, because a verdict that short circuited leaves
+// them at zero, which would otherwise read as fully synced.
 func summariseRgwSyncVerdict(sourceZone string, remoteName string, info RgwSyncInfo, verdict RgwSyncVerdict) types.RgwReplicationSyncBrief {
 	brief := types.RgwReplicationSyncBrief{
 		SourceZone:   sourceZone,
@@ -452,6 +507,9 @@ func summariseRgwSyncVerdict(sourceZone string, remoteName string, info RgwSyncI
 	}
 
 	switch {
+	case verdict.NotSource:
+		brief.State = types.RgwSyncStateNotSource
+		return brief
 	case verdict.LocalUnavailable:
 		brief.State = types.RgwSyncStateLocalUnavailable
 		return brief

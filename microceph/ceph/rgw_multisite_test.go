@@ -5,6 +5,7 @@ package ceph
 // the pure verdict and validation helpers are tested with inline data.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -92,6 +93,29 @@ func (s *RgwMultisiteSuite) TestGetRgwZoneGroup() {
 	assert.Contains(s.T(), names, "sitea")
 	assert.Contains(s.T(), names, "siteb")
 	assert.NotEmpty(s.T(), zonegroup.Zones[0].Endpoints)
+	assert.True(s.T(), zonegroup.Zones[0].SyncFromAll)
+	assert.Empty(s.T(), zonegroup.Zones[0].SyncFrom)
+}
+
+// sync_from_all defaults to true when absent, matching radosgw-admin's own
+// decoder; a plain zero value would silently invert the topology.
+func (s *RgwMultisiteSuite) TestRgwZoneGroupZoneUnmarshalDefaults() {
+	zone := RgwZoneGroupZone{}
+	err := json.Unmarshal([]byte(`{"id": "z1", "name": "sitea"}`), &zone)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), zone.SyncFromAll)
+	assert.Empty(s.T(), zone.SyncFrom)
+
+	zone = RgwZoneGroupZone{}
+	err = json.Unmarshal([]byte(`{"id": "z1", "name": "sitea", "sync_from_all": false, "sync_from": ["siteb"]}`), &zone)
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), zone.SyncFromAll)
+	assert.Equal(s.T(), []string{"siteb"}, zone.SyncFrom)
+
+	zone = RgwZoneGroupZone{}
+	err = json.Unmarshal([]byte(`{"id": "z1", "name": "sitea", "sync_from_all": true}`), &zone)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), zone.SyncFromAll)
 }
 
 func (s *RgwMultisiteSuite) TestGetRgwZone() {
