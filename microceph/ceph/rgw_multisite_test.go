@@ -5,6 +5,7 @@ package ceph
 // the pure verdict and validation helpers are tested with inline data.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -92,6 +93,29 @@ func (s *RgwMultisiteSuite) TestGetRgwZoneGroup() {
 	assert.Contains(s.T(), names, "sitea")
 	assert.Contains(s.T(), names, "siteb")
 	assert.NotEmpty(s.T(), zonegroup.Zones[0].Endpoints)
+	assert.True(s.T(), zonegroup.Zones[0].SyncFromAll)
+	assert.Empty(s.T(), zonegroup.Zones[0].SyncFrom)
+}
+
+// sync_from_all defaults to true when absent, matching radosgw-admin's own
+// decoder; a plain zero value would silently invert the topology.
+func (s *RgwMultisiteSuite) TestRgwZoneGroupZoneUnmarshalDefaults() {
+	zone := RgwZoneGroupZone{}
+	err := json.Unmarshal([]byte(`{"id": "z1", "name": "sitea"}`), &zone)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), zone.SyncFromAll)
+	assert.Empty(s.T(), zone.SyncFrom)
+
+	zone = RgwZoneGroupZone{}
+	err = json.Unmarshal([]byte(`{"id": "z1", "name": "sitea", "sync_from_all": false, "sync_from": ["siteb"]}`), &zone)
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), zone.SyncFromAll)
+	assert.Equal(s.T(), []string{"siteb"}, zone.SyncFrom)
+
+	zone = RgwZoneGroupZone{}
+	err = json.Unmarshal([]byte(`{"id": "z1", "name": "sitea", "sync_from_all": true}`), &zone)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), zone.SyncFromAll)
 }
 
 func (s *RgwMultisiteSuite) TestGetRgwZone() {
@@ -108,6 +132,51 @@ func (s *RgwMultisiteSuite) TestGetRgwZone() {
 	assert.Equal(s.T(), "7b7a8b32-3e1e-4bab-9965-e756fbe29aa7", zone.ID)
 	assert.NotEmpty(s.T(), zone.SystemKey.AccessKey)
 	assert.NotEmpty(s.T(), zone.SystemKey.SecretKey)
+}
+
+func (s *RgwMultisiteSuite) TestGetRgwPeriod() {
+	r := mocks.NewRunner(s.T())
+
+	output, _ := os.ReadFile("./test_assets/rgw_period_get.json")
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "period", "get"}...).Return(string(output), nil).Once()
+	common.ProcessExec = r
+
+	period, err := GetRgwPeriod("", "")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), "67be86c9-2912-4ce2-835d-9bdf91915363", period.MasterZonegroup)
+	assert.Equal(s.T(), "7b7a8b32-3e1e-4bab-9965-e756fbe29aa7", period.MasterZone)
+	assert.Len(s.T(), period.PeriodMap.ZoneGroups, 1)
+	assert.Equal(s.T(), "microceph", period.PeriodMap.ZoneGroups[0].Name)
+	assert.Len(s.T(), period.PeriodMap.ZoneGroups[0].Zones, 2)
+}
+
+func (s *RgwMultisiteSuite) TestGetRgwPeriodRemote() {
+	r := mocks.NewRunner(s.T())
+
+	output, _ := os.ReadFile("./test_assets/rgw_period_get.json")
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "period", "get", "--cluster", "siteb", "--id", "sitea"}...).Return(string(output), nil).Once()
+	common.ProcessExec = r
+
+	period, err := GetRgwPeriod("siteb", "sitea")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), "7b7a8b32-3e1e-4bab-9965-e756fbe29aa7", period.MasterZone)
+}
+
+func (s *RgwMultisiteSuite) TestGetRgwPeriodUnconfigured() {
+	r := mocks.NewRunner(s.T())
+
+	// A realm-less gateway fails period get; the wrapper swallows the exec
+	// error into a zero-value period like the other topology reads.
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "period", "get"}...).Return("", fmt.Errorf("failed to load realm: (2) No such file or directory")).Once()
+	common.ProcessExec = r
+
+	period, err := GetRgwPeriod("", "")
+	assert.NoError(s.T(), err)
+	assert.Empty(s.T(), period.MasterZone)
+	assert.Empty(s.T(), period.PeriodMap.ZoneGroups)
 }
 
 func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusSecondary() {
@@ -139,6 +208,31 @@ func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusInvalidResponse() {
 
 	_, err := GetRgwMetadataSyncStatus("", "")
 	assert.Error(s.T(), err)
+	assert.NotErrorIs(s.T(), err, ErrRgwSyncStatusUnreadable)
+}
+
+// A command that cannot run at all is a different failure from a malformed
+// response, and the sentinel is what lets callers tell them apart.
+func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusCommandFailure() {
+	r := mocks.NewRunner(s.T())
+
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "metadata", "sync", "status"}...).Return("", fmt.Errorf("exit status 5")).Once()
+	common.ProcessExec = r
+
+	_, err := GetRgwMetadataSyncStatus("", "")
+	assert.ErrorIs(s.T(), err, ErrRgwSyncStatusUnreadable)
+}
+
+func (s *RgwMultisiteSuite) TestGetRgwDataSyncStatusCommandFailure() {
+	r := mocks.NewRunner(s.T())
+
+	r.On("RunCommand", []interface{}{
+		"radosgw-admin", "data", "sync", "status", "--source-zone", "sitea"}...).Return("", fmt.Errorf("exit status 5")).Once()
+	common.ProcessExec = r
+
+	_, err := GetRgwDataSyncStatus("sitea", "", "")
+	assert.ErrorIs(s.T(), err, ErrRgwSyncStatusUnreadable)
 }
 
 func (s *RgwMultisiteSuite) TestGetRgwMetadataSyncStatusMaster() {
@@ -184,6 +278,7 @@ func (s *RgwMultisiteSuite) TestGetRgwDataSyncStatusInvalidResponse() {
 
 	_, err := GetRgwDataSyncStatus("sitea", "", "")
 	assert.Error(s.T(), err)
+	assert.NotErrorIs(s.T(), err, ErrRgwSyncStatusUnreadable)
 }
 
 func (s *RgwMultisiteSuite) TestGetRgwMdlogStatus() {

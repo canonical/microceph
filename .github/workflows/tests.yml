@@ -93,6 +93,11 @@ jobs:
             suite: api-tests
             args: --variable XTRACE:True
 
+          - id: rgw-replication-status-test
+            name: RGW replication status API
+            suite: rgw-replication-status-test
+            args: --variable XTRACE:True
+
           - id: single-system-tests
             name: Single node with encryption
             suite: single-system-tests
@@ -141,6 +146,10 @@ jobs:
             name: Test MicroCeph Cephfs Remote Replication features.
             suite: cephfs-replication-test
             runner: ubuntu-24.04
+
+          - id: rgw-replication-test
+            name: Test MicroCeph RGW replication status against a real multisite.
+            suite: rgw-replication-test
 
           - id: nfs-test
             name: Test MicroCeph NFS feature
