@@ -31,8 +31,13 @@ func createMonMap(s interfaces.StateInterface, path string, fsid string, address
 }
 
 func genMonmap(path string, fsid string) error {
+	// A persistent Nautilus feature makes --add write the initial monitor as a
+	// v2/v1 address vector. Starting with a v1-only map and upgrading it after
+	// the monitor starts leaves Ceph 20 reporting MON_MSGR2_NOT_ENABLED.
 	args := []string{
 		"--create",
+		"--feature-set", "nautilus",
+		"--persistent",
 		"--fsid", fsid,
 		path,
 	}
