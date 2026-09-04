@@ -1,0 +1,31 @@
+From 18cb6bf5ad94b7452b0f4e3a558913f662246c9b Mon Sep 17 00:00:00 2001
+From: Canonical MicroCeph <microceph@canonical.com>
+Subject: [PATCH] mgr: supply a default for optional notify types
+
+Ceph 20.2.4 treats a missing NOTIFY_TYPES member as optional, but leaves the
+AttributeError raised by PyObject_GetAttrString pending. Subsequent Python C
+API calls then fail while loading manager modules. Upstream fixed the C++
+exception handling in 18cb6bf5ad94 ("mgr/PyModule: clear Python exception when
+NOTIFY_TYPES is missing").
+
+The snap stages binary packages, so apply the equivalent harmless Python
+workaround until the PPA includes that upstream fix: every MgrModule subclass
+inherits the documented empty notification list unless it declares its own.
+
+---
+ share/ceph/mgr/mgr_module.py | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/share/ceph/mgr/mgr_module.py b/share/ceph/mgr/mgr_module.py
+index 123456789ab..abcdef01234 100644
+--- a/share/ceph/mgr/mgr_module.py
++++ b/share/ceph/mgr/mgr_module.py
+@@ -1032,2 +1032,6 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
+ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
++    # Ceph 20.2.4 leaves an AttributeError pending for missing optional
++    # NOTIFY_TYPES. Keep the optional default on the base class until the
++    # staged Ceph package includes upstream 18cb6bf5ad94.
++    NOTIFY_TYPES: List[NotifyType] = []
+     MGR_POOL_NAME = ".mgr"
+--
+2.43.0
