@@ -100,10 +100,10 @@ func joinMon(hostname string, path string) error {
 	return bootstrapMon(hostname, path, monmap, keyring)
 }
 
-// monRemovalVerifyTimeout bounds the detached postcondition check after
-// `ceph mon rm`. The command may have committed just as its caller's context
-// expired, so checking with the cancelled context would turn a successful
-// removal into an ambiguous failure.
+// monRemovalVerifyTimeout bounds the detached postcondition check after an
+// ambiguous `ceph mon rm` result. The command may have committed just as its
+// caller's context expired, so checking with the cancelled context would turn
+// a successful removal into an ambiguous failure.
 const monRemovalVerifyTimeout = 30 * time.Second
 
 // getMonmapNames returns the monitor names in the committed monmap.
@@ -198,9 +198,9 @@ func removeMon(ctx context.Context, hostname string) error {
 	return nil
 }
 
-// verifyMonAbsent checks the monmap with a fresh, bounded context. This makes
-// an ambiguous `ceph mon rm` outcome resumable even when the original request
-// was cancelled while the command response was in flight.
+// verifyMonAbsent checks the monmap with a fresh, bounded context after an
+// ambiguous `ceph mon rm` result. This makes a removal resumable even when the
+// original request was cancelled while the command response was in flight.
 func verifyMonAbsent(ctx context.Context, hostname string) (bool, error) {
 	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), monRemovalVerifyTimeout)
 	defer cancel()
@@ -263,22 +263,23 @@ func ensureMonAbsent(ctx context.Context, hostname string) error {
 	}
 
 	removeErr := removeMon(ctx, hostname)
-	absent, verifyErr := verifyMonAbsent(ctx, hostname)
-	if verifyErr != nil {
-		if removeErr != nil {
-			return fmt.Errorf("%w; failed to verify monitor removal: %v", removeErr, verifyErr)
-		}
-		return fmt.Errorf("monitor %q removal could not be verified: %w", hostname, verifyErr)
-	}
-	if absent {
-		// This also handles an ambiguous command error after the monmap change
-		// committed successfully.
+	if removeErr == nil {
+		// Ceph replies to a successful `mon rm` only after the monmap proposal
+		// commits. The removed MON can immediately exit, so a follow-up client
+		// command from that host may be unable to reach the remaining quorum.
 		return nil
 	}
-	if removeErr != nil {
-		return removeErr
+
+	absent, verifyErr := verifyMonAbsent(ctx, hostname)
+	if verifyErr != nil {
+		return fmt.Errorf("%w; failed to verify monitor removal: %v", removeErr, verifyErr)
 	}
-	return fmt.Errorf("monitor %q remains in the monitor map after removal", hostname)
+	if absent {
+		// The command response was ambiguous, but the monmap proves that the
+		// removal committed successfully.
+		return nil
+	}
+	return removeErr
 }
 
 func getActiveMons() ([]string, error) {
