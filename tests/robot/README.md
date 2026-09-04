@@ -78,7 +78,7 @@ cluster-tests                      static-checks
 dsl-functional-tests               test-maintenance-modes
 loop-file-tests                    test-sequential-mon-host-refresh
 messenger-v2-tests                 unit-tests
-multi-node-tests                   upgrade-reef-tests
+multi-node-tests                   upgrade-squid-tests
 multi-node-tests-with-custom-microceph-ip
                                    wal-db-tests
                                    wiping-test
