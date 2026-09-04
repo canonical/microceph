@@ -1,16 +1,16 @@
 *** Settings ***
-Documentation    upgrade-reef-tests
-...    Installs MicroCeph from reef/stable Snap Store channel on 4 containers, bootstraps,
+Documentation    upgrade-squid-tests
+...    Installs MicroCeph from squid/stable Snap Store channel on 4 containers, bootstraps,
 ...    adds 3 OSDs, enables and exercises RGW, then upgrades to the locally-built snap
 ...    and verifies the cluster remains healthy.
 Resource        ../resources/microceph_harness.resource
-Suite Setup     Upgrade Reef Suite Setup
+Suite Setup     Upgrade Squid Suite Setup
 Suite Teardown  Teardown MicroCeph Environment
-Test Tags       multi-node    upgrade    osd    rgw    lxd    slow    integration    deprecated
+Test Tags       multi-node    upgrade    osd    rgw    lxd    slow    integration
 
 *** Keywords ***
-Upgrade Reef Suite Setup
-    Launch Outer Test VM    vm_name=microceph-ureef-vm    disk_size=${OUTER_VM_DISK}
+Upgrade Squid Suite Setup
+    Launch Outer Test VM    vm_name=microceph-usquid-vm    disk_size=${OUTER_VM_DISK}
     Copy Scripts To VM
     Copy Snap To VM
     Install Tools
@@ -18,13 +18,13 @@ Upgrade Reef Suite Setup
     Free Runner Disk
     Setup LXD In VM
     Create LXD Containers With Loop Devices    public
-    Install MicroCeph From Store On All Nodes    reef/stable
+    Install MicroCeph From Store On All Nodes    squid/stable
     Bootstrap Head Node
     Join Worker Nodes To Cluster
 
 *** Test Cases ***
 Test Add OSDs Before Upgrade
-    [Documentation]    Adds 3 OSDs (node-wrk0..2) from the reef/stable build.
+    [Documentation]    Adds 3 OSDs (node-wrk0..2) from the squid/stable build.
     [Tags]    osd
     Add OSD To Node    node-wrk0
     Add OSD To Node    node-wrk1

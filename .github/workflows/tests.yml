@@ -125,9 +125,9 @@ jobs:
             name: Test WAL/DB device usage
             suite: wal-db-tests
 
-          - id: upgrade-reef-tests
-            name: Test reef upgrades
-            suite: upgrade-reef-tests
+          - id: upgrade-squid-tests
+            name: Test squid upgrades
+            suite: upgrade-squid-tests
 
           - id: cluster-tests
             name: Test MicroCeph Cluster features.
