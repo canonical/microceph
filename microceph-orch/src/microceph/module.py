@@ -28,7 +28,7 @@ from orchestrator import (
     InventoryHost,
     ServiceDescription,
     DaemonDescription,
-    CLICommandMeta,
+    OrchestratorCLICommandBase,
     handle_orch_error,
     OrchResult,
 )
@@ -45,9 +45,10 @@ daemon_spec_map = {
     'nfs': NFSServiceSpec,
 }
 
-class MicroCephOrchestrator(Orchestrator,
-                            MgrModule,
-                            metaclass=CLICommandMeta):
+class MicroCephOrchestrator(Orchestrator, MgrModule):
+    CLICommand = OrchestratorCLICommandBase.make_registry_subtype(
+        "MicroCephOrchestratorCLICommand"
+    )
 
     def __init__(self, *args: Any, **kwargs: Any):
         """
