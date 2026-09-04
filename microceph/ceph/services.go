@@ -221,7 +221,9 @@ var (
 // invokes them through those injectable vars so teardown ordering and failure
 // boundaries stay unit-testable.
 
-// DeleteService deletes a service from the node.
+// DeleteService deletes a service from the node. For mon, mgr and mds it first
+// renders ceph.conf from the shared database, so the teardown's ceph commands
+// can reach a current monitor.
 func DeleteService(ctx context.Context, s interfaces.StateInterface, service string) error {
 	// Serialize teardown with bootstrap, join, service enablement, and startup
 	// re-enablement. In particular, reEnableServices must not observe the service
@@ -231,6 +233,23 @@ func DeleteService(ctx context.Context, s interfaces.StateInterface, service str
 	defer serviceStartMu.Unlock()
 
 	hostname := s.ClusterState().Name()
+
+	// Render ceph.conf from the shared database before touching Ceph. The
+	// ensure*Absent phases below run `ceph` commands on this node, and this
+	// node's `mon host` line is otherwise refreshed only by the once-a-minute
+	// loop in Start. A MON added elsewhere within that minute is missing from
+	// it, so once this node's own MON leaves the monmap the local client has no
+	// reachable monitor and hangs until its deadline. Reconciliation adds
+	// services before removing any, so the database already holds every current
+	// MON address at this point. Other services are torn down without ceph
+	// commands, so they skip the render and its public network requirement.
+	switch service {
+	case "mon", "mgr", "mds":
+		err := updateConfigFunc(ctx, s)
+		if err != nil {
+			return fmt.Errorf("failed to render ceph config before %s removal: %w", service, err)
+		}
+	}
 
 	if service == "mon" {
 		// Commit membership removal while the source MON is still running. With
