@@ -42,16 +42,17 @@ func TestEnsureMonAbsentRefusesDegradedResultingMonmap(t *testing.T) {
 	assert.ErrorIs(t, err, ErrKeepOneInvariant)
 }
 
-func TestEnsureMonAbsentRemovesAndConfirmsMembership(t *testing.T) {
+func TestEnsureMonAbsentTrustsCommittedRemovalReply(t *testing.T) {
 	r := withMockRunner(t)
 	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
 		Return(`{"mons":[{"name":"node-a"},{"name":"node-b"}]}`, nil).Once()
 	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "stat", "-f", "json").
 		Return(`{"quorum":[{"rank":0,"name":"node-a"},{"rank":1,"name":"node-b"}]}`, nil).Once()
+	// A successful `ceph mon rm` reply is sent only after the monmap proposal
+	// commits. The removed daemon may already be exiting and unable to run a
+	// follow-up client command, so no post-removal readback is expected here.
 	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "rm", "node-a").
 		Return("", nil).Once()
-	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
-		Return(`{"mons":[{"name":"node-b"}]}`, nil).Once()
 
 	err := ensureMonAbsent(context.Background(), "node-a")
 	assert.NoError(t, err)
@@ -96,22 +97,6 @@ func TestEnsureMonAbsentPreservesRemovalFailure(t *testing.T) {
 
 	err := ensureMonAbsent(context.Background(), "node-a")
 	assert.ErrorIs(t, err, removeErr)
-}
-
-func TestEnsureMonAbsentFailsWhenSuccessfulRemovalCannotBeVerified(t *testing.T) {
-	r := withMockRunner(t)
-	verifyErr := errors.New("verification unavailable")
-	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
-		Return(`{"mons":[{"name":"node-a"},{"name":"node-b"}]}`, nil).Once()
-	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "stat", "-f", "json").
-		Return(`{"quorum_names":["node-a","node-b"]}`, nil).Once()
-	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "rm", "node-a").
-		Return("", nil).Once()
-	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
-		Return("", verifyErr).Once()
-
-	err := ensureMonAbsent(context.Background(), "node-a")
-	assert.ErrorIs(t, err, verifyErr)
 }
 
 func TestEnsureMonAbsentRejectsMalformedMonmap(t *testing.T) {
