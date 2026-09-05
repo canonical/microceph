@@ -289,7 +289,7 @@ func updateDbForMon(s interfaces.StateInterface, ctx context.Context, tx *sql.Tx
 	}
 
 	key := fmt.Sprintf("mon.host.%s", s.ClusterState().Name())
-	_, err = database.CreateConfigItem(ctx, tx, database.ConfigItem{Key: key, Value: monHost})
+	err = database.UpsertConfigItem(ctx, tx, database.ConfigItem{Key: key, Value: monHost})
 	if err != nil {
 		return fmt.Errorf("failed to record mon host: %w", err)
 	}
