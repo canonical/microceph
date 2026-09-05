@@ -32,6 +32,34 @@ Ceph Only Bootstrap Target And Verify
     Run In Container    node-wrk0    microceph.ceph -s    30
     Assert Member Has Control Services    ${target}    yes
 
+Get Public Network IP
+    [Documentation]    The container's address on the LXD public network, which is the
+    ...    address ceph.conf's mon host carries. `hostname -I` lists the management
+    ...    address first, so the public one is selected by subnet.
+    [Arguments]    ${container}
+    ${cidr}=    Get Public Network CIDR
+    ${res}=    Run In Container    ${container}    hostname -I    30
+    ${ip}=    Evaluate    next((a for a in """${res.stdout}""".split() if ipaddress.ip_address(a) in ipaddress.ip_network("""${cidr}""", strict=False)), "")    modules=ipaddress
+    Should Not Be Empty    ${ip}    msg=No address of ${container} on public network ${cidr}: ${res.stdout}
+    RETURN    ${ip}
+
+Pin Mon Host To Self
+    [Documentation]    Overwrite the container's ceph.conf `mon host` line with only its own
+    ...    address, reproducing a render from before a peer MON was added. The daemon's
+    ...    refresh loop only re-renders when the MON list changes, so once it has rendered
+    ...    the current list the pin holds until service teardown renders the file itself.
+    [Arguments]    ${container}
+    ${ip}=    Get Public Network IP    ${container}
+    Run In Container    ${container}    sed -i 's/^mon host = .*/mon host = ${ip}/' /var/snap/microceph/current/conf/ceph.conf    30
+    ${pinned}=    Get Ceph Conf Value    ${container}    mon host
+    Should Be Equal As Strings    ${pinned}    ${ip}    msg=Failed to pin mon host on ${container}: ${pinned}
+
+Assert Mon Host Includes
+    [Documentation]    The container's rendered ceph.conf `mon host` line names the given address.
+    [Arguments]    ${container}    ${peer_ip}
+    ${hosts}=    Get Ceph Conf Value    ${container}    mon host
+    Should Contain    ${hosts}    ${peer_ip}    msg=mon host on ${container} does not list ${peer_ip}: ${hosts}
+
 *** Test Cases ***
 Test Deferred Join Forms MicroCluster Without Ceph
     [Documentation]    `microceph cluster join --defer-ceph` joins MicroCluster but does
@@ -72,11 +100,26 @@ Test Declarative Control Placement Migration Preserves Quorum
     [Documentation]    Moving the only desired control placement from the bootstrap member
     ...    to its replacement must commit MON membership removal before stopping the source.
     ...    The destination remains a one-MON quorum and repeating the policy is idempotent.
+    ...    Once the source's refresh loop has rendered the destination MON, the source's
+    ...    ceph.conf is pinned to list only its own MON, as a render from before the add
+    ...    would. Nothing rewrites that pin before teardown, so the removal verify on the
+    ...    source only succeeds if service teardown re-renders mon host before `ceph mon rm`;
+    ...    otherwise it hangs on the exited local MON until its deadline kills it.
     [Tags]    placement    migration
     ${policy}=    Set Variable    {"mode":"reconcile","members":{"node-wrk0":{"control":true},"node-wrk1":{"control":false}}}
+    ${dst_ip}=    Get Public Network IP    node-wrk0
+    # The refresh loop renders the destination MON into the source's conf within a
+    # minute of the add and then stays idle until the MON list changes again.
+    Wait Until Keyword Succeeds    90s    5s    Assert Mon Host Includes    node-wrk1    ${dst_ip}
+    Pin Mon Host To Self    node-wrk1
+    ${start}=    Get Time    epoch
     ${resp}=    MicroCeph API Put In Container    node-wrk0    placement    ${policy}
     ${code}=    Response Status Code    ${resp}
     Should Be Equal As Integers    ${code}    200    msg=Control migration failed: ${resp}
+    ${end}=    Get Time    epoch
+    ${elapsed}=    Evaluate    ${end} - ${start}
+    Should Be True    ${elapsed} < 25    msg=Migration took ${elapsed}s: the MON removal verify ran against a stale mon host and timed out
+    Assert Mon Host Includes    node-wrk1    ${dst_ip}
     ${mons}=    Get Mon Count
     Should Be Equal As Integers    ${mons}    1    msg=Expected destination-only monmap after migration
     Assert Mon Quorum Members    node-wrk0
