@@ -161,6 +161,30 @@ func (s *configSuite) TestGetMonitorsFromConfigRetainsLargeNumericAdoptedEntry()
 	assert.Equal(s.T(), []string{"192.0.2.1"}, monitorAddresses)
 }
 
+func (s *configSuite) TestGetMonitorAddressesFailsWhenNoMonitorCanBeFound() {
+	origFetch := fetchConfigDb
+	s.T().Cleanup(func() { fetchConfigDb = origFetch })
+	fetchConfigDb = func(_ context.Context, _ interfaces.StateInterface) (map[string]string, error) {
+		return map[string]string{"mon.host.removed-monitor": "10.0.0.1"}, nil
+	}
+
+	origActiveMonitors := getActiveMonitorMembersFunc
+	s.T().Cleanup(func() { getActiveMonitorMembersFunc = origActiveMonitors })
+	getActiveMonitorMembersFunc = func(_ context.Context, _ interfaces.StateInterface) (map[string]struct{}, error) {
+		return map[string]struct{}{}, nil
+	}
+
+	origBackwardCompatMonitors := backwardCompatMonitorsFunc
+	s.T().Cleanup(func() { backwardCompatMonitorsFunc = origBackwardCompatMonitors })
+	backwardCompatMonitorsFunc = func(_ context.Context, _ interfaces.StateInterface) ([]string, error) {
+		return nil, nil
+	}
+
+	monitorAddresses, err := GetMonitorAddresses(context.Background(), nil)
+	assert.Nil(s.T(), monitorAddresses)
+	assert.ErrorContains(s.T(), err, "no monitor addresses found")
+}
+
 // --- UpdateConfig / radosgw.conf mon host refresh tests (issue #766) ---
 
 // setupUpdateConfigMocks wires the injectable seams that UpdateConfig relies on

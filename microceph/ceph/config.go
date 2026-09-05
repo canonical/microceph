@@ -286,6 +286,11 @@ var getMonitorCountFunc = func(ctx context.Context, s interfaces.StateInterface)
 // Extracted as a variable to allow overriding in tests.
 var fetchConfigDb = GetConfigDb
 
+// backwardCompatMonitorsFunc retrieves monitor addresses from the member list
+// for clusters created before mon.host config entries were persisted.
+// Extracted as a variable to allow overriding in tests.
+var backwardCompatMonitorsFunc = backwardCompatMonitors
+
 // getActiveMonitorMembersFunc returns the members with an active monitor
 // service record. It is extracted as a variable to allow overriding in tests.
 var getActiveMonitorMembersFunc = func(ctx context.Context, s interfaces.StateInterface) (map[string]struct{}, error) {
@@ -424,7 +429,7 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	// backward compat: if no mon hosts found, get them from the node addresses but don't
 	// insert into db, as the join logic will take care of that.
 	if len(monitorAddresses) == 0 {
-		monitorAddresses, err = backwardCompatMonitors(ctx, s)
+		monitorAddresses, err = backwardCompatMonitorsFunc(ctx, s)
 		if err != nil {
 			return fmt.Errorf("failed to get monitor addresses: %w", err)
 		}
@@ -521,8 +526,10 @@ func GetConfigDb(ctx context.Context, s interfaces.StateInterface) (map[string]s
 }
 
 // GetMonitorAddresses retrieves the monitor addresses from the database.
+// It returns an error when neither persisted nor backward-compatible monitor
+// discovery finds a monitor address.
 func GetMonitorAddresses(ctx context.Context, s interfaces.StateInterface) ([]string, error) {
-	config, err := GetConfigDb(ctx, s)
+	config, err := fetchConfigDb(ctx, s)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config db: %w", err)
 	}
@@ -535,10 +542,13 @@ func GetMonitorAddresses(ctx context.Context, s interfaces.StateInterface) ([]st
 	monitorAddresses := getMonitorsFromConfig(config, activeMonitorMembers)
 
 	if len(monitorAddresses) == 0 {
-		monitorAddresses, err = backwardCompatMonitors(ctx, s)
+		monitorAddresses, err = backwardCompatMonitorsFunc(ctx, s)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get monitor addresses: %w", err)
 		}
+	}
+	if len(monitorAddresses) == 0 {
+		return nil, fmt.Errorf("no monitor addresses found")
 	}
 
 	// Ensure that IPv6 addresses have square brackets around them (if IPv6 is used).

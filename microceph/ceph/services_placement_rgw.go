@@ -3,7 +3,6 @@ package ceph
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/canonical/microceph/microceph/interfaces"
 )
@@ -30,18 +29,12 @@ func (rgw *RgwServicePlacement) HospitalityCheck(s interfaces.StateInterface) er
 }
 
 func (rgw *RgwServicePlacement) ServiceInit(ctx context.Context, s interfaces.StateInterface) error {
-	// fetch configs from db
-	config, err := GetConfigDb(ctx, s)
+	monitorAddresses, err := GetMonitorAddresses(ctx, s)
 	if err != nil {
-		return fmt.Errorf("failed to get config db: %w", err)
+		return err
 	}
 
-	activeMonitorMembers, err := getActiveMonitorMembersFunc(ctx, s)
-	if err != nil {
-		return fmt.Errorf("failed to get active monitor members: %w", err)
-	}
-
-	return EnableRGW(s, rgw.Port, rgw.SSLPort, rgw.SSLCertificate, rgw.SSLPrivateKey, getMonitorsFromConfig(config, activeMonitorMembers))
+	return EnableRGW(s, rgw.Port, rgw.SSLPort, rgw.SSLCertificate, rgw.SSLPrivateKey, monitorAddresses)
 }
 
 func (rgw *RgwServicePlacement) PostPlacementCheck(s interfaces.StateInterface) error {

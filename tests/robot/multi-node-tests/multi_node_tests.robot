@@ -82,28 +82,18 @@ Wait For CRUSH Rule
     END
     Fail    CRUSH rule did not reach ${expected} after ${attempts} attempts (last=${val})
 
-Remove Node Head Node
-    [Documentation]    Removes specified node via node-wrk0.
-    ...    Waits for cluster health before attempting removal and retries on transient
-    ...    'context canceled' failures from the pre-remove hook RPC (the target node
-    ...    may be busy rebalancing OSDs and not respond in time).
+Force Remove Node Head Node
+    [Documentation]    Stops ${node} so its pre-remove hook is unreachable, then force-removes it
+    ...    via node-wrk0. Verifies the database trigger removes its mon.host config entry.
     [Arguments]    ${node}
-    Log To Console    [cluster] Removing node ${node} via node-wrk0...
+    Log To Console    [cluster] Force-removing unreachable node ${node} via node-wrk0...
     Verify Cluster Health Head Node
-    FOR    ${attempt}    IN RANGE    3
-        ${result}=    Run In VM    lxc exec node-wrk0 -- microceph cluster remove ${node}    120
-        IF    ${result.rc} == 0    BREAK
-        Log To Console    [cluster] Remove attempt ${attempt} failed (rc=${result.rc}): ${result.stderr.strip()} — retrying in 10s
-        IF    ${attempt} == 2    Fail    Failed to remove ${node} after 3 attempts: ${result.stderr}
-        Sleep    10s
-    END
-    FOR    ${i}    IN RANGE    8
-        ${in_mon}=    Node Is In Mon List    ${node}
-        IF    "${in_mon}" != "yes"    BREAK
-        IF    ${i} == 7    Fail    ${node} still in mon list 40 s after removal
-        Sleep    5s
-    END
-    Sleep    1s
+    ${mon_host_before}=    Run In Container    node-wrk0    microceph cluster sql "SELECT key FROM config WHERE key = 'mon.host.${node}'"    30
+    Should Contain    ${mon_host_before.stdout}    mon.host.${node}    msg=Expected mon.host config for ${node} before force removal
+    Run In VM And Check    lxc stop --force ${node}    60
+    Run In Container    node-wrk0    microceph cluster remove ${node} --force    120
+    ${mon_host_after}=    Run In Container    node-wrk0    microceph cluster sql "SELECT key FROM config WHERE key = 'mon.host.${node}'"    30
+    Should Not Contain    ${mon_host_after.stdout}    mon.host.${node}    msg=mon.host config for ${node} survived force removal
     Run In Container    node-wrk0    microceph.ceph -s    30
     Run In Container    node-wrk0    microceph status    30
 
@@ -252,12 +242,11 @@ Test Prohibit CRUSH Scaledown
     Wait For CRUSH Auto Host Rule On Head Node
 
 Test Node Removal
-    [Documentation]    Re-adds wrk0's OSD then removes node-wrk3 from the cluster.
-    ...    After removal verifies node-wrk3 is gone from microceph status and that the mon
-    ...    daemon count is either 3 (wrk3 removed cleanly) or 4 with wrk3 out of quorum
-    ...    (transitional state), mirroring the original bash "Test remove node wrk3" step.
+    [Documentation]    Re-adds wrk0's OSD then force-removes an unreachable node-wrk3.
+    ...    Verifies the force-removal trigger deletes node-wrk3's mon.host config entry and
+    ...    that node-wrk3 is gone from microceph status with a viable monitor quorum.
     [Tags]    multi-node    cluster
     Add OSD To Node    node-wrk0
     Wait For OSD Count Head    3
-    Remove Node Head Node    node-wrk3
+    Force Remove Node Head Node    node-wrk3
     Verify Node Removed From Cluster    node-wrk3
