@@ -192,6 +192,10 @@ Verify Cluster Health Head Node
     [Documentation]    Polls microceph.ceph health until HEALTH_OK via node-wrk0.
     Wait For Cluster Health OK    node-wrk0
 
+Verify Legacy CephX Compatibility Head Node
+    [Documentation]    Allows only AUTH_INSECURE_* health checks from pre-AES256K keys on node-wrk0.
+    Wait For Legacy CephX Compatibility    node-wrk0
+
 # ---------------------------------------------------------------------------
 # NFS operations
 # ---------------------------------------------------------------------------

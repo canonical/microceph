@@ -11,6 +11,7 @@ Run with pytest:
 """
 
 import json
+from pathlib import Path
 
 import placement_status
 from microceph_harness import microceph_harness as H
@@ -171,6 +172,45 @@ def test_ceph_osd_counts_empty_string():
 
 def test_ceph_osd_counts_garbage():
     assert H._ceph_osd_counts("not json at all") == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# _legacy_cephx_health_is_compatible
+# ---------------------------------------------------------------------------
+
+def test_legacy_cephx_health_accepts_only_auth_insecure_checks():
+    payload = json.dumps(
+        {
+            "status": "HEALTH_ERR",
+            "checks": {
+                "AUTH_INSECURE_CLIENT_KEY_TYPE": {"severity": "HEALTH_WARN"},
+                "AUTH_INSECURE_SERVICE_KEY_TYPE": {"severity": "HEALTH_ERR"},
+            },
+        }
+    )
+
+    assert H._legacy_cephx_health_is_compatible(payload) is True
+
+
+def test_legacy_cephx_health_rejects_non_auth_warning():
+    payload = json.dumps(
+        {
+            "status": "HEALTH_WARN",
+            "checks": {
+                "AUTH_INSECURE_CLIENT_KEY_TYPE": {"severity": "HEALTH_WARN"},
+                "OSD_DOWN": {"severity": "HEALTH_WARN"},
+            },
+        }
+    )
+
+    assert H._legacy_cephx_health_is_compatible(payload) is False
+
+
+def test_legacy_cephx_health_rejects_non_health_or_empty_checks():
+    assert H._legacy_cephx_health_is_compatible(json.dumps({"status": "HEALTH_OK", "checks": {}})) is False
+    assert H._legacy_cephx_health_is_compatible(
+        json.dumps({"status": "HEALTH_UNKNOWN", "checks": {"AUTH_INSECURE_CLIENT_KEY_TYPE": {"severity": "HEALTH_ERR"}}})
+    ) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1174,6 +1214,37 @@ def test_log_exec_no_output_prints_nothing(monkeypatch):
     H()._log_exec("mkdir -p ~/x", _Res(0, "", ""), quiet=False)
     assert cap.console_lines == []
 
+
+# ---------------------------------------------------------------------------
+# wait_for_legacy_cephx_compatibility
+# ---------------------------------------------------------------------------
+
+def test_wait_for_legacy_cephx_compatibility_checks_health_detail_json(monkeypatch):
+    cap = _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+    health = json.dumps(
+        {
+            "status": "HEALTH_WARN",
+            "checks": {"AUTH_INSECURE_CLIENT_KEY_TYPE": {"severity": "HEALTH_WARN"}},
+        }
+    )
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return _Res(0, health, "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_legacy_cephx_compatibility(tries=1, interval=0)
+
+    assert calls == [
+        ("node-wrk0", ("microceph.ceph", "health", "detail", "-f", "json"), 30, True)
+    ]
+    assert "[health] Legacy CephX checks are the only remaining health checks" in cap.console_lines
+
+
 # ---------------------------------------------------------------------------
 # wait_for_member_control_services (polling absence/presence with convergence)
 # ---------------------------------------------------------------------------
@@ -1264,3 +1335,32 @@ def test_wait_for_control_services_absent_timeout_on_persistent_bad_output(monke
     msg = str(exc.value)
     assert "never became absent" in msg
     assert "unparseable" in msg
+
+
+# ---------------------------------------------------------------------------
+# Single-system suite state sequencing
+# ---------------------------------------------------------------------------
+
+def test_mgr_remote_call_reuses_the_waitready_cluster():
+    """The shared-VM mgr test must not bootstrap MicroCluster a second time."""
+    suite_path = Path(__file__).parents[1] / "single-system-tests" / "single_system_tests.robot"
+    suite = suite_path.read_text()
+    mgr_test = suite.split("Test Mgr Remote Module Call", maxsplit=1)[1].split(
+        "Add OSD With Failure", maxsplit=1
+    )[0]
+
+    assert "Install MicroCeph From Local Snap" not in mgr_test
+    assert "Bootstrap MicroCeph Cluster" not in mgr_test
+
+
+def test_cephfs_replication_uses_a_tentacle_compatible_mount_client():
+    """The external mount client must match the snap's Resolute Ceph release."""
+    suite_path = Path(__file__).parents[1] / "cephfs-replication-test" / "cephfs_replication_tests.robot"
+    suite = suite_path.read_text()
+    install_test = suite.split("Test Install Ceph Common On Host", maxsplit=1)[1].split(
+        "Test Configure CephFS Mirroring", maxsplit=1
+    )[0]
+
+    assert "${OUTER_VM_IMAGE}    ubuntu:26.04" in suite
+    assert "${CEPH_PPA}          ppa:lmlogiudice/ceph-stonking-tentacle" in suite
+    assert "Install Ceph Client From PPA" in install_test

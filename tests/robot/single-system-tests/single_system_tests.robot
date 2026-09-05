@@ -248,10 +248,9 @@ Test Orchestrator Module
     Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mgr" | grep -F ${hn}    30
 
 Test Mgr Remote Module Call
-    [Documentation]    Verifies that a mgr remote call returns its serialized result.
+    [Documentation]    Verifies that a mgr remote call returns its serialized result on the
+    ...    cluster bootstrapped by Test Waitready.
     [Tags]    mgr
-    Install MicroCeph From Local Snap
-    Bootstrap MicroCeph Cluster
     Run In VM And Check    sudo microceph.ceph mgr module enable selftest    30
     Run In VM And Check    sudo microceph.ceph mgr self-test eval "mgr.remote('selftest', 'python_version')" | grep -F "(0,"    30
 

@@ -10,12 +10,30 @@ Suite Teardown  Teardown MicroCeph Environment
 Test Tags       multi-node    cephfs    replication    remote    lxd    slow    integration
 
 *** Variables ***
-${STR1}    ABCDEFGH
-${STR2}    IJKLMNOP
+${STR1}              ABCDEFGH
+${STR2}              IJKLMNOP
+${OUTER_VM_IMAGE}    ubuntu:26.04
+${CEPH_PPA}          ppa:lmlogiudice/ceph-stonking-tentacle
 
 *** Keywords ***
 CephFS Replication Suite Setup
     Provision Multinode VM    microceph-cfsrep-vm    ${OUTER_VM_DISK}    public
+    Verify Resolute Outer VM
+
+Verify Resolute Outer VM
+    [Documentation]    Ensures the external CephFS mount client runs on the PPA's target release.
+    Run In VM And Check    grep -Fx 'VERSION_ID="26.04"' /etc/os-release    30
+
+Install Ceph Client From PPA
+    [Documentation]    Installs the CephFS mount client from the same Resolute PPA as the snap.
+    Run In VM And Check    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common    300
+    Run In VM And Check    sudo add-apt-repository --yes ${CEPH_PPA}    120
+    Run In VM And Check    sudo apt-get update    120
+    Run In VM And Check    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y ceph-common    300
+    ${package}=    Run In VM And Check    dpkg-query -W ceph-common    30
+    Should Contain    ${package.stdout}    ~ppa
+    ${policy}=    Run In VM And Check    apt-cache policy ceph-common    30
+    Should Contain    ${policy.stdout}    lmlogiudice/ceph-stonking-tentacle
 
 Configure CephFS Mirroring
     [Documentation]    Creates CephFS volumes on both sites, enables directory mirroring,
@@ -115,9 +133,9 @@ Test Enable CephFS Mirror Daemon
     Enable Mirror Service On Both Sites    cephfs-mirror
 
 Test Install Ceph Common On Host
-    [Documentation]    Installs ceph-common in the outer VM so that CephFS can be mounted.
+    [Documentation]    Installs a Tentacle-compatible ceph-common client in the outer VM.
     [Tags]    cephfs    replication
-    Run In VM And Check    sudo apt install ceph-common -y    300
+    Install Ceph Client From PPA
 
 Test Configure CephFS Mirroring
     [Documentation]    Creates CephFS volumes on both sites, enables mirroring for /dir1 and /dir2,
