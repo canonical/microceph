@@ -63,8 +63,10 @@ layout:
 apps:
   # Service
   daemon:
-    command: commands/daemon.start
+    command: bin/microceph-pebble run daemon
     daemon: simple
+    stop-mode: sigterm-all
+    stop-timeout: 45s
     plugs:
       - block-devices
       - dm-crypt
@@ -76,8 +78,10 @@ apps:
     slots:
       - microceph
   mds:
-    command: commands/mds.start
+    command: bin/microceph-pebble run mds
     daemon: simple
+    stop-mode: sigterm-all
+    stop-timeout: 45s
     install-mode: disable
     after:
       - daemon
@@ -86,8 +90,10 @@ apps:
       - network-bind
       - process-control
   mon:
-    command: commands/mon.start
+    command: bin/microceph-pebble run mon
     daemon: simple
+    stop-mode: sigterm-all
+    stop-timeout: 45s
     install-mode: disable
     after:
       - daemon
@@ -97,8 +103,10 @@ apps:
       - network-bind
       - process-control
   mgr:
-    command: commands/mgr.start
+    command: bin/microceph-pebble run mgr
     daemon: simple
+    stop-mode: sigterm-all
+    stop-timeout: 45s
     install-mode: disable
     after:
       - daemon
@@ -107,8 +115,10 @@ apps:
       - network-bind
       - process-control
   nfs:
-    command: commands/nfs-ganesha.start
+    command: bin/microceph-pebble run nfs
     daemon: simple
+    stop-mode: sigterm-all
+    stop-timeout: 45s
     install-mode: disable
     after:
       - daemon
@@ -117,12 +127,12 @@ apps:
       - network-bind
       - process-control
   osd:
-    command: commands/osd.start
+    command: bin/microceph-pebble run osd
     reload-command: commands/osd.reload
     daemon: simple
     install-mode: disable
     stop-mode: sigterm-all
-    stop-timeout: 5m
+    stop-timeout: 6m
     after:
       - daemon
     plugs:
@@ -134,8 +144,10 @@ apps:
       - microceph-support
       - process-control
   rgw:
-    command: commands/rgw.start
+    command: bin/microceph-pebble run rgw
     daemon: simple
+    stop-mode: sigterm-all
+    stop-timeout: 45s
     install-mode: disable
     after:
       - daemon
@@ -145,8 +157,10 @@ apps:
       - network-bind
       - process-control
   "rbd-mirror":
-    command: commands/rbd-mirror.start
+    command: bin/microceph-pebble run rbd-mirror
     daemon: simple
+    stop-mode: sigterm-all
+    stop-timeout: 45s
     install-mode: disable
     after:
       - daemon
@@ -155,8 +169,10 @@ apps:
       - network-bind
       - process-control
   "cephfs-mirror":
-    command: commands/cephfs-mirror.start
+    command: bin/microceph-pebble run cephfs-mirror
     daemon: simple
+    stop-mode: sigterm-all
+    stop-timeout: 45s
     install-mode: disable
     after:
       - daemon
@@ -416,6 +432,23 @@ parts:
       - lib/libraft*so*
       - lib/*/libuv*so*
 
+  pebble:
+    # v1.32.1: qualified with Go 1.26.7; keep the source and toolchain explicit.
+    source: https://github.com/canonical/pebble.git
+    source-type: git
+    source-commit: e712a58489c17089c9bc89a3e26d9d4aee89e957
+    plugin: nil
+    build-snaps:
+      - go
+    override-build: |
+      set -eux
+      GOTOOLCHAIN=go1.26.7 CGO_ENABLED=0 go build -mod=readonly -trimpath \
+        -ldflags='-s -w' -o "${CRAFT_PART_INSTALL}/bin/pebble" ./cmd/pebble
+      install -Dm644 COPYING "${CRAFT_PART_INSTALL}/share/doc/pebble/COPYING"
+    prime:
+      - bin/pebble
+      - share/doc/pebble/COPYING
+
   microceph:
     source: microceph/
     after:
@@ -454,6 +487,8 @@ parts:
       # Build the binaries
       go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microceph" -ldflags "-X 'github.com/canonical/microceph/microceph/version.version=${MC_VERSION}'" ./cmd/microceph
       go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 -ldflags "-X 'github.com/canonical/microceph/microceph/version.version=${MC_VERSION}'" ./cmd/microcephd
+      GOTOOLCHAIN=go1.26.7 CGO_ENABLED=0 go build -mod=readonly -trimpath \
+        -ldflags='-s -w' -o "${CRAFT_PART_INSTALL}/bin/microceph-pebble" ./cmd/microceph-pebble
 
       # Strip binaries
       strip -s "${CRAFT_PART_INSTALL}/bin/microceph"
@@ -461,6 +496,7 @@ parts:
     prime:
       - bin/microceph
       - bin/microcephd
+      - bin/microceph-pebble
 
   nfs-ganesha:
     plugin: nil

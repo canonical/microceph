@@ -2,9 +2,11 @@ package ceph
 
 import (
 	"fmt"
-	"github.com/canonical/microceph/microceph/common"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/logger"
 )
 
@@ -95,10 +97,21 @@ func snapCheckActive(service string) error {
 		return err
 	}
 
-	// Check if the particular service is inactive.
+	// Preserve the outer-app check, including the OSD aggregate used at startup.
 	if strings.Contains(out, "inactive") {
 		return fmt.Errorf("%s service is not active", service)
 	}
+	if service == "osd" {
+		return nil
+	}
 
-	return nil
+	// A live supervisor may contain a failed child. Ceph-specific readiness
+	// checks remain with the placement implementations.
+	return pebbleCommand(common.ProcessExec, "status", service)
+}
+
+func pebbleCommand(runner common.Runner, operation, target string) error {
+	binary := filepath.Join(os.Getenv("SNAP"), "bin", "microceph-pebble")
+	_, err := runner.RunCommand(binary, operation, target)
+	return err
 }
