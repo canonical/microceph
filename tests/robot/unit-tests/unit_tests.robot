@@ -8,7 +8,7 @@ Test Tags       unit    fast    smoke
 
 *** Keywords ***
 Check Host Dependencies
-    Require Host Commands    go    make    patch
+    Require Host Commands    go    make
 
 *** Test Cases ***
 Run Go Unit Tests
@@ -47,11 +47,3 @@ Run MicroCeph Orchestrator Unit Tests
     Log    ${result.stdout}
     Log    STDERR: ${result.stderr}
     Should Be Equal As Integers    ${result.rc}    0    msg=pytest failed:\n${result.stdout}\n${result.stderr}
-
-Run Ceph Manager Staging Patch Test
-    [Documentation]    Verifies the staged Ceph workaround supplies optional NOTIFY_TYPES.
-    [Tags]    unit    fast    smoke    shell
-    ${result}=    Run Process    bash    ${REPO_ROOT}/tests/scripts/test_ceph_mgr_notify_patch.sh    timeout=60
-    Log    ${result.stdout}
-    Log    STDERR: ${result.stderr}
-    Should Be Equal As Integers    ${result.rc}    0    msg=Ceph manager staging patch failed:\n${result.stderr}

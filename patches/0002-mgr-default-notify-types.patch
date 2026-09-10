@@ -17,10 +17,9 @@ inherits the documented empty notification list unless it declares its own.
  1 file changed, 4 insertions(+)
 
 diff --git a/share/ceph/mgr/mgr_module.py b/share/ceph/mgr/mgr_module.py
-index 123456789ab..abcdef01234 100644
 --- a/share/ceph/mgr/mgr_module.py
 +++ b/share/ceph/mgr/mgr_module.py
-@@ -1032,2 +1032,6 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
+@@ -1032,2 +1032,6 @@
  class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
 +    # Ceph 20.2.4 leaves an AttributeError pending for missing optional
 +    # NOTIFY_TYPES. Keep the optional default on the base class until the

@@ -1353,14 +1353,58 @@ def test_mgr_remote_call_reuses_the_waitready_cluster():
     assert "Bootstrap MicroCeph Cluster" not in mgr_test
 
 
-def test_cephfs_replication_uses_a_tentacle_compatible_mount_client():
-    """The external mount client must match the snap's Resolute Ceph release."""
-    suite_path = Path(__file__).parents[1] / "cephfs-replication-test" / "cephfs_replication_tests.robot"
-    suite = suite_path.read_text()
-    install_test = suite.split("Test Install Ceph Common On Host", maxsplit=1)[1].split(
-        "Test Configure CephFS Mirroring", maxsplit=1
-    )[0]
+def test_resolute_ceph_client_setup_is_shared():
+    """The two Resolute-client suites use one common setup implementation."""
+    robot_root = Path(__file__).parents[1]
+    resource = (robot_root / "resources" / "microceph_harness.resource").read_text()
 
-    assert "${OUTER_VM_IMAGE}    ubuntu:26.04" in suite
-    assert "${CEPH_PPA}          ppa:lmlogiudice/ceph-stonking-tentacle" in suite
-    assert "Install Ceph Client From PPA" in install_test
+    assert "${CEPH_PPA}" in resource
+    assert "lmlogiudice/ceph-stonking-tentacle" in resource
+    assert "Verify Resolute Outer VM" in resource
+    assert "Install Ceph Client From PPA" in resource
+    assert "sudo add-apt-repository --yes ppa:${CEPH_PPA}" in resource
+    assert "Should Contain    ${policy.stdout}    ${CEPH_PPA}" in resource
+
+    suites = (
+        robot_root / "cephfs-replication-test" / "cephfs_replication_tests.robot",
+        robot_root / "nfs-test" / "nfs_tests.robot",
+    )
+    for suite_path in suites:
+        suite = suite_path.read_text()
+        assert "${OUTER_VM_IMAGE}    ubuntu:26.04" in suite
+        assert "Verify Resolute Outer VM" in suite
+        assert "Install Ceph Client From PPA" in suite
+        assert "Verify Resolute Outer VM\n    [Documentation]" not in suite
+        assert "Install Ceph Client From PPA\n    [Documentation]" not in suite
+        assert "${CEPH_PPA}" not in suite
+
+
+def test_local_snap_install_caches_core26(monkeypatch):
+    """Local core26 snap installs prefetch their matching base snap."""
+    _with_logger(monkeypatch)
+    harness = H()
+    commands = []
+
+    def fake_run_in_vm_and_check(command, timeout):
+        commands.append((command, timeout))
+
+    monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
+
+    harness.install_microceph_from_local_snap("/tmp/microceph.snap")
+
+    assert commands[0] == ("sudo snap install core26 || true", 120)
+
+
+def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
+    """The build validates the patch against the manager module it will patch."""
+    repo_root = Path(__file__).parents[3]
+    snapcraft = (repo_root / "snap" / "snapcraft.yaml").read_text()
+    script = (repo_root / "tests" / "scripts" / "test_ceph_mgr_notify_patch.sh").read_text()
+    unit_suite = (Path(__file__).parents[1] / "unit-tests" / "unit_tests.robot").read_text()
+
+    assert 'test_ceph_mgr_notify_patch.sh" "$CRAFT_STAGE"' in snapcraft
+    assert 'mgr_module="$staging_dir/share/ceph/mgr/mgr_module.py"' in script
+    assert 'cp "$mgr_module"' in script
+    assert "dpkg-deb -x" not in script
+    assert "cat >" not in script
+    assert "Run Ceph Manager Staging Patch Test" not in unit_suite

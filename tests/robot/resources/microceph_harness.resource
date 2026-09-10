@@ -17,6 +17,7 @@ ${OUTER_VM_DISK}      50GiB
 ${OUTER_VM_CPU}            4
 ${OUTER_VM_MEMORY}         6GiB
 ${OUTER_VM_IMAGE}         ubuntu:24.04
+${CEPH_PPA}               lmlogiudice/ceph-stonking-tentacle
 ${INNER_NODE_IMAGE}       ubuntu:22.04
 ${LXD_STORAGE_LOOP_SIZE}   25
 ${REPO_ROOT}          ${CURDIR}/../../..
@@ -39,6 +40,21 @@ Enable DM Crypt
     [Documentation]    Connects the dm-crypt snap interface and restarts microceph.daemon.
     Run In VM And Check    sudo snap connect microceph:dm-crypt    30
     Run In VM And Check    sudo snap restart microceph.daemon    60
+
+Verify Resolute Outer VM
+    [Documentation]    Ensures the external CephFS mount client runs on the PPA's target release.
+    Run In VM And Check    grep -Fx 'VERSION_ID="26.04"' /etc/os-release    30
+
+Install Ceph Client From PPA
+    [Documentation]    Installs the CephFS mount client from the same Resolute PPA as the snap.
+    Run In VM And Check    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common    300
+    Run In VM And Check    sudo add-apt-repository --yes ppa:${CEPH_PPA}    120
+    Run In VM And Check    sudo apt-get update    120
+    Run In VM And Check    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y ceph-common    300
+    ${package}=    Run In VM And Check    dpkg-query -W ceph-common    30
+    Should Contain    ${package.stdout}    ~ppa
+    ${policy}=    Run In VM And Check    apt-cache policy ceph-common    30
+    Should Contain    ${policy.stdout}    ${CEPH_PPA}
 
 # ---------------------------------------------------------------------------
 # Multi-node LXD container setup
