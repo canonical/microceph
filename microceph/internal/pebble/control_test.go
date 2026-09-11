@@ -1,6 +1,7 @@
 package pebble_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -66,8 +67,9 @@ func osdChild(t *testing.T, f fixture, script string) *exec.Cmd {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		cmd.Wait()
+		// The test may already have killed and reaped the child.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
 	})
 	receipt := filepath.Join(f.common, "run", "pebble", "osd", "osd-1.json")
 	deadline := time.Now().Add(5 * time.Second)
@@ -103,8 +105,15 @@ func TestOSDStopChecksActualExit(t *testing.T) {
 	if err == nil || !strings.Contains(string(out), "still running") {
 		t.Fatalf("accepted a live process after stop acknowledgement: %v: %s", err, out)
 	}
-	syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	cmd.Wait()
+	err = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if err != nil {
+		t.Fatalf("kill child process group: %v", err)
+	}
+	err = cmd.Wait()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected killed child to report an exit error, got: %v", err)
+	}
 	out, err = f.command(t, "osd-stop", "1").CombinedOutput()
 	if err != nil {
 		t.Fatalf("verified stopped OSD rejected: %v: %s", err, out)
@@ -115,7 +124,10 @@ func TestOSDStopChecksActualExit(t *testing.T) {
 func TestOSDStopChecksDescendants(t *testing.T) {
 	f := newFixture(t)
 	cmd := osdChild(t, f, "sleep 60 >/dev/null 2>&1 &\nexit 0\n")
-	cmd.Wait()
+	err := cmd.Wait()
+	if err != nil {
+		t.Fatalf("wait for successful leader exit: %v", err)
+	}
 	fakeControl(t, f, `{"services":{"osd-1":{"name":"osd-1","startup":"disabled","current":"inactive"}}}`)
 	suppress(t, f)
 	out, err := f.command(t, "osd-stop", "1").CombinedOutput()

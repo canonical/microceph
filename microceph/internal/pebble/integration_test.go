@@ -51,23 +51,33 @@ func TestPebbleIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cmd.Process.Signal(syscall.SIGTERM)
+		// Termination is best-effort: the supervisor may already have exited.
+		_ = cmd.Process.Signal(syscall.SIGTERM)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
-			cmd.Process.Kill()
+			_ = cmd.Process.Kill()
 			<-done
 		}
 		// Emergency cleanup if a supervisor failure left a child group behind.
 		paths, _ := filepath.Glob(filepath.Join(f.common, "run", "pebble", "osd", "osd-*.json"))
 		for _, path := range paths {
 			var process struct{ PID int }
-			data, _ := os.ReadFile(path)
-			json.Unmarshal(data, &process)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Errorf("read cleanup process receipt %s: %v", path, err)
+				continue
+			}
+			err = json.Unmarshal(data, &process)
+			if err != nil {
+				t.Errorf("decode cleanup process receipt %s: %v", path, err)
+				continue
+			}
 			if process.PID > 1 {
-				syscall.Kill(-process.PID, syscall.SIGKILL)
+				// Normal supervisor shutdown will already have removed this group.
+				_ = syscall.Kill(-process.PID, syscall.SIGKILL)
 			}
 		}
 	})

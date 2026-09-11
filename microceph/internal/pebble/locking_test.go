@@ -41,7 +41,8 @@ func testControllerLock(t *testing.T, operation, target string) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	t.Cleanup(func() { cmd.Process.Kill() })
+	// The normal wait path may already have reaped the process.
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
 	select {
 	case err := <-done:
 		t.Fatalf("bootstrap bypassed controller lock: %v", err)
