@@ -12,11 +12,12 @@ Run with pytest:
 
 import json
 from pathlib import Path
+import subprocess
 
 import placement_status
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
-from snap_services import enabled_active_services
+from snap_services import enabled_active_services, service_has_state
 from cephfs_replication import cephfs_replication_list_has_volume, verify_cephfs_list_entry_types
 from rbd_replication import (
     rbd_mirror_health,
@@ -570,6 +571,24 @@ def test_enabled_active_services_empty_string():
 
 def test_enabled_active_services_header_only():
     assert enabled_active_services("Service  Startup  Current  Notes\n") == []
+
+
+def test_service_has_state_matches_target_service():
+    output = (
+        "Service                 Startup   Current   Notes\n"
+        "microceph.daemon        enabled   active    -\n"
+        "microceph.smbd          disabled  inactive  -\n"
+    )
+    assert service_has_state(output, "microceph.smbd", "disabled", "inactive") is True
+
+
+def test_service_has_state_rejects_different_state_or_service():
+    output = (
+        "Service                 Startup   Current   Notes\n"
+        "microceph.smbd          enabled   active    -\n"
+    )
+    assert service_has_state(output, "microceph.smbd", "disabled", "inactive") is False
+    assert service_has_state(output, "microceph.mgr", "enabled", "active") is False
 
 
 # ---------------------------------------------------------------------------
@@ -1408,3 +1427,177 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "dpkg-deb -x" not in script
     assert "cat >" not in script
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
+
+
+# ---------------------------------------------------------------------------
+# SMB Core26 packaging
+# ---------------------------------------------------------------------------
+
+def test_smb_manifest_uses_direct_ceph_new_and_scoped_identity_switching():
+    """The strict SMB service uses Core26's native Ceph VFS and only it can switch identities."""
+    repo_root = Path(__file__).parents[3]
+    snapcraft = (repo_root / "snap" / "snapcraft.yaml").read_text()
+
+    assert "assumes:\n  - snapd2.78\n" in snapcraft
+    assert "  smb-identity:\n    interface: microceph-support\n    user-identity-switching: true\n" in snapcraft
+    assert "  smbd:\n" in snapcraft
+    smbd_app = snapcraft.split("  smbd:\n", 1)[1].split("  osd:\n", 1)[0]
+    assert "    after:\n      - daemon\n    plugs:\n      - smb-identity\n" in smbd_app
+    assert "      - process-control\n" not in smbd_app
+    assert "  samba:\n" in snapcraft
+    assert "      - samba-vfs-ceph\n" in snapcraft
+    assert "      - python3-samba\n" in snapcraft
+    assert "      - libnss-wrapper\n" in snapcraft
+    assert "      - libpopt0\n" in snapcraft
+    assert "      - libtirpc3t64\n" in snapcraft
+    assert "  sambacc:\n" in snapcraft
+    assert "--target=$CRAFT_PART_INSTALL/lib/python3.14/site-packages" in snapcraft
+    assert "$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba" in snapcraft
+    for target in (
+        "/etc/samba:",
+        "/usr/libexec/samba:",
+        "/var/cache/samba:",
+        "/var/lib/samba:",
+        "/var/log/samba:",
+    ):
+        assert target in snapcraft
+    assert "/run/samba:" not in snapcraft
+
+    wrapper = (repo_root / "snapcraft" / "commands" / "smbd.start").read_text()
+    assert 'for path in "${SNAP}"/lib/*/libnss_wrapper.so; do' in wrapper
+    assert 'export LD_PRELOAD="${nss_wrapper}"' in wrapper
+    assert "CRAFT_ARCH_TRIPLET_BUILD_FOR" not in wrapper
+    assert 'export NSS_WRAPPER_PASSWD="${SNAP_DATA}/samba/passwd"' in wrapper
+    assert 'export NSS_WRAPPER_GROUP="${SNAP_DATA}/samba/group"' in wrapper
+    assert 'cluster_id="$(cat "${identity_dir}/cluster-id")"' in wrapper
+    assert '"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start"' in wrapper
+    assert 'import-users' in wrapper
+    assert 'config="${SNAP_DATA}/conf/samba/smb.conf"' in wrapper
+    assert "\nlimits\n" not in wrapper
+    assert '--samba-command-prefix "${SNAP}/commands/samba-command"' in wrapper
+    assert 'exec smbd --foreground --no-process-group --configfile="${config}" \\\n    --option="lock directory=/var/lib/samba/lock" \\\n    --option="pid directory=/var/lib/samba/run" \\\n    --option="ncalrpc dir=/var/lib/samba/ncalrpc" \\\n    --option="winbindd socket directory=/var/lib/samba/winbindd"' in wrapper
+    assert 'head -c 4 "${path}"' in snapcraft
+    assert "printf '\\177ELF'" in snapcraft
+    assert 'strip -s "${path}"' in snapcraft
+
+
+def test_sambacc_runtime_overrides_registry_incompatible_paths():
+    """The passdb loader overrides paths that the Samba registry cannot store."""
+    repo_root = Path(__file__).parents[3]
+    module_path = repo_root / "snapcraft" / "commands" / "sambacc_runtime.py"
+    namespace = {}
+    exec(module_path.read_text(), namespace)
+
+    class FakeLoadParm:
+        def __init__(self):
+            self.options = {}
+
+        def set(self, name, value):
+            self.options[name] = value
+
+    loadparm = FakeLoadParm()
+    namespace["configure_loadparm"](loadparm)
+
+    assert loadparm.options == {
+        "lock directory": "/var/lib/samba/lock",
+        "pid directory": "/var/lib/samba/run",
+        "ncalrpc dir": "/var/lib/samba/ncalrpc",
+        "winbindd socket directory": "/var/lib/samba/winbindd",
+    }
+
+
+def test_sambacc_runtime_creates_no_run_samba_directory(tmp_path):
+    """The sambacc replacement creates its state below the Samba data layout."""
+    repo_root = Path(__file__).parents[3]
+    module_path = repo_root / "snapcraft" / "commands" / "sambacc_runtime.py"
+    namespace = {}
+    exec(module_path.read_text(), namespace)
+
+    namespace["ensure_runtime_dirs"](tmp_path)
+
+    for relative_path in (
+        "var/lib/samba",
+        "var/lib/samba/private",
+        "var/lib/samba/lock",
+        "var/lib/samba/run",
+        "var/lib/samba/ncalrpc",
+        "var/lib/samba/winbindd",
+    ):
+        assert (tmp_path / relative_path).is_dir()
+    assert not (tmp_path / "run/samba").exists()
+
+
+def test_sambacc_runtime_sets_paths_before_loading_registry_config():
+    """LoadParm must receive runtime paths before a registry config is opened."""
+    repo_root = Path(__file__).parents[3]
+    module_path = repo_root / "snapcraft" / "commands" / "sambacc_runtime.py"
+    namespace = {}
+    exec(module_path.read_text(), namespace)
+    events = []
+
+    class FakeLoadParm:
+        def set(self, name, value):
+            events.append(("set", name, value))
+
+        def load_default(self):
+            events.append(("load_default",))
+
+    class FakeParam:
+        def get_context(self):
+            events.append(("get_context",))
+            return FakeLoadParm()
+
+    namespace["load_runtime_loadparm"](FakeParam())
+
+    assert events == [
+        ("get_context",),
+        ("set", "lock directory", "/var/lib/samba/lock"),
+        ("set", "pid directory", "/var/lib/samba/run"),
+        ("set", "ncalrpc dir", "/var/lib/samba/ncalrpc"),
+        ("set", "winbindd socket directory", "/var/lib/samba/winbindd"),
+        ("load_default",),
+    ]
+
+
+def test_samba_command_injects_runtime_paths(tmp_path):
+    """The sambacc command prefix keeps helper processes out of /run/samba."""
+    repo_root = Path(__file__).parents[3]
+    command = repo_root / "snapcraft" / "commands" / "samba-command"
+    target = tmp_path / "capture-args"
+    target.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+    target.chmod(0o755)
+
+    result = subprocess.run(
+        [command, target, "conf", "import", "config.smb"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.splitlines() == [
+        "--option=lock directory=/var/lib/samba/lock",
+        "--option=pid directory=/var/lib/samba/run",
+        "--option=ncalrpc dir=/var/lib/samba/ncalrpc",
+        "--option=winbindd socket directory=/var/lib/samba/winbindd",
+        "conf",
+        "import",
+        "config.smb",
+    ]
+
+
+def test_smb_service_api_is_registered():
+    """The upstream SMB orchestrator can place and remove native SMB members."""
+    repo_root = Path(__file__).parents[3]
+    servers = (repo_root / "microceph" / "api" / "servers.go").read_text()
+    services = (repo_root / "microceph" / "api" / "services.go").read_text()
+    orch_client = (repo_root / "microceph-orch" / "src" / "microceph" / "client" / "cluster.py").read_text()
+
+    assert "smbServiceCmd," in servers
+    assert 'Path:   "services/smb",' in services
+    assert "Delete: mcTypes.EndpointAction{Handler: cmdSMBDeleteService, ProxyTarget: true}," in services
+    assert "def apply_smb(" in orch_client
+    assert "def remove_smb(" in orch_client
+    assert '"/1.0/services/smb?{query}"' in orch_client
+    assert '"name": "smb"' in orch_client
+    assert '"bool": True' in orch_client
+    assert "json.dumps(payload)" in orch_client

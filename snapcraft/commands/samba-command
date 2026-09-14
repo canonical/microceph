@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+program="$1"
+shift
+
+exec "${program}" \
+    --option="lock directory=/var/lib/samba/lock" \
+    --option="pid directory=/var/lib/samba/run" \
+    --option="ncalrpc dir=/var/lib/samba/ncalrpc" \
+    --option="winbindd socket directory=/var/lib/samba/winbindd" \
+    "$@"
