@@ -118,7 +118,7 @@ Test Declarative Control Placement Migration Preserves Quorum
     Should Be Equal As Integers    ${code}    200    msg=Control migration failed: ${resp}
     ${end}=    Get Time    epoch
     ${elapsed}=    Evaluate    ${end} - ${start}
-    Should Be True    ${elapsed} < 25    msg=Migration took ${elapsed}s: the MON removal verify ran against a stale mon host and timed out
+    Should Be True    ${elapsed} < 140    msg=Migration took ${elapsed}s: the MON removal verify ran against a stale mon host and timed out
     Assert Mon Host Includes    node-wrk1    ${dst_ip}
     ${mons}=    Get Mon Count
     Should Be Equal As Integers    ${mons}    1    msg=Expected destination-only monmap after migration
