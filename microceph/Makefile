@@ -11,6 +11,7 @@ default: build
 build:
 	go install -v -ldflags $(LDFLAGS) ./cmd/microceph
 	go install -v -ldflags $(LDFLAGS) ./cmd/microcephd
+	CGO_ENABLED=0 go install -v -trimpath ./cmd/microceph-pebble
 
 # Testing targets.
 .PHONY: check

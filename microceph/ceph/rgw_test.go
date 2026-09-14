@@ -166,8 +166,7 @@ func (s *rgwSuite) TestEnableRGWWithSSL() {
 func (s *rgwSuite) TestUpdateRGWCertificates() {
 	r := mocks.NewRunner(s.T())
 
-	// snapCheckActive expects: snapctl services microceph.rgw
-	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
+	addSnapServiceActiveExpectations(r, "rgw", "microceph.rgw enabled active", nil)
 
 	common.ProcessExec = r
 
@@ -214,7 +213,7 @@ func (s *rgwSuite) TestUpdateRGWCertificatesWhenRGWNotActive() {
 func (s *rgwSuite) TestUpdateRGWCertificatesSSLNotConfigured() {
 	r := mocks.NewRunner(s.T())
 
-	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
+	addSnapServiceActiveExpectations(r, "rgw", "microceph.rgw enabled active", nil)
 
 	common.ProcessExec = r
 
@@ -230,7 +229,7 @@ func (s *rgwSuite) TestUpdateRGWCertificatesSSLNotConfigured() {
 func (s *rgwSuite) TestUpdateRGWCertificatesInvalidCertificate() {
 	r := mocks.NewRunner(s.T())
 
-	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
+	addSnapServiceActiveExpectations(r, "rgw", "microceph.rgw enabled active", nil)
 
 	common.ProcessExec = r
 
@@ -246,7 +245,7 @@ func (s *rgwSuite) TestUpdateRGWCertificatesInvalidCertificate() {
 func (s *rgwSuite) TestUpdateRGWCertificatesInvalidPrivateKey() {
 	r := mocks.NewRunner(s.T())
 
-	r.On("RunCommand", "snapctl", "services", "microceph.rgw").Return("microceph.rgw  enabled  active", nil).Once()
+	addSnapServiceActiveExpectations(r, "rgw", "microceph.rgw enabled active", nil)
 
 	common.ProcessExec = r
 

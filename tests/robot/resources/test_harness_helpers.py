@@ -1408,3 +1408,392 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "dpkg-deb -x" not in script
     assert "cat >" not in script
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
+
+
+# ---------------------------------------------------------------------------
+# Individual Pebble OSD service control
+# ---------------------------------------------------------------------------
+
+PEBBLE_SERVICES_SAMPLE = json.dumps({"services": {
+    "osd-1": {"name": "osd-1", "startup": "enabled", "current": "active",
+              "current-since": "2026-09-10T12:00:00Z"},
+    "osd-2": {"name": "osd-2", "startup": "enabled", "current": "inactive",
+              "current-since": "2026-09-10T12:00:01Z"},
+}})
+PEBBLE_RECEIPT_SAMPLE = {"pid": 101, "start-time": "456", "boot-id": "test-boot"}
+PEBBLE_PROCESS_SAMPLE = """      1       1 Ss   systemd
+    101     101 Sl   ceph-osd
+    102     101 S    helper
+    103     103 Z    ceph-osd
+"""
+PEBBLE_SUPERVISOR_SAMPLE = (
+    "MainPID=90\nExecMainStartTimestampMonotonic=123456\nActiveState=active\n"
+)
+
+
+def _pebble_snapshot():
+    return {
+        "services": {"osd-1": "active"},
+        "osds": {"1": {"up": 1, "in": 1}},
+        "identities": {"1": dict(PEBBLE_RECEIPT_SAMPLE)},
+        "groups": {101: {101: "ceph-osd", 102: "helper"}},
+        "supervisor": {"pid": 90, "started": 123456, "state": "active"},
+    }
+
+
+def test_pebble_service_states_use_child_status():
+    from pebble_services import _service_states
+
+    assert _service_states(PEBBLE_SERVICES_SAMPLE) == {
+        "osd-1": "active", "osd-2": "inactive",
+    }
+
+
+@pytest.mark.parametrize("payload", [
+    "", "null", "{}", '{"services":[]}',
+    '{"services":{"osd-1":{"name":"osd-2","current":"inactive"}}}',
+    '{"services":{"osd-1":{"name":"osd-1"}}}',
+])
+def test_pebble_service_states_reject_bad_observations(payload):
+    from pebble_services import _service_states
+
+    with pytest.raises(ValueError):
+        _service_states(payload)
+
+
+def test_pebble_ceph_osd_states_preserve_up_and_in():
+    from pebble_services import _ceph_osd_states
+
+    payload = {"epoch": 5, "osds": [
+        {"osd": 1, "up": 0, "in": 1, "weight": 1.0},
+        {"osd": 2, "up": 1, "in": 0, "weight": 1.0},
+    ]}
+    assert _ceph_osd_states(json.dumps(payload)) == {
+        "1": {"up": 0, "in": 1}, "2": {"up": 1, "in": 0},
+    }
+
+
+@pytest.mark.parametrize("payload", [
+    "", "null", "{}", '{"osds":{}}',
+    '{"osds":[{"osd":1,"in":1}]}',
+    '{"osds":[{"osd":1,"up":2,"in":1}]}',
+    '{"osds":[{"osd":1,"up":0,"in":1},{"osd":1,"up":1,"in":1}]}',
+])
+def test_pebble_ceph_osd_states_do_not_treat_missing_data_as_down(payload):
+    from pebble_services import _ceph_osd_states
+
+    with pytest.raises(ValueError):
+        _ceph_osd_states(payload)
+
+
+def test_pebble_receipt_preserves_full_process_identity():
+    from pebble_services import _osd_identity
+
+    assert _osd_identity(json.dumps(PEBBLE_RECEIPT_SAMPLE)) == PEBBLE_RECEIPT_SAMPLE
+
+
+@pytest.mark.parametrize("field,value", [
+    ("pid", 0), ("pid", 1), ("pid", True), ("pid", "101"),
+    ("start-time", ""), ("start-time", "abc"), ("boot-id", ""),
+])
+def test_pebble_receipt_rejects_invalid_identity(field, value):
+    from pebble_services import _osd_identity
+
+    receipt = dict(PEBBLE_RECEIPT_SAMPLE, **{field: value})
+    with pytest.raises(ValueError):
+        _osd_identity(json.dumps(receipt))
+
+
+def test_pebble_process_groups_include_descendants_but_not_zombies():
+    from pebble_services import _live_process_groups
+
+    assert _live_process_groups(PEBBLE_PROCESS_SAMPLE) == {
+        1: {1: "systemd"}, 101: {101: "ceph-osd", 102: "helper"},
+    }
+    # An exited leader does not make its surviving process group disappear.
+    assert _live_process_groups("101 101 Z ceph-osd\n102 101 S helper\n") == {
+        101: {102: "helper"},
+    }
+
+
+@pytest.mark.parametrize("output", ["", "101 101", "bad 101 S ceph-osd"])
+def test_pebble_process_groups_reject_unusable_output(output):
+    from pebble_services import _live_process_groups
+
+    with pytest.raises(ValueError):
+        _live_process_groups(output)
+
+
+def test_pebble_supervisor_identity_includes_start_timestamp():
+    from pebble_services import _supervisor_identity
+
+    assert _supervisor_identity(PEBBLE_SUPERVISOR_SAMPLE) == {
+        "pid": 90, "started": 123456, "state": "active",
+    }
+    with pytest.raises(ValueError):
+        _supervisor_identity("ActiveState=active\n")
+
+
+def test_pebble_active_requires_child_ceph_membership_and_live_process():
+    from pebble_services import pebble_services as P
+
+    snapshot = _pebble_snapshot()
+    assert P.pebble_osd_is_in_state(snapshot, "1", "active")
+    for key, value in [
+        ("services", {"osd-1": "backoff"}),
+        ("services", {}),
+        ("osds", {"1": {"up": 0, "in": 1}}),
+        ("osds", {"1": {"up": 1, "in": 0}}),
+        ("identities", {}),
+        ("groups", {}),
+        ("groups", {101: {101: "osd.run"}}),
+        ("groups", {101: {102: "helper"}}),
+    ]:
+        assert not P.pebble_osd_is_in_state(dict(snapshot, **{key: value}), "1", "active")
+
+
+def test_pebble_inactive_requires_down_in_and_verified_group_exit():
+    from pebble_services import pebble_services as P
+
+    snapshot = _pebble_snapshot()
+    snapshot["services"]["osd-1"] = "inactive"
+    snapshot["osds"]["1"]["up"] = 0
+    snapshot["groups"] = {}
+    assert P.pebble_osd_is_in_state(snapshot, "1", "inactive")
+    for key, value in [
+        ("services", {}),
+        ("services", {"osd-1": "active"}),
+        ("osds", {}),
+        ("osds", {"1": {"up": 1, "in": 1}}),
+        ("osds", {"1": {"up": 0, "in": 0}}),
+        ("identities", {}),
+        ("groups", {101: {101: "ceph-osd"}}),
+        ("groups", {101: {102: "helper"}}),
+    ]:
+        assert not P.pebble_osd_is_in_state(dict(snapshot, **{key: value}), "1", "inactive")
+
+
+@pytest.mark.parametrize("action", ["stop", "start", "restart"])
+def test_pebble_control_targets_one_service_through_confined_socket(monkeypatch, action):
+    import shlex
+    from microceph_harness import ExecResult
+    from pebble_services import pebble_services as P
+
+    commands = []
+    library = P()
+    result = ExecResult(0, "", "")
+
+    def run(command, timeout, quiet=False):
+        commands.append((command, timeout))
+        return result
+
+    monkeypatch.setattr(library._harness, "run_in_vm_and_check", run)
+    assert library.control_pebble_osd(action, "1") == result
+    command, timeout = commands.pop()
+    argv = shlex.split(command)
+    assert argv[:6] == ["sudo", "snap", "run", "--shell", "microceph.daemon", "-c"]
+    assert shlex.split(argv[6]) == [
+        "exec", "env", "PEBBLE_SOCKET=$SNAP_COMMON/run/pebble/osd/.pebble.socket",
+        "$SNAP/bin/pebble", action, "osd-1",
+    ]
+    assert timeout == 330  # Includes the five-minute child shutdown grace.
+
+
+@pytest.mark.parametrize("action,osd_id", [
+    ("replan", "1"), ("stop", ""), ("stop", "-1"), ("stop", "01"),
+    ("start", "1; true"), ("restart", "1 2"), ("stop", "9223372036854775808"),
+])
+def test_pebble_control_rejects_broad_or_invalid_requests(action, osd_id):
+    from pebble_services import pebble_services as P
+
+    with pytest.raises(ValueError):
+        P().control_pebble_osd(action, osd_id)
+
+
+def test_pebble_snapshot_fetches_raw_observations(monkeypatch):
+    from microceph_harness import ExecResult
+    from pebble_services import pebble_services as P
+
+    library = P()
+    outputs = iter([
+        PEBBLE_SERVICES_SAMPLE,
+        json.dumps({"osds": [{"osd": 1, "up": 1, "in": 1}]}),
+        json.dumps(PEBBLE_RECEIPT_SAMPLE),
+        PEBBLE_PROCESS_SAMPLE,
+        PEBBLE_SUPERVISOR_SAMPLE,
+    ])
+    commands = []
+
+    def run(command, timeout, quiet=False):
+        commands.append(command)
+        return ExecResult(0, next(outputs), "")
+
+    monkeypatch.setattr(library._harness, "run_in_vm_and_check", run)
+    snapshot = library.get_pebble_osd_snapshot()
+    assert snapshot == dict(_pebble_snapshot(),
+                            services={"osd-1": "active", "osd-2": "inactive"},
+                            groups={1: {1: "systemd"}, 101: {101: "ceph-osd", 102: "helper"}})
+    assert "services --format=json" in commands[0]
+    assert commands[1] == "sudo microceph.ceph osd dump -f json"
+    assert commands[2] == "sudo cat /var/snap/microceph/common/run/pebble/osd/osd-1.json"
+    assert commands[3] == "ps -e -o pid=,pgid=,stat=,comm="
+    assert "systemctl show snap.microceph.osd.service" in commands[4]
+
+
+def test_pebble_poll_waits_for_ceph_and_process_exit(monkeypatch):
+    from pebble_services import pebble_services as P
+
+    library = P()
+    states = [_pebble_snapshot() for _ in range(3)]
+    for snapshot in states:
+        snapshot["services"]["osd-1"] = "inactive"
+    states[1]["osds"]["1"]["up"] = 0
+    states[1]["groups"] = {101: {102: "helper"}}
+    states[2]["osds"]["1"]["up"] = 0
+    states[2]["groups"] = {}
+    samples = iter(states)
+    monkeypatch.setattr(library, "get_pebble_osd_snapshot", lambda: next(samples))
+    assert library.wait_for_pebble_osd_state("1", "inactive", tries=3, interval=0) == states[2]
+
+
+def test_pebble_poll_reports_last_observation_on_timeout(monkeypatch):
+    from pebble_services import pebble_services as P
+
+    library = P()
+    snapshot = _pebble_snapshot()
+    snapshot["services"]["osd-1"] = "backoff"
+    monkeypatch.setattr(library, "get_pebble_osd_snapshot", lambda: snapshot)
+    with pytest.raises(AssertionError, match="osd-1.*active.*backoff"):
+        library.wait_for_pebble_osd_state("1", "active", tries=2, interval=0)
+
+
+def test_pebble_poll_does_not_hide_failed_observation(monkeypatch):
+    from pebble_services import pebble_services as P
+
+    library = P()
+
+    def fail():
+        raise AssertionError("cannot query Pebble socket")
+
+    monkeypatch.setattr(library, "get_pebble_osd_snapshot", fail)
+    with pytest.raises(AssertionError, match="cannot query Pebble socket"):
+        library.wait_for_pebble_osd_state("1", "inactive", tries=2, interval=0)
+
+
+def _pebble_three_osd_snapshot(osd_ids):
+    osd_ids = tuple(osd_ids)
+    snapshot = _pebble_snapshot()
+    snapshot["services"] = {f"osd-{osd_id}": "active" for osd_id in osd_ids}
+    snapshot["osds"] = {osd_id: {"up": 1, "in": 1} for osd_id in osd_ids}
+    snapshot["identities"] = {
+        osd_id: dict(PEBBLE_RECEIPT_SAMPLE, pid=100 + index)
+        for index, osd_id in enumerate(osd_ids)
+    }
+    snapshot["groups"] = {100 + i: {100 + i: "ceph-osd"} for i in range(3)}
+    return snapshot
+
+
+@pytest.mark.parametrize("osd_ids", [("0", "1", "2"), ("1", "2", "3"), ("2", "10", "23")])
+def test_pebble_osd_ids_are_discovered_and_sorted_numerically(osd_ids):
+    from pebble_services import pebble_services as P
+
+    snapshot = _pebble_three_osd_snapshot(reversed(osd_ids))
+    assert P.get_pebble_osd_ids(snapshot) == list(osd_ids)
+
+
+@pytest.mark.parametrize("osd_ids", [("0", "1", "2"), ("1", "2", "3"), ("2", "10", "23")])
+def test_pebble_robot_setup_accepts_allocated_ids(monkeypatch, osd_ids):
+    """CI allocated 1/2/3, but Record Running OSDs incorrectly required osd-0."""
+    import io
+    from robot.api import TestSuiteBuilder
+    from pebble_services import pebble_services as P
+
+    snapshot = _pebble_three_osd_snapshot(osd_ids)
+    monkeypatch.setattr(P, "get_pebble_osd_snapshot", lambda self: snapshot)
+    monkeypatch.setattr(H, "wait_for_osd_count_up_in", lambda *args: None)
+
+    def no_vm_access(*args, **kwargs):
+        raise AssertionError("Unit tests must not execute VM commands")
+
+    monkeypatch.setattr(H, "_exec", no_vm_access)
+    suite_path = Path(__file__).parents[1] / "pebble-service-control-tests" / "pebble_service_control_tests.robot"
+    suite = TestSuiteBuilder().build(str(suite_path))
+    suite.setup.name = None
+    suite.teardown.name = None
+    suite.tests.clear()
+    case = suite.tests.create("Record allocated OSDs")
+    case.body.create_keyword("Get Pebble OSD Snapshot", assign=["${snapshot}"])
+    case.body.create_keyword("Select OSDs For Service Control", args=["${snapshot}"])
+    case.body.create_keyword("Record Running OSDs")
+    output = io.StringIO()
+    result = suite.run(output=None, log=None, report=None, stdout=output, stderr=output)
+    assert result.return_code == 0, output.getvalue()
+
+
+@pytest.mark.parametrize("osd_ids", [("0", "1", "2"), ("1", "2", "3"), ("2", "10", "23")])
+@pytest.mark.parametrize("stopped", [True, False], ids=["stop", "start-or-restart"])
+@pytest.mark.parametrize("fault", [
+    None, "no-op", "sibling-restarted", "sibling-dead", "supervisor-restarted",
+    "old-group-alive", "descendant-alive", "wrong-ceph-state", "backoff",
+])
+def test_pebble_robot_assertions_reject_collateral_changes(monkeypatch, stopped, fault, osd_ids):
+    """Execute the real Robot assertion keywords on controlled observations, not VMs."""
+    import copy
+    import io
+    from robot.api import TestSuiteBuilder
+
+    before = _pebble_three_osd_snapshot(osd_ids)
+    target = osd_ids[1]
+    after = copy.deepcopy(before)
+    del after["groups"][101]
+    if stopped:
+        after["services"][f"osd-{target}"] = "inactive"
+        after["osds"][target]["up"] = 0
+    else:
+        after["identities"][target].update({"pid": 201, "start-time": "789"})
+        after["groups"][201] = {201: "ceph-osd"}
+    if fault == "no-op":
+        after = copy.deepcopy(before)
+    elif fault == "sibling-restarted":
+        after["identities"][osd_ids[2]].update({"pid": 202, "start-time": "789"})
+        del after["groups"][102]
+        after["groups"][202] = {202: "ceph-osd"}
+    elif fault == "sibling-dead":
+        del after["groups"][102]
+    elif fault == "supervisor-restarted":
+        after["supervisor"].update(pid=91, started=654321)
+    elif fault == "old-group-alive":
+        after["groups"][101] = {101: "ceph-osd"}
+    elif fault == "descendant-alive":
+        after["groups"][101] = {301: "helper"}
+    elif fault == "wrong-ceph-state":
+        after["osds"][target]["up"] = int(stopped)
+    elif fault == "backoff":
+        after["services"][f"osd-{target}"] = "backoff"
+
+    def no_vm_access(*args, **kwargs):
+        raise AssertionError("Unit tests must not execute VM commands")
+
+    monkeypatch.setattr(H, "_exec", no_vm_access)
+    suite_path = Path(__file__).parents[1] / "pebble-service-control-tests" / "pebble_service_control_tests.robot"
+    suite = TestSuiteBuilder().build(str(suite_path))
+    suite.setup.name = None
+    suite.teardown.name = None
+    suite.tests.clear()
+    suite.resource.variables.create("${BEFORE_JSON}", [json.dumps(before)])
+    suite.resource.variables.create("${AFTER_JSON}", [json.dumps(after)])
+    case = suite.tests.create("Verify observation assertions")
+    case.body.create_keyword("Evaluate", args=["json.loads($BEFORE_JSON)", "json"], assign=["${before}"])
+    # JSON object keys are strings; the process table is keyed by integer PGIDs/PIDs.
+    expression = (
+        'dict(json.loads($AFTER_JSON), groups={int(g): {int(p): c for p, c in members.items()} '
+        'for g, members in json.loads($AFTER_JSON)["groups"].items()})'
+    )
+    case.body.create_keyword("Evaluate", args=[expression, "json"], assign=["${after}"])
+    case.body.create_keyword("Select OSDs For Service Control", args=["${before}"])
+    keyword = "Only Target OSD Should Be Stopped" if stopped else "Only Target OSD Should Have A New Process"
+    case.body.create_keyword(keyword, args=["${before}", "${after}"])
+    output = io.StringIO()
+    result = suite.run(output=None, log=None, report=None, stdout=output, stderr=output)
+    assert result.return_code == (1 if fault else 0), output.getvalue()
+    assert "Unit tests must not execute VM commands" not in output.getvalue()

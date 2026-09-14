@@ -3,16 +3,19 @@ package ceph
 import (
 	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/common"
-	"github.com/canonical/microceph/microceph/interfaces"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/canonical/microceph/microceph/tests"
-
-	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/mocks"
+	"github.com/canonical/microceph/microceph/tests"
 )
 
 type servicesPlacementSuite struct {
@@ -41,6 +44,10 @@ func addSnapServiceActiveExpectations(r *mocks.Runner, service string, retStr st
 	r.On("RunCommand", []interface{}{
 		"snapctl", "services", fmt.Sprintf("microceph.%s", service),
 	}...).Return(retStr, retErr).Once()
+	if retErr == nil && !strings.Contains(retStr, "inactive") && service != "osd" {
+		binary := filepath.Join(os.Getenv("SNAP"), "bin", "microceph-pebble")
+		r.On("RunCommand", binary, "status", service).Return("", nil).Once()
+	}
 }
 
 func addPlacementServiceInitFailExpectation(sp *mocks.PlacementIntf, s *mocks.StateInterface, payload types.EnableService) {
