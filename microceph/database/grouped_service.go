@@ -42,3 +42,11 @@ type NFSServiceInfo struct {
 	BindAddress string `json:"bind_address"`
 	BindPort    uint   `json:"bind_port"`
 }
+
+// SMBServiceGroupConfig holds SMB configuration shared by all placed members.
+type SMBServiceGroupConfig struct{}
+
+// SMBServiceInfo holds node-local SMB service metadata.
+type SMBServiceInfo struct {
+	ConfigURI string `json:"config_uri"`
+}

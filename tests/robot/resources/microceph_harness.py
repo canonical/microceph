@@ -29,7 +29,7 @@ from rbd_replication import (
     rbd_primary_image_count,
     rbd_synced_image_count,
 )
-from snap_services import enabled_active_services
+from snap_services import enabled_active_services, service_has_state
 from streaming_process import run_streaming_process
 
 # Attribute names are load-bearing: Robot suites read ${result.rc}, ${result.stdout},
@@ -1176,6 +1176,36 @@ class microceph_harness:
         if re.search(rf"mon: .*daemons.*{re.escape(node)}", status):
             return "yes"
         return "no"
+
+    # -----------------------------------------------------------------------
+    # Snap-service pollers
+    # -----------------------------------------------------------------------
+
+    def wait_for_smb_service(self, startup="enabled", current="active", tries=30):
+        """Poll until microceph.smbd reaches the requested snap service state."""
+        logger.console(
+            f"[smb] Waiting for microceph.smbd to be {startup}/{current}..."
+        )
+        last_output = [""]
+
+        def predicate():
+            result = self.run_in_vm(
+                "snap services microceph.smbd", 15, quiet=True
+            )
+            last_output[0] = result.stdout
+            return result.rc == 0 and service_has_state(
+                result.stdout, "microceph.smbd", startup, current
+            )
+
+        self._poll_until(
+            predicate,
+            attempts=int(tries),
+            interval=2,
+            fail_msg=lambda: (
+                "microceph.smbd did not reach "
+                f"{startup}/{current}; last output:\n{last_output[0]}"
+            ),
+        )
 
     # -----------------------------------------------------------------------
     # RGW pollers

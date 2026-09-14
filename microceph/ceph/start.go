@@ -313,6 +313,14 @@ func fixConfigLine(confFile string, fn func(string) (string, bool)) (bool, error
 	return true, nil
 }
 
+func snapServiceForRecordedService(service string) string {
+	if service == "smb" {
+		return smbSnapService
+	}
+
+	return service
+}
+
 // reEnableServices checks which services are registered in the database for
 // the current host and re-enables any that are not currently active. This
 // handles the case where "snap disable/enable microceph" leaves the secondary
@@ -339,9 +347,12 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 	}
 
 	for _, service := range services {
-		if err := snapCheckActive(service.Service); err != nil {
+		snapService := snapServiceForRecordedService(service.Service)
+		err := snapCheckActive(snapService)
+		if err != nil {
 			logger.Infof("start: re-enabling inactive service %q", service.Service)
-			if err := snapStart(service.Service, true); err != nil {
+			err = snapStart(snapService, true)
+			if err != nil {
 				logger.Warnf("start: failed to re-enable service %q: %v", service.Service, err)
 			}
 		}
@@ -370,9 +381,12 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 			continue
 		}
 		seen[gs.Service] = true
-		if err := snapCheckActive(gs.Service); err != nil {
+		snapService := snapServiceForRecordedService(gs.Service)
+		err := snapCheckActive(snapService)
+		if err != nil {
 			logger.Infof("start: re-enabling inactive grouped service %q", gs.Service)
-			if err := snapStart(gs.Service, true); err != nil {
+			err = snapStart(snapService, true)
+			if err != nil {
 				logger.Warnf("start: failed to re-enable grouped service %q: %v", gs.Service, err)
 			}
 		}
