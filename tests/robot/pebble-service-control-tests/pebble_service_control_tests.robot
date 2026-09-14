@@ -11,9 +11,6 @@ Test Teardown   Restore Target OSD
 Test Timeout    15 minutes
 Test Tags       single-node    osd    pebble    service-control    lxd    integration
 
-*** Variables ***
-${TARGET_OSD}    1
-
 *** Test Cases ***
 Stop An Individual OSD
     [Documentation]    A named stop must leave the target down/in and both siblings untouched.
@@ -43,15 +40,26 @@ Pebble Service Control Suite Setup
     Install And Bootstrap MicroCeph
     Run In VM And Check    sudo microceph disk add loop,1G,3    120
     Wait For OSD Count Up In    3
+    ${snapshot}=    Get Pebble OSD Snapshot
+    Select OSDs For Service Control    ${snapshot}
+
+Select OSDs For Service Control
+    [Documentation]    Keep the same discovered target and siblings throughout the suite.
+    [Arguments]    ${snapshot}
+    Snapshot Should Have Three OSDs    ${snapshot}
+    ${first}    ${middle}    ${last}=    Get Pebble OSD IDs    ${snapshot}
+    Set Suite Variable    ${SIBLING_OSD_1}    ${first}
+    Set Suite Variable    ${TARGET_OSD}    ${middle}
+    Set Suite Variable    ${SIBLING_OSD_2}    ${last}
 
 Record Running OSDs
     [Documentation]    Every case starts with all three OSDs running; no test-order dependency.
     Wait For OSD Count Up In    3
     ${snapshot}=    Get Pebble OSD Snapshot
     Snapshot Should Have Three OSDs    ${snapshot}
-    OSD Should Be In State    ${snapshot}    0    active
-    OSD Should Be In State    ${snapshot}    1    active
-    OSD Should Be In State    ${snapshot}    2    active
+    OSD Should Be In State    ${snapshot}    ${SIBLING_OSD_1}    active
+    OSD Should Be In State    ${snapshot}    ${TARGET_OSD}    active
+    OSD Should Be In State    ${snapshot}    ${SIBLING_OSD_2}    active
     Set Test Variable    ${BEFORE}    ${snapshot}
 
 Restore Target OSD
@@ -83,8 +91,8 @@ Only Target OSD Should Be Affected
     [Arguments]    ${before}    ${after}
     Snapshot Should Have Three OSDs    ${after}
     Dictionaries Should Be Equal    ${before}[supervisor]    ${after}[supervisor]
-    Sibling OSD Should Be Unchanged    ${before}    ${after}    0
-    Sibling OSD Should Be Unchanged    ${before}    ${after}    2
+    Sibling OSD Should Be Unchanged    ${before}    ${after}    ${SIBLING_OSD_1}
+    Sibling OSD Should Be Unchanged    ${before}    ${after}    ${SIBLING_OSD_2}
 
 Only Target OSD Should Be Stopped
     [Arguments]    ${before}    ${after}

@@ -92,9 +92,10 @@ tox -e robot -- --snap-path /path/to/microceph_*.snap \
 ```
 
 This suite creates three loopback OSDs in its own VM and independently tests
-`stop`, `start`, and `restart` of `osd-1` using the bundled Pebble CLI through a
-confined Snap shell. Each operation checks Pebble child status, Ceph up/down and
-in membership, and live process groups. Both sibling OSD identities and the
+`stop`, `start`, and `restart` using the bundled Pebble CLI through a confined
+Snap shell. It discovers the allocated IDs and targets the middle one in numeric
+order; IDs need not start at zero or be consecutive. Each operation checks Pebble
+child status, Ceph up/in state, and live process groups. Both sibling OSD identities and the
 outer Snap supervisor identity must remain unchanged. Start and restart must
 produce a new target identity with no surviving old process group. Test teardown
 restores the target even after assertion failures; suite teardown removes the VM.

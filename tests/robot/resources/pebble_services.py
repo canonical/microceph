@@ -144,6 +144,11 @@ class pebble_services:
         }
 
     @staticmethod
+    def get_pebble_osd_ids(snapshot):
+        """Return allocated OSD IDs in numeric order, without assuming a base or gaps."""
+        return sorted(snapshot["osds"], key=int)
+
+    @staticmethod
     def pebble_osd_is_in_state(snapshot, osd_id, state):
         """Combine child state, Ceph up/in membership, and live process evidence.
 

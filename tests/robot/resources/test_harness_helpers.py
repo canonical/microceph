@@ -1680,36 +1680,82 @@ def test_pebble_poll_does_not_hide_failed_observation(monkeypatch):
         library.wait_for_pebble_osd_state("1", "inactive", tries=2, interval=0)
 
 
+def _pebble_three_osd_snapshot(osd_ids):
+    osd_ids = tuple(osd_ids)
+    snapshot = _pebble_snapshot()
+    snapshot["services"] = {f"osd-{osd_id}": "active" for osd_id in osd_ids}
+    snapshot["osds"] = {osd_id: {"up": 1, "in": 1} for osd_id in osd_ids}
+    snapshot["identities"] = {
+        osd_id: dict(PEBBLE_RECEIPT_SAMPLE, pid=100 + index)
+        for index, osd_id in enumerate(osd_ids)
+    }
+    snapshot["groups"] = {100 + i: {100 + i: "ceph-osd"} for i in range(3)}
+    return snapshot
+
+
+@pytest.mark.parametrize("osd_ids", [("0", "1", "2"), ("1", "2", "3"), ("2", "10", "23")])
+def test_pebble_osd_ids_are_discovered_and_sorted_numerically(osd_ids):
+    from pebble_services import pebble_services as P
+
+    snapshot = _pebble_three_osd_snapshot(reversed(osd_ids))
+    assert P.get_pebble_osd_ids(snapshot) == list(osd_ids)
+
+
+@pytest.mark.parametrize("osd_ids", [("0", "1", "2"), ("1", "2", "3"), ("2", "10", "23")])
+def test_pebble_robot_setup_accepts_allocated_ids(monkeypatch, osd_ids):
+    """CI allocated 1/2/3, but Record Running OSDs incorrectly required osd-0."""
+    import io
+    from robot.api import TestSuiteBuilder
+    from pebble_services import pebble_services as P
+
+    snapshot = _pebble_three_osd_snapshot(osd_ids)
+    monkeypatch.setattr(P, "get_pebble_osd_snapshot", lambda self: snapshot)
+    monkeypatch.setattr(H, "wait_for_osd_count_up_in", lambda *args: None)
+
+    def no_vm_access(*args, **kwargs):
+        raise AssertionError("Unit tests must not execute VM commands")
+
+    monkeypatch.setattr(H, "_exec", no_vm_access)
+    suite_path = Path(__file__).parents[1] / "pebble-service-control-tests" / "pebble_service_control_tests.robot"
+    suite = TestSuiteBuilder().build(str(suite_path))
+    suite.setup.name = None
+    suite.teardown.name = None
+    suite.tests.clear()
+    case = suite.tests.create("Record allocated OSDs")
+    case.body.create_keyword("Get Pebble OSD Snapshot", assign=["${snapshot}"])
+    case.body.create_keyword("Select OSDs For Service Control", args=["${snapshot}"])
+    case.body.create_keyword("Record Running OSDs")
+    output = io.StringIO()
+    result = suite.run(output=None, log=None, report=None, stdout=output, stderr=output)
+    assert result.return_code == 0, output.getvalue()
+
+
+@pytest.mark.parametrize("osd_ids", [("0", "1", "2"), ("1", "2", "3"), ("2", "10", "23")])
 @pytest.mark.parametrize("stopped", [True, False], ids=["stop", "start-or-restart"])
 @pytest.mark.parametrize("fault", [
     None, "no-op", "sibling-restarted", "sibling-dead", "supervisor-restarted",
     "old-group-alive", "descendant-alive", "wrong-ceph-state", "backoff",
 ])
-def test_pebble_robot_assertions_reject_collateral_changes(monkeypatch, stopped, fault):
+def test_pebble_robot_assertions_reject_collateral_changes(monkeypatch, stopped, fault, osd_ids):
     """Execute the real Robot assertion keywords on controlled observations, not VMs."""
     import copy
     import io
     from robot.api import TestSuiteBuilder
 
-    before = _pebble_snapshot()
-    before["services"] = {f"osd-{i}": "active" for i in range(3)}
-    before["osds"] = {str(i): {"up": 1, "in": 1} for i in range(3)}
-    before["identities"] = {
-        str(i): dict(PEBBLE_RECEIPT_SAMPLE, pid=100 + i) for i in range(3)
-    }
-    before["groups"] = {100 + i: {100 + i: "ceph-osd"} for i in range(3)}
+    before = _pebble_three_osd_snapshot(osd_ids)
+    target = osd_ids[1]
     after = copy.deepcopy(before)
     del after["groups"][101]
     if stopped:
-        after["services"]["osd-1"] = "inactive"
-        after["osds"]["1"]["up"] = 0
+        after["services"][f"osd-{target}"] = "inactive"
+        after["osds"][target]["up"] = 0
     else:
-        after["identities"]["1"].update({"pid": 201, "start-time": "789"})
+        after["identities"][target].update({"pid": 201, "start-time": "789"})
         after["groups"][201] = {201: "ceph-osd"}
     if fault == "no-op":
         after = copy.deepcopy(before)
     elif fault == "sibling-restarted":
-        after["identities"]["2"].update({"pid": 202, "start-time": "789"})
+        after["identities"][osd_ids[2]].update({"pid": 202, "start-time": "789"})
         del after["groups"][102]
         after["groups"][202] = {202: "ceph-osd"}
     elif fault == "sibling-dead":
@@ -1721,9 +1767,9 @@ def test_pebble_robot_assertions_reject_collateral_changes(monkeypatch, stopped,
     elif fault == "descendant-alive":
         after["groups"][101] = {301: "helper"}
     elif fault == "wrong-ceph-state":
-        after["osds"]["1"]["up"] = int(stopped)
+        after["osds"][target]["up"] = int(stopped)
     elif fault == "backoff":
-        after["services"]["osd-1"] = "backoff"
+        after["services"][f"osd-{target}"] = "backoff"
 
     def no_vm_access(*args, **kwargs):
         raise AssertionError("Unit tests must not execute VM commands")
@@ -1744,6 +1790,7 @@ def test_pebble_robot_assertions_reject_collateral_changes(monkeypatch, stopped,
         'for g, members in json.loads($AFTER_JSON)["groups"].items()})'
     )
     case.body.create_keyword("Evaluate", args=[expression, "json"], assign=["${after}"])
+    case.body.create_keyword("Select OSDs For Service Control", args=["${before}"])
     keyword = "Only Target OSD Should Be Stopped" if stopped else "Only Target OSD Should Have A New Process"
     case.body.create_keyword(keyword, args=["${before}", "${after}"])
     output = io.StringIO()
