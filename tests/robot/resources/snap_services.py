@@ -5,6 +5,22 @@ pipelines read poorly) in a single unit-testable function.
 """
 
 
+def service_has_state(snap_services_output, service, startup, current):
+    """Return whether *service* has the requested snap startup/current state.
+
+    ``snap services`` reports a header followed by whitespace-delimited columns:
+    Service, Startup, Current, and Notes. This intentionally accepts additional
+    trailing columns so it remains compatible with snapd additions.
+    """
+    for line in snap_services_output.splitlines()[1:]:
+        cols = line.split()
+        if len(cols) < 3:
+            continue
+        if cols[0] == service and cols[1] == startup and cols[2] == current:
+            return True
+    return False
+
+
 def enabled_active_services(snap_services_output):
     """Return the names of services that are both enabled and active.
 

@@ -9,6 +9,8 @@ description: |-
   MicroCeph is snap-deployed Ceph with built-in clustering.
 
 confinement: strict
+assumes:
+  - snapd2.78
 
 package-repositories:
   - type: apt
@@ -20,6 +22,10 @@ plugs:
     modules:
       - name: rbd
         load: on-boot
+
+  smb-identity:
+    interface: microceph-support
+    user-identity-switching: true
 
 slots:
   ceph-logs:
@@ -37,12 +43,16 @@ slots:
         - "$SNAP_DATA/conf"
 
 environment:
-  LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib/ganesha:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/erasure-code
+  LD_LIBRARY_PATH: $SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba:$SNAP/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:$SNAP/lib/ganesha:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/compressor:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/crypto:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph/erasure-code
   PYTHONPATH: $SNAP/lib/python3/dist-packages:$SNAP/lib/python3.14/site-packages
 
 layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/ceph
+  /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba:
+    symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba
+  /usr/libexec/samba:
+    symlink: $SNAP/libexec/samba
   /usr/lib/ganesha:
     symlink: $SNAP/lib/ganesha
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/rados-classes:
@@ -51,6 +61,8 @@ layout:
     bind: $SNAP_DATA/conf
   /etc/ganesha:
     bind: $SNAP_DATA/conf/ganesha
+  /etc/samba:
+    bind: $SNAP_DATA/conf/samba
   /usr/share/ceph:
     bind: $SNAP/share/ceph
   /var/lib/ceph:
@@ -59,6 +71,12 @@ layout:
     bind: $SNAP_COMMON/logs
   /var/log/ganesha:
     bind: $SNAP_COMMON/logs/ganesha
+  /var/cache/samba:
+    bind: $SNAP_COMMON/data/samba/cache
+  /var/lib/samba:
+    bind: $SNAP_COMMON/data/samba
+  /var/log/samba:
+    bind: $SNAP_COMMON/logs/samba
 
 apps:
   # Service
@@ -116,6 +134,16 @@ apps:
       - network
       - network-bind
       - process-control
+  smbd:
+    command: commands/smbd.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+    plugs:
+      - smb-identity
+      - network
+      - network-bind
   osd:
     command: commands/osd.start
     reload-command: commands/osd.reload
@@ -483,6 +511,39 @@ parts:
       - lib/*/liburcu-bp.so*
       - lib/*/libwbclient.so*
 
+  samba:
+    plugin: nil
+    stage-packages:
+      - samba
+      - samba-vfs-ceph
+      - python3-samba
+      - libnss-wrapper
+      - libpopt0
+      - libtirpc3t64
+    organize:
+      sbin/: bin/
+      usr/bin/: bin/
+      usr/sbin/: bin/
+      usr/lib/: lib/
+      usr/libexec/: libexec/
+    prime:
+      - -usr/share/doc
+      - -usr/share/lintian
+      - -usr/share/man
+      - -lib/systemd
+      - -lib/sysusers.d
+      - -lib/tmpfiles.d
+
+  sambacc:
+    plugin: nil
+    build-packages:
+      - python3-pip
+    override-build: |
+      set -eux
+      craftctl default
+      pip install --break-system-packages --no-compile \
+        --target=$CRAFT_PART_INSTALL/lib/python3.14/site-packages sambacc==0.9
+
   logrotate:
     plugin: nil
     stage-packages:
@@ -504,19 +565,32 @@ parts:
       - ceph
       - dqlite
       - microceph
+      - samba
+      - sambacc
       - logrotate
     plugin: nil
     override-prime: |
       set -x
 
-      # Strip libraries (excluding python3 scripts)
-      find "${CRAFT_PRIME}"/lib -type f \
-        -not -path "${CRAFT_PRIME}/lib/python3*/*" \
-        -exec strip -s {} +
+      # Only ELF objects can be stripped. Samba's staged dependencies also
+      # install Python, Perl, and metadata files below lib/.
+      find "${CRAFT_PRIME}"/lib -type f -exec sh -c '
+        for path do
+          if [ "$(head -c 4 "${path}")" = "$(printf '\177ELF')" ]; then
+            strip -s "${path}"
+          fi
+        done
+      ' sh {} +
 
   wrappers:
     plugin: dump
     source: snapcraft/
     permissions:
+      - path: commands/samba-command
+        mode: "0755"
+      - path: commands/sambacc.start
+        mode: "0755"
+      - path: commands/smbd.start
+        mode: "0755"
       - path: etc/logrotate.conf
         mode: "0644"
