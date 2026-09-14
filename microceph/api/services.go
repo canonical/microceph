@@ -68,6 +68,11 @@ var nfsServiceCmd = mcTypes.Endpoint{
 	Put:    mcTypes.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
 	Delete: mcTypes.EndpointAction{Handler: cmdNFSDeleteService, ProxyTarget: true},
 }
+var smbServiceCmd = mcTypes.Endpoint{
+	Path:   "services/smb",
+	Put:    mcTypes.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Delete: mcTypes.EndpointAction{Handler: cmdSMBDeleteService, ProxyTarget: true},
+}
 var rgwServiceCmd = mcTypes.Endpoint{
 	Path:   "services/rgw",
 	Put:    mcTypes.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
@@ -195,6 +200,29 @@ func cmdNFSDeleteService(s mcTypes.State, r *http.Request) mcTypes.Response {
 	err = ceph.DisableNFS(r.Context(), interfaces.CephState{State: s}, svc.ClusterID)
 	if err != nil {
 		logger.Errorf("Failed disabling NFS: %v", err)
+		return mcTypes.SmartError(err)
+	}
+
+	return mcTypes.EmptySyncResponse
+}
+
+func cmdSMBDeleteService(s mcTypes.State, r *http.Request) mcTypes.Response {
+	var svc types.SMBService
+
+	err := json.NewDecoder(r.Body).Decode(&svc)
+	if err != nil {
+		logger.Errorf("failed decoding disable service request: %v", err)
+		return mcTypes.InternalError(err)
+	}
+
+	if !types.SMBClusterIDRegex.MatchString(svc.ClusterID) {
+		err := fmt.Errorf("expected cluster_id to be valid (regex: '%s')", types.SMBClusterIDRegex.String())
+		return mcTypes.SmartError(err)
+	}
+
+	err = ceph.DisableSMB(r.Context(), interfaces.CephState{State: s}, svc.ClusterID)
+	if err != nil {
+		logger.Errorf("failed disabling SMB: %v", err)
 		return mcTypes.SmartError(err)
 	}
 

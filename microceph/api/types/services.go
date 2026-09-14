@@ -31,6 +31,11 @@ type NFSService struct {
 	ClusterID string `json:"cluster_id" yaml:"cluster_id"`
 }
 
+// SMBService holds the Cluster ID of the SMB service.
+type SMBService struct {
+	ClusterID string `json:"cluster_id" yaml:"cluster_id"`
+}
+
 // NFSClusterIDRegex is a regex for acceptable ClusterIDs.
 var NFSClusterIDRegex = regexp.MustCompile(`^[\w][\w.-]{1,61}[\w]$`)
 
