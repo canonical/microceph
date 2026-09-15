@@ -91,7 +91,7 @@ Force Remove Node Head Node
     ${mon_host_before}=    Run In Container    node-wrk0    microceph cluster sql "SELECT key FROM config WHERE key = 'mon.host.${node}'"    30
     Should Contain    ${mon_host_before.stdout}    mon.host.${node}    msg=Expected mon.host config for ${node} before force removal
     Run In VM And Check    lxc stop --force ${node}    60
-    Run In Container    node-wrk0    microceph cluster remove ${node} --force    120
+    Run In Container With Retry    node-wrk0    microceph cluster remove ${node} --force    3    10s    120
     ${mon_host_after}=    Run In Container    node-wrk0    microceph cluster sql "SELECT key FROM config WHERE key = 'mon.host.${node}'"    30
     Should Not Contain    ${mon_host_after.stdout}    mon.host.${node}    msg=mon.host config for ${node} survived force removal
     Run In Container    node-wrk0    microceph.ceph -s    30
