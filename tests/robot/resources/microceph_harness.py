@@ -362,6 +362,25 @@ class microceph_harness:
             raise AssertionError(f"Command failed (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}")
         return res
 
+    def run_in_container_with_retry(self, container, cmd, attempts, interval, timeout=300):
+        """Runs a container command until it succeeds or retries are exhausted."""
+        last_result = [None]
+
+        def predicate():
+            last_result[0] = self.run_in_container_unchecked(container, cmd, timeout, quiet=False)
+            return last_result[0].rc == 0
+
+        self._poll_until(
+            predicate,
+            attempts=attempts,
+            interval=interval,
+            fail_msg=lambda: (
+                f"Command failed after {attempts} attempts (rc={last_result[0].rc}):\n"
+                f"STDERR: {last_result[0].stderr}\nSTDOUT: {last_result[0].stdout}"
+            ),
+        )
+        return last_result[0]
+
     def run_in_head_node(self, cmd, timeout=300, quiet=False):
         """Runs cmd inside node-wrk0 container."""
         return self.run_in_container(HEAD_NODE, cmd, timeout, quiet)
