@@ -1,0 +1,120 @@
+name: Auto Doc Tag
+
+# Cron every 6h. Inspect commits on main since latest vX.Y.Z+doc tag.
+# If any commit since tag touches docs/, create new tag at main HEAD:
+#   feat: in any subject since tag -> bump minor
+#   otherwise                      -> bump patch
+# No docs/ changes since tag -> exit.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Print computed tag without pushing"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-doc-tag
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: main
+
+      - name: Compute next tag
+        id: compute
+        run: |
+          set -euo pipefail
+
+          # Latest +doc tag by semver. Empty if none.
+          latest=$(git tag --list 'v*+doc' \
+            | sed 's/+doc$//' \
+            | sed 's/^v//' \
+            | sort -V \
+            | tail -n1)
+
+          if [ -z "$latest" ]; then
+            echo "No prior +doc tag found; seeding at v0.1.0+doc"
+            echo "next=v0.1.0+doc" >> "$GITHUB_OUTPUT"
+            echo "reason=seed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          prev_tag="v${latest}+doc"
+          echo "Previous tag: ${prev_tag}"
+
+          # Doc-touching commits since prev_tag.
+          doc_commits=$(git log --format=%H "${prev_tag}..origin/main" -- docs/ || true)
+          if [ -z "$doc_commits" ]; then
+            echo "No docs/ changes since ${prev_tag}; nothing to do."
+            echo "next=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Look at ALL commit subjects since prev_tag (not just doc-only)
+          # to decide feat vs patch -- feat in any commit triggers minor bump.
+          subjects=$(git log --format=%s "${prev_tag}..origin/main")
+          if echo "$subjects" | grep -Eq '^feat(\([^)]+\))?:'; then
+            bump=minor
+          else
+            bump=patch
+          fi
+
+          IFS='.' read -r major minor patch <<< "$latest"
+          case "$bump" in
+            minor) minor=$((minor+1)); patch=0 ;;
+            patch) patch=$((patch+1)) ;;
+          esac
+          next="v${major}.${minor}.${patch}+doc"
+
+          echo "Bump: ${bump}"
+          echo "Next tag: ${next}"
+          echo "next=${next}" >> "$GITHUB_OUTPUT"
+          echo "prev=${prev_tag}" >> "$GITHUB_OUTPUT"
+          echo "bump=${bump}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if no tag computed
+        if: steps.compute.outputs.next == ''
+        run: echo "No tag to push."
+
+      - name: Create and push tag
+        if: steps.compute.outputs.next != '' && inputs.dry-run != 'true'
+        env:
+          NEXT: ${{ steps.compute.outputs.next }}
+        run: |
+          set -euo pipefail
+          # Idempotent: skip if HEAD already has any +doc tag pointing at it.
+          existing=$(git tag --points-at HEAD --list 'v*+doc' || true)
+          if [ -n "$existing" ]; then
+            echo "HEAD already tagged: ${existing}; skipping."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$NEXT"
+          git push origin "$NEXT"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Auto Doc Tag"
+            echo ""
+            echo "- Previous: \`${{ steps.compute.outputs.prev || 'none' }}\`"
+            echo "- Bump:     \`${{ steps.compute.outputs.bump || 'n/a' }}\`"
+            echo "- Next:     \`${{ steps.compute.outputs.next || 'no-op' }}\`"
+            echo "- Dry-run:  \`${{ inputs.dry-run || 'false' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
