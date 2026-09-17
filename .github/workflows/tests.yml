@@ -48,10 +48,36 @@ jobs:
           path: "*.snap"
           retention-days: 5
 
+  # Infra gate for every test job: on a gross Snap Store or
+  # Ubuntu archive outage, fail this one job and skip the suites instead
+  # of recording one failure per suite. It cannot see inside the LXD
+  # instances the suites create later; in-instance checks are tracked in
+  # https://github.com/canonical/microceph/issues/836
+  preflight:
+    name: Preflight infra gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      # The probes live in a script shared with main.
+      - name: Checkout preflight script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: tests/scripts/preflight.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Probe Snap Store and Ubuntu archive reachability
+        run: tests/scripts/preflight.sh probe_endpoints
+
+      - name: Download Snap Store canary
+        run: tests/scripts/preflight.sh snap_canary
+
+      - name: Download APT test tools
+        run: tests/scripts/preflight.sh apt_canary jq s3cmd
+
   dsl-functional-tests:
     name: DSL functional tests
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     env:
       DSL_FUNCTEST_SUITE: run_dsl_full_tests
     steps:
@@ -95,7 +121,7 @@ jobs:
   api-tests:
     name: API tests
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -192,7 +218,7 @@ jobs:
   single-system-tests:
     name: Single node with encryption
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -393,7 +419,7 @@ jobs:
   multi-node-tests:
     name: Multi node testing
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -535,7 +561,7 @@ jobs:
   availability-zone-tests:
     name: Availability zone crush rule testing
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -584,7 +610,7 @@ jobs:
   multi-node-tests-with-custom-microceph-ip:
     name: Multi node testing with custom microceph IP
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -641,7 +667,7 @@ jobs:
   multi-subnet-tests:
     name: Multi subnet public and cluster networks
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -692,7 +718,7 @@ jobs:
   test-sequential-mon-host-refresh:
     name: Regression test for sequential join mon host refresh (issue #556)
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -738,7 +764,7 @@ jobs:
   test-maintenance-modes:
     name: Test maintenance mode
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -838,7 +864,7 @@ jobs:
   loop-file-tests:
     name: Test with loopback file OSDs
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -893,7 +919,7 @@ jobs:
   wal-db-tests:
     name: Test WAL/DB device usage
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -964,7 +990,7 @@ jobs:
   upgrade-quincy-tests:
     name: Test quincy upgrades
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -1036,7 +1062,7 @@ jobs:
   upgrade-reef-tests:
     name: Test reef upgrades
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -1112,7 +1138,7 @@ jobs:
   cluster-tests:
     name: Test MicroCeph Cluster features.
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -1173,7 +1199,7 @@ jobs:
   rbd-replication-test:
     name: Test MicroCeph RBD Remote Replication features.
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -1242,7 +1268,7 @@ jobs:
   cephfs-replication-test:
     name: Test MicroCeph Cephfs Remote Replication features.
     runs-on: ubuntu-24.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -1307,7 +1333,7 @@ jobs:
   nfs-test:
     name: Test MicroCeph NFS feature
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -1378,7 +1404,7 @@ jobs:
   nfs-multinode-test:
     name: Test MicroCeph NFS feature (multinode)
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -1452,7 +1478,7 @@ jobs:
   messenger-v2-tests:
     name: Messenger v2 tests
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -1498,7 +1524,7 @@ jobs:
   wiping-test:
     name: Verify pristineness and wiping
     runs-on: ubuntu-22.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
@@ -1523,7 +1549,7 @@ jobs:
   cephadm-adopt-test:
     name: Adopt test with cephadm
     runs-on: ubuntu-24.04
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
