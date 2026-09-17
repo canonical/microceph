@@ -1,0 +1,18 @@
+{
+  "placement": {
+    "count": 1,
+    "hosts": [
+      "node-a"
+    ]
+  },
+  "service_id": "files",
+  "service_name": "smb.files",
+  "service_type": "smb",
+  "spec": {
+    "cluster_id": "files",
+    "config_uri": "rados://.smb/files/config.smb",
+    "user_sources": [
+      "rados:mon-config-key:smb/config/files/users-groups.0.json"
+    ]
+  }
+}

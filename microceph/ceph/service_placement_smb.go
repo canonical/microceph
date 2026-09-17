@@ -24,13 +24,15 @@ type SMBServicePlacement struct {
 	Features    []string `json:"features"`
 	JoinSources []string `json:"join_sources"`
 	UserSources []string `json:"user_sources"`
+
+	upstreamSpec json.RawMessage
 }
 
 // PopulateParams validates an SMB placement payload before it is applied locally.
 func (smb *SMBServicePlacement) PopulateParams(_ interfaces.StateInterface, payload string) error {
-	err := json.Unmarshal([]byte(payload), smb)
+	err := smb.decodePayload(payload)
 	if err != nil {
-		return fmt.Errorf("failed to decode SMB service payload: %w", err)
+		return err
 	}
 
 	if !types.SMBClusterIDRegex.MatchString(smb.ClusterID) {
@@ -59,6 +61,36 @@ func (smb *SMBServicePlacement) PopulateParams(_ interfaces.StateInterface, payl
 	}
 
 	return nil
+}
+
+func (smb *SMBServicePlacement) decodePayload(payload string) error {
+	upstreamSpec := []byte(payload)
+	data := upstreamSpec
+
+	var envelope struct {
+		Spec json.RawMessage `json:"spec"`
+	}
+	err := json.Unmarshal(data, &envelope)
+	if err != nil {
+		return fmt.Errorf("failed to decode SMB service payload: %w", err)
+	}
+	if len(envelope.Spec) > 0 && string(envelope.Spec) != "null" {
+		data = envelope.Spec
+	}
+
+	var decoded SMBServicePlacement
+	err = json.Unmarshal(data, &decoded)
+	if err != nil {
+		return fmt.Errorf("failed to decode SMB service payload: %w", err)
+	}
+
+	decoded.upstreamSpec = append(decoded.upstreamSpec, upstreamSpec...)
+	*smb = decoded
+	return nil
+}
+
+func (smb *SMBServicePlacement) upstreamSpecJSON() []byte {
+	return append([]byte(nil), smb.upstreamSpec...)
 }
 
 // HospitalityCheck verifies that the SMB service can run with the required identity-switching permission.
@@ -115,19 +147,11 @@ func (smb *SMBServicePlacement) PostPlacementCheck(_ interfaces.StateInterface) 
 	return genericPostPlacementCheck("smbd")
 }
 
-// DbUpdate records the SMB service on this host after its first successful placement.
+// DbUpdate records the successful SMB configuration and local member state.
 func (smb *SMBServicePlacement) DbUpdate(ctx context.Context, s interfaces.StateInterface) error {
-	exists, err := database.GroupedServicesQuery.ExistsOnHost(ctx, s, "smb", smb.ClusterID)
-	if err != nil {
-		return fmt.Errorf("failed to check existing SMB service: %w", err)
-	}
-	if exists {
-		return nil
-	}
-
-	groupConfig := database.SMBServiceGroupConfig{}
+	groupConfig := database.SMBServiceGroupConfig{DesiredSpec: smb.upstreamSpecJSON()}
 	serviceInfo := database.SMBServiceInfo{ConfigURI: smb.ConfigURI}
-	return database.GroupedServicesQuery.AddNew(ctx, s, "smb", smb.ClusterID, groupConfig, serviceInfo)
+	return database.GroupedServicesQuery.AddOrUpdate(ctx, s, "smb", smb.ClusterID, groupConfig, serviceInfo)
 }
 
 func currentSMBClusterID() (string, error) {

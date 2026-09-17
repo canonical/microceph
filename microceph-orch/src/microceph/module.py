@@ -29,6 +29,7 @@ from orchestrator import (
     InventoryHost,
     ServiceDescription,
     DaemonDescription,
+    DaemonDescriptionStatus,
     OrchestratorCLICommandBase,
     handle_orch_error,
     OrchResult,
@@ -186,6 +187,61 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
 
         return config_uris.pop()
 
+    @staticmethod
+    def _smb_service_groups(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """Collect SMB specs and members from grouped-service records."""
+        groups: Dict[str, Dict[str, Any]] = {}
+        for record in records:
+            if record.get("service") != "smb":
+                continue
+
+            cluster_id = record.get("group_id")
+            member = record.get("location")
+            group_config = record.get("group_config")
+            if not isinstance(cluster_id, str) or not cluster_id:
+                raise ValueError("invalid SMB grouped-service identity")
+            if not isinstance(member, str) or not member:
+                raise ValueError("invalid SMB grouped-service member")
+            if not isinstance(group_config, str):
+                raise ValueError(f"missing SMB group configuration for '{cluster_id}'")
+
+            try:
+                config = json.loads(group_config)
+            except json.JSONDecodeError as err:
+                raise ValueError(
+                    f"invalid SMB group configuration for '{cluster_id}'"
+                ) from err
+            desired_spec = config.get("desired_spec")
+            if not isinstance(desired_spec, dict):
+                raise ValueError(f"missing SMB desired spec for '{cluster_id}'")
+
+            group = groups.setdefault(
+                cluster_id,
+                {"desired_spec": desired_spec, "members": []},
+            )
+            if group["desired_spec"] != desired_spec:
+                raise ValueError(f"inconsistent SMB group configuration for '{cluster_id}'")
+            group["members"].append(member)
+
+        for group in groups.values():
+            group["members"].sort()
+        return groups
+
+    def _smb_descriptions(
+        self, records: List[Dict[str, Any]], service_name: Optional[str]
+    ) -> List[ServiceDescription]:
+        """Build SMB descriptions from grouped-service configuration."""
+        descriptions = []
+        for cluster_id, group in self._smb_service_groups(records).items():
+            expected_service_name = f"smb.{cluster_id}"
+            if service_name and service_name != expected_service_name:
+                continue
+            descriptions.append(ServiceDescription(
+                spec=SMBSpec.from_json(group["desired_spec"]),
+                running=0,
+            ))
+        return descriptions
+
     @handle_orch_error
     def describe_service(self,
                 service_type: Optional[str] = None,
@@ -200,6 +256,8 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
         service_hostlist = self._get_service_hostlist(recorded_services)
 
         service_descs = []
+        if service_type in (None, "smb"):
+            service_descs = self._smb_descriptions(recorded_services, service_name)
         for svc_name, hostlist in service_hostlist.items():
             spec = None
             svc_type, svc_id = self._elaborate_service(svc_name)
@@ -207,6 +265,10 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
 
             # skip unrelated services if a specific daemon type is requested.
             if service_type and svc_type != service_type:
+                continue
+            if service_name and svc_name != service_name:
+                continue
+            if svc_type == "smb":
                 continue
 
             placement = PlacementSpec(hosts=hostlist, count=len(hostlist))
@@ -254,15 +316,31 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             svc_ip = None
             svc_ports = None
             svc_name = f"{svc_daemon_type}.{svc_group_ip}" if svc_group_ip else svc_daemon_type
-            if daemon_type:
-                if svc_daemon_type != daemon_type:
-                    continue
+            if daemon_type and svc_daemon_type != daemon_type:
+                continue
+            if service_name and svc_name != service_name:
+                continue
+            if daemon_id and svc_hostname != daemon_id:
+                continue
+            if host and svc_hostname != host:
+                continue
+            if svc_daemon_type == "smb":
+                descriptions.append(DaemonDescription(
+                    service_name=svc_name,
+                    daemon_type="smb",
+                    daemon_id=svc_hostname,
+                    hostname=svc_hostname,
+                    status=DaemonDescriptionStatus.unknown,
+                    status_desc="runtime state is not reported by the MicroCeph services API",
+                    is_active=False,
+                ))
+                continue
 
             if svc_daemon_type == 'nfs':
                 info = json.loads(svc['info'])
                 svc_ip = None if "0.0.0.0" in info['bind_address'] else info['bind_address']
                 svc_ports = [info['bind_port']]
-            
+
             descriptions.append(DaemonDescription(
                 service_name=svc_name,
                 daemon_type=svc_daemon_type,
@@ -298,14 +376,43 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
         return inventory
 
     def _smb_target_hosts(self, spec: SMBSpec) -> List[str]:
-        """Resolve an SMB placement to one native smbd process per host."""
+        """Resolve an SMB placement to validated MicroCeph member names."""
         placement = spec.placement
         if placement.count_per_host not in (None, 1):
             raise ValueError("native SMB supports at most one daemon per host")
+        if getattr(placement, "label", None):
+            raise ValueError("native SMB placement does not support labels")
+        if getattr(placement, "host_pattern", None):
+            raise ValueError("native SMB placement does not support host patterns")
 
         hosts = self._microceph_hosts()
-        candidates = placement.filter_matching_hostspecs(hosts)
+        member_names = [host.hostname for host in hosts]
+        explicit_hosts = list(getattr(placement, "hosts", []) or [])
+        if explicit_hosts:
+            for host in explicit_hosts:
+                if getattr(host, "network", ""):
+                    raise ValueError(
+                        "native SMB placement does not support host network overrides"
+                    )
+                if getattr(host, "name", ""):
+                    raise ValueError(
+                        "native SMB placement does not support daemon names"
+                    )
+
+            candidates = [host.hostname for host in explicit_hosts]
+            unknown_hosts = sorted(set(candidates).difference(member_names))
+            if unknown_hosts:
+                names = ", ".join(unknown_hosts)
+                raise ValueError(f"unknown MicroCeph members: {names}")
+        else:
+            candidates = member_names
+
         target_count = placement.get_target_count(hosts)
+        if target_count > len(candidates):
+            raise ValueError(
+                f"SMB placement requests {target_count} daemons but only "
+                f"{len(candidates)} hosts are available"
+            )
         targets = candidates[:target_count]
         if not targets:
             raise ValueError("SMB placement did not select any MicroCeph members")
@@ -353,14 +460,8 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
 
     @staticmethod
     def _smb_payload(spec: SMBSpec) -> Dict[str, Any]:
-        """Convert the upstream SMB spec into the node-local placement payload."""
-        return {
-            "cluster_id": spec.cluster_id,
-            "config_uri": spec.config_uri,
-            "features": list(spec.features or []),
-            "join_sources": list(spec.join_sources or []),
-            "user_sources": list(spec.user_sources or []),
-        }
+        """Return the complete upstream SMBSpec envelope for node-local placement."""
+        return spec.to_json()
 
     @handle_orch_error
     def apply_smb(self, spec: SMBSpec) -> str:
@@ -386,7 +487,6 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             if record['group_id'] == spec.cluster_id
         }
         payload = self._smb_payload(spec)
-
         for target in targets:
             self.microceph.services.apply_smb(target, payload)
 

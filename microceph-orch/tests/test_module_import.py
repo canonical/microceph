@@ -1,6 +1,7 @@
 """Compatibility tests for loading the MicroCeph manager module."""
 
 import importlib
+import json
 import sys
 import types
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 
 
 SOURCE_ROOT = Path(__file__).parents[1] / "src"
+FIXTURES_ROOT = Path(__file__).parent / "fixtures"
 
 
 class _OrchResult(Generic[TypeVar("T")]):
@@ -53,6 +55,28 @@ def _install_ceph20_stubs(monkeypatch):
     class SMBSpec:
         def __init__(self, **kwargs):
             self.__dict__.update(kwargs)
+
+        @classmethod
+        def from_json(cls, data):
+            spec = data.get("spec", {})
+            return cls(
+                service_id=data.get("service_id"),
+                cluster_id=spec.get("cluster_id"),
+                config_uri=spec.get("config_uri"),
+                placement=PlacementSpec(**data.get("placement", {})),
+                source_json=data,
+            )
+
+        def to_json(self):
+            if hasattr(self, "source_json"):
+                return self.source_json
+            return {
+                "service_id": self.service_id,
+                "spec": {
+                    "cluster_id": self.cluster_id,
+                    "config_uri": self.config_uri,
+                },
+            }
 
     inventory.Device = Device
     inventory.Devices = Devices
@@ -103,8 +127,16 @@ def _install_ceph20_stubs(monkeypatch):
         def __init__(self, **kwargs):
             self.__dict__.update(kwargs)
 
+    class DaemonDescriptionStatus:
+        unknown = "unknown"
+        error = "error"
+        stopped = "stopped"
+        running = "running"
+        starting = "starting"
+
     class DaemonDescription:
-        pass
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
 
     def handle_orch_error(function):
         return function
@@ -116,6 +148,7 @@ def _install_ceph20_stubs(monkeypatch):
     orchestrator.InventoryHost = InventoryHost
     orchestrator.ServiceDescription = ServiceDescription
     orchestrator.DaemonDescription = DaemonDescription
+    orchestrator.DaemonDescriptionStatus = DaemonDescriptionStatus
     orchestrator.handle_orch_error = handle_orch_error
     orchestrator.OrchResult = _OrchResult
 
@@ -167,15 +200,39 @@ def test_manager_registers_smb_for_service_description(monkeypatch):
     assert module.daemon_spec_map["smb"] is module.SMBSpec
 
 
+class _HostPlacement:
+    def __init__(self, hostname, network="", name=""):
+        self.hostname = hostname
+        self.network = network
+        self.name = name
+
+
 class _SMBPlacement:
-    count = 1
-    count_per_host = None
+    def __init__(
+        self,
+        *,
+        hosts=None,
+        count=1,
+        count_per_host=None,
+        label=None,
+        host_pattern=None,
+    ):
+        self.hosts = hosts or []
+        self.count = count
+        self.count_per_host = count_per_host
+        self.label = label
+        self.host_pattern = host_pattern
 
     def filter_matching_hostspecs(self, hosts):
-        return [host.hostname for host in hosts]
+        available = [host.hostname for host in hosts]
+        if self.hosts:
+            return [host.hostname for host in self.hosts if host.hostname in available]
+        return available
 
-    def get_target_count(self, _hosts):
-        return self.count
+    def get_target_count(self, hosts):
+        if self.count is not None:
+            return self.count
+        return len(self.filter_matching_hostspecs(hosts)) * (self.count_per_host or 1)
 
 
 class _SMBSpec:
@@ -188,21 +245,29 @@ class _SMBSpec:
     include_ceph_users = ["client.smb.fs.cluster.files"]
     placement = _SMBPlacement()
 
+    def to_json(self):
+        return json.loads(
+            (FIXTURES_ROOT / "smb-spec-user-direct.json").read_text()
+        )
+
 
 class _SMBServices:
     def __init__(self, records):
         self.records = records
         self.applied = []
         self.removed = []
+        self.events = []
 
     def list_services(self):
         return self.records
 
     def apply_smb(self, target, payload):
         self.applied.append((target, payload))
+        self.events.append(("apply", target))
 
     def remove_smb(self, target, cluster_id):
         self.removed.append((target, cluster_id))
+        self.events.append(("remove", target))
 
 
 class _SMBCluster:
@@ -219,29 +284,59 @@ class _SMBClient:
         self.services = _SMBServices(records)
 
 
-def test_describe_smb_service_reconstructs_a_valid_smb_spec(monkeypatch):
-    module = _load_module(monkeypatch)
-    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
-    manager.microceph = _SMBClient(
-        [
-            {
-                "service": "smb",
-                "group_id": "files",
-                "location": "node-a",
-                "info": '{"config_uri":"rados://.smb/files/config.smb"}',
-            }
-        ]
-    )
+def _smb_record(location, desired_spec):
+    return {
+        "service": "smb",
+        "group_id": "files",
+        "location": location,
+        "info": '{"config_uri":"rados://.smb/files/config.smb"}',
+        "group_config": json.dumps({"desired_spec": desired_spec}),
+    }
 
-    descriptions = manager.describe_service(service_type="smb")
+
+def test_describe_smb_service_uses_grouped_service_state(monkeypatch):
+    module = _load_module(monkeypatch)
+    desired_spec = json.loads(
+        (FIXTURES_ROOT / "smb-spec-user-direct.json").read_text()
+    )
+    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
+    manager.microceph = _SMBClient([
+        _smb_record("node-a", desired_spec),
+        _smb_record("node-b", desired_spec),
+    ])
+
+    descriptions = manager.describe_service(service_type="smb", service_name="smb.files")
 
     assert len(descriptions) == 1
-    spec = descriptions[0].spec
-    assert isinstance(spec, module.SMBSpec)
-    assert spec.cluster_id == "files"
-    assert spec.config_uri == "rados://.smb/files/config.smb"
-    assert spec.placement.hosts == ["node-a"]
-    assert spec.placement.count == 1
+    assert descriptions[0].spec.to_json() == desired_spec
+    assert descriptions[0].running == 0
+
+
+def test_list_smb_daemons_uses_grouped_members_and_reports_unknown(monkeypatch):
+    module = _load_module(monkeypatch)
+    desired_spec = _SMBSpec().to_json()
+    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
+    manager.microceph = _SMBClient([
+        _smb_record("node-a", desired_spec),
+        _smb_record("node-b", desired_spec),
+    ])
+
+    descriptions = manager.list_daemons(service_name="smb.files", daemon_type="smb")
+
+    assert [description.hostname for description in descriptions] == ["node-a", "node-b"]
+    assert all(
+        description.status == module.DaemonDescriptionStatus.unknown
+        for description in descriptions
+    )
+    assert all(description.is_active is False for description in descriptions)
+
+    filtered = manager.list_daemons(
+        service_name="smb.files",
+        daemon_type="smb",
+        daemon_id="node-a",
+        host="node-a",
+    )
+    assert [description.hostname for description in filtered] == ["node-a"]
 
 
 def _load_module(monkeypatch):
@@ -254,6 +349,69 @@ def _load_module(monkeypatch):
     return importlib.import_module("microceph.module")
 
 
+@pytest.mark.parametrize(
+    ("placement", "description"),
+    [
+        (_SMBPlacement(label="smb"), "labels"),
+        (_SMBPlacement(host_pattern="node-*"), "host patterns"),
+        (
+            _SMBPlacement(hosts=[_HostPlacement("node-a", network="10.0.0.1")]),
+            "host network overrides",
+        ),
+        (
+            _SMBPlacement(hosts=[_HostPlacement("node-a", name="smb.0")]),
+            "daemon names",
+        ),
+    ],
+)
+def test_smb_target_hosts_rejects_unsupported_placement_expressions(
+    monkeypatch, placement, description
+):
+    module = _load_module(monkeypatch)
+    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
+    manager.microceph = _SMBClient([])
+    spec = _SMBSpec()
+    spec.placement = placement
+
+    with pytest.raises(ValueError, match=description):
+        manager._smb_target_hosts(spec)
+
+
+def test_smb_target_hosts_rejects_unknown_explicit_hostname(monkeypatch):
+    module = _load_module(monkeypatch)
+    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
+    manager.microceph = _SMBClient([])
+    spec = _SMBSpec()
+    spec.placement = _SMBPlacement(hosts=[_HostPlacement("node-missing")])
+
+    with pytest.raises(ValueError, match="unknown MicroCeph members: node-missing"):
+        manager._smb_target_hosts(spec)
+
+
+def test_smb_target_hosts_preserves_explicit_host_order(monkeypatch):
+    module = _load_module(monkeypatch)
+    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
+    manager.microceph = _SMBClient([])
+    spec = _SMBSpec()
+    spec.placement = _SMBPlacement(
+        hosts=[_HostPlacement("node-b"), _HostPlacement("node-a")],
+        count=None,
+    )
+
+    assert manager._smb_target_hosts(spec) == ["node-b", "node-a"]
+
+
+def test_smb_target_hosts_rejects_count_above_available_members(monkeypatch):
+    module = _load_module(monkeypatch)
+    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
+    manager.microceph = _SMBClient([])
+    spec = _SMBSpec()
+    spec.placement = _SMBPlacement(count=3)
+
+    with pytest.raises(ValueError, match="requests 3 daemons but only 2 hosts"):
+        manager._smb_target_hosts(spec)
+
+
 def test_apply_smb_reconciles_members_and_sends_the_upstream_spec(monkeypatch):
     module = _load_module(monkeypatch)
     manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
@@ -264,19 +422,13 @@ def test_apply_smb_reconciles_members_and_sends_the_upstream_spec(monkeypatch):
     result = manager.apply_smb(_SMBSpec())
 
     assert result == "Applied SMB service 'files'"
-    assert manager.microceph.services.applied == [
-        (
-            "node-a",
-            {
-                "cluster_id": "files",
-                "config_uri": "rados://.smb/files/config.smb",
-                "features": [],
-                "join_sources": [],
-                "user_sources": [
-                    "rados:mon-config-key:smb/config/files/users-groups.0.json"
-                ],
-            },
-        )
+    desired_spec = json.loads(
+        (FIXTURES_ROOT / "smb-spec-user-direct.json").read_text()
+    )
+    assert manager.microceph.services.applied == [("node-a", desired_spec)]
+    assert manager.microceph.services.events == [
+        ("apply", "node-a"),
+        ("remove", "node-old"),
     ]
     assert manager.microceph.services.removed == [("node-old", "files")]
 

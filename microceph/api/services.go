@@ -29,17 +29,18 @@ func cmdServicesGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 		return mcTypes.InternalError(err)
 	}
 
-	groupedServices, err := database.GroupedServicesQuery.GetGroupedServices(r.Context(), interfaces.CephState{State: s})
+	groupedServices, err := database.GroupedServicesQuery.GetGroupedServicesWithGroupConfig(r.Context(), interfaces.CephState{State: s})
 	if err != nil {
 		return mcTypes.InternalError(err)
 	}
 
 	for _, groupedService := range groupedServices {
 		services = append(services, types.Service{
-			Service:  groupedService.Service,
-			Location: groupedService.Member,
-			GroupID:  groupedService.GroupID,
-			Info:     groupedService.Info,
+			Service:     groupedService.Service,
+			Location:    groupedService.Member,
+			GroupID:     groupedService.GroupID,
+			Info:        groupedService.Info,
+			GroupConfig: groupedService.GroupConfig,
 		})
 	}
 
