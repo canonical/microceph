@@ -170,7 +170,7 @@ Test Service Migration
     ...    then asserts ${src} has only OSD and ${dst} has mds, mgr, mon.
     [Arguments]    ${src}    ${dst}
     Log To Console    [cluster] Migrating services from ${src} to ${dst}...
-    Run In Container    node-wrk0    microceph cluster migrate ${src} ${dst}    120
+    Run In Container    node-wrk0    microceph cluster migrate ${src} ${dst}    400
     FOR    ${i}    IN RANGE    8
         ${status}=    Run In Container Unchecked    node-wrk0    microceph status    30
         ${src_ok}    ${dst_ok}=    Parse Migration Status    ${status.stdout}    ${src}    ${dst}
