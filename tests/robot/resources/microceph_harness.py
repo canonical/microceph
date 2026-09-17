@@ -1101,6 +1101,64 @@ class microceph_harness:
             raise AssertionError(f"Failed to {errlabel}: {res.stderr}")
         return res
 
+    @staticmethod
+    def _csv_lists_instance(csv_output, instance):
+        """Returns True when `lxc list --format csv` output still lists *instance*.
+
+        Pure helper for the delete-then-wait logic: the first CSV column is the
+        instance name, so any line naming *instance* means it is still present.
+        """
+        for line in (csv_output or "").splitlines():
+            if line.split(",", 1)[0].strip() == instance:
+                return True
+        return False
+
+    def _lxc_instance_exists(self, instance):
+        """Returns True when `lxc list` still shows *instance*.
+
+        A failed or timed-out `lxc list` (res.rc != 0) leaves the instance's
+        real state unknown, so this fails closed and returns True ("still
+        there") rather than open -- callers keep waiting instead of treating
+        an unanswered probe as proof the instance is gone and relaunching
+        into one that may still be live.
+        """
+        res = self._exec(["lxc", "list", instance, "--format", "csv", "-c", "n"], 30)
+        if res.rc != 0:
+            return True
+        return self._csv_lists_instance(res.stdout, instance)
+
+    def _delete_instance_synced(self, instance):
+        """Force-deletes *instance* and polls `lxc list` until it is really gone.
+
+        The delete's return code is checked and logged (a delete of a
+        not-yet-created or already-gone instance is expected and harmless), and
+        the instance is not considered deleted until `lxc list` stops naming it
+        -- a delete can return while the instance still exists, which is what
+        makes an immediate relaunch fail with "Instance already exists". If a
+        probe still finds the instance listed (for example because it was busy
+        with a server-side create when the delete was issued), the delete is
+        re-issued between probes rather than only ever waiting on the one
+        attempt already made.
+        """
+        def delete():
+            res = self._exec(["lxc", "delete", "--force", instance], 60)
+            if res.rc != 0:
+                logger.console(f"[setup] lxc delete --force {instance} rc={res.rc}: {res.stderr.strip()}")
+
+        def on_fail():
+            res = self._exec(["lxc", "list", instance], 30)
+            logger.console(res.stdout or res.stderr or "")
+
+        delete()
+        self._poll_until(
+            lambda: not self._lxc_instance_exists(instance),
+            attempts=10,
+            interval=6,
+            fail_msg=f"{instance} still listed by lxc after delete",
+            on_fail=on_fail,
+            between=delete,
+        )
+
     def launch_outer_test_vm(self, vm_name=None, disk_size=None, enable_nesting=False):
         """Launches the LXD VM used as the test boundary, deleting any pre-existing instance."""
         vm_name = vm_name or BuiltIn().get_variable_value("${OUTER_VM}", "microceph-test-vm")
@@ -1109,7 +1167,7 @@ class microceph_harness:
         # original keyword body ignores it).
         self.require_host_commands("lxc")
         logger.console(f"\n[setup] Deleting pre-existing VM {vm_name} (if any)...")
-        self._exec(["lxc", "delete", "--force", vm_name], 60)
+        self._delete_instance_synced(vm_name)
         logger.console(f"[setup] Launching VM {vm_name} (disk={disk_size})...")
         cpu = BuiltIn().get_variable_value("${OUTER_VM_CPU}", "4")
         memory = BuiltIn().get_variable_value("${OUTER_VM_MEMORY}", "6GiB")
@@ -1125,7 +1183,20 @@ class microceph_harness:
             if res.rc == 0:
                 break
             logger.console(f"[setup] Launch attempt {attempt} failed (rc={res.rc}), retrying in 30s...")
-            self._exec(["lxc", "delete", "--force", vm_name], 60)
+            # A timed-out launch (rc 124) may still have created the instance
+            # server-side, so check lxc list for it before deleting (a failed
+            # lxc list now counts as "exists", so the delete is attempted); a
+            # non-timeout failure keeps the original unconditional delete.
+            if res.rc != 124 or self._lxc_instance_exists(vm_name):
+                if attempt == 2:
+                    # Don't let a cleanup failure on the last attempt mask the
+                    # "Failed to launch VM" error raised right below.
+                    try:
+                        self._delete_instance_synced(vm_name)
+                    except AssertionError as exc:
+                        logger.console(f"[setup] Cleanup after final launch attempt failed (ignored): {exc}")
+                else:
+                    self._delete_instance_synced(vm_name)
             if attempt == 2:
                 raise AssertionError(f"Failed to launch VM {vm_name} after 3 attempts: {res.stderr}")
             time.sleep(30)

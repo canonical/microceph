@@ -27,6 +27,120 @@ from streaming_process import run_streaming_process
 
 
 # ---------------------------------------------------------------------------
+# _csv_lists_instance
+# ---------------------------------------------------------------------------
+
+def test_csv_lists_instance_matches_first_column():
+    assert H._csv_lists_instance("microceph-test-vm,RUNNING,10.0.0.1", "microceph-test-vm")
+
+
+def test_csv_lists_instance_ignores_other_names():
+    assert not H._csv_lists_instance("other-vm,RUNNING,10.0.0.2\nnode-wrk0,STOPPED,", "microceph-test-vm")
+
+
+def test_csv_lists_instance_empty_output_is_absent():
+    assert not H._csv_lists_instance("", "microceph-test-vm")
+
+
+def test_csv_lists_instance_none_output_is_absent():
+    assert not H._csv_lists_instance(None, "microceph-test-vm")
+
+
+def test_csv_lists_instance_name_must_be_whole_first_column():
+    assert not H._csv_lists_instance("microceph-test-vm-2,RUNNING,", "microceph-test-vm")
+
+
+# ---------------------------------------------------------------------------
+# _lxc_instance_exists -- fails closed: an unanswered probe means "still
+# there", never "gone". (_mh, _Res are defined further down this file; that's
+# fine here since these bodies only run once the whole module has loaded.)
+# ---------------------------------------------------------------------------
+
+def test_lxc_instance_exists_true_when_listed(monkeypatch):
+    h = H()
+    monkeypatch.setattr(h, "_exec", lambda argv, timeout: _Res(0, "microceph-test-vm,RUNNING,", ""))
+    assert h._lxc_instance_exists("microceph-test-vm") is True
+
+
+def test_lxc_instance_exists_false_when_not_listed(monkeypatch):
+    h = H()
+    monkeypatch.setattr(h, "_exec", lambda argv, timeout: _Res(0, "", ""))
+    assert h._lxc_instance_exists("microceph-test-vm") is False
+
+
+def test_lxc_instance_exists_fails_closed_on_error(monkeypatch):
+    h = H()
+    monkeypatch.setattr(h, "_exec", lambda argv, timeout: _Res(1, "", "error: not found"))
+    assert h._lxc_instance_exists("microceph-test-vm") is True
+
+
+def test_lxc_instance_exists_fails_closed_on_timeout(monkeypatch):
+    h = H()
+    monkeypatch.setattr(h, "_exec", lambda argv, timeout: _Res(124, "", ""))
+    assert h._lxc_instance_exists("microceph-test-vm") is True
+
+
+# ---------------------------------------------------------------------------
+# _delete_instance_synced -- the delete is re-issued between probes, not just
+# attempted once before the wait.
+# ---------------------------------------------------------------------------
+
+def test_delete_instance_synced_gone_on_first_probe_deletes_once(monkeypatch):
+    h = H()
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    calls = {"delete": 0}
+
+    def fake_exec(argv, timeout):
+        if argv[:2] == ["lxc", "delete"]:
+            calls["delete"] += 1
+            return _Res(0, "", "")
+        if argv[:2] == ["lxc", "list"]:
+            return _Res(0, "", "")  # never listed: already gone
+        raise AssertionError(f"unexpected exec: {argv}")
+
+    monkeypatch.setattr(h, "_exec", fake_exec)
+    h._delete_instance_synced("microceph-test-vm")
+    assert calls["delete"] == 1
+
+
+def test_delete_instance_synced_reissues_delete_between_probes(monkeypatch):
+    h = H()
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    calls = {"delete": 0}
+    still_listed = [True, False]  # first probe: still there, second: gone
+
+    def fake_exec(argv, timeout):
+        if argv[:2] == ["lxc", "delete"]:
+            calls["delete"] += 1
+            return _Res(0, "", "")
+        if argv[:2] == ["lxc", "list"]:
+            listed = still_listed.pop(0)
+            return _Res(0, "microceph-test-vm,RUNNING," if listed else "", "")
+        raise AssertionError(f"unexpected exec: {argv}")
+
+    monkeypatch.setattr(h, "_exec", fake_exec)
+    h._delete_instance_synced("microceph-test-vm")
+    assert calls["delete"] == 2
+
+
+def test_delete_instance_synced_never_gone_raises(monkeypatch):
+    h = H()
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    def fake_exec(argv, timeout):
+        if argv[:2] == ["lxc", "delete"]:
+            return _Res(0, "", "")
+        if argv[:2] == ["lxc", "list"]:
+            return _Res(0, "microceph-test-vm,RUNNING,", "")
+        raise AssertionError(f"unexpected exec: {argv}")
+
+    monkeypatch.setattr(h, "_exec", fake_exec)
+    with pytest.raises(AssertionError) as exc:
+        h._delete_instance_synced("microceph-test-vm")
+    assert str(exc.value) == "microceph-test-vm still listed by lxc after delete"
+
+
+# ---------------------------------------------------------------------------
 # _safe_int
 # ---------------------------------------------------------------------------
 
