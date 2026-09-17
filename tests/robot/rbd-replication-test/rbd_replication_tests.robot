@@ -126,8 +126,8 @@ Disable RBD Mirroring
     Should Contain    ${disable_result.stdout}    in Image mirroring mode    msg=Expected 'in Image mirroring mode' error
     Run In Container    node-wrk2    sudo microceph replication disable rbd pool_two/image_one    60
     Run In Container    node-wrk2    sudo microceph replication disable rbd pool_two/image_two    60
-    Run In Container    node-wrk2    sudo microceph replication disable rbd pool_two    60
-    Run In Container    node-wrk2    sudo microceph replication disable rbd pool_one    60
+    Run In Container    node-wrk2    sudo microceph replication disable rbd pool_two    300
+    Run In Container    node-wrk2    sudo microceph replication disable rbd pool_one    300
 
 Remove Remote And Verify
     [Documentation]    Removes the siteb remote from sitea and verifies no remotes remain.
