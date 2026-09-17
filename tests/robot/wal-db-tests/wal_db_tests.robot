@@ -45,7 +45,7 @@ Test Encrypted WAL DB Startup Inline
     FOR    ${vol}    IN    luksosd-${osd_id}    luksosd.wal-${osd_id}    luksosd.db-${osd_id}
         FOR    ${i}    IN RANGE    24
             ${exists}=    Run In VM    test -e /dev/mapper/${vol} && echo yes || echo no    15
-            IF    "${exists.stdout.strip()}" == "yes"    BREAK
+            IF    $exists.stdout.strip() == "yes"    BREAK
             IF    ${i} == 23    Fail    LUKS volume ${vol} not reopened after 120s
             Sleep    5s
         END

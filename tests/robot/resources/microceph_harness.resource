@@ -78,7 +78,7 @@ Setup LXD In VM
     [Documentation]    Installs and initialises LXD inside the outer VM.
     Log To Console    [setup] Setting up LXD inside ${OUTER_VM} (may take several minutes)...
     ${check}=    Run In VM    sudo snap list | grep -cF "lxd" || true    30
-    IF    "${check.stdout.strip()}" != "1"
+    IF    $check.stdout.strip() != "1"
         Run In VM And Check    sudo snap install lxd    300
     END
     Run In VM And Check    sudo snap refresh    300
@@ -139,7 +139,7 @@ Exercise RGW
     Run In VM And Check    sudo microceph.ceph status    30
     Run In VM And Check    sudo systemctl status snap.microceph.rgw --no-pager    30
     ${user_exists}=    Run In VM    sudo microceph.radosgw-admin user list | grep -q test && echo yes || echo no    30
-    IF    "${user_exists.stdout.strip()}" != "yes"
+    IF    $user_exists.stdout.strip() != "yes"
         Run In VM And Check    sudo microceph.radosgw-admin user create --uid=test --display-name=test    60
         Run In VM And Check    sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey    30
     END
@@ -155,7 +155,7 @@ Exercise RGW SSL
     Run In VM And Check    sudo microceph.ceph status    30
     Run In VM And Check    sudo systemctl status snap.microceph.rgw --no-pager    30
     ${user_exists}=    Run In VM    sudo microceph.radosgw-admin user list | grep -q test && echo yes || echo no    30
-    IF    "${user_exists.stdout.strip()}" != "yes"
+    IF    $user_exists.stdout.strip() != "yes"
         Run In VM And Check    sudo microceph.radosgw-admin user create --uid=test --display-name=test    60
         Run In VM And Check    sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey    30
     END
@@ -187,7 +187,7 @@ Exercise RGW Head Node
     # (Test Exercise RGW After Upgrade) if RGW has not finished restarting after the upgrade.
     Run In Container Unchecked    node-wrk0    sudo systemctl status snap.microceph.rgw --no-pager    30
     ${user_exists}=    Run In Container Unchecked    node-wrk0    microceph.radosgw-admin user list | grep -q test && echo yes || echo no    30
-    IF    "${user_exists.stdout.strip()}" != "yes"
+    IF    $user_exists.stdout.strip() != "yes"
         Run In Container    node-wrk0    microceph.radosgw-admin user create --uid=test --display-name=test    60
         Run In Container    node-wrk0    microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey    30
     END
