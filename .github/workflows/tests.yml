@@ -58,100 +58,21 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
+      # The probes live in a script shared with main.
+      - name: Checkout preflight script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: tests/scripts/preflight.sh
+          sparse-checkout-cone-mode: false
+
       - name: Probe Snap Store and Ubuntu archive reachability
-        run: |
-          failures=""
-          check() {
-              local name="$1" url="$2"
-              shift 2
-              # Keep curl's exponential backoff (1s, 2s) and honor Retry-After.
-              if curl -sSf --max-time 10 --retry 2 --retry-connrefused \
-                  --retry-max-time 30 "$@" "$url" >/dev/null 2>&1; then
-                  echo "$name reachable: $url"
-              else
-                  failures="${failures:+$failures, }$name ($url)"
-              fi
-          }
-
-          # api.snapcraft.io answers 400 to info queries without the
-          # device-series header, so the probe would never pass without it.
-          check snap-store "https://api.snapcraft.io/v2/snaps/info/lxd" -H "Snap-Device-Series: 16"
-          check ubuntu-archive "http://archive.ubuntu.com/ubuntu/dists/"
-
-          if [ -n "$failures" ]; then
-              message="kind=preflight PREFLIGHT: endpoint checks failed: $failures"
-              echo "::error title=Infra::${message}"
-              echo "${message}" >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-          fi
+        run: tests/scripts/preflight.sh probe_endpoints
 
       - name: Download Snap Store canary
-        run: |
-          work_dir=$(mktemp -d)
-          trap 'rm -rf "$work_dir"' EXIT
-          cd "$work_dir"
-
-          # Download and verify a small snap and its assertions; install nothing.
-          if timeout --kill-after=5s 60s snap download hello-world --channel=latest/stable; then
-              echo "Snap Store payload and assertions verified"
-          else
-              status=$?
-              message="kind=preflight PREFLIGHT: Snap Store payload/assertion download failed (exit $status)"
-              echo "::error title=Infra::${message}"
-              echo "${message}" >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-          fi
+        run: tests/scripts/preflight.sh snap_canary
 
       - name: Download APT test tools
-        run: |
-          work_dir=$(mktemp -d)
-          trap 'rm -rf "$work_dir"' EXIT
-          mkdir -p "$work_dir/lists/partial" "$work_dir/cache/archives/partial" \
-              "$work_dir/log" "$work_dir/downloads"
-
-          # Keep the runner's Ubuntu mirrors and keys, not unrelated third-party sources.
-          sources=/etc/apt/sources.list
-          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-              sources=/etc/apt/sources.list.d/ubuntu.sources
-          fi
-
-          # Fresh indexes and downloads prevent cache hits from hiding an outage.
-          # Ignore installed versions when selecting packages from those indexes.
-          # Disable host update hooks so this check only writes in its temporary directory.
-          cat > "$work_dir/apt.conf" <<EOF
-          #clear APT::Update::Pre-Invoke; // Disable host hooks that run before index updates.
-          #clear APT::Update::Post-Invoke; // Disable host hooks that run after index updates.
-          #clear APT::Update::Post-Invoke-Success; // Disable host hooks that run after successful updates.
-          Dir::Etc::sourcelist "$sources"; // Use the runner's Ubuntu repository definitions.
-          Dir::Etc::sourceparts "-"; // Do not load additional repositories from sources.list.d.
-          Dir::State::lists "$work_dir/lists"; // Fetch indexes into a fresh temporary directory.
-          Dir::State::status "/dev/null"; // Ignore installed versions when selecting download candidates.
-          Dir::Cache "$work_dir/cache"; // Keep APT cache files separate from the host cache.
-          Dir::Log "$work_dir/log"; // Keep any APT logs in the temporary directory.
-          Acquire::Languages "none"; // Skip package-description translation indexes.
-          Acquire::Retries "2"; // Retry failed file downloads up to twice.
-          Acquire::http::Timeout "10"; // Limit HTTP connection and data inactivity waits to 10 seconds.
-          Acquire::https::Timeout "10"; // Limit HTTPS connection and data inactivity waits to 10 seconds.
-          Acquire::IndexTargets::deb::DEP-11::DefaultEnabled "false"; // Skip AppStream application metadata.
-          Acquire::IndexTargets::deb::CNF::DefaultEnabled "false"; // Skip command-not-found lookup indexes.
-          EOF
-
-          check_apt() {
-              local status message
-              if timeout --kill-after=5s 90s apt-get -c "$work_dir/apt.conf" "$@"; then
-                  return 0
-              else
-                  status=$?
-                  message="kind=preflight PREFLIGHT: APT $1 failed (exit $status)"
-                  echo "::error title=Infra::${message}"
-                  echo "${message}" >> "$GITHUB_STEP_SUMMARY"
-                  exit 1
-              fi
-          }
-
-          cd "$work_dir/downloads"
-          check_apt update --error-on=any
-          check_apt download jq s3cmd
+        run: tests/scripts/preflight.sh apt_canary jq s3cmd
 
   dsl-functional-tests:
     name: DSL functional tests
