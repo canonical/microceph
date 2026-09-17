@@ -50,10 +50,38 @@ jobs:
           path: "*.snap"
           retention-days: 5
 
+  # Infra gate for the whole matrix: on a gross Snap Store or
+  # Ubuntu archive outage, fail this one job and skip every suite instead
+  # of recording one failure per suite. It cannot see inside the LXD
+  # instances the suites create later; in-instance checks are tracked in
+  # https://github.com/canonical/microceph/issues/836
+  preflight:
+    name: Preflight infra gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # The probes live in a script so other branches and workflows can reuse them.
+      - name: Checkout preflight script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: tests/scripts/preflight.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Probe Snap Store and Ubuntu archive reachability
+        run: |
+          tests/scripts/preflight.sh probe_endpoints \
+              "ceph-ppa=https://ppa.launchpadcontent.net/lmlogiudice/ceph-stonking-tentacle/ubuntu/dists/"
+
+      - name: Download Snap Store canary
+        run: tests/scripts/preflight.sh snap_canary
+
+      - name: Download APT test tools
+        run: tests/scripts/preflight.sh apt_canary jq s3cmd
+
   robot-tests:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner || 'ubuntu-22.04' }}
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     strategy:
       fail-fast: false
       matrix:
