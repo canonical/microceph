@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Ceph 19.2.6 defaults CephX to AES256KRB5 as part of CVE-2025-30156.
+# The bundled MicroCeph Ceph 20.2.1 client cannot read that key format, so
+# keep this fixture on the compatible Squid 19.2.5 image. Remove this pin
+# once MicroCeph bundles Ceph 20.2.4 or later; tracked in #826.
+readonly CEPHADM_TEST_IMAGE="quay.io/ceph/ceph:v19.2.5"
+
 function create_cephadm_vm() {
   set -u
   input=$1
@@ -57,7 +63,7 @@ function bootstrap_cephadm() {
 
   ip=$(echo "$ip_info" | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
 
-  lxc exec $name -- sh -c "cephadm bootstrap --mon-ip $ip --single-host-defaults --skip-dashboard --skip-monitoring-stack"
+  lxc exec $name -- sh -c "cephadm --image ${CEPHADM_TEST_IMAGE} bootstrap --mon-ip $ip --single-host-defaults --skip-dashboard --skip-monitoring-stack"
   lxc exec $name -- sh -c "cephadm shell -- ceph orch apply osd --all-available-devices"
 
   # Wait for the cluster to settle before adopt can connect
