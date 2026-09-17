@@ -141,14 +141,22 @@ function test_encrypted_wal_db_startup() {
 
     # Restart OSD service
     sudo snap start microceph.osd
-    sleep 30
 
-    # Verify all LUKS volumes were reopened
+    # Verify all LUKS volumes were reopened; osd.start unlocks them
+    # sequentially, so poll each mapper rather than checking once.
+    local tries=24
     for suffix in "" ".wal" ".db"; do
-        if [ ! -e "/dev/mapper/luksosd${suffix}-${osd_id}" ]; then
-            echo "Error: luksosd${suffix}-${osd_id} was not reopened after restart"
-            exit 1
-        fi
+        for ((i=0; i<tries; i++)); do
+            if [ -e "/dev/mapper/luksosd${suffix}-${osd_id}" ]; then
+                break
+            fi
+            if (( i == tries - 1 )); then
+                echo "Error: luksosd${suffix}-${osd_id} was not reopened after restart"
+                exit 1
+            fi
+            printf '.'
+            sleep 5
+        done
     done
 
     wait_for_osds "${expected_osds}" || exit 1
