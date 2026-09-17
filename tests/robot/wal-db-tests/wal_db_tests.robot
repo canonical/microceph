@@ -23,6 +23,7 @@ Test Encrypted WAL DB Startup Inline
     Log To Console    [osd] Testing encrypted WAL/DB startup (expected_osds=${expected_osds})...
     Run In VM And Check    sudo snap connect microceph:dm-crypt    30
     Run In VM And Check    sudo snap restart microceph.daemon    60
+    Run In VM And Check    sudo microceph waitready --timeout 30    60
     # Create 3 loop devices for data (sdid), WAL (sdie), DB (sdif)
     FOR    ${l}    IN    d    e    f
         Create Loop Device At    /dev/sdi${l}
