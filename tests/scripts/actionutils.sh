@@ -93,6 +93,7 @@ function add_encrypted_osds() {
     # Enable dm-crypt connection and restart microceph daemon
     sudo snap connect microceph:dm-crypt
     sudo snap restart microceph.daemon
+    sudo microceph waitready --timeout 30
     create_loop_devices
     sudo microceph disk add /dev/sdia /dev/sdib --wipe --encrypt
 
@@ -111,6 +112,7 @@ function test_encrypted_wal_db_startup() {
     set -eux
     sudo snap connect microceph:dm-crypt
     sudo snap restart microceph.daemon
+    sudo microceph waitready --timeout 30
     local expected_osds="${1?missing}"
 
     # Create loop devices for encrypted data, WAL, and DB
