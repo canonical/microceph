@@ -49,12 +49,12 @@ Verify CephFS Mirror List Output
     Run Keyword And Ignore Error    Run In Container    node-wrk0    sudo microceph.ceph fs subvolume create vol testGroupedSubVol testGroup    60
     IF    "${sv_status}" == "PASS"
         ${subvolpath}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs subvolume getpath vol testSubVol 2>/dev/null || echo ''"    30
-        IF    "${subvolpath.stdout.strip()}" != ""
+        IF    $subvolpath.stdout.strip() != ""
             Run In Container    node-wrk0    sudo microceph.ceph fs snapshot mirror add vol ${subvolpath.stdout.strip()}    60
         END
     END
     ${groupedpath}=    Run In VM    lxc exec node-wrk0 -- bash -c "sudo microceph.ceph fs subvolume getpath vol testGroupedSubVol testGroup 2>/dev/null || echo ''"    30
-    IF    "${groupedpath.stdout.strip()}" != ""
+    IF    $groupedpath.stdout.strip() != ""
         Run In Container    node-wrk0    sudo microceph.ceph fs snapshot mirror add vol ${groupedpath.stdout.strip()}    60
     END
     Wait For CephFS Replication List Non Empty    node-wrk0    vol

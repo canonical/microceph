@@ -21,7 +21,7 @@ Wait For IP In Ceph Conf On Node
     [Arguments]    ${node}    ${ip}    ${attempts}=24
     FOR    ${i}    IN RANGE    ${attempts}
         ${result}=    Run In VM    lxc exec ${node} -- sh -c "grep -q '${ip}' /var/snap/microceph/current/conf/ceph.conf && echo yes || echo no" 2>/dev/null || true    15
-        IF    "${result.stdout.strip()}" == "yes"
+        IF    $result.stdout.strip() == "yes"
             Log To Console    [mon] ${node} ceph.conf contains ${ip} (attempt ${i})
             RETURN
         END
