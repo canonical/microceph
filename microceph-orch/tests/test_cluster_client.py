@@ -50,7 +50,7 @@ class _RequestRecorder:
         return {"metadata": {"result": "ok"}}
 
 
-def test_apply_smb_wraps_placement_data_in_the_enable_service_api(monkeypatch):
+def test_apply_smb_waits_for_targeted_services_api_result(monkeypatch):
     cluster = _load_cluster_module(monkeypatch)
 
     class Service(_RequestRecorder, cluster.ExtendedAPIService):
@@ -58,8 +58,12 @@ def test_apply_smb_wraps_placement_data_in_the_enable_service_api(monkeypatch):
 
     service = Service()
     payload = {
-        "cluster_id": "files",
-        "config_uri": "rados://.smb/files/config.smb",
+        "service_type": "smb",
+        "service_id": "files",
+        "spec": {
+            "cluster_id": "files",
+            "config_uri": "rados://.smb/files/config.smb",
+        },
     }
 
     result = service.apply_smb("node a", payload)
@@ -73,7 +77,7 @@ def test_apply_smb_wraps_placement_data_in_the_enable_service_api(monkeypatch):
     }
 
 
-def test_remove_smb_addresses_the_requested_member(monkeypatch):
+def test_remove_smb_waits_for_targeted_services_api_result(monkeypatch):
     cluster = _load_cluster_module(monkeypatch)
 
     class Service(_RequestRecorder, cluster.ExtendedAPIService):

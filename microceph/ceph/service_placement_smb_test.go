@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,6 +28,7 @@ func TestSMBServicePlacementPopulateParamsAcceptsDirectVFS(t *testing.T) {
 	payload := `{
 		"cluster_id": "files",
 		"config_uri": "rados://.smb/files/config.smb",
+		"provider": "samba-vfs/new",
 		"user_sources": [
 			"rados:mon-config-key:smb/config/files/users-groups.0.json"
 		]
@@ -37,6 +40,37 @@ func TestSMBServicePlacementPopulateParamsAcceptsDirectVFS(t *testing.T) {
 	assert.Equal(t, "files", placement.ClusterID)
 	assert.Equal(t, "rados://.smb/files/config.smb", placement.ConfigURI)
 	assert.Equal(t, []string{"rados:mon-config-key:smb/config/files/users-groups.0.json"}, placement.UserSources)
+}
+
+func TestSMBServicePlacementPopulateParamsAcceptsNestedUpstreamSMBSpec(t *testing.T) {
+	placement := &SMBServicePlacement{}
+	payload := `{
+		"service_type": "smb",
+		"service_id": "files",
+		"service_name": "smb.files",
+		"placement": {
+			"hosts": ["node-a"],
+			"count": 1
+		},
+		"spec": {
+			"cluster_id": "files",
+			"config_uri": "rados://.smb/files/config.smb",
+			"user_sources": [
+				"rados:mon-config-key:smb/config/files/users-groups.0.json"
+			]
+		}
+	}`
+
+	err := placement.PopulateParams(nil, payload)
+
+	require.NoError(t, err)
+	assert.Equal(t, "files", placement.ClusterID)
+	assert.Equal(t, "rados://.smb/files/config.smb", placement.ConfigURI)
+	assert.Equal(t, []string{"rados:mon-config-key:smb/config/files/users-groups.0.json"}, placement.UserSources)
+
+	carrier, ok := any(placement).(interface{ upstreamSpecJSON() []byte })
+	require.True(t, ok, "SMB placement must retain the complete upstream SMBSpec")
+	assert.JSONEq(t, payload, string(carrier.upstreamSpecJSON()))
 }
 
 func TestSMBServicePlacementPopulateParamsRejectsUnsupportedFeatures(t *testing.T) {
@@ -52,11 +86,28 @@ func TestSMBServicePlacementPopulateParamsRejectsUnsupportedFeatures(t *testing.
 	assert.ErrorContains(t, err, "does not support SMB feature 'cephfs-proxy'")
 }
 
+func TestSMBServicePlacementPopulateParamsAcceptsUpstreamSpecWithoutProvider(t *testing.T) {
+	placement := &SMBServicePlacement{}
+	payload := `{
+		"service_type": "smb",
+		"service_id": "files",
+		"spec": {
+			"cluster_id": "files",
+			"config_uri": "rados://.smb/files/config.smb"
+		}
+	}`
+
+	err := placement.PopulateParams(nil, payload)
+
+	assert.NoError(t, err)
+}
+
 func TestSMBServicePlacementPopulateParamsRejectsOtherClusterNamespace(t *testing.T) {
 	placement := &SMBServicePlacement{}
 	payload := `{
 		"cluster_id": "files",
-		"config_uri": "rados://.smb/other/config.smb"
+		"config_uri": "rados://.smb/other/config.smb",
+		"provider": "samba-vfs/new"
 	}`
 
 	err := placement.PopulateParams(nil, payload)
@@ -150,33 +201,54 @@ func TestSMBServicePlacementServiceInitMaterializesConfigAndStartsSMBD(t *testin
 	assert.Equal(t, "[client.smb.fs.cluster.files]\\nkey = key\\n", string(data))
 }
 
-func TestSMBServicePlacementDbUpdateAddsNewService(t *testing.T) {
-	placement := &SMBServicePlacement{
-		ClusterID: "files",
-		ConfigURI: "rados://.smb/files/config.smb",
-	}
+func TestSMBServicePlacementDbUpdatePersistsCompleteUpstreamSpec(t *testing.T) {
+	payload := `{
+		"service_type": "smb",
+		"service_id": "files",
+		"service_name": "smb.files",
+		"placement": {"hosts": ["node-a", "node-b"]},
+		"spec": {
+			"cluster_id": "files",
+			"config_uri": "rados://.smb/files/config.smb",
+			"user_sources": ["rados:mon-config-key:smb/config/files/users-groups.0.json"],
+			"provider": "samba-vfs/new"
+		}
+	}`
+	placement := &SMBServicePlacement{}
+	err := placement.PopulateParams(nil, payload)
+	require.NoError(t, err)
+
+	expectedGroupConfig, err := json.Marshal(struct {
+		DesiredSpec json.RawMessage `json:"desired_spec"`
+	}{DesiredSpec: json.RawMessage(payload)})
+	require.NoError(t, err)
+
 	state := mocks.NewStateInterface(t)
 	databaseMock := mocks.NewGroupedServiceQueryIntf(t)
 	ctx := context.Background()
-	databaseMock.On("ExistsOnHost", []interface{}{ctx, state, "smb", "files"}...).Return(false, nil).Once()
 	databaseMock.On(
-		"AddNew",
-		[]interface{}{
-			ctx,
-			state,
-			"smb",
-			"files",
-			database.SMBServiceGroupConfig{},
-			database.SMBServiceInfo{ConfigURI: "rados://.smb/files/config.smb"},
-		}...,
-	).Return(nil).Once()
+		"AddOrUpdate",
+		ctx,
+		state,
+		"smb",
+		"files",
+		mock.Anything,
+		database.SMBServiceInfo{ConfigURI: "rados://.smb/files/config.smb"},
+	).Run(func(args mock.Arguments) {
+		groupConfig, ok := args.Get(4).(database.SMBServiceGroupConfig)
+		require.True(t, ok)
+
+		groupConfigJSON, err := json.Marshal(groupConfig)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(expectedGroupConfig), string(groupConfigJSON))
+	}).Return(nil).Once()
 	originalDatabase := database.GroupedServicesQuery
 	defer func() {
 		database.GroupedServicesQuery = originalDatabase
 	}()
 	database.GroupedServicesQuery = databaseMock
 
-	err := placement.DbUpdate(ctx, state)
+	err = placement.DbUpdate(ctx, state)
 
 	assert.NoError(t, err)
 }
