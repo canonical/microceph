@@ -296,12 +296,14 @@ class microceph_harness:
             f.write(cmd)
             local = f.name
         try:
-            push = self._exec(["lxc", "file", "push", local, f"{self._outer_vm()}{remote}"], 30)
-            if push.rc != 0:
-                raise AssertionError(f"Failed to push script to outer VM: {push.stderr}")
-            push = self._exec(self._vm_argv("lxc", "file", "push", remote, f"{container}{remote}"), 30)
-            if push.rc != 0:
-                raise AssertionError(f"Failed to push script to {container}: {push.stderr}")
+            self._push_with_forkfile_retry(
+                ["lxc", "file", "push", local, f"{self._outer_vm()}{remote}"],
+                "push script to outer VM",
+            )
+            self._push_with_forkfile_retry(
+                self._vm_argv("lxc", "file", "push", remote, f"{container}{remote}"),
+                f"push script to {container}",
+            )
             res = self._exec(self._ct_argv(container, "bash", "-eo", "pipefail", remote), timeout)
             self._log_exec(f"[{container}] {cmd}", res, quiet)
         finally:
@@ -322,6 +324,65 @@ class microceph_harness:
                 f"Command failed (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}"
             )
         return res
+
+    @staticmethod
+    def _is_forkfile_socket_error(stderr):
+        """Returns True when an lxc file push failure is the transient forkfile socket error.
+
+        Observed as 'forkfile.sock: read: connection reset by peer' and
+        'dial unix ... forkfile.sock: connect: no such file or directory'.
+        Pure helper so the match is unit-testable.
+        """
+        return "forkfile.sock" in (stderr or "")
+
+    @staticmethod
+    def _infra_annotation_line(kind, message):
+        """Builds the Infra workflow-annotation line for *kind* (see preflight.sh).
+
+        Pure helper so the annotation format stays unit-testable; the shell
+        twin is preflight_fail() in tests/scripts/preflight.sh.
+        """
+        return f"::error title=Infra::kind={kind} {message}"
+
+    def _infra_annotate(self, kind, message):
+        """Emits the *kind* Infra annotation to the console and the step summary.
+
+        Lets the ci-health dashboard bucket the failure as infrastructure
+        rather than suite flakiness (convention from #836).
+        """
+        summary_line = f"kind={kind} {message}"
+        logger.console(self._infra_annotation_line(kind, message))
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            try:
+                with open(summary, "a") as f:
+                    f.write(summary_line + "\n")
+            except OSError as exc:
+                logger.info(f"could not append to step summary (ignored): {exc}")
+
+    def _push_with_forkfile_retry(self, argv, errlabel):
+        """Runs one lxc file push, retrying up to 3 attempts on forkfile socket errors.
+
+        The nested-LXD forkfile helper socket can reset or vanish momentarily;
+        only that error is retried -- every other failure stays fatal. On
+        exhaustion the retry emits the kind=lxd-socket Infra annotation so
+        the failure is classified as infrastructure.
+        """
+        res = None
+        for attempt in range(3):
+            res = self._exec(argv, 30)
+            if res.rc == 0:
+                return res
+            if not self._is_forkfile_socket_error(res.stderr):
+                break
+            if attempt < 2:
+                logger.console(
+                    f"[setup] forkfile socket error on push ({errlabel}), attempt {attempt + 1}/3, retrying in 5s..."
+                )
+                time.sleep(5)
+        if self._is_forkfile_socket_error(res.stderr):
+            self._infra_annotate("lxd-socket", f"Failed to {errlabel} after 3 attempts: {res.stderr.strip()}")
+        raise AssertionError(f"Failed to {errlabel}: {res.stderr}")
 
     def exec_in_container(self, container, *argv, timeout=300, check=False, quiet=False):
         """Runs a single command (no inner shell) inside *container* via the outer VM.
