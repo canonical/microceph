@@ -4,15 +4,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
@@ -32,6 +36,10 @@ var (
 )
 
 var errRGWInactive = errors.New("rgw service is not active")
+
+// A first start creates the gateway's pools before it listens, so readiness
+// waits far longer than a restart of an already-initialised gateway needs.
+var rgwReadyTimeout = 2 * time.Minute
 
 func rgwConfPath() string {
 	return filepath.Join(constants.GetPathConst().ConfPath, "radosgw.conf")
@@ -532,11 +540,57 @@ func checkRGWActive() error {
 	return errors.New("cannot determine the RGW service state")
 }
 
-// checkRGWReady only checks the service is active, not what it serves.
-// [[NOTE: intentionally minimal; replaced in "feat(rgw): wait until the
-// gateway really serves the requested frontend".]]
 func checkRGWReady(spec rgwFrontendSpec) error {
-	return checkRGWActiveFunc()
+	deadline := time.Now().Add(rgwReadyTimeout)
+	for {
+		err := checkRGWActiveFunc()
+		if err == nil {
+			err = checkRGWFrontend(spec)
+		}
+		if err == nil || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// Local readiness pins the supplied certificate, not a public DNS name or CA.
+func checkRGWFrontend(spec rgwFrontendSpec) error {
+	dialer := &net.Dialer{Timeout: time.Second}
+	if spec.port != 0 {
+		conn, err := dialer.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(spec.port)))
+		if err != nil {
+			return err
+		}
+		conn.Close()
+	}
+	if !spec.ssl {
+		return nil
+	}
+	certificate, _ := pem.Decode(spec.certPEM)
+	if certificate == nil {
+		return errors.New("expected RGW certificate is unavailable")
+	}
+	conn, err := dialer.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(spec.sslPort)))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	err = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err != nil {
+		return err
+	}
+	client := tls.Client(conn, &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true,
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 || !bytes.Equal(state.PeerCertificates[0].Raw, certificate.Bytes) {
+				return errors.New("RGW did not load the expected certificate")
+			}
+			return nil
+		},
+	})
+	return client.Handshake()
 }
 
 func removeIgnoreMissing(path string) error {
