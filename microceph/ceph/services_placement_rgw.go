@@ -88,6 +88,8 @@ func (rgw *RgwServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 			return fmt.Errorf("%w: %v", ErrRgwFrontendInvalid, err)
 		}
 	}
+	// ssl=true without material means reuse: resolved against local state
+	// in ServiceInit, which fails closed when no valid local pair exists.
 	return nil
 }
 
@@ -111,10 +113,16 @@ func (rgw *RgwServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 		keyPEM:  rgw.keyPEM,
 	}
 	if spec.ssl && spec.certPEM == nil {
-		// [[NOTE: intentionally minimal; refuses rather than reuses the
-		// member's own pair, replaced in "feat(rgw): reuse the member's own
-		// pair when TLS is asked for without one".]]
-		return fmt.Errorf("%w: TLS requires a certificate and private key", ErrRgwFrontendInvalid)
+		// ssl=true with no supplied material: reuse the local pair, or fail
+		// closed — never fall back to plaintext.
+		conf, err := readRGWConf()
+		if err != nil {
+			return err
+		}
+		spec.certPEM, spec.keyPEM, err = resolveRGWTLSReuse(conf)
+		if err != nil {
+			return err
+		}
 	}
 
 	rollback, err := applyRGWFrontend(spec, getMonitorsFromConfig(config), true)

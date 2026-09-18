@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/canonical/lxd/shared/api"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -90,6 +92,32 @@ func newRGWTestState(t *testing.T, dbErr error) *mocks.StateInterface {
 	}
 	si.On("ClusterState").Return(state).Maybe()
 	return si
+}
+
+// stageFlatLayoutGateway leaves the member as an older snap did: the pair in
+// the flat server.crt/server.key files, referenced by radosgw.conf. The config
+// template has not changed since, so rendering it reproduces that file. The
+// monitor differs from the recorder's so a re-rendered config is detectable.
+func stageFlatLayoutGateway(t *testing.T, port int) (certPEM, keyPEM []byte, flatCert, flatKey string) {
+	t.Helper()
+	certB64, keyB64 := genTestTLSPair(t)
+	certPEM, err := base64.StdEncoding.DecodeString(certB64)
+	require.NoError(t, err)
+	keyPEM, err = base64.StdEncoding.DecodeString(keyB64)
+	require.NoError(t, err)
+
+	paths := constants.GetPathConst()
+	flatCert = filepath.Join(paths.SSLFilesPath, "server.crt")
+	flatKey = filepath.Join(paths.SSLFilesPath, "server.key")
+	require.NoError(t, os.WriteFile(flatCert, certPEM, 0600))
+	require.NoError(t, os.WriteFile(flatKey, keyPEM, 0600))
+	conf, err := newRadosGWConfig(paths.ConfPath).RenderConfig(map[string]any{
+		"runDir": paths.RunPath, "monitors": "10.0.0.9", "rgwPort": port, "sslPort": 443,
+		"sslCertificatePath": flatCert, "sslPrivateKeyPath": flatKey,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(rgwConfPath(), conf, 0644))
+	return certPEM, keyPEM, flatCert, flatKey
 }
 
 // TestPopulateParamsValidation verifies the full member-side payload
@@ -180,6 +208,165 @@ func TestEnablePipelineAlreadyActiveSucceeds(t *testing.T) {
 	assert.Equal(t, 0, rec.restarts, "a healthy unchanged gateway must not restart")
 	assert.Equal(t, 1, rec.starts)
 	assert.NoFileExists(t, rgwPendingApplyPath())
+}
+
+// TestServiceInitReuseFailsClosed verifies ssl=true with no supplied material
+// and no valid local pair fails closed (operational error), never silently
+// enabling plaintext.
+func TestServiceInitReuseFailsClosed(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{}
+	defer rec.install(t)()
+	si := newRGWTestState(t, nil)
+
+	sp := &RgwServicePlacement{}
+	require.NoError(t, sp.PopulateParams(si, rgwPayload(t, map[string]any{"Port": 80, "SSLPort": 443, "SSL": true})))
+
+	err := sp.ServiceInit(context.Background(), si)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlacementOperationFailed)
+	_, statErr := os.Stat(rgwConfPath())
+	assert.True(t, os.IsNotExist(statErr), "a failed reuse must not publish a plaintext config")
+	assert.Equal(t, 0, rec.starts+rec.restarts, "nothing must be started on a failed reuse")
+}
+
+// TestServiceInitReuseKeepsTLS verifies ssl=true with no supplied material
+// reuses the local pair: no restart, no republish, TLS retained.
+func TestServiceInitReuseKeepsTLS(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{}
+	defer rec.install(t)()
+	si := newRGWTestState(t, nil)
+
+	// Reuse revalidates the on-disk pair with tls.X509KeyPair, so the staged
+	// material must be a genuine PEM pair.
+	certB64, keyB64 := genTestTLSPair(t)
+	certPEM, _ := base64.StdEncoding.DecodeString(certB64)
+	keyPEM, _ := base64.StdEncoding.DecodeString(keyB64)
+	spec := rgwFrontendSpec{port: 80, sslPort: 443, ssl: true, certPEM: certPEM, keyPEM: keyPEM}
+	_, err := applyTestRGWFrontend(spec, []string{"mon1"}, true)
+	require.NoError(t, err)
+	rec.active = true
+	before := readTestConf(t)
+
+	sp := &RgwServicePlacement{}
+	// Same ports, TLS, but no material: reuse the pair the config references.
+	require.NoError(t, sp.PopulateParams(si, rgwPayload(t, map[string]any{"Port": 80, "SSLPort": 443, "SSL": true})))
+	require.NoError(t, sp.ServiceInit(context.Background(), si))
+
+	assert.Equal(t, before, readTestConf(t), "reuse must keep the TLS configuration")
+	assert.Equal(t, 0, rec.restarts, "reuse of the running pair must not restart")
+	assert.Equal(t, 1, rec.starts)
+}
+
+// TestServiceInitReuseFailsOnUnusableLocalPair verifies reuse revalidates the
+// on-disk pair: corrupted local material fails closed instead of being
+// adopted.
+func TestServiceInitReuseFailsOnUnusableLocalPair(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{}
+	defer rec.install(t)()
+	si := newRGWTestState(t, nil)
+
+	spec := rgwFrontendSpec{port: 80, sslPort: 443, ssl: true, certPEM: []byte("certA"), keyPEM: []byte("keyA")}
+	_, err := applyTestRGWFrontend(spec, []string{"mon1"}, true)
+	require.NoError(t, err)
+	// Corrupt the private key the config references (interrupted write).
+	require.NoError(t, os.WriteFile(filepath.Join(spec.tlsGenDir(), "server.key"), []byte("garbage"), 0600))
+	rec.active = true
+	before := readTestConf(t)
+
+	sp := &RgwServicePlacement{}
+	require.NoError(t, sp.PopulateParams(si, rgwPayload(t, map[string]any{"Port": 80, "SSLPort": 443, "SSL": true})))
+
+	err = sp.ServiceInit(context.Background(), si)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlacementOperationFailed)
+	assert.Equal(t, before, readTestConf(t), "a failed reuse must leave the config untouched")
+	assert.Equal(t, 0, rec.restarts)
+}
+
+// TestServiceInitReuseMigratesFlatLayout verifies the upgrade path: a TLS
+// apply without material reuses the flat pair, moves it into a generation
+// with one restart, and drops the flat files only once the record commits.
+func TestServiceInitReuseMigratesFlatLayout(t *testing.T) {
+	// The old CLI left the plaintext port out whenever a pair was supplied.
+	for name, port := range map[string]int{"TLS only": 0, "dual listeners": 80} {
+		t.Run(name, func(t *testing.T) {
+			defer setupRGWPaths(t)()
+			rec := &rgwOpsRecorder{active: true}
+			defer rec.install(t)()
+			si := newRGWTestState(t, nil)
+			certPEM, keyPEM, flatCert, flatKey := stageFlatLayoutGateway(t, port)
+			genDir := rgwFrontendSpec{certPEM: certPEM, keyPEM: keyPEM}.tlsGenDir()
+			payload := rgwPayload(t, map[string]any{"Port": port, "SSLPort": 443, "SSL": true})
+
+			sp := &RgwServicePlacement{}
+			require.NoError(t, sp.PopulateParams(si, payload))
+			require.NoError(t, sp.ServiceInit(context.Background(), si))
+			assert.FileExists(t, rgwPendingApplyPath(), "the migration is journaled until the record commits")
+
+			conf := readTestConf(t)
+			assert.Contains(t, conf, "ssl_certificate="+filepath.Join(genDir, "server.crt"))
+			assert.Contains(t, conf, "ssl_private_key="+filepath.Join(genDir, "server.key"))
+			assert.NotContains(t, conf, flatCert, "the config must stop referencing the flat layout")
+			assert.Contains(t, conf, "mon host = 10.0.0.9", "only the frontend line may change")
+			assert.Equal(t, port != 0, strings.Contains(conf, " port="), "the plaintext listener must stay as it was")
+			for file, want := range map[string][]byte{"server.crt": certPEM, "server.key": keyPEM} {
+				got, err := os.ReadFile(filepath.Join(genDir, file))
+				require.NoError(t, err)
+				assert.Equal(t, want, got, "the generation must hold the reused pair unchanged")
+				info, err := os.Stat(filepath.Join(genDir, file))
+				require.NoError(t, err)
+				assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+			}
+			assert.Equal(t, 1, rec.restarts, "the changed paths restart the running gateway once")
+			assert.Equal(t, 0, rec.starts)
+			assert.FileExists(t, flatCert, "the flat pair is the rollback target until the record commits")
+			assert.FileExists(t, flatKey)
+
+			require.NoError(t, sp.DbUpdate(context.Background(), si))
+			assert.NoFileExists(t, flatCert, "a committed migration removes the flat pair")
+			assert.NoFileExists(t, flatKey)
+			assert.DirExists(t, genDir)
+			assert.NoFileExists(t, rgwPendingApplyPath())
+
+			// Once migrated, the same request is the ordinary reuse: nothing restarts.
+			again := &RgwServicePlacement{}
+			require.NoError(t, again.PopulateParams(si, payload))
+			require.NoError(t, again.ServiceInit(context.Background(), si))
+			assert.Equal(t, conf, readTestConf(t))
+			assert.Equal(t, 1, rec.restarts)
+		})
+	}
+}
+
+// TestServiceInitReuseMigrationRollbackKeepsFlatPair verifies a migration
+// whose gateway does not come back returns to the flat layout intact.
+func TestServiceInitReuseMigrationRollbackKeepsFlatPair(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{active: true, readyErr: errors.New("not ready")}
+	defer rec.install(t)()
+	si := newRGWTestState(t, nil)
+	certPEM, keyPEM, flatCert, flatKey := stageFlatLayoutGateway(t, 0)
+	genDir := rgwFrontendSpec{certPEM: certPEM, keyPEM: keyPEM}.tlsGenDir()
+	before := readTestConf(t)
+
+	sp := &RgwServicePlacement{}
+	require.NoError(t, sp.PopulateParams(si, rgwPayload(t, map[string]any{"SSLPort": 443, "SSL": true})))
+	err := sp.ServiceInit(context.Background(), si)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlacementOperationFailed)
+
+	assert.Equal(t, before, readTestConf(t), "the config must reference the flat pair again")
+	for path, want := range map[string][]byte{flatCert: certPEM, flatKey: keyPEM} {
+		got, readErr := os.ReadFile(path)
+		require.NoError(t, readErr)
+		assert.Equal(t, want, got, "rollback must leave the flat pair untouched")
+	}
+	assert.NoDirExists(t, genDir, "the abandoned generation must not linger")
+	assert.NoFileExists(t, rgwPendingApplyPath())
+	assert.Equal(t, 2, rec.restarts, "one restart onto the generation, one back onto the flat pair")
 }
 
 // TestPostPlacementCheckFailureRollsBack verifies the readiness phase restores
