@@ -455,6 +455,81 @@ func TestDbUpdateSuccessPrunesGenerations(t *testing.T) {
 	assert.NoDirExists(t, specA.tlsGenDir(), "a committed apply prunes the superseded generation")
 }
 
+// TestDisableRGWConvergent verifies cleanup retries and preservation of a
+// running gateway's configuration when stopping it fails.
+func TestDisableRGWConvergent(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{}
+	defer rec.install(t)()
+	si := newRGWTestState(t, nil)
+
+	spec := rgwFrontendSpec{port: 80, sslPort: 443, ssl: true, certPEM: []byte("certA"), keyPEM: []byte("keyA")}
+	_, err := applyTestRGWFrontend(spec, []string{"mon1"}, true)
+	require.NoError(t, err)
+
+	// Simulate the full set of leftovers, including legacy-layout files and
+	// an interrupted-apply marker.
+	pathConsts := constants.GetPathConst()
+	require.NoError(t, os.WriteFile(filepath.Join(pathConsts.SSLFilesPath, "server.crt"), []byte("legacy"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(pathConsts.SSLFilesPath, "server.key"), []byte("legacy"), 0600))
+	require.NoError(t, os.WriteFile(rgwPendingApplyPath(), []byte("pending"), 0644))
+	keyringDir := filepath.Join(pathConsts.DataPath, "radosgw", "ceph-radosgw.gateway")
+	require.NoError(t, os.MkdirAll(keyringDir, 0770))
+	require.NoError(t, os.WriteFile(filepath.Join(keyringDir, "keyring"), []byte("key"), 0600))
+
+	require.NoError(t, DisableRGW(context.Background(), si))
+
+	for path, desc := range map[string]string{
+		rgwConfPath():         "radosgw.conf",
+		rgwPendingApplyPath(): "pending-apply marker",
+		rgwTLSRoot():          "TLS generations",
+		filepath.Join(pathConsts.SSLFilesPath, "server.crt"):                      "legacy certificate",
+		filepath.Join(pathConsts.SSLFilesPath, "server.key"):                      "legacy private key",
+		filepath.Join(keyringDir, "keyring"):                                      "keyring",
+		filepath.Join(pathConsts.ConfPath, "ceph.client.radosgw.gateway.keyring"): "keyring symlink",
+	} {
+		_, statErr := os.Stat(path)
+		assert.True(t, os.IsNotExist(statErr), "disable must remove the "+desc)
+	}
+	assert.Equal(t, 1, rec.stops)
+
+	// A repeated disable on an already-clean member is a successful no-op.
+	require.NoError(t, DisableRGW(context.Background(), si))
+	assert.Equal(t, 2, rec.stops)
+
+	// Never discard a running gateway's configuration when stopping it fails.
+	rec.active = true
+	rec.stopErr = errors.New("snapctl stop failed")
+	require.NoError(t, os.WriteFile(rgwConfPath(), []byte("leftover"), 0644))
+	err = DisableRGW(context.Background(), si)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlacementOperationFailed)
+	assert.FileExists(t, rgwConfPath())
+	assert.True(t, rec.active)
+}
+
+// TestDisableRGWDatabaseFailureLeavesFilesForRetry verifies a failed record
+// removal stops the disable before any file is deleted, so the member stays
+// consistent (record and files both present) for a retry.
+func TestDisableRGWDatabaseFailureLeavesFilesForRetry(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{}
+	defer rec.install(t)()
+	si := newRGWTestState(t, errors.New("dqlite unavailable"))
+
+	spec := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certA"), keyPEM: []byte("keyA")}
+	_, err := applyTestRGWFrontend(spec, []string{"mon1"}, true)
+	require.NoError(t, err)
+
+	err = DisableRGW(context.Background(), si)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlacementOperationFailed)
+	assert.Equal(t, 1, rec.stops)
+	assert.FileExists(t, rgwConfPath(), "files must survive a failed record removal")
+	assert.DirExists(t, spec.tlsGenDir())
+	assert.FileExists(t, filepath.Join(constants.GetPathConst().ConfPath, "ceph.client.radosgw.gateway.keyring"))
+}
+
 // TestDbUpdateFinishFailureIsNotAnApplyFailure verifies that once the record
 // is committed, a journal that cannot be cleared does not fail the apply or
 // undo the published frontend.
@@ -479,6 +554,37 @@ func TestDbUpdateFinishFailureIsNotAnApplyFailure(t *testing.T) {
 	require.NoError(t, sp.DbUpdate(context.Background(), si))
 	assert.Contains(t, readTestConf(t), "port=8080", "the recorded frontend must stay published")
 	assert.Equal(t, 1, rec.restarts, "no rollback restart may follow a committed record")
+}
+
+// TestRemoveServiceDatabaseToleratesMissingRGWRecord verifies an already
+// absent RGW record is a successful removal, while other services keep the
+// strict behaviour.
+func TestRemoveServiceDatabaseToleratesMissingRGWRecord(t *testing.T) {
+	origDelete, origFrontend := deleteServiceRecordFunc, deleteRGWFrontendFunc
+	defer func() { deleteServiceRecordFunc, deleteRGWFrontendFunc = origDelete, origFrontend }()
+	deleteServiceRecordFunc = func(context.Context, *sql.Tx, string, string) error {
+		return api.StatusErrorf(http.StatusNotFound, "Service not found")
+	}
+	frontendDeletes := 0
+	deleteRGWFrontendFunc = func(context.Context, *sql.Tx, string) error {
+		frontendDeletes++
+		return nil
+	}
+
+	si := mocks.NewStateInterface(t)
+	si.On("ClusterState").Return(&mocks.MockState{
+		ClusterName: "node-a",
+		Cert:        &shared.CertInfo{},
+		DBObj: &mocks.MockDB{TxFn: func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+			return f(ctx, nil)
+		}},
+	}).Maybe()
+
+	require.NoError(t, removeServiceDatabase(context.Background(), si, "rgw"))
+	assert.Equal(t, 1, frontendDeletes, "the frontend record is still dropped")
+
+	err := removeServiceDatabase(context.Background(), si, "mds")
+	require.Error(t, err, "other services keep reporting a missing record")
 }
 
 // TestDbUpdateRecordsEffectiveFrontend verifies the committed record carries
