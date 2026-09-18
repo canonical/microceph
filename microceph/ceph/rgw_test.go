@@ -2,10 +2,14 @@ package ceph
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/common"
@@ -552,6 +556,57 @@ func TestApplyRGWFrontendFirstEnableRollback(t *testing.T) {
 	assert.Equal(t, 1, rec.starts)
 	assert.Equal(t, 1, rec.stops, "the gateway started for a failed first enable must be stopped")
 	assert.Equal(t, 0, rec.restarts)
+}
+
+// TestCheckRGWReadyHonoursTimeout verifies readiness waits for the configured
+// deadline and then reports the last failure.
+func TestCheckRGWReadyHonoursTimeout(t *testing.T) {
+	origTimeout, origActive := rgwReadyTimeout, checkRGWActiveFunc
+	defer func() { rgwReadyTimeout, checkRGWActiveFunc = origTimeout, origActive }()
+	rgwReadyTimeout = 300 * time.Millisecond
+	checkRGWActiveFunc = func() error { return errRGWInactive }
+
+	start := time.Now()
+	err := checkRGWReady(rgwFrontendSpec{port: 80})
+	assert.ErrorIs(t, err, errRGWInactive)
+	assert.GreaterOrEqual(t, time.Since(start), rgwReadyTimeout)
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
+// TestCheckRGWFrontendPinsCertificate verifies the local readiness probe only
+// accepts a listener that serves exactly the staged certificate.
+func TestCheckRGWFrontendPinsCertificate(t *testing.T) {
+	servedB64, servedKeyB64 := genTestTLSPair(t)
+	otherB64, _ := genTestTLSPair(t)
+	servedPEM, _ := base64.StdEncoding.DecodeString(servedB64)
+	servedKey, _ := base64.StdEncoding.DecodeString(servedKeyB64)
+	otherPEM, _ := base64.StdEncoding.DecodeString(otherB64)
+
+	pair, err := tls.X509KeyPair(servedPEM, servedKey)
+	require.NoError(t, err)
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{pair}})
+	require.NoError(t, err)
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_ = conn.(*tls.Conn).Handshake()
+				conn.Close()
+			}()
+		}
+	}()
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	err = checkRGWFrontend(rgwFrontendSpec{ssl: true, sslPort: port, certPEM: servedPEM})
+	assert.NoError(t, err, "the served certificate must be accepted")
+
+	err = checkRGWFrontend(rgwFrontendSpec{ssl: true, sslPort: port, certPEM: otherPEM})
+	require.Error(t, err, "a different served certificate must be rejected")
+	assert.Contains(t, err.Error(), "expected certificate")
 }
 
 // The mock-runner suite below predates the recorder-based tests above. Only its
