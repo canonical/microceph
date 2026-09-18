@@ -90,20 +90,26 @@ func (s *servicesPlacementSuite) TestIllStructuredPayloadFailure() {
 	assert.ErrorContains(s.T(), err, "failed to populate the payload")
 }
 
+// TestHospitalityCheckFailure verifies the pipeline rejects an enablement
+// whose hospitality check fails. A generic control service is used because
+// RGW deliberately accepts an already-active gateway (idempotent enable); the
+// generic check is what rejects repeats.
 func (s *servicesPlacementSuite) TestHospitalityCheckFailure() {
-	service := "rgw"
+	service := "mgr"
 
 	r := mocks.NewRunner(s.T())
+	origExec := common.ProcessExec
 	common.ProcessExec = r
+	defer func() { common.ProcessExec = origExec }()
 	addSnapServiceActiveExpectations(r, service, "active", nil)
 
 	payload := types.EnableService{
 		Name:    service,
 		Wait:    true,
-		Payload: "{\"Port\":80}",
+		Payload: "",
 	}
 
-	// Check Enable Service fails for unregistered services.
+	// The generic hospitality check sees the service already active and fails.
 	err := ServicePlacementHandler(context.Background(), s.TestStateInterface, payload)
 	assert.ErrorContains(s.T(), err, "host failed hospitality check")
 }
