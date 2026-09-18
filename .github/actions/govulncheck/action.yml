@@ -9,7 +9,7 @@ inputs:
   go-version:
     description: Go toolchain version to install (passed to actions/setup-go).
     required: false
-    default: 1.25.x
+    default: 1.27.x
   output-file:
     description: Path (relative to working-directory) for the JSON scan output.
     required: false

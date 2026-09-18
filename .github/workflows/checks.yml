@@ -20,10 +20,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdqlite1.17-dev
 
-      - name: Install Go (1.25)
+      - name: Install Go (1.27)
         uses: actions/setup-go@v5
         with:
-          go-version: 1.25.x
+          go-version: 1.27.x
 
       - name: Install tox
         run: pipx install tox
@@ -57,10 +57,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdqlite1.17-dev
 
-      - name: Install Go (1.25)
+      - name: Install Go (1.27)
         uses: actions/setup-go@v5
         with:
-          go-version: 1.25.x
+          go-version: 1.27.x
 
       - name: Install tox
         run: pipx install tox
