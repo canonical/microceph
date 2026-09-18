@@ -10,9 +10,12 @@ Run with pytest:
     pytest tests/robot/resources/test_harness_helpers.py
 """
 
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import sys
+import types
 
 import placement_status
 from microceph_harness import microceph_harness as H
@@ -139,6 +142,35 @@ def test_delete_instance_synced_never_gone_raises(monkeypatch):
     with pytest.raises(AssertionError) as exc:
         h._delete_instance_synced("microceph-test-vm")
     assert str(exc.value) == "microceph-test-vm still listed by lxc after delete"
+
+
+# ---------------------------------------------------------------------------
+# Robot CLI wrapper
+# ---------------------------------------------------------------------------
+
+def test_robot_wrapper_exports_snapd_channel(monkeypatch):
+    """The wrapper gives Robot and child scripts one snapd channel value."""
+    wrapper_path = Path(__file__).parents[1] / "robot.py"
+    spec = importlib.util.spec_from_file_location("microceph_robot_wrapper", wrapper_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    captured = {}
+
+    def fake_run(command, env):
+        captured["command"] = command
+        captured["env"] = env
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["robot.py", "--test-suite", "unit-tests", "--snapd-channel", "latest/edge"],
+    )
+
+    assert module.main() == 0
+    assert "SNAPD_CHANNEL:latest/edge" in captured["command"]
+    assert captured["env"]["SNAPD_CHANNEL"] == "latest/edge"
 
 
 # ---------------------------------------------------------------------------
@@ -2355,26 +2387,121 @@ def test_resolute_ceph_client_setup_is_shared():
         assert "${CEPH_PPA}" not in suite
 
 
-def test_local_snap_install_caches_core26(monkeypatch):
-    """Local core26 snap installs prefetch their matching base snap."""
+def _fake_snapd_result(stdout=""):
+    class _Result:
+        rc = 0
+        stderr = ""
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    return _Result(stdout)
+
+
+def test_local_snap_install_refreshes_a_preinstalled_snapd(monkeypatch):
+    """An already-installed snapd is refreshed onto the configured channel."""
     _with_logger(monkeypatch)
     harness = H()
     commands = []
 
     def fake_run_in_vm_and_check(command, timeout):
         commands.append((command, timeout))
+        if "snap install snapd" in command:
+            return _fake_snapd_result(
+                'snap "snapd" is already installed, see \'snap refresh --help\'.'
+            )
+        return _fake_snapd_result("ok")
 
     retried = []
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
     monkeypatch.setattr(
         harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: retried.append((command, timeout))
     )
+    monkeypatch.setattr(harness, "_snapd_channel", lambda: "latest/edge")
 
     harness.install_microceph_from_local_snap("/tmp/microceph.snap")
 
-    assert commands[0] == ("sudo snap install core26 || true", 120)
+    assert commands[:3] == [
+        ("sudo snap install snapd --channel=latest/edge", 600),
+        ("sudo snap refresh snapd --channel=latest/edge", 600),
+        ("sudo snap install core26 || true", 120),
+    ]
     # The --dangerous install is where a swallowed core26 store error resurfaces.
     assert retried == [("sudo snap install --dangerous ~/microceph_*.snap", 600)]
+
+
+def test_local_snap_install_skips_refresh_for_a_fresh_snapd(monkeypatch):
+    """A fresh snapd install does not trigger a redundant refresh."""
+    _with_logger(monkeypatch)
+    harness = H()
+    commands = []
+
+    def fake_run_in_vm_and_check(command, timeout):
+        commands.append((command, timeout))
+        return _fake_snapd_result("snapd (edge) 2.78 installed")
+
+    monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
+    monkeypatch.setattr(harness, "_snapd_channel", lambda: "latest/edge")
+    monkeypatch.setattr(harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: None)
+
+    harness.install_microceph_from_local_snap("/tmp/microceph.snap")
+
+    assert commands[:2] == [
+        ("sudo snap install snapd --channel=latest/edge", 600),
+        ("sudo snap install core26 || true", 120),
+    ]
+
+
+def test_snapd_channel_flows_from_the_cli_wrapper_into_suites_and_scripts():
+    """The channel is chosen once by the wrapper and inherited everywhere else."""
+    robot_root = Path(__file__).parents[1]
+    resource = (robot_root / "resources" / "microceph_harness.resource").read_text()
+    dsl_suite = (robot_root / "dsl-functional-tests" / "dsl_functional_tests.robot").read_text()
+    adopt_suite = (robot_root / "cephadm-adopt-test" / "cephadm_adopt_tests.robot").read_text()
+    api_suite = (robot_root / "api-tests" / "api_tests.robot").read_text()
+
+    assert "${SNAPD_CHANNEL}      latest/stable" in resource
+    for suite in (dsl_suite, adopt_suite, api_suite):
+        assert "Set Environment Variable    SNAPD_CHANNEL" not in suite
+        assert "env SNAPD_CHANNEL=" not in suite
+
+
+def test_all_local_snap_install_paths_prepare_configured_snapd():
+    """Every guest path prepares snapd before installing the local snap."""
+    repo_root = Path(__file__).parents[3]
+    harness = (repo_root / "tests" / "robot" / "resources" / "microceph_harness.py").read_text()
+    actionutils = (repo_root / "tests" / "scripts" / "actionutils.sh").read_text()
+    adoptutils = (repo_root / "tests" / "scripts" / "adoptutils.sh").read_text()
+    dsl = (repo_root / "tests" / "scripts" / "test_dsl_functest.sh").read_text()
+
+    builder = harness.split("def build_base_lxd_image", 1)[1].split(
+        "def create_lxd_containers_with_loop_devices", 1
+    )[0]
+    assert "self._snapd_channel()" in builder
+    assert builder.index("snap install snapd") < builder.index("snap install --dangerous")
+
+    for script in (actionutils, adoptutils, dsl):
+        assert 'SNAPD_CHANNEL="${SNAPD_CHANNEL:-latest/stable}"' in script
+        assert "ensure_snapd_channel" in script
+        # Install first; refresh only when snap reports it was already installed.
+        assert "already installed" in script
+        assert script.index("snap install snapd") < script.index("snap refresh snapd")
+
+    # actionutils prepares snapd only in its one live local-install path
+    # (verify_pristine_check -> install_microceph); store-channel upgrade
+    # workflows and the dead multinode helpers must not be touched.
+    assert "ensure_snapd_channel_in_instance" not in actionutils
+    assert actionutils.count("    ensure_snapd_channel\n") == 1
+
+    assert actionutils.index("ensure_snapd_channel") < actionutils.index(
+        "sudo snap install --dangerous ~/microceph_*.snap"
+    )
+    assert adoptutils.index("ensure_snapd_channel") < adoptutils.index(
+        'sudo snap install --dangerous /root/microceph_*.snap'
+    )
+    assert dsl.index("ensure_snapd_channel") < dsl.index(
+        "snap install /tmp/microceph.snap --dangerous"
+    )
 
 
 def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
@@ -2395,6 +2522,36 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
 # ---------------------------------------------------------------------------
 # SMB Core26 packaging
 # ---------------------------------------------------------------------------
+
+def test_ci_runs_smb_on_edge_and_keeps_a_stable_snapd_gate():
+    """CI exercises SMB with 2.78 while stable compatibility remains blocking."""
+    repo_root = Path(__file__).parents[3]
+    workflow = (repo_root / ".github" / "workflows" / "tests.yml").read_text()
+    stable_suite = (
+        repo_root
+        / "tests"
+        / "robot"
+        / "snapd-stable-compatibility"
+        / "snapd_stable_compatibility.robot"
+    ).read_text()
+    smb_suite = (repo_root / "tests" / "robot" / "smb-test" / "smb_tests.robot").read_text()
+
+    assert "id: smb-test" in workflow
+    assert "suite: smb-test" in workflow
+    assert "id: snapd-stable-compatibility" in workflow
+    assert "name: Snapd stable compatibility gate" in workflow
+    assert "snapd_channel: latest/stable" in workflow
+    assert "--snapd-channel '" in workflow
+    assert "matrix.snapd_channel || 'latest/edge'" in workflow
+
+    assert "${OUTER_VM_IMAGE}    ubuntu:26.04" in stable_suite
+    assert "Prepare Snapd In VM" in stable_suite
+    assert "sudo snap install core26 || true" in stable_suite
+    assert "sudo snap install --dangerous ~/microceph_*.snap" in stable_suite
+    assert "Install MicroCeph From Local Snap" not in stable_suite
+    assert "SMB_SNAPD_CHANNEL" not in smb_suite
+    assert "snap install snapd" not in smb_suite
+
 
 def test_smb_manifest_uses_direct_ceph_new_and_scoped_identity_switching():
     """The strict SMB service uses Core26's native Ceph VFS and only it can switch identities."""

@@ -9,8 +9,6 @@ Test Tags       single-node    smb    cephfs    lxd    integration    strict-con
 
 *** Variables ***
 ${OUTER_VM_IMAGE}       ubuntu:26.04
-# The snapd 2.78 identity-switching policy is only on edge while this suite runs.
-${SMB_SNAPD_CHANNEL}    latest/edge
 ${SMB_CLUSTER}          smbtest
 ${SMB_SHARE}            cephfs
 ${SMB_VOLUME}           smbfs
@@ -22,7 +20,6 @@ ${SMB_PASSWORD}         SmbTestPassword1
 SMB Tests Suite Setup
     Launch Outer Test VM    vm_name=microceph-smb-vm
     Verify Resolute Outer VM
-    Run In VM And Check    sudo snap install snapd --channel=${SMB_SNAPD_CHANNEL} || sudo snap refresh snapd --channel=${SMB_SNAPD_CHANNEL}    600
     Copy Snap To VM
     Install And Bootstrap MicroCeph
     Run In VM And Check    sudo microceph disk add loop,1G,3    120

@@ -17,6 +17,7 @@ MEM="${MEM:-4GiB}"
 STORAGE_POOL="${STORAGE_POOL:-default}"
 SNAP_PATH="${SNAP_PATH:-}"  # Path to local snap file, empty means use store
 SNAP_CHANNEL="${SNAP_CHANNEL:-latest/edge}"
+SNAPD_CHANNEL="${SNAPD_CHANNEL:-latest/stable}"
 LXD_VM_IMAGE="${LXD_VM_IMAGE:-}"
 NO_CLEANUP="${NO_CLEANUP:-0}"
 REQUESTED_FUNCTION="${REQUESTED_FUNCTION:-}"
@@ -580,6 +581,16 @@ function vm_exec() {
     lxc exec "$VM_NAME" -- "$@"
 }
 
+function ensure_snapd_channel() {
+    local out
+    out=$(vm_exec snap install snapd --channel="$SNAPD_CHANNEL" 2>&1) || { echo "$out"; return 1; }
+    # `snap install` exits 0 without switching channels when snapd is already
+    # installed as a snap; only then is a refresh needed.
+    case "$out" in
+        *"already installed"*) vm_exec snap refresh snapd --channel="$SNAPD_CHANNEL" ;;
+    esac
+}
+
 # Run shell command in VM
 function vm_shell() {
     lxc exec "$VM_NAME" -- sh -lc "$*"
@@ -1134,6 +1145,7 @@ function resolve_snap_path() {
 # Install MicroCeph snap in VM
 function install_microceph_in_vm() {
     log "Installing MicroCeph snap..."
+    ensure_snapd_channel
 
     local snap_file=""
     if [[ -n "$SNAP_PATH" ]]; then

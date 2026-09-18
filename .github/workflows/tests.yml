@@ -121,6 +121,15 @@ jobs:
             suite: api-tests
             args: --variable XTRACE:True
 
+          - id: smb-test
+            name: Native SMB tests
+            suite: smb-test
+
+          - id: snapd-stable-compatibility
+            name: Snapd stable compatibility gate
+            suite: snapd-stable-compatibility
+            snapd_channel: latest/stable
+
           - id: single-system-tests
             name: Single node with encryption
             suite: single-system-tests
@@ -250,7 +259,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run Robot suite
-        run: tox -e robot -- --test-suite ${{ matrix.suite }} --snap-path '${{ runner.temp }}/*.snap' ${{ matrix.args }}
+        run: tox -e robot -- --test-suite ${{ matrix.suite }} --snap-path '${{ runner.temp }}/*.snap' --snapd-channel '${{ matrix.snapd_channel || 'latest/edge' }}' ${{ matrix.args }}
 
       - name: Upload Robot logs
         if: always()
