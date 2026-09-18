@@ -657,59 +657,55 @@ func UpdateRGWCertificates(ctx context.Context, s interfaces.StateInterface, cer
 	return finishRGWApply()
 }
 
-// DisableRGW disables the RGW service on the cluster.
-// [[NOTE: intentionally minimal; only removes the files this branch adds
-// and is not yet convergent on a repeat or interrupted call, replaced in
-// "fix(rgw): make RGW disable converge when repeated or interrupted".]]
+// DisableRGW stops the gateway, drops its records, then deletes local files.
+// The record is dropped first so a failure leaves files and record consistent,
+// and the file cleanup tolerates leftovers so a retry converges.
 func DisableRGW(ctx context.Context, s interfaces.StateInterface) error {
-	pathConsts := constants.GetPathConst()
-
-	err := stopRGW()
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+	err := stopRGWFunc()
 	if err != nil {
-		return fmt.Errorf("Failed to stop RGW service: %w", err)
+		return fmt.Errorf("%w: cannot stop RGW: %w", ErrPlacementOperationFailed, err)
 	}
-
 	err = removeServiceDatabase(ctx, s, "rgw")
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrPlacementOperationFailed, err)
 	}
-
-	// Remove the keyring symlink.
-	err = os.Remove(filepath.Join(pathConsts.ConfPath, "ceph.client.radosgw.gateway.keyring"))
+	paths := constants.GetPathConst()
+	var failures []error
+	err = removeIgnoreMissing(filepath.Join(paths.ConfPath, "ceph.client.radosgw.gateway.keyring"))
 	if err != nil {
-		return fmt.Errorf("failed to remove RGW keyring symlink: %w", err)
+		failures = append(failures, err)
 	}
-
-	// Remove the keyring.
-	err = os.Remove(filepath.Join(pathConsts.DataPath, "radosgw", "ceph-radosgw.gateway", "keyring"))
-	if err != nil {
-		return fmt.Errorf("failed to remove RGW keyring: %w", err)
+	for _, dir := range []string{
+		filepath.Join(paths.DataPath, "radosgw", "ceph-radosgw.gateway"),
+		rgwTLSRoot(),
+	} {
+		err = os.RemoveAll(dir)
+		if err != nil {
+			failures = append(failures, err)
+		}
 	}
-
-	// Remove the SSL files, in the old flat layout and in generations.
-	err = os.Remove(filepath.Join(pathConsts.SSLFilesPath, "server.crt"))
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove RGW SSL Certificate file: %w", err)
+	for _, path := range []string{
+		filepath.Join(paths.SSLFilesPath, "server.crt"),
+		filepath.Join(paths.SSLFilesPath, "server.key"),
+	} {
+		err = removeIgnoreMissing(path)
+		if err != nil {
+			failures = append(failures, err)
+		}
 	}
-	err = os.Remove(filepath.Join(pathConsts.SSLFilesPath, "server.key"))
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove RGW SSL Private Key file: %w", err)
+	radosgwConfMu.Lock()
+	for _, path := range []string{rgwConfPath(), rgwPendingApplyPath()} {
+		err = removeIgnoreMissing(path)
+		if err != nil {
+			failures = append(failures, err)
+		}
 	}
-	err = os.RemoveAll(rgwTLSRoot())
-	if err != nil {
-		return fmt.Errorf("failed to remove RGW TLS generations: %w", err)
+	radosgwConfMu.Unlock()
+	if len(failures) != 0 {
+		return fmt.Errorf("%w: RGW cleanup failed: %w", ErrPlacementOperationFailed, errors.Join(failures...))
 	}
-
-	// Remove the configuration and any unfinished apply marker.
-	err = removeIgnoreMissing(rgwPendingApplyPath())
-	if err != nil {
-		return fmt.Errorf("failed to remove RGW pending apply marker: %w", err)
-	}
-	err = os.Remove(filepath.Join(pathConsts.ConfPath, "radosgw.conf"))
-	if err != nil {
-		return fmt.Errorf("failed to remove RGW configuration: %w", err)
-	}
-
 	return nil
 }
 
