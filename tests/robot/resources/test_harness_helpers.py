@@ -1330,6 +1330,116 @@ def test_log_exec_no_output_prints_nothing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _is_forkfile_socket_error / _infra_annotation_line
+# ---------------------------------------------------------------------------
+
+def test_forkfile_error_matches_connection_reset():
+    stderr = "Error: forkfile2: .../forkfile.sock: read: connection reset by peer"
+    assert H._is_forkfile_socket_error(stderr)
+
+
+def test_forkfile_error_matches_missing_socket():
+    stderr = "Error: dial unix /var/lib/lxd/.../forkfile.sock: connect: no such file or directory"
+    assert H._is_forkfile_socket_error(stderr)
+
+
+def test_forkfile_error_ignores_other_failures():
+    assert not H._is_forkfile_socket_error("Error: Instance not found")
+    assert not H._is_forkfile_socket_error("")
+
+
+def test_infra_annotation_line_format():
+    assert H._infra_annotation_line("lxd-socket", "boom") == "::error title=Infra::kind=lxd-socket boom"
+
+
+# ---------------------------------------------------------------------------
+# _push_with_forkfile_retry / _infra_annotate
+# ---------------------------------------------------------------------------
+
+def test_push_with_forkfile_retry_succeeds_after_two_forkfile_errors(monkeypatch):
+    cap = _with_logger(monkeypatch)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    h = H()
+    results = [
+        _Res(1, "", "Error: forkfile2: .../forkfile.sock: read: connection reset by peer"),
+        _Res(1, "", "Error: forkfile2: .../forkfile.sock: read: connection reset by peer"),
+        _Res(0, "ok", ""),
+    ]
+    calls = []
+
+    def fake_exec(argv, timeout):
+        calls.append(argv)
+        return results[len(calls) - 1]
+
+    monkeypatch.setattr(h, "_exec", fake_exec)
+
+    res = h._push_with_forkfile_retry(["lxc", "file", "push", "a", "b"], "push script to outer VM")
+
+    assert res.rc == 0
+    assert len(calls) == 3
+    assert not any(line.startswith("::error title=Infra::kind=lxd-socket") for line in cap.console_lines)
+
+
+def test_push_with_forkfile_retry_fails_at_once_on_other_error(monkeypatch):
+    cap = _with_logger(monkeypatch)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    h = H()
+    calls = []
+
+    def fake_exec(argv, timeout):
+        calls.append(argv)
+        return _Res(1, "", "Error: Instance not found")
+
+    monkeypatch.setattr(h, "_exec", fake_exec)
+
+    with pytest.raises(AssertionError) as exc:
+        h._push_with_forkfile_retry(["lxc", "file", "push", "a", "b"], "push script to outer VM")
+
+    assert str(exc.value) == "Failed to push script to outer VM: Error: Instance not found"
+    assert len(calls) == 1
+    assert not any(line.startswith("::error title=Infra::kind=lxd-socket") for line in cap.console_lines)
+
+
+def test_push_with_forkfile_retry_exhausts_and_annotates(monkeypatch):
+    cap = _with_logger(monkeypatch)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    h = H()
+    calls = []
+
+    def fake_exec(argv, timeout):
+        calls.append(argv)
+        return _Res(1, "", "Error: forkfile2: .../forkfile.sock: read: connection reset by peer")
+
+    monkeypatch.setattr(h, "_exec", fake_exec)
+
+    with pytest.raises(AssertionError):
+        h._push_with_forkfile_retry(["lxc", "file", "push", "a", "b"], "push script to outer VM")
+
+    assert len(calls) == 3
+    infra_lines = [
+        line for line in cap.console_lines if line.startswith("::error title=Infra::kind=lxd-socket")
+    ]
+    assert len(infra_lines) == 1
+
+
+def test_infra_annotate_appends_to_step_summary(monkeypatch, tmp_path):
+    _with_logger(monkeypatch)
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+
+    H()._infra_annotate("lxd-socket", "boom")
+
+    assert summary.read_text() == "kind=lxd-socket boom\n"
+
+
+def test_infra_annotate_without_step_summary_writes_nothing(monkeypatch):
+    _with_logger(monkeypatch)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    H()._infra_annotate("lxd-socket", "boom")  # must not raise, must not touch a file
+
+
+# ---------------------------------------------------------------------------
 # wait_for_legacy_cephx_compatibility
 # ---------------------------------------------------------------------------
 
