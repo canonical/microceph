@@ -53,7 +53,8 @@ const placementPutTimeout = 10 * time.Minute
 func isClientSidePlacementError(err error) bool {
 	return errors.Is(err, ceph.ErrCephNotBootstrapped) ||
 		errors.Is(err, ceph.ErrUnknownPlacementMember) ||
-		errors.Is(err, ceph.ErrKeepOneInvariant)
+		errors.Is(err, ceph.ErrKeepOneInvariant) ||
+		errors.Is(err, ceph.ErrRgwFrontendInvalid)
 }
 
 // inProgressResponse maps an "already in progress" sentinel (placement apply or
@@ -83,6 +84,10 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	if err != nil {
 		logger.Errorf("failed decoding placement policy: %v", err)
 		return mcTypes.BadRequest(err)
+	}
+	err = dec.Decode(&struct{}{})
+	if err != io.EOF {
+		return mcTypes.BadRequest(errors.New("placement request must contain exactly one JSON object"))
 	}
 
 	// Require an explicit mode; only "reconcile" is supported. See
@@ -138,6 +143,10 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	err = ceph.ApplyPlacementPolicyFunc(ctx, interfaces.CephState{State: s}, policy)
 	if err != nil {
 		logger.Errorf("failed to apply placement policy: %v", err)
+		// An operational failure must not be hidden by a simultaneous safety refusal.
+		if errors.Is(err, ceph.ErrPlacementOperationFailed) {
+			return mcTypes.InternalError(err)
+		}
 		if isClientSidePlacementError(err) {
 			return mcTypes.BadRequest(err)
 		}

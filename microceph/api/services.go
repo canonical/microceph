@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -105,15 +106,26 @@ func cmdEnableServicePut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	err := json.NewDecoder(r.Body).Decode(&payload)
 	if err != nil {
 		logger.Errorf("Failed decoding enable service request: %v", err)
-		return mcTypes.InternalError(err)
+		return mcTypes.BadRequest(err)
 	}
 
 	err = ceph.ServicePlacementHandler(r.Context(), interfaces.CephState{State: s}, payload)
 	if err != nil {
-		return mcTypes.SyncResponse(false, err)
+		return rgwErrorResponse(err)
 	}
 
 	return mcTypes.SyncResponse(true, nil)
+}
+
+// Return errors before a sync response can commit HTTP 200.
+func rgwErrorResponse(err error) mcTypes.Response {
+	if errors.Is(err, ceph.ErrPlacementOperationFailed) {
+		return mcTypes.InternalError(err)
+	}
+	if errors.Is(err, ceph.ErrRgwFrontendInvalid) {
+		return mcTypes.BadRequest(err)
+	}
+	return mcTypes.SmartError(err)
 }
 
 // Service Reload Endpoint.
@@ -205,7 +217,7 @@ func cmdRGWServiceDelete(s mcTypes.State, r *http.Request) mcTypes.Response {
 	err := ceph.DisableRGW(r.Context(), interfaces.CephState{State: s})
 	if err != nil {
 		logger.Errorf("Failed disabling RGW: %v", err)
-		return mcTypes.SmartError(err)
+		return rgwErrorResponse(err)
 	}
 
 	return mcTypes.EmptySyncResponse

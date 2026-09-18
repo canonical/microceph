@@ -131,9 +131,14 @@ class microceph_harness:
         """
         return BuiltIn().get_variable_value("${OUTER_VM}", "microceph-test-vm")
 
-    def _vm_argv(self, *rest):
-        """Builds the argv that runs *rest* inside the outer VM via lxc exec."""
-        return ["lxc", "exec", "-n", self._outer_vm(), "--", *rest]
+    def _vm_argv(self, *rest, vm=None):
+        """Builds the argv that runs *rest* inside the outer VM via lxc exec.
+
+        Pass vm= to target a different LXD VM: the multi-VM RGW placement
+        suite runs sibling guest VMs (real independent members) rather than
+        containers inside one outer VM.
+        """
+        return ["lxc", "exec", "-n", vm or self._outer_vm(), "--", *rest]
 
     def _ct_argv(self, container, *rest):
         """Builds the argv that runs *rest* inside *container* via the outer VM."""
@@ -247,7 +252,7 @@ class microceph_harness:
     # Core execution helpers
     # -----------------------------------------------------------------------
 
-    def run_in_vm(self, bash_cmd, timeout=300, quiet=False):
+    def run_in_vm(self, bash_cmd, timeout=300, quiet=False, vm_name=None):
         """Runs an arbitrary bash command inside the outer VM (no fail on non-zero).
 
         bash -eo pipefail: pipe failures and early command failures propagate to the exit code,
@@ -256,24 +261,27 @@ class microceph_harness:
         command inherits Robot's stdin (a tty on interactive runs, Robot Framework >= 7.0), and
         commands that read stdin to EOF when it is not a tty -- notably lxc init / lxc launch,
         which slurp instance config YAML from stdin -- block forever on a tty that never EOFs.
+
+        Pass vm_name= to run inside a different LXD VM (guest-VM suites); the
+        default remains ${OUTER_VM} so existing callers are unchanged.
         """
         self._echo_cmd(bash_cmd, quiet)
-        res = self._exec(self._vm_argv("bash", "-eo", "pipefail", "-c", bash_cmd), timeout)
+        res = self._exec(self._vm_argv("bash", "-eo", "pipefail", "-c", bash_cmd, vm=vm_name), timeout)
         self._log_exec(bash_cmd, res, quiet)
         return res
 
-    def run_in_vm_and_check(self, bash_cmd, timeout=300, quiet=False):
+    def run_in_vm_and_check(self, bash_cmd, timeout=300, quiet=False, vm_name=None):
         """Runs a bash command inside the outer VM and fails on non-zero rc."""
-        res = self.run_in_vm(bash_cmd, timeout, quiet)
+        res = self.run_in_vm(bash_cmd, timeout, quiet, vm_name=vm_name)
         if res.rc != 0:
             raise AssertionError(
                 f"Command failed (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}"
             )
         return res
 
-    def run_in_vm_must_fail(self, bash_cmd, timeout=120, quiet=False):
+    def run_in_vm_must_fail(self, bash_cmd, timeout=120, quiet=False, vm_name=None):
         """Runs a bash command inside the outer VM and fails if it SUCCEEDS (expects non-zero)."""
-        res = self.run_in_vm(bash_cmd, timeout, quiet)
+        res = self.run_in_vm(bash_cmd, timeout, quiet, vm_name=vm_name)
         if res.rc == 0:
             raise AssertionError(f"Expected failure but command succeeded: {bash_cmd}")
         return res
@@ -1165,13 +1173,24 @@ class microceph_harness:
         disk_size = disk_size or BuiltIn().get_variable_value("${OUTER_VM_DISK}", "50GiB")
         # enable_nesting is accepted for API parity but is currently unused (the
         # original keyword body ignores it).
+        cpu = BuiltIn().get_variable_value("${OUTER_VM_CPU}", "4")
+        memory = BuiltIn().get_variable_value("${OUTER_VM_MEMORY}", "6GiB")
+        image = BuiltIn().get_variable_value("${OUTER_VM_IMAGE}", "ubuntu:24.04")
+        self._launch_vm_instance(vm_name, disk_size, cpu, memory, image)
+        # Bridge: keep the still-in-Robot keywords and _outer_vm() in sync (replaces
+        # the original Set Suite Variable).
+        BuiltIn().set_suite_variable("${OUTER_VM}", vm_name)
+
+    def _launch_vm_instance(self, vm_name, disk_size, cpu, memory, image):
+        """Launches one LXD VM (delete-first, 3 attempts) and waits for agent + cloud-init.
+
+        Shared by Launch Outer Test VM (single-boundary suites) and
+        Launch Guest Test VM (multi-VM suites); it never touches ${OUTER_VM}.
+        """
         self.require_host_commands("lxc")
         logger.console(f"\n[setup] Deleting pre-existing VM {vm_name} (if any)...")
         self._delete_instance_synced(vm_name)
         logger.console(f"[setup] Launching VM {vm_name} (disk={disk_size})...")
-        cpu = BuiltIn().get_variable_value("${OUTER_VM_CPU}", "4")
-        memory = BuiltIn().get_variable_value("${OUTER_VM_MEMORY}", "6GiB")
-        image = BuiltIn().get_variable_value("${OUTER_VM_IMAGE}", "ubuntu:24.04")
         argv = [
             "lxc", "launch", image, vm_name, "--vm",
             "-c", f"limits.cpu={cpu}",
@@ -1200,9 +1219,6 @@ class microceph_harness:
             if attempt == 2:
                 raise AssertionError(f"Failed to launch VM {vm_name} after 3 attempts: {res.stderr}")
             time.sleep(30)
-        # Bridge: keep the still-in-Robot keywords and _outer_vm() in sync (replaces
-        # the original Set Suite Variable).
-        BuiltIn().set_suite_variable("${OUTER_VM}", vm_name)
         logger.console(f"[setup] Waiting for VM agent in {vm_name}...")
         self.wait_for_vm_agent(vm_name)
         logger.console(f"[setup] Waiting for cloud-init in {vm_name}...")
@@ -1210,6 +1226,62 @@ class microceph_harness:
         if res.rc != 0:
             raise AssertionError(f"cloud-init failed in {vm_name}: {res.stderr}")
         logger.console(f"[setup] VM {vm_name} ready.")
+
+    # -----------------------------------------------------------------------
+    # Guest-VM lifecycle (multi-VM RGW placement suite)
+    #
+    # The multi-VM suite runs three sibling LXD VMs as real independent
+    # cluster members, so an unreachable member is an unreachable machine.
+    # Guests are bounded (${RGW_VM_CPU}/${RGW_VM_MEMORY}/${RGW_VM_DISK}) and
+    # are launched sequentially to keep peak host resource use flat.
+    # -----------------------------------------------------------------------
+
+    def launch_guest_test_vm(self, vm_name, disk_size=None, cpu=None, memory=None, image=None):
+        """Launches a named guest LXD VM with bounded, overridable resources.
+
+        Defaults come from ${RGW_VM_DISK}/${RGW_VM_CPU}/${RGW_VM_MEMORY} so a
+        small tooling host can size all guests at once from the command line.
+        """
+        disk_size = disk_size or BuiltIn().get_variable_value("${RGW_VM_DISK}", "6GiB")
+        cpu = cpu or BuiltIn().get_variable_value("${RGW_VM_CPU}", "2")
+        memory = memory or BuiltIn().get_variable_value("${RGW_VM_MEMORY}", "2GiB")
+        image = image or BuiltIn().get_variable_value("${OUTER_VM_IMAGE}", "ubuntu:24.04")
+        self._launch_vm_instance(vm_name, disk_size, cpu, memory, image)
+
+    def stop_named_vm(self, vm_name):
+        """Force-stops a named guest VM (member-unreachable scenarios)."""
+        logger.console(f"[vm] Stopping {vm_name}...")
+        self._exec(["lxc", "stop", vm_name, "--force"], 60)
+
+    def start_named_vm(self, vm_name):
+        """Starts a previously stopped guest VM and waits for its agent."""
+        logger.console(f"[vm] Starting {vm_name}...")
+        res = self._exec(["lxc", "start", vm_name], 120)
+        if res.rc != 0:
+            raise AssertionError(f"failed to start {vm_name}: {res.stderr}")
+        self.wait_for_vm_agent(vm_name)
+
+    def teardown_named_vms(self, *vm_names):
+        """Always-run teardown for guest-VM suites: diagnostics on failure, then delete.
+
+        Diagnostics only stream when the suite failed, mirroring
+        teardown_microceph_environment; stop/delete failures are best-effort
+        per VM so one wedged guest cannot leak the others.
+        """
+        for vm_name in vm_names:
+            if self._suite_failed():
+                try:
+                    self.run_in_vm(
+                        "sudo microceph status 2>/dev/null || true; "
+                        "sudo microceph.ceph -s 2>/dev/null || true; "
+                        "sudo snap logs microceph -n 100 2>/dev/null || true",
+                        60, vm_name=vm_name,
+                    )
+                except Exception as exc:
+                    logger.warn(f"diagnostics on {vm_name} failed (continuing): {exc}")
+            self._exec(["lxc", "stop", vm_name, "--force"], 60)
+            self._exec(["lxc", "delete", vm_name, "--force"], 60)
+        logger.console(f"[teardown] guest VMs destroyed: {', '.join(vm_names)}")
 
     def _copy_files_to_vm(self, manifest):
         """Pushes each (src_rel_to_repo, dest_on_vm, chmod_x) entry of *manifest* into the outer VM."""
@@ -1229,8 +1301,8 @@ class microceph_harness:
         self._copy_files_to_vm(HARNESS_SCRIPTS)
         logger.info(f"Scripts copied to {self._outer_vm()}")
 
-    def copy_snap_to_vm(self, snap_path=None):
-        """Copies the snap to ~/microceph_0_amd64.snap inside the outer VM."""
+    def copy_snap_to_vm(self, snap_path=None, vm_name=None):
+        """Copies the snap to ~/microceph_0_amd64.snap inside the outer VM (or vm_name)."""
         snap_path = snap_path or self._snap_path()
         if not snap_path:
             logger.warn("SNAP_PATH not set - skipping snap copy")
@@ -1242,7 +1314,7 @@ class microceph_harness:
         matches = sorted(glob.glob(os.path.expanduser(snap_path)))
         if matches:
             snap_path = matches[0]
-        vm = self._outer_vm()
+        vm = vm_name or self._outer_vm()
         logger.console(f"[setup] Copying snap to {vm} (this may take a minute)...")
         self._lxc_file_push(
             snap_path, f"{vm}/root/{SNAP_DEST_NAME}",
@@ -1352,13 +1424,13 @@ class microceph_harness:
     # Single-node MicroCeph setup (migrated from microceph_harness.resource)
     # -----------------------------------------------------------------------
 
-    def install_tools(self):
-        """Installs s3cmd and jq on the outer VM."""
+    def install_tools(self, vm_name=None):
+        """Installs s3cmd and jq on the outer VM (or vm_name)."""
         logger.console("[setup] Installing tools (s3cmd, jq)...")
-        self.run_in_vm_and_check("sudo apt-get update -qq", 120)
-        self.run_in_vm_and_check(f"sudo apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 120)
+        self.run_in_vm_and_check("sudo apt-get update -qq", 120, vm_name=vm_name)
+        self.run_in_vm_and_check(f"sudo apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 120, vm_name=vm_name)
 
-    def install_microceph_from_local_snap(self, snap_path=None):
+    def install_microceph_from_local_snap(self, snap_path=None, vm_name=None):
         """Installs the locally-built snap and connects all interfaces (except dm-crypt)."""
         snap_path = snap_path or self._snap_path()
         if not snap_path:
@@ -1367,10 +1439,10 @@ class microceph_harness:
         # snap_path only gates the skip above; the install uses the ~/microceph_*.snap
         # glob below, so the argument value is otherwise unused.
         logger.console("[install] Installing MicroCeph snap...")
-        self.run_in_vm_and_check("sudo snap install core26 || true", 120)
-        self.run_in_vm_and_check(f"sudo snap install --dangerous {LOCAL_SNAP_GLOB}", 600)
+        self.run_in_vm_and_check("sudo snap install core26 || true", 120, vm_name=vm_name)
+        self.run_in_vm_and_check(f"sudo snap install --dangerous {LOCAL_SNAP_GLOB}", 600, vm_name=vm_name)
         for iface in SNAP_INTERFACES:
-            self.run_in_vm_and_check(f"sudo snap connect microceph:{iface}", 30)
+            self.run_in_vm_and_check(f"sudo snap connect microceph:{iface}", 30, vm_name=vm_name)
 
     def bootstrap_microceph_cluster(self, mon_ip=""):
         """Runs microceph cluster bootstrap and waits 30 s for stabilisation."""
@@ -1896,6 +1968,125 @@ class microceph_harness:
         )
         return res.stdout
 
+    # -----------------------------------------------------------------------
+    # Placement API on named guest VMs (multi-VM RGW placement suite)
+    #
+    # These mirror the container variants but run curl inside a sibling LXD
+    # VM, so a policy can be submitted from a non-head member over that
+    # member's own control socket. Bodies without TLS material go inline;
+    # material-bearing policies are built from files inside the VM (see
+    # write_rgw_tls_policy_in_vm) and submitted with -d @file so no secret
+    # value ever appears in a command line, the journal, or the Robot log.
+    # -----------------------------------------------------------------------
+
+    def microceph_api_get_in_vm(self, vm_name, path):
+        """GETs a path from the MicroCeph control socket inside a named guest VM."""
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s --unix-socket {MICROCEPH_CONTROL_SOCKET} http://localhost/1.0/{path}",
+            30, vm_name=vm_name,
+        )
+        return res.stdout
+
+    def microceph_api_put_in_vm(self, vm_name, path, body, timeout=300):
+        """PUTs a JSON body to a path on the control socket inside a named guest VM.
+
+        Returns the raw response body; decide on it with `Response Status Code`.
+        """
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s -X PUT --unix-socket {MICROCEPH_CONTROL_SOCKET}"
+            f" -H 'Content-Type: application/json' -d '{body}' http://localhost/1.0/{path}",
+            float(timeout), vm_name=vm_name,
+        )
+        return res.stdout
+
+    def microceph_api_delete_in_vm(self, vm_name, path, timeout=60):
+        """DELETEs a path on the control socket inside a named guest VM."""
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s -X DELETE --unix-socket {MICROCEPH_CONTROL_SOCKET} http://localhost/1.0/{path}",
+            float(timeout), vm_name=vm_name,
+        )
+        return res.stdout
+
+    def get_placement_status_json_in_vm(self, vm_name):
+        """Returns the placement status JSON from a named guest VM."""
+        return self.microceph_api_get_in_vm(vm_name, "placement")
+
+    def microceph_api_delete(self, path, vm_name=None, timeout=60):
+        """DELETEs a path on the control socket on the outer VM (or vm_name)."""
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s -X DELETE --unix-socket {MICROCEPH_CONTROL_SOCKET} http://localhost/1.0/{path}",
+            float(timeout), vm_name=vm_name,
+        )
+        return res.stdout
+
+    def microceph_api_put_from_file_in_vm(self, path, body_file, timeout=300, vm_name=None):
+        """PUTs a pre-built JSON body file to a path on the control socket.
+
+        -d @file keeps the body out of every command line; sudo's journal
+        entry would carry only the file path, so the TLS-bearing policies
+        submitted this way cannot leak through the audit log either.
+        """
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s -X PUT --unix-socket {MICROCEPH_CONTROL_SOCKET}"
+            f" -H 'Content-Type: application/json' -d @{body_file} http://localhost/1.0/{path}",
+            float(timeout), vm_name=vm_name,
+        )
+        return res.stdout
+
+    def wait_for_cluster_members_in_vm(self, *members, tries=30, vm_name=None):
+        """Polls `microceph status` inside *vm_name* until every name in *members* appears."""
+        members = list(members)
+
+        def predicate():
+            out = self.run_in_vm("sudo microceph status", 30, quiet=True, vm_name=vm_name).stdout
+            present = placement_status.cluster_member_names(out)
+            return all(m in present for m in members)
+
+        self._poll_until(
+            predicate,
+            attempts=tries,
+            interval=5,
+            fail_msg=f"not all cluster members visible: {', '.join(members)}",
+        )
+
+    def wait_for_cluster_health_ok_in_vm(self, tries=100, interval=3, vm_name=None):
+        """Polls microceph.ceph health inside *vm_name* until HEALTH_OK."""
+        vm = vm_name or self._outer_vm()
+
+        def predicate():
+            res = self.run_in_vm("sudo microceph.ceph health", 30, quiet=True, vm_name=vm)
+            return res.rc == 0 and "HEALTH_OK" in res.stdout
+
+        self._poll_until(
+            predicate,
+            attempts=tries,
+            interval=interval,
+            fail_msg=f"cluster never reached HEALTH_OK on {vm}",
+        )
+
+    def wait_for_osd_count_in_vm(self, expect, tries=20, vm_name=None):
+        """Polls ceph -s -f json inside *vm_name* until num_in_osds >= *expect*."""
+        def predicate():
+            out = self.run_in_vm(
+                "sudo microceph.ceph -s -f json 2>/dev/null", 30, quiet=True, vm_name=vm_name
+            ).stdout
+            _, num_in = self._ceph_osd_counts(out)
+            return num_in >= int(expect)
+
+        self._poll_until(
+            predicate,
+            attempts=tries,
+            interval=5,
+            fail_msg=f"never reached {expect} OSD(s) on {vm_name or self._outer_vm()}",
+        )
+
+    def mon_count_in_vm(self, vm_name=None):
+        """Returns the monmap daemon count from ceph -s -f json inside *vm_name* (0 on failure)."""
+        res = self.run_in_vm("sudo microceph.ceph -s -f json 2>/dev/null", 30, quiet=True, vm_name=vm_name)
+        if res.rc != 0:
+            return 0
+        return placement_status.mon_count(res.stdout)
+
     def response_status_code(self, raw):
         """Returns the code embedded in a microcluster API response body (int).
 
@@ -1946,13 +2137,27 @@ class microceph_harness:
         """Asserts the lifecycle bootstrap_state in the placement status JSON on a container."""
         self.assert_lifecycle_state(expected_state, container)
 
-    def wait_for_microceph_control_socket(self, tries=24):
-        """Polls until the microceph control socket exists in the outer VM."""
+    def wait_for_microceph_control_socket(self, tries=24, vm_name=None):
+        """Polls until the microceph control socket exists in the outer VM (or vm_name)."""
         self._poll_until(
-            lambda: self.run_in_vm(f"test -S {MICROCEPH_CONTROL_SOCKET}", 15).rc == 0,
+            lambda: self.run_in_vm(f"test -S {MICROCEPH_CONTROL_SOCKET}", 15, vm_name=vm_name).rc == 0,
             attempts=tries,
             interval=5,
-            fail_msg="MicroCeph control socket never appeared",
+            fail_msg=f"MicroCeph control socket never appeared on {vm_name or self._outer_vm()}",
+        )
+
+    def wait_for_microceph_ready_in_vm(self, vm_name, tries=24):
+        """Polls `microceph status` inside *vm_name* until it exits 0.
+
+        The control socket file survives a guest VM stop/start, so after
+        restarting a stopped member this proves the daemon is actually
+        answering again, not just that a stale socket file exists.
+        """
+        self._poll_until(
+            lambda: self.run_in_vm("sudo microceph status >/dev/null", 30, quiet=True, vm_name=vm_name).rc == 0,
+            attempts=tries,
+            interval=5,
+            fail_msg=f"microceph daemon in {vm_name} never became responsive",
         )
 
     def wait_for_ceph_healthy_on_container(self, container, tries=40):
