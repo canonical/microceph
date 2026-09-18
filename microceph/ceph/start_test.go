@@ -251,7 +251,7 @@ func (s *startSuite) TestReEnableOSDRestarted() {
 		[]database.Service{{Service: "mon", Member: "node1"}},
 		nil,
 	)
-	r.On("RunCommand", "snapctl", "services", "microceph.mon").Return("active", nil).Once()
+	addSnapServiceActiveExpectations(r, "mon", "active", nil)
 	// OSD is inactive → gets restarted.
 	r.On("RunCommand", "snapctl", "services", "microceph.osd").Return("inactive", nil).Once()
 	r.On("RunCommand", "snapctl", "start", "microceph.osd", "--enable").Return("ok", nil).Once()
@@ -267,7 +267,7 @@ func (s *startSuite) TestReEnableGroupedServiceRestarted() {
 			{Service: "nfs", GroupID: "g2", Member: "node1"}, // duplicate — should be skipped
 		},
 	)
-	r.On("RunCommand", "snapctl", "services", "microceph.mon").Return("active", nil).Once()
+	addSnapServiceActiveExpectations(r, "mon", "active", nil)
 	r.On("RunCommand", "snapctl", "services", "microceph.osd").Return("active", nil).Once()
 	// nfs checked once (deduplicated), inactive → restarted.
 	r.On("RunCommand", "snapctl", "services", "microceph.nfs").Return("inactive", nil).Once()

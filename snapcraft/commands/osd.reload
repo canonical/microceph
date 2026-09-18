@@ -1,9 +1,5 @@
 #!/bin/bash
 set -eu
 
-# shellcheck disable=SC2155
-export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
-
-PID=$(cat "${SNAP_CURRENT}/run/ceph-osd.pid")
-kill -HUP "${PID}"
-exit 0
+# Add/start newly eligible OSDs without replanning healthy siblings.
+exec "${SNAP}/bin/microceph-pebble" reload osd
