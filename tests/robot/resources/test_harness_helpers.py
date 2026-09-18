@@ -10,10 +10,14 @@ Run with pytest:
     pytest tests/robot/resources/test_harness_helpers.py
 """
 
+import base64
 import json
 from pathlib import Path
 
+import pytest
+
 import placement_status
+import rgw_probe
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
 from snap_services import enabled_active_services
@@ -160,7 +164,6 @@ def test_coerce_xtrace_bool_true():
 def test_ceph_osd_counts_valid():
     payload = json.dumps({"osdmap": {"num_up_osds": 3, "num_in_osds": 2}})
     assert H._ceph_osd_counts(payload) == (3, 2)
-
 
 def test_ceph_osd_counts_missing_osdmap():
     assert H._ceph_osd_counts(json.dumps({})) == (0, 0)
@@ -933,6 +936,15 @@ def test_response_code_error_body():
     assert placement_status.response_code(_ERROR_RESPONSE) == 400
 
 
+def test_response_code_real_error_body_uses_error_code():
+    # microcluster error bodies carry status_code 0 next to the real error_code.
+    body = json.dumps({"type": "error", "status": "", "status_code": 0, "operation": "",
+                       "error_code": 400, "error": "bad request", "metadata": None})
+    assert placement_status.response_code(body) == 400
+    conflict = json.dumps({"type": "error", "status_code": 0, "error_code": 409, "error": "in progress"})
+    assert placement_status.response_code(conflict) == 409
+
+
 def test_response_code_garbage_is_zero():
     # Fail closed: comparisons against 200 must fail on unparseable bodies.
     assert placement_status.response_code("curl: (7) connection refused") == 0
@@ -975,6 +987,418 @@ def test_supported_capabilities_malformed_is_empty():
     assert placement_status.supported_capabilities("garbage") == []
     non_list = json.dumps({"status_code": 200, "metadata": {"supported": "nope"}})
     assert placement_status.supported_capabilities(non_list) == []
+
+
+# GET /1.0/placement body carrying an observed RGW member with a frontend, plus
+# a stored policy whose rgw entry has been stripped/redacted (no key material).
+_RGW_PLACEMENT_RESPONSE = json.dumps({
+    "status_code": 200,
+    "metadata": {
+        "active": True,
+        "policy": {
+            "mode": "reconcile",
+            "members": {
+                "node-a": {"rgw": {"enabled": True, "port": 8080, "ssl_port": 443}},
+            },
+        },
+        "observed": [
+            {"member": "node-a", "rgw": True,
+             "rgw_frontend": {"port": 8080, "ssl_port": 443, "ssl": True}},
+            {"member": "node-b", "control": True},
+        ],
+    },
+})
+
+
+def test_member_rgw_frontend_reports_ports_and_tls():
+    fe = placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-a")
+    assert fe == {"port": 8080, "ssl_port": 443, "ssl": True}
+
+
+def test_member_rgw_frontend_absent_member_is_empty():
+    # An existing member with no rgw_frontend key, and a member not present
+    # at all, both read as "no frontend reported" -- not an error.
+    assert placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-b") == {}
+    assert placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-z") == {}
+
+
+def test_member_rgw_frontend_malformed_body_raises():
+    # A malformed body must never read as "no frontend reported": absence and
+    # "cannot tell" are different outcomes, so garbage must fail closed.
+    for bad in ("garbage", "", _ERROR_RESPONSE, json.dumps({"status_code": 200})):
+        with pytest.raises(ValueError):
+            placement_status.member_rgw_frontend(bad, "node-a")
+
+
+def test_member_rgw_frontend_missing_observed_key_raises():
+    raw = json.dumps({"status_code": 200, "metadata": {"active": True}})
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(raw, "node-a")
+
+
+def test_member_rgw_frontend_malformed_observed_shape_raises():
+    not_a_list = json.dumps({"status_code": 200, "metadata": {"observed": "nope"}})
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(not_a_list, "node-a")
+
+    bad_frontend = json.dumps({
+        "status_code": 200,
+        "metadata": {"observed": [
+            {"member": "node-a", "rgw_frontend": {"port": 8080, "ssl": "not-a-bool"}},
+        ]},
+    })
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(bad_frontend, "node-a")
+
+    bad_port = json.dumps({
+        "status_code": 200,
+        "metadata": {"observed": [
+            {"member": "node-a", "rgw_frontend": {"port": 70000, "ssl": True}},
+        ]},
+    })
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(bad_port, "node-a")
+
+
+def test_placement_leaks_rgw_secrets_false_when_stripped():
+    # The stored policy carries port/ssl_port but no cert/key: no leak.
+    assert placement_status.placement_leaks_rgw_secrets(_RGW_PLACEMENT_RESPONSE) is False
+
+
+def test_placement_leaks_rgw_secrets_reject_malformed_status():
+    # Secret checks must fail closed: garbage or error bodies must not read as
+    # "nothing to leak".
+    for bad in ("garbage", "", _ERROR_RESPONSE, json.dumps({"status_code": 200})):
+        with pytest.raises(ValueError):
+            placement_status.placement_leaks_rgw_secrets(bad)
+    misshapen = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": "not-a-map"}},
+    })
+    with pytest.raises(ValueError):
+        placement_status.placement_leaks_rgw_secrets(misshapen)
+
+
+def test_placement_leaks_rgw_secrets_true_when_present():
+    leaky = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {
+            "node-a": {"rgw": {"enabled": True, "ssl_certificate": "Y2VydA=="}},
+        }}},
+    })
+    assert placement_status.placement_leaks_rgw_secrets(leaky) is True
+    leaky_key = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {
+            "node-a": {"rgw": {"enabled": True, "ssl_private_key": "a2V5"}},
+        }}},
+    })
+    assert placement_status.placement_leaks_rgw_secrets(leaky_key) is True
+
+
+_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL = json.dumps({
+    "status_code": 200,
+    "metadata": {
+        "active": True,
+        "policy": {
+            "mode": "reconcile",
+            "members": {
+                "node-a": {"rgw": {"enabled": True, "ssl": True, "ssl_port": 8443}},
+                "node-b": {"rgw": {"enabled": False}},
+            },
+        },
+        "observed": [
+            {"member": "node-a", "rgw": True, "rgw_frontend": {"ssl_port": 8443, "ssl": True}},
+            {"member": "node-b", "rgw": False},
+        ],
+        "placement_refusal": "keep-one invariant: refused to remove last mon on node-c",
+    },
+})
+
+
+def test_placement_metadata_strict_parse():
+    meta = placement_status.placement_metadata(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL)
+    assert meta["active"] is True
+    assert placement_status.placement_metadata(_RGW_PLACEMENT_RESPONSE) == {
+        "active": True,
+        "policy": {"mode": "reconcile", "members": {
+            "node-a": {"rgw": {"enabled": True, "port": 8080, "ssl_port": 443}},
+        }},
+        "observed": [
+            {"member": "node-a", "rgw": True,
+             "rgw_frontend": {"port": 8080, "ssl_port": 443, "ssl": True}},
+            {"member": "node-b", "control": True},
+        ],
+    }
+
+
+def test_placement_metadata_rejects_malformed_bodies():
+    for bad in ("garbage", "", "[1, 2, 3]", _ERROR_RESPONSE,
+                json.dumps({"status_code": 200}),
+                json.dumps({"status_code": 200, "metadata": "not-an-object"})):
+        with pytest.raises(ValueError):
+            placement_status.placement_metadata(bad)
+
+
+def test_placement_refusal_present_absent_and_malformed():
+    assert placement_status.placement_refusal(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL) == \
+        "keep-one invariant: refused to remove last mon on node-c"
+    # No recorded refusal reads as empty on a valid body.
+    assert placement_status.placement_refusal(_RGW_PLACEMENT_RESPONSE) == ""
+    with pytest.raises(ValueError):
+        placement_status.placement_refusal("garbage")
+    with pytest.raises(ValueError):
+        placement_status.placement_refusal(_ERROR_RESPONSE)
+
+
+def test_stored_policy_rgw_returns_member_intent():
+    intent = placement_status.stored_policy_rgw(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL, "node-a")
+    assert intent == {"enabled": True, "ssl": True, "ssl_port": 8443}
+    assert placement_status.stored_policy_rgw(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL, "node-b") == \
+        {"enabled": False}
+
+
+def test_stored_policy_rgw_absent_member_and_policy_are_empty():
+    assert placement_status.stored_policy_rgw(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL, "node-z") == {}
+    no_policy = json.dumps({"status_code": 200, "metadata": {"active": False}})
+    assert placement_status.stored_policy_rgw(no_policy, "node-a") == {}
+    # A member entry without an rgw field (omission policy) is also empty.
+    omitted = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"mode": "reconcile", "members": {"node-a": {"control": True}}}},
+    })
+    assert placement_status.stored_policy_rgw(omitted, "node-a") == {}
+
+
+def test_stored_policy_rgw_rejects_malformed_bodies():
+    # Before/after comparisons of accepted state must fail on garbage rather
+    # than compare {} == {}.
+    for bad in ("garbage", "", _ERROR_RESPONSE):
+        with pytest.raises(ValueError):
+            placement_status.stored_policy_rgw(bad, "node-a")
+    # Not a stored-boolean-policy compatibility check (out of scope; new
+    # placement requests are object-only) -- just another malformed rgw
+    # intent shape, a list where an object is required.
+    misshapen = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {"node-a": {"rgw": ["not", "an", "object"]}}}},
+    })
+    with pytest.raises(ValueError):
+        placement_status.stored_policy_rgw(misshapen, "node-a")
+
+
+def test_observed_rgw_members_flags():
+    flags = placement_status.observed_rgw_members(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL)
+    assert flags == {"node-a": True, "node-b": False}
+
+
+def test_observed_rgw_members_rejects_malformed_bodies():
+    for bad in ("garbage", "", _ERROR_RESPONSE,
+                json.dumps({"status_code": 200, "metadata": {"observed": "nope"}})):
+        with pytest.raises(ValueError):
+            placement_status.observed_rgw_members(bad)
+    bad_entry = json.dumps({
+        "status_code": 200,
+        "metadata": {"observed": [{"member": "node-a", "rgw": True}, "not-an-entry"]},
+    })
+    with pytest.raises(ValueError):
+        placement_status.observed_rgw_members(bad_entry)
+
+
+def test_rgw_frontend_conf_ports_plaintext():
+    conf = "rgw frontends = beast port=8080\n"
+    assert placement_status.rgw_frontend_conf_ports(conf) == {
+        "port": 8080, "ssl_port": 0, "ssl": False,
+    }
+
+
+def test_rgw_frontend_conf_ports_tls_only():
+    conf = "rgw frontends = beast ssl_port=443 ssl_certificate=/x/server.crt ssl_private_key=/x/server.key\n"
+    assert placement_status.rgw_frontend_conf_ports(conf) == {
+        "port": 0, "ssl_port": 443, "ssl": True,
+    }
+
+
+def test_rgw_frontend_conf_ports_dual_listener():
+    conf = "rgw frontends = beast port=8080 ssl_port=8443 ssl_certificate=/x/server.crt ssl_private_key=/x/server.key\n"
+    assert placement_status.rgw_frontend_conf_ports(conf) == {
+        "port": 8080, "ssl_port": 8443, "ssl": True,
+    }
+
+
+def test_rgw_frontend_conf_ports_rejects_missing_line_and_bad_values():
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_conf_ports("[global]\nrun dir = /x\n")
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_conf_ports("")
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_conf_ports("rgw frontends = beast port=notaport\n")
+
+
+# ---------------------------------------------------------------------------
+# rgw_frontend_tls_paths
+# ---------------------------------------------------------------------------
+
+def test_rgw_frontend_tls_paths_plaintext_is_empty():
+    conf = "rgw frontends = beast port=8080\n"
+    assert placement_status.rgw_frontend_tls_paths(conf) == []
+
+
+def test_rgw_frontend_tls_paths_full_pair_returns_exact_paths():
+    conf = (
+        "rgw frontends = beast port=8080 ssl_port=8443 "
+        "ssl_certificate=/var/snap/microceph/common/rgw-tls/abc/server.crt "
+        "ssl_private_key=/var/snap/microceph/common/rgw-tls/abc/server.key\n"
+    )
+    assert placement_status.rgw_frontend_tls_paths(conf) == [
+        "/var/snap/microceph/common/rgw-tls/abc/server.crt",
+        "/var/snap/microceph/common/rgw-tls/abc/server.key",
+    ]
+
+
+def test_rgw_frontend_tls_paths_half_pair_raises():
+    # A certificate with no matching key (or vice versa) must never read as
+    # "nothing to reference"; it is a broken reference and must fail.
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths(
+            "rgw frontends = beast ssl_port=8443 ssl_certificate=/x/server.crt\n"
+        )
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths(
+            "rgw frontends = beast ssl_port=8443 ssl_private_key=/x/server.key\n"
+        )
+
+
+def test_rgw_frontend_tls_paths_missing_line_raises():
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths("[global]\nrun dir = /x\n")
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths("")
+
+
+def test_rgw_frontend_tls_paths_quoted_values_via_shlex():
+    # Paths containing spaces are only recovered correctly if the tokenizer
+    # honours shell quoting rather than splitting on every space.
+    conf = (
+        'rgw frontends = beast ssl_port=8443 '
+        'ssl_certificate="/var/snap/microceph/common/rgw tls/abc/server.crt" '
+        'ssl_private_key="/var/snap/microceph/common/rgw tls/abc/server.key"\n'
+    )
+    assert placement_status.rgw_frontend_tls_paths(conf) == [
+        "/var/snap/microceph/common/rgw tls/abc/server.crt",
+        "/var/snap/microceph/common/rgw tls/abc/server.key",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# cluster_member_names
+# ---------------------------------------------------------------------------
+
+_DEPLOYMENT_SUMMARY = (
+    "MicroCeph deployment summary:\n"
+    "- rgw-mvm-first (10.0.0.11)\n"
+    "  Services: mds, mgr, mon, osd\n"
+    "  Disks: 1\n"
+    "- rgw-mvm-first-2 (10.0.0.12)\n"
+    "  Services: osd\n"
+    "  Disks: 1\n"
+)
+
+
+def test_cluster_member_names_parses_deployment_summary():
+    assert placement_status.cluster_member_names(_DEPLOYMENT_SUMMARY) == {
+        "rgw-mvm-first", "rgw-mvm-first-2",
+    }
+
+
+def test_cluster_member_names_does_not_treat_prefix_as_present():
+    # "rgw-mvm-first" is a substring of "rgw-mvm-first-2"; only the member
+    # whose own line actually names it may count as present.
+    text = "MicroCeph deployment summary:\n- rgw-mvm-first-2 (10.0.0.12)\n"
+    names = placement_status.cluster_member_names(text)
+    assert "rgw-mvm-first-2" in names
+    assert "rgw-mvm-first" not in names
+
+
+def test_cluster_member_names_ignores_service_and_disk_lines():
+    text = "MicroCeph deployment summary:\n- node-a (10.0.0.1)\n  Services: osd\n  Disks: 1\n"
+    assert placement_status.cluster_member_names(text) == {"node-a"}
+
+
+def test_cluster_member_names_empty_or_no_members_is_empty_set():
+    assert placement_status.cluster_member_names("") == set()
+    assert placement_status.cluster_member_names(None) == set()
+    assert placement_status.cluster_member_names("MicroCeph deployment summary:\n") == set()
+
+
+# ---------------------------------------------------------------------------
+# rgw_probe.material_needles
+# ---------------------------------------------------------------------------
+
+# A banner line, one long (>=32 byte) base64-looking body line, and a second
+# banner -- shaped like a real PEM without needing a real key.
+_PEM_BODY_LINE = b"A" * 44
+_PEM = b"-----BEGIN CERTIFICATE-----\n" + _PEM_BODY_LINE + b"\n-----END CERTIFICATE-----\n"
+
+
+def test_material_needles_includes_raw_base64_and_json_escaped_forms():
+    needles = rgw_probe.material_needles(_PEM)
+    assert _PEM in needles
+    assert base64.b64encode(_PEM) in needles
+    # JSON-embedding a PEM escapes its newlines to a literal backslash-n.
+    assert json.dumps(_PEM.decode("ascii"))[1:-1].encode() in needles
+
+
+def test_material_needles_includes_long_body_lines_excludes_banners():
+    needles = rgw_probe.material_needles(_PEM)
+    assert _PEM_BODY_LINE in needles
+    assert b"-----BEGIN CERTIFICATE-----" not in needles
+    assert b"-----END CERTIFICATE-----" not in needles
+
+
+def test_material_needles_excludes_short_body_lines():
+    short_pem = b"-----BEGIN CERTIFICATE-----\nshort\n-----END CERTIFICATE-----\n"
+    needles = rgw_probe.material_needles(short_pem)
+    assert b"short" not in needles
+
+
+def test_material_needles_dedups_across_repeated_material():
+    assert rgw_probe.material_needles(_PEM, _PEM) == rgw_probe.material_needles(_PEM)
+
+
+# ---------------------------------------------------------------------------
+# rgw_probe.file_contains_material
+# ---------------------------------------------------------------------------
+
+def test_file_contains_material_matches_in_first_chunk(tmp_path):
+    needle = b"super-secret-material"
+    path = tmp_path / "leak.txt"
+    path.write_bytes(b"prefix " + needle + b" suffix")
+    assert rgw_probe.file_contains_material(path, (needle,)) is True
+
+
+def test_file_contains_material_no_match(tmp_path):
+    path = tmp_path / "clean.txt"
+    path.write_bytes(b"nothing interesting in here")
+    assert rgw_probe.file_contains_material(path, (b"super-secret-material",)) is False
+
+
+def test_file_contains_material_empty_file_is_false(tmp_path):
+    path = tmp_path / "empty.txt"
+    path.write_bytes(b"")
+    assert rgw_probe.file_contains_material(path, (b"needle",)) is False
+
+
+def test_file_contains_material_matches_across_chunk_boundary(tmp_path):
+    # The reader works in 64KiB (65536-byte) chunks; place the needle so it
+    # starts just before that boundary and ends just after it, proving the
+    # overlap-retention logic (not a single unbroken chunk) finds the match.
+    needle = b"boundary-spanning-secret-material-marker"
+    before = b"a" * (65536 - 10)
+    after = b"b" * 4096
+    path = tmp_path / "boundary.txt"
+    path.write_bytes(before + needle + after)
+    assert rgw_probe.file_contains_material(path, (needle,)) is True
 
 
 def test_mon_count_prefers_monmap_num_mons():
@@ -1082,8 +1506,6 @@ def test_control_service_presence_requires_each_explicit_service():
 def test_control_service_presence_malformed_raises():
     # Unparseable output must not be reported as "service absent": an absence
     # assertion would otherwise pass on garbage rather than a genuine removal.
-    import pytest as _pytest
-
     mon = json.dumps({"quorum_names": ["node-a"]})
     mgr = json.dumps([{"name": "node-a"}])
     mds = json.dumps({"fsmap": {"standbys": [], "filesystems": []}})
@@ -1094,7 +1516,7 @@ def test_control_service_presence_malformed_raises():
         (mon, mgr, "bad"),
         ("", "", ""),
     ):
-        with _pytest.raises(ValueError):
+        with pytest.raises(ValueError):
             placement_status.control_service_presence(
                 bad_mon, bad_mgr, bad_mds, "node-a"
             )
@@ -1106,9 +1528,6 @@ def test_member_in_ceph_status_substring():
     assert placement_status.member_in_ceph_status(status, "node-wrk3") is False
     assert placement_status.member_in_ceph_status("", "node-wrk0") is False
     assert placement_status.member_in_ceph_status(None, "node-wrk0") is False
-
-
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -1338,6 +1757,41 @@ def test_wait_for_control_services_absent_timeout_on_persistent_bad_output(monke
 
 
 # ---------------------------------------------------------------------------
+# wait_for_cluster_members_in_vm (must decide via cluster_member_names, not a
+# substring search over the raw `microceph status` text)
+# ---------------------------------------------------------------------------
+
+def test_wait_for_cluster_members_in_vm_rejects_prefix_match(monkeypatch):
+    # Only "rgw-mvm-first-2" is actually a member; a substring search would
+    # wrongly report "rgw-mvm-first" present too.
+    h = H()
+    status_text = (
+        "MicroCeph deployment summary:\n"
+        "- rgw-mvm-first-2 (10.0.0.12)\n"
+        "  Services: osd\n"
+        "  Disks: 1\n"
+    )
+    monkeypatch.setattr(h, "run_in_vm", lambda *a, **k: _Res(0, status_text, ""))
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    with pytest.raises(AssertionError) as exc:
+        h.wait_for_cluster_members_in_vm("rgw-mvm-first", tries=1)
+    assert "rgw-mvm-first" in str(exc.value)
+
+
+def test_wait_for_cluster_members_in_vm_succeeds_on_exact_names(monkeypatch):
+    h = H()
+    status_text = (
+        "MicroCeph deployment summary:\n"
+        "- rgw-mvm-first (10.0.0.11)\n"
+        "- rgw-mvm-later (10.0.0.13)\n"
+    )
+    monkeypatch.setattr(h, "run_in_vm", lambda *a, **k: _Res(0, status_text, ""))
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    # Must not raise: both requested members are exact matches.
+    h.wait_for_cluster_members_in_vm("rgw-mvm-first", "rgw-mvm-later", tries=1)
+
+
+# ---------------------------------------------------------------------------
 # Single-system suite state sequencing
 # ---------------------------------------------------------------------------
 
@@ -1385,9 +1839,9 @@ def test_local_snap_install_caches_core26(monkeypatch):
     harness = H()
     commands = []
 
-    def fake_run_in_vm_and_check(command, timeout):
+    def fake_run_in_vm_and_check(command, timeout, quiet=False, vm_name=None):
         commands.append((command, timeout))
-
+        return None
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
 
     harness.install_microceph_from_local_snap("/tmp/microceph.snap")
@@ -1408,3 +1862,26 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "dpkg-deb -x" not in script
     assert "cat >" not in script
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
+
+
+def test_migration_samples_counts_only_in_flight_reads():
+    text = "0 0 1\n0 0 1\n1 0 1\n1 1 0\n1 1 0\nEND\n"
+    assert placement_status.migration_samples(text) == {
+        "samples": 3, "available": True, "replacement_ready": True, "complete": True,
+    }
+
+
+def test_migration_samples_detects_an_outage_and_an_unfinished_sampler():
+    outage = "1 0 1\n1 0 0\n1 1 0\nEND\n"
+    assert placement_status.migration_samples(outage)["available"] is False
+    unfinished = placement_status.migration_samples("1 0 1\n")
+    assert unfinished["complete"] is False and unfinished["samples"] == 1
+    empty = placement_status.migration_samples("END\n")
+    assert empty == {"samples": 0, "available": False, "replacement_ready": False, "complete": True}
+
+
+def test_migration_samples_rejects_malformed_lines():
+    with pytest.raises(ValueError):
+        placement_status.migration_samples("1 2 3\n")
+    with pytest.raises(ValueError):
+        placement_status.migration_samples("garbage\n")
