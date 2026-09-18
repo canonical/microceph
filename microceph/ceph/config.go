@@ -404,11 +404,12 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	monitorAddresses = formatIPv6(monitorAddresses)
 
 	// Keep radosgw.conf's `mon host` line in sync with the current monitors.
-	// radosgw.conf is written once at RGW enable time (EnableRGW) and is never
-	// re-rendered from scratch, because the RGW frontend port/SSL settings are
-	// not persisted. We therefore rewrite only the mon host line in place,
-	// preserving the other settings. A missing file (RGW disabled) is a no-op;
-	// a failure here must not block the ceph.conf refresh below.
+	// radosgw.conf is owned by the RGW enable/update paths (applyRGWFrontend),
+	// which alone know the TLS material the frontend references, so it is not
+	// re-rendered from scratch here. We therefore rewrite only the mon host
+	// line in place, preserving the other settings. A missing file (RGW
+	// disabled) is a no-op; a failure here must not block the ceph.conf
+	// refresh below.
 	err = updateRadosGWMonHost(confPath, monitorAddresses)
 	if err != nil {
 		logger.Warnf("failed to refresh radosgw.conf mon host: %v", err)
