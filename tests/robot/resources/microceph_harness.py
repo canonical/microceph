@@ -1842,18 +1842,37 @@ class microceph_harness:
                     self.run_in_container_unchecked(container, osd_up_cmd, 30).stdout.strip()
                 )
 
-            # Poll up to 36 x 10 s for >= 3 OSDs up; raise_on_timeout=False keeps the original
-            # break-and-fall-through so the exact-count assertion below stays the failure gate.
+            # Require exactly 3 OSDs up on TWO consecutive polls before trusting it: the
+            # first "3 up" reading can land just before a transient dip in the rolling
+            # restart, and a single post-loop re-query then failed the upgrade.
+            consecutive = [0]
+            last_count = [0]
+
+            def three_osds_up_twice():
+                last_count[0] = osd_up_count()
+                consecutive[0] = self._advance_consecutive(consecutive[0], last_count[0] == 3)
+                return consecutive[0] >= 2
+
             self._poll_until(
-                lambda: osd_up_count() >= 3,
-                attempts=36,
+                three_osds_up_twice,
+                # One poll more than the original 36-poll budget: the second, confirming
+                # poll must not eat into it.
+                attempts=37,
                 interval=10,
-                fail_msg="",
-                raise_on_timeout=False,
+                fail_msg=lambda: (
+                    f"Expected exactly 3 OSD up on two consecutive polls after upgrading "
+                    f"{container} (last count: {last_count[0]})"
+                ),
             )
-            count = osd_up_count()
-            if count != 3:
-                raise AssertionError(f"Expected 3 OSD up after upgrading {container}")
+
+    @staticmethod
+    def _advance_consecutive(current, ok):
+        """Returns the consecutive-success count after one poll: +1 when ok, else reset to 0.
+
+        Pure helper for the two-consecutive-polls OSD readiness gate so the
+        reset-on-dip behaviour is unit-testable.
+        """
+        return current + 1 if ok else 0
 
     # -----------------------------------------------------------------------
     # Multi-site replication getters (migrated from microceph_harness.resource)

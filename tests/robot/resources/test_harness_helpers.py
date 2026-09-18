@@ -664,6 +664,39 @@ def test_poll_until_between_not_called_on_success():
 
 
 # ---------------------------------------------------------------------------
+# _advance_consecutive
+# ---------------------------------------------------------------------------
+
+def test_advance_consecutive_increments_on_success():
+    assert H._advance_consecutive(1, True) == 2
+    assert H._advance_consecutive(0, True) == 1
+
+
+def test_advance_consecutive_resets_on_dip():
+    assert H._advance_consecutive(1, False) == 0
+
+
+def test_advance_consecutive_two_consecutive_polls_is_enough():
+    # mirrors the two-consecutive-polls gate in upgrade_multi_node
+    count = 0
+    count = H._advance_consecutive(count, True)
+    assert count < 2
+    count = H._advance_consecutive(count, True)
+    assert count >= 2
+
+
+def test_advance_consecutive_dip_resets_the_gate():
+    # a dip before the second success means the count reaches 2 only on the last poll
+    count = 0
+    reached_two_at = None
+    for i, ok in enumerate([True, False, True, True]):
+        count = H._advance_consecutive(count, ok)
+        if count >= 2 and reached_two_at is None:
+            reached_two_at = i
+    assert reached_two_at == 3
+
+
+# ---------------------------------------------------------------------------
 # enabled_active_services (snap_services.py)
 # ---------------------------------------------------------------------------
 
