@@ -38,6 +38,20 @@ var ErrKeepOneInvariant = fmt.Errorf("keep-one invariant")
 // ErrCephBootstrapInProgress.
 var ErrPlacementApplyInProgress = fmt.Errorf("placement apply already in progress")
 
+// ErrRgwFrontendInvalid is returned when the RGW frontend configuration in a
+// placement policy is malformed (e.g. bad base64 SSL material). It is a
+// client-side sentinel so the API handler maps it to HTTP 400 rather than the
+// SmartError 500 fallback.
+var ErrRgwFrontendInvalid = fmt.Errorf("invalid RGW frontend configuration")
+
+// ErrPlacementOperationFailed marks placement apply failures that are genuine
+// operational faults -- dispatch or convergence failures against real cluster
+// state -- as opposed to client input errors or keep-one safety refusals. The
+// API handler maps it to HTTP 500 before considering the 400-class sentinels,
+// so a failure forwarded from a member's service handler is never mistaken
+// for a bad request.
+var ErrPlacementOperationFailed = fmt.Errorf("placement operation failed")
+
 // placementApplyLease bounds how long a placement apply may hold the
 // cluster-wide dqlite lock before it is considered abandoned (daemon crashed
 // mid-apply) and reclaimable by the next writer. It must comfortably exceed
