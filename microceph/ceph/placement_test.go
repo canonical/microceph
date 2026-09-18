@@ -2,7 +2,15 @@ package ceph
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,9 +19,11 @@ import (
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
@@ -28,16 +38,20 @@ func TestPlacement(t *testing.T) {
 	suite.Run(t, new(placementSuite))
 }
 
-// applyPlacement runs validation before the package-private reconciliation
-// phase. Reconciliation tests use it without exercising policy persistence;
-// ApplyPlacementPolicy's full validate-store-reconcile ordering is covered by
-// dedicated orchestration tests below.
+// applyPlacement mirrors ApplyPlacementPolicy's pipeline minus persistence:
+// normalization, validation, then reconciliation. Reconciliation tests use it
+// without exercising policy storage; the full pipeline, including the
+// storage-boundary TLS strip, is covered by dedicated orchestration tests.
 func applyPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
-	err := ValidatePlacement(ctx, s, policy)
+	normalized, err := normalizePlacement(policy)
 	if err != nil {
 		return err
 	}
-	return reconcilePlacement(ctx, s, policy)
+	err = ValidatePlacement(ctx, s, normalized)
+	if err != nil {
+		return err
+	}
+	return reconcilePlacement(ctx, s, normalized)
 }
 
 // TestApplyPlacementPolicyOrdering verifies that the exported placement entry
@@ -989,6 +1003,140 @@ func (s *placementSuite) TestControlServiceViabilityAllRemovalTargetsNoRetainers
 		assert.True(s.T(), viableControl[svc]["node-a"], "%s on node-a must keep its existence-seeded viability", svc)
 		assert.True(s.T(), viableControl[svc]["node-b"], "%s on node-b must keep its existence-seeded viability", svc)
 	}
+}
+
+// testTLSMaterial generates a fresh self-signed certificate/key pair and
+// returns both PEM blocks base64-encoded -- the wire format RgwPlacement
+// expects. Normalization decodes and parses the pair with tls.X509KeyPair,
+// so a fixture must be a real matching pair; fake base64 would be rejected
+// before any dispatch.
+func testTLSMaterial(t *testing.T) (certB64 string, keyB64 string) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "microceph-placement-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return base64.StdEncoding.EncodeToString(certPEM), base64.StdEncoding.EncodeToString(keyPEM)
+}
+
+// TestPolicyForStorageStripsTLSMaterial verifies the storage boundary returns
+// a copy of the policy with the RGW TLS certificate and private key removed,
+// while the explicit ssl intent and effective ports are retained (so a
+// redacted policy resubmitted as-is cannot silently downgrade TLS). The
+// original policy is untouched so the active apply path keeps the material.
+func (s *placementSuite) TestPolicyForStorageStripsTLSMaterial() {
+	certB64, keyB64 := testTLSMaterial(s.T())
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(true), SSLPort: 443, SSLCertificate: certB64, SSLPrivateKey: keyB64}},
+			"node-b": {Control: boolPtr(true)}, // no rgw: untouched
+		},
+	}
+	stored := policyForStorage(policy)
+
+	require.Contains(s.T(), stored.Members, "node-a")
+	storedRgw := stored.Members["node-a"].Rgw
+	require.NotNil(s.T(), storedRgw)
+	assert.Empty(s.T(), storedRgw.SSLCertificate, "certificate must be stripped before storage")
+	assert.Empty(s.T(), storedRgw.SSLPrivateKey, "private key must be stripped before storage")
+	require.NotNil(s.T(), storedRgw.SSL)
+	assert.True(s.T(), *storedRgw.SSL, "explicit ssl intent must be retained")
+	assert.True(s.T(), *storedRgw.Enabled)
+	assert.Equal(s.T(), 443, storedRgw.SSLPort)
+
+	// Original policy untouched: the active reconcile path keeps the material.
+	assert.Equal(s.T(), certB64, policy.Members["node-a"].Rgw.SSLCertificate)
+	assert.Equal(s.T(), keyB64, policy.Members["node-a"].Rgw.SSLPrivateKey)
+}
+
+// TestPlacementPolicyJSONNeverCarriesMaterial verifies the stored encoding of
+// a policy with TLS material contains neither the certificate nor the key,
+// while the non-secret intent survives.
+func (s *placementSuite) TestPlacementPolicyJSONNeverCarriesMaterial() {
+	certB64, keyB64 := testTLSMaterial(s.T())
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(true), SSLPort: 8443, SSLCertificate: certB64, SSLPrivateKey: keyB64}},
+		},
+	}
+	data, err := placementPolicyJSON(policy)
+	require.NoError(s.T(), err)
+	assert.NotContains(s.T(), string(data), certB64)
+	assert.NotContains(s.T(), string(data), keyB64)
+	assert.NotContains(s.T(), string(data), "ssl_certificate")
+	assert.Contains(s.T(), string(data), `"ssl":true`)
+	assert.Contains(s.T(), string(data), `"ssl_port":8443`)
+}
+
+// TestPopulateRGWFrontends verifies the pure helper maps recorded rgw_frontends
+// rows onto observed members that host RGW, and ignores rows for members not
+// observed with RGW (the services row is the presence authority). A member
+// observed with RGW but lacking a frontend row keeps a nil frontend: unknown
+// is reported explicitly, never defaulted to plaintext.
+func (s *placementSuite) TestPopulateRGWFrontends() {
+	observed := map[string]*types.PlacementObservedMember{
+		"node-a": {Member: "node-a", Rgw: true},
+		"node-b": {Member: "node-b", Rgw: true},
+		"node-c": {Member: "node-c", Rgw: false},
+		"node-d": {Member: "node-d", Rgw: true}, // observed RGW, no frontend row
+	}
+	frontends := []database.RgwFrontend{
+		{Member: "node-a", Port: 80, SSLPort: 0, SSL: false},
+		{Member: "node-b", Port: 0, SSLPort: 443, SSL: true},
+		{Member: "node-c", Port: 80, SSL: false}, // not observed with RGW
+		{Member: "node-e", Port: 80, SSL: false}, // not in observed at all
+	}
+	populateRGWFrontends(observed, frontends)
+
+	require.NotNil(s.T(), observed["node-a"].RgwFrontend)
+	assert.Equal(s.T(), 80, observed["node-a"].RgwFrontend.Port)
+	assert.False(s.T(), observed["node-a"].RgwFrontend.SSL)
+
+	require.NotNil(s.T(), observed["node-b"].RgwFrontend)
+	assert.Equal(s.T(), 443, observed["node-b"].RgwFrontend.SSLPort)
+	assert.True(s.T(), observed["node-b"].RgwFrontend.SSL)
+
+	assert.Nil(s.T(), observed["node-c"].RgwFrontend, "member without observed RGW gets no frontend")
+	assert.Nil(s.T(), observed["node-d"].RgwFrontend, "observed RGW without a recorded frontend row stays unknown, never plaintext")
+}
+
+// TestRedactStoredPolicy verifies the GET defense-in-depth redaction blanks
+// the RGW TLS certificate and private key from the declared policy while
+// retaining non-secret fields, and that a nil policy is a no-op.
+func (s *placementSuite) TestRedactStoredPolicy() {
+	policy := &types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(true), Port: 80, SSLPort: 443, SSLCertificate: "Y2VydA==", SSLPrivateKey: "a2V5"}},
+			"node-b": {Control: boolPtr(true)},
+		},
+	}
+	redactStoredPolicy(policy)
+
+	require.NotNil(s.T(), policy.Members["node-a"].Rgw)
+	assert.Empty(s.T(), policy.Members["node-a"].Rgw.SSLCertificate, "certificate must be redacted on GET")
+	assert.Empty(s.T(), policy.Members["node-a"].Rgw.SSLPrivateKey, "key must be redacted on GET")
+	require.NotNil(s.T(), policy.Members["node-a"].Rgw.SSL)
+	assert.True(s.T(), *policy.Members["node-a"].Rgw.SSL, "TLS intent survives GET redaction")
+	assert.True(s.T(), *policy.Members["node-a"].Rgw.Enabled)
+	assert.Equal(s.T(), 80, policy.Members["node-a"].Rgw.Port, "port must be retained")
+	assert.Equal(s.T(), 443, policy.Members["node-a"].Rgw.SSLPort, "ssl_port must be retained")
+
+	// nil policy must not panic.
+	redactStoredPolicy(nil)
 }
 
 // TestRedactSecrets verifies that redactSecrets masks realistic cephx key
