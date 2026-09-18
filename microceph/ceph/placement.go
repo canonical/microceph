@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"time"
@@ -149,10 +150,10 @@ var getClusterLifecycleFunc = func(ctx context.Context, s interfaces.StateInterf
 // ValidatePlacement checks a desired placement snapshot against cluster
 // preconditions without touching any service or the stored policy (CE142).
 //
-// It is the first of the three phases ApplyPlacementPolicy drives -- validate,
-// store, reconcile -- and exists as a separate phase so that a policy which can
-// never apply is rejected before it replaces the stored desired state, while a
-// policy that merely fails to converge is still persisted and observable.
+// It runs after RGW normalization (normalizePlacement) and before persistence
+// and reconciliation, so a policy which can never apply is rejected before it
+// replaces the stored desired state, while a policy that merely fails to
+// converge is still persisted and observable.
 //
 // Rejections:
 //   - Ceph is not bootstrapped and the policy is non-empty
@@ -211,29 +212,48 @@ func ValidatePlacement(ctx context.Context, s interfaces.StateInterface, policy 
 	return nil
 }
 
-// ApplyPlacementPolicy validates, stores, and reconciles a complete desired
-// placement snapshot (CE142). The caller must hold the cluster-wide placement
-// apply lock for the duration of this call.
-//
-// Validation runs before persistence so a policy that can never apply does not
-// replace the current desired state. Persistence runs before reconciliation so
-// a convergence failure leaves the new intent observable through placement
-// status. Every failure is recorded as the latest refusal on a best-effort
-// basis; a successful apply clears any previous refusal.
+// normalizePlacement checks RGW intent before any cluster state changes.
+// The caller's policy is left untouched.
+func normalizePlacement(policy types.PlacementPolicy) (types.PlacementPolicy, error) {
+	out := policy
+	out.Members = maps.Clone(policy.Members)
+	for name, mp := range policy.Members {
+		if mp.Rgw == nil {
+			continue
+		}
+		normalized, err := mp.Rgw.Normalized()
+		if err != nil {
+			return policy, fmt.Errorf("%w: member %s: %w", ErrRgwFrontendInvalid, name, err)
+		}
+		mp.Rgw = &normalized
+		out.Members[name] = mp
+	}
+	return out, nil
+}
+
+// ApplyPlacementPolicy validates, stores, and reconciles a complete desired policy.
+// The caller must hold the cluster-wide apply lock. Storage removes TLS material;
+// reconciliation retains it. Failed reconciliation leaves the desired policy in place.
 func ApplyPlacementPolicy(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
-	err := validatePlacementFunc(ctx, s, policy)
+	normalized, err := normalizePlacement(policy)
 	if err != nil {
 		recordPlacementRefusal(ctx, s, err)
 		return err
 	}
 
-	err = storePlacementPolicyFunc(ctx, s, policy)
+	err = validatePlacementFunc(ctx, s, normalized)
 	if err != nil {
 		recordPlacementRefusal(ctx, s, err)
 		return err
 	}
 
-	err = reconcilePlacementFunc(ctx, s, policy)
+	err = storePlacementPolicyFunc(ctx, s, normalized)
+	if err != nil {
+		recordPlacementRefusal(ctx, s, err)
+		return err
+	}
+
+	err = reconcilePlacementFunc(ctx, s, normalized)
 	if err != nil {
 		recordPlacementRefusal(ctx, s, err)
 		return err
@@ -469,6 +489,67 @@ func prodRemoveControlService(ctx context.Context, s interfaces.StateInterface, 
 	return nil
 }
 
+// placementPolicyJSON is the only encoder for the stored policy, so nothing
+// can persist a policy without passing the secret strip.
+func placementPolicyJSON(policy types.PlacementPolicy) ([]byte, error) {
+	data, err := json.Marshal(policyForStorage(policy))
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal placement policy: %w", err)
+	}
+	return data, nil
+}
+
+// policyForStorage removes secrets without changing the active apply's policy.
+func policyForStorage(policy types.PlacementPolicy) types.PlacementPolicy {
+	out := policy
+	out.Members = maps.Clone(policy.Members)
+	for name, mp := range policy.Members {
+		if mp.Rgw == nil {
+			continue
+		}
+		stripped := *mp.Rgw
+		stripped.SSLCertificate = ""
+		stripped.SSLPrivateKey = ""
+		mp.Rgw = &stripped
+		out.Members[name] = mp
+	}
+	return out
+}
+
+// redactStoredPolicy blanks the RGW TLS certificate and private key from every
+// member's rgw entry in a declared policy before it is returned via
+// GET /placement. It is defense-in-depth: the stored policy is already stripped
+// at PUT time (policyForStorage), but this protects against any future code
+// path that stores the raw policy. A nil policy is a no-op. The observed
+// frontend (RgwObservedFrontend) carries ports + a TLS flag only, so it needs no
+// redaction.
+func redactStoredPolicy(policy *types.PlacementPolicy) {
+	if policy == nil {
+		return
+	}
+	for _, mp := range policy.Members {
+		if mp.Rgw != nil {
+			mp.Rgw.SSLCertificate = ""
+			mp.Rgw.SSLPrivateKey = ""
+		}
+	}
+}
+
+// populateRGWFrontends attaches last-applied settings only to registered gateways.
+func populateRGWFrontends(observedByMember map[string]*types.PlacementObservedMember, frontends []database.RgwFrontend) {
+	for _, frontend := range frontends {
+		member := observedByMember[frontend.Member]
+		if member == nil || !member.Rgw {
+			continue
+		}
+		member.RgwFrontend = &types.RgwObservedFrontend{
+			Port:    frontend.Port,
+			SSLPort: frontend.SSLPort,
+			SSL:     frontend.SSL,
+		}
+	}
+}
+
 // GetPlacementStatusFunc is the injectable wrapper for GetPlacementStatus,
 // used by the API handler so tests can override it.
 var GetPlacementStatusFunc = GetPlacementStatus
@@ -510,6 +591,10 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 			if err != nil {
 				return fmt.Errorf("failed to unmarshal placement policy: %w", err)
 			}
+			// Defense-in-depth: the stored policy is already stripped at PUT time,
+			// but redact again so a future code path that stores the raw policy
+			// cannot leak SSL material via GET /placement.
+			redactStoredPolicy(&policy)
 			status.Policy = &policy
 		}
 		status.PlacementRefusal = redactSecrets(rec.LastRefusal)
@@ -563,6 +648,15 @@ func GetPlacementStatus(ctx context.Context, s interfaces.StateInterface) (*type
 			om.Nfs = append(om.Nfs, gs.GroupID)
 		}
 
+		// Observed RGW frontends: ports + TLS flag from the rgw_frontends table
+		// (CE142 placement-rgw), read in the same transaction as the rest of the
+		// observed state. Never cert/key bytes.
+		rgwFrontends, err := database.GetRGWFrontends(ctx, tx)
+		if err != nil {
+			return err
+		}
+		populateRGWFrontends(observedByMember, rgwFrontends)
+
 		for _, om := range observedByMember {
 			status.Observed = append(status.Observed, *om)
 		}
@@ -586,9 +680,9 @@ var storePlacementPolicyFunc = storePlacementPolicy
 // this record as the authoritative statement of desired placement --
 // OSDManager.checkStorageEligibility gates OSD enrollment on it.
 func storePlacementPolicy(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
-	data, err := json.Marshal(policy)
+	data, err := placementPolicyJSON(policy)
 	if err != nil {
-		return fmt.Errorf("failed to marshal placement policy: %w", err)
+		return err
 	}
 
 	return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
