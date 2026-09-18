@@ -845,6 +845,34 @@ def test_run_streaming_process_argv_list_runs_without_shell():
 
 
 # ---------------------------------------------------------------------------
+# _is_member_not_found_error (microceph_harness.py)
+#
+# Pure replacement for the inline Robot Evaluate that decided whether a
+# 'microceph cluster remove' failure means the member was already gone.
+# ---------------------------------------------------------------------------
+
+def test_is_member_not_found_error_matches_real_cli_text():
+    stderr = 'Error: cluster member "node-wrk3" not found'
+    assert H._is_member_not_found_error(stderr) is True
+
+
+def test_is_member_not_found_error_does_not_match_context_canceled():
+    assert H._is_member_not_found_error("Error: context canceled") is False
+
+
+def test_is_member_not_found_error_does_not_match_context_deadline_exceeded():
+    assert H._is_member_not_found_error("Error: context deadline exceeded") is False
+
+
+def test_is_member_not_found_error_none_is_false():
+    assert H._is_member_not_found_error(None) is False
+
+
+def test_is_member_not_found_error_empty_is_false():
+    assert H._is_member_not_found_error("") is False
+
+
+# ---------------------------------------------------------------------------
 # parse_migration_status (cluster_ops.py)
 #
 # Pure replacement for the `microceph status | grep -F -A 1 <node> | grep -qE

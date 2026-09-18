@@ -86,13 +86,28 @@ Remove Node Head Node
     [Documentation]    Removes specified node via node-wrk0.
     ...    Waits for cluster health before attempting removal and retries on transient
     ...    'context canceled' failures from the pre-remove hook RPC (the target node
-    ...    may be busy rebalancing OSDs and not respond in time).
+    ...    may be busy rebalancing OSDs and not respond in time). A 'member not found'
+    ...    result is only trusted as an already-removed success once an earlier attempt
+    ...    in this loop failed for some other reason, proving a removal was in flight.
     [Arguments]    ${node}
     Log To Console    [cluster] Removing node ${node} via node-wrk0...
     Verify Cluster Health Head Node
+    ${saw_other_failure}=    Set Variable    ${False}
     FOR    ${attempt}    IN RANGE    3
         ${result}=    Run In VM    lxc exec node-wrk0 -- microceph cluster remove ${node}    120
         IF    ${result.rc} == 0    BREAK
+        ${not_found}=    Is Member Not Found Error    ${result.stderr}
+        # 'member not found' only means already-removed if a PRIOR attempt failed for
+        # some other reason (timeout, context canceled/deadline exceeded): that other
+        # failure is the evidence a removal RPC actually reached the server. Without
+        # it, 'not found' on every attempt is just a bad node name, not idempotency.
+        IF    ${not_found} and ${saw_other_failure}
+            Log To Console    [cluster] ${node} already removed (member not found) on attempt ${attempt}; treating as success
+            BREAK
+        END
+        IF    not ${not_found}
+            ${saw_other_failure}=    Set Variable    ${True}
+        END
         Log To Console    [cluster] Remove attempt ${attempt} failed (rc=${result.rc}): ${result.stderr.strip()} — retrying in 10s
         IF    ${attempt} == 2    Fail    Failed to remove ${node} after 3 attempts: ${result.stderr}
         Sleep    10s
