@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/canonical/lxd/shared/api"
 
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -180,6 +183,13 @@ func cleanService(hostname, service string) error {
 	return nil
 }
 
+// The record writers are injectable so record handling can be tested without
+// a dqlite statement registry.
+var (
+	deleteServiceRecordFunc = database.DeleteService
+	deleteRGWFrontendFunc   = database.DeleteRGWFrontendByMember
+)
+
 // removeServiceDatabase removes a service record from the database.
 func removeServiceDatabase(ctx context.Context, s interfaces.StateInterface, service string) error {
 	if s.ClusterState().ServerCert() == nil {
@@ -187,7 +197,12 @@ func removeServiceDatabase(ctx context.Context, s interfaces.StateInterface, ser
 	}
 
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		err := database.DeleteService(ctx, tx, s.ClusterState().Name(), service)
+		err := deleteServiceRecordFunc(ctx, tx, s.ClusterState().Name(), service)
+		// An absent RGW record is what a disable wants, so a repeated
+		// disable or a retry after partial cleanup still converges.
+		if err != nil && service == "rgw" && api.StatusErrorCheck(err, http.StatusNotFound) {
+			err = nil
+		}
 		if err != nil {
 			logger.Errorf("failed to remove service from db %q: %v", service, err)
 			return fmt.Errorf("failed to remove service from db %q: %w", service, err)
@@ -199,6 +214,15 @@ func removeServiceDatabase(ctx context.Context, s interfaces.StateInterface, ser
 			err = database.DeleteConfigItem(ctx, tx, key)
 			if err != nil {
 				return err
+			}
+		}
+
+		// Drop the recorded RGW frontend so observed state does not outlive the
+		// service row. Both are removed in the same transaction.
+		if service == "rgw" {
+			err = deleteRGWFrontendFunc(ctx, tx, s.ClusterState().Name())
+			if err != nil {
+				return fmt.Errorf("failed to remove rgw frontend from db: %w", err)
 			}
 		}
 
