@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -105,15 +106,40 @@ func cmdEnableServicePut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	err := json.NewDecoder(r.Body).Decode(&payload)
 	if err != nil {
 		logger.Errorf("Failed decoding enable service request: %v", err)
-		return mcTypes.InternalError(err)
+		return mcTypes.BadRequest(err)
 	}
 
 	err = ceph.ServicePlacementHandler(r.Context(), interfaces.CephState{State: s}, payload)
 	if err != nil {
-		return mcTypes.SyncResponse(false, err)
+		// Not SyncResponse(false, err), which would answer 200. See serviceErrorResponse.
+		return serviceErrorResponse(err)
 	}
 
 	return mcTypes.SyncResponse(true, nil)
+}
+
+// serviceErrorResponse turns a service handler's error into an error response
+// with the right HTTP status.
+//
+// A handler must not report a failure with mcTypes.SyncResponse(false, err).
+// A sync response writes "200 OK" first and only then hands the error to
+// SmartError, and an HTTP status cannot be changed once it is written, so the
+// client would get status 200 with an error body. Returning an error response
+// writes the failure status the first time.
+//
+// The status comes from the error's class. A failure while changing the member
+// (ErrPlacementOperationFailed) is a 500 and is checked first, so it wins when
+// an error carries both classes. A request the caller must fix
+// (ErrRgwFrontendInvalid) is a 400. Anything else goes to SmartError, which
+// maps the status errors it knows and answers 500 for the rest.
+func serviceErrorResponse(err error) mcTypes.Response {
+	if errors.Is(err, ceph.ErrPlacementOperationFailed) {
+		return mcTypes.InternalError(err)
+	}
+	if errors.Is(err, ceph.ErrRgwFrontendInvalid) {
+		return mcTypes.BadRequest(err)
+	}
+	return mcTypes.SmartError(err)
 }
 
 // Service Reload Endpoint.
@@ -205,7 +231,7 @@ func cmdRGWServiceDelete(s mcTypes.State, r *http.Request) mcTypes.Response {
 	err := ceph.DisableRGW(r.Context(), interfaces.CephState{State: s})
 	if err != nil {
 		logger.Errorf("Failed disabling RGW: %v", err)
-		return mcTypes.SmartError(err)
+		return serviceErrorResponse(err)
 	}
 
 	return mcTypes.EmptySyncResponse
