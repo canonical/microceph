@@ -1,10 +1,98 @@
 // Package types provides shared types and structs.
 package types
 
+import (
+	"crypto/tls"
+	"encoding/base64"
+	"errors"
+)
+
 // NFSPlacement describes a single role-driven NFS gateway placement entry for a member.
 type NFSPlacement struct {
 	GroupID     string `json:"group_id" yaml:"group_id"`
 	BindAddress string `json:"bind_address" yaml:"bind_address"`
+}
+
+// RgwPlacement declares whether a member should run RGW and its frontend settings.
+// Certificate material is write-only; only the TLS flag and ports are stored.
+type RgwPlacement struct {
+	Enabled        *bool  `json:"enabled" yaml:"enabled"`
+	SSL            *bool  `json:"ssl,omitempty" yaml:"ssl,omitempty"`
+	Port           int    `json:"port,omitempty" yaml:"port,omitempty"`
+	SSLPort        int    `json:"ssl_port,omitempty" yaml:"ssl_port,omitempty"`
+	SSLCertificate string `json:"ssl_certificate,omitempty" yaml:"ssl_certificate,omitempty"`
+	SSLPrivateKey  string `json:"ssl_private_key,omitempty" yaml:"ssl_private_key,omitempty"`
+}
+
+// Normalized validates RGW intent and fills in the effective listener ports.
+func (r RgwPlacement) Normalized() (RgwPlacement, error) {
+	if r.Enabled == nil {
+		return r, errors.New("rgw.enabled is required")
+	}
+	if !*r.Enabled {
+		return RgwPlacement{Enabled: r.Enabled}, nil
+	}
+	if r.SSL == nil {
+		return r, errors.New("rgw.ssl is required when RGW is enabled")
+	}
+	if !*r.SSL && (r.SSLCertificate != "" || r.SSLPrivateKey != "") {
+		return r, errors.New("TLS material requires rgw.ssl=true")
+	}
+
+	var err error
+	r.Port, r.SSLPort, err = NormalizeRGWPorts(r.Port, r.SSLPort, *r.SSL)
+	if err != nil {
+		return r, err
+	}
+	if r.SSLCertificate != "" || r.SSLPrivateKey != "" {
+		_, _, err = DecodeRGWCertificate(r.SSLCertificate, r.SSLPrivateKey)
+		if err != nil {
+			return r, err
+		}
+	}
+
+	// No supplied material means reuse the member's pair, never disable TLS.
+	return r, nil
+}
+
+// NormalizeRGWPorts returns the ports used by plaintext or TLS listeners.
+func NormalizeRGWPorts(port, sslPort int, ssl bool) (int, int, error) {
+	if port < 0 || port > 65535 || sslPort < 0 || sslPort > 65535 {
+		return 0, 0, errors.New("RGW ports must be between 0 and 65535")
+	}
+	if !ssl {
+		if port == 0 {
+			port = 80
+		}
+		return port, 0, nil
+	}
+	if sslPort == 0 {
+		sslPort = 443
+	}
+	if port == sslPort {
+		return 0, 0, errors.New("HTTP and TLS listeners must use different ports")
+	}
+	return port, sslPort, nil
+}
+
+// DecodeRGWCertificate decodes a base64 certificate and matching private key.
+func DecodeRGWCertificate(certificate, privateKey string) ([]byte, []byte, error) {
+	if certificate == "" || privateKey == "" {
+		return nil, nil, errors.New("TLS requires both a certificate and a private key")
+	}
+	cert, err := base64.StdEncoding.DecodeString(certificate)
+	if err != nil {
+		return nil, nil, errors.New("invalid base64 TLS certificate")
+	}
+	key, err := base64.StdEncoding.DecodeString(privateKey)
+	if err != nil {
+		return nil, nil, errors.New("invalid base64 TLS private key")
+	}
+	_, err = tls.X509KeyPair(cert, key)
+	if err != nil {
+		return nil, nil, errors.New("invalid or mismatched TLS certificate and private key")
+	}
+	return cert, key, nil
 }
 
 // MemberPlacement describes the desired placement for a single MicroCeph member.
@@ -20,9 +108,9 @@ type MemberPlacement struct {
 	// Control governs MON, MGR, and MDS placement. nil means unmanaged:
 	// reconciliation neither adds nor removes control services on this member.
 	Control *bool `json:"control,omitempty" yaml:"control,omitempty"`
-	// Rgw governs RGW placement. nil means unmanaged: reconciliation does not
-	// change RGW on this member.
-	Rgw *bool `json:"rgw,omitempty" yaml:"rgw,omitempty"`
+	// Rgw governs RGW placement and frontend config. nil means untouched; a
+	// non-nil value with Enabled false means remove RGW from the member.
+	Rgw *RgwPlacement `json:"rgw,omitempty" yaml:"rgw,omitempty"`
 	// Nfs governs role-driven NFS placement. nil means unmanaged; an empty
 	// (non-nil) slice means remove role-driven NFS on that member. The json
 	// tag intentionally omits the omitempty modifier so that an empty slice
@@ -67,14 +155,25 @@ type PlacementPolicy struct {
 	Members map[string]MemberPlacement `json:"members" yaml:"members"`
 }
 
+// RgwObservedFrontend records the last successfully applied frontend settings.
+// It contains no secrets and does not imply that an offline member is serving.
+type RgwObservedFrontend struct {
+	Port    int  `json:"port,omitempty" yaml:"port,omitempty"`
+	SSLPort int  `json:"ssl_port,omitempty" yaml:"ssl_port,omitempty"`
+	SSL     bool `json:"ssl" yaml:"ssl"`
+}
+
 // PlacementObservedMember captures the observed service placement for a member.
 // Control is true when the member hosts any of MON, MGR, or MDS. Nfs lists the
 // NFS group IDs placed on the member (from the grouped-services records).
+// Rgw is true when the member hosts RGW; RgwFrontend reports its observed beast
+// frontend (ports + TLS flag, never key material) when Rgw is true.
 type PlacementObservedMember struct {
-	Member  string   `json:"member" yaml:"member"`
-	Control bool     `json:"control" yaml:"control"`
-	Rgw     bool     `json:"rgw" yaml:"rgw"`
-	Nfs     []string `json:"nfs" yaml:"nfs"`
+	Member      string               `json:"member" yaml:"member"`
+	Control     bool                 `json:"control" yaml:"control"`
+	Rgw         bool                 `json:"rgw" yaml:"rgw"`
+	RgwFrontend *RgwObservedFrontend `json:"rgw_frontend,omitempty" yaml:"rgw_frontend,omitempty"`
+	Nfs         []string             `json:"nfs" yaml:"nfs"`
 }
 
 // PlacementStatus is the response body of GET /1.0/placement. It returns the
