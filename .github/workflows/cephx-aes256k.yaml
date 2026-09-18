@@ -1,0 +1,74 @@
+name: CephX aes256k upgrade + rotation
+
+# Manual trigger only: brings up a cluster, upgrades to a 19.2.6 snap built here,
+# rotates every cephx key to aes256k and cuts over. See tests/scripts/cephx-aes256k-upgrade.md.
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  build-snap:
+    name: Build a 19.2.6 snap (staged from the SRU PPA)
+    runs-on: ubuntu-22.04
+    env:
+      SNAPCRAFT_BUILD_ENVIRONMENT: "lxd"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Copy utils
+        run: cp tests/scripts/actionutils.sh $HOME
+      - name: Clear FORWARD firewall rules
+        run: ~/actionutils.sh cleaript
+      - name: Install dependencies
+        run: |
+          ~/actionutils.sh setup_lxd
+          sudo snap install snapcraft --classic
+      - name: Stage Ceph 19.2.6 from the SRU PPA
+        run: |
+          python3 - <<'PY'
+          p = "snap/snapcraft.yaml"; s = open(p).read()
+          blk = ("package-repositories:\n"
+                 "  - type: apt\n"
+                 "    ppa: johnramsden/noble-caracal-ceph-squid-sru\n\n")
+          if "package-repositories" not in s:
+              s = s.replace("confinement: strict\n\n", "confinement: strict\n\n" + blk, 1)
+          open(p, "w").write(s)
+          PY
+          # the 19.2.3-only cephfs-mirror patch does not apply to 19.2.6
+          rm -f patches/0002-Adds-list-command-to-cephfs-mirroring.patch
+          # the snap's override-build aborts on a dirty worktree, so commit the staging change
+          git config user.email "ci@localhost"
+          git config user.name "microceph CI"
+          git commit -aqm "test(ci): stage Ceph 19.2.6 for the cephx aes256k test"
+      - name: Build snap
+        run: snapcraft
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: microceph-snap
+          path: "*.snap"
+          retention-days: 5
+
+  cephx-test:
+    name: Upgrade + rotate to aes256k
+    runs-on: ubuntu-22.04
+    needs: build-snap
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download snap
+        uses: actions/download-artifact@v4
+        with:
+          name: microceph-snap
+      - name: Prepare runner
+        run: |
+          cp tests/scripts/actionutils.sh $HOME
+          ~/actionutils.sh cleaript
+          ~/actionutils.sh free_runner_disk
+          sudo apt-get update -q && sudo apt-get install -y jq
+      - name: Run the cephx aes256k test
+        run: |
+          export MICROCEPH_SNAP="$(ls "$PWD"/microceph_*.snap)"
+          tests/scripts/cephx-aes256k-upgrade.sh
