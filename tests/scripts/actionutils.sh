@@ -3,6 +3,7 @@
 # global bash vars
 STR1="ABCDEFGH"
 STR2="IJKLMNOP"
+SNAPD_CHANNEL="${SNAPD_CHANNEL:-latest/stable}"
 
 function cleaript() {
     # Docker can inject rules causing firewall conflicts
@@ -23,8 +24,19 @@ function setup_lxd() {
     sudo lxd init --auto
 }
 
+function ensure_snapd_channel() {
+    local out
+    out=$(sudo snap install snapd --channel="$SNAPD_CHANNEL" 2>&1) || { echo "$out"; return 1; }
+    # `snap install` exits 0 without switching channels when snapd is already
+    # installed as a snap; only then is a refresh needed.
+    case "$out" in
+        *"already installed"*) sudo snap refresh snapd --channel="$SNAPD_CHANNEL" ;;
+    esac
+}
+
 function install_microceph() {
     # Install locally built microceph snap and connect interfaces
+    ensure_snapd_channel
     sudo snap install --dangerous ~/microceph_*.snap
     sudo snap connect microceph:block-devices
     sudo snap connect microceph:hardware-observe

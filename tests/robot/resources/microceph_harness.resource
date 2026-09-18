@@ -12,6 +12,7 @@ Library         cephfs_replication.py
 
 *** Variables ***
 ${SNAP_PATH}          ${EMPTY}
+${SNAPD_CHANNEL}      latest/stable
 ${OUTER_VM}           microceph-test-vm
 ${OUTER_VM_DISK}      50GiB
 ${OUTER_VM_CPU}            4
