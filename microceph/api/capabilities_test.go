@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCapabilitiesGet verifies that cmdCapabilitiesGet returns the 3 CE142
-// capability markers.
+// TestCapabilitiesGet verifies that cmdCapabilitiesGet returns the CE142
+// capability markers, including placement-rgw for object-shaped RGW placement.
 func TestCapabilitiesGet(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/1.0/cluster/capabilities", nil)
@@ -32,4 +32,5 @@ func TestCapabilitiesGet(t *testing.T) {
 	assert.Contains(t, raw.Metadata.Supported, "deferred-ceph-bootstrap")
 	assert.Contains(t, raw.Metadata.Supported, "ceph-only-bootstrap")
 	assert.Contains(t, raw.Metadata.Supported, "declarative-placement")
+	assert.Contains(t, raw.Metadata.Supported, "placement-rgw", "object-shaped RGW placement capability must be advertised")
 }
