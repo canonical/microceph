@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+
+from sambacc_runtime import run
+
+run()

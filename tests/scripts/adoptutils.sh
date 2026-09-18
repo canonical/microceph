@@ -5,6 +5,18 @@
 # keep this fixture on the compatible Squid 19.2.5 image. Remove this pin
 # once MicroCeph bundles Ceph 20.2.4 or later; tracked in #826.
 readonly CEPHADM_TEST_IMAGE="quay.io/ceph/ceph:v19.2.5"
+SNAPD_CHANNEL="${SNAPD_CHANNEL:-latest/stable}"
+
+function ensure_snapd_channel() {
+  local name=$1
+  local out
+  out=$(lxc exec "$name" -- sh -c "sudo snap install snapd --channel='$SNAPD_CHANNEL'" 2>&1) || { echo "$out"; return 1; }
+  # `snap install` exits 0 without switching channels when snapd is already
+  # installed as a snap; only then is a refresh needed.
+  case "$out" in
+    *"already installed"*) lxc exec "$name" -- sh -c "sudo snap refresh snapd --channel='$SNAPD_CHANNEL'" ;;
+  esac
+}
 
 function create_cephadm_vm() {
   set -eu
@@ -204,6 +216,7 @@ function adopt_cephadm() {
   lxc --quiet file push $snap_glob $name/root/
 
   # install microceph snap
+  ensure_snapd_channel "$name"
   lxc exec $name -- sh -c "sudo snap install --dangerous /root/microceph_*.snap"
   for feat in block-devices hardware-observe mount-observe load-rbd microceph-support network-bind process-control; do
     lxc exec $name -- sh -c "sudo snap connect microceph:$feat"

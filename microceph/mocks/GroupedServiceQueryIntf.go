@@ -34,6 +34,24 @@ func (_m *GroupedServiceQueryIntf) AddNew(ctx context.Context, s interfaces.Stat
 	return r0
 }
 
+// AddOrUpdate provides a mock function with given fields: ctx, s, service, groupID, groupConfig, serviceInfo
+func (_m *GroupedServiceQueryIntf) AddOrUpdate(ctx context.Context, s interfaces.StateInterface, service string, groupID string, groupConfig interface{}, serviceInfo interface{}) error {
+	ret := _m.Called(ctx, s, service, groupID, groupConfig, serviceInfo)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AddOrUpdate")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface, string, string, interface{}, interface{}) error); ok {
+		r0 = rf(ctx, s, service, groupID, groupConfig, serviceInfo)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // ExistsOnHost provides a mock function with given fields: ctx, s, service, groupID
 func (_m *GroupedServiceQueryIntf) ExistsOnHost(ctx context.Context, s interfaces.StateInterface, service string, groupID string) (bool, error) {
 	ret := _m.Called(ctx, s, service, groupID)
@@ -81,6 +99,34 @@ func (_m *GroupedServiceQueryIntf) GetGroupedServices(ctx context.Context, s int
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]database.GroupedService)
 		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, interfaces.StateInterface) error); ok {
+		r1 = rf(ctx, s)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// GetGroupedServicesWithGroupConfig provides a mock function with given fields: ctx, s
+func (_m *GroupedServiceQueryIntf) GetGroupedServicesWithGroupConfig(ctx context.Context, s interfaces.StateInterface) ([]database.GroupedServiceWithGroupConfig, error) {
+	ret := _m.Called(ctx, s)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetGroupedServicesWithGroupConfig")
+	}
+
+	var r0 []database.GroupedServiceWithGroupConfig
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface) ([]database.GroupedServiceWithGroupConfig, error)); ok {
+		return rf(ctx, s)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, interfaces.StateInterface) []database.GroupedServiceWithGroupConfig); ok {
+		r0 = rf(ctx, s)
+	} else if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]database.GroupedServiceWithGroupConfig)
 	}
 
 	if rf, ok := ret.Get(1).(func(context.Context, interfaces.StateInterface) error); ok {
