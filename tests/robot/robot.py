@@ -17,6 +17,10 @@ def main():
     )
     parser.add_argument("--snap-path", help="Path to the MicroCeph snap file")
     parser.add_argument("--test-suite", help="Test suite to run (relative to tests/robot/)")
+    parser.add_argument(
+        "--snapd-channel",
+        help="snapd channel used by test guests (default: latest/stable)",
+    )
     parser.add_argument("--all", action="store_true", help="Run all tests in tests/robot/")
     parser.add_argument("--help", "-h", action="store_true", help="Show this help and exit")
 
@@ -35,6 +39,9 @@ def main():
     if args.snap_path:
         robot_flags.extend(["--variable", f"SNAP_PATH:{args.snap_path}"])
 
+    if args.snapd_channel:
+        robot_flags.extend(["--variable", f"SNAPD_CHANNEL:{args.snapd_channel}"])
+
     # Any extra flags the user passed through (e.g. --console dotted, --loglevel DEBUG).
     robot_flags.extend(remaining)
 
@@ -51,6 +58,10 @@ def main():
     print(f"robot {' '.join(robot_args)}", flush=True)
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    # Child shell scripts (actionutils/adoptutils/DSL) read SNAPD_CHANNEL from
+    # their environment, so the chosen channel must be exported here once.
+    if args.snapd_channel:
+        env["SNAPD_CHANNEL"] = args.snapd_channel
     result = subprocess.run(cmd, env=env)
     return result.returncode
 

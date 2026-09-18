@@ -384,7 +384,11 @@ class microceph_harness:
         exactly as the previous string form produced.
         """
         runner = ["bash", "-x"] if self._xtrace() else ["bash"]
-        argv = ["lxc", "exec", self._outer_vm(), "--", *runner, script]
+        snapd_channel = self._snapd_channel()
+        argv = [
+            "lxc", "exec", self._outer_vm(), "--",
+            "env", f"SNAPD_CHANNEL={snapd_channel}", *runner, script,
+        ]
         if args:
             argv.extend(str(args).split())
         return run_streaming_process(argv, timeout=timeout, xtrace=False)
@@ -1124,6 +1128,10 @@ class microceph_harness:
         """Returns the configured snap path from ${SNAP_PATH}, or "" when unset."""
         return BuiltIn().get_variable_value("${SNAP_PATH}", "") or ""
 
+    def _snapd_channel(self):
+        """Returns the snapd channel configured for test guests."""
+        return BuiltIn().get_variable_value("${SNAPD_CHANNEL}", "latest/stable")
+
     def _lxc_file_push(self, src, dest, timeout, errlabel):
         """Pushes *src* to *dest* via lxc file push, failing on non-zero rc."""
         res = self._exec(["lxc", "file", "push", src, dest], timeout)
@@ -1317,6 +1325,19 @@ class microceph_harness:
         self.run_in_vm_and_check("sudo apt-get update -qq", 120)
         self.run_in_vm_and_check(f"sudo apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 120)
 
+    def prepare_snapd_in_vm(self):
+        """Installs snapd from the configured channel, refreshing it if preinstalled."""
+        snapd_channel = self._snapd_channel()
+        result = self.run_in_vm_and_check(
+            f"sudo snap install snapd --channel={snapd_channel}", 600
+        )
+        # `snap install` exits 0 without switching channels when snapd is
+        # already installed as a snap; only then is a refresh needed.
+        if "already installed" in f"{result.stdout}{result.stderr}":
+            self.run_in_vm_and_check(
+                f"sudo snap refresh snapd --channel={snapd_channel}", 600
+            )
+
     def install_microceph_from_local_snap(self, snap_path=None):
         """Installs the locally-built snap and connects all interfaces (except dm-crypt)."""
         snap_path = snap_path or self._snap_path()
@@ -1326,6 +1347,7 @@ class microceph_harness:
         # snap_path only gates the skip above; the install uses the ~/microceph_*.snap
         # glob below, so the argument value is otherwise unused.
         logger.console("[install] Installing MicroCeph snap...")
+        self.prepare_snapd_in_vm()
         self.run_in_vm_and_check("sudo snap install core26 || true", 120)
         self.run_in_vm_and_check(f"sudo snap install --dangerous {LOCAL_SNAP_GLOB}", 600)
         for iface in SNAP_INTERFACES:
@@ -1448,6 +1470,14 @@ class microceph_harness:
         self.run_in_container_and_check(
             builder, f"apt-get update -qq && apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 300
         )
+        snapd_channel = self._snapd_channel()
+        result = self.run_in_container_and_check(
+            builder, f"snap install snapd --channel={snapd_channel}", 600
+        )
+        if "already installed" in f"{result.stdout}{result.stderr}":
+            self.run_in_container_and_check(
+                builder, f"snap refresh snapd --channel={snapd_channel}", 600
+            )
         self.run_in_container_and_check(
             builder, f"snap install --dangerous {MNT_SNAP_GLOB}", 600
         )
