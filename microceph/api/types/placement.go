@@ -110,9 +110,9 @@ type MemberPlacement struct {
 	// Control governs MON, MGR, and MDS placement. nil means unmanaged:
 	// reconciliation neither adds nor removes control services on this member.
 	Control *bool `json:"control,omitempty" yaml:"control,omitempty"`
-	// Rgw governs RGW placement. nil means unmanaged: reconciliation does not
-	// change RGW on this member.
-	Rgw *bool `json:"rgw,omitempty" yaml:"rgw,omitempty"`
+	// Rgw governs RGW placement and frontend config. nil means untouched; a
+	// non-nil value with Enabled false means remove RGW from the member.
+	Rgw *RgwPlacement `json:"rgw,omitempty" yaml:"rgw,omitempty"`
 	// Nfs governs role-driven NFS placement. nil means unmanaged; an empty
 	// (non-nil) slice means remove role-driven NFS on that member. The json
 	// tag intentionally omits the omitempty modifier so that an empty slice
@@ -157,14 +157,25 @@ type PlacementPolicy struct {
 	Members map[string]MemberPlacement `json:"members" yaml:"members"`
 }
 
+// RgwObservedFrontend records the last successfully applied frontend settings.
+// It contains no secrets and does not imply that an offline member is serving.
+type RgwObservedFrontend struct {
+	Port    int  `json:"port,omitempty" yaml:"port,omitempty"`
+	SSLPort int  `json:"ssl_port,omitempty" yaml:"ssl_port,omitempty"`
+	SSL     bool `json:"ssl" yaml:"ssl"`
+}
+
 // PlacementObservedMember captures the observed service placement for a member.
 // Control is true when the member hosts any of MON, MGR, or MDS. Nfs lists the
 // NFS group IDs placed on the member (from the grouped-services records).
+// Rgw is true when the member hosts RGW; RgwFrontend reports its observed beast
+// frontend (ports + TLS flag, never key material) when Rgw is true.
 type PlacementObservedMember struct {
-	Member  string   `json:"member" yaml:"member"`
-	Control bool     `json:"control" yaml:"control"`
-	Rgw     bool     `json:"rgw" yaml:"rgw"`
-	Nfs     []string `json:"nfs" yaml:"nfs"`
+	Member      string               `json:"member" yaml:"member"`
+	Control     bool                 `json:"control" yaml:"control"`
+	Rgw         bool                 `json:"rgw" yaml:"rgw"`
+	RgwFrontend *RgwObservedFrontend `json:"rgw_frontend,omitempty" yaml:"rgw_frontend,omitempty"`
+	Nfs         []string             `json:"nfs" yaml:"nfs"`
 }
 
 // PlacementStatus is the response body of GET /1.0/placement. It returns the
