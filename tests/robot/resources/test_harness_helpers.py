@@ -2254,6 +2254,46 @@ def test_wait_for_legacy_cephx_compatibility_checks_health_detail_json(monkeypat
 
 
 # ---------------------------------------------------------------------------
+# wait_for_smb_service (single-node VM vs multinode container polling)
+# ---------------------------------------------------------------------------
+
+def test_wait_for_smb_service_polls_the_outer_vm_by_default(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_run_in_vm(cmd, timeout, quiet):
+        calls.append((cmd, timeout, quiet))
+        return _Res(0, "Service                 Startup   Current   Notes\nmicroceph.smbd          enabled   active    -\n", "")
+
+    monkeypatch.setattr(harness, "run_in_vm", fake_run_in_vm)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_smb_service(tries=1, interval=0)
+
+    assert calls == [("snap services microceph.smbd", 15, True)]
+
+
+def test_wait_for_smb_service_polls_inside_a_container_when_node_given(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return _Res(0, "Service                 Startup   Current   Notes\nmicroceph.smbd          enabled   active    -\n", "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_smb_service(tries=1, interval=0, node="node-wrk1")
+
+    assert calls == [
+        ("node-wrk1", ("snap", "services", "microceph.smbd"), 15, True)
+    ]
+
+
+# ---------------------------------------------------------------------------
 # wait_for_member_control_services (polling absence/presence with convergence)
 # ---------------------------------------------------------------------------
 
@@ -2538,6 +2578,8 @@ def test_ci_runs_smb_on_edge_and_keeps_a_stable_snapd_gate():
 
     assert "id: smb-test" in workflow
     assert "suite: smb-test" in workflow
+    assert "id: smb-multinode-test" in workflow
+    assert "suite: smb-multinode-test" in workflow
     assert "id: snapd-stable-compatibility" in workflow
     assert "name: Snapd stable compatibility gate" in workflow
     assert "snapd_channel: latest/stable" in workflow
@@ -2551,6 +2593,27 @@ def test_ci_runs_smb_on_edge_and_keeps_a_stable_snapd_gate():
     assert "Install MicroCeph From Local Snap" not in stable_suite
     assert "SMB_SNAPD_CHANNEL" not in smb_suite
     assert "snap install snapd" not in smb_suite
+
+
+def test_multinode_smb_suite_places_two_clusters_on_disjoint_hosts():
+    """CI proves multi-cluster SMB: one-host + two-host clusters, per-host cap."""
+    repo_root = Path(__file__).parents[3]
+    multinode_suite = (
+        repo_root
+        / "tests"
+        / "robot"
+        / "smb-multinode-test"
+        / "smb_multinode_tests.robot"
+    ).read_text()
+
+    assert "smb cluster create ${SMB_SINGLE_CLUSTER}" in multinode_suite
+    assert "smb cluster create ${SMB_DUAL_CLUSTER}" in multinode_suite
+    assert '--placement "2 node-wrk1 node-wrk2"' in multinode_suite
+    # smbd state is polled per container, not on the outer VM.
+    assert "node=node-wrk" in multinode_suite
+    # the per-host rejection is integration-tested with the adapter's message.
+    assert "at most one SMB cluster" in multinode_suite
+    assert "snap install snapd" not in multinode_suite
 
 
 def test_smb_manifest_uses_direct_ceph_new_and_scoped_identity_switching():

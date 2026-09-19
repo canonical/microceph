@@ -1185,17 +1185,28 @@ class microceph_harness:
     # Snap-service pollers
     # -----------------------------------------------------------------------
 
-    def wait_for_smb_service(self, startup="enabled", current="active", tries=30):
-        """Poll until microceph.smbd reaches the requested snap service state."""
+    def wait_for_smb_service(self, startup="enabled", current="active", tries=30, interval=2, node=""):
+        """Polls until microceph.smbd reaches the requested snap service state.
+
+        Pass node= (e.g. node-wrk0) to poll inside that LXD container; omit to
+        poll the outer VM itself (single-node suites).
+        """
         logger.console(
-            f"[smb] Waiting for microceph.smbd to be {startup}/{current}..."
+            f"[smb] Waiting for microceph.smbd to be {startup}/{current}"
+            + (f" on {node}" if node else "")
+            + "..."
         )
         last_output = [""]
 
         def predicate():
-            result = self.run_in_vm(
-                "snap services microceph.smbd", 15, quiet=True
-            )
+            if node:
+                result = self.exec_in_container(
+                    node, "snap", "services", "microceph.smbd", timeout=15, quiet=True
+                )
+            else:
+                result = self.run_in_vm(
+                    "snap services microceph.smbd", 15, quiet=True
+                )
             last_output[0] = result.stdout
             return result.rc == 0 and service_has_state(
                 result.stdout, "microceph.smbd", startup, current
@@ -1204,7 +1215,7 @@ class microceph_harness:
         self._poll_until(
             predicate,
             attempts=int(tries),
-            interval=2,
+            interval=interval,
             fail_msg=lambda: (
                 "microceph.smbd did not reach "
                 f"{startup}/{current}; last output:\n{last_output[0]}"
