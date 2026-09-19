@@ -456,15 +456,35 @@ def test_apply_smb_rejects_unsupported_native_features(monkeypatch, attribute, v
         manager.apply_smb(spec)
 
 
-def test_apply_smb_rejects_a_second_cluster(monkeypatch):
+def test_apply_smb_rejects_a_second_cluster_on_an_occupied_host(monkeypatch):
     module = _load_module(monkeypatch)
     manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
     manager.microceph = _SMBClient(
         [{"service": "smb", "group_id": "other", "location": "node-a"}]
     )
 
-    with pytest.raises(ValueError, match="only one SMB cluster"):
+    with pytest.raises(ValueError, match="at most one SMB cluster"):
         manager.apply_smb(_SMBSpec())
+
+
+def test_apply_smb_permits_a_second_cluster_on_disjoint_hosts(monkeypatch):
+    module = _load_module(monkeypatch)
+    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
+    manager.microceph = _SMBClient(
+        [{"service": "smb", "group_id": "files", "location": "node-a"}]
+    )
+    spec = _SMBSpec()
+    spec.service_id = "second"
+    spec.cluster_id = "second"
+    spec.include_ceph_users = ["client.smb.fs.cluster.second"]
+    spec.placement = _SMBPlacement(hosts=[_HostPlacement("node-b")], count=None)
+
+    result = manager.apply_smb(spec)
+
+    assert result == "Applied SMB service 'second'"
+    desired_spec = _SMBSpec().to_json()
+    assert manager.microceph.services.applied == [("node-b", desired_spec)]
+    assert manager.microceph.services.removed == []
 
 
 def test_remove_smb_service_accepts_the_orchestrator_force_argument(monkeypatch):

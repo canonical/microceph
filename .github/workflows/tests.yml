@@ -125,6 +125,10 @@ jobs:
             name: Native SMB tests
             suite: smb-test
 
+          - id: smb-multinode-test
+            name: Native SMB multi-cluster tests
+            suite: smb-multinode-test
+
           - id: snapd-stable-compatibility
             name: Snapd stable compatibility gate
             suite: snapd-stable-compatibility
