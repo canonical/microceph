@@ -18,7 +18,7 @@ ${OUTER_VM_DISK}      50GiB
 ${OUTER_VM_CPU}            4
 ${OUTER_VM_MEMORY}         6GiB
 ${OUTER_VM_IMAGE}         ubuntu:24.04
-${CEPH_PPA}               lmlogiudice/ceph-stonking-tentacle
+${CEPH_PPA}               lmlogiudice/ceph-tentacle-updates
 ${INNER_NODE_IMAGE}       ubuntu:22.04
 ${LXD_STORAGE_LOOP_SIZE}   25
 ${REPO_ROOT}          ${CURDIR}/../../..
