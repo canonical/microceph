@@ -73,12 +73,14 @@ Test Native SMB Rejects Clustered Configuration
     ${error}=    Catenate    SEPARATOR=\n    ${result.stdout}    ${result.stderr}
     Should Contain    ${error}    native SMB does not support SMB features
 
-Test Native SMB Rejects A Second Cluster
-    [Documentation]    This initial scope permits only one native SMB cluster per host.
+Test Native SMB Rejects A Second Cluster On An Occupied Host
+    [Documentation]    Multiple native SMB clusters are allowed only on disjoint hosts.
+    ...    The single node already serves cluster smbtest, so a second cluster
+    ...    targeting the same host is rejected by the per-host invariant.
     ${result}=    Run In VM    echo c2VydmljZV90eXBlOiBzbWIKc2VydmljZV9pZDogc21iLXNlY29uZApjbHVzdGVyX2lkOiBzbWItc2Vjb25kCmNvbmZpZ191cmk6IHJhZG9zOi8vLnNtYi9zbWItc2Vjb25kL2NvbmZpZy5zbWIKcGxhY2VtZW50OgogIGhvc3RzOgogIC0gbWljcm9jZXBoLXNtYi12bQogIGNvdW50OiAxCg== | base64 --decode | sudo microceph.ceph orch apply -i -    120
-    Should Not Be Equal As Integers    ${result.rc}    0    msg=Second native SMB cluster unexpectedly succeeded
+    Should Not Be Equal As Integers    ${result.rc}    0    msg=Second native SMB cluster on an occupied host unexpectedly succeeded
     ${error}=    Catenate    SEPARATOR=\n    ${result.stdout}    ${result.stderr}
-    Should Contain    ${error}    native MicroCeph supports only one SMB cluster
+    Should Contain    ${error}    at most one SMB cluster
 
 Test Native SMB Share And Service Lifecycle
     [Documentation]    Removing the share restarts smbd; removing the cluster stops it and clears local inputs.

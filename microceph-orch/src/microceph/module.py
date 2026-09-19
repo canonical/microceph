@@ -161,33 +161,6 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             return service, ""
 
     @staticmethod
-    def _smb_config_uri(records: list, cluster_id: str) -> str:
-        """Return the consistent stored configuration URI for an SMB cluster."""
-        config_uris = set()
-        for record in records:
-            if record['service'] != 'smb' or record['group_id'] != cluster_id:
-                continue
-            try:
-                info = json.loads(record['info'])
-            except (KeyError, TypeError, json.JSONDecodeError) as err:
-                raise ValueError(
-                    f"invalid stored SMB service information for '{cluster_id}'"
-                ) from err
-            config_uri = info.get('config_uri')
-            if not isinstance(config_uri, str) or not config_uri:
-                raise ValueError(
-                    f"missing SMB configuration URI for '{cluster_id}'"
-                )
-            config_uris.add(config_uri)
-
-        if len(config_uris) != 1:
-            raise ValueError(
-                f"inconsistent SMB configuration URIs for '{cluster_id}'"
-            )
-
-        return config_uris.pop()
-
-    @staticmethod
     def _smb_service_groups(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         """Collect SMB specs and members from grouped-service records."""
         groups: Dict[str, Dict[str, Any]] = {}
@@ -272,14 +245,7 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
                 continue
 
             placement = PlacementSpec(hosts=hostlist, count=len(hostlist))
-            if svc_type == 'smb':
-                spec = SMBSpec(
-                    service_id=svc_id,
-                    placement=placement,
-                    cluster_id=svc_id,
-                    config_uri=self._smb_config_uri(recorded_services, svc_id),
-                )
-            elif svc_type in daemon_spec_map:
+            if svc_type in daemon_spec_map:
                 spec = daemon_spec_map[svc_type](
                     service_id=svc_id, service_type=svc_type, placement=placement
                 )
@@ -470,17 +436,31 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
 
         records = self.microceph.services.list_services() or []
         current = [record for record in records if record['service'] == 'smb']
-        current_clusters = {record['group_id'] for record in current}
-        other_clusters = current_clusters.difference({spec.cluster_id})
-        if other_clusters:
-            names = ', '.join(sorted(other_clusters))
-            raise ValueError(
-                "native MicroCeph supports only one SMB cluster; "
-                f"already placed: {names}"
-            )
-
         targets = self._smb_target_hosts(spec)
         target_set = set(targets)
+
+        # Multiple SMB clusters are supported on disjoint hosts; a host can
+        # only serve one cluster (single smbd, single config, port 445).
+        members_by_cluster: Dict[str, set] = {}
+        for record in current:
+            members_by_cluster.setdefault(record['group_id'], set()).add(
+                record['location']
+            )
+        conflicts = []
+        for cluster_id in sorted(members_by_cluster):
+            if cluster_id == spec.cluster_id:
+                continue
+            overlap = sorted(members_by_cluster[cluster_id] & target_set)
+            if overlap:
+                conflicts.append(
+                    f"host(s) {', '.join(overlap)} already serve '{cluster_id}'"
+                )
+        if conflicts:
+            raise ValueError(
+                "native MicroCeph hosts serve at most one SMB cluster; "
+                + "; ".join(conflicts)
+            )
+
         current_hosts = {
             record['location']
             for record in current
