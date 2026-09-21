@@ -98,6 +98,21 @@ SNAP_STORE_TRANSIENT_RE = re.compile(
 SNAP_RETRY_ATTEMPTS = 3
 SNAP_RETRY_BACKOFF = 5
 
+# --- apt-get flags and bounded retry for archive stalls (#842) ---
+# apt's own retries cover fetches it sees fail (timeout, reset); it does not retry a
+# 404, and it cannot help while data merely trickles, which is what the harness-level
+# retry below is for. Only _apt_cmd spells the flags: callers go through apt_update /
+# apt_install and never build an apt-get string themselves.
+APT_RETRY_FLAGS = "-o Acquire::Retries=3 -o Acquire::http::Timeout=30"
+APT_RETRY_ATTEMPTS = 2
+APT_RETRY_BACKOFF = 10
+# A harness timeout only kills the local lxc client: the apt-get it started keeps
+# running inside the instance and keeps the apt lock, so a second attempt would fail
+# on the lock. Each attempt is therefore bounded INSIDE the instance by coreutils
+# `timeout` (rc 124 as well); the harness timeout, this much longer, is the backstop.
+APT_KILL_AFTER = 10
+APT_HARNESS_MARGIN = 15
+
 # --- snap artefact ---
 SNAP_DEST_NAME = "microceph_0_amd64.snap"
 LOCAL_SNAP_GLOB = "~/microceph_*.snap"
@@ -569,6 +584,97 @@ class microceph_harness:
             lambda: self.run_in_container_unchecked(container, cmd, timeout, shell),
             lambda res: self._is_transient_snap_store_error(res.stderr),
             SNAP_RETRY_ATTEMPTS, SNAP_RETRY_BACKOFF, "snap-store", f"'{cmd}' in container {container}",
+        )
+
+    @staticmethod
+    def _apt_bounded_cmd(cmd, timeout):
+        """Wraps *cmd* so it is killed inside the instance after *timeout* seconds (pure helper).
+
+        coreutils timeout signals the whole process group, so an apt-get behind sudo
+        or behind '&&' dies too and releases the apt lock before the next attempt.
+        """
+        return f"timeout --kill-after={APT_KILL_AFTER} {int(timeout)} sh -c {shlex.quote(cmd)}"
+
+    @staticmethod
+    def _is_transient_apt_stall(res):
+        """Returns True when an apt-get attempt timed out before printing anything (pure helper).
+
+        The archive stalls seen in CI are rc 124 with empty stdout: apt-get -qq is
+        silent while it downloads. Any output means dpkg had started unpacking, and
+        any other rc is a real apt error; neither is retried.
+        """
+        return res.rc == 124 and not (res.stdout or "").strip()
+
+    @staticmethod
+    def _apt_label_timeout(res, timeout):
+        """Gives an in-instance timeout (rc 124, silent) the stderr text of a harness timeout (pure helper).
+
+        coreutils timeout prints nothing, so without this the failure would read
+        'Command failed (rc=124)' with empty STDERR instead of 'Command timed out after Ns'.
+        """
+        if res.rc == 124 and not (res.stderr or "").strip():
+            return res._replace(stderr=f"Command timed out after {timeout}s (killed inside the instance)")
+        return res
+
+    @staticmethod
+    def _apt_cmd(args, packages=()):
+        """Builds 'sudo apt-get <APT_RETRY_FLAGS> <args> [<packages>]' (pure helper).
+
+        The one place the retry flags are spelled. *packages* is an iterable of package
+        names, or a whitespace-separated string (the form a Robot call passes).
+        """
+        if isinstance(packages, str):
+            packages = packages.split()
+        words = ["sudo", "apt-get", APT_RETRY_FLAGS, args, *map(str, packages)]
+        return " ".join(words)
+
+    def _run_apt(self, container, cmd, timeout, label):
+        """Runs one apt-get *cmd* in *container* (outer VM when empty) with one retry when it stalls.
+
+        *timeout* bounds each attempt inside the instance; *label* names the command in
+        the kind=apt Infra annotation on exhaustion. Only apt_update / apt_install call
+        this, so *cmd* always comes from _apt_cmd.
+        """
+        bounded = self._apt_bounded_cmd(cmd, timeout)
+        harness_timeout = int(timeout) + APT_HARNESS_MARGIN
+        if container:
+            where = f"container {container}"
+
+            def run():
+                return self.run_in_container_unchecked(container, bounded, harness_timeout)
+        else:
+            where = f"outer VM {self._outer_vm()}"
+
+            def run():
+                return self.run_in_vm(bounded, harness_timeout)
+
+        return self._retry_transient(
+            lambda: self._apt_label_timeout(run(), timeout),
+            self._is_transient_apt_stall,
+            APT_RETRY_ATTEMPTS, APT_RETRY_BACKOFF, "apt", f"'{label}' in {where}",
+        )
+
+    def apt_update(self, container="", timeout=120):
+        """Runs 'apt-get update' in *container*, or in the outer VM when *container* is empty.
+
+        The Acquire retry flags and the one retry on a silent stall are applied here;
+        callers pass nothing but the target. *timeout* bounds each attempt.
+        """
+        return self._run_apt(container, self._apt_cmd("update -qq"), timeout, "apt-get update")
+
+    def apt_install(self, packages, container="", timeout=300):
+        """Installs *packages* (an iterable of names) in *container*, or in the outer VM when empty.
+
+        Same flags and stall retry as apt_update; run apt_update first. *timeout*
+        bounds each attempt.
+        """
+        if isinstance(packages, str):
+            packages = packages.split()
+        packages = [str(pkg) for pkg in packages]
+        if not packages:
+            raise ValueError("apt_install needs at least one package name")
+        return self._run_apt(
+            container, self._apt_cmd("-qq -y install", packages), timeout, f"apt-get install {' '.join(packages)}"
         )
 
     def exec_in_container(self, container, *argv, timeout=300, check=False, quiet=False):
@@ -1604,8 +1710,8 @@ class microceph_harness:
         """Installs s3cmd and jq on the outer VM."""
         logger.console("[setup] Installing tools (s3cmd, jq)...")
         self.probe_instance_network()
-        self.run_in_vm_and_check("sudo apt-get update -qq", 120)
-        self.run_in_vm_and_check(f"sudo apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 120)
+        self.apt_update()
+        self.apt_install(VM_APT_TOOLS)
 
     def install_microceph_from_local_snap(self, snap_path=None):
         """Installs the locally-built snap and connects all interfaces (except dm-crypt)."""
@@ -1759,9 +1865,10 @@ class microceph_harness:
             raise_on_timeout=False,
         )
         self.probe_instance_network(builder)
-        self.run_in_container_and_check(
-            builder, f"apt-get update -qq && apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 300
-        )
+        # Two calls rather than one chained string, so a stalled install is retried
+        # without repeating the update, and each gets its own attempt budget.
+        self.apt_update(builder)
+        self.apt_install(VM_APT_TOOLS, builder)
         self.run_in_container_with_snap_retry(
             builder, f"snap install --dangerous {MNT_SNAP_GLOB}", 600
         )
@@ -1834,18 +1941,17 @@ class microceph_harness:
         logger.console(f"[install] Installing MicroCeph from store ({channel}) on all nodes...")
         for container in NODES:
             self.ensure_snap_mount_healthy(container)
-            # Three calls rather than one chained string, so the store install can be
-            # retried without re-running the purge and the apt-get. The purge is local
-            # and needs no network budget; the apt-get gets the same 120s ceiling as
-            # the equivalent call in install_tools().
+            # Separate calls rather than one chained string, so the store install can be
+            # retried without re-running the purge and the apt-get, and a stalled apt-get
+            # install without repeating the update. The purge is local and needs no
+            # network budget; the apt-get calls get the same ceilings as install_tools().
             self.run_in_container_and_check(
                 container, "sudo snap remove --purge microceph >/dev/null 2>&1 || true", 60
             )
             # Store install needs only s3cmd (not jq), so the apt-get install list is
             # kept literal rather than driven from VM_APT_TOOLS.
-            self.run_in_container_and_check(
-                container, "sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd", 120
-            )
+            self.apt_update(container)
+            self.apt_install(["s3cmd"], container)
             self.run_in_container_with_snap_retry(
                 container, f"sudo snap install microceph --channel {channel}", 600
             )

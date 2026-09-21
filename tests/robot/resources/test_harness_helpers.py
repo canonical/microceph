@@ -1686,7 +1686,16 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
         h, "run_in_container_with_snap_retry",
         lambda container, cmd, timeout=300, shell="sh": events.append(("ct-snap-retry", container, cmd, timeout)),
     )
+    # Stubbed below apt_update / apt_install, so call-site tests see the exact apt-get
+    # string those methods build (flags included) and the target they aim it at.
+    monkeypatch.setattr(
+        h, "_run_apt",
+        lambda container, cmd, timeout, label: events.append(("apt", container, cmd, timeout)),
+    )
     return h, events
+
+
+APT_FLAGS = "-o Acquire::Retries=3 -o Acquire::http::Timeout=30"
 
 
 class _FakeBuiltIn:
@@ -1733,8 +1742,11 @@ def test_install_tools_probes_the_outer_vm_first(monkeypatch):
 
     h.install_tools()
 
-    assert events[0] == ("probe", "")
-    assert events[1][0] == "vm" and "apt-get" in events[1][1]
+    assert events == [
+        ("probe", ""),
+        ("apt", "", f"sudo apt-get {APT_FLAGS} update -qq", 120),
+        ("apt", "", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq", 300),
+    ]
 
 
 def test_build_base_lxd_image_probes_the_builder_before_apt(monkeypatch):
@@ -1743,8 +1755,12 @@ def test_build_base_lxd_image_probes_the_builder_before_apt(monkeypatch):
     h.build_base_lxd_image("/root")
 
     probe_at = events.index(("probe", "microceph-img-builder"))
-    first_apt = next(i for i, e in enumerate(events) if e[0] == "ct" and "apt-get" in e[2])
+    first_apt = next(i for i, e in enumerate(events) if e[0] == "apt")
     assert probe_at == first_apt - 1
+    assert events[first_apt:first_apt + 2] == [
+        ("apt", "microceph-img-builder", f"sudo apt-get {APT_FLAGS} update -qq", 120),
+        ("apt", "microceph-img-builder", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq", 300),
+    ]
     assert [e for e in events if e[0] == "probe"] == [("probe", "microceph-img-builder")]
 
 
@@ -1925,6 +1941,181 @@ def test_run_in_container_with_snap_retry_uses_the_non_raising_sh_helper(monkeyp
 
 
 # ---------------------------------------------------------------------------
+# apt-get stall retry (#842)
+# ---------------------------------------------------------------------------
+
+def test_apt_bounded_cmd_kills_the_command_inside_the_instance():
+    assert H._apt_bounded_cmd("sudo apt-get update -qq && echo 'done'", 120) == (
+        "timeout --kill-after=10 120 sh -c 'sudo apt-get update -qq && echo '\"'\"'done'\"'\"''"
+    )
+
+
+@pytest.mark.parametrize("res, transient", [
+    (_Res(124, "", ""), True),
+    (_Res(124, "", "\nCommand timed out after 135s"), True),
+    (_Res(124, "\n", ""), True),
+    # dpkg had started unpacking: re-running is not known to be safe.
+    (_Res(124, "Selecting previously unselected package s3cmd.\n", ""), False),
+    (_Res(100, "", "E: Unable to locate package s3cmd"), False),
+    (_Res(100, "", "E: Failed to fetch http://security.ubuntu.com/... 404  Not Found"), False),
+    (_Res(137, "", ""), False),
+    (_Res(0, "", ""), False),
+])
+def test_is_transient_apt_stall(res, transient):
+    assert H._is_transient_apt_stall(res) is transient
+
+
+def test_apt_label_timeout_only_touches_a_silent_rc_124():
+    assert H._apt_label_timeout(_Res(124, "", ""), 120) == _Res(
+        124, "", "Command timed out after 120s (killed inside the instance)"
+    )
+    harness_timeout = _Res(124, "", "\nCommand timed out after 135s")
+    assert H._apt_label_timeout(harness_timeout, 120) == harness_timeout
+    apt_error = _Res(100, "", "")
+    assert H._apt_label_timeout(apt_error, 120) == apt_error
+
+
+def test_apt_cmd_spells_the_retry_flags_exactly_once():
+    assert H._apt_cmd("update -qq") == f"sudo apt-get {APT_FLAGS} update -qq"
+    assert H._apt_cmd("-qq -y install", ["s3cmd", "jq"]) == f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq"
+    assert H._apt_cmd("-qq -y install", ("s3cmd",)) == f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd"
+    # A Robot call passes the package list as one string.
+    assert H._apt_cmd("-qq -y install", "s3cmd jq") == f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq"
+    assert H._apt_cmd("-qq -y install", ["s3cmd", "jq"]).count(APT_FLAGS) == 1
+    assert H._apt_cmd("-qq -y install", ["s3cmd", "jq"]).count("apt-get") == 1
+
+
+def _apt_target_harness(monkeypatch):
+    """Harness whose _run_apt only records what apt_update / apt_install hand it."""
+    h = H()
+    calls = []
+    monkeypatch.setattr(
+        h, "_run_apt", lambda container, cmd, timeout, label: calls.append((container, cmd, timeout, label))
+    )
+    return h, calls
+
+
+def test_apt_update_targets_the_outer_vm_by_default_and_a_container_when_named(monkeypatch):
+    h, calls = _apt_target_harness(monkeypatch)
+
+    h.apt_update()
+    h.apt_update("node-wrk0")
+    h.apt_update("node-wrk0", 60)
+
+    assert calls == [
+        ("", f"sudo apt-get {APT_FLAGS} update -qq", 120, "apt-get update"),
+        ("node-wrk0", f"sudo apt-get {APT_FLAGS} update -qq", 120, "apt-get update"),
+        ("node-wrk0", f"sudo apt-get {APT_FLAGS} update -qq", 60, "apt-get update"),
+    ]
+
+
+def test_apt_install_adds_the_flags_and_joins_the_package_list(monkeypatch):
+    h, calls = _apt_target_harness(monkeypatch)
+
+    h.apt_install(["s3cmd", "jq"])
+    h.apt_install(("s3cmd",), "node-wrk0")
+    h.apt_install("s3cmd jq", "microceph-img-builder", 90)
+
+    assert calls == [
+        ("", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq", 300, "apt-get install s3cmd jq"),
+        ("node-wrk0", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd", 300, "apt-get install s3cmd"),
+        ("microceph-img-builder", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq", 90, "apt-get install s3cmd jq"),
+    ]
+
+
+def test_apt_install_rejects_an_empty_package_list(monkeypatch):
+    h, calls = _apt_target_harness(monkeypatch)
+
+    with pytest.raises(ValueError):
+        h.apt_install([])
+    with pytest.raises(ValueError):
+        h.apt_install("")
+
+    assert calls == []
+
+
+def test_apt_update_in_the_vm_second_attempt_succeeds(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(124, "", ""), _Res(0, "", "")])
+
+    res = h.apt_update()
+
+    assert res.rc == 0
+    bounded = f"timeout --kill-after=10 120 sh -c 'sudo apt-get {APT_FLAGS} update -qq'"
+    assert [c[0][-1] for c in calls] == [bounded, bounded]
+    assert calls[0][0][:4] == ["lxc", "exec", "-n", "vm1"]
+    assert "microceph-img-builder" not in calls[0][0]
+    # The harness timeout is only the backstop behind the in-instance one.
+    assert [c[1] for c in calls] == [135, 135]
+    assert sleeps == [10]
+    assert _infra_lines(cap, "apt") == []
+
+
+def test_apt_update_exhaustion_is_an_apt_infra_failure(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(124, "", "")])
+
+    with pytest.raises(AssertionError) as exc:
+        h.apt_update()
+
+    assert str(exc.value) == (
+        "Command failed (rc=124):\nSTDERR: Command timed out after 120s (killed inside the instance)\nSTDOUT: "
+    )
+    assert len(calls) == 2
+    assert sleeps == [10]
+    assert _infra_lines(cap, "apt") == [
+        "::error title=Infra::kind=apt 'apt-get update' in outer VM vm1 "
+        "failed after 2 attempts: Command timed out after 120s (killed inside the instance)"
+    ]
+
+
+def test_apt_install_real_apt_error_is_fatal_at_once(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(100, "", "E: Unable to locate package s3cmd")])
+
+    with pytest.raises(AssertionError) as exc:
+        h.apt_install(["s3cmd", "jq"])
+
+    assert str(exc.value) == "Command failed (rc=100):\nSTDERR: E: Unable to locate package s3cmd\nSTDOUT: "
+    assert calls[0][0][-1] == f"timeout --kill-after=10 300 sh -c 'sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq'"
+    assert len(calls) == 1
+    assert sleeps == []
+    assert _infra_lines(cap, "apt") == []
+
+
+def test_apt_install_in_a_container_bounds_and_retries_in_the_container(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(124, "", ""), _Res(0, "", "")])
+
+    h.apt_install(["jq"], "microceph-img-builder", 300)
+
+    assert calls[0] == (
+        ["lxc", "exec", "-n", "vm1", "--", "lxc", "exec", "-n", "microceph-img-builder", "--", "sh", "-c",
+         f"timeout --kill-after=10 300 sh -c 'sudo apt-get {APT_FLAGS} -qq -y install jq'"],
+        315,
+    )
+    assert len(calls) == 2
+    assert sleeps == [10]
+    assert _infra_lines(cap, "apt") == []
+
+
+def test_apt_install_exhaustion_in_a_container_names_the_container(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(124, "", "")])
+
+    with pytest.raises(AssertionError):
+        h.apt_install(["s3cmd"], "node-wrk0", 120)
+
+    assert _infra_lines(cap, "apt") == [
+        "::error title=Infra::kind=apt 'apt-get install s3cmd' in container node-wrk0 "
+        "failed after 2 attempts: Command timed out after 120s (killed inside the instance)"
+    ]
+
+
+def test_no_public_apt_wrapper_takes_a_hand_built_command():
+    assert not hasattr(H, "run_in_vm_with_apt_retry")
+    assert not hasattr(H, "run_in_container_with_apt_retry")
+    source = (Path(__file__).parent / "microceph_harness.py").read_text()
+    # The flags are spelled in the constant and used in _apt_cmd, nowhere else.
+    assert source.count("APT_RETRY_FLAGS") == 3
+
+
+# ---------------------------------------------------------------------------
 # snap retry call sites
 # ---------------------------------------------------------------------------
 
@@ -1946,7 +2137,8 @@ def test_store_install_is_split_so_only_the_snap_install_is_retried(monkeypatch)
     assert per_node == [
         ("mount", "node-wrk0"),
         ("ct", "node-wrk0", "sudo snap remove --purge microceph >/dev/null 2>&1 || true", 60),
-        ("ct", "node-wrk0", "sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd", 120),
+        ("apt", "node-wrk0", f"sudo apt-get {APT_FLAGS} update -qq", 120),
+        ("apt", "node-wrk0", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd", 300),
         ("ct-snap-retry", "node-wrk0", "sudo snap install microceph --channel squid/stable", 600),
     ]
     assert len(events) == 4 * len(per_node)
