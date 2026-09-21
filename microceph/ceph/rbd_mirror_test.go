@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/Rican7/retry/strategy"
 	"github.com/stretchr/testify/assert"
@@ -321,4 +322,13 @@ func (ks *RbdMirrorSuite) TestDisablePoolMirroringRemoteDisableRetriesUnrelatedE
 
 	err := DisablePoolMirroring("pool", RbdReplicationPeer{}, "magical", "simple")
 	assert.NoError(ks.T(), err)
+}
+
+// TestRemoteDisableRetryDelaysAreSeconds guards the "strategy.Delay(5) slept 5ns instead
+// of 5s" unit bug directly: SetupTest overrides remoteDisableRetryStrategies wholesale
+// for every other test in this suite, so only an assertion on the extracted constants
+// themselves exercises the real production durations.
+func (ks *RbdMirrorSuite) TestRemoteDisableRetryDelaysAreSeconds() {
+	assert.Equal(ks.T(), 5*time.Second, remoteDisableInitialDelay)
+	assert.Equal(ks.T(), 5*time.Second, remoteDisableBackoffStep)
 }

@@ -22,6 +22,22 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// restartServiceInitialDelay and restartServiceBackoffStep are typed so that a
+// bare number cannot slip in again: strategy.Delay(5) once meant 5 nanoseconds. A
+// test checks their values.
+const (
+	restartServiceInitialDelay time.Duration = 5 * time.Second
+	restartServiceBackoffStep  time.Duration = 10 * time.Second
+)
+
+// restartServiceRetryStrategies bounds the wait in RestartCephService for the restarted
+// daemons to come back up. Tests override it.
+var restartServiceRetryStrategies = []strategy.Strategy{
+	strategy.Delay(restartServiceInitialDelay),
+	strategy.Limit(10),
+	strategy.Backoff(backoff.Linear(restartServiceBackoffStep)),
+}
+
 // Table to map fetchFunc for workers (daemons) to a service.
 var serviceWorkerTable = map[string](func() (common.Set, error)){
 	"osd": getUpOsds,
@@ -95,7 +111,7 @@ func RestartCephService(clusterServices types.Services, service string, hostname
 			return (err)
 		}
 		return nil
-	}, strategy.Delay(5), strategy.Limit(10), strategy.Backoff(backoff.Linear(10*time.Second)))
+	}, restartServiceRetryStrategies...)
 	if err != nil {
 		return err
 	}
