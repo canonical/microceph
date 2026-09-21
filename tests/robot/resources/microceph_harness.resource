@@ -74,23 +74,6 @@ Provision Multinode VM
     Create LXD Containers With Loop Devices    ${network_type}
     Install MicroCeph On All Nodes
 
-Setup LXD In VM
-    [Documentation]    Installs and initialises LXD inside the outer VM.
-    Log To Console    [setup] Setting up LXD inside ${OUTER_VM} (may take several minutes)...
-    ${check}=    Run In VM    sudo snap list | grep -cF "lxd" || true    30
-    IF    $check.stdout.strip() != "1"
-        Run In VM And Check    sudo snap install lxd    300
-    END
-    Run In VM And Check    sudo snap refresh    300
-    Run In VM And Check    sudo snap set lxd daemon.group=adm    30
-    # Force a btrfs (copy-on-write) storage pool. On the default "dir" backend every
-    # lxc init / publish is a full rootfs copy, which serializes ~6 x 1.5GB copies in
-    # multi-node setup; btrfs makes instance creation a near-instant reflink snapshot.
-    # Size the loop file explicitly: the auto default (~20% of free space, capped at
-    # 30GB) can be too small for the base image + 4 node rootfs deltas + loop OSDs
-    # that replication suites create inside container rootfs.
-    Run In VM And Check    sudo lxd init --auto --storage-backend btrfs --storage-create-loop ${LXD_STORAGE_LOOP_SIZE}    60
-
 # ---------------------------------------------------------------------------
 # OSD / disk operations
 # ---------------------------------------------------------------------------

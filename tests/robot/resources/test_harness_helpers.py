@@ -1473,6 +1473,275 @@ def test_infra_annotate_without_step_summary_writes_nothing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# in-instance preflight probe: pure helpers
+# ---------------------------------------------------------------------------
+
+def test_last_line_returns_last_non_blank_line():
+    assert H._last_line("first\n  curl: (28) Connection timed out  \n\n") == "curl: (28) Connection timed out"
+    assert H._last_line("") == ""
+    assert H._last_line(None) == ""
+
+
+def test_preflight_argv_curl_is_single_attempt_with_headers():
+    argv = H._preflight_argv("https://api.snapcraft.io/v2/snaps/info/lxd", ("Snap-Device-Series: 16",))
+    assert argv == [
+        "curl", "-sSf", "-o", "/dev/null", "--connect-timeout", "5", "--max-time", "10",
+        "-H", "Snap-Device-Series: 16", "https://api.snapcraft.io/v2/snaps/info/lxd",
+    ]
+    assert "--retry" not in argv
+
+
+def test_preflight_endpoints_match_the_runner_side_gate():
+    """The in-instance probe checks the URLs and header preflight.sh checks from the runner."""
+    script = (Path(__file__).parents[2] / "scripts" / "preflight.sh").read_text()
+    for _, url, headers in _mh.PREFLIGHT_ENDPOINTS:
+        assert url in script
+        for header in headers:
+            assert header in script
+
+
+def test_preflight_endpoint_parses_name_equals_url():
+    assert H._preflight_endpoint("ceph-ppa=https://ppa.example/ubuntu/dists/?a=b") == (
+        "ceph-ppa", "https://ppa.example/ubuntu/dists/?a=b", (),
+    )
+
+
+def test_preflight_endpoint_rejects_malformed_spec():
+    for spec in ("https://no-name.example/", "=https://x.example/", "name="):
+        with pytest.raises(ValueError):
+            H._preflight_endpoint(spec)
+
+
+def test_preflight_message_names_instance_and_every_endpoint():
+    failed = [("snap-store", "https://s.example/", ("H: 1",)), ("ubuntu-archive", "http://a.example/", ())]
+    assert H._preflight_message("outer VM vm1", failed) == (
+        "PREFLIGHT: endpoint checks failed from outer VM vm1: "
+        "snap-store (https://s.example/), ubuntu-archive (http://a.example/)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# probe_instance_network (stubbed exec)
+# ---------------------------------------------------------------------------
+
+def _probe_harness(monkeypatch, rc_for):
+    """Harness whose _preflight_exec is stubbed: every probe call returns
+    rc_for(url, nth_call_for_that_url)."""
+    cap = _with_logger(monkeypatch)
+    sleeps = []
+    monkeypatch.setattr(_mh.time, "sleep", lambda secs: sleeps.append(secs))
+    h = H()
+    monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
+    calls = []
+    seen = {}
+
+    def fake_exec(container, argv, timeout):
+        calls.append((container, argv, timeout))
+        url = argv[-1]
+        seen[url] = seen.get(url, 0) + 1
+        rc = rc_for(url, seen[url])
+        return _Res(rc, "", "" if rc == 0 else "noise\ncurl: (28) Connection timed out after 5001 milliseconds\n")
+
+    monkeypatch.setattr(h, "_preflight_exec", fake_exec)
+    return h, cap, calls, sleeps
+
+
+def _infra_lines(cap, kind):
+    return [line for line in cap.console_lines if line.startswith(f"::error title=Infra::kind={kind} ")]
+
+
+def test_probe_instance_network_happy_path_probes_each_endpoint_once(monkeypatch):
+    h, cap, calls, sleeps = _probe_harness(monkeypatch, lambda url, n: 0)
+
+    h.probe_instance_network()
+
+    assert [c[1][0] for c in calls] == ["curl", "curl"]
+    assert all(c[0] == "" for c in calls)
+    assert sleeps == []
+    assert _infra_lines(cap, "preflight") == []
+
+
+def test_probe_instance_network_missing_curl_is_a_harness_error_not_preflight(monkeypatch):
+    h, cap, calls, sleeps = _probe_harness(monkeypatch, lambda url, n: 127)
+
+    with pytest.raises(AssertionError) as exc:
+        h.probe_instance_network("microceph-img-builder")
+
+    assert str(exc.value) == (
+        "[preflight] curl not found in container microceph-img-builder in outer VM vm1; "
+        "the reachability probe needs curl"
+    )
+    # Raised on the first probe: no retry, no backoff, no Infra annotation of any kind.
+    assert len(calls) == 1
+    assert sleeps == []
+    assert not any(line.startswith("::error title=Infra::") for line in cap.console_lines)
+
+
+def test_probe_instance_network_recovers_and_reprobes_only_the_failed_endpoint(monkeypatch):
+    archive = "http://archive.ubuntu.com/ubuntu/dists/"
+    h, cap, calls, sleeps = _probe_harness(monkeypatch, lambda url, n: 1 if (url == archive and n < 3) else 0)
+
+    h.probe_instance_network()
+
+    probed = [c[1][-1] for c in calls]
+    assert probed.count(archive) == 3
+    assert probed.count("https://api.snapcraft.io/v2/snaps/info/lxd") == 1
+    assert sleeps == [2, 2]
+    assert _infra_lines(cap, "preflight") == []
+
+
+def test_probe_instance_network_outage_fails_with_preflight_annotation(monkeypatch, tmp_path):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    h, cap, calls, sleeps = _probe_harness(monkeypatch, lambda url, n: 28)
+
+    with pytest.raises(AssertionError) as exc:
+        h.probe_instance_network("microceph-img-builder")
+
+    expected = (
+        "PREFLIGHT: endpoint checks failed from container microceph-img-builder in outer VM vm1: "
+        "snap-store (https://api.snapcraft.io/v2/snaps/info/lxd), "
+        "ubuntu-archive (http://archive.ubuntu.com/ubuntu/dists/)"
+    )
+    assert str(exc.value) == expected
+    assert len(calls) == 3 * 2
+    # No backoff sleep after the last attempt.
+    assert sleeps == [2, 2]
+    assert _infra_lines(cap, "preflight") == [f"::error title=Infra::kind=preflight {expected}"]
+    assert summary.read_text() == f"kind=preflight {expected}\n"
+    assert any("(attempt 3/3): curl: (28) Connection timed out" in line for line in cap.console_lines)
+
+
+def test_probe_instance_network_names_only_the_unreachable_endpoint(monkeypatch):
+    archive = "http://archive.ubuntu.com/ubuntu/dists/"
+    h, cap, _, _ = _probe_harness(monkeypatch, lambda url, n: 7 if url == archive else 0)
+
+    with pytest.raises(AssertionError) as exc:
+        h.probe_instance_network()
+
+    assert str(exc.value) == f"PREFLIGHT: endpoint checks failed from outer VM vm1: ubuntu-archive ({archive})"
+    assert len(_infra_lines(cap, "preflight")) == 1
+
+
+def test_probe_instance_network_probes_extra_endpoints(monkeypatch):
+    h, _, calls, _ = _probe_harness(monkeypatch, lambda url, n: 0)
+
+    h.probe_instance_network("", "ceph-ppa=https://ppa.example/ubuntu/dists/")
+
+    assert calls[-1][1][-1] == "https://ppa.example/ubuntu/dists/"
+
+
+def test_preflight_exec_targets_the_vm_or_the_container(monkeypatch):
+    _with_logger(monkeypatch)
+    h = H()
+    vm_calls, ct_calls = [], []
+    monkeypatch.setattr(h, "run_in_vm", lambda cmd, timeout, quiet=False: vm_calls.append((cmd, timeout, quiet)))
+    monkeypatch.setattr(
+        h, "exec_in_container",
+        lambda container, *argv, timeout, quiet: ct_calls.append((container, argv, timeout, quiet)),
+    )
+
+    h._preflight_exec("", ["curl", "-H", "Snap-Device-Series: 16", "http://x/"], 20)
+    h._preflight_exec("node-wrk0", ["curl", "http://x/"], 20)
+
+    assert vm_calls == [("curl -H 'Snap-Device-Series: 16' http://x/", 20, True)]
+    assert ct_calls == [("node-wrk0", ("curl", "http://x/"), 20, True)]
+
+
+# ---------------------------------------------------------------------------
+# probe call sites: setup_lxd_in_vm / install_tools / build_base_lxd_image
+# ---------------------------------------------------------------------------
+
+def _recording_harness(monkeypatch, snap_list_count="0"):
+    """Harness that records every probe/exec helper call in order instead of running it."""
+    _with_logger(monkeypatch)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    h = H()
+    monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
+    events = []
+
+    def fake_run_in_vm(cmd, timeout=300, quiet=False):
+        events.append(("vm", cmd, timeout))
+        return _Res(0, snap_list_count + "\n" if "snap list" in cmd else "", "")
+
+    def fake_run_in_container(container, cmd, timeout=300, shell="sh", quiet=False):
+        events.append(("ct", container, cmd, timeout))
+        return _Res(0, "", "")
+
+    def fake_exec_in_container(container, *argv, timeout=300, check=False, quiet=False):
+        events.append(("exec", container, argv))
+        return _Res(0, "", "")
+
+    monkeypatch.setattr(h, "probe_instance_network", lambda container="", *extra: events.append(("probe", container)))
+    monkeypatch.setattr(h, "run_in_vm", fake_run_in_vm)
+    monkeypatch.setattr(h, "run_in_vm_and_check", fake_run_in_vm)
+    monkeypatch.setattr(h, "run_in_container_unchecked", fake_run_in_container)
+    monkeypatch.setattr(h, "run_in_container_and_check", fake_run_in_container)
+    monkeypatch.setattr(h, "exec_in_container", fake_exec_in_container)
+    return h, events
+
+
+class _FakeBuiltIn:
+    def get_variable_value(self, name, default=None):
+        return default
+
+
+def test_setup_lxd_in_vm_probes_then_installs_lxd_when_absent(monkeypatch):
+    h, events = _recording_harness(monkeypatch, snap_list_count="0")
+    monkeypatch.setattr(_mh, "BuiltIn", _FakeBuiltIn)
+
+    h.setup_lxd_in_vm()
+
+    assert events == [
+        ("probe", ""),
+        ("vm", 'sudo snap list | grep -cF "lxd" || true', 30),
+        ("vm", "sudo snap install lxd", 300),
+        ("vm", "sudo snap refresh", 300),
+        ("vm", "sudo snap set lxd daemon.group=adm", 30),
+        ("vm", "sudo lxd init --auto --storage-backend btrfs --storage-create-loop 25", 60),
+    ]
+
+
+def test_setup_lxd_in_vm_skips_the_install_when_lxd_is_present(monkeypatch):
+    h, events = _recording_harness(monkeypatch, snap_list_count="1")
+    monkeypatch.setattr(_mh, "BuiltIn", _FakeBuiltIn)
+
+    h.setup_lxd_in_vm()
+
+    commands = [e[1] for e in events if e[0] == "vm"]
+    assert "sudo snap install lxd" not in commands
+    assert "sudo snap refresh" in commands
+    assert events[0] == ("probe", "")
+
+
+def test_setup_lxd_in_vm_is_no_longer_a_resource_keyword():
+    """A resource keyword of the same name would shadow the Python method."""
+    resource = (Path(__file__).parent / "microceph_harness.resource").read_text()
+    assert "\nSetup LXD In VM\n" not in resource
+    assert "    Setup LXD In VM\n" in resource  # Provision Multinode VM still calls it
+
+
+def test_install_tools_probes_the_outer_vm_first(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+
+    h.install_tools()
+
+    assert events[0] == ("probe", "")
+    assert events[1][0] == "vm" and "apt-get" in events[1][1]
+
+
+def test_build_base_lxd_image_probes_the_builder_before_apt(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+
+    h.build_base_lxd_image("/root")
+
+    probe_at = events.index(("probe", "microceph-img-builder"))
+    first_apt = next(i for i, e in enumerate(events) if e[0] == "ct" and "apt-get" in e[2])
+    assert probe_at == first_apt - 1
+    assert [e for e in events if e[0] == "probe"] == [("probe", "microceph-img-builder")]
+
+
+# ---------------------------------------------------------------------------
 # wait_for_legacy_cephx_compatibility
 # ---------------------------------------------------------------------------
 

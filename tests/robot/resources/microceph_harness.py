@@ -10,6 +10,7 @@ import glob
 import ipaddress
 import json
 import re
+import shlex
 import subprocess
 import tempfile
 import time
@@ -70,6 +71,21 @@ BASE_IMAGE_ALIAS = "ubuntu-22.04"
 MICROCEPH_IMAGE_ALIAS = "ubuntu-22.04-microceph"
 # raw.lxc device-allow block; the \n is a LITERAL backslash-n for the remote printf.
 RAW_LXC_DEVICE_ALLOW = "lxc.cgroup2.devices.allow = b 7:* rwm\\nlxc.cgroup2.devices.allow = c 10:237 rwm"
+
+# --- in-instance preflight probe (#836) ---
+# (name, url, headers): the endpoints probe_endpoints checks in tests/scripts/preflight.sh,
+# probed from the instance that is about to install rather than from the runner.
+PREFLIGHT_ENDPOINTS = (
+    ("snap-store", "https://api.snapcraft.io/v2/snaps/info/lxd", ("Snap-Device-Series: 16",)),
+    ("ubuntu-archive", "http://archive.ubuntu.com/ubuntu/dists/", ()),
+)
+# The probe uses curl, the same tool as tests/scripts/preflight.sh; the Ubuntu images the
+# harness launches ship it by default. A missing curl is reported as a harness error,
+# never as a network outage.
+PREFLIGHT_ATTEMPTS = 3
+PREFLIGHT_BACKOFF = 2
+PREFLIGHT_CONNECT_TIMEOUT = 5
+PREFLIGHT_MAX_TIME = 10
 
 # --- snap artefact ---
 SNAP_DEST_NAME = "microceph_0_amd64.snap"
@@ -383,6 +399,94 @@ class microceph_harness:
         if self._is_forkfile_socket_error(res.stderr):
             self._infra_annotate("lxd-socket", f"Failed to {errlabel} after 3 attempts: {res.stderr.strip()}")
         raise AssertionError(f"Failed to {errlabel}: {res.stderr}")
+
+    @staticmethod
+    def _last_line(text):
+        """Returns the last non-blank line of *text* (stripped), or "" when there is none.
+
+        Pure helper: Infra annotations must stay on one line, and the last stderr line
+        is the one that names the error (curl, snapd and apt all end on it).
+        """
+        lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+        return lines[-1] if lines else ""
+
+    @staticmethod
+    def _preflight_argv(url, headers=()):
+        """Builds the single-attempt curl probe argv for *url* (pure helper).
+
+        curl -f exits 0 only on an HTTP status below 400. Retries are done by the
+        caller, so curl gets no --retry here.
+        """
+        argv = [
+            "curl", "-sSf", "-o", "/dev/null",
+            "--connect-timeout", str(PREFLIGHT_CONNECT_TIMEOUT),
+            "--max-time", str(PREFLIGHT_MAX_TIME),
+        ]
+        for header in headers:
+            argv += ["-H", header]
+        return argv + [url]
+
+    @staticmethod
+    def _preflight_endpoint(spec):
+        """Parses an extra endpoint given as 'name=url' (the preflight.sh form) into (name, url, ())."""
+        name, sep, url = str(spec).partition("=")
+        if not sep or not name or not url:
+            raise ValueError(f"extra preflight endpoint must be name=url, got: {spec!r}")
+        return (name, url, ())
+
+    @staticmethod
+    def _preflight_message(where, failed):
+        """Builds the PREFLIGHT failure message naming *where* and every failed (name, url, headers)."""
+        names = ", ".join(f"{name} ({url})" for name, url, _ in failed)
+        return f"PREFLIGHT: endpoint checks failed from {where}: {names}"
+
+    def _preflight_exec(self, container, argv, timeout):
+        """Runs probe *argv* in *container*, or in the outer VM when *container* is empty. Never raises."""
+        if container:
+            return self.exec_in_container(container, *argv, timeout=timeout, quiet=True)
+        return self.run_in_vm(shlex.join(argv), timeout, quiet=True)
+
+    def probe_instance_network(self, container="", *extra_endpoints):
+        """Fails fast with a kind=preflight Infra annotation when the Snap Store or archive is unreachable.
+
+        Runs where the install is about to run: inside *container*, or in the outer VM
+        when *container* is empty. Extra endpoints are given as 'name=url'. Each endpoint
+        gets up to PREFLIGHT_ATTEMPTS single-shot curl probes; one that answered is not
+        probed again. A missing curl is a harness error, not a preflight failure: it is
+        raised without an Infra annotation. The runner-side twin is probe_endpoints in
+        tests/scripts/preflight.sh, which cannot see the network path of a nested
+        instance (#836).
+        """
+        vm = self._outer_vm()
+        where = f"container {container} in outer VM {vm}" if container else f"outer VM {vm}"
+        pending = list(PREFLIGHT_ENDPOINTS) + [self._preflight_endpoint(spec) for spec in extra_endpoints]
+        attempt = [0]
+
+        def all_reachable():
+            attempt[0] += 1
+            failed = []
+            for name, url, headers in pending:
+                res = self._preflight_exec(container, self._preflight_argv(url, headers), PREFLIGHT_MAX_TIME + 10)
+                if res.rc == 127:
+                    # Command not found: both lxc exec and the VM shell return 127 when the
+                    # binary is missing. A packaging problem must never be labelled kind=preflight.
+                    raise AssertionError(f"[preflight] curl not found in {where}; the reachability probe needs curl")
+                if res.rc != 0:
+                    logger.console(
+                        f"[preflight] {name} unreachable from {where} "
+                        f"(attempt {attempt[0]}/{PREFLIGHT_ATTEMPTS}): {self._last_line(res.stderr)}"
+                    )
+                    failed.append((name, url, headers))
+            pending[:] = failed
+            if failed and attempt[0] >= PREFLIGHT_ATTEMPTS:
+                # Raised from inside the predicate so the last attempt is not followed
+                # by one more backoff sleep before the failure is reported.
+                message = self._preflight_message(where, failed)
+                self._infra_annotate("preflight", message)
+                raise AssertionError(message)
+            return not failed
+
+        self._poll_until(all_reachable, PREFLIGHT_ATTEMPTS, PREFLIGHT_BACKOFF, fail_msg="")
 
     def exec_in_container(self, container, *argv, timeout=300, check=False, quiet=False):
         """Runs a single command (no inner shell) inside *container* via the outer VM.
@@ -1416,6 +1520,7 @@ class microceph_harness:
     def install_tools(self):
         """Installs s3cmd and jq on the outer VM."""
         logger.console("[setup] Installing tools (s3cmd, jq)...")
+        self.probe_instance_network()
         self.run_in_vm_and_check("sudo apt-get update -qq", 120)
         self.run_in_vm_and_check(f"sudo apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 120)
 
@@ -1516,6 +1621,27 @@ class microceph_harness:
     # Multi-node LXD container setup (migrated from microceph_harness.resource)
     # -----------------------------------------------------------------------
 
+    def setup_lxd_in_vm(self):
+        """Installs and initialises LXD inside the outer VM."""
+        logger.console(f"[setup] Setting up LXD inside {self._outer_vm()} (may take several minutes)...")
+        # snap install and snap refresh below both need the Snap Store.
+        self.probe_instance_network()
+        check = self.run_in_vm('sudo snap list | grep -cF "lxd" || true', 30)
+        if check.stdout.strip() != "1":
+            self.run_in_vm_and_check("sudo snap install lxd", 300)
+        self.run_in_vm_and_check("sudo snap refresh", 300)
+        self.run_in_vm_and_check("sudo snap set lxd daemon.group=adm", 30)
+        # Force a btrfs (copy-on-write) storage pool. On the default "dir" backend every
+        # lxc init / publish is a full rootfs copy, which serializes ~6 x 1.5GB copies in
+        # multi-node setup; btrfs makes instance creation a near-instant reflink snapshot.
+        # Size the loop file explicitly: the auto default (~20% of free space, capped at
+        # 30GB) can be too small for the base image + 4 node rootfs deltas + loop OSDs
+        # that replication suites create inside container rootfs.
+        loop_size = BuiltIn().get_variable_value("${LXD_STORAGE_LOOP_SIZE}", 25)
+        self.run_in_vm_and_check(
+            f"sudo lxd init --auto --storage-backend btrfs --storage-create-loop {loop_size}", 60
+        )
+
     def build_base_lxd_image(self, home):
         """Builds the ubuntu-22.04-microceph base LXD image with tools and MicroCeph pre-installed."""
         logger.console("[setup] Building base LXD image with tools and MicroCeph...")
@@ -1547,6 +1673,7 @@ class microceph_harness:
             fail_msg="",
             raise_on_timeout=False,
         )
+        self.probe_instance_network(builder)
         self.run_in_container_and_check(
             builder, f"apt-get update -qq && apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 300
         )
