@@ -1330,6 +1330,33 @@ def _with_logger(monkeypatch):
     return cap
 
 
+def test_run_in_container_with_retry_retries_until_success(monkeypatch):
+    harness = H()
+    results = iter([
+        _Res(1, "", "context deadline exceeded"),
+        _Res(1, "", "context deadline exceeded"),
+        _Res(0, "removed", ""),
+    ])
+    calls = []
+
+    def run_in_container_unchecked(container, cmd, timeout, quiet):
+        calls.append((container, cmd, timeout, quiet))
+        return next(results)
+
+    monkeypatch.setattr(harness, "run_in_container_unchecked", run_in_container_unchecked)
+
+    result = harness.run_in_container_with_retry(
+        "node-wrk0", "microceph cluster remove node-wrk3 --force", 3, 0, 120
+    )
+
+    assert result == _Res(0, "removed", "")
+    assert calls == [
+        ("node-wrk0", "microceph cluster remove node-wrk3 --force", 120, False),
+        ("node-wrk0", "microceph cluster remove node-wrk3 --force", 120, False),
+        ("node-wrk0", "microceph cluster remove node-wrk3 --force", 120, False),
+    ]
+
+
 def test_echo_cmd_prints_the_command(monkeypatch):
     cap = _with_logger(monkeypatch)
     H()._echo_cmd("microceph.ceph -s", quiet=False)
