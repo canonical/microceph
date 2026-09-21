@@ -87,6 +87,17 @@ PREFLIGHT_BACKOFF = 2
 PREFLIGHT_CONNECT_TIMEOUT = 5
 PREFLIGHT_MAX_TIME = 10
 
+# --- bounded retry for transient Snap Store errors (#838) ---
+# Only the store error texts seen in CI are retried (plus 5xx in place of 408, as
+# #838 asks); every other snap failure stays fatal on the first attempt.
+SNAP_STORE_TRANSIENT_RE = re.compile(
+    r"cannot get nonce from store: store server returned status (?:408|5\d\d)"
+    r"|cannot fetch assertion: got unexpected HTTP status code (?:408|5\d\d)"
+    r"|cannot get nonce from store: .*Client\.Timeout exceeded while awaiting headers"
+)
+SNAP_RETRY_ATTEMPTS = 3
+SNAP_RETRY_BACKOFF = 5
+
 # --- snap artefact ---
 SNAP_DEST_NAME = "microceph_0_amd64.snap"
 LOCAL_SNAP_GLOB = "~/microceph_*.snap"
@@ -487,6 +498,78 @@ class microceph_harness:
             return not failed
 
         self._poll_until(all_reachable, PREFLIGHT_ATTEMPTS, PREFLIGHT_BACKOFF, fail_msg="")
+
+    @staticmethod
+    def _is_transient_snap_store_error(stderr):
+        """Returns True when a snap failure is one of the transient Snap Store errors (pure helper).
+
+        Observed as 'cannot get nonce from store: store server returned status 408',
+        'cannot fetch assertion: got unexpected HTTP status code 408 via GET to ...' and
+        'cannot get nonce from store: Post ...: net/http: request canceled while waiting
+        for connection (Client.Timeout exceeded while awaiting headers)'.
+        """
+        return bool(SNAP_STORE_TRANSIENT_RE.search(stderr or ""))
+
+    def _retry_transient(self, run_fn, is_transient_fn, attempts, backoff, kind, errlabel):
+        """Calls run_fn() until rc 0, retrying only results that is_transient_fn accepts.
+
+        run_fn is a zero-arg callable returning an ExecResult from a NON-raising exec
+        helper. A failure that is_transient_fn rejects raises at once with the usual
+        'Command failed' text. When all *attempts* fail transiently the *kind* Infra
+        annotation is emitted and the same error is raised: exhaustion fails the
+        suite, it never skips it.
+        """
+        state = {"attempt": 0, "res": None}
+
+        def succeeded():
+            state["attempt"] += 1
+            res = run_fn()
+            state["res"] = res
+            if res.rc == 0:
+                return True
+            failure = f"Command failed (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}"
+            if not is_transient_fn(res):
+                raise AssertionError(failure)
+            if state["attempt"] >= attempts:
+                # Raised from inside the predicate so the last attempt is not followed
+                # by one more backoff sleep before the failure is reported.
+                self._infra_annotate(kind, f"{errlabel} failed after {attempts} attempts: {detail(res)}")
+                raise AssertionError(failure)
+            return False
+
+        def detail(res):
+            return self._last_line(res.stderr) or f"rc={res.rc} with no error output"
+
+        def announce():
+            logger.console(
+                f"[setup] transient {kind} error ({errlabel}), attempt {state['attempt']}/{attempts}: "
+                f"{detail(state['res'])}; retrying in {backoff}s..."
+            )
+
+        self._poll_until(succeeded, attempts, backoff, fail_msg="", between=announce)
+        return state["res"]
+
+    def run_in_vm_with_snap_retry(self, bash_cmd, timeout=300):
+        """Runs a snap command inside the outer VM, retrying transient Snap Store errors.
+
+        Same result and failure text as Run In VM And Check; exhaustion emits kind=snap-store.
+        """
+        return self._retry_transient(
+            lambda: self.run_in_vm(bash_cmd, timeout),
+            lambda res: self._is_transient_snap_store_error(res.stderr),
+            SNAP_RETRY_ATTEMPTS, SNAP_RETRY_BACKOFF, "snap-store", f"'{bash_cmd}' in outer VM {self._outer_vm()}",
+        )
+
+    def run_in_container_with_snap_retry(self, container, cmd, timeout=300, shell="sh"):
+        """Runs a snap command inside *container*, retrying transient Snap Store errors.
+
+        Same result and failure text as Run In Container And Check; exhaustion emits kind=snap-store.
+        """
+        return self._retry_transient(
+            lambda: self.run_in_container_unchecked(container, cmd, timeout, shell),
+            lambda res: self._is_transient_snap_store_error(res.stderr),
+            SNAP_RETRY_ATTEMPTS, SNAP_RETRY_BACKOFF, "snap-store", f"'{cmd}' in container {container}",
+        )
 
     def exec_in_container(self, container, *argv, timeout=300, check=False, quiet=False):
         """Runs a single command (no inner shell) inside *container* via the outer VM.
@@ -1534,7 +1617,9 @@ class microceph_harness:
         # glob below, so the argument value is otherwise unused.
         logger.console("[install] Installing MicroCeph snap...")
         self.run_in_vm_and_check("sudo snap install core26 || true", 120)
-        self.run_in_vm_and_check(f"sudo snap install --dangerous {LOCAL_SNAP_GLOB}", 600)
+        # The core26 prefetch above tolerates failure, so a transient store error
+        # resurfaces here as 'cannot install snap base "core26": ...' and is retried.
+        self.run_in_vm_with_snap_retry(f"sudo snap install --dangerous {LOCAL_SNAP_GLOB}", 600)
         for iface in SNAP_INTERFACES:
             self.run_in_vm_and_check(f"sudo snap connect microceph:{iface}", 30)
 
@@ -1628,8 +1713,8 @@ class microceph_harness:
         self.probe_instance_network()
         check = self.run_in_vm('sudo snap list | grep -cF "lxd" || true', 30)
         if check.stdout.strip() != "1":
-            self.run_in_vm_and_check("sudo snap install lxd", 300)
-        self.run_in_vm_and_check("sudo snap refresh", 300)
+            self.run_in_vm_with_snap_retry("sudo snap install lxd", 300)
+        self.run_in_vm_with_snap_retry("sudo snap refresh", 300)
         self.run_in_vm_and_check("sudo snap set lxd daemon.group=adm", 30)
         # Force a btrfs (copy-on-write) storage pool. On the default "dir" backend every
         # lxc init / publish is a full rootfs copy, which serializes ~6 x 1.5GB copies in
@@ -1677,7 +1762,7 @@ class microceph_harness:
         self.run_in_container_and_check(
             builder, f"apt-get update -qq && apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 300
         )
-        self.run_in_container_and_check(
+        self.run_in_container_with_snap_retry(
             builder, f"snap install --dangerous {MNT_SNAP_GLOB}", 600
         )
         connects = " && ".join(f"snap connect microceph:{iface}" for iface in SNAP_INTERFACES_MINIMAL)
@@ -1749,12 +1834,20 @@ class microceph_harness:
         logger.console(f"[install] Installing MicroCeph from store ({channel}) on all nodes...")
         for container in NODES:
             self.ensure_snap_mount_healthy(container)
+            # Three calls rather than one chained string, so the store install can be
+            # retried without re-running the purge and the apt-get. The purge is local
+            # and needs no network budget; the apt-get gets the same 120s ceiling as
+            # the equivalent call in install_tools().
+            self.run_in_container_and_check(
+                container, "sudo snap remove --purge microceph >/dev/null 2>&1 || true", 60
+            )
             # Store install needs only s3cmd (not jq), so the apt-get install list is
             # kept literal rather than driven from VM_APT_TOOLS.
             self.run_in_container_and_check(
-                container,
-                f"sudo snap remove --purge microceph >/dev/null 2>&1 || true; sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd && sudo snap install microceph --channel {channel}",
-                600,
+                container, "sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd", 120
+            )
+            self.run_in_container_with_snap_retry(
+                container, f"sudo snap install microceph --channel {channel}", 600
             )
 
     def bootstrap_head_node(self, network_mode="public", extra_flags=""):
@@ -1957,7 +2050,7 @@ class microceph_harness:
         connects = " && ".join(f"snap connect microceph:{iface}" for iface in SNAP_INTERFACES_MINIMAL)
         for container in NODES:
             logger.console(f"[upgrade] Upgrading {container}...")
-            self.run_in_container_and_check(
+            self.run_in_container_with_snap_retry(
                 container, f"sudo snap install --dangerous {MNT_SNAP_GLOB}", 600
             )
             self.run_in_container_and_check(container, connects, 60)

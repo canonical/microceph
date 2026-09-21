@@ -1678,6 +1678,14 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     monkeypatch.setattr(h, "run_in_container_unchecked", fake_run_in_container)
     monkeypatch.setattr(h, "run_in_container_and_check", fake_run_in_container)
     monkeypatch.setattr(h, "exec_in_container", fake_exec_in_container)
+    monkeypatch.setattr(
+        h, "run_in_vm_with_snap_retry",
+        lambda cmd, timeout=300: events.append(("vm-snap-retry", cmd, timeout)),
+    )
+    monkeypatch.setattr(
+        h, "run_in_container_with_snap_retry",
+        lambda container, cmd, timeout=300, shell="sh": events.append(("ct-snap-retry", container, cmd, timeout)),
+    )
     return h, events
 
 
@@ -1695,8 +1703,8 @@ def test_setup_lxd_in_vm_probes_then_installs_lxd_when_absent(monkeypatch):
     assert events == [
         ("probe", ""),
         ("vm", 'sudo snap list | grep -cF "lxd" || true', 30),
-        ("vm", "sudo snap install lxd", 300),
-        ("vm", "sudo snap refresh", 300),
+        ("vm-snap-retry", "sudo snap install lxd", 300),
+        ("vm-snap-retry", "sudo snap refresh", 300),
         ("vm", "sudo snap set lxd daemon.group=adm", 30),
         ("vm", "sudo lxd init --auto --storage-backend btrfs --storage-create-loop 25", 60),
     ]
@@ -1708,9 +1716,8 @@ def test_setup_lxd_in_vm_skips_the_install_when_lxd_is_present(monkeypatch):
 
     h.setup_lxd_in_vm()
 
-    commands = [e[1] for e in events if e[0] == "vm"]
-    assert "sudo snap install lxd" not in commands
-    assert "sudo snap refresh" in commands
+    assert ("vm-snap-retry", "sudo snap install lxd", 300) not in events
+    assert ("vm-snap-retry", "sudo snap refresh", 300) in events
     assert events[0] == ("probe", "")
 
 
@@ -1739,6 +1746,210 @@ def test_build_base_lxd_image_probes_the_builder_before_apt(monkeypatch):
     first_apt = next(i for i, e in enumerate(events) if e[0] == "ct" and "apt-get" in e[2])
     assert probe_at == first_apt - 1
     assert [e for e in events if e[0] == "probe"] == [("probe", "microceph-img-builder")]
+
+
+# ---------------------------------------------------------------------------
+# _is_transient_snap_store_error -- verbatim CI error texts (#838)
+# ---------------------------------------------------------------------------
+
+_SNAP_408_NONCE = (
+    "error: cannot perform the following tasks:\n"
+    '- Fetch and check assertions for snap "snapd" (27710) '
+    "(cannot get nonce from store: store server returned status 408)\n"
+)
+_SNAP_408_ASSERTION = (
+    "error: cannot perform the following tasks:\n"
+    '- Fetch and check assertions for snap "snapd" (27738) (cannot fetch assertion: got unexpected '
+    'HTTP status code 408 via GET to "https://api.snapcraft.io/v2/assertions/snap-revision/3Dvx?max-format=0")\n'
+)
+_SNAP_CLIENT_TIMEOUT = (
+    "error: cannot perform the following tasks:\n"
+    '- Ensure prerequisites for "microceph" are available (cannot install snap base "core24": '
+    'cannot get nonce from store: Post "https://api.snapcraft.io/api/v1/snaps/auth/nonces": net/http: '
+    "request canceled while waiting for connection (Client.Timeout exceeded while awaiting headers))\n"
+)
+
+
+@pytest.mark.parametrize("stderr", [
+    _SNAP_408_NONCE,
+    _SNAP_408_ASSERTION,
+    _SNAP_CLIENT_TIMEOUT,
+    "(cannot get nonce from store: store server returned status 503)",
+    "(cannot fetch assertion: got unexpected HTTP status code 502 via GET to ...)",
+])
+def test_transient_snap_store_error_matches(stderr):
+    assert H._is_transient_snap_store_error(stderr)
+
+
+@pytest.mark.parametrize("stderr", [
+    'error: snap "bogus" not found',
+    "error: unable to contact snap store",
+    "error: too early for operation, device not yet seeded or device model not acknowledged",
+    "(cannot get nonce from store: store server returned status 401)",
+    "(cannot fetch assertion: got unexpected HTTP status code 404 via GET to ...)",
+    'error: cannot install "microceph": snap has no updates available',
+    "",
+    None,
+])
+def test_transient_snap_store_error_ignores_other_failures(stderr):
+    assert not H._is_transient_snap_store_error(stderr)
+
+
+# ---------------------------------------------------------------------------
+# _retry_transient / run_in_*_with_snap_retry (stubbed exec)
+# ---------------------------------------------------------------------------
+
+def _retry_harness(monkeypatch, results):
+    """Harness whose _exec returns *results* in order (the last one repeats)."""
+    cap = _with_logger(monkeypatch)
+    sleeps = []
+    monkeypatch.setattr(_mh.time, "sleep", lambda secs: sleeps.append(secs))
+    h = H()
+    monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
+    calls = []
+
+    def fake_exec(argv, timeout):
+        calls.append((argv, timeout))
+        return results[min(len(calls), len(results)) - 1]
+
+    monkeypatch.setattr(h, "_exec", fake_exec)
+    return h, cap, calls, sleeps
+
+
+def test_retry_transient_recovers_after_two_transient_failures(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "", "blip"), _Res(1, "", "blip"), _Res(0, "ok", "")])
+
+    res = h._retry_transient(
+        lambda: h._exec(["x"], 1), lambda r: r.stderr == "blip", 3, 7, "snap-store", "install x"
+    )
+
+    assert res == _Res(0, "ok", "")
+    assert len(calls) == 3
+    assert sleeps == [7, 7]
+    assert _infra_lines(cap, "snap-store") == []
+    assert sum("retrying in 7s" in line for line in cap.console_lines) == 2
+
+
+def test_retry_transient_fails_at_once_on_other_error(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "out", 'error: snap "bogus" not found')])
+
+    with pytest.raises(AssertionError) as exc:
+        h._retry_transient(lambda: h._exec(["x"], 1), lambda r: False, 3, 7, "snap-store", "install x")
+
+    assert str(exc.value) == 'Command failed (rc=1):\nSTDERR: error: snap "bogus" not found\nSTDOUT: out'
+    assert len(calls) == 1
+    assert sleeps == []
+    assert _infra_lines(cap, "snap-store") == []
+
+
+def test_retry_transient_exhausts_annotates_once_and_fails(monkeypatch, tmp_path):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "", "first line\nblip\n")])
+
+    with pytest.raises(AssertionError) as exc:
+        h._retry_transient(lambda: h._exec(["x"], 1), lambda r: True, 3, 7, "snap-store", "install x")
+
+    assert str(exc.value).startswith("Command failed (rc=1):")
+    assert len(calls) == 3
+    # No backoff sleep after the last attempt.
+    assert sleeps == [7, 7]
+    assert _infra_lines(cap, "snap-store") == [
+        "::error title=Infra::kind=snap-store install x failed after 3 attempts: blip"
+    ]
+    assert summary.read_text() == "kind=snap-store install x failed after 3 attempts: blip\n"
+
+
+def test_retry_transient_annotation_says_so_when_stderr_is_empty(monkeypatch):
+    h, cap, _, _ = _retry_harness(monkeypatch, [_Res(124, "", "")])
+
+    with pytest.raises(AssertionError):
+        h._retry_transient(lambda: h._exec(["x"], 1), lambda r: True, 2, 0, "apt", "update")
+
+    assert _infra_lines(cap, "apt") == [
+        "::error title=Infra::kind=apt update failed after 2 attempts: rc=124 with no error output"
+    ]
+
+
+def test_run_in_vm_with_snap_retry_recovers_from_a_408(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "", _SNAP_408_NONCE), _Res(0, "lxd installed", "")])
+
+    res = h.run_in_vm_with_snap_retry("sudo snap install lxd", 300)
+
+    assert res.rc == 0
+    assert [c[0] for c in calls] == [
+        ["lxc", "exec", "-n", "vm1", "--", "bash", "-eo", "pipefail", "-c", "sudo snap install lxd"]
+    ] * 2
+    assert [c[1] for c in calls] == [300, 300]
+    assert sleeps == [5]
+    assert _infra_lines(cap, "snap-store") == []
+
+
+def test_run_in_vm_with_snap_retry_exhaustion_is_a_snap_store_infra_failure(monkeypatch):
+    h, cap, calls, _ = _retry_harness(monkeypatch, [_Res(1, "", _SNAP_408_ASSERTION)])
+
+    with pytest.raises(AssertionError):
+        h.run_in_vm_with_snap_retry("sudo snap install lxd", 300)
+
+    assert len(calls) == 3
+    lines = _infra_lines(cap, "snap-store")
+    assert len(lines) == 1
+    assert "'sudo snap install lxd' in outer VM vm1 failed after 3 attempts" in lines[0]
+    assert "got unexpected HTTP status code 408" in lines[0]
+    assert "\n" not in lines[0]
+
+
+def test_run_in_vm_with_snap_retry_does_not_retry_a_timeout_or_a_missing_snap(monkeypatch):
+    for res in (_Res(124, "", "\nCommand timed out after 300s"), _Res(1, "", 'error: snap "lxd" not found')):
+        h, cap, calls, sleeps = _retry_harness(monkeypatch, [res])
+        with pytest.raises(AssertionError):
+            h.run_in_vm_with_snap_retry("sudo snap install lxd", 300)
+        assert len(calls) == 1
+        assert sleeps == []
+        assert _infra_lines(cap, "snap-store") == []
+
+
+def test_run_in_container_with_snap_retry_uses_the_non_raising_sh_helper(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "", _SNAP_CLIENT_TIMEOUT), _Res(0, "", "")])
+
+    res = h.run_in_container_with_snap_retry("node-wrk1", "sudo snap install microceph --channel squid/stable", 600)
+
+    assert res.rc == 0
+    assert calls[0] == (
+        ["lxc", "exec", "-n", "vm1", "--", "lxc", "exec", "-n", "node-wrk1", "--",
+         "sh", "-c", "sudo snap install microceph --channel squid/stable"],
+        600,
+    )
+    assert len(calls) == 2
+    assert sleeps == [5]
+
+
+# ---------------------------------------------------------------------------
+# snap retry call sites
+# ---------------------------------------------------------------------------
+
+def test_build_base_lxd_image_retries_the_builder_snap_install(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+
+    h.build_base_lxd_image("/root")
+
+    assert ("ct-snap-retry", "microceph-img-builder", "snap install --dangerous /mnt/microceph_*.snap", 600) in events
+
+
+def test_store_install_is_split_so_only_the_snap_install_is_retried(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+    monkeypatch.setattr(h, "ensure_snap_mount_healthy", lambda container: events.append(("mount", container)))
+
+    h.install_microceph_from_store_on_all_nodes("squid/stable")
+
+    per_node = [e for e in events if e[1] == "node-wrk0"]
+    assert per_node == [
+        ("mount", "node-wrk0"),
+        ("ct", "node-wrk0", "sudo snap remove --purge microceph >/dev/null 2>&1 || true", 60),
+        ("ct", "node-wrk0", "sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd", 120),
+        ("ct-snap-retry", "node-wrk0", "sudo snap install microceph --channel squid/stable", 600),
+    ]
+    assert len(events) == 4 * len(per_node)
 
 
 # ---------------------------------------------------------------------------
@@ -1914,11 +2125,17 @@ def test_local_snap_install_caches_core26(monkeypatch):
     def fake_run_in_vm_and_check(command, timeout):
         commands.append((command, timeout))
 
+    retried = []
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
+    monkeypatch.setattr(
+        harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: retried.append((command, timeout))
+    )
 
     harness.install_microceph_from_local_snap("/tmp/microceph.snap")
 
     assert commands[0] == ("sudo snap install core26 || true", 120)
+    # The --dangerous install is where a swallowed core26 store error resurfaces.
+    assert retried == [("sudo snap install --dangerous ~/microceph_*.snap", 600)]
 
 
 def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
