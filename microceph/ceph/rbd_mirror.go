@@ -204,12 +204,20 @@ var localDisableRetryStrategies = []strategy.Strategy{
 	strategy.Wait(5*time.Second, 40*time.Second),
 }
 
+// remoteDisableInitialDelay and remoteDisableBackoffStep are typed so that a bare
+// number cannot slip in again: strategy.Delay(5) once meant 5 nanoseconds. A test
+// checks their values.
+const (
+	remoteDisableInitialDelay time.Duration = 5 * time.Second
+	remoteDisableBackoffStep  time.Duration = 5 * time.Second
+)
+
 // remoteDisableRetryStrategies spaces the retries of the remote pool disable in
 // DisablePoolMirroring. Tests override it.
 var remoteDisableRetryStrategies = []strategy.Strategy{
-	strategy.Delay(5),
+	strategy.Delay(remoteDisableInitialDelay),
 	strategy.Limit(10),
-	strategy.Backoff(backoff.Linear(5 * time.Second)),
+	strategy.Backoff(backoff.Linear(remoteDisableBackoffStep)),
 }
 
 // isPeerReregistrationFailure reports whether a pool disable was refused because
