@@ -4,6 +4,59 @@
 STR1="ABCDEFGH"
 STR2="IJKLMNOP"
 
+# Probe Snap Store and Ubuntu archive reachability from wherever this runs
+# (the runner, or an LXD instance when reached through nodeexec) before an
+# install needs them. Reuses probe_endpoints from preflight.sh, which must sit
+# next to this script: "Copy utils" puts both in $HOME, which create_containers
+# bind-mounts into every instance at /mnt. preflight.sh runs as a subprocess
+# because it sets -eu, installs an EXIT trap and dispatches at file scope.
+# An unreachable endpoint exits 1 with a kind=preflight annotation. The probe
+# needs curl, which the runner image and the ubuntu:22.04 images ship; a
+# missing curl is a harness error, never an outage.
+function preflight_probe() {
+    local origin="${1?missing}"
+    local script
+    script="$(dirname "${BASH_SOURCE[0]}")/preflight.sh"
+    if [ ! -f "$script" ]; then
+        # A harness packaging error, not an outage: fail loudly, unclassified.
+        echo "::error title=Harness::preflight_probe on ${origin}: ${script} not found, copy tests/scripts/preflight.sh next to actionutils.sh"
+        exit 1
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        # Without curl every endpoint would look unreachable: fail loudly, unclassified.
+        echo "::error title=Harness::preflight_probe on ${origin}: curl not found, the reachability probe needs it"
+        exit 1
+    fi
+    PREFLIGHT_ORIGIN="$origin" bash "$script" probe_endpoints || exit 1
+}
+
+# relay_infra_summary <command...>: run, from the runner, a command that
+# executes inside an LXD instance, and print its output. The instance has no
+# GITHUB_STEP_SUMMARY, so when the command fails every Infra annotation it
+# printed is copied into the runner's step summary. Returns the command's
+# status; callers must exit on a non-zero return.
+function relay_infra_summary() {
+    local log rc
+    log="$(mktemp)"
+    if "$@" > "$log" 2>&1; then
+        rc=0
+    else
+        rc=$?
+    fi
+    cat "$log"
+    if [ "$rc" -ne 0 ]; then
+        sed -n 's/^::error title=Infra:://p' "$log" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+    fi
+    rm -f "$log"
+    return "$rc"
+}
+
+# Run preflight_probe inside an LXD instance, from the runner.
+function preflight_probe_instance() {
+    local node="${1?missing}"
+    relay_infra_summary lxc exec "$node" -- /mnt/actionutils.sh preflight_probe "$node" || exit 1
+}
+
 function cleaript() {
     # Docker can inject rules causing firewall conflicts
     sudo iptables -P FORWARD ACCEPT  || true
@@ -14,6 +67,7 @@ function cleaript() {
 }
 
 function setup_lxd() {
+    preflight_probe "$(hostname)"
     lxd_check=$(sudo snap list | grep -cF "lxd" || true)
     if [[ $lxd_check -ne 1 ]]; then
       sudo snap install lxd
@@ -25,6 +79,8 @@ function setup_lxd() {
 
 function install_microceph() {
     # Install locally built microceph snap and connect interfaces
+    # The local snap still pulls its base and prerequisites from the store.
+    preflight_probe "$(hostname)"
     sudo snap install --dangerous ~/microceph_*.snap
     sudo snap connect microceph:block-devices
     sudo snap connect microceph:hardware-observe
@@ -60,6 +116,11 @@ function install_and_bootstrap_microceph() {
 }
 
 function install_tools() {
+    # wait_for_osds calls this every time it runs. Only probe while an install
+    # is still pending, so a later blip cannot fail a step that needs no network.
+    if ! command -v s3cmd >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+        preflight_probe "$(hostname)"
+    fi
     sudo apt-get update -qq
     sudo apt-get -qq -y install s3cmd jq
 }
@@ -978,7 +1039,10 @@ function remote_remove_and_verify() {
 function install_multinode() {
     # Install and setup microceph snap
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
-        nodeexec $container install_tools
+        preflight_probe_instance "$container"
+        # install_tools probes again in the instance; relay that too, and do
+        # not carry on past a failure.
+        relay_infra_summary nodeexec "$container" install_tools || exit 1
         lxc exec $container -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
         lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
         lxc exec $container -- sh -c "snap alias microceph.ceph ceph"
@@ -992,6 +1056,7 @@ function install_multinode() {
 function install_store() {
     local chan="${1?missing}"
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
+        preflight_probe_instance "$container"
         lxc exec $container -- sh -c "sudo snap install microceph --channel ${chan}"
     done
 }
@@ -1032,6 +1097,7 @@ function dump_microceph_debug() {
 function upgrade_multinode() {
     # Refresh to local version, checking health
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
+        preflight_probe_instance "$container"
         lxc exec $container -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
         lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
         sleep 5

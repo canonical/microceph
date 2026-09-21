@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -93,7 +93,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -135,7 +135,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Free disk
         run: ~/actionutils.sh free_runner_disk
@@ -232,7 +232,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Free disk
         run: ~/actionutils.sh free_runner_disk
@@ -433,7 +433,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -575,7 +575,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -624,7 +624,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -681,7 +681,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -732,7 +732,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -778,7 +778,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -878,7 +878,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -933,7 +933,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -1004,7 +1004,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -1076,7 +1076,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -1152,7 +1152,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -1213,7 +1213,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -1280,7 +1280,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -1347,7 +1347,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -1418,7 +1418,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -1492,7 +1492,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Clear FORWARD firewall rules
         run: ~/actionutils.sh cleaript
@@ -1538,7 +1538,7 @@ jobs:
           fetch-depth: 0
 
       - name: Copy utils
-        run: cp tests/scripts/actionutils.sh $HOME
+        run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
       - name: Free disk
         run: ~/actionutils.sh free_runner_disk
@@ -1564,7 +1564,7 @@ jobs:
 
       - name: Copy utils
         run: |
-          cp tests/scripts/actionutils.sh $HOME
+          cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
           cp tests/scripts/adoptutils.sh $HOME
 
       - name: Clear FORWARD firewall rules
