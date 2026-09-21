@@ -57,6 +57,50 @@ function preflight_probe_instance() {
     relay_infra_summary lxc exec "$node" -- /mnt/actionutils.sh preflight_probe "$node" || exit 1
 }
 
+# Transient Snap Store errors seen in CI: a 408 or 5xx from the store, or the
+# client timing out while waiting for it. Anything else is a real failure.
+SNAP_STORE_TRANSIENT_RE='cannot get nonce from store|(store server returned status|unexpected HTTP status code) (408|5[0-9][0-9])|Client\.Timeout exceeded while awaiting headers'
+
+# Succeeds when the text in $1 contains a transient Snap Store error.
+function is_transient_snap_store_error() {
+    grep -qE "$SNAP_STORE_TRANSIENT_RE" <<< "$1"
+}
+
+# retry_snap_install <origin> <command...>: run a snap install command, up to
+# three times while it fails with a transient Snap Store error. Any other
+# failure returns at once. Running out of attempts reports kind=snap-store.
+# Callers must exit on a non-zero return; most of them run without errexit.
+function retry_snap_install() {
+    local origin="${1?missing}"
+    shift
+    local attempts=3
+    local delay="${SNAP_INSTALL_RETRY_DELAY:-5}"
+    local attempt log out rc message
+    log="$(mktemp)"
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if "$@" > "$log" 2>&1; then
+            rc=0
+        else
+            rc=$?
+        fi
+        out="$(cat "$log")"
+        cat "$log"
+        if [ "$rc" -eq 0 ] || ! is_transient_snap_store_error "$out"; then
+            rm -f "$log"
+            return "$rc"
+        fi
+        if [ "$attempt" -lt "$attempts" ]; then
+            echo "Transient Snap Store error on ${origin} (attempt ${attempt}/${attempts}), retrying in ${delay}s"
+            sleep "$delay"
+        fi
+    done
+    rm -f "$log"
+    message="kind=snap-store snap install failed on ${origin} after ${attempts} attempts: $(grep -E "$SNAP_STORE_TRANSIENT_RE" <<< "$out" | tail -n 1)"
+    echo "::error title=Infra::${message}"
+    echo "${message}" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+    return "$rc"
+}
+
 function cleaript() {
     # Docker can inject rules causing firewall conflicts
     sudo iptables -P FORWARD ACCEPT  || true
@@ -70,7 +114,7 @@ function setup_lxd() {
     preflight_probe "$(hostname)"
     lxd_check=$(sudo snap list | grep -cF "lxd" || true)
     if [[ $lxd_check -ne 1 ]]; then
-      sudo snap install lxd
+      retry_snap_install "$(hostname)" sudo snap install lxd || exit 1
     fi
     sudo snap refresh
     sudo snap set lxd daemon.group=adm
@@ -81,7 +125,7 @@ function install_microceph() {
     # Install locally built microceph snap and connect interfaces
     # The local snap still pulls its base and prerequisites from the store.
     preflight_probe "$(hostname)"
-    sudo snap install --dangerous ~/microceph_*.snap
+    retry_snap_install "$(hostname)" sudo snap install --dangerous ~/microceph_*.snap || exit 1
     sudo snap connect microceph:block-devices
     sudo snap connect microceph:hardware-observe
     sudo snap connect microceph:mount-observe
@@ -1043,7 +1087,7 @@ function install_multinode() {
         # install_tools probes again in the instance; relay that too, and do
         # not carry on past a failure.
         relay_infra_summary nodeexec "$container" install_tools || exit 1
-        lxc exec $container -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
+        retry_snap_install "$container" lxc exec "$container" -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap" || exit 1
         lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
         lxc exec $container -- sh -c "snap alias microceph.ceph ceph"
         # Hack: allow access to sysfs hardware info through lxc
@@ -1057,7 +1101,7 @@ function install_store() {
     local chan="${1?missing}"
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
         preflight_probe_instance "$container"
-        lxc exec $container -- sh -c "sudo snap install microceph --channel ${chan}"
+        retry_snap_install "$container" lxc exec "$container" -- sh -c "sudo snap install microceph --channel ${chan}" || exit 1
     done
 }
 
@@ -1098,7 +1142,7 @@ function upgrade_multinode() {
     # Refresh to local version, checking health
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
         preflight_probe_instance "$container"
-        lxc exec $container -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
+        retry_snap_install "$container" lxc exec "$container" -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap" || exit 1
         lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
         sleep 5
         expect=3
