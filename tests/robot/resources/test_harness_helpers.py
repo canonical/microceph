@@ -12,6 +12,7 @@ Run with pytest:
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -1737,6 +1738,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
     h = H()
     monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
+    monkeypatch.setattr(h, "_snapd_channel", lambda: "latest/edge")
     events = []
 
     def fake_run_in_vm(cmd, timeout=300, quiet=False):
@@ -1763,7 +1765,9 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     )
     monkeypatch.setattr(
         h, "run_in_container_with_snap_retry",
-        lambda container, cmd, timeout=300, shell="sh": events.append(("ct-snap-retry", container, cmd, timeout)),
+        lambda container, cmd, timeout=300, shell="sh": (
+            events.append(("ct-snap-retry", container, cmd, timeout)) or _Res(0, "", "")
+        ),
     )
     # Stubbed below apt_update / apt_install, so call-site tests see the exact apt-get
     # string those methods build (flags included) and the target they aim it at.
@@ -2224,6 +2228,46 @@ def test_store_install_is_split_so_only_the_snap_install_is_retried(monkeypatch)
 
 
 # ---------------------------------------------------------------------------
+# join_worker_nodes_to_cluster
+# ---------------------------------------------------------------------------
+
+def test_join_worker_nodes_to_cluster_honours_worker_count(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    added = []
+    joined = []
+    waited = []
+
+    monkeypatch.setattr(harness, "_network_cidr", lambda _mode: "10.0.0./24")
+
+    def fake_exec(container, *argv, timeout):
+        added.append((container, argv))
+        return _Res(0, f"token-{argv[-1]}", "")
+
+    def fake_run(container, cmd, timeout):
+        joined.append((container, cmd))
+        return _Res(0, "", "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(harness, "run_in_container", fake_run)
+    monkeypatch.setattr(
+        harness,
+        "run_in_container_unchecked",
+        lambda *_args, **_kwargs: _Res(0, "1\n", ""),
+    )
+    monkeypatch.setattr(
+        harness, "wait_for_n_nodes_in_cluster", lambda count: waited.append(count)
+    )
+
+    harness.join_worker_nodes_to_cluster("public", worker_count="2")
+
+    assert [call[1][-1] for call in added] == ["node-wrk1", "node-wrk2"]
+    join_calls = [call for call in joined if "microceph cluster join" in call[1]]
+    assert [call[0] for call in join_calls] == ["node-wrk1", "node-wrk2"]
+    assert waited == [3]
+
+
+# ---------------------------------------------------------------------------
 # wait_for_legacy_cephx_compatibility
 # ---------------------------------------------------------------------------
 
@@ -2272,6 +2316,70 @@ def test_wait_for_smb_service_polls_the_outer_vm_by_default(monkeypatch):
     harness.wait_for_smb_service(tries=1, interval=0)
 
     assert calls == [("snap services microceph.smbd", 15, True)]
+
+
+def test_wait_for_ctdb_service_polls_inside_a_container(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return _Res(0, "Service                 Startup   Current   Notes\nmicroceph.ctdbd         enabled   active    -\n", "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_ctdb_service(tries=1, interval=0, node="node-wrk1")
+
+    assert calls == [
+        ("node-wrk1", ("snap", "services", "microceph.ctdbd"), 15, True)
+    ]
+
+
+def test_wait_for_ctdb_nodes_service_polls_inside_a_container(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return _Res(0, "Service                    Startup   Current   Notes\nmicroceph.ctdb-nodes     enabled   active    -\n", "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_ctdb_nodes_service(tries=1, interval=0, node="node-wrk1")
+
+    assert calls == [
+        ("node-wrk1", ("snap", "services", "microceph.ctdb-nodes"), 15, True)
+    ]
+
+
+def test_wait_for_ctdb_healthy_nodes_accepts_degraded_cluster(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    outputs = iter(
+        [
+            _Res(0, "Number of nodes:2\npnn:0 10.0.0.1 OK\npnn:1 10.0.0.2 OK\n", ""),
+            _Res(0, "Number of nodes:2\npnn:0 10.0.0.1 DISCONNECTED\npnn:1 10.0.0.2 OK\n", ""),
+        ]
+    )
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return next(outputs)
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_ctdb_healthy_nodes(2, 1, tries=2, interval=0, node="node-wrk2")
+
+    assert calls == [
+        ("node-wrk2", ("microceph.ctdb", "status"), 15, True),
+        ("node-wrk2", ("microceph.ctdb", "status"), 15, True),
+    ]
 
 
 def test_wait_for_smb_service_polls_inside_a_container_when_node_given(monkeypatch):
@@ -2595,8 +2703,8 @@ def test_ci_runs_smb_on_edge_and_keeps_a_stable_snapd_gate():
     assert "snap install snapd" not in smb_suite
 
 
-def test_multinode_smb_suite_places_two_clusters_on_disjoint_hosts():
-    """CI proves multi-cluster SMB: one-host + two-host clusters, per-host cap."""
+def test_multinode_smb_suite_covers_mixed_topology_and_member_failover():
+    """CI proves mixed-cluster placement, member loss, recovery, and isolation."""
     repo_root = Path(__file__).parents[3]
     multinode_suite = (
         repo_root
@@ -2609,10 +2717,29 @@ def test_multinode_smb_suite_places_two_clusters_on_disjoint_hosts():
     assert "smb cluster create ${SMB_SINGLE_CLUSTER}" in multinode_suite
     assert "smb cluster create ${SMB_DUAL_CLUSTER}" in multinode_suite
     assert '--placement "2 node-wrk1 node-wrk2"' in multinode_suite
+    assert "--clustering never" not in multinode_suite
+    assert "Wait For CTDB Service" in multinode_suite
+    assert "Wait For CTDB Healthy Nodes    2    1" in multinode_suite
+    assert "lxc stop node-wrk1 --force" in multinode_suite
+    assert "lxc start node-wrk1" in multinode_suite
+    assert "${SMB_SINGLE_SUBVOLUME}" in multinode_suite
+    assert "${SMB_DUAL_SUBVOLUME}" in multinode_suite
+    assert "smb share rm ${SMB_SINGLE_CLUSTER} ${SMB_SHARE}" in multinode_suite
+    assert "smb share rm ${SMB_DUAL_CLUSTER} ${SMB_SHARE}" in multinode_suite
+    assert multinode_suite.index("smb share rm ${SMB_SINGLE_CLUSTER}") < (
+        multinode_suite.index("smb cluster rm ${SMB_SINGLE_CLUSTER}")
+    )
+    assert "Join Worker Nodes To Cluster    public    2" in multinode_suite
+    assert multinode_suite.index("fs volume create") < multinode_suite.index(
+        "orch set backend microceph"
+    )
     # smbd state is polled per container, not on the outer VM.
     assert "node=node-wrk" in multinode_suite
     # the per-host rejection is integration-tested with the adapter's message.
     assert "at most one SMB cluster" in multinode_suite
+    assert "smb-dual-after-single-removal" in multinode_suite
+    test_cases = multinode_suite.split("*** Test Cases ***", 1)[1]
+    assert test_cases.count("\nTest ") == 1
     assert "snap install snapd" not in multinode_suite
 
 
@@ -2623,12 +2750,15 @@ def test_smb_manifest_uses_direct_ceph_new_and_scoped_identity_switching():
 
     assert "assumes:\n  - snapd2.78\n" in snapcraft
     assert "  smb-identity:\n    interface: microceph-support\n    user-identity-switching: true\n" in snapcraft
+    assert "  ctdb-run:\n    interface: system-files\n    write:\n      - /run/ctdb\n" in snapcraft
     assert "  smbd:\n" in snapcraft
     smbd_app = snapcraft.split("  smbd:\n", 1)[1].split("  osd:\n", 1)[0]
-    assert "    after:\n      - daemon\n    plugs:\n      - smb-identity\n" in smbd_app
+    assert "    after:\n      - daemon\n      - ctdbd\n" in smbd_app
+    assert "    plugs:\n      - smb-identity\n" in smbd_app
     assert "      - process-control\n" not in smbd_app
     assert "  samba:\n" in snapcraft
     assert "      - samba-vfs-ceph\n" in snapcraft
+    assert "      - ctdb\n" in snapcraft
     assert "      - python3-samba\n" in snapcraft
     assert "      - libnss-wrapper\n" in snapcraft
     assert "      - libpopt0\n" in snapcraft
@@ -2638,30 +2768,119 @@ def test_smb_manifest_uses_direct_ceph_new_and_scoped_identity_switching():
     assert "$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba" in snapcraft
     for target in (
         "/etc/samba:",
+        "/etc/ctdb:",
         "/usr/libexec/samba:",
+        "/usr/libexec/ctdb:",
+        "/usr/share/ctdb:",
         "/var/cache/samba:",
         "/var/lib/samba:",
+        "/var/lib/ctdb:",
         "/var/log/samba:",
     ):
         assert target in snapcraft
     assert "/run/samba:" not in snapcraft
 
     wrapper = (repo_root / "snapcraft" / "commands" / "smbd.start").read_text()
-    assert 'for path in "${SNAP}"/lib/*/libnss_wrapper.so; do' in wrapper
-    assert 'export LD_PRELOAD="${nss_wrapper}"' in wrapper
-    assert "CRAFT_ARCH_TRIPLET_BUILD_FOR" not in wrapper
-    assert 'export NSS_WRAPPER_PASSWD="${SNAP_DATA}/samba/passwd"' in wrapper
-    assert 'export NSS_WRAPPER_GROUP="${SNAP_DATA}/samba/group"' in wrapper
-    assert 'cluster_id="$(cat "${identity_dir}/cluster-id")"' in wrapper
+    runtime = (repo_root / "snapcraft" / "commands" / "smb-common").read_text()
+    assert 'for path in "${SNAP}"/lib/*/libnss_wrapper.so; do' in runtime
+    assert 'export LD_PRELOAD="${nss_wrapper}"' in runtime
+    assert "CRAFT_ARCH_TRIPLET_BUILD_FOR" not in runtime
+    assert 'export NSS_WRAPPER_PASSWD="${smb_identity_dir}/passwd"' in runtime
+    assert 'export NSS_WRAPPER_GROUP="${smb_identity_dir}/group"' in runtime
+    assert 'smb_cluster_id="$(cat "${smb_cluster_id_path}")"' in runtime
     assert '"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start"' in wrapper
     assert 'import-users' in wrapper
-    assert 'config="${SNAP_DATA}/conf/samba/smb.conf"' in wrapper
+    assert 'smb_config="${SNAP_DATA}/conf/samba/smb.conf"' in runtime
     assert "\nlimits\n" not in wrapper
-    assert '--samba-command-prefix "${SNAP}/commands/samba-command"' in wrapper
-    assert 'exec smbd --foreground --no-process-group --configfile="${config}" \\\n    --option="lock directory=/var/lib/samba/lock" \\\n    --option="pid directory=/var/lib/samba/run" \\\n    --option="ncalrpc dir=/var/lib/samba/ncalrpc" \\\n    --option="winbindd socket directory=/var/lib/samba/winbindd"' in wrapper
+    assert '--samba-command-prefix "${SNAP}/commands/samba-command"' in runtime
+    assert 'exec smbd --foreground --no-process-group --configfile="${smb_config}" \\\n    --option="lock directory=/var/lib/samba/lock" \\\n    --option="pid directory=/var/lib/samba/run" \\\n    --option="ncalrpc dir=/var/lib/samba/ncalrpc" \\\n    --option="winbindd socket directory=/var/lib/samba/winbindd"' in wrapper
     assert 'head -c 4 "${path}"' in snapcraft
     assert "printf '\\177ELF'" in snapcraft
     assert 'strip -s "${path}"' in snapcraft
+
+
+def test_smb_manifest_runs_ctdb_services_before_clustered_smbd():
+    repo_root = Path(__file__).parents[3]
+    snapcraft = (repo_root / "snap" / "snapcraft.yaml").read_text()
+
+    assert "  ctdbd:\n" in snapcraft
+    assert "  ctdb-nodes:\n" in snapcraft
+    assert "  ctdb:\n" in snapcraft
+    ctdbd_app = snapcraft.split("  ctdbd:\n", 1)[1].split("  ctdb-nodes:\n", 1)[0]
+    nodes_app = snapcraft.split("  ctdb-nodes:\n", 1)[1].split("  ctdb:\n", 1)[0]
+    assert "    command: commands/ctdbd.start\n" in ctdbd_app
+    assert "    daemon: simple\n" in ctdbd_app
+    assert "      - smb-identity\n" in ctdbd_app
+    assert "      - ctdb-run\n" in ctdbd_app
+    assert "    command: commands/ctdb-nodes.start\n" in nodes_app
+    assert "      - ctdbd\n" in nodes_app
+    assert "      - ctdb-run\n" in nodes_app
+    assert "    command: commands/ctdb\n" in snapcraft
+
+    runtime = (repo_root / "snapcraft" / "commands" / "smb-common").read_text()
+    assert 'export CTDB_SOCKET="/run/ctdb/ctdbd.socket"' in runtime
+    assert 'export SAMBA_SPECIFICS="daemon_cli_debug_output"' in runtime
+
+    ctdbd = (repo_root / "snapcraft" / "commands" / "ctdbd.start").read_text()
+    assert "ctdb-set-node" in ctdbd
+    assert "ctdb-list-nodes" in ctdbd
+    assert "ctdb-must-have-node" not in ctdbd
+    assert "ctdb-migrate" not in ctdbd
+    assert "--setup=ctdb_config" in ctdbd
+    assert "--setup=ctdb_etc" in ctdbd
+    assert "etc/ctdb/functions: usr/share/ctdb/functions" in snapcraft
+    assert "etc/ctdb/notify.sh: usr/share/ctdb/notify.sh" in snapcraft
+
+    monitor = (repo_root / "snapcraft" / "commands" / "ctdb-nodes.start").read_text()
+    assert '"${SNAP}/commands/samba-command" ctdb pnn' in monitor
+    assert "ctdb_ready.py" in monitor
+    assert "ctdb-monitor-nodes" in monitor
+    assert "--reload=all" in monitor
+    assert "ctdb-manage-nodes" not in monitor
+
+    smbd = (repo_root / "snapcraft" / "commands" / "smbd.start").read_text()
+    assert "--setup=smb_ctdb" in smbd
+    assert "--wait-for=ctdb" in smbd
+
+
+def test_samba_command_does_not_inject_samba_options_into_ctdb(tmp_path):
+    repo_root = Path(__file__).parents[3]
+    command = repo_root / "snapcraft" / "commands" / "samba-command"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    target = bindir / "ctdb"
+    target.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+    target.chmod(0o755)
+
+    result = subprocess.run(
+        [command, "ctdb", "status"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "SNAP": str(tmp_path)},
+    )
+
+    assert result.stdout.splitlines() == ["status"]
+
+
+def test_ctdb_ready_marks_only_the_local_node_ready():
+    repo_root = Path(__file__).parents[3]
+    script = repo_root / "snapcraft" / "commands" / "ctdb_ready.py"
+    namespace = {"__name__": "ctdb_ready_test"}
+    exec(script.read_text(), namespace)
+    data = {
+        "nodes": [
+            {"identity": "smb.files.node-a", "pnn": 0, "state": "ready"},
+            {"identity": "smb.files.node-b", "pnn": 1, "state": "new"},
+        ]
+    }
+
+    updated = namespace["mark_ready"](data, "smb.files.node-b", 1)
+
+    assert updated["nodes"] == [
+        {"identity": "smb.files.node-a", "pnn": 0, "state": "ready"},
+        {"identity": "smb.files.node-b", "pnn": 1, "state": "ready"},
+    ]
 
 
 def test_sambacc_runtime_overrides_registry_incompatible_paths():

@@ -1185,14 +1185,10 @@ class microceph_harness:
     # Snap-service pollers
     # -----------------------------------------------------------------------
 
-    def wait_for_smb_service(self, startup="enabled", current="active", tries=30, interval=2, node=""):
-        """Polls until microceph.smbd reaches the requested snap service state.
-
-        Pass node= (e.g. node-wrk0) to poll inside that LXD container; omit to
-        poll the outer VM itself (single-node suites).
-        """
+    def _wait_for_snap_service(self, service, startup, current, tries, interval, node):
+        """Polls until a MicroCeph snap service reaches the requested state."""
         logger.console(
-            f"[smb] Waiting for microceph.smbd to be {startup}/{current}"
+            f"[service] Waiting for {service} to be {startup}/{current}"
             + (f" on {node}" if node else "")
             + "..."
         )
@@ -1201,15 +1197,15 @@ class microceph_harness:
         def predicate():
             if node:
                 result = self.exec_in_container(
-                    node, "snap", "services", "microceph.smbd", timeout=15, quiet=True
+                    node, "snap", "services", service, timeout=15, quiet=True
                 )
             else:
                 result = self.run_in_vm(
-                    "snap services microceph.smbd", 15, quiet=True
+                    f"snap services {service}", 15, quiet=True
                 )
             last_output[0] = result.stdout
             return result.rc == 0 and service_has_state(
-                result.stdout, "microceph.smbd", startup, current
+                result.stdout, service, startup, current
             )
 
         self._poll_until(
@@ -1217,8 +1213,58 @@ class microceph_harness:
             attempts=int(tries),
             interval=interval,
             fail_msg=lambda: (
-                "microceph.smbd did not reach "
+                f"{service} did not reach "
                 f"{startup}/{current}; last output:\n{last_output[0]}"
+            ),
+        )
+
+    def wait_for_smb_service(self, startup="enabled", current="active", tries=30, interval=2, node=""):
+        """Polls until microceph.smbd reaches the requested snap service state."""
+        self._wait_for_snap_service(
+            "microceph.smbd", startup, current, tries, interval, node
+        )
+
+    def wait_for_ctdb_service(self, startup="enabled", current="active", tries=30, interval=2, node=""):
+        """Polls until microceph.ctdbd reaches the requested snap service state."""
+        self._wait_for_snap_service(
+            "microceph.ctdbd", startup, current, tries, interval, node
+        )
+
+    def wait_for_ctdb_nodes_service(self, startup="enabled", current="active", tries=30, interval=2, node=""):
+        """Polls until microceph.ctdb-nodes reaches the requested snap service state."""
+        self._wait_for_snap_service(
+            "microceph.ctdb-nodes", startup, current, tries, interval, node
+        )
+
+    def wait_for_ctdb_healthy_nodes(
+        self, total, healthy, tries=60, interval=2, node="node-wrk0"
+    ):
+        """Polls until CTDB reports the expected total and healthy node counts."""
+        total = int(total)
+        healthy = int(healthy)
+        last_output = [""]
+
+        def predicate():
+            result = self.exec_in_container(
+                node, "microceph.ctdb", "status", timeout=15, quiet=True
+            )
+            last_output[0] = result.stdout + result.stderr
+            healthy_nodes = re.findall(
+                r"^pnn:\d+ .*\bOK\b", result.stdout, re.MULTILINE
+            )
+            return (
+                result.rc == 0
+                and f"Number of nodes:{total}" in result.stdout
+                and len(healthy_nodes) == healthy
+            )
+
+        self._poll_until(
+            predicate,
+            attempts=int(tries),
+            interval=interval,
+            fail_msg=lambda: (
+                f"CTDB did not report {healthy}/{total} healthy nodes on {node}; "
+                f"last output:\n{last_output[0]}"
             ),
         )
 
@@ -2111,14 +2157,15 @@ class microceph_harness:
         self.run_in_container(head, "microceph status", 30)
         return [public_networks, mon_ip]
 
-    def join_worker_nodes_to_cluster(self, network_mode="public"):
-        """Joins node-wrk1..3 to the cluster."""
+    def join_worker_nodes_to_cluster(self, network_mode="public", worker_count=3):
+        """Joins the requested number of worker nodes to the cluster."""
+        worker_count = int(worker_count)
         logger.console(f"[cluster] Joining worker nodes to cluster ({network_mode})...")
         head = HEAD_NODE
         nw = self._network_cidr(network_mode)
         gw, mask = nw.split("/")
         mon_ips = [f"{gw}0"]
-        for i in range(1, len(NODES)):
+        for i in range(1, worker_count + 1):
             node = NODES[i]
             logger.console(f"[cluster] Joining {node}...")
             tok = self.exec_in_container(head, "microceph", "cluster", "add", node, timeout=60).stdout.strip()
@@ -2154,7 +2201,7 @@ class microceph_harness:
                         f"public_network = {nw} not exactly-once in {node} ceph.conf (mirrors verify_bootstrap_configs)"
                     )
                 mon_ips.append(f"{gw}{i}")
-        self.wait_for_n_nodes_in_cluster(len(NODES))
+        self.wait_for_n_nodes_in_cluster(worker_count + 1)
         self.run_in_container(head, "microceph status", 30)
         self.run_in_container(head, "microceph.ceph -s", 30)
 

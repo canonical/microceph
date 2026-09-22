@@ -1,7 +1,8 @@
 *** Settings ***
 Documentation    smb-test
-...    Verifies strict-confinement native SMB using upstream mgr/smb resources,
-...    direct samba-vfs ceph_new CephFS access, user authentication, and lifecycle.
+...    Verifies the complete strict-confinement native SMB lifecycle on one node:
+...    placement, direct samba-vfs ceph_new access, authentication, validation,
+...    share removal, service shutdown, and local-state cleanup.
 Resource        ../resources/microceph_harness.resource
 Suite Setup     SMB Tests Suite Setup
 Suite Teardown  Teardown MicroCeph Environment
@@ -40,52 +41,47 @@ SMB Tests Suite Setup
     Run In VM And Check    sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq    120
     Run In VM And Check    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y smbclient    300
 
-Create Native SMB Cluster
+Create Native SMB Cluster And Share
     Run In VM And Check    sudo microceph.ceph smb cluster create ${SMB_CLUSTER} user --define-user-pass '${SMB_USERNAME}%${SMB_PASSWORD}' --placement "1 $(hostname)"    120
     Run In VM And Check    echo cmVzb3VyY2VfdHlwZTogY2VwaC5zbWIuc2hhcmUKY2x1c3Rlcl9pZDogc21idGVzdApzaGFyZV9pZDogY2VwaGZzCmNlcGhmczoKICB2b2x1bWU6IHNtYmZzCiAgc3Vidm9sdW1lOiBzbWJzaGFyZQogIHByb3ZpZGVyOiBzYW1iYS12ZnMvbmV3Cg== | base64 --decode | sudo microceph.ceph smb apply -i -    120
     Wait For SMB Service    enabled    active
 
-Remove SMB Cluster
-    Run In VM And Check    sudo microceph.ceph smb cluster rm ${SMB_CLUSTER}    120
-    Wait For SMB Service    disabled    inactive
-
-*** Test Cases ***
-Test Native SMB Placement And Direct Ceph Configuration
-    [Documentation]    Creates one non-clustered mgr/smb resource and proves it is placed as microceph.smbd.
-    Create Native SMB Cluster
+Verify Native SMB Placement And Direct Configuration
     Run In VM And Check    sudo microceph.ceph orch ls --service_type smb | grep -F 'smb.${SMB_CLUSTER}'    30
     Run In VM And Check    test -f /var/snap/microceph/current/samba/container.json    30
     Run In VM And Check    grep -E '"vfs objects": ".*ceph_new' /var/snap/microceph/current/samba/container.json    30
     Run In VM And Check    grep -F '"ceph_new:proxy": "no"' /var/snap/microceph/current/samba/container.json    30
     Run In VM Must Fail    grep -F '"ceph_new:proxy": "yes"' /var/snap/microceph/current/samba/container.json    30
 
-Test Native SMB CephFS Share And User Authentication
-    [Documentation]    Serves CephFS over direct ceph_new and reads/writes it with the configured SMB user.
+Verify Native SMB Authentication And IO
     Run In VM And Check    smbclient //127.0.0.1/${SMB_SHARE} -U '${SMB_USERNAME}%${SMB_PASSWORD}' -c 'ls'    60
     Run In VM And Check    printf 'native SMB CephFS test\n' > /tmp/smb-e2e-source    30
     Run In VM And Check    smbclient //127.0.0.1/${SMB_SHARE} -U '${SMB_USERNAME}%${SMB_PASSWORD}' -c 'put /tmp/smb-e2e-source smb-e2e-file; get smb-e2e-file /tmp/smb-e2e-result'    60
     Run In VM And Check    cmp /tmp/smb-e2e-source /tmp/smb-e2e-result    30
 
-Test Native SMB Rejects Clustered Configuration
-    [Documentation]    A direct clustered SMBSpec must fail before it can affect mgr/smb resources.
-    ${result}=    Run In VM    echo c2VydmljZV90eXBlOiBzbWIKc2VydmljZV9pZDogc21iLWN0ZGIKY2x1c3Rlcl9pZDogc21iLWN0ZGIKY29uZmlnX3VyaTogcmFkb3M6Ly8uc21iL3NtYi1jdGRiL2NvbmZpZy5zbWIKZmVhdHVyZXM6CiAgLSBjbHVzdGVyZWQKcGxhY2VtZW50OgogIGhvc3RzOgogIC0gbWljcm9jZXBoLXNtYi12bQogIGNvdW50OiAxCg== | base64 --decode | sudo microceph.ceph orch apply -i -    120
-    Should Not Be Equal As Integers    ${result.rc}    0    msg=Clustered SMBSpec unexpectedly succeeded
-    ${error}=    Catenate    SEPARATOR=\n    ${result.stdout}    ${result.stderr}
-    Should Contain    ${error}    native SMB does not support SMB features
+Verify Unsupported And Overlapping Placements Are Rejected
+    ${proxy_result}=    Run In VM    echo c2VydmljZV90eXBlOiBzbWIKc2VydmljZV9pZDogc21iLXByb3h5CmNsdXN0ZXJfaWQ6IHNtYi1wcm94eQpjb25maWdfdXJpOiByYWRvczovLy5zbWIvc21iLXByb3h5L2NvbmZpZy5zbWIKZmVhdHVyZXM6CiAgLSBjZXBoZnMtcHJveHkKcGxhY2VtZW50OgogIGhvc3RzOgogIC0gbWljcm9jZXBoLXNtYi12bQogIGNvdW50OiAxCg== | base64 --decode | sudo microceph.ceph orch apply -i -    120
+    Should Not Be Equal As Integers    ${proxy_result.rc}    0    msg=Proxied SMBSpec unexpectedly succeeded
+    ${proxy_error}=    Catenate    SEPARATOR=\n    ${proxy_result.stdout}    ${proxy_result.stderr}
+    Should Contain    ${proxy_error}    native SMB does not support SMB features
+    ${overlap_result}=    Run In VM    echo c2VydmljZV90eXBlOiBzbWIKc2VydmljZV9pZDogc21iLXNlY29uZApjbHVzdGVyX2lkOiBzbWItc2Vjb25kCmNvbmZpZ191cmk6IHJhZG9zOi8vLnNtYi9zbWItc2Vjb25kL2NvbmZpZy5zbWIKcGxhY2VtZW50OgogIGhvc3RzOgogIC0gbWljcm9jZXBoLXNtYi12bQogIGNvdW50OiAxCg== | base64 --decode | sudo microceph.ceph orch apply -i -    120
+    Should Not Be Equal As Integers    ${overlap_result.rc}    0    msg=Second native SMB cluster on an occupied host unexpectedly succeeded
+    ${overlap_error}=    Catenate    SEPARATOR=\n    ${overlap_result.stdout}    ${overlap_result.stderr}
+    Should Contain    ${overlap_error}    at most one SMB cluster
 
-Test Native SMB Rejects A Second Cluster On An Occupied Host
-    [Documentation]    Multiple native SMB clusters are allowed only on disjoint hosts.
-    ...    The single node already serves cluster smbtest, so a second cluster
-    ...    targeting the same host is rejected by the per-host invariant.
-    ${result}=    Run In VM    echo c2VydmljZV90eXBlOiBzbWIKc2VydmljZV9pZDogc21iLXNlY29uZApjbHVzdGVyX2lkOiBzbWItc2Vjb25kCmNvbmZpZ191cmk6IHJhZG9zOi8vLnNtYi9zbWItc2Vjb25kL2NvbmZpZy5zbWIKcGxhY2VtZW50OgogIGhvc3RzOgogIC0gbWljcm9jZXBoLXNtYi12bQogIGNvdW50OiAxCg== | base64 --decode | sudo microceph.ceph orch apply -i -    120
-    Should Not Be Equal As Integers    ${result.rc}    0    msg=Second native SMB cluster on an occupied host unexpectedly succeeded
-    ${error}=    Catenate    SEPARATOR=\n    ${result.stdout}    ${result.stderr}
-    Should Contain    ${error}    at most one SMB cluster
-
-Test Native SMB Share And Service Lifecycle
-    [Documentation]    Removing the share restarts smbd; removing the cluster stops it and clears local inputs.
+Verify Native SMB Share And Cluster Removal
     Run In VM And Check    sudo microceph.ceph smb share rm ${SMB_CLUSTER} ${SMB_SHARE}    120
     Wait For SMB Service    enabled    active
     Run In VM Must Fail    timeout 30s smbclient //127.0.0.1/${SMB_SHARE} -U '${SMB_USERNAME}%${SMB_PASSWORD}' -c 'ls'    45
-    Remove SMB Cluster
+    Run In VM And Check    sudo microceph.ceph smb cluster rm ${SMB_CLUSTER}    120
+    Wait For SMB Service    disabled    inactive
     Run In VM And Check    test ! -e /var/snap/microceph/current/samba/container.json    30
+
+*** Test Cases ***
+Test Complete Native SMB Single Node Scenario
+    [Documentation]    Exercises the complete supported single-node SMB lifecycle as one independent scenario.
+    Create Native SMB Cluster And Share
+    Verify Native SMB Placement And Direct Configuration
+    Verify Native SMB Authentication And IO
+    Verify Unsupported And Overlapping Placements Are Rejected
+    Verify Native SMB Share And Cluster Removal
