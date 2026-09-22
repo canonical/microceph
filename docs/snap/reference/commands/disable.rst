@@ -16,6 +16,7 @@ Available Commands:
 .. code-block:: none
 
    nfs         Disable the NFS Ganesha service on the --target server (default: this server)
+   smb         Disable a managed SMB service instance on the --target server (default: this server)
    rgw         Disable the RGW service on this node
 
 Global flags:
@@ -47,3 +48,24 @@ Flags:
 
    --cluster-id string   NFS Cluster ID (must match regex: '^[\w][\w.-]{1,61}[\w]$')
    --target string       Server hostname (default: this server)
+
+
+``smb``
+-------
+
+Disables a managed SMB service instance on the --target server (default: this server).
+
+Usage:
+
+.. code-block:: none
+
+   microceph disable smb --cluster-id <cluster-id> [--target <server>] [flags]
+
+Flags:
+
+.. code-block:: none
+
+   --cluster-id string   SMB Cluster ID (must match regex: '^[\w][\w.-]{1,61}[\w]$')
+   --target string       Server hostname (default: this server)
+
+See :ref:`smb-reference` for member removal and final-cluster cleanup semantics.
