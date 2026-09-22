@@ -21,6 +21,7 @@ satisfied by manual means. In addition to the above-listed services, the
 following service can be added manually to a node:
 
 * NFS
+* SMB
 * RGW (:external+upstream-ceph:doc:`RADOS Gateway service <radosgw/index>`)
 * cephfs-mirror
 
@@ -33,8 +34,8 @@ The syntax is:
 
    sudo microceph enable <service> --target <destination> ...
 
-Where the service value is one of 'mon', 'mds', 'mgr', 'nfs-<cluster-id>' and
-'rgw'. The destination is a node name as discerned by the output of the
+Where the service value is one of ``mon``, ``mds``, ``mgr``, ``nfs``, ``smb``,
+``rgw``, ``rbd-mirror``, or ``cephfs-mirror``. The destination is a node name as discerned by the output of the
 :command:`status` command:
 
 .. code-block:: none
@@ -96,6 +97,13 @@ Finally, view cluster status again and verify expected changes:
    - workbook (192.168.29.152)
      Services: mds, mgr, mon
      Disks: 0
+
+Enable an SMB service
+---------------------
+
+SMB instances sharing a cluster ID are reconciled as one managed SMB cluster.
+A multi-member cluster uses CTDB. See :ref:`deploy-smb-gateway` for the complete
+three-node procedure and :ref:`smb-reference` for command options.
 
 Enable an NFS service
 ---------------------
