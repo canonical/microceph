@@ -2703,8 +2703,8 @@ def test_ci_runs_smb_on_edge_and_keeps_a_stable_snapd_gate():
     assert "snap install snapd" not in smb_suite
 
 
-def test_multinode_smb_suite_covers_mixed_topology_and_member_failover():
-    """CI proves mixed-cluster placement, member loss, recovery, and isolation."""
+def test_multinode_smb_suite_covers_three_instance_failover():
+    """CI proves managed three-instance placement, member loss, and recovery."""
     repo_root = Path(__file__).parents[3]
     multinode_suite = (
         repo_root
@@ -2714,30 +2714,25 @@ def test_multinode_smb_suite_covers_mixed_topology_and_member_failover():
         / "smb_multinode_tests.robot"
     ).read_text()
 
-    assert "smb cluster create ${SMB_SINGLE_CLUSTER}" in multinode_suite
-    assert "smb cluster create ${SMB_DUAL_CLUSTER}" in multinode_suite
-    assert '--placement "2 node-wrk1 node-wrk2"' in multinode_suite
-    assert "--clustering never" not in multinode_suite
+    for node in ("node-wrk0", "node-wrk1", "node-wrk2"):
+        assert (
+            f"microceph enable smb --cluster-id ${{SMB_CLUSTER}} --target {node}"
+            in multinode_suite
+        )
     assert "Wait For CTDB Service" in multinode_suite
-    assert "Wait For CTDB Healthy Nodes    2    1" in multinode_suite
+    assert "Wait For CTDB Healthy Nodes    3    2" in multinode_suite
+    assert "Wait For CTDB Healthy Nodes    3    3" in multinode_suite
     assert "lxc stop node-wrk1 --force" in multinode_suite
     assert "lxc start node-wrk1" in multinode_suite
-    assert "${SMB_SINGLE_SUBVOLUME}" in multinode_suite
-    assert "${SMB_DUAL_SUBVOLUME}" in multinode_suite
-    assert "smb share rm ${SMB_SINGLE_CLUSTER} ${SMB_SHARE}" in multinode_suite
-    assert "smb share rm ${SMB_DUAL_CLUSTER} ${SMB_SHARE}" in multinode_suite
-    assert multinode_suite.index("smb share rm ${SMB_SINGLE_CLUSTER}") < (
-        multinode_suite.index("smb cluster rm ${SMB_SINGLE_CLUSTER}")
-    )
+    assert "microceph disable smb --cluster-id ${SMB_CLUSTER}" in multinode_suite
+    assert "smb share rm ${SMB_CLUSTER} ${SMB_SHARE}" in multinode_suite
     assert "Join Worker Nodes To Cluster    public    2" in multinode_suite
     assert multinode_suite.index("fs volume create") < multinode_suite.index(
-        "orch set backend microceph"
+        "microceph enable smb"
     )
     # smbd state is polled per container, not on the outer VM.
     assert "node=node-wrk" in multinode_suite
-    # the per-host rejection is integration-tested with the adapter's message.
-    assert "at most one SMB cluster" in multinode_suite
-    assert "smb-dual-after-single-removal" in multinode_suite
+    assert "smb-after-scale-down" in multinode_suite
     test_cases = multinode_suite.split("*** Test Cases ***", 1)[1]
     assert test_cases.count("\nTest ") == 1
     assert "snap install snapd" not in multinode_suite
