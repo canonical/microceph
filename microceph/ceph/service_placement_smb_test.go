@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/canonical/lxd/shared/api"
+
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
@@ -265,7 +267,19 @@ func TestSMBServicePlacementHospitalityRequiresIdentitySwitching(t *testing.T) {
 	assert.ErrorContains(t, err, "requires the smb-identity interface connection")
 }
 
-func TestResolveSMBCTDBAddressDefaultsToPublicNetwork(t *testing.T) {
+func TestResolveSMBCTDBAddressUsesMicroClusterAddress(t *testing.T) {
+	url := api.NewURL()
+	url.Host("10.10.10.12:7443")
+	state := mocks.NewStateInterface(t)
+	state.On("ClusterState").Return(&mocks.MockState{URL: url}).Once()
+
+	address, err := resolveSMBCTDBAddress(state)
+
+	require.NoError(t, err)
+	assert.Equal(t, "10.10.10.12", address)
+}
+
+func TestResolveSMBBindAddressDefaultsToPublicNetwork(t *testing.T) {
 	originalFetchConfig := fetchConfigDb
 	defer func() {
 		fetchConfigDb = originalFetchConfig
@@ -282,13 +296,13 @@ func TestResolveSMBCTDBAddressDefaultsToPublicNetwork(t *testing.T) {
 	}()
 	common.Network = network
 
-	address, err := resolveSMBCTDBAddress(context.Background(), nil, &SMBServicePlacement{})
+	address, err := resolveSMBBindAddress(context.Background(), nil, &SMBServicePlacement{})
 
 	require.NoError(t, err)
 	assert.Equal(t, "10.0.0.12", address)
 }
 
-func TestResolveSMBCTDBAddressUsesFirstResolvableBind(t *testing.T) {
+func TestResolveSMBBindAddressUsesFirstResolvableBind(t *testing.T) {
 	network := mocks.NewNetworkIntf(t)
 	network.On("FindIpOnSubnet", "198.51.100.0/24").Return("", assert.AnError).Once()
 	network.On("FindNetworkAddress", "192.0.2.12").Return("192.0.2.0/24", nil).Once()
@@ -305,13 +319,13 @@ func TestResolveSMBCTDBAddressUsesFirstResolvableBind(t *testing.T) {
 			{Network: "203.0.113.0/24"},
 		},
 	}
-	address, err := resolveSMBCTDBAddress(context.Background(), nil, placement)
+	address, err := resolveSMBBindAddress(context.Background(), nil, placement)
 
 	require.NoError(t, err)
 	assert.Equal(t, "192.0.2.12", address)
 }
 
-func TestResolveSMBCTDBAddressReportsCandidateFailure(t *testing.T) {
+func TestResolveSMBBindAddressReportsCandidateFailure(t *testing.T) {
 	network := mocks.NewNetworkIntf(t)
 	network.On("FindIpOnSubnet", "198.51.100.0/24").Return("", assert.AnError).Once()
 	network.On("FindNetworkAddress", "not-an-address").Return("", assert.AnError).Once()
@@ -327,7 +341,7 @@ func TestResolveSMBCTDBAddressReportsCandidateFailure(t *testing.T) {
 			{Address: "not-an-address"},
 		},
 	}
-	_, err := resolveSMBCTDBAddress(context.Background(), nil, placement)
+	_, err := resolveSMBBindAddress(context.Background(), nil, placement)
 
 	assert.ErrorContains(t, err, "failed to resolve an SMB bind address")
 }
@@ -351,6 +365,7 @@ func TestSMBServicePlacementClusteredHospitalityRequiresCTDBRun(t *testing.T) {
 func TestSMBServicePlacementServiceInitMaterializesConfigAndStartsSMBD(t *testing.T) {
 	tempDir := t.TempDir()
 	confPath := filepath.Join(tempDir, "conf")
+	mockSMBPublicAddress(t, "192.0.2.0/24", "192.0.2.12")
 
 	originalPaths := constants.GetPathConst
 	defer func() {
@@ -400,12 +415,15 @@ func TestSMBServicePlacementServiceInitMaterializesConfigAndStartsSMBD(t *testin
 	data, err := os.ReadFile(keyringPath)
 	require.NoError(t, err)
 	assert.Equal(t, "[client.smb.fs.cluster.files]\\nkey = key\\n", string(data))
+	baseConfig := readSMBConfigFile(t, filepath.Join(confPath, "samba", "smb.conf"))
+	assert.Contains(t, baseConfig, "bind interfaces only = yes\ninterfaces = 192.0.2.12\n")
 }
 
 func TestSMBServicePlacementFreshInitFailureRemovesLocalState(t *testing.T) {
 	tempDir := t.TempDir()
 	confPath := filepath.Join(tempDir, "conf")
 	runtimePath := filepath.Join(tempDir, "samba")
+	mockSMBPublicAddress(t, "192.0.2.0/24", "192.0.2.12")
 
 	originalPaths := constants.GetPathConst
 	defer func() {
@@ -453,6 +471,7 @@ func TestSMBServicePlacementDirectServiceInitStopsStaleCTDB(t *testing.T) {
 	confPath := filepath.Join(tempDir, "conf")
 	dataPath := filepath.Join(tempDir, "data")
 	runtimePath := filepath.Join(tempDir, "samba")
+	mockSMBPublicAddress(t, "192.0.2.0/24", "192.0.2.12")
 
 	originalPaths := constants.GetPathConst
 	defer func() {
@@ -594,10 +613,17 @@ func TestSMBServicePlacementDirectToClusteredStartsCTDBBeforeRestartingSMBD(t *t
 		},
 	}
 
-	err = placement.ServiceInit(context.Background(), nil)
+	url := api.NewURL()
+	url.Host("10.10.10.12:7443")
+	state := mocks.NewStateInterface(t)
+	state.On("ClusterState").Return(&mocks.MockState{URL: url}).Once()
+
+	err = placement.ServiceInit(context.Background(), state)
 
 	require.NoError(t, err)
-	assert.Equal(t, "10.0.0.12\n", readSMBConfigFile(t, filepath.Join(runtimePath, "ctdb-address")))
+	assert.Equal(t, "10.10.10.12\n", readSMBConfigFile(t, filepath.Join(runtimePath, "ctdb-address")))
+	baseConfig := readSMBConfigFile(t, filepath.Join(confPath, "samba", "smb.conf"))
+	assert.Contains(t, baseConfig, "bind interfaces only = yes\ninterfaces = 10.0.0.12\n")
 	configKeyring, err := os.ReadFile(filepath.Join(confPath, "ceph.client.smb.config.files.keyring"))
 	require.NoError(t, err)
 	assert.Equal(t, "[client.smb.config.files]\\nkey = config\\n", string(configKeyring))
@@ -877,6 +903,22 @@ func TestDisableSMBOnOneMemberKeepsSharedConfigurationIdentity(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NoDirExists(t, runtimePath)
+}
+
+func mockSMBPublicAddress(t *testing.T, network string, address string) {
+	t.Helper()
+	originalFetchConfig := fetchConfigDb
+	originalNetwork := common.Network
+	t.Cleanup(func() {
+		fetchConfigDb = originalFetchConfig
+		common.Network = originalNetwork
+	})
+	fetchConfigDb = func(_ context.Context, _ interfaces.StateInterface) (map[string]string, error) {
+		return map[string]string{"public_network": network}, nil
+	}
+	networkMock := mocks.NewNetworkIntf(t)
+	networkMock.On("FindIpOnSubnet", network).Return(address, nil).Once()
+	common.Network = networkMock
 }
 
 func TestValidateSMBContainerConfigRejectsNonDirectVFS(t *testing.T) {

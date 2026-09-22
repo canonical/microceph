@@ -22,6 +22,10 @@ func (c *cmdDisable) Command() *cobra.Command {
 	disableRGWCmd := cmdDisableRGW{common: c.common}
 	cmd.AddCommand(disableRGWCmd.Command())
 
+	// Disable SMB
+	disableSMBCmd := cmdDisableSMB{common: c.common}
+	cmd.AddCommand(disableSMBCmd.Command())
+
 	// Disable cephfs-mirror
 	disableCephfsMirror := cmdDisableCephFSMirror{common: c.common}
 	cmd.AddCommand(disableCephfsMirror.Command())

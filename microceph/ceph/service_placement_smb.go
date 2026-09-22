@@ -42,6 +42,7 @@ type SMBServicePlacement struct {
 	CustomPorts    map[string]int   `json:"custom_ports"`
 
 	ctdb         *smbCTDBPlacement
+	bindAddress  string
 	upstreamSpec json.RawMessage
 }
 
@@ -141,7 +142,7 @@ func (smb *SMBServicePlacement) upstreamSpecJSON() []byte {
 	return append([]byte(nil), smb.upstreamSpec...)
 }
 
-func resolveSMBCTDBAddress(ctx context.Context, s interfaces.StateInterface, smb *SMBServicePlacement) (string, error) {
+func resolveSMBBindAddress(ctx context.Context, s interfaces.StateInterface, smb *SMBServicePlacement) (string, error) {
 	if len(smb.BindAddrs) > 0 {
 		var lastErr error
 		for _, bind := range smb.BindAddrs {
@@ -175,6 +176,21 @@ func resolveSMBCTDBAddress(ctx context.Context, s interfaces.StateInterface, smb
 	address, err := common.Network.FindIpOnSubnet(publicNetwork)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve an address on public_network %s: %w", publicNetwork, err)
+	}
+	return address, nil
+}
+
+func resolveSMBCTDBAddress(s interfaces.StateInterface) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("MicroCluster address is unavailable")
+	}
+	state := s.ClusterState()
+	if state == nil || state.Address() == nil {
+		return "", fmt.Errorf("MicroCluster address is unavailable")
+	}
+	address := state.Address().Hostname()
+	if address == "" {
+		return "", fmt.Errorf("MicroCluster address is empty")
 	}
 	return address, nil
 }
@@ -217,8 +233,14 @@ func (smb *SMBServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 		return initErr
 	}
 
+	bindAddress, err := resolveSMBBindAddress(ctx, s, smb)
+	if err != nil {
+		return cleanupFreshFailure(err)
+	}
+	smb.bindAddress = bindAddress
+
 	wasClustered := isSMBClusteredLocal()
-	err := materializeSMBConfig(smb)
+	err = materializeSMBConfig(smb)
 	if err != nil {
 		return cleanupFreshFailure(err)
 	}
@@ -239,11 +261,11 @@ func (smb *SMBServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 		}
 	}
 	if smb.isClustered() {
-		address, err := resolveSMBCTDBAddress(ctx, s, smb)
+		address, err := resolveSMBCTDBAddress(s)
 		if err != nil {
 			return cleanupFreshFailure(err)
 		}
-		err = writeSMBCTDBAddress(address, smb)
+		err = writeSMBCTDBAddress(address)
 		if err != nil {
 			return cleanupFreshFailure(err)
 		}
@@ -345,7 +367,7 @@ func currentSMBClusterID() (string, error) {
 	return clusterID, nil
 }
 
-func writeSMBCTDBAddress(address string, smb *SMBServicePlacement) error {
+func writeSMBCTDBAddress(address string) error {
 	paths := constants.GetPathConst()
 	runtimeDir := filepath.Join(filepath.Dir(paths.ConfPath), "samba")
 	err := writeSMBFileAtomic(
@@ -363,12 +385,6 @@ func writeSMBCTDBAddress(address string, smb *SMBServicePlacement) error {
 		return fmt.Errorf("failed to create SMB data directory: %w", err)
 	}
 	config := "[global]\nctdbd socket = /run/ctdb/ctdbd.socket\n"
-	if len(smb.BindAddrs) > 0 {
-		config += fmt.Sprintf(
-			"bind interfaces only = yes\ninterfaces = %s\n",
-			address,
-		)
-	}
 	err = writeSMBFileAtomic(
 		ctdbSMBConfigPath,
 		[]byte(config),
