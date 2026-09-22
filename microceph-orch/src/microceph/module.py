@@ -394,13 +394,32 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
                 "native SMB does not support a service ID distinct from its cluster ID"
             )
 
+        features = set(getattr(spec, "features", []) or [])
+        unsupported_features = sorted(features.difference({"clustered"}))
+        if unsupported_features:
+            names = ", ".join(unsupported_features)
+            raise ValueError(f"native SMB does not support SMB features: {names}")
+        if "clustered" in features:
+            if not getattr(spec, "cluster_meta_uri", None):
+                raise ValueError("clustered native SMB requires cluster metadata")
+            if not getattr(spec, "cluster_lock_uri", None):
+                raise ValueError("clustered native SMB requires a cluster lock")
+
+        custom_ports = dict(getattr(spec, "custom_ports", None) or {})
+        unsupported_ports = sorted(set(custom_ports).difference({"smb", "ctdb"}))
+        if unsupported_ports:
+            names = ", ".join(unsupported_ports)
+            raise ValueError(f"native SMB does not support custom ports: {names}")
+        if "ctdb" in custom_ports and custom_ports["ctdb"] != 4379:
+            raise ValueError("native SMB does not support a custom CTDB port")
+        smb_port = custom_ports.get("smb")
+        if smb_port is not None and not 0 < smb_port < 65536:
+            raise ValueError("native SMB requires a valid custom SMB port")
+
         unsupported_fields = (
-            ("SMB features", getattr(spec, "features", [])),
             ("domain join sources", getattr(spec, "join_sources", [])),
             ("custom DNS", getattr(spec, "custom_dns", [])),
-            ("custom ports", getattr(spec, "custom_ports", None)),
             ("cluster public addresses", getattr(spec, "cluster_public_addrs", [])),
-            ("cluster bind addresses", getattr(spec, "bind_addrs", [])),
             ("remote-control certificates", getattr(spec, "remote_control_ssl_cert", None)),
             ("remote-control keys", getattr(spec, "remote_control_ssl_key", None)),
             ("remote-control CA certificates", getattr(spec, "remote_control_ca_cert", None)),
@@ -424,10 +443,27 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
         if ceph_users.difference({allowed_user}):
             raise ValueError("native SMB does not support additional Ceph users")
 
-    @staticmethod
-    def _smb_payload(spec: SMBSpec) -> Dict[str, Any]:
-        """Return the complete upstream SMBSpec envelope for node-local placement."""
-        return spec.to_json()
+    def _smb_payloads(
+        self, spec: SMBSpec, targets: List[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return each target's upstream spec and optional CTDB node metadata."""
+        desired_spec = spec.to_json()
+        if "clustered" not in (getattr(spec, "features", []) or []):
+            return {target: desired_spec for target in targets}
+
+        ordered_targets = sorted(targets)
+        return {
+            target: {
+                "service_spec": desired_spec,
+                "microceph": {
+                    "ctdb": {
+                        "rank": rank,
+                        "identity": f"smb.{spec.cluster_id}.{target}",
+                    }
+                },
+            }
+            for rank, target in enumerate(ordered_targets)
+        }
 
     @handle_orch_error
     def apply_smb(self, spec: SMBSpec) -> str:
@@ -466,9 +502,9 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             for record in current
             if record['group_id'] == spec.cluster_id
         }
-        payload = self._smb_payload(spec)
-        for target in targets:
-            self.microceph.services.apply_smb(target, payload)
+        payloads = self._smb_payloads(spec, targets)
+        for target in sorted(targets):
+            self.microceph.services.apply_smb(target, payloads[target])
 
         for target in sorted(current_hosts.difference(target_set)):
             self.microceph.services.remove_smb(target, spec.cluster_id)

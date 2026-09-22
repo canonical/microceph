@@ -26,6 +26,10 @@ plugs:
   smb-identity:
     interface: microceph-support
     user-identity-switching: true
+  ctdb-run:
+    interface: system-files
+    write:
+      - /run/ctdb
 
 slots:
   ceph-logs:
@@ -53,6 +57,10 @@ layout:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba
   /usr/libexec/samba:
     symlink: $SNAP/libexec/samba
+  /usr/libexec/ctdb:
+    symlink: $SNAP/libexec/ctdb
+  /usr/share/ctdb:
+    bind: $SNAP/usr/share/ctdb
   /usr/lib/ganesha:
     symlink: $SNAP/lib/ganesha
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/rados-classes:
@@ -63,6 +71,8 @@ layout:
     bind: $SNAP_DATA/conf/ganesha
   /etc/samba:
     bind: $SNAP_DATA/conf/samba
+  /etc/ctdb:
+    bind: $SNAP_COMMON/data/samba/ctdb/etc
   /usr/share/ceph:
     bind: $SNAP/share/ceph
   /var/lib/ceph:
@@ -75,6 +85,8 @@ layout:
     bind: $SNAP_COMMON/data/samba/cache
   /var/lib/samba:
     bind: $SNAP_COMMON/data/samba
+  /var/lib/ctdb:
+    bind: $SNAP_COMMON/data/samba/ctdb
   /var/log/samba:
     bind: $SNAP_COMMON/logs/samba
 
@@ -134,14 +146,42 @@ apps:
       - network
       - network-bind
       - process-control
-  smbd:
-    command: commands/smbd.start
+  ctdbd:
+    command: commands/ctdbd.start
     daemon: simple
     install-mode: disable
     after:
       - daemon
     plugs:
       - smb-identity
+      - ctdb-run
+      - network
+      - network-bind
+  ctdb-nodes:
+    command: commands/ctdb-nodes.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+      - ctdbd
+    plugs:
+      - ctdb-run
+      - network
+  ctdb:
+    command: commands/ctdb
+    plugs:
+      - ctdb-run
+      - network
+  smbd:
+    command: commands/smbd.start
+    daemon: simple
+    install-mode: disable
+    after:
+      - daemon
+      - ctdbd
+    plugs:
+      - smb-identity
+      - ctdb-run
       - network
       - network-bind
   osd:
@@ -516,6 +556,7 @@ parts:
     stage-packages:
       - samba
       - samba-vfs-ceph
+      - ctdb
       - python3-samba
       - libnss-wrapper
       - libpopt0
@@ -526,6 +567,8 @@ parts:
       usr/sbin/: bin/
       usr/lib/: lib/
       usr/libexec/: libexec/
+      etc/ctdb/functions: usr/share/ctdb/functions
+      etc/ctdb/notify.sh: usr/share/ctdb/notify.sh
     prime:
       - -usr/share/doc
       - -usr/share/lintian
@@ -589,6 +632,16 @@ parts:
       - path: commands/samba-command
         mode: "0755"
       - path: commands/sambacc.start
+        mode: "0755"
+      - path: commands/smb-common
+        mode: "0755"
+      - path: commands/ctdb
+        mode: "0755"
+      - path: commands/ctdbd.start
+        mode: "0755"
+      - path: commands/ctdb-nodes.start
+        mode: "0755"
+      - path: commands/ctdb_ready.py
         mode: "0755"
       - path: commands/smbd.start
         mode: "0755"

@@ -1,0 +1,96 @@
+#!/bin/bash
+
+smb_prepare_runtime() {
+    smb_config="${SNAP_DATA}/conf/samba/smb.conf"
+    smb_identity_dir="${SNAP_DATA}/samba"
+    smb_container_config="${smb_identity_dir}/container.json"
+    smb_cluster_id_path="${smb_identity_dir}/cluster-id"
+    smb_data_dir="${SNAP_COMMON}/data/samba"
+
+    mkdir -p \
+        "${smb_data_dir}/cache" \
+        "${smb_data_dir}/lock/ctdb" \
+        "${smb_data_dir}/ncalrpc" \
+        "${smb_data_dir}/private" \
+        "${smb_data_dir}/run" \
+        "${smb_data_dir}/state" \
+        "${smb_data_dir}/winbindd" \
+        "${smb_data_dir}/ctdb/etc" \
+        "${smb_data_dir}/ctdb/persistent" \
+        "${smb_data_dir}/ctdb/run" \
+        "${smb_data_dir}/ctdb/state" \
+        "${smb_data_dir}/ctdb/volatile" \
+        "${SNAP_COMMON}/logs/samba" \
+        "${smb_identity_dir}"
+
+    while [ ! -f "${smb_config}" ] || [ ! -f "${smb_container_config}" ] || [ ! -f "${smb_cluster_id_path}" ]; do
+        echo "Waiting for SMB configuration"
+        sleep 5
+    done
+
+    cp /etc/passwd "${smb_identity_dir}/passwd.tmp"
+    mv "${smb_identity_dir}/passwd.tmp" "${smb_identity_dir}/passwd"
+    cp /etc/group "${smb_identity_dir}/group.tmp"
+    mv "${smb_identity_dir}/group.tmp" "${smb_identity_dir}/group"
+
+    local nss_wrapper=""
+    for path in "${SNAP}"/lib/*/libnss_wrapper.so; do
+        if [ -f "${path}" ]; then
+            nss_wrapper="${path}"
+            break
+        fi
+    done
+    if [ -z "${nss_wrapper}" ]; then
+        echo "Could not find libnss_wrapper.so" >&2
+        exit 1
+    fi
+    export LD_PRELOAD="${nss_wrapper}"
+    export NSS_WRAPPER_PASSWD="${smb_identity_dir}/passwd"
+    export NSS_WRAPPER_GROUP="${smb_identity_dir}/group"
+
+    smb_cluster_id="$(cat "${smb_cluster_id_path}")"
+    smb_sambacc_args=(
+        --identity "${smb_cluster_id}"
+        --config "${smb_container_config}"
+        --etc-passwd-path "${smb_identity_dir}/passwd"
+        --etc-group-path "${smb_identity_dir}/group"
+        --samba-command-prefix "${SNAP}/commands/samba-command"
+        --validate-config=false
+    )
+    smb_config_sources=("${smb_container_config}")
+    for user_config in "${smb_identity_dir}"/users-*.json; do
+        [ -e "${user_config}" ] || continue
+        smb_sambacc_args+=(--config "${user_config}")
+        smb_config_sources+=("${user_config}")
+    done
+}
+
+smb_prepare_ctdb_runtime() {
+    smb_ctdb_config="${smb_identity_dir}/ctdb.json"
+    smb_ctdb_rank_path="${smb_identity_dir}/ctdb-rank"
+    smb_ctdb_identity_path="${smb_identity_dir}/ctdb-identity"
+    smb_ctdb_address_path="${smb_identity_dir}/ctdb-address"
+
+    for path in "${smb_ctdb_config}" "${smb_ctdb_rank_path}" "${smb_ctdb_identity_path}" "${smb_ctdb_address_path}"; do
+        while [ ! -f "${path}" ]; do
+            echo "Waiting for CTDB configuration ${path}"
+            sleep 5
+        done
+    done
+
+    smb_ctdb_rank="$(cat "${smb_ctdb_rank_path}")"
+    smb_ctdb_identity="$(cat "${smb_ctdb_identity_path}")"
+    smb_ctdb_address="$(cat "${smb_ctdb_address_path}")"
+    smb_ctdb_nodes_path="/var/lib/ctdb/persistent/nodes"
+
+    smb_sambacc_args+=(--config "${smb_ctdb_config}")
+    smb_config_sources+=("${smb_ctdb_config}")
+    export SAMBACC_CONFIG
+    SAMBACC_CONFIG="$("${SNAP}/bin/python3" -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "${smb_config_sources[@]}")"
+    export SAMBACC_CTDB="ctdb-is-experimental"
+    export SAMBACC_CEPH_ID="name=client.smb.config.${smb_cluster_id}"
+    export SAMBA_SPECIFICS="daemon_cli_debug_output"
+    export SAMBA_CONTAINER_ID="${smb_cluster_id}"
+    export NODE_NUMBER="${smb_ctdb_rank}"
+    export CTDB_SOCKET="/run/ctdb/ctdbd.socket"
+}
