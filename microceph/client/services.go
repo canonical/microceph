@@ -76,6 +76,32 @@ func SendServicePlacementReq(ctx context.Context, c mcTypes.Client, data *types.
 	return nil
 }
 
+// EnableManagedSMB requests cluster-level SMB reconciliation for a target member.
+func EnableManagedSMB(ctx context.Context, c mcTypes.Client, target string, service *types.ManagedSMBService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*300)
+	defer cancel()
+
+	c = c.UseTarget(target)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("managed-services", "smb").URL, service, nil)
+	if err != nil {
+		return fmt.Errorf("failed enabling managed SMB service: %w", err)
+	}
+	return nil
+}
+
+// DisableManagedSMB requests removal of a target member from a managed SMB cluster.
+func DisableManagedSMB(ctx context.Context, c mcTypes.Client, target string, service *types.SMBService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Second*300)
+	defer cancel()
+
+	c = c.UseTarget(target)
+	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("managed-services", "smb").URL, service, nil)
+	if err != nil {
+		return fmt.Errorf("failed disabling managed SMB service: %w", err)
+	}
+	return nil
+}
+
 // Sends a request to the host to restart the provided service.
 func RestartService(ctx context.Context, c mcTypes.Client, data *types.Services) error {
 	// 120 second timeout for waiting.
