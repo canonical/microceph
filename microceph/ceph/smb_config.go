@@ -74,7 +74,14 @@ func materializeSMBConfig(placement *SMBServicePlacement) error {
 		}
 	}
 
-	err = writeSMBFileAtomic(filepath.Join(configDir, "smb.conf"), []byte(smbBaseConfig), constants.PermissionUserRwWorldRAccess)
+	baseConfig := smbBaseConfig
+	if placement.bindAddress != "" {
+		baseConfig += fmt.Sprintf(
+			"bind interfaces only = yes\ninterfaces = %s\n",
+			placement.bindAddress,
+		)
+	}
+	err = writeSMBFileAtomic(filepath.Join(configDir, "smb.conf"), []byte(baseConfig), constants.PermissionUserRwWorldRAccess)
 	if err != nil {
 		return fmt.Errorf("failed to write SMB base configuration: %w", err)
 	}

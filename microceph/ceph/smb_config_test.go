@@ -235,7 +235,7 @@ func TestMaterializeSMBCTDBConfigReportsTheFailedArtifact(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(runtimeDir, "ctdb-identity"))
 }
 
-func TestWriteSMBCTDBAddressWritesSambaBindInclude(t *testing.T) {
+func TestWriteSMBCTDBAddressWritesPrivateAddressAndSocketInclude(t *testing.T) {
 	tempDir := t.TempDir()
 	confPath := filepath.Join(tempDir, "conf")
 	dataPath := filepath.Join(tempDir, "data")
@@ -249,15 +249,11 @@ func TestWriteSMBCTDBAddressWritesSambaBindInclude(t *testing.T) {
 	}
 	err := os.MkdirAll(filepath.Join(tempDir, "samba"), 0700)
 	require.NoError(t, err)
-	placement := &SMBServicePlacement{
-		BindAddrs: []smbBindAddress{{Network: "10.0.0.0/24"}},
-	}
-
-	err = writeSMBCTDBAddress("10.0.0.12", placement)
+	err = writeSMBCTDBAddress("10.10.10.12")
 
 	require.NoError(t, err)
-	assert.Equal(t, "10.0.0.12\n", readSMBConfigFile(t, filepath.Join(tempDir, "samba", "ctdb-address")))
-	assert.Equal(t, "[global]\nctdbd socket = /run/ctdb/ctdbd.socket\nbind interfaces only = yes\ninterfaces = 10.0.0.12\n", readSMBConfigFile(t, filepath.Join(dataPath, "samba", "smb.ctdb.conf")))
+	assert.Equal(t, "10.10.10.12\n", readSMBConfigFile(t, filepath.Join(tempDir, "samba", "ctdb-address")))
+	assert.Equal(t, "[global]\nctdbd socket = /run/ctdb/ctdbd.socket\n", readSMBConfigFile(t, filepath.Join(dataPath, "samba", "smb.ctdb.conf")))
 }
 
 func TestMaterializeSMBConfigRejectsNonDirectContainerBeforeWriting(t *testing.T) {
