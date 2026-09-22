@@ -70,8 +70,8 @@ Each suite runs sequentially. Peak resource usage per suite (not concurrent):
 Each directory under `tests/robot/` is a suite:
 
 ```
-api-tests                                    nfs-test
-availability-zone-tests                      rbd-replication-test
+api-tests                                    rbd-replication-test
+availability-zone-tests                      rgw-placement-multivm-tests
 cephadm-adopt-test                           rgw-placement-tests
 cephfs-replication-test                      single-system-tests
 cluster-tests                                static-checks
@@ -81,6 +81,7 @@ messenger-v2-tests                           unit-tests
 multi-node-tests                             upgrade-squid-tests
 multi-node-tests-with-custom-microceph-ip    wal-db-tests
 nfs-multinode-test                           wiping-test
+nfs-test
 ```
 
 ## Harness conventions
