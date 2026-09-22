@@ -2,73 +2,34 @@
 set -eu
 
 . "${SNAP}/commands/common"
+. "${SNAP}/commands/smb-common"
 
 wait_for_config
+smb_prepare_runtime
 
-config="${SNAP_DATA}/conf/samba/smb.conf"
-identity_dir="${SNAP_DATA}/samba"
-container_config="${identity_dir}/container.json"
-cluster_id_path="${identity_dir}/cluster-id"
-samba_data_dir="${SNAP_COMMON}/data/samba"
-
-mkdir -p \
-    "${samba_data_dir}/cache" \
-    "${samba_data_dir}/lock" \
-    "${samba_data_dir}/ncalrpc" \
-    "${samba_data_dir}/private" \
-    "${samba_data_dir}/run" \
-    "${samba_data_dir}/state" \
-    "${samba_data_dir}/winbindd" \
-    "${SNAP_COMMON}/logs/samba" \
-    "${identity_dir}"
-
-while [ ! -f "${config}" ] || [ ! -f "${container_config}" ] || [ ! -f "${cluster_id_path}" ]; do
-    echo "Waiting for SMB configuration"
-    sleep 5
-done
-
-cp /etc/passwd "${identity_dir}/passwd.tmp"
-mv "${identity_dir}/passwd.tmp" "${identity_dir}/passwd"
-cp /etc/group "${identity_dir}/group.tmp"
-mv "${identity_dir}/group.tmp" "${identity_dir}/group"
-
-nss_wrapper=""
-for path in "${SNAP}"/lib/*/libnss_wrapper.so; do
-    if [ -f "${path}" ]; then
-        nss_wrapper="${path}"
-        break
-    fi
-done
-if [ -z "${nss_wrapper}" ]; then
-    echo "Could not find libnss_wrapper.so" >&2
-    exit 1
+if [ -f "${smb_identity_dir}/ctdb.json" ]; then
+    smb_prepare_ctdb_runtime
+    while ! "${SNAP}/commands/samba-command" ctdb pnn >/dev/null 2>&1; do
+        echo "Waiting for CTDB"
+        sleep 1
+    done
+    "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" import
+    "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" import-users
+    exec "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" \
+        run \
+        --setup=smb_ctdb \
+        --wait-for=ctdb \
+        smbd
 fi
-export LD_PRELOAD="${nss_wrapper}"
-export NSS_WRAPPER_PASSWD="${SNAP_DATA}/samba/passwd"
-export NSS_WRAPPER_GROUP="${SNAP_DATA}/samba/group"
-
-cluster_id="$(cat "${identity_dir}/cluster-id")"
-sambacc_args=(
-    --identity "${cluster_id}"
-    --config "${container_config}"
-    --etc-passwd-path "${identity_dir}/passwd"
-    --etc-group-path "${identity_dir}/group"
-    --samba-command-prefix "${SNAP}/commands/samba-command"
-    --validate-config=false
-)
-for user_config in "${identity_dir}"/users-*.json; do
-    [ -e "${user_config}" ] || continue
-    sambacc_args+=(--config "${user_config}")
-done
 
 rm -f \
-    "${samba_data_dir}/registry.tdb" \
-    "${samba_data_dir}/private/passdb.tdb" \
-    "${samba_data_dir}/private/registry.tdb"
-"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${sambacc_args[@]}" import
-"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${sambacc_args[@]}" import-users
+    "${smb_data_dir}/registry.tdb" \
+    "${smb_data_dir}/private/passdb.tdb" \
+    "${smb_data_dir}/private/registry.tdb"
+"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" import
+"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" import-users
 
-exec smbd --foreground --no-process-group --configfile="${config}" \
+exec smbd --foreground --no-process-group --configfile="${smb_config}" \
     --option="lock directory=/var/lib/samba/lock" \
     --option="pid directory=/var/lib/samba/run" \
     --option="ncalrpc dir=/var/lib/samba/ncalrpc" \

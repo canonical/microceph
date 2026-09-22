@@ -1,0 +1,29 @@
+#!/bin/bash
+set -eu
+
+. "${SNAP}/commands/common"
+. "${SNAP}/commands/smb-common"
+
+wait_for_config
+smb_prepare_runtime
+smb_prepare_ctdb_runtime
+while ! "${SNAP}/commands/samba-command" ctdb pnn >/dev/null 2>&1; do
+    echo "Waiting for CTDB"
+    sleep 1
+done
+
+smb_ctdb_meta_uri="$("${SNAP}/bin/python3" -c 'import json, sys; print(json.load(open(sys.argv[1]))["ctdb"]["cluster_meta_uri"])' "${smb_ctdb_config}")"
+"${SNAP}/bin/python3" "${SNAP}/commands/ctdb_ready.py" \
+    "${smb_ctdb_meta_uri}" \
+    "${smb_cluster_id}" \
+    "${smb_ctdb_identity}" \
+    "${smb_ctdb_rank}"
+
+exec "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" \
+    --debug \
+    ctdb-monitor-nodes \
+    --hostname="${smb_ctdb_identity}" \
+    --node-number="${smb_ctdb_rank}" \
+    --persistent-path="${smb_ctdb_nodes_path}" \
+    --write-nodes \
+    --reload=all

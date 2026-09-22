@@ -1,0 +1,28 @@
+#!/bin/bash
+set -eu
+
+. "${SNAP}/commands/common"
+. "${SNAP}/commands/smb-common"
+
+wait_for_config
+smb_prepare_runtime
+smb_prepare_ctdb_runtime
+mkdir -p /run/ctdb
+
+"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" \
+    ctdb-set-node \
+    --hostname="${smb_ctdb_identity}" \
+    --node-number="${smb_ctdb_rank}" \
+    --ip="${smb_ctdb_address}" \
+    --persistent-path="${smb_ctdb_nodes_path}"
+
+"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" \
+    ctdb-list-nodes > "${smb_ctdb_nodes_path}.tmp"
+mv "${smb_ctdb_nodes_path}.tmp" "${smb_ctdb_nodes_path}"
+
+exec "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" \
+    run \
+    --setup=smb_ctdb \
+    --setup=ctdb_config \
+    --setup=ctdb_etc \
+    ctdbd

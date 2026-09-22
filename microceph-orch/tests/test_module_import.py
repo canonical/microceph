@@ -114,8 +114,9 @@ def _install_ceph20_stubs(monkeypatch):
             return list(cls.COMMANDS.values())
 
     class HostSpec:
-        def __init__(self, hostname, *_args, **_kwargs):
+        def __init__(self, hostname, addr=None, **_kwargs):
             self.hostname = hostname
+            self.addr = addr
 
     class InventoryFilter:
         pass
@@ -271,16 +272,23 @@ class _SMBServices:
 
 
 class _SMBCluster:
+    def __init__(self, members):
+        self.members = members
+
     def get_cluster_members(self):
         return [
-            {"name": "node-a", "address": "10.0.0.1:7443", "status": "online"},
-            {"name": "node-b", "address": "10.0.0.2:7443", "status": "online"},
+            {
+                "name": name,
+                "address": f"10.0.0.{index}:7443",
+                "status": "online",
+            }
+            for index, name in enumerate(self.members, start=1)
         ]
 
 
 class _SMBClient:
-    def __init__(self, records):
-        self.cluster = _SMBCluster()
+    def __init__(self, records, members=("node-a", "node-b")):
+        self.cluster = _SMBCluster(members)
         self.services = _SMBServices(records)
 
 
@@ -438,7 +446,8 @@ def test_apply_smb_reconciles_members_and_sends_the_upstream_spec(monkeypatch):
     [
         ("service_id", "other"),
         ("features", ["cephfs-proxy"]),
-        ("custom_ports", {"smb": 1445}),
+        ("custom_ports", {"ctdb": 14379}),
+        ("custom_ports", {"smbmetrics": 19009}),
         ("custom_dns", ["192.0.2.53"]),
         ("include_ceph_users", ["client.smb.fs.cluster.files", "client.extra"]),
         ("remote_control_ssl_cert", "rados:mon-config-key:smb/cert"),
@@ -454,6 +463,77 @@ def test_apply_smb_rejects_unsupported_native_features(monkeypatch, attribute, v
 
     with pytest.raises(ValueError, match="native SMB does not support"):
         manager.apply_smb(spec)
+
+
+def test_apply_smb_accepts_custom_smb_port_and_bind_network(monkeypatch):
+    module = _load_module(monkeypatch)
+    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
+    manager.microceph = _SMBClient([])
+    spec = _SMBSpec()
+    spec.custom_ports = {"smb": 1445}
+    spec.bind_addrs = [{"network": "10.0.0.0/24"}]
+
+    result = manager.apply_smb(spec)
+
+    assert result == "Applied SMB service 'files'"
+
+
+def test_apply_smb_reconciles_clustered_members_and_ranks(monkeypatch):
+    module = _load_module(monkeypatch)
+    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
+    manager.microceph = _SMBClient(
+        [
+            {"service": "smb", "group_id": "files", "location": "node-a"},
+            {"service": "smb", "group_id": "files", "location": "node-b"},
+        ],
+        members=("node-a", "node-b", "node-c"),
+    )
+    spec = _SMBSpec()
+    spec.features = ["clustered"]
+    spec.cluster_meta_uri = "rados://.smb/files/cluster.meta.json"
+    spec.cluster_lock_uri = "rados://.smb/files/cluster.meta.lock"
+    spec.placement = _SMBPlacement(
+        hosts=[_HostPlacement("node-c"), _HostPlacement("node-b")],
+        count=2,
+    )
+    desired_spec = _SMBSpec().to_json()
+    desired_spec.update(
+        {
+            "features": ["clustered"],
+            "cluster_meta_uri": spec.cluster_meta_uri,
+            "cluster_lock_uri": spec.cluster_lock_uri,
+        }
+    )
+    spec.to_json = lambda: desired_spec
+
+    result = manager.apply_smb(spec)
+
+    assert result == "Applied SMB service 'files'"
+    assert manager.microceph.services.applied == [
+        (
+            "node-b",
+            {
+                "service_spec": desired_spec,
+                "microceph": {
+                    "ctdb": {"rank": 0, "identity": "smb.files.node-b"}
+                },
+            },
+        ),
+        (
+            "node-c",
+            {
+                "service_spec": desired_spec,
+                "microceph": {
+                    "ctdb": {"rank": 1, "identity": "smb.files.node-c"}
+                },
+            },
+        ),
+    ]
+    assert manager.microceph.services.events == [
+        ("apply", "node-b"),
+        ("apply", "node-c"),
+        ("remove", "node-a"),
+    ]
 
 
 def test_apply_smb_rejects_a_second_cluster_on_an_occupied_host(monkeypatch):
@@ -487,14 +567,35 @@ def test_apply_smb_permits_a_second_cluster_on_disjoint_hosts(monkeypatch):
     assert manager.microceph.services.removed == []
 
 
-def test_remove_smb_service_accepts_the_orchestrator_force_argument(monkeypatch):
+def test_apply_smb_is_idempotent_for_an_unchanged_placement(monkeypatch):
+    module = _load_module(monkeypatch)
+    manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
+    manager.microceph = _SMBClient(
+        [{"service": "smb", "group_id": "files", "location": "node-a"}]
+    )
+    spec = _SMBSpec()
+
+    first = manager.apply_smb(spec)
+    second = manager.apply_smb(spec)
+
+    assert first == second == "Applied SMB service 'files'"
+    assert manager.microceph.services.applied == [
+        ("node-a", spec.to_json()),
+        ("node-a", spec.to_json()),
+    ]
+    assert manager.microceph.services.removed == []
+
+
+def test_remove_absent_smb_service_is_idempotent_and_accepts_force(monkeypatch):
     module = _load_module(monkeypatch)
     manager = module.MicroCephOrchestrator.__new__(module.MicroCephOrchestrator)
     manager.microceph = _SMBClient([])
 
-    result = manager.remove_service("smb.files", force=True)
+    first = manager.remove_service("smb.files", force=True)
+    second = manager.remove_service("smb.files")
 
-    assert result == "Removed SMB service 'files'"
+    assert first == second == "Removed SMB service 'files'"
+    assert manager.microceph.services.removed == []
 
 
 def test_remove_smb_service_removes_every_placed_member(monkeypatch):
