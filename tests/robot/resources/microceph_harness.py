@@ -1029,6 +1029,33 @@ class microceph_harness:
 
         return True
 
+    @staticmethod
+    def _health_is_ok_ignoring(health_json, ignore_checks=()):
+        """Returns whether ``ceph health -f json`` output counts as healthy.
+
+        HEALTH_OK always does. HEALTH_WARN does only when every check it carries
+        is named in *ignore_checks*. HEALTH_ERR, malformed output, a HEALTH_WARN
+        with no checks, or any check outside *ignore_checks* is not healthy.
+        """
+        try:
+            health = json.loads(health_json)
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(health, dict):
+            return False
+
+        status = health.get("status")
+        if status == "HEALTH_OK":
+            return True
+        if status != "HEALTH_WARN":
+            return False
+
+        checks = health.get("checks")
+        if not isinstance(checks, dict) or not checks:
+            return False
+
+        return all(name in ignore_checks for name in checks)
+
     # -----------------------------------------------------------------------
     # VM / cluster pollers (migrated from microceph_harness.resource)
     # -----------------------------------------------------------------------
@@ -2484,19 +2511,37 @@ class microceph_harness:
             fail_msg=f"not all cluster members visible: {', '.join(members)}",
         )
 
-    def wait_for_cluster_health_ok_in_vm(self, tries=100, interval=3, vm_name=None):
-        """Polls microceph.ceph health inside *vm_name* until HEALTH_OK."""
+    def wait_for_cluster_health_ok_in_vm(self, tries=100, interval=3, vm_name=None, ignore_checks=None):
+        """Polls microceph.ceph health inside *vm_name* until HEALTH_OK.
+
+        *ignore_checks* names health checks (a comma-separated string from Robot,
+        or any iterable of names) that may remain at HEALTH_WARN without failing
+        the wait. On timeout the failure message carries the last health output
+        and ``ceph health detail`` is logged.
+        """
         vm = vm_name or self._outer_vm()
+        if ignore_checks is None:
+            ignored = frozenset()
+        elif isinstance(ignore_checks, str):
+            ignored = frozenset(name.strip() for name in ignore_checks.split(",") if name.strip())
+        else:
+            ignored = frozenset(ignore_checks)
+        last_health = [""]
 
         def predicate():
-            res = self.run_in_vm("sudo microceph.ceph health", 30, quiet=True, vm_name=vm)
-            return res.rc == 0 and "HEALTH_OK" in res.stdout
+            res = self.run_in_vm("sudo microceph.ceph health -f json", 30, quiet=True, vm_name=vm)
+            last_health[0] = res.stdout.strip()
+            return res.rc == 0 and self._health_is_ok_ignoring(last_health[0], ignored)
+
+        def on_fail():
+            self.run_in_vm("sudo microceph.ceph health detail", 30, vm_name=vm)
 
         self._poll_until(
             predicate,
             attempts=tries,
             interval=interval,
-            fail_msg=f"cluster never reached HEALTH_OK on {vm}",
+            fail_msg=lambda: f"cluster never reached HEALTH_OK on {vm} (last: {last_health[0] or 'no output'})",
+            on_fail=on_fail,
         )
 
     def wait_for_osd_count_in_vm(self, expect, tries=20, vm_name=None):

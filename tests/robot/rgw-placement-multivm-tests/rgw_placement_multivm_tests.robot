@@ -47,7 +47,10 @@ RGW MultiVM Suite Setup
     [Documentation]    Launches the three guest VMs sequentially (launch, snap
     ...    copy, tools, install, socket), bootstraps MicroCeph on vm0, joins vm1
     ...    and vm2 as named members, adds one loop-file OSD per member so RGW
-    ...    pools can place, and waits for HEALTH_OK.
+    ...    pools can place, and waits for HEALTH_OK. MON_CLOCK_SKEW alone does
+    ...    not fail that wait: the guests are separate VMs whose clocks are not
+    ...    yet NTP-synced when the mons first form quorum, and the leader only
+    ...    re-checks skew every 300 s, longer than the wait itself.
     FOR    ${vm}    IN    ${GUEST_VM0}    ${GUEST_VM1}    ${GUEST_VM2}
         Launch Guest Test VM    ${vm}
         Copy Snap To VM    vm_name=${vm}
@@ -73,7 +76,7 @@ RGW MultiVM Suite Setup
         Run In VM And Check    sudo microceph disk add loop,1G,1    300    vm_name=${vm}
     END
     Wait For OSD Count In VM    3    vm_name=${GUEST_VM0}
-    Wait For Cluster Health OK In VM    vm_name=${GUEST_VM0}
+    Wait For Cluster Health OK In VM    vm_name=${GUEST_VM0}    ignore_checks=MON_CLOCK_SKEW
     Log To Console    [rgw-mvm] 3-member cluster healthy on independent VMs
 
 RGW MultiVM Suite Teardown
