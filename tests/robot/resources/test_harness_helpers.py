@@ -993,6 +993,83 @@ def test_remote_list_has_null_is_false():
     assert H._remote_list_has("null", "name", "siteb") is False
 
 
+def test_export_cluster_token_retries_a_transient_control_socket_timeout(monkeypatch):
+    harness = H()
+    export_token = getattr(harness, "export_cluster_token", None)
+    assert export_token is not None, "cluster token export must retry transient control-socket failures"
+
+    results = iter(
+        [
+            _Res(1, "", 'Error: failed to fetch cluster state: Get "http://control.socket/1.0/cluster": context deadline exceeded\n'),
+            _Res(0, "token-for-sitea\n", ""),
+        ]
+    )
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return next(results)
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    token = export_token("node-wrk2", "sitea", attempts=2, interval=0)
+
+    assert token == "token-for-sitea"
+    assert calls == [
+        ("node-wrk2", ("microceph", "cluster", "export", "sitea"), 60, True),
+        ("node-wrk2", ("microceph", "cluster", "export", "sitea"), 60, True),
+    ]
+
+
+def test_export_cluster_token_does_not_retry_a_permanent_failure(monkeypatch):
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return _Res(1, "", "Error: access denied\n")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    with pytest.raises(AssertionError) as exc:
+        harness.export_cluster_token("node-wrk2", "sitea", attempts=2, interval=0)
+
+    assert str(exc.value) == "failed to export cluster token for sitea on node-wrk2; last error: Error: access denied"
+    assert calls == [
+        ("node-wrk2", ("microceph", "cluster", "export", "sitea"), 60, True),
+    ]
+
+
+def test_install_lxd_in_vm_retries_a_snap_store_nonce_timeout(monkeypatch):
+    harness = H()
+    install_lxd = getattr(harness, "install_lxd_in_vm", None)
+    assert install_lxd is not None, "LXD installation must retry transient Snap Store nonce timeouts"
+
+    results = iter(
+        [
+            _Res(1, "", "cannot get nonce from store: store server returned status 408\n"),
+            _Res(0, "lxd installed\n", ""),
+        ]
+    )
+    calls = []
+
+    def fake_run_in_vm(command, timeout, quiet):
+        calls.append((command, timeout, quiet))
+        return next(results)
+
+    monkeypatch.setattr(harness, "run_in_vm", fake_run_in_vm)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    install_lxd(attempts=2, interval=0)
+
+    assert calls == [
+        ("sudo snap install lxd", 300, True),
+        ("sudo snap install lxd", 300, True),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # run_streaming_process (streaming_process.py)
 #

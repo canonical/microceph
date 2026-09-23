@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,12 +65,17 @@ func TestEnableManagedSMBCreatesFirstMember(t *testing.T) {
 func TestEnableManagedSMBRejectsFirstMemberWithoutUserConfigBeforePreparingBackend(t *testing.T) {
 	originalEnsure := ensureManagedSMBBackendFunc
 	originalMembers := getManagedSMBMembersFunc
+	originalLoad := loadManagedSMBClusterFunc
 	t.Cleanup(func() {
 		ensureManagedSMBBackendFunc = originalEnsure
 		getManagedSMBMembersFunc = originalMembers
+		loadManagedSMBClusterFunc = originalLoad
 	})
 	getManagedSMBMembersFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) ([]string, error) {
 		return nil, nil
+	}
+	loadManagedSMBClusterFunc = func(_ string) (map[string]any, error) {
+		return nil, errors.New("not found")
 	}
 	ensureCalls := 0
 	ensureManagedSMBBackendFunc = func(_ context.Context) error {
@@ -85,6 +91,48 @@ func TestEnableManagedSMBRejectsFirstMemberWithoutUserConfigBeforePreparingBacke
 
 	assert.ErrorContains(t, err, "requires a user or user-group resource")
 	assert.Zero(t, ensureCalls)
+}
+
+func TestEnableManagedSMBReconcilesExistingClusterBeforeFirstCallback(t *testing.T) {
+	originalMembers := getManagedSMBMembersFunc
+	originalLoad := loadManagedSMBClusterFunc
+	originalApply := applyManagedSMBClusterFunc
+	t.Cleanup(func() {
+		getManagedSMBMembersFunc = originalMembers
+		loadManagedSMBClusterFunc = originalLoad
+		applyManagedSMBClusterFunc = originalApply
+	})
+	getManagedSMBMembersFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) ([]string, error) {
+		return nil, nil
+	}
+	loadManagedSMBClusterFunc = func(_ string) (map[string]any, error) {
+		return map[string]any{
+			"resource_type": "ceph.smb.cluster",
+			"cluster_id":    "files",
+			"auth_mode":     "user",
+			"placement": map[string]any{
+				"hosts": []any{"node-a"},
+				"count": float64(1),
+			},
+		}, nil
+	}
+	var applied map[string]any
+	applyManagedSMBClusterFunc = func(resource map[string]any) error {
+		applied = resource
+		return nil
+	}
+
+	err := EnableManagedSMB(
+		context.Background(),
+		managedSMBTestState(t, "node-b"),
+		types.ManagedSMBService{ClusterID: "files"},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{
+		"hosts": []string{"node-a", "node-b"},
+		"count": 2,
+	}, applied["placement"])
 }
 
 func TestEnableManagedSMBReconcilesAdditionalMemberAndClusterOptions(t *testing.T) {
