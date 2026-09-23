@@ -70,7 +70,7 @@ jobs:
       - name: Probe Snap Store and Ubuntu archive reachability
         run: |
           tests/scripts/preflight.sh probe_endpoints \
-              "ceph-ppa=https://ppa.launchpadcontent.net/lmlogiudice/ceph-tentacle-updates/ubuntu/dists/"
+              "ceph-ppa=https://ppa.launchpadcontent.net/lmlogiudice/ceph-lp2166817-updates/ubuntu/dists/"
 
       - name: Download Snap Store canary
         run: tests/scripts/preflight.sh snap_canary
