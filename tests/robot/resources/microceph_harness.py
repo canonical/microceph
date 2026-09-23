@@ -1872,6 +1872,28 @@ class microceph_harness:
         self.apt_update()
         self.apt_install(VM_APT_TOOLS)
 
+    def install_lxd_in_vm(self, attempts=3, interval=5):
+        """Installs LXD, retrying only a transient Snap Store nonce timeout."""
+        last_error = [""]
+
+        def predicate():
+            result = self.run_in_vm("sudo snap install lxd", 300, quiet=True)
+            last_error[0] = (result.stderr or result.stdout).strip()
+            transient_nonce_timeout = (
+                "cannot get nonce from store" in result.stderr
+                and "store server returned status 408" in result.stderr
+            )
+            if result.rc != 0 and not transient_nonce_timeout:
+                raise AssertionError(f"failed to install LXD: {last_error[0]}")
+            return result.rc == 0
+
+        self._poll_until(
+            predicate,
+            attempts=int(attempts),
+            interval=interval,
+            fail_msg=lambda: f"failed to install LXD: {last_error[0]}",
+        )
+
     def prepare_snapd_in_vm(self):
         """Installs snapd from the configured channel, refreshing it if preinstalled."""
         snapd_channel = self._snapd_channel()

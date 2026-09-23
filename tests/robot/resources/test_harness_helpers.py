@@ -1294,6 +1294,34 @@ def test_installed_robot_framework_honours_the_exit_on_failure_tag():
     assert (major, minor) >= (7, 2), f"Robot Framework {VERSION} ignores robot:exit-on-failure; use 7.2 or newer"
 
 
+def test_install_lxd_in_vm_retries_a_snap_store_nonce_timeout(monkeypatch):
+    harness = H()
+    install_lxd = getattr(harness, "install_lxd_in_vm", None)
+    assert install_lxd is not None, "LXD installation must retry transient Snap Store nonce timeouts"
+
+    results = iter(
+        [
+            _Res(1, "", "cannot get nonce from store: store server returned status 408\n"),
+            _Res(0, "lxd installed\n", ""),
+        ]
+    )
+    calls = []
+
+    def fake_run_in_vm(command, timeout, quiet):
+        calls.append((command, timeout, quiet))
+        return next(results)
+
+    monkeypatch.setattr(harness, "run_in_vm", fake_run_in_vm)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    install_lxd(attempts=2, interval=0)
+
+    assert calls == [
+        ("sudo snap install lxd", 300, True),
+        ("sudo snap install lxd", 300, True),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # run_streaming_process (streaming_process.py)
 #
