@@ -28,10 +28,20 @@ func EnableManagedSMB(ctx context.Context, s interfaces.StateInterface, request 
 	}
 
 	target := s.ClusterState().Name()
-	if len(members) == 0 {
-		if len(request.DefineUserPass) == 0 && len(request.UserGroupRefs) == 0 {
-			return fmt.Errorf("new managed SMB cluster requires a user or user-group resource")
+	if len(members) == 0 && len(request.DefineUserPass) == 0 && len(request.UserGroupRefs) == 0 {
+		resource, loadErr := loadManagedSMBClusterFunc(request.ClusterID)
+		if loadErr == nil {
+			members = appendUniqueSMBMember(managedSMBResourceMembers(resource), target)
+			updateManagedSMBResource(resource, members, request)
+			err = applyManagedSMBClusterFunc(resource)
+			if err != nil {
+				return fmt.Errorf("failed to update managed SMB cluster: %w", err)
+			}
+			return nil
 		}
+		return fmt.Errorf("new managed SMB cluster requires a user or user-group resource")
+	}
+	if len(members) == 0 {
 		err = ensureManagedSMBBackendFunc(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to prepare managed SMB backend: %w", err)
@@ -230,6 +240,28 @@ func updateManagedSMBResource(resource map[string]any, members []string, request
 		ports["smb"] = request.Port
 		resource["custom_ports"] = ports
 	}
+}
+
+func managedSMBResourceMembers(resource map[string]any) []string {
+	placement, ok := resource["placement"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	members := []string{}
+	switch hosts := placement["hosts"].(type) {
+	case []any:
+		for _, host := range hosts {
+			member, ok := host.(string)
+			if ok && member != "" {
+				members = append(members, member)
+			}
+		}
+	case []string:
+		members = append(members, hosts...)
+	}
+	sort.Strings(members)
+	return members
 }
 
 func containsManagedSMBMember(members []string, target string) bool {

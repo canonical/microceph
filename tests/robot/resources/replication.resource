@@ -26,10 +26,10 @@ Exchange Remote Site Tokens
     [Documentation]    Exports tokens from each site and imports them cross-site with --local-name.
     ...    After this call, sitea knows siteb and siteb knows sitea.
     Log To Console    [replication] Exchanging site tokens...
-    ${sitea_token}=    Exec In Container    node-wrk0    microceph    cluster    export    siteb    timeout=60
-    ${siteb_token}=    Exec In Container    node-wrk2    microceph    cluster    export    sitea    timeout=60
-    Run In Container    node-wrk0    microceph remote import siteb ${siteb_token.stdout.strip()} --local-name=sitea    60
-    Run In Container    node-wrk2    microceph remote import sitea ${sitea_token.stdout.strip()} --local-name=siteb    60
+    ${sitea_token}=    Export Cluster Token    node-wrk0    siteb
+    ${siteb_token}=    Export Cluster Token    node-wrk2    sitea
+    Run In Container    node-wrk0    microceph remote import siteb ${siteb_token} --local-name=sitea    60
+    Run In Container    node-wrk2    microceph remote import sitea ${sitea_token} --local-name=siteb    60
     Sleep    15s    reason=Allow remote credentials to propagate across the cluster
 
 Verify Remote Authentication On All Nodes
