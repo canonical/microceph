@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:dqlite/dev -y --no-update
           sudo apt-get update
-          sudo apt-get install -y libdqlite1.17-dev
+          sudo apt-get install -y libdqlite1.18-dev
 
       - name: Install Go (1.27)
         uses: actions/setup-go@v5
@@ -55,7 +55,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:dqlite/dev -y --no-update
           sudo apt-get update
-          sudo apt-get install -y libdqlite1.17-dev
+          sudo apt-get install -y libdqlite1.18-dev
 
       - name: Install Go (1.27)
         uses: actions/setup-go@v5
