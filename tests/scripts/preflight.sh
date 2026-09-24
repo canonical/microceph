@@ -13,6 +13,9 @@
 #                                   (default: jq s3cmd) into a temp dir.
 #
 # The probes install nothing and only write inside temporary directories.
+#
+# PREFLIGHT_ORIGIN, when set, names where probe_endpoints ran (for example an
+# LXD instance) in its failure message.
 
 set -eu
 
@@ -63,7 +66,7 @@ probe_endpoints() {
     done
 
     if [ -n "$PREFLIGHT_FAILURES" ]; then
-        preflight_fail "endpoint checks failed: $PREFLIGHT_FAILURES"
+        preflight_fail "endpoint checks failed${PREFLIGHT_ORIGIN:+ from $PREFLIGHT_ORIGIN}: $PREFLIGHT_FAILURES"
     fi
 }
 

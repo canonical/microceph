@@ -15,7 +15,7 @@ jobs:
         fetch-depth: 0
 
     - name: Copy utils
-      run: cp tests/scripts/actionutils.sh $HOME
+      run: cp tests/scripts/actionutils.sh tests/scripts/preflight.sh $HOME
 
     - name: Clear FORWARD firewall rules
       run: ~/actionutils.sh cleaript
