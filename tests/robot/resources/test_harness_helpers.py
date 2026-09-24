@@ -2316,7 +2316,7 @@ def test_resolute_ceph_client_setup_is_shared():
     resource = (robot_root / "resources" / "microceph_harness.resource").read_text()
 
     assert "${CEPH_PPA}" in resource
-    assert "lmlogiudice/ceph-tentacle-updates" in resource
+    assert "lmlogiudice/ceph-lp2166817-updates" in resource
     assert "Verify Resolute Outer VM" in resource
     assert "Install Ceph Client From PPA" in resource
     assert "sudo add-apt-repository --yes ppa:${CEPH_PPA}" in resource
