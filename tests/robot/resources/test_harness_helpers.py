@@ -1070,6 +1070,38 @@ def test_install_lxd_in_vm_retries_a_snap_store_nonce_timeout(monkeypatch):
     ]
 
 
+def test_microceph_api_put_in_container_until_success_retries_closed_connection(monkeypatch):
+    harness = H()
+    put_until_success = getattr(harness, "microceph_api_put_in_container_until_success", None)
+    assert put_until_success is not None, "placement PUT must retry a closed MicroCluster connection"
+
+    responses = iter(
+        [
+            '{"type":"error","error_code":500,"error":"failed to list cluster members: use of closed network connection"}',
+            '{"type":"sync","status_code":200,"metadata":null}',
+        ]
+    )
+    calls = []
+
+    def fake_put(container, path, body, query="", timeout=300):
+        calls.append((container, path, body, query, timeout))
+        return next(responses)
+
+    monkeypatch.setattr(harness, "microceph_api_put_in_container", fake_put)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    response = put_until_success(
+        "node-wrk0",
+        "placement",
+        '{"mode":"reconcile","members":{"node-wrk0":{"control":true},"node-wrk1":{"control":false}}}',
+        attempts=2,
+        interval=0,
+    )
+
+    assert response == '{"type":"sync","status_code":200,"metadata":null}'
+    assert len(calls) == 2
+
+
 # ---------------------------------------------------------------------------
 # run_streaming_process (streaming_process.py)
 #

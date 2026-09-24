@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
@@ -20,6 +21,8 @@ var loadManagedSMBClusterFunc = loadManagedSMBCluster
 var applyManagedSMBClusterFunc = applyManagedSMBCluster
 var removeManagedSMBClusterFunc = removeManagedSMBCluster
 
+const managedSMBMemberWaitTimeout = time.Minute
+
 // EnableManagedSMB adds the local target member to a managed SMB cluster.
 func EnableManagedSMB(ctx context.Context, s interfaces.StateInterface, request types.ManagedSMBService) error {
 	members, err := getManagedSMBMembersFunc(ctx, s, request.ClusterID)
@@ -29,17 +32,16 @@ func EnableManagedSMB(ctx context.Context, s interfaces.StateInterface, request 
 
 	target := s.ClusterState().Name()
 	if len(members) == 0 && len(request.DefineUserPass) == 0 && len(request.UserGroupRefs) == 0 {
-		resource, loadErr := loadManagedSMBClusterFunc(request.ClusterID)
-		if loadErr == nil {
-			members = appendUniqueSMBMember(managedSMBResourceMembers(resource), target)
-			updateManagedSMBResource(resource, members, request)
-			err = applyManagedSMBClusterFunc(resource)
-			if err != nil {
-				return fmt.Errorf("failed to update managed SMB cluster: %w", err)
-			}
-			return nil
+		_, loadErr := loadManagedSMBClusterFunc(request.ClusterID)
+		if loadErr != nil {
+			return fmt.Errorf("new managed SMB cluster requires a user or user-group resource")
 		}
-		return fmt.Errorf("new managed SMB cluster requires a user or user-group resource")
+		waitCtx, cancel := context.WithTimeout(ctx, managedSMBMemberWaitTimeout)
+		defer cancel()
+		members, err = waitForManagedSMBMembers(waitCtx, s, request.ClusterID)
+		if err != nil {
+			return fmt.Errorf("failed waiting for initial managed SMB member: %w", err)
+		}
 	}
 	if len(members) == 0 {
 		err = ensureManagedSMBBackendFunc(ctx)
@@ -242,26 +244,25 @@ func updateManagedSMBResource(resource map[string]any, members []string, request
 	}
 }
 
-func managedSMBResourceMembers(resource map[string]any) []string {
-	placement, ok := resource["placement"].(map[string]any)
-	if !ok {
-		return nil
-	}
+func waitForManagedSMBMembers(ctx context.Context, s interfaces.StateInterface, clusterID string) ([]string, error) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 
-	members := []string{}
-	switch hosts := placement["hosts"].(type) {
-	case []any:
-		for _, host := range hosts {
-			member, ok := host.(string)
-			if ok && member != "" {
-				members = append(members, member)
-			}
+	for {
+		members, err := getManagedSMBMembersFunc(ctx, s, clusterID)
+		if err == nil && len(members) > 0 {
+			return members, nil
 		}
-	case []string:
-		members = append(members, hosts...)
+
+		select {
+		case <-ctx.Done():
+			if err != nil {
+				return nil, err
+			}
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
 	}
-	sort.Strings(members)
-	return members
 }
 
 func containsManagedSMBMember(members []string, target string) bool {

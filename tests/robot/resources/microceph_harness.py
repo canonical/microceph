@@ -2491,6 +2491,31 @@ class microceph_harness:
         )
         return res.stdout
 
+    def microceph_api_put_in_container_until_success(
+        self, container, path, body, query="", timeout=300, attempts=3, interval=5
+    ):
+        """Retries a placement PUT only when MicroCluster closed its transport connection."""
+        last_response = [""]
+
+        def predicate():
+            response = self.microceph_api_put_in_container(
+                container, path, body, query=query, timeout=timeout
+            )
+            last_response[0] = response
+            if placement_status.response_code(response) == 200:
+                return True
+            if "use of closed network connection" not in response:
+                raise AssertionError(f"MicroCeph API PUT {path} failed: {response}")
+            return False
+
+        self._poll_until(
+            predicate,
+            attempts=int(attempts),
+            interval=interval,
+            fail_msg=lambda: f"MicroCeph API PUT {path} did not recover: {last_response[0]}",
+        )
+        return last_response[0]
+
     def microceph_api_delete_in_container(self, container, path):
         """DELETEs a path on the MicroCeph control socket inside an inner container.
 
