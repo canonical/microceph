@@ -32,6 +32,10 @@ Other commit rules:
 - Squash into logical commits (API / docs / CLI / daemon / tests / CI) for non-trivial PRs.
 - Maintain a linear git history.
 
+## Pull Requests
+
+- Pull request descriptions must always conform to the project's PR template at [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md). Fill in every section of the template rather than replacing it with free-form text.
+
 ## Coding conventions
 
 Follow the [Go Style Guide](https://google.github.io/styleguide/go/guide), plus:
