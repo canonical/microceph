@@ -80,9 +80,34 @@ loop-file-tests                    test-sequential-mon-host-refresh
 messenger-v2-tests                 unit-tests
 multi-node-tests                   upgrade-squid-tests
 multi-node-tests-with-custom-microceph-ip
-                                   wal-db-tests
+pebble-service-control-tests        wal-db-tests
                                    wiping-test
 ```
+
+## Individual Pebble OSD service control
+
+```bash
+tox -e robot -- --snap-path /path/to/microceph_*.snap \
+    --test-suite pebble-service-control-tests
+```
+
+This suite creates three loopback OSDs in its own VM and independently tests
+`stop`, `start`, and `restart` using the bundled Pebble CLI through a confined
+Snap shell. It discovers the allocated IDs and targets the middle one in numeric
+order; IDs need not start at zero or be consecutive. Each operation checks Pebble
+child status, Ceph up/in state, and live process groups. Both sibling OSD identities and the
+outer Snap supervisor identity must remain unchanged. Start and restart must
+produce a new target identity with no surviving old process group. Test teardown
+restores the target even after assertion failures; suite teardown removes the VM.
+
+These are **temporary service controls**, not disk removal or persistent disable.
+The tests do not change `ready`/`ready.removing` markers or use the adapter's
+fenced `osd-stop` operation. An app restart or reload may start eligible OSDs
+again. No public MicroCeph lifecycle command is added.
+
+The area library is `resources/pebble_services.py`; its parsers and poller are
+covered by `resources/test_harness_helpers.py`. CI runs the full VM suite. A
+local `--dryrun` checks keyword resolution only, not actual OSD lifecycle behavior.
 
 ## Harness conventions
 
