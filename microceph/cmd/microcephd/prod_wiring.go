@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -28,6 +29,8 @@ func wireProductionFuncs() {
 	ceph.GetClusterMemberNamesFunc = prodGetClusterMemberNamesFunc
 	ceph.ProdAddControlServiceFunc = prodAddControlServiceFunc
 	ceph.ProdRemoveControlServiceFunc = prodRemoveControlServiceFunc
+	ceph.ProdEnableRgwServiceFunc = prodEnableRgwServiceFunc
+	ceph.ProdRemoveRgwServiceFunc = prodRemoveRgwServiceFunc
 	ceph.BootstrapCephStepsFunc = prodBootstrapCephStepsFunc
 }
 
@@ -66,6 +69,51 @@ func prodRemoveControlServiceFunc(ctx context.Context, s interfaces.StateInterfa
 		return fmt.Errorf("failed to get leader client: %w", err)
 	}
 	return client.DeleteService(ctx, cli, member, service)
+}
+
+// prodEnableRgwServiceFunc enables/reconciles RGW with its frontend config
+// (explicit TLS intent + material) on a target member via the existing
+// services/rgw placement API. The payload is the RgwServicePlacement struct
+// the enable rgw CLI already uses, so the member-side ServiceInit/DbUpdate
+// reuse the same path; the member-side applyRGWFrontend decides whether a
+// restart is actually needed.
+func prodEnableRgwServiceFunc(ctx context.Context, s interfaces.StateInterface, member string, rgw types.RgwPlacement) error {
+	cli, err := s.ClusterState().Connect().Leader(false)
+	if err != nil {
+		return fmt.Errorf("failed to get leader client: %w", err)
+	}
+	// An older member would ignore SSL and could turn a TLS retry into plaintext.
+	err = client.CheckRGWPlacementSupport(ctx, cli, member)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(ceph.RgwServicePlacement{
+		Port:           rgw.Port,
+		SSLPort:        rgw.SSLPort,
+		SSL:            rgw.SSL,
+		SSLCertificate: rgw.SSLCertificate,
+		SSLPrivateKey:  rgw.SSLPrivateKey,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal rgw placement payload: %w", err)
+	}
+	return client.SendServicePlacementReq(ctx, cli, &types.EnableService{
+		Name:    "rgw",
+		Wait:    true,
+		Payload: string(payload),
+	}, member)
+}
+
+// prodRemoveRgwServiceFunc removes RGW from a target member via the service
+// deletion API. DisableRGW on the member is idempotent, so a re-run after a
+// partial disable still converges. A removal carries no TLS intent, so an
+// older member needs no capability check.
+func prodRemoveRgwServiceFunc(ctx context.Context, s interfaces.StateInterface, member string) error {
+	cli, err := s.ClusterState().Connect().Leader(false)
+	if err != nil {
+		return fmt.Errorf("failed to get leader client: %w", err)
+	}
+	return client.DeleteService(ctx, cli, member, "rgw")
 }
 
 // prodBootstrapCephStepsFunc runs the Ceph bootstrap steps on the local node

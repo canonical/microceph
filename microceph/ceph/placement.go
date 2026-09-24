@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/canonical/lxd/shared/api"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/database"
@@ -75,6 +79,23 @@ var LockPlacementApplyFunc = LockPlacementApply
 // could each count the other's removal targets as keep-one retainers and
 // together remove the last viable control service. The dqlite-backed lock
 // makes the read-modify cycle mutually exclusive across all cluster members.
+//
+//  1. Control-service safety. An apply reads observed service state and
+//     then mutates services over minutes; two overlapping applies (possibly
+//     served by different members) could each count the other's removal
+//     targets as keep-one retainers and together remove the last viable
+//     control service. This rationale is specific to control: the keep-one
+//     decision reads *other* members' state, so a stale snapshot is unsafe.
+//
+//  2. Apply/store atomicity, for every service class. The API handler stores
+//     the policy inside this lock (see cmdPlacementPut), so the stored intent
+//     always matches the apply that ran last. Without it, two overlapping PUTs
+//     could apply in one order and store in the other, leaving GET /placement
+//     reporting a declared policy that contradicts what was actually applied.
+//
+// Non-quorum services such as RGW have no keep-one invariant and decide each
+// member independently, so reason 1 does not apply to them — they ride along
+// on this lock for reason 2 (atomicity), not for safety.
 //
 // The returned token must be passed to UnlockPlacementApply. If another apply
 // holds the lock, ErrPlacementApplyInProgress is returned; a lock older than
@@ -314,10 +335,11 @@ func writePlacementRefusal(ctx context.Context, s interfaces.StateInterface, rea
 // stores the same policy before calling this package-private phase.
 //
 // If a removal is refused for keep-one safety the adds remain in effect (a
-// partial convergence) and the function returns ErrKeepOneInvariant so the
-// caller can surface a clear blocked reason. The desired policy has already
-// been stored by then, so GET /placement reports the observed-vs-desired gap
-// with last_refusal explaining it.
+// partial convergence) and the refusal is reported so the caller can surface a
+// clear blocked reason: alone it returns ErrKeepOneInvariant, and alongside an
+// RGW dispatch failure both causes are retained in one error. The desired
+// policy has already been stored by then, so GET /placement reports the
+// observed-vs-desired gap with last_refusal explaining it.
 func reconcilePlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
 	if s.ClusterState().ServerCert() == nil {
 		return fmt.Errorf("no server certificate")
@@ -334,7 +356,7 @@ func reconcilePlacement(ctx context.Context, s interfaces.StateInterface, policy
 	// Get current observed control services.
 	observedControl, err := getObservedControlServicesFunc(ctx, s)
 	if err != nil {
-		return fmt.Errorf("failed to get observed control services: %w", err)
+		return fmt.Errorf("%w: failed to get observed control services: %w", ErrPlacementOperationFailed, err)
 	}
 	logger.Debugf("Placement: observed control services: %s", formatControlMap(observedControl))
 
@@ -353,7 +375,7 @@ func reconcilePlacement(ctx context.Context, s interfaces.StateInterface, policy
 			if !observedControl[svc][memberName] {
 				err = addControlServiceFunc(ctx, s, memberName, svc)
 				if err != nil {
-					return fmt.Errorf("failed to add %s on %s: %w", svc, memberName, err)
+					return fmt.Errorf("%w: failed to add %s on %s: %w", ErrPlacementOperationFailed, svc, memberName, err)
 				}
 				// Update observed state so the removal loop sees the new service.
 				observedControl[svc][memberName] = true
@@ -411,12 +433,22 @@ func reconcilePlacement(ctx context.Context, s interfaces.StateInterface, policy
 			}
 			err = removeControlServiceFunc(ctx, s, memberName, svc)
 			if err != nil {
-				return fmt.Errorf("failed to remove %s on %s: %w", svc, memberName, err)
+				return retainRefusals(fmt.Errorf("%w: failed to remove %s on %s: %w", ErrPlacementOperationFailed, svc, memberName, err), refused)
 			}
 			// Update observed and viability state so subsequent keep-one checks are accurate.
 			observedControl[svc][memberName] = false
 			viableControl[svc][memberName] = false
 		}
+	}
+
+	// RGW pass: reconcile role-managed gateways after the control pass, so
+	// control quorum is established before gateways move. RGW has no
+	// keep-one invariant (scale-to-zero is allowed). Its failures are
+	// collected rather than returned immediately so a keep-one refusal from
+	// the control pass stays visible alongside them.
+	rgwErr := applyRgwPlacement(ctx, s, policy)
+	if rgwErr != nil {
+		return retainRefusals(rgwErr, refused)
 	}
 
 	if len(refused) > 0 {
@@ -488,6 +520,133 @@ func prodRemoveControlService(ctx context.Context, s interfaces.StateInterface, 
 	}
 	return nil
 }
+
+// retainRefusals keeps an earlier keep-one refusal visible next to a later
+// operational failure: the failure takes precedence, but the stored policy
+// still requests the refused removals, so a retrying operator needs both.
+func retainRefusals(err error, refused []string) error {
+	if len(refused) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w; also %w: refused to remove last control service(s): %s",
+		err, ErrKeepOneInvariant, strings.Join(refused, ", "))
+}
+
+// applyRgwPlacement updates requested gateways before removing any.
+// Failed replacements leave removal targets running, but independent additions proceed.
+// Explicit disables always run so a retry can finish partially removed services.
+func applyRgwPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
+	var enables []string
+	var disables []string
+	for memberName, mp := range policy.Members {
+		if mp.Rgw == nil {
+			continue
+		}
+		// normalizePlacement guarantees Enabled is non-nil here.
+		if *mp.Rgw.Enabled {
+			enables = append(enables, memberName)
+		} else {
+			disables = append(disables, memberName)
+		}
+	}
+	if len(enables) == 0 && len(disables) == 0 {
+		// No RGW intent anywhere in the policy: no member is dispatched, so
+		// control-only policies never touch RGW.
+		return nil
+	}
+	sort.Strings(enables)
+	sort.Strings(disables)
+
+	var failures []string
+	operational := false
+	for _, memberName := range enables {
+		err := enableRgwServiceFunc(ctx, s, memberName, *policy.Members[memberName].Rgw)
+		if err == nil {
+			continue
+		}
+		detail, op := rgwDispatchFailure("enabling RGW on", memberName, err)
+		failures = append(failures, detail)
+		operational = operational || op
+	}
+	if len(failures) > 0 {
+		// Keep removal targets running until all replacements are ready.
+		if len(disables) > 0 {
+			failures = append(failures, "deferred disabling RGW on "+strings.Join(disables, ", "))
+		}
+		return rgwAggregateError(failures, operational)
+	}
+
+	for _, memberName := range disables {
+		err := removeRgwServiceFunc(ctx, s, memberName)
+		if err == nil {
+			continue
+		}
+		detail, op := rgwDispatchFailure("disabling RGW on", memberName, err)
+		failures = append(failures, detail)
+		operational = operational || op
+	}
+	if len(failures) > 0 {
+		return rgwAggregateError(failures, operational)
+	}
+	return nil
+}
+
+// rgwDispatchFailure formats one failed RGW member dispatch and reports
+// whether it is operational. An HTTP 400 forwarded from the member-side
+// service handler is a forwarded input rejection and stays client-classified;
+// every other dispatch failure (unreachable member, failed start, failed
+// teardown) is operational. Only the aggregate error carries a sentinel, so
+// the classification is attached exactly once.
+func rgwDispatchFailure(action, member string, err error) (detail string, operational bool) {
+	detail = fmt.Sprintf("%s %s: %v", action, member, err)
+	operational = !api.StatusErrorCheck(err, http.StatusBadRequest)
+	return detail, operational
+}
+
+// rgwAggregateError combines per-member RGW dispatch failures into one
+// error. A mix of client-classified and operational failures is itself
+// operational: the apply genuinely failed on real cluster state and must not
+// read as a merely bad request.
+func rgwAggregateError(failures []string, operational bool) error {
+	if operational {
+		return fmt.Errorf("%w: %s", ErrPlacementOperationFailed, strings.Join(failures, "; "))
+	}
+	return fmt.Errorf("%w: %s", ErrRgwFrontendInvalid, strings.Join(failures, "; "))
+}
+
+// enableRgwServiceFunc dispatches an RGW enable to a target member with its
+// normalized frontend config. Injectable for testing; the production
+// implementation is wired by the daemon package. It fails closed when no
+// production implementation is wired: a missing dispatch must not silently
+// report success.
+var enableRgwServiceFunc = func(ctx context.Context, s interfaces.StateInterface, member string, rgw types.RgwPlacement) error {
+	tls := rgw.SSL != nil && *rgw.SSL
+	logger.Infof("Placement: enabling RGW on %s (port=%d, ssl_port=%d, tls=%v)", member, rgw.Port, rgw.SSLPort, tls)
+	if ProdEnableRgwServiceFunc == nil {
+		return fmt.Errorf("no production RGW enable dispatch wired for %s", member)
+	}
+	return ProdEnableRgwServiceFunc(ctx, s, member, rgw)
+}
+
+// removeRgwServiceFunc dispatches an RGW disable to a target member.
+// Injectable for testing; fails closed like enableRgwServiceFunc.
+var removeRgwServiceFunc = func(ctx context.Context, s interfaces.StateInterface, member string) error {
+	logger.Infof("Placement: disabling RGW on %s", member)
+	if ProdRemoveRgwServiceFunc == nil {
+		return fmt.Errorf("no production RGW disable dispatch wired for %s", member)
+	}
+	return ProdRemoveRgwServiceFunc(ctx, s, member)
+}
+
+// ProdEnableRgwServiceFunc is the injectable hook for the production RGW
+// enable dispatch. The daemon package sets it at init time; the default is
+// nil, and enableRgwServiceFunc fails closed without it.
+var ProdEnableRgwServiceFunc func(ctx context.Context, s interfaces.StateInterface, member string, rgw types.RgwPlacement) error
+
+// ProdRemoveRgwServiceFunc is the injectable hook for the production RGW
+// disable dispatch. The daemon package sets it at init time; the default is
+// nil, and removeRgwServiceFunc fails closed without it.
+var ProdRemoveRgwServiceFunc func(ctx context.Context, s interfaces.StateInterface, member string) error
 
 // placementPolicyJSON is the only encoder for the stored policy, so nothing
 // can persist a policy without passing the secret strip.
