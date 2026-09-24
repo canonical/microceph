@@ -11,6 +11,32 @@ from robot.api import logger
 import placement_status
 from microceph_harness import MICROCEPH_CONTROL_SOCKET, microceph_harness
 
+# Runs inside the coordinating guest so samples are taken every 100 ms
+# regardless of the lxc exec round trip; see start_rgw_migration_sampler_in_vm.
+RGW_MIGRATION_SAMPLER = """\
+import os, sys, time, urllib.request
+tag, old, new, port, path, expected = sys.argv[1:7]
+def url(host):
+    host = f"[{host}]" if ":" in host else host
+    return f"http://{host}:{port}{path}"
+def serves(host):
+    try:
+        with urllib.request.urlopen(url(host), timeout=1) as response:
+            return response.read().decode().strip() == expected
+    except Exception:
+        return False
+with open(f"/tmp/{tag}.samples", "w") as out:
+    while not os.path.exists(f"/tmp/{tag}.done"):
+        started = os.path.exists(f"/tmp/{tag}.started")
+        new_ok = serves(new)
+        old_ok = False if new_ok else serves(old)
+        out.write(f"{int(started)} {int(new_ok)} {int(old_ok)}\\n")
+        out.flush()
+        time.sleep(0.1)
+    out.write("END\\n")
+"""
+
+
 class rgw_placement:
     """Keep gateway-specific operations out of the shared execution harness."""
 
@@ -63,6 +89,33 @@ class rgw_placement:
             attempts=tries,
             interval=5,
             fail_msg=f"rgw systemd unit on {where} never became {want}",
+        )
+
+    def get_rgw_daemon_count_in_vm(self, vm_name=None):
+        """Returns the RGW daemon count from ceph -s inside *vm_name* (None on failure)."""
+        res = self._harness.run_in_vm("sudo microceph.ceph -s", 30, quiet=True, vm_name=vm_name)
+        if res.rc != 0:
+            return None
+        return self._harness._rgw_daemon_count(res.stdout)
+
+    def wait_for_rgw_count_in_vm(self, expect, tries=20, vm_name=None):
+        """Polls ceph -s inside *vm_name* until at least *expect* RGW daemons run."""
+        last = [0]
+
+        def predicate():
+            count = self.get_rgw_daemon_count_in_vm(vm_name)
+            last[0] = count if count is not None else 0
+            return last[0] >= int(expect)
+
+        def on_fail():
+            self._harness.run_in_vm("sudo microceph.ceph -s", 30, vm_name=vm_name)
+
+        self._harness._poll_until(
+            predicate,
+            attempts=tries,
+            interval=5,
+            fail_msg=lambda: f"Never reached {expect} RGW daemon(s) (last saw {last[0]})",
+            on_fail=on_fail,
         )
 
     def get_rgw_frontend_conf_ports(self, vm_name=None):
@@ -310,6 +363,117 @@ class rgw_placement:
         )
         self._harness.run_in_vm_and_check(cmd, 30, vm_name=vm_name)
         return body_path
+
+    # -----------------------------------------------------------------------
+    # In-flight placement requests
+    # -----------------------------------------------------------------------
+
+    def start_placement_put_in_vm(self, vm_name, body, tag, timeout=120):
+        """Starts a detached placement PUT inside *vm_name* and returns immediately.
+
+        nohup + disown keeps curl running after the lxc exec session closes;
+        the response body lands in /tmp/<tag>.json and /tmp/<tag>.done appears
+        once it finishes. Background PUTs are how the suites observe in-flight
+        apply behavior (migration add-before-remove sampling, lock conflicts)
+        that a blocking PUT cannot show.
+        """
+        body_path = f"/tmp/{tag}-body.json"
+        # argv, not shell interpolation: the body must reach the file verbatim.
+        self._exec(
+            ["python3", "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text(sys.argv[2])", body_path, body],
+            vm_name,
+        )
+        self._harness.run_in_vm_and_check(
+            f"rm -f /tmp/{tag}.json /tmp/{tag}.done && "
+            f"nohup sh -c 'touch /tmp/{tag}.started; curl -s -X PUT --unix-socket {MICROCEPH_CONTROL_SOCKET} "
+            f"-H \"Content-Type: application/json\" -d @{body_path} -o /tmp/{tag}.json "
+            f"http://localhost/1.0/placement; touch /tmp/{tag}.done' >/dev/null 2>&1 & disown",
+            timeout, vm_name=vm_name,
+        )
+
+    def start_concurrent_placement_puts_in_vm(self, vm_name, body_a, tag_a, body_b, tag_b, target_b):
+        """Launches two detached placement PUTs from one shell, milliseconds apart.
+
+        The second request carries ?target=<target_b>, so the daemon in
+        *vm_name* forwards it to that member and the apply runs there, under
+        that member's daemon, while the first apply runs locally. Launching
+        both from one shell keeps the gap far below the shortest real apply,
+        so the pair genuinely overlaps on the cluster-wide apply lock. Both
+        results land in /tmp/<tag>.json with a /tmp/<tag>.done marker.
+        """
+        for tag, body in ((tag_a, body_a), (tag_b, body_b)):
+            self._exec(
+                ["python3", "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text(sys.argv[2])",
+                 f"/tmp/{tag}-body.json", body],
+                vm_name,
+            )
+        curl = (f"curl -s -X PUT --unix-socket {MICROCEPH_CONTROL_SOCKET} "
+                f"-H \"Content-Type: application/json\"")
+        self._harness.run_in_vm_and_check(
+            f"rm -f /tmp/{tag_a}.json /tmp/{tag_a}.done /tmp/{tag_b}.json /tmp/{tag_b}.done && "
+            f"nohup sh -c '{curl} -d @/tmp/{tag_a}-body.json -o /tmp/{tag_a}.json http://localhost/1.0/placement; "
+            f"touch /tmp/{tag_a}.done' >/dev/null 2>&1 & "
+            f"nohup sh -c '{curl} -d @/tmp/{tag_b}-body.json -o /tmp/{tag_b}.json "
+            f"\"http://localhost/1.0/placement?target={shlex.quote(target_b)}\"; touch /tmp/{tag_b}.done' >/dev/null 2>&1 & disown",
+            30, vm_name=vm_name,
+        )
+
+    def background_put_done_in_vm(self, vm_name, tag):
+        """Returns True when the detached PUT *tag* inside *vm_name* has finished."""
+        return self._harness.run_in_vm(f"test -f /tmp/{tag}.done", 15, quiet=True, vm_name=vm_name).rc == 0
+
+    def wait_for_background_put_in_vm(self, vm_name, tag, timeout=600):
+        """Waits for the detached PUT *tag* and returns its response body."""
+        self._harness._poll_until(
+            lambda: self.background_put_done_in_vm(vm_name, tag),
+            attempts=max(1, int(timeout / 5)),
+            interval=5,
+            fail_msg=f"background placement PUT {tag} did not finish within {timeout}s",
+        )
+        return self._harness.run_in_vm(f"cat /tmp/{tag}.json", 30, vm_name=vm_name).stdout
+
+    def start_rgw_migration_sampler_in_vm(self, vm_name, tag, old_host, new_host, port, path, expected):
+        """Starts an in-guest sampler that reads the object every 100 ms until the PUT *tag* finishes.
+
+        The sampler runs inside *vm_name* so its cadence does not depend on the
+        lxc exec round trip; a fast apply still yields in-flight samples. Start
+        it before Start Placement Put In VM with the same tag; the PUT's
+        .started marker separates in-flight samples from the warm-up.
+        """
+        self._exec(["rm", "-f", f"/tmp/{tag}.started", f"/tmp/{tag}.done", f"/tmp/{tag}.samples"], vm_name)
+        self._exec(
+            ["python3", "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text(sys.argv[2])",
+             f"/tmp/{tag}-sampler.py", RGW_MIGRATION_SAMPLER],
+            vm_name,
+        )
+        self._harness.run_in_vm_and_check(
+            f"nohup python3 /tmp/{tag}-sampler.py {shlex.quote(tag)} {shlex.quote(old_host)} {shlex.quote(new_host)} "
+            f"{int(port)} {shlex.quote(path)} {shlex.quote(expected)} >/tmp/{tag}-sampler.log 2>&1 & disown",
+            30, vm_name=vm_name,
+        )
+
+    def collect_rgw_migration_samples_in_vm(self, vm_name, tag, attempts=60):
+        """Waits for the sampler started for *tag* to finish and returns its verdict.
+
+        Returns {"samples": in-flight sample count, "available": every in-flight
+        sample read the object from the old or the new gateway,
+        "replacement_ready": the new gateway served the object at least once}.
+        """
+        last = [""]
+
+        def predicate():
+            last[0] = self._harness.run_in_vm(f"cat /tmp/{tag}.samples", 30, quiet=True, vm_name=vm_name).stdout
+            return placement_status.migration_samples(last[0])["complete"]
+
+        self._harness._poll_until(
+            predicate,
+            attempts=attempts,
+            interval=1,
+            fail_msg=f"migration sampler for {tag} never finished",
+        )
+        verdict = placement_status.migration_samples(last[0])
+        del verdict["complete"]
+        return verdict
 
     # -----------------------------------------------------------------------
     # Stored-policy / observed-state parsers (Python decisions for Robot asserts)
