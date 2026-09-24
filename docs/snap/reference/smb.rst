@@ -19,8 +19,11 @@ Enable an SMB instance
    microceph enable smb --cluster-id <cluster-id> [--target <member>] [flags]
 
 The first member creates the SMB cluster and requires at least one local-user
-configuration source. Later commands add members to the existing cluster and
-must not repeat creation-only user options.
+configuration source. Managed clusters use CTDB even with one member, so
+connect ``microceph:ctdb-run`` before applying a share. The Ceph SMB manager
+defers initial service placement until a CephFS-backed share exists: create
+and apply the first share before enabling a second member. Later commands add
+members to the existing cluster and must not repeat creation-only user options.
 
 Options
 ~~~~~~~
@@ -79,8 +82,8 @@ be removed.
 Runtime services
 ----------------
 
-A managed cluster with multiple members runs these snap services on every
-selected member:
+A managed cluster runs these snap services on every selected member, including
+when only one member remains:
 
 ``microceph.smbd``
    Serves SMB clients and accesses CephFS through ``vfs_ceph_new``.
@@ -120,8 +123,8 @@ Placement rules
 * A member can run at most one SMB cluster because there is one local Samba
   configuration and one default SMB port.
 * One SMB cluster can contain multiple MicroCeph members.
-* Adding the second member changes the service from direct mode to CTDB mode.
-  Removing members until one remains changes it back to direct mode.
+* Managed clusters start in CTDB mode. Adding or removing members does not
+  change the clustering mode, including when only one member remains.
 * Labels, host patterns, per-host daemon names, and unknown members are not
   supported by the native MicroCeph SMB orchestrator.
 

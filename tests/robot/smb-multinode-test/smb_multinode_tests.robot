@@ -38,9 +38,10 @@ SMB Multinode Suite Setup
 
 Enable Three Managed SMB Instances
     Run In Head Node    microceph enable smb --cluster-id ${SMB_CLUSTER} --target node-wrk0 --define-user-pass '${SMB_USER}%${SMB_PASSWORD}'    180
+    Run In Head Node    echo cmVzb3VyY2VfdHlwZTogY2VwaC5zbWIuc2hhcmUKY2x1c3Rlcl9pZDogc21iY2x1c3RlcgpzaGFyZV9pZDogY2VwaGZzCmNlcGhmczoKICB2b2x1bWU6IHNtYnNmcwogIHN1YnZvbHVtZTogc21iZGF0YQogIHByb3ZpZGVyOiBzYW1iYS12ZnMvbmV3Cg== | base64 --decode | microceph.ceph smb apply -i -    120
+    Wait For CTDB Service    enabled    active    node=node-wrk0
     Run In Head Node    microceph enable smb --cluster-id ${SMB_CLUSTER} --target node-wrk1    180
     Run In Head Node    microceph enable smb --cluster-id ${SMB_CLUSTER} --target node-wrk2    180
-    Run In Head Node    echo cmVzb3VyY2VfdHlwZTogY2VwaC5zbWIuc2hhcmUKY2x1c3Rlcl9pZDogc21iY2x1c3RlcgpzaGFyZV9pZDogY2VwaGZzCmNlcGhmczoKICB2b2x1bWU6IHNtYnNmcwogIHN1YnZvbHVtZTogc21iZGF0YQogIHByb3ZpZGVyOiBzYW1iYS12ZnMvbmV3Cg== | base64 --decode | microceph.ceph smb apply -i -    120
     FOR    ${node}    IN    node-wrk0    node-wrk1    node-wrk2
         Wait For SMB Service    enabled    active    node=${node}
         Wait For CTDB Service    enabled    active    node=${node}
@@ -105,8 +106,8 @@ Scale Down And Remove Managed SMB Cluster
     Wait For CTDB Service    disabled    inactive    node=node-wrk1
     Wait For CTDB Nodes Service    disabled    inactive    node=node-wrk1
     Wait For SMB Service    enabled    active    node=node-wrk0
-    Wait For CTDB Service    disabled    inactive    node=node-wrk0
-    Wait For CTDB Nodes Service    disabled    inactive    node=node-wrk0
+    Wait For CTDB Service    enabled    active    node=node-wrk0
+    Wait For CTDB Nodes Service    enabled    active    node=node-wrk0
     Run In Head Node    microceph.ceph smb share rm ${SMB_CLUSTER} ${SMB_SHARE}    120
     Run In Head Node    microceph disable smb --cluster-id ${SMB_CLUSTER} --target node-wrk0    180
     Wait For SMB Service    disabled    inactive    node=node-wrk0
