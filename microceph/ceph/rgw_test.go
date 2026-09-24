@@ -11,15 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/interfaces"
-	"github.com/canonical/microceph/microceph/mocks"
-	"github.com/canonical/microceph/microceph/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
 
 // rgwOpsRecorder captures calls to the injectable RGW primitives so tests can
@@ -607,57 +602,4 @@ func TestCheckRGWFrontendPinsCertificate(t *testing.T) {
 	err = checkRGWFrontend(rgwFrontendSpec{ssl: true, sslPort: port, certPEM: otherPEM})
 	require.Error(t, err, "a different served certificate must be rejected")
 	assert.Contains(t, err.Error(), "expected certificate")
-}
-
-// The mock-runner suite below predates the recorder-based tests above. Only its
-// disable test is left; it goes when disable gets its own convergence tests.
-type rgwSuite struct {
-	tests.BaseSuite
-	TestStateInterface *mocks.StateInterface
-}
-
-func TestRGW(t *testing.T) {
-	suite.Run(t, new(rgwSuite))
-}
-
-// Expect: run snapctl service stop
-func addStopRGWExpectations(s *rgwSuite, r *mocks.Runner) {
-	u := api.NewURL()
-
-	state := &mocks.MockState{
-		URL:         u,
-		ClusterName: "foohost",
-	}
-
-	s.TestStateInterface.On("ClusterState").Return(state)
-	r.On("RunCommand", tests.CmdAny("snapctl", 3)...).Return("ok", nil).Once()
-}
-
-// Set up test suite
-func (s *rgwSuite) SetupTest() {
-	s.BaseSuite.SetupTest()
-	s.CopyCephConfigs()
-
-	s.TestStateInterface = mocks.NewStateInterface(s.T())
-}
-
-func (s *rgwSuite) TestDisableRGW() {
-	r := mocks.NewRunner(s.T())
-
-	addStopRGWExpectations(s, r)
-
-	common.ProcessExec = r
-
-	err := DisableRGW(context.Background(), s.TestStateInterface)
-
-	// we expect a missing database error
-	assert.EqualError(s.T(), err, "no server certificate")
-
-	// check that the radosgw.conf file is absent
-	_, err = os.Stat(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf"))
-	assert.True(s.T(), os.IsNotExist(err))
-
-	// check that the keyring file is absent
-	_, err = os.Stat(filepath.Join(s.Tmp, "SNAP_COMMON", "data", "radosgw", "ceph-radosgw.gateway", "keyring"))
-	assert.True(s.T(), os.IsNotExist(err))
 }
