@@ -2132,6 +2132,28 @@ class microceph_harness:
         self.run_in_vm_and_check("sudo microceph.ceph -s", 30)
         self.run_in_vm_and_check("sudo microceph status", 30)
 
+    @staticmethod
+    def _is_member_not_found_error(stderr):
+        """Returns True when *stderr* is a 'cluster member ... not found' error.
+
+        Matches the real `microceph cluster remove` failure text, e.g.
+        'Error: ... cluster member "node-wrk3" not found'. A None or empty
+        *stderr* (no error text, e.g. the command succeeded) is not a match.
+        """
+        if not stderr:
+            return False
+        return re.search(r'cluster member .* not found', stderr) is not None
+
+    def is_member_not_found_error(self, stderr):
+        """Returns True when *stderr* is a 'cluster member ... not found' error.
+
+        Robot keyword wrapper around the pure _is_member_not_found_error
+        staticmethod, so Remove Node Head Node can decide this in Python
+        (see AGENTS.md, "Purify: fetch raw, decide in Python") instead of an
+        inline Evaluate with no unit test.
+        """
+        return self._is_member_not_found_error(stderr)
+
     def get_node_ip(self, container):
         """Returns the primary IP of *container* (first address from hostname -I), or "" if none.
 
