@@ -173,9 +173,14 @@ class microceph_harness:
         """
         return BuiltIn().get_variable_value("${OUTER_VM}", "microceph-test-vm")
 
-    def _vm_argv(self, *rest):
-        """Builds the argv that runs *rest* inside the outer VM via lxc exec."""
-        return ["lxc", "exec", "-n", self._outer_vm(), "--", *rest]
+    def _vm_argv(self, *rest, vm=None):
+        """Builds the argv that runs *rest* inside the outer VM via lxc exec.
+
+        Pass vm= to target a different LXD VM: the multi-VM RGW placement
+        suite runs sibling guest VMs (real independent members) rather than
+        containers inside one outer VM.
+        """
+        return ["lxc", "exec", "-n", vm or self._outer_vm(), "--", *rest]
 
     def _ct_argv(self, container, *rest):
         """Builds the argv that runs *rest* inside *container* via the outer VM."""
@@ -289,7 +294,7 @@ class microceph_harness:
     # Core execution helpers
     # -----------------------------------------------------------------------
 
-    def run_in_vm(self, bash_cmd, timeout=300, quiet=False):
+    def run_in_vm(self, bash_cmd, timeout=300, quiet=False, vm_name=None):
         """Runs an arbitrary bash command inside the outer VM (no fail on non-zero).
 
         bash -eo pipefail: pipe failures and early command failures propagate to the exit code,
@@ -298,24 +303,27 @@ class microceph_harness:
         command inherits Robot's stdin (a tty on interactive runs, Robot Framework >= 7.0), and
         commands that read stdin to EOF when it is not a tty -- notably lxc init / lxc launch,
         which slurp instance config YAML from stdin -- block forever on a tty that never EOFs.
+
+        Pass vm_name= to run inside a different LXD VM (guest-VM suites); the
+        default remains ${OUTER_VM} so existing callers are unchanged.
         """
         self._echo_cmd(bash_cmd, quiet)
-        res = self._exec(self._vm_argv("bash", "-eo", "pipefail", "-c", bash_cmd), timeout)
+        res = self._exec(self._vm_argv("bash", "-eo", "pipefail", "-c", bash_cmd, vm=vm_name), timeout)
         self._log_exec(bash_cmd, res, quiet)
         return res
 
-    def run_in_vm_and_check(self, bash_cmd, timeout=300, quiet=False):
+    def run_in_vm_and_check(self, bash_cmd, timeout=300, quiet=False, vm_name=None):
         """Runs a bash command inside the outer VM and fails on non-zero rc."""
-        res = self.run_in_vm(bash_cmd, timeout, quiet)
+        res = self.run_in_vm(bash_cmd, timeout, quiet, vm_name=vm_name)
         if res.rc != 0:
             raise AssertionError(
                 f"Command failed (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}"
             )
         return res
 
-    def run_in_vm_must_fail(self, bash_cmd, timeout=120, quiet=False):
+    def run_in_vm_must_fail(self, bash_cmd, timeout=120, quiet=False, vm_name=None):
         """Runs a bash command inside the outer VM and fails if it SUCCEEDS (expects non-zero)."""
-        res = self.run_in_vm(bash_cmd, timeout, quiet)
+        res = self.run_in_vm(bash_cmd, timeout, quiet, vm_name=vm_name)
         if res.rc == 0:
             raise AssertionError(f"Expected failure but command succeeded: {bash_cmd}")
         return res
@@ -1519,13 +1527,24 @@ class microceph_harness:
         disk_size = disk_size or BuiltIn().get_variable_value("${OUTER_VM_DISK}", "50GiB")
         # enable_nesting is accepted for API parity but is currently unused (the
         # original keyword body ignores it).
+        cpu = BuiltIn().get_variable_value("${OUTER_VM_CPU}", "4")
+        memory = BuiltIn().get_variable_value("${OUTER_VM_MEMORY}", "6GiB")
+        image = BuiltIn().get_variable_value("${OUTER_VM_IMAGE}", "ubuntu:24.04")
+        self._launch_vm_instance(vm_name, disk_size, cpu, memory, image)
+        # Bridge: keep the still-in-Robot keywords and _outer_vm() in sync (replaces
+        # the original Set Suite Variable).
+        BuiltIn().set_suite_variable("${OUTER_VM}", vm_name)
+
+    def _launch_vm_instance(self, vm_name, disk_size, cpu, memory, image):
+        """Launches one LXD VM (delete-first, 3 attempts) and waits for agent + cloud-init.
+
+        Shared by Launch Outer Test VM (single-boundary suites) and
+        Launch Guest Test VM (multi-VM suites); it never touches ${OUTER_VM}.
+        """
         self.require_host_commands("lxc")
         logger.console(f"\n[setup] Deleting pre-existing VM {vm_name} (if any)...")
         self._delete_instance_synced(vm_name)
         logger.console(f"[setup] Launching VM {vm_name} (disk={disk_size})...")
-        cpu = BuiltIn().get_variable_value("${OUTER_VM_CPU}", "4")
-        memory = BuiltIn().get_variable_value("${OUTER_VM_MEMORY}", "6GiB")
-        image = BuiltIn().get_variable_value("${OUTER_VM_IMAGE}", "ubuntu:24.04")
         argv = [
             "lxc", "launch", image, vm_name, "--vm",
             "-c", f"limits.cpu={cpu}",
@@ -1554,9 +1573,6 @@ class microceph_harness:
             if attempt == 2:
                 raise AssertionError(f"Failed to launch VM {vm_name} after 3 attempts: {res.stderr}")
             time.sleep(30)
-        # Bridge: keep the still-in-Robot keywords and _outer_vm() in sync (replaces
-        # the original Set Suite Variable).
-        BuiltIn().set_suite_variable("${OUTER_VM}", vm_name)
         logger.console(f"[setup] Waiting for VM agent in {vm_name}...")
         self.wait_for_vm_agent(vm_name)
         logger.console(f"[setup] Waiting for cloud-init in {vm_name}...")
@@ -2321,6 +2337,51 @@ class microceph_harness:
         res = self.exec_in_container(
             container, "curl", "-s", "-X", "DELETE", "--unix-socket", MICROCEPH_CONTROL_SOCKET,
             f"http://localhost/1.0/{path}", timeout=60, check=True,
+        )
+        return res.stdout
+
+    # -----------------------------------------------------------------------
+    # Placement API on named guest VMs (multi-VM RGW placement suite)
+    #
+    # These mirror the container variants but run curl inside a sibling LXD
+    # VM, so a policy can be submitted from a non-head member over that
+    # member's own control socket. Bodies without TLS material go inline;
+    # material-bearing policies are built from files inside the VM (see
+    # write_rgw_tls_policy_in_vm) and submitted with -d @file so no secret
+    # value ever appears in a command line, the journal, or the Robot log.
+    # -----------------------------------------------------------------------
+
+    def microceph_api_get_in_vm(self, vm_name, path):
+        """GETs a path from the MicroCeph control socket inside a named guest VM."""
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s --unix-socket {MICROCEPH_CONTROL_SOCKET} http://localhost/1.0/{path}",
+            30, vm_name=vm_name,
+        )
+        return res.stdout
+
+    def get_placement_status_json_in_vm(self, vm_name):
+        """Returns the placement status JSON from a named guest VM."""
+        return self.microceph_api_get_in_vm(vm_name, "placement")
+
+    def microceph_api_delete(self, path, vm_name=None, timeout=60):
+        """DELETEs a path on the control socket on the outer VM (or vm_name)."""
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s -X DELETE --unix-socket {MICROCEPH_CONTROL_SOCKET} http://localhost/1.0/{path}",
+            float(timeout), vm_name=vm_name,
+        )
+        return res.stdout
+
+    def microceph_api_put_from_file_in_vm(self, path, body_file, timeout=300, vm_name=None):
+        """PUTs a pre-built JSON body file to a path on the control socket.
+
+        -d @file keeps the body out of every command line; sudo's journal
+        entry would carry only the file path, so the TLS-bearing policies
+        submitted this way cannot leak through the audit log either.
+        """
+        res = self.run_in_vm_and_check(
+            f"sudo curl -s -X PUT --unix-socket {MICROCEPH_CONTROL_SOCKET}"
+            f" -H 'Content-Type: application/json' -d @{body_file} http://localhost/1.0/{path}",
+            float(timeout), vm_name=vm_name,
         )
         return res.stdout
 

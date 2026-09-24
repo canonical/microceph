@@ -209,6 +209,10 @@ jobs:
           - id: legacy-placement-tests
             name: Legacy bootstrap placement regression
             suite: legacy-placement-tests
+
+          - id: rgw-placement-tests
+            name: Role-managed RGW placement single node
+            suite: rgw-placement-tests
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
