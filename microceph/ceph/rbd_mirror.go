@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -194,7 +195,65 @@ func EnablePoolMirroring(pool string, mode types.RbdResourceType, localName stri
 	return BootstrapPeer(pool, localName, remoteName)
 }
 
-// DisablePoolMirroring disables mirroring for an rbd pool.
+// localDisableRetryStrategies spaces the retries of the local pool disable in
+// DisablePoolMirroring: one quick retry, then gaps wide enough for the other
+// site's rbd-mirror daemon to notice its peer is gone and stop re-adding it.
+// Tests override it.
+var localDisableRetryStrategies = []strategy.Strategy{
+	strategy.Limit(4),
+	strategy.Wait(5*time.Second, 40*time.Second),
+}
+
+// remoteDisableInitialDelay and remoteDisableBackoffStep are typed so that a bare
+// number cannot slip in again: strategy.Delay(5) once meant 5 nanoseconds. A test
+// checks their values.
+const (
+	remoteDisableInitialDelay time.Duration = 5 * time.Second
+	remoteDisableBackoffStep  time.Duration = 5 * time.Second
+)
+
+// remoteDisableRetryStrategies spaces the retries of the remote pool disable in
+// DisablePoolMirroring. Tests override it.
+var remoteDisableRetryStrategies = []strategy.Strategy{
+	strategy.Delay(remoteDisableInitialDelay),
+	strategy.Limit(10),
+	strategy.Backoff(backoff.Linear(remoteDisableBackoffStep)),
+}
+
+// isPeerReregistrationFailure reports whether a pool disable was refused because
+// a peer is still (or again) registered. See DisablePoolMirroring.
+func isPeerReregistrationFailure(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "mirror peers still registered")
+}
+
+// stopUnlessPeerRace is a retry strategy that keeps retrying only while the last
+// error is the "peers still registered" refusal; any other error ends the loop at
+// once. Pass it before the sleeping strategies so a stopped loop does not sleep
+// first.
+func stopUnlessPeerRace(lastErr *error) strategy.Strategy {
+	return func(attempt uint) bool {
+		if attempt == 0 {
+			return true
+		}
+		return isPeerReregistrationFailure(*lastErr)
+	}
+}
+
+// DisablePoolMirroring disables mirroring for an rbd pool on both sites.
+//
+// Ceph refuses to disable pool mirroring while the pool still lists a peer, so
+// the peers are removed on both sites first. Removing them once is not enough:
+// the other site's rbd-mirror daemon pings this pool every 30 seconds and, when
+// it finds no entry for itself, adds one back. It only stops once it notices, up
+// to another 30 seconds later, that its own peer entry is gone. A plain retry of
+// the disable would fail the same way because the re-added peer is still there,
+// so every retry first removes any peer that came back, then tries the disable
+// again (https://github.com/canonical/microceph/issues/849).
+//
+// The local disable retries only that refusal; any other error fails at once.
+// The remote disable retries every error, as it has since
+// https://github.com/canonical/microceph/pull/468, because it can run before the
+// other site has caught up.
 func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string, remoteName string) error {
 	// remove peer permissions
 	err := RemovePeer(pool, localName, remoteName)
@@ -204,27 +263,63 @@ func DisablePoolMirroring(pool string, peer RbdReplicationPeer, localName string
 	}
 
 	// Disable pool mirroring on the local cluster.
-	err = configurePoolMirroring(pool, types.RbdResourceDisabled, "", "")
+	var localErr error
+	err = retry.Retry(func(i uint) error {
+		if i > 1 {
+			removeReregisteredPeers(i, pool, remoteName, "", "")
+		}
+
+		localErr = configurePoolMirroring(pool, types.RbdResourceDisabled, "", "")
+		if localErr != nil {
+			logger.Errorf("REPRBD: attempt %d: failed to disable the primary pool mirroring: %s", i, localErr.Error())
+		}
+		return localErr
+	}, append([]strategy.Strategy{stopUnlessPeerRace(&localErr)}, localDisableRetryStrategies...)...)
 	if err != nil {
 		logger.Errorf("REPRBD: failed to disable the primary pool mirroring %s", err.Error())
 		return err
 	}
 
 	err = retry.Retry(func(i uint) error {
+		if i > 1 {
+			removeReregisteredPeers(i, pool, localName, localName, remoteName)
+		}
+
 		// Disable pool mirroring on the remote cluster.
-		err = configurePoolMirroring(pool, types.RbdResourceDisabled, localName, remoteName)
+		err := configurePoolMirroring(pool, types.RbdResourceDisabled, localName, remoteName)
 		if err != nil {
 			logger.Errorf("REPRBD: attempt %d: %s", i, err.Error())
 			return err
 		}
 		return nil
-	}, strategy.Delay(5), strategy.Limit(10), strategy.Backoff(backoff.Linear(5*time.Second)))
+	}, remoteDisableRetryStrategies...)
 	if err != nil {
 		logger.Errorf("REPRBD: failed to disable the secondary pool mirroring: %s", err.Error())
 		return err
 	}
 
 	return nil
+}
+
+// removeReregisteredPeers removes every peer named peerName from the pool, best
+// effort, before a retried pool disable. Empty client and cluster mean the local
+// site, as for getAllPeerUUIDs.
+func removeReregisteredPeers(attempt uint, pool string, peerName string, client string, cluster string) {
+	ids, err := getAllPeerUUIDs(pool, peerName, client, cluster)
+	if err != nil {
+		if !errors.Is(err, errNoPeerFound) {
+			logger.Warnf("REPRBD: attempt %d: failed to look up re-registered peers for pool(%s): %s", attempt, pool, err.Error())
+		}
+		return
+	}
+
+	for _, id := range ids {
+		logger.Warnf("REPRBD: attempt %d: removing re-registered peer(%s) named %s from pool(%s)", attempt, id, peerName, pool)
+		err := peerRemove(pool, id, client, cluster)
+		if err != nil {
+			logger.Warnf("REPRBD: attempt %d: failed to remove re-registered peer(%s): %s", attempt, id, err.Error())
+		}
+	}
 }
 
 // DisableAllMirroringImagesInPool disables mirroring for all images for a pool enabled in pool mirroring mode.
@@ -271,48 +366,62 @@ func ResyncAllMirroringImagesInPool(poolName string) error {
 	return nil
 }
 
-// getPeerUUID returns the peer ID for the requested peer name.
-func getPeerUUID(pool string, peerName string, client string, cluster string) (string, error) {
+// errNoPeerFound is returned by getAllPeerUUIDs when no peer has the requested name.
+var errNoPeerFound = errors.New("no peer found")
+
+// getAllPeerUUIDs returns the ID of every registered peer with the given name.
+// There can be more than one: a peer that Ceph re-adds gets a new ID, see
+// DisablePoolMirroring.
+func getAllPeerUUIDs(pool string, peerName string, client string, cluster string) ([]string, error) {
 	poolInfo, err := GetRbdMirrorPoolInfo(pool, cluster, client)
 	if err != nil {
 		logger.Error(err.Error())
-		return "", err
+		return nil, err
 	}
 
+	ids := []string{}
 	for _, peer := range poolInfo.Peers {
 		if peer.RemoteName == peerName {
-			return peer.Id, nil
+			ids = append(ids, peer.Id)
 		}
 	}
 
-	return "", fmt.Errorf("no peer found")
+	if len(ids) == 0 {
+		return nil, errNoPeerFound
+	}
+
+	return ids, nil
 }
 
 // RemovePeer removes the rbd-mirror peer permissions for requested pool.
 func RemovePeer(pool string, localName string, remoteName string) error {
-	// find local site's peer with name $remoteName
-	localPeer, err := getPeerUUID(pool, remoteName, "", "")
+	// find local site's peers with name $remoteName
+	localPeers, err := getAllPeerUUIDs(pool, remoteName, "", "")
 	if err != nil {
 		return err
 	}
 
-	remotePeer, err := getPeerUUID(pool, localName, localName, remoteName)
+	remotePeers, err := getAllPeerUUIDs(pool, localName, localName, remoteName)
 	if err != nil {
 		return err
 	}
 
-	// Remove local cluster's peer
-	err = peerRemove(pool, localPeer, "", "")
-	if err != nil {
-		logger.Errorf("REPRBD: %s", err.Error())
-		return err
+	// Remove local cluster's peers
+	for _, localPeer := range localPeers {
+		err = peerRemove(pool, localPeer, "", "")
+		if err != nil {
+			logger.Errorf("REPRBD: %s", err.Error())
+			return err
+		}
 	}
 
-	// Remove remote's peer
-	err = peerRemove(pool, remotePeer, localName, remoteName)
-	if err != nil {
-		logger.Errorf("REPRBD: %s", err.Error())
-		return err
+	// Remove remote's peers
+	for _, remotePeer := range remotePeers {
+		err = peerRemove(pool, remotePeer, localName, remoteName)
+		if err != nil {
+			logger.Errorf("REPRBD: %s", err.Error())
+			return err
+		}
 	}
 
 	return nil
