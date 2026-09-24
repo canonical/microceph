@@ -113,7 +113,7 @@ Test Declarative Control Placement Migration Preserves Quorum
     Wait Until Keyword Succeeds    90s    5s    Assert Mon Host Includes    node-wrk1    ${dst_ip}
     Pin Mon Host To Self    node-wrk1
     ${start}=    Get Time    epoch
-    ${resp}=    MicroCeph API Put In Container    node-wrk0    placement    ${policy}
+    ${resp}=    MicroCeph API Put In Container Until Success    node-wrk0    placement    ${policy}
     ${code}=    Response Status Code    ${resp}
     Should Be Equal As Integers    ${code}    200    msg=Control migration failed: ${resp}
     ${end}=    Get Time    epoch

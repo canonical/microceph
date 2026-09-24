@@ -93,7 +93,7 @@ func TestEnableManagedSMBRejectsFirstMemberWithoutUserConfigBeforePreparingBacke
 	assert.Zero(t, ensureCalls)
 }
 
-func TestEnableManagedSMBReconcilesExistingClusterBeforeFirstCallback(t *testing.T) {
+func TestEnableManagedSMBWaitsForFirstCallbackBeforeReconcile(t *testing.T) {
 	originalMembers := getManagedSMBMembersFunc
 	originalLoad := loadManagedSMBClusterFunc
 	originalApply := applyManagedSMBClusterFunc
@@ -102,8 +102,13 @@ func TestEnableManagedSMBReconcilesExistingClusterBeforeFirstCallback(t *testing
 		loadManagedSMBClusterFunc = originalLoad
 		applyManagedSMBClusterFunc = originalApply
 	})
+	memberReads := 0
 	getManagedSMBMembersFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) ([]string, error) {
-		return nil, nil
+		memberReads++
+		if memberReads == 1 {
+			return nil, nil
+		}
+		return []string{"node-a"}, nil
 	}
 	loadManagedSMBClusterFunc = func(_ string) (map[string]any, error) {
 		return map[string]any{
@@ -133,6 +138,7 @@ func TestEnableManagedSMBReconcilesExistingClusterBeforeFirstCallback(t *testing
 		"hosts": []string{"node-a", "node-b"},
 		"count": 2,
 	}, applied["placement"])
+	assert.Equal(t, 2, memberReads)
 }
 
 func TestEnableManagedSMBReconcilesAdditionalMemberAndClusterOptions(t *testing.T) {
