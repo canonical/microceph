@@ -1473,6 +1473,678 @@ def test_infra_annotate_without_step_summary_writes_nothing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# in-instance preflight probe: pure helpers
+# ---------------------------------------------------------------------------
+
+def test_last_line_returns_last_non_blank_line():
+    assert H._last_line("first\n  curl: (28) Connection timed out  \n\n") == "curl: (28) Connection timed out"
+    assert H._last_line("") == ""
+    assert H._last_line(None) == ""
+
+
+def test_preflight_argv_curl_is_single_attempt_with_headers():
+    argv = H._preflight_argv("https://api.snapcraft.io/v2/snaps/info/lxd", ("Snap-Device-Series: 16",))
+    assert argv == [
+        "curl", "-sSf", "-o", "/dev/null", "--connect-timeout", "5", "--max-time", "10",
+        "-H", "Snap-Device-Series: 16", "https://api.snapcraft.io/v2/snaps/info/lxd",
+    ]
+    assert "--retry" not in argv
+
+
+def test_preflight_endpoints_match_the_runner_side_gate():
+    """The in-instance probe checks the URLs and header preflight.sh checks from the runner."""
+    script = (Path(__file__).parents[2] / "scripts" / "preflight.sh").read_text()
+    for _, url, headers in _mh.PREFLIGHT_ENDPOINTS:
+        assert url in script
+        for header in headers:
+            assert header in script
+
+
+def test_preflight_endpoint_parses_name_equals_url():
+    assert H._preflight_endpoint("ceph-ppa=https://ppa.example/ubuntu/dists/?a=b") == (
+        "ceph-ppa", "https://ppa.example/ubuntu/dists/?a=b", (),
+    )
+
+
+def test_preflight_endpoint_rejects_malformed_spec():
+    for spec in ("https://no-name.example/", "=https://x.example/", "name="):
+        with pytest.raises(ValueError):
+            H._preflight_endpoint(spec)
+
+
+def test_preflight_message_names_instance_and_every_endpoint():
+    failed = [("snap-store", "https://s.example/", ("H: 1",)), ("ubuntu-archive", "http://a.example/", ())]
+    assert H._preflight_message("outer VM vm1", failed) == (
+        "PREFLIGHT: endpoint checks failed from outer VM vm1: "
+        "snap-store (https://s.example/), ubuntu-archive (http://a.example/)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# probe_instance_network (stubbed exec)
+# ---------------------------------------------------------------------------
+
+def _probe_harness(monkeypatch, rc_for):
+    """Harness whose _preflight_exec is stubbed: every probe call returns
+    rc_for(url, nth_call_for_that_url)."""
+    cap = _with_logger(monkeypatch)
+    sleeps = []
+    monkeypatch.setattr(_mh.time, "sleep", lambda secs: sleeps.append(secs))
+    h = H()
+    monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
+    calls = []
+    seen = {}
+
+    def fake_exec(container, argv, timeout):
+        calls.append((container, argv, timeout))
+        url = argv[-1]
+        seen[url] = seen.get(url, 0) + 1
+        rc = rc_for(url, seen[url])
+        return _Res(rc, "", "" if rc == 0 else "noise\ncurl: (28) Connection timed out after 5001 milliseconds\n")
+
+    monkeypatch.setattr(h, "_preflight_exec", fake_exec)
+    return h, cap, calls, sleeps
+
+
+def _infra_lines(cap, kind):
+    return [line for line in cap.console_lines if line.startswith(f"::error title=Infra::kind={kind} ")]
+
+
+def test_probe_instance_network_happy_path_probes_each_endpoint_once(monkeypatch):
+    h, cap, calls, sleeps = _probe_harness(monkeypatch, lambda url, n: 0)
+
+    h.probe_instance_network()
+
+    assert [c[1][0] for c in calls] == ["curl", "curl"]
+    assert all(c[0] == "" for c in calls)
+    assert sleeps == []
+    assert _infra_lines(cap, "preflight") == []
+
+
+def test_probe_instance_network_missing_curl_is_a_harness_error_not_preflight(monkeypatch):
+    h, cap, calls, sleeps = _probe_harness(monkeypatch, lambda url, n: 127)
+
+    with pytest.raises(AssertionError) as exc:
+        h.probe_instance_network("microceph-img-builder")
+
+    assert str(exc.value) == (
+        "[preflight] curl not found in container microceph-img-builder in outer VM vm1; "
+        "the reachability probe needs curl"
+    )
+    # Raised on the first probe: no retry, no backoff, no Infra annotation of any kind.
+    assert len(calls) == 1
+    assert sleeps == []
+    assert not any(line.startswith("::error title=Infra::") for line in cap.console_lines)
+
+
+def test_probe_instance_network_recovers_and_reprobes_only_the_failed_endpoint(monkeypatch):
+    archive = "http://archive.ubuntu.com/ubuntu/dists/"
+    h, cap, calls, sleeps = _probe_harness(monkeypatch, lambda url, n: 1 if (url == archive and n < 3) else 0)
+
+    h.probe_instance_network()
+
+    probed = [c[1][-1] for c in calls]
+    assert probed.count(archive) == 3
+    assert probed.count("https://api.snapcraft.io/v2/snaps/info/lxd") == 1
+    assert sleeps == [2, 2]
+    assert _infra_lines(cap, "preflight") == []
+
+
+def test_probe_instance_network_outage_fails_with_preflight_annotation(monkeypatch, tmp_path):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    h, cap, calls, sleeps = _probe_harness(monkeypatch, lambda url, n: 28)
+
+    with pytest.raises(AssertionError) as exc:
+        h.probe_instance_network("microceph-img-builder")
+
+    expected = (
+        "PREFLIGHT: endpoint checks failed from container microceph-img-builder in outer VM vm1: "
+        "snap-store (https://api.snapcraft.io/v2/snaps/info/lxd), "
+        "ubuntu-archive (http://archive.ubuntu.com/ubuntu/dists/)"
+    )
+    assert str(exc.value) == expected
+    assert len(calls) == 3 * 2
+    # No backoff sleep after the last attempt.
+    assert sleeps == [2, 2]
+    assert _infra_lines(cap, "preflight") == [f"::error title=Infra::kind=preflight {expected}"]
+    assert summary.read_text() == f"kind=preflight {expected}\n"
+    assert any("(attempt 3/3): curl: (28) Connection timed out" in line for line in cap.console_lines)
+
+
+def test_probe_instance_network_names_only_the_unreachable_endpoint(monkeypatch):
+    archive = "http://archive.ubuntu.com/ubuntu/dists/"
+    h, cap, _, _ = _probe_harness(monkeypatch, lambda url, n: 7 if url == archive else 0)
+
+    with pytest.raises(AssertionError) as exc:
+        h.probe_instance_network()
+
+    assert str(exc.value) == f"PREFLIGHT: endpoint checks failed from outer VM vm1: ubuntu-archive ({archive})"
+    assert len(_infra_lines(cap, "preflight")) == 1
+
+
+def test_probe_instance_network_probes_extra_endpoints(monkeypatch):
+    h, _, calls, _ = _probe_harness(monkeypatch, lambda url, n: 0)
+
+    h.probe_instance_network("", "ceph-ppa=https://ppa.example/ubuntu/dists/")
+
+    assert calls[-1][1][-1] == "https://ppa.example/ubuntu/dists/"
+
+
+def test_preflight_exec_targets_the_vm_or_the_container(monkeypatch):
+    _with_logger(monkeypatch)
+    h = H()
+    vm_calls, ct_calls = [], []
+    monkeypatch.setattr(h, "run_in_vm", lambda cmd, timeout, quiet=False: vm_calls.append((cmd, timeout, quiet)))
+    monkeypatch.setattr(
+        h, "exec_in_container",
+        lambda container, *argv, timeout, quiet: ct_calls.append((container, argv, timeout, quiet)),
+    )
+
+    h._preflight_exec("", ["curl", "-H", "Snap-Device-Series: 16", "http://x/"], 20)
+    h._preflight_exec("node-wrk0", ["curl", "http://x/"], 20)
+
+    assert vm_calls == [("curl -H 'Snap-Device-Series: 16' http://x/", 20, True)]
+    assert ct_calls == [("node-wrk0", ("curl", "http://x/"), 20, True)]
+
+
+# ---------------------------------------------------------------------------
+# probe call sites: setup_lxd_in_vm / install_tools / build_base_lxd_image
+# ---------------------------------------------------------------------------
+
+def _recording_harness(monkeypatch, snap_list_count="0"):
+    """Harness that records every probe/exec helper call in order instead of running it."""
+    _with_logger(monkeypatch)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    h = H()
+    monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
+    events = []
+
+    def fake_run_in_vm(cmd, timeout=300, quiet=False):
+        events.append(("vm", cmd, timeout))
+        return _Res(0, snap_list_count + "\n" if "snap list" in cmd else "", "")
+
+    def fake_run_in_container(container, cmd, timeout=300, shell="sh", quiet=False):
+        events.append(("ct", container, cmd, timeout))
+        return _Res(0, "", "")
+
+    def fake_exec_in_container(container, *argv, timeout=300, check=False, quiet=False):
+        events.append(("exec", container, argv))
+        return _Res(0, "", "")
+
+    monkeypatch.setattr(h, "probe_instance_network", lambda container="", *extra: events.append(("probe", container)))
+    monkeypatch.setattr(h, "run_in_vm", fake_run_in_vm)
+    monkeypatch.setattr(h, "run_in_vm_and_check", fake_run_in_vm)
+    monkeypatch.setattr(h, "run_in_container_unchecked", fake_run_in_container)
+    monkeypatch.setattr(h, "run_in_container_and_check", fake_run_in_container)
+    monkeypatch.setattr(h, "exec_in_container", fake_exec_in_container)
+    monkeypatch.setattr(
+        h, "run_in_vm_with_snap_retry",
+        lambda cmd, timeout=300: events.append(("vm-snap-retry", cmd, timeout)),
+    )
+    monkeypatch.setattr(
+        h, "run_in_container_with_snap_retry",
+        lambda container, cmd, timeout=300, shell="sh": events.append(("ct-snap-retry", container, cmd, timeout)),
+    )
+    # Stubbed below apt_update / apt_install, so call-site tests see the exact apt-get
+    # string those methods build (flags included) and the target they aim it at.
+    monkeypatch.setattr(
+        h, "_run_apt",
+        lambda container, cmd, timeout, label: events.append(("apt", container, cmd, timeout)),
+    )
+    return h, events
+
+
+APT_FLAGS = "-o Acquire::Retries=3 -o Acquire::http::Timeout=30"
+
+
+class _FakeBuiltIn:
+    def get_variable_value(self, name, default=None):
+        return default
+
+
+def test_setup_lxd_in_vm_probes_then_installs_lxd_when_absent(monkeypatch):
+    h, events = _recording_harness(monkeypatch, snap_list_count="0")
+    monkeypatch.setattr(_mh, "BuiltIn", _FakeBuiltIn)
+
+    h.setup_lxd_in_vm()
+
+    assert events == [
+        ("probe", ""),
+        ("vm", 'sudo snap list | grep -cF "lxd" || true', 30),
+        ("vm-snap-retry", "sudo snap install lxd", 300),
+        ("vm-snap-retry", "sudo snap refresh", 300),
+        ("vm", "sudo snap set lxd daemon.group=adm", 30),
+        ("vm", "sudo lxd init --auto --storage-backend btrfs --storage-create-loop 25", 60),
+    ]
+
+
+def test_setup_lxd_in_vm_skips_the_install_when_lxd_is_present(monkeypatch):
+    h, events = _recording_harness(monkeypatch, snap_list_count="1")
+    monkeypatch.setattr(_mh, "BuiltIn", _FakeBuiltIn)
+
+    h.setup_lxd_in_vm()
+
+    assert ("vm-snap-retry", "sudo snap install lxd", 300) not in events
+    assert ("vm-snap-retry", "sudo snap refresh", 300) in events
+    assert events[0] == ("probe", "")
+
+
+def test_setup_lxd_in_vm_is_no_longer_a_resource_keyword():
+    """A resource keyword of the same name would shadow the Python method."""
+    resource = (Path(__file__).parent / "microceph_harness.resource").read_text()
+    assert "\nSetup LXD In VM\n" not in resource
+    assert "    Setup LXD In VM\n" in resource  # Provision Multinode VM still calls it
+
+
+def test_install_tools_probes_the_outer_vm_first(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+
+    h.install_tools()
+
+    assert events == [
+        ("probe", ""),
+        ("apt", "", f"sudo apt-get {APT_FLAGS} update -qq", 120),
+        ("apt", "", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq", 300),
+    ]
+
+
+def test_build_base_lxd_image_probes_the_builder_before_apt(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+
+    h.build_base_lxd_image("/root")
+
+    probe_at = events.index(("probe", "microceph-img-builder"))
+    first_apt = next(i for i, e in enumerate(events) if e[0] == "apt")
+    assert probe_at == first_apt - 1
+    assert events[first_apt:first_apt + 2] == [
+        ("apt", "microceph-img-builder", f"sudo apt-get {APT_FLAGS} update -qq", 120),
+        ("apt", "microceph-img-builder", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq", 300),
+    ]
+    assert [e for e in events if e[0] == "probe"] == [("probe", "microceph-img-builder")]
+
+
+# ---------------------------------------------------------------------------
+# _is_transient_snap_store_error -- verbatim CI error texts (#838)
+# ---------------------------------------------------------------------------
+
+_SNAP_408_NONCE = (
+    "error: cannot perform the following tasks:\n"
+    '- Fetch and check assertions for snap "snapd" (27710) '
+    "(cannot get nonce from store: store server returned status 408)\n"
+)
+_SNAP_408_ASSERTION = (
+    "error: cannot perform the following tasks:\n"
+    '- Fetch and check assertions for snap "snapd" (27738) (cannot fetch assertion: got unexpected '
+    'HTTP status code 408 via GET to "https://api.snapcraft.io/v2/assertions/snap-revision/3Dvx?max-format=0")\n'
+)
+_SNAP_CLIENT_TIMEOUT = (
+    "error: cannot perform the following tasks:\n"
+    '- Ensure prerequisites for "microceph" are available (cannot install snap base "core24": '
+    'cannot get nonce from store: Post "https://api.snapcraft.io/api/v1/snaps/auth/nonces": net/http: '
+    "request canceled while waiting for connection (Client.Timeout exceeded while awaiting headers))\n"
+)
+
+
+@pytest.mark.parametrize("stderr", [
+    _SNAP_408_NONCE,
+    _SNAP_408_ASSERTION,
+    _SNAP_CLIENT_TIMEOUT,
+    "(cannot get nonce from store: store server returned status 503)",
+    "(cannot fetch assertion: got unexpected HTTP status code 502 via GET to ...)",
+])
+def test_transient_snap_store_error_matches(stderr):
+    assert H._is_transient_snap_store_error(stderr)
+
+
+@pytest.mark.parametrize("stderr", [
+    'error: snap "bogus" not found',
+    "error: unable to contact snap store",
+    "error: too early for operation, device not yet seeded or device model not acknowledged",
+    "(cannot get nonce from store: store server returned status 401)",
+    "(cannot fetch assertion: got unexpected HTTP status code 404 via GET to ...)",
+    'error: cannot install "microceph": snap has no updates available',
+    "",
+    None,
+])
+def test_transient_snap_store_error_ignores_other_failures(stderr):
+    assert not H._is_transient_snap_store_error(stderr)
+
+
+# ---------------------------------------------------------------------------
+# _retry_transient / run_in_*_with_snap_retry (stubbed exec)
+# ---------------------------------------------------------------------------
+
+def _retry_harness(monkeypatch, results):
+    """Harness whose _exec returns *results* in order (the last one repeats)."""
+    cap = _with_logger(monkeypatch)
+    sleeps = []
+    monkeypatch.setattr(_mh.time, "sleep", lambda secs: sleeps.append(secs))
+    h = H()
+    monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
+    calls = []
+
+    def fake_exec(argv, timeout):
+        calls.append((argv, timeout))
+        return results[min(len(calls), len(results)) - 1]
+
+    monkeypatch.setattr(h, "_exec", fake_exec)
+    return h, cap, calls, sleeps
+
+
+def test_retry_transient_recovers_after_two_transient_failures(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "", "blip"), _Res(1, "", "blip"), _Res(0, "ok", "")])
+
+    res = h._retry_transient(
+        lambda: h._exec(["x"], 1), lambda r: r.stderr == "blip", 3, 7, "snap-store", "install x"
+    )
+
+    assert res == _Res(0, "ok", "")
+    assert len(calls) == 3
+    assert sleeps == [7, 7]
+    assert _infra_lines(cap, "snap-store") == []
+    assert sum("retrying in 7s" in line for line in cap.console_lines) == 2
+
+
+def test_retry_transient_fails_at_once_on_other_error(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "out", 'error: snap "bogus" not found')])
+
+    with pytest.raises(AssertionError) as exc:
+        h._retry_transient(lambda: h._exec(["x"], 1), lambda r: False, 3, 7, "snap-store", "install x")
+
+    assert str(exc.value) == 'Command failed (rc=1):\nSTDERR: error: snap "bogus" not found\nSTDOUT: out'
+    assert len(calls) == 1
+    assert sleeps == []
+    assert _infra_lines(cap, "snap-store") == []
+
+
+def test_retry_transient_exhausts_annotates_once_and_fails(monkeypatch, tmp_path):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "", "first line\nblip\n")])
+
+    with pytest.raises(AssertionError) as exc:
+        h._retry_transient(lambda: h._exec(["x"], 1), lambda r: True, 3, 7, "snap-store", "install x")
+
+    assert str(exc.value).startswith("Command failed (rc=1):")
+    assert len(calls) == 3
+    # No backoff sleep after the last attempt.
+    assert sleeps == [7, 7]
+    assert _infra_lines(cap, "snap-store") == [
+        "::error title=Infra::kind=snap-store install x failed after 3 attempts: blip"
+    ]
+    assert summary.read_text() == "kind=snap-store install x failed after 3 attempts: blip\n"
+
+
+def test_retry_transient_annotation_says_so_when_stderr_is_empty(monkeypatch):
+    h, cap, _, _ = _retry_harness(monkeypatch, [_Res(124, "", "")])
+
+    with pytest.raises(AssertionError):
+        h._retry_transient(lambda: h._exec(["x"], 1), lambda r: True, 2, 0, "apt", "update")
+
+    assert _infra_lines(cap, "apt") == [
+        "::error title=Infra::kind=apt update failed after 2 attempts: rc=124 with no error output"
+    ]
+
+
+def test_run_in_vm_with_snap_retry_recovers_from_a_408(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "", _SNAP_408_NONCE), _Res(0, "lxd installed", "")])
+
+    res = h.run_in_vm_with_snap_retry("sudo snap install lxd", 300)
+
+    assert res.rc == 0
+    assert [c[0] for c in calls] == [
+        ["lxc", "exec", "-n", "vm1", "--", "bash", "-eo", "pipefail", "-c", "sudo snap install lxd"]
+    ] * 2
+    assert [c[1] for c in calls] == [300, 300]
+    assert sleeps == [5]
+    assert _infra_lines(cap, "snap-store") == []
+
+
+def test_run_in_vm_with_snap_retry_exhaustion_is_a_snap_store_infra_failure(monkeypatch):
+    h, cap, calls, _ = _retry_harness(monkeypatch, [_Res(1, "", _SNAP_408_ASSERTION)])
+
+    with pytest.raises(AssertionError):
+        h.run_in_vm_with_snap_retry("sudo snap install lxd", 300)
+
+    assert len(calls) == 3
+    lines = _infra_lines(cap, "snap-store")
+    assert len(lines) == 1
+    assert "'sudo snap install lxd' in outer VM vm1 failed after 3 attempts" in lines[0]
+    assert "got unexpected HTTP status code 408" in lines[0]
+    assert "\n" not in lines[0]
+
+
+def test_run_in_vm_with_snap_retry_does_not_retry_a_timeout_or_a_missing_snap(monkeypatch):
+    for res in (_Res(124, "", "\nCommand timed out after 300s"), _Res(1, "", 'error: snap "lxd" not found')):
+        h, cap, calls, sleeps = _retry_harness(monkeypatch, [res])
+        with pytest.raises(AssertionError):
+            h.run_in_vm_with_snap_retry("sudo snap install lxd", 300)
+        assert len(calls) == 1
+        assert sleeps == []
+        assert _infra_lines(cap, "snap-store") == []
+
+
+def test_run_in_container_with_snap_retry_uses_the_non_raising_sh_helper(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "", _SNAP_CLIENT_TIMEOUT), _Res(0, "", "")])
+
+    res = h.run_in_container_with_snap_retry("node-wrk1", "sudo snap install microceph --channel squid/stable", 600)
+
+    assert res.rc == 0
+    assert calls[0] == (
+        ["lxc", "exec", "-n", "vm1", "--", "lxc", "exec", "-n", "node-wrk1", "--",
+         "sh", "-c", "sudo snap install microceph --channel squid/stable"],
+        600,
+    )
+    assert len(calls) == 2
+    assert sleeps == [5]
+
+
+# ---------------------------------------------------------------------------
+# apt-get stall retry (#842)
+# ---------------------------------------------------------------------------
+
+def test_apt_bounded_cmd_kills_the_command_inside_the_instance():
+    assert H._apt_bounded_cmd("sudo apt-get update -qq && echo 'done'", 120) == (
+        "timeout --kill-after=10 120 sh -c 'sudo apt-get update -qq && echo '\"'\"'done'\"'\"''"
+    )
+
+
+@pytest.mark.parametrize("res, transient", [
+    (_Res(124, "", ""), True),
+    (_Res(124, "", "\nCommand timed out after 135s"), True),
+    (_Res(124, "\n", ""), True),
+    # dpkg had started unpacking: re-running is not known to be safe.
+    (_Res(124, "Selecting previously unselected package s3cmd.\n", ""), False),
+    (_Res(100, "", "E: Unable to locate package s3cmd"), False),
+    (_Res(100, "", "E: Failed to fetch http://security.ubuntu.com/... 404  Not Found"), False),
+    (_Res(137, "", ""), False),
+    (_Res(0, "", ""), False),
+])
+def test_is_transient_apt_stall(res, transient):
+    assert H._is_transient_apt_stall(res) is transient
+
+
+def test_apt_label_timeout_only_touches_a_silent_rc_124():
+    assert H._apt_label_timeout(_Res(124, "", ""), 120) == _Res(
+        124, "", "Command timed out after 120s (killed inside the instance)"
+    )
+    harness_timeout = _Res(124, "", "\nCommand timed out after 135s")
+    assert H._apt_label_timeout(harness_timeout, 120) == harness_timeout
+    apt_error = _Res(100, "", "")
+    assert H._apt_label_timeout(apt_error, 120) == apt_error
+
+
+def test_apt_cmd_spells_the_retry_flags_exactly_once():
+    assert H._apt_cmd("update -qq") == f"sudo apt-get {APT_FLAGS} update -qq"
+    assert H._apt_cmd("-qq -y install", ["s3cmd", "jq"]) == f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq"
+    assert H._apt_cmd("-qq -y install", ("s3cmd",)) == f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd"
+    # A Robot call passes the package list as one string.
+    assert H._apt_cmd("-qq -y install", "s3cmd jq") == f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq"
+    assert H._apt_cmd("-qq -y install", ["s3cmd", "jq"]).count(APT_FLAGS) == 1
+    assert H._apt_cmd("-qq -y install", ["s3cmd", "jq"]).count("apt-get") == 1
+
+
+def _apt_target_harness(monkeypatch):
+    """Harness whose _run_apt only records what apt_update / apt_install hand it."""
+    h = H()
+    calls = []
+    monkeypatch.setattr(
+        h, "_run_apt", lambda container, cmd, timeout, label: calls.append((container, cmd, timeout, label))
+    )
+    return h, calls
+
+
+def test_apt_update_targets_the_outer_vm_by_default_and_a_container_when_named(monkeypatch):
+    h, calls = _apt_target_harness(monkeypatch)
+
+    h.apt_update()
+    h.apt_update("node-wrk0")
+    h.apt_update("node-wrk0", 60)
+
+    assert calls == [
+        ("", f"sudo apt-get {APT_FLAGS} update -qq", 120, "apt-get update"),
+        ("node-wrk0", f"sudo apt-get {APT_FLAGS} update -qq", 120, "apt-get update"),
+        ("node-wrk0", f"sudo apt-get {APT_FLAGS} update -qq", 60, "apt-get update"),
+    ]
+
+
+def test_apt_install_adds_the_flags_and_joins_the_package_list(monkeypatch):
+    h, calls = _apt_target_harness(monkeypatch)
+
+    h.apt_install(["s3cmd", "jq"])
+    h.apt_install(("s3cmd",), "node-wrk0")
+    h.apt_install("s3cmd jq", "microceph-img-builder", 90)
+
+    assert calls == [
+        ("", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq", 300, "apt-get install s3cmd jq"),
+        ("node-wrk0", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd", 300, "apt-get install s3cmd"),
+        ("microceph-img-builder", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq", 90, "apt-get install s3cmd jq"),
+    ]
+
+
+def test_apt_install_rejects_an_empty_package_list(monkeypatch):
+    h, calls = _apt_target_harness(monkeypatch)
+
+    with pytest.raises(ValueError):
+        h.apt_install([])
+    with pytest.raises(ValueError):
+        h.apt_install("")
+
+    assert calls == []
+
+
+def test_apt_update_in_the_vm_second_attempt_succeeds(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(124, "", ""), _Res(0, "", "")])
+
+    res = h.apt_update()
+
+    assert res.rc == 0
+    bounded = f"timeout --kill-after=10 120 sh -c 'sudo apt-get {APT_FLAGS} update -qq'"
+    assert [c[0][-1] for c in calls] == [bounded, bounded]
+    assert calls[0][0][:4] == ["lxc", "exec", "-n", "vm1"]
+    assert "microceph-img-builder" not in calls[0][0]
+    # The harness timeout is only the backstop behind the in-instance one.
+    assert [c[1] for c in calls] == [135, 135]
+    assert sleeps == [10]
+    assert _infra_lines(cap, "apt") == []
+
+
+def test_apt_update_exhaustion_is_an_apt_infra_failure(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(124, "", "")])
+
+    with pytest.raises(AssertionError) as exc:
+        h.apt_update()
+
+    assert str(exc.value) == (
+        "Command failed (rc=124):\nSTDERR: Command timed out after 120s (killed inside the instance)\nSTDOUT: "
+    )
+    assert len(calls) == 2
+    assert sleeps == [10]
+    assert _infra_lines(cap, "apt") == [
+        "::error title=Infra::kind=apt 'apt-get update' in outer VM vm1 "
+        "failed after 2 attempts: Command timed out after 120s (killed inside the instance)"
+    ]
+
+
+def test_apt_install_real_apt_error_is_fatal_at_once(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(100, "", "E: Unable to locate package s3cmd")])
+
+    with pytest.raises(AssertionError) as exc:
+        h.apt_install(["s3cmd", "jq"])
+
+    assert str(exc.value) == "Command failed (rc=100):\nSTDERR: E: Unable to locate package s3cmd\nSTDOUT: "
+    assert calls[0][0][-1] == f"timeout --kill-after=10 300 sh -c 'sudo apt-get {APT_FLAGS} -qq -y install s3cmd jq'"
+    assert len(calls) == 1
+    assert sleeps == []
+    assert _infra_lines(cap, "apt") == []
+
+
+def test_apt_install_in_a_container_bounds_and_retries_in_the_container(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(124, "", ""), _Res(0, "", "")])
+
+    h.apt_install(["jq"], "microceph-img-builder", 300)
+
+    assert calls[0] == (
+        ["lxc", "exec", "-n", "vm1", "--", "lxc", "exec", "-n", "microceph-img-builder", "--", "sh", "-c",
+         f"timeout --kill-after=10 300 sh -c 'sudo apt-get {APT_FLAGS} -qq -y install jq'"],
+        315,
+    )
+    assert len(calls) == 2
+    assert sleeps == [10]
+    assert _infra_lines(cap, "apt") == []
+
+
+def test_apt_install_exhaustion_in_a_container_names_the_container(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(124, "", "")])
+
+    with pytest.raises(AssertionError):
+        h.apt_install(["s3cmd"], "node-wrk0", 120)
+
+    assert _infra_lines(cap, "apt") == [
+        "::error title=Infra::kind=apt 'apt-get install s3cmd' in container node-wrk0 "
+        "failed after 2 attempts: Command timed out after 120s (killed inside the instance)"
+    ]
+
+
+def test_no_public_apt_wrapper_takes_a_hand_built_command():
+    assert not hasattr(H, "run_in_vm_with_apt_retry")
+    assert not hasattr(H, "run_in_container_with_apt_retry")
+    source = (Path(__file__).parent / "microceph_harness.py").read_text()
+    # The flags are spelled in the constant and used in _apt_cmd, nowhere else.
+    assert source.count("APT_RETRY_FLAGS") == 3
+
+
+# ---------------------------------------------------------------------------
+# snap retry call sites
+# ---------------------------------------------------------------------------
+
+def test_build_base_lxd_image_retries_the_builder_snap_install(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+
+    h.build_base_lxd_image("/root")
+
+    assert ("ct-snap-retry", "microceph-img-builder", "snap install --dangerous /mnt/microceph_*.snap", 600) in events
+
+
+def test_store_install_is_split_so_only_the_snap_install_is_retried(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+    monkeypatch.setattr(h, "ensure_snap_mount_healthy", lambda container: events.append(("mount", container)))
+
+    h.install_microceph_from_store_on_all_nodes("squid/stable")
+
+    per_node = [e for e in events if e[1] == "node-wrk0"]
+    assert per_node == [
+        ("mount", "node-wrk0"),
+        ("ct", "node-wrk0", "sudo snap remove --purge microceph >/dev/null 2>&1 || true", 60),
+        ("apt", "node-wrk0", f"sudo apt-get {APT_FLAGS} update -qq", 120),
+        ("apt", "node-wrk0", f"sudo apt-get {APT_FLAGS} -qq -y install s3cmd", 300),
+        ("ct-snap-retry", "node-wrk0", "sudo snap install microceph --channel squid/stable", 600),
+    ]
+    assert len(events) == 4 * len(per_node)
+
+
+# ---------------------------------------------------------------------------
 # wait_for_legacy_cephx_compatibility
 # ---------------------------------------------------------------------------
 
@@ -1645,11 +2317,17 @@ def test_local_snap_install_caches_core26(monkeypatch):
     def fake_run_in_vm_and_check(command, timeout):
         commands.append((command, timeout))
 
+    retried = []
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
+    monkeypatch.setattr(
+        harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: retried.append((command, timeout))
+    )
 
     harness.install_microceph_from_local_snap("/tmp/microceph.snap")
 
     assert commands[0] == ("sudo snap install core26 || true", 120)
+    # The --dangerous install is where a swallowed core26 store error resurfaces.
+    assert retried == [("sudo snap install --dangerous ~/microceph_*.snap", 600)]
 
 
 def test_ceph_mgr_patch_is_checked_against_the_staging_tree():

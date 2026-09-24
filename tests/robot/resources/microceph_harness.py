@@ -10,6 +10,7 @@ import glob
 import ipaddress
 import json
 import re
+import shlex
 import subprocess
 import tempfile
 import time
@@ -70,6 +71,47 @@ BASE_IMAGE_ALIAS = "ubuntu-22.04"
 MICROCEPH_IMAGE_ALIAS = "ubuntu-22.04-microceph"
 # raw.lxc device-allow block; the \n is a LITERAL backslash-n for the remote printf.
 RAW_LXC_DEVICE_ALLOW = "lxc.cgroup2.devices.allow = b 7:* rwm\\nlxc.cgroup2.devices.allow = c 10:237 rwm"
+
+# --- in-instance preflight probe (#836) ---
+# (name, url, headers): the endpoints probe_endpoints checks in tests/scripts/preflight.sh,
+# probed from the instance that is about to install rather than from the runner.
+PREFLIGHT_ENDPOINTS = (
+    ("snap-store", "https://api.snapcraft.io/v2/snaps/info/lxd", ("Snap-Device-Series: 16",)),
+    ("ubuntu-archive", "http://archive.ubuntu.com/ubuntu/dists/", ()),
+)
+# The probe uses curl, the same tool as tests/scripts/preflight.sh; the Ubuntu images the
+# harness launches ship it by default. A missing curl is reported as a harness error,
+# never as a network outage.
+PREFLIGHT_ATTEMPTS = 3
+PREFLIGHT_BACKOFF = 2
+PREFLIGHT_CONNECT_TIMEOUT = 5
+PREFLIGHT_MAX_TIME = 10
+
+# --- bounded retry for transient Snap Store errors (#838) ---
+# Only the store error texts seen in CI are retried (plus 5xx in place of 408, as
+# #838 asks); every other snap failure stays fatal on the first attempt.
+SNAP_STORE_TRANSIENT_RE = re.compile(
+    r"cannot get nonce from store: store server returned status (?:408|5\d\d)"
+    r"|cannot fetch assertion: got unexpected HTTP status code (?:408|5\d\d)"
+    r"|cannot get nonce from store: .*Client\.Timeout exceeded while awaiting headers"
+)
+SNAP_RETRY_ATTEMPTS = 3
+SNAP_RETRY_BACKOFF = 5
+
+# --- apt-get flags and bounded retry for archive stalls (#842) ---
+# apt's own retries cover fetches it sees fail (timeout, reset); it does not retry a
+# 404, and it cannot help while data merely trickles, which is what the harness-level
+# retry below is for. Only _apt_cmd spells the flags: callers go through apt_update /
+# apt_install and never build an apt-get string themselves.
+APT_RETRY_FLAGS = "-o Acquire::Retries=3 -o Acquire::http::Timeout=30"
+APT_RETRY_ATTEMPTS = 2
+APT_RETRY_BACKOFF = 10
+# A harness timeout only kills the local lxc client: the apt-get it started keeps
+# running inside the instance and keeps the apt lock, so a second attempt would fail
+# on the lock. Each attempt is therefore bounded INSIDE the instance by coreutils
+# `timeout` (rc 124 as well); the harness timeout, this much longer, is the backstop.
+APT_KILL_AFTER = 10
+APT_HARNESS_MARGIN = 15
 
 # --- snap artefact ---
 SNAP_DEST_NAME = "microceph_0_amd64.snap"
@@ -383,6 +425,257 @@ class microceph_harness:
         if self._is_forkfile_socket_error(res.stderr):
             self._infra_annotate("lxd-socket", f"Failed to {errlabel} after 3 attempts: {res.stderr.strip()}")
         raise AssertionError(f"Failed to {errlabel}: {res.stderr}")
+
+    @staticmethod
+    def _last_line(text):
+        """Returns the last non-blank line of *text* (stripped), or "" when there is none.
+
+        Pure helper: Infra annotations must stay on one line, and the last stderr line
+        is the one that names the error (curl, snapd and apt all end on it).
+        """
+        lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+        return lines[-1] if lines else ""
+
+    @staticmethod
+    def _preflight_argv(url, headers=()):
+        """Builds the single-attempt curl probe argv for *url* (pure helper).
+
+        curl -f exits 0 only on an HTTP status below 400. Retries are done by the
+        caller, so curl gets no --retry here.
+        """
+        argv = [
+            "curl", "-sSf", "-o", "/dev/null",
+            "--connect-timeout", str(PREFLIGHT_CONNECT_TIMEOUT),
+            "--max-time", str(PREFLIGHT_MAX_TIME),
+        ]
+        for header in headers:
+            argv += ["-H", header]
+        return argv + [url]
+
+    @staticmethod
+    def _preflight_endpoint(spec):
+        """Parses an extra endpoint given as 'name=url' (the preflight.sh form) into (name, url, ())."""
+        name, sep, url = str(spec).partition("=")
+        if not sep or not name or not url:
+            raise ValueError(f"extra preflight endpoint must be name=url, got: {spec!r}")
+        return (name, url, ())
+
+    @staticmethod
+    def _preflight_message(where, failed):
+        """Builds the PREFLIGHT failure message naming *where* and every failed (name, url, headers)."""
+        names = ", ".join(f"{name} ({url})" for name, url, _ in failed)
+        return f"PREFLIGHT: endpoint checks failed from {where}: {names}"
+
+    def _preflight_exec(self, container, argv, timeout):
+        """Runs probe *argv* in *container*, or in the outer VM when *container* is empty. Never raises."""
+        if container:
+            return self.exec_in_container(container, *argv, timeout=timeout, quiet=True)
+        return self.run_in_vm(shlex.join(argv), timeout, quiet=True)
+
+    def probe_instance_network(self, container="", *extra_endpoints):
+        """Fails fast with a kind=preflight Infra annotation when the Snap Store or archive is unreachable.
+
+        Runs where the install is about to run: inside *container*, or in the outer VM
+        when *container* is empty. Extra endpoints are given as 'name=url'. Each endpoint
+        gets up to PREFLIGHT_ATTEMPTS single-shot curl probes; one that answered is not
+        probed again. A missing curl is a harness error, not a preflight failure: it is
+        raised without an Infra annotation. The runner-side twin is probe_endpoints in
+        tests/scripts/preflight.sh, which cannot see the network path of a nested
+        instance (#836).
+        """
+        vm = self._outer_vm()
+        where = f"container {container} in outer VM {vm}" if container else f"outer VM {vm}"
+        pending = list(PREFLIGHT_ENDPOINTS) + [self._preflight_endpoint(spec) for spec in extra_endpoints]
+        attempt = [0]
+
+        def all_reachable():
+            attempt[0] += 1
+            failed = []
+            for name, url, headers in pending:
+                res = self._preflight_exec(container, self._preflight_argv(url, headers), PREFLIGHT_MAX_TIME + 10)
+                if res.rc == 127:
+                    # Command not found: both lxc exec and the VM shell return 127 when the
+                    # binary is missing. A packaging problem must never be labelled kind=preflight.
+                    raise AssertionError(f"[preflight] curl not found in {where}; the reachability probe needs curl")
+                if res.rc != 0:
+                    logger.console(
+                        f"[preflight] {name} unreachable from {where} "
+                        f"(attempt {attempt[0]}/{PREFLIGHT_ATTEMPTS}): {self._last_line(res.stderr)}"
+                    )
+                    failed.append((name, url, headers))
+            pending[:] = failed
+            if failed and attempt[0] >= PREFLIGHT_ATTEMPTS:
+                # Raised from inside the predicate so the last attempt is not followed
+                # by one more backoff sleep before the failure is reported.
+                message = self._preflight_message(where, failed)
+                self._infra_annotate("preflight", message)
+                raise AssertionError(message)
+            return not failed
+
+        self._poll_until(all_reachable, PREFLIGHT_ATTEMPTS, PREFLIGHT_BACKOFF, fail_msg="")
+
+    @staticmethod
+    def _is_transient_snap_store_error(stderr):
+        """Returns True when a snap failure is one of the transient Snap Store errors (pure helper).
+
+        Observed as 'cannot get nonce from store: store server returned status 408',
+        'cannot fetch assertion: got unexpected HTTP status code 408 via GET to ...' and
+        'cannot get nonce from store: Post ...: net/http: request canceled while waiting
+        for connection (Client.Timeout exceeded while awaiting headers)'.
+        """
+        return bool(SNAP_STORE_TRANSIENT_RE.search(stderr or ""))
+
+    def _retry_transient(self, run_fn, is_transient_fn, attempts, backoff, kind, errlabel):
+        """Calls run_fn() until rc 0, retrying only results that is_transient_fn accepts.
+
+        run_fn is a zero-arg callable returning an ExecResult from a NON-raising exec
+        helper. A failure that is_transient_fn rejects raises at once with the usual
+        'Command failed' text. When all *attempts* fail transiently the *kind* Infra
+        annotation is emitted and the same error is raised: exhaustion fails the
+        suite, it never skips it.
+        """
+        state = {"attempt": 0, "res": None}
+
+        def succeeded():
+            state["attempt"] += 1
+            res = run_fn()
+            state["res"] = res
+            if res.rc == 0:
+                return True
+            failure = f"Command failed (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}"
+            if not is_transient_fn(res):
+                raise AssertionError(failure)
+            if state["attempt"] >= attempts:
+                # Raised from inside the predicate so the last attempt is not followed
+                # by one more backoff sleep before the failure is reported.
+                self._infra_annotate(kind, f"{errlabel} failed after {attempts} attempts: {detail(res)}")
+                raise AssertionError(failure)
+            return False
+
+        def detail(res):
+            return self._last_line(res.stderr) or f"rc={res.rc} with no error output"
+
+        def announce():
+            logger.console(
+                f"[setup] transient {kind} error ({errlabel}), attempt {state['attempt']}/{attempts}: "
+                f"{detail(state['res'])}; retrying in {backoff}s..."
+            )
+
+        self._poll_until(succeeded, attempts, backoff, fail_msg="", between=announce)
+        return state["res"]
+
+    def run_in_vm_with_snap_retry(self, bash_cmd, timeout=300):
+        """Runs a snap command inside the outer VM, retrying transient Snap Store errors.
+
+        Same result and failure text as Run In VM And Check; exhaustion emits kind=snap-store.
+        """
+        return self._retry_transient(
+            lambda: self.run_in_vm(bash_cmd, timeout),
+            lambda res: self._is_transient_snap_store_error(res.stderr),
+            SNAP_RETRY_ATTEMPTS, SNAP_RETRY_BACKOFF, "snap-store", f"'{bash_cmd}' in outer VM {self._outer_vm()}",
+        )
+
+    def run_in_container_with_snap_retry(self, container, cmd, timeout=300, shell="sh"):
+        """Runs a snap command inside *container*, retrying transient Snap Store errors.
+
+        Same result and failure text as Run In Container And Check; exhaustion emits kind=snap-store.
+        """
+        return self._retry_transient(
+            lambda: self.run_in_container_unchecked(container, cmd, timeout, shell),
+            lambda res: self._is_transient_snap_store_error(res.stderr),
+            SNAP_RETRY_ATTEMPTS, SNAP_RETRY_BACKOFF, "snap-store", f"'{cmd}' in container {container}",
+        )
+
+    @staticmethod
+    def _apt_bounded_cmd(cmd, timeout):
+        """Wraps *cmd* so it is killed inside the instance after *timeout* seconds (pure helper).
+
+        coreutils timeout signals the whole process group, so an apt-get behind sudo
+        or behind '&&' dies too and releases the apt lock before the next attempt.
+        """
+        return f"timeout --kill-after={APT_KILL_AFTER} {int(timeout)} sh -c {shlex.quote(cmd)}"
+
+    @staticmethod
+    def _is_transient_apt_stall(res):
+        """Returns True when an apt-get attempt timed out before printing anything (pure helper).
+
+        The archive stalls seen in CI are rc 124 with empty stdout: apt-get -qq is
+        silent while it downloads. Any output means dpkg had started unpacking, and
+        any other rc is a real apt error; neither is retried.
+        """
+        return res.rc == 124 and not (res.stdout or "").strip()
+
+    @staticmethod
+    def _apt_label_timeout(res, timeout):
+        """Gives an in-instance timeout (rc 124, silent) the stderr text of a harness timeout (pure helper).
+
+        coreutils timeout prints nothing, so without this the failure would read
+        'Command failed (rc=124)' with empty STDERR instead of 'Command timed out after Ns'.
+        """
+        if res.rc == 124 and not (res.stderr or "").strip():
+            return res._replace(stderr=f"Command timed out after {timeout}s (killed inside the instance)")
+        return res
+
+    @staticmethod
+    def _apt_cmd(args, packages=()):
+        """Builds 'sudo apt-get <APT_RETRY_FLAGS> <args> [<packages>]' (pure helper).
+
+        The one place the retry flags are spelled. *packages* is an iterable of package
+        names, or a whitespace-separated string (the form a Robot call passes).
+        """
+        if isinstance(packages, str):
+            packages = packages.split()
+        words = ["sudo", "apt-get", APT_RETRY_FLAGS, args, *map(str, packages)]
+        return " ".join(words)
+
+    def _run_apt(self, container, cmd, timeout, label):
+        """Runs one apt-get *cmd* in *container* (outer VM when empty) with one retry when it stalls.
+
+        *timeout* bounds each attempt inside the instance; *label* names the command in
+        the kind=apt Infra annotation on exhaustion. Only apt_update / apt_install call
+        this, so *cmd* always comes from _apt_cmd.
+        """
+        bounded = self._apt_bounded_cmd(cmd, timeout)
+        harness_timeout = int(timeout) + APT_HARNESS_MARGIN
+        if container:
+            where = f"container {container}"
+
+            def run():
+                return self.run_in_container_unchecked(container, bounded, harness_timeout)
+        else:
+            where = f"outer VM {self._outer_vm()}"
+
+            def run():
+                return self.run_in_vm(bounded, harness_timeout)
+
+        return self._retry_transient(
+            lambda: self._apt_label_timeout(run(), timeout),
+            self._is_transient_apt_stall,
+            APT_RETRY_ATTEMPTS, APT_RETRY_BACKOFF, "apt", f"'{label}' in {where}",
+        )
+
+    def apt_update(self, container="", timeout=120):
+        """Runs 'apt-get update' in *container*, or in the outer VM when *container* is empty.
+
+        The Acquire retry flags and the one retry on a silent stall are applied here;
+        callers pass nothing but the target. *timeout* bounds each attempt.
+        """
+        return self._run_apt(container, self._apt_cmd("update -qq"), timeout, "apt-get update")
+
+    def apt_install(self, packages, container="", timeout=300):
+        """Installs *packages* (an iterable of names) in *container*, or in the outer VM when empty.
+
+        Same flags and stall retry as apt_update; run apt_update first. *timeout*
+        bounds each attempt.
+        """
+        if isinstance(packages, str):
+            packages = packages.split()
+        packages = [str(pkg) for pkg in packages]
+        if not packages:
+            raise ValueError("apt_install needs at least one package name")
+        return self._run_apt(
+            container, self._apt_cmd("-qq -y install", packages), timeout, f"apt-get install {' '.join(packages)}"
+        )
 
     def exec_in_container(self, container, *argv, timeout=300, check=False, quiet=False):
         """Runs a single command (no inner shell) inside *container* via the outer VM.
@@ -1416,8 +1709,9 @@ class microceph_harness:
     def install_tools(self):
         """Installs s3cmd and jq on the outer VM."""
         logger.console("[setup] Installing tools (s3cmd, jq)...")
-        self.run_in_vm_and_check("sudo apt-get update -qq", 120)
-        self.run_in_vm_and_check(f"sudo apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 120)
+        self.probe_instance_network()
+        self.apt_update()
+        self.apt_install(VM_APT_TOOLS)
 
     def install_microceph_from_local_snap(self, snap_path=None):
         """Installs the locally-built snap and connects all interfaces (except dm-crypt)."""
@@ -1429,7 +1723,9 @@ class microceph_harness:
         # glob below, so the argument value is otherwise unused.
         logger.console("[install] Installing MicroCeph snap...")
         self.run_in_vm_and_check("sudo snap install core26 || true", 120)
-        self.run_in_vm_and_check(f"sudo snap install --dangerous {LOCAL_SNAP_GLOB}", 600)
+        # The core26 prefetch above tolerates failure, so a transient store error
+        # resurfaces here as 'cannot install snap base "core26": ...' and is retried.
+        self.run_in_vm_with_snap_retry(f"sudo snap install --dangerous {LOCAL_SNAP_GLOB}", 600)
         for iface in SNAP_INTERFACES:
             self.run_in_vm_and_check(f"sudo snap connect microceph:{iface}", 30)
 
@@ -1516,6 +1812,27 @@ class microceph_harness:
     # Multi-node LXD container setup (migrated from microceph_harness.resource)
     # -----------------------------------------------------------------------
 
+    def setup_lxd_in_vm(self):
+        """Installs and initialises LXD inside the outer VM."""
+        logger.console(f"[setup] Setting up LXD inside {self._outer_vm()} (may take several minutes)...")
+        # snap install and snap refresh below both need the Snap Store.
+        self.probe_instance_network()
+        check = self.run_in_vm('sudo snap list | grep -cF "lxd" || true', 30)
+        if check.stdout.strip() != "1":
+            self.run_in_vm_with_snap_retry("sudo snap install lxd", 300)
+        self.run_in_vm_with_snap_retry("sudo snap refresh", 300)
+        self.run_in_vm_and_check("sudo snap set lxd daemon.group=adm", 30)
+        # Force a btrfs (copy-on-write) storage pool. On the default "dir" backend every
+        # lxc init / publish is a full rootfs copy, which serializes ~6 x 1.5GB copies in
+        # multi-node setup; btrfs makes instance creation a near-instant reflink snapshot.
+        # Size the loop file explicitly: the auto default (~20% of free space, capped at
+        # 30GB) can be too small for the base image + 4 node rootfs deltas + loop OSDs
+        # that replication suites create inside container rootfs.
+        loop_size = BuiltIn().get_variable_value("${LXD_STORAGE_LOOP_SIZE}", 25)
+        self.run_in_vm_and_check(
+            f"sudo lxd init --auto --storage-backend btrfs --storage-create-loop {loop_size}", 60
+        )
+
     def build_base_lxd_image(self, home):
         """Builds the ubuntu-22.04-microceph base LXD image with tools and MicroCeph pre-installed."""
         logger.console("[setup] Building base LXD image with tools and MicroCeph...")
@@ -1547,10 +1864,12 @@ class microceph_harness:
             fail_msg="",
             raise_on_timeout=False,
         )
-        self.run_in_container_and_check(
-            builder, f"apt-get update -qq && apt-get -qq -y install {' '.join(VM_APT_TOOLS)}", 300
-        )
-        self.run_in_container_and_check(
+        self.probe_instance_network(builder)
+        # Two calls rather than one chained string, so a stalled install is retried
+        # without repeating the update, and each gets its own attempt budget.
+        self.apt_update(builder)
+        self.apt_install(VM_APT_TOOLS, builder)
+        self.run_in_container_with_snap_retry(
             builder, f"snap install --dangerous {MNT_SNAP_GLOB}", 600
         )
         connects = " && ".join(f"snap connect microceph:{iface}" for iface in SNAP_INTERFACES_MINIMAL)
@@ -1622,12 +1941,19 @@ class microceph_harness:
         logger.console(f"[install] Installing MicroCeph from store ({channel}) on all nodes...")
         for container in NODES:
             self.ensure_snap_mount_healthy(container)
+            # Separate calls rather than one chained string, so the store install can be
+            # retried without re-running the purge and the apt-get, and a stalled apt-get
+            # install without repeating the update. The purge is local and needs no
+            # network budget; the apt-get calls get the same ceilings as install_tools().
+            self.run_in_container_and_check(
+                container, "sudo snap remove --purge microceph >/dev/null 2>&1 || true", 60
+            )
             # Store install needs only s3cmd (not jq), so the apt-get install list is
             # kept literal rather than driven from VM_APT_TOOLS.
-            self.run_in_container_and_check(
-                container,
-                f"sudo snap remove --purge microceph >/dev/null 2>&1 || true; sudo apt-get update -qq && sudo apt-get -qq -y install s3cmd && sudo snap install microceph --channel {channel}",
-                600,
+            self.apt_update(container)
+            self.apt_install(["s3cmd"], container)
+            self.run_in_container_with_snap_retry(
+                container, f"sudo snap install microceph --channel {channel}", 600
             )
 
     def bootstrap_head_node(self, network_mode="public", extra_flags=""):
@@ -1830,7 +2156,7 @@ class microceph_harness:
         connects = " && ".join(f"snap connect microceph:{iface}" for iface in SNAP_INTERFACES_MINIMAL)
         for container in NODES:
             logger.console(f"[upgrade] Upgrading {container}...")
-            self.run_in_container_and_check(
+            self.run_in_container_with_snap_retry(
                 container, f"sudo snap install --dangerous {MNT_SNAP_GLOB}", 600
             )
             self.run_in_container_and_check(container, connects, 60)
