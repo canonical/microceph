@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
@@ -23,15 +24,18 @@ import (
 //
 // active models the pre-change liveness read; readyErr, when set, is returned
 // by every active check after the first one, i.e. the post-action readiness
-// gate.
+// gate. serves is the certificate the running gateway presents: the marker
+// probe succeeds only against it, and probes counts the attempts.
 type rgwOpsRecorder struct {
 	starts   int
 	restarts int
 	stops    int
 	keyrings int
+	probes   int
 
 	active   bool
 	readyErr error
+	serves   []byte
 
 	checkAfterAction bool
 
@@ -50,8 +54,16 @@ func (r *rgwOpsRecorder) install(t *testing.T) func() {
 	t.Helper()
 	origStart, origRestart, origStop := startRGWFunc, restartRGWFunc, stopRGWFunc
 	origCheck, origKey, origCfg := checkRGWActiveFunc, createRGWKeyringFunc, getConfigDbFunc
-	origReady := checkRGWReadyFunc
+	origReady, origFrontend, origInterval := checkRGWReadyFunc, checkRGWFrontendFunc, rgwPendingProbeInterval
 	checkRGWReadyFunc = func(rgwFrontendSpec) error { return checkRGWActiveFunc() }
+	checkRGWFrontendFunc = func(spec rgwFrontendSpec) error {
+		r.probes++
+		if r.serves != nil && bytes.Equal(spec.certPEM, r.serves) {
+			return nil
+		}
+		return errors.New("the gateway does not serve the probed certificate")
+	}
+	rgwPendingProbeInterval = 0
 
 	startRGWFunc = func() error {
 		r.starts++
@@ -101,7 +113,7 @@ func (r *rgwOpsRecorder) install(t *testing.T) func() {
 	return func() {
 		startRGWFunc, restartRGWFunc, stopRGWFunc = origStart, origRestart, origStop
 		checkRGWActiveFunc, createRGWKeyringFunc, getConfigDbFunc = origCheck, origKey, origCfg
-		checkRGWReadyFunc = origReady
+		checkRGWReadyFunc, checkRGWFrontendFunc, rgwPendingProbeInterval = origReady, origFrontend, origInterval
 	}
 }
 
@@ -270,8 +282,134 @@ func TestApplyRGWFrontendPendingMarkerForcesRedrive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, rec.restarts, "the marker must force a restart despite matching files")
 	assert.Equal(t, 1, rec.starts)
+	assert.Zero(t, rec.probes, "a marker naming the same pair as the config has nothing to probe")
 	assert.NoFileExists(t, rgwPendingApplyPath(), "the redrive must clear the marker")
 	assert.Equal(t, before, readTestConf(t))
+}
+
+// deferRGWRotation enables the gateway with old, then publishes rotated without
+// a restart, as "certificate set rgw" without --restart does. The gateway keeps
+// serving old and the marker names old as the rollback target. It returns the
+// config that named old.
+func deferRGWRotation(t *testing.T, rec *rgwOpsRecorder, old, rotated rgwFrontendSpec) string {
+	t.Helper()
+	_, err := applyTestRGWFrontend(old, []string{"mon1"}, true)
+	require.NoError(t, err)
+	before := readTestConf(t)
+	_, err = applyRGWFrontend(rotated, []string{"mon1"}, false)
+	require.NoError(t, err)
+	require.FileExists(t, rgwPendingApplyPath(), "a deferred update leaves the marker")
+	require.Contains(t, readTestConf(t), rotated.tlsGenDir(), "a deferred update publishes the new pair")
+	rec.serves = old.certPEM
+	return before
+}
+
+// TestApplyRGWFrontendStaleMarkerAfterManualRestart covers the operator who
+// defers the restart of a certificate update and then restarts the gateway by
+// hand: the marker still names the old pair, but the gateway serves the new
+// one. A later change that fails must go back to the pair that was live, not
+// to the older one the marker names, and must not delete the live pair.
+func TestApplyRGWFrontendStaleMarkerAfterManualRestart(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{}
+	defer rec.install(t)()
+	old := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certA"), keyPEM: []byte("keyA")}
+	rotated := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certB"), keyPEM: []byte("keyB")}
+	broken := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certC"), keyPEM: []byte("keyC")}
+	deferRGWRotation(t, rec, old, rotated)
+	live := readTestConf(t)
+
+	// The operator restarts the gateway by hand; the daemon does not see it.
+	rec.serves = rotated.certPEM
+
+	// A change that does not come up must fall back to what was live.
+	rec.readyErr = errRGWInactive
+	rb, err := applyTestRGWFrontend(broken, []string{"mon1"}, true)
+	require.Error(t, err)
+	assert.Nil(t, rb)
+	assert.ErrorIs(t, err, ErrPlacementOperationFailed)
+
+	assert.Equal(t, 1, rec.probes, "the gateway must be asked which pair it serves")
+	assert.Equal(t, live, readTestConf(t), "rollback must land on the pair the gateway served")
+	assert.DirExists(t, rotated.tlsGenDir(), "the live pair must survive the rollback")
+	assert.NoDirExists(t, broken.tlsGenDir(), "the unpublished pair must be removed")
+	assert.NoDirExists(t, old.tlsGenDir(), "the pair the stale marker named is pruned")
+	assert.NoFileExists(t, rgwPendingApplyPath())
+	// 1st restart switched to broken, 2nd is the rollback onto rotated.
+	assert.Equal(t, 2, rec.restarts)
+	assert.Equal(t, 1, rec.starts)
+}
+
+// TestApplyRGWFrontendMarkerKeptWhileRestartPending is the same deferred
+// update without the manual restart: the gateway still serves the old pair,
+// so the marker is right and a failed change goes back to the old pair.
+func TestApplyRGWFrontendMarkerKeptWhileRestartPending(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{}
+	defer rec.install(t)()
+	old := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certA"), keyPEM: []byte("keyA")}
+	rotated := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certB"), keyPEM: []byte("keyB")}
+	broken := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certC"), keyPEM: []byte("keyC")}
+	before := deferRGWRotation(t, rec, old, rotated)
+
+	rec.readyErr = errRGWInactive
+	rb, err := applyTestRGWFrontend(broken, []string{"mon1"}, true)
+	require.Error(t, err)
+	assert.Nil(t, rb)
+
+	assert.Equal(t, 3, rec.probes, "the probe retries before it gives up")
+	assert.Equal(t, before, readTestConf(t), "rollback must land on the pair the marker names")
+	assert.DirExists(t, old.tlsGenDir(), "the pair the gateway serves must survive")
+	assert.NoDirExists(t, rotated.tlsGenDir(), "a pair that never went live is pruned")
+	assert.NoDirExists(t, broken.tlsGenDir())
+	assert.NoFileExists(t, rgwPendingApplyPath())
+}
+
+// TestApplyRGWFrontendStoppedGatewayIsNotProbed verifies the probe follows the
+// liveness reading the rest of the apply uses: a gateway read as stopped is
+// started, and the marker stays the rollback target.
+func TestApplyRGWFrontendStoppedGatewayIsNotProbed(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{}
+	defer rec.install(t)()
+	old := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certA"), keyPEM: []byte("keyA")}
+	rotated := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certB"), keyPEM: []byte("keyB")}
+	deferRGWRotation(t, rec, old, rotated)
+	rec.active = false
+	rec.serves = rotated.certPEM
+
+	rb, err := applyTestRGWFrontend(rotated, []string{"mon1"}, true)
+	require.NoError(t, err)
+	require.NotNil(t, rb)
+	assert.Zero(t, rec.probes, "a stopped gateway serves nothing to probe")
+	assert.Equal(t, 2, rec.starts, "a stopped gateway is started, not restarted")
+	assert.Zero(t, rec.restarts)
+	assert.NoFileExists(t, rgwPendingApplyPath())
+}
+
+// TestApplyRGWFrontendCompletedMarkerNeedsNoRestart covers a placement apply
+// arriving after the operator restarted the gateway by hand: the gateway
+// already serves the requested pair, so nothing is restarted and the stale
+// marker is dropped.
+func TestApplyRGWFrontendCompletedMarkerNeedsNoRestart(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{}
+	defer rec.install(t)()
+	old := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certA"), keyPEM: []byte("keyA")}
+	rotated := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certB"), keyPEM: []byte("keyB")}
+	deferRGWRotation(t, rec, old, rotated)
+	rec.serves = rotated.certPEM
+	live := readTestConf(t)
+
+	rb, err := applyTestRGWFrontend(rotated, []string{"mon1"}, true)
+	require.NoError(t, err)
+	assert.Nil(t, rb, "nothing was published, so there is nothing to roll back")
+	assert.Equal(t, 1, rec.probes)
+	assert.Zero(t, rec.restarts, "a gateway already serving the requested pair is left alone")
+	assert.Equal(t, 1, rec.starts)
+	assert.Equal(t, live, readTestConf(t))
+	assert.NoFileExists(t, rgwPendingApplyPath(), "the stale marker is dropped")
+	assert.NoDirExists(t, old.tlsGenDir(), "the superseded pair is pruned")
 }
 
 // TestApplyRGWFrontendPortChange verifies a port change rewrites radosgw.conf

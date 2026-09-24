@@ -198,7 +198,7 @@ MicroCeph can place the RADOS Gateway (RGW) on cluster members from the placemen
 - **`ssl: true` without a certificate and key means reuse.** The member keeps the pair it already has. If it has no usable pair the request fails. It never falls back to plaintext.
 - **Additions come before removals.** Within one request every gateway addition is tried, then the removals. If any addition fails, all removals wait, so a migration never stops the old gateway before the new one serves. Gateways can scale to zero.
 - **`rgw_frontend` in `GET /1.0/placement` is the last applied setting,** read from the `rgw_frontends` table. It is not a health check. If it is absent, the setting is unknown, not plaintext.
-- **One owner per member.** Do not use `microceph enable rgw` or `microceph disable rgw` on a member whose policy entry has an `rgw` object. The next `PUT` applies the policy again without warning. `microceph certificate set rgw` is safe and never changes the policy.
+- **One owner per member.** Do not use `microceph enable rgw` or `microceph disable rgw` on a member whose policy entry has an `rgw` object. The next `PUT` applies the policy again without warning. `microceph certificate set rgw` is safe and never changes the policy. After `certificate set rgw` without `--restart`, the next `PUT` that names the member restarts its gateway unless the operator has already done so.
 - **Applying is safe to repeat.** The same settings cause no restart. A failed change puts the previous config and gateway back. A first gateway start can use the whole 2 minute readiness wait, and the call to each member times out after 5 minutes.
 
 ### What a `PUT` returns for RGW
@@ -216,7 +216,7 @@ MicroCeph can place the RADOS Gateway (RGW) on cluster members from the placemen
 | File | Role |
 |---|---|
 | `/var/snap/microceph/current/conf/radosgw.conf` | Once the file exists, only the `rgw frontends` line is rewritten, so a monitor list refresh made at the same time survives. The first enable writes the whole file. |
-| `/var/snap/microceph/current/conf/radosgw.conf.pending` | Holds the previous config while a change is in flight. If it is present at the next apply, the gateway is restarted rather than trusted. |
+| `/var/snap/microceph/current/conf/radosgw.conf.pending` | Holds the previous config while a change is in flight, and after `certificate set rgw` without `--restart` until the gateway is restarted. If it is present at the next apply, the gateway is asked which pair it serves. A gateway that already serves the pair in `radosgw.conf` was restarted by hand, so the file is stale and is dropped, and a failed change goes back to `radosgw.conf`. Otherwise the gateway is restarted rather than trusted, and a failed change goes back to the config the file holds. |
 | `/var/snap/microceph/common/rgw-tls/<hash>/server.crt`, `server.key` | One directory per certificate and key pair, named by a hash of both. The config switches to a directory only once both files are complete. Old directories are removed once the apply commits: after the database row on a `PUT`, or right after `certificate set rgw --restart`. |
 
 ### Upgrades
