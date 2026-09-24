@@ -102,8 +102,10 @@ Enable an SMB service
 ---------------------
 
 SMB instances sharing a cluster ID are reconciled as one managed SMB cluster.
-A multi-member cluster uses CTDB. See :ref:`deploy-smb-gateway` for the complete
-three-node procedure and :ref:`smb-reference` for command options.
+Managed clusters use CTDB even with one member. Apply a CephFS-backed share
+after creating the first member and before adding more members. See
+:ref:`deploy-smb-gateway` for the complete three-node procedure and
+:ref:`smb-reference` for command options.
 
 Enable an NFS service
 ---------------------

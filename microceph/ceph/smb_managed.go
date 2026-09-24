@@ -139,9 +139,12 @@ func getManagedSMBMembers(ctx context.Context, s interfaces.StateInterface, clus
 }
 
 func createManagedSMBCluster(request types.ManagedSMBService, targets []string) error {
+	// Ceph cannot enable clustering after creating a single-member cluster.
+	// Start clustered so subsequent members can be added without replacing it.
 	args := []string{
 		"smb", "cluster", "create", request.ClusterID, "user",
 		"--placement", managedSMBPlacement(targets),
+		"--clustering", "always",
 	}
 	for _, ref := range request.UserGroupRefs {
 		args = append(args, "--user-group-ref", ref)
