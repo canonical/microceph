@@ -246,6 +246,7 @@ func TestCreateManagedSMBClusterPassesSupportedOptions(t *testing.T) {
 		"ceph",
 		"smb", "cluster", "create", "files", "user",
 		"--placement", "1 node-a",
+		"--clustering", "always",
 		"--user-group-ref", "existing-users",
 		"--define-user-pass", "smbuser%secret",
 	).Return("ok", nil).Once()

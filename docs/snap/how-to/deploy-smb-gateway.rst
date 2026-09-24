@@ -48,12 +48,13 @@ Create a CephFS volume and a dedicated subvolume for the share:
    sudo microceph.ceph fs volume create smbfs
    sudo microceph.ceph fs subvolume create smbfs shared --mode 0770
 
-Enable the three SMB instances
-------------------------------
+Enable the first SMB instance
+-----------------------------
 
 The first command creates the managed SMB cluster and its initial local user.
-Replace the example password before running it. Be aware that a password
-provided on a command line may be retained in shell history.
+Managed clusters start in CTDB mode, including while only one member is
+selected. Replace the example password before running it. Be aware that a
+password provided on a command line may be retained in shell history.
 
 .. code-block:: none
 
@@ -62,19 +63,11 @@ provided on a command line may be retained in shell history.
       --target node1 \
       --define-user-pass 'smbuser%REPLACE_WITH_A_SECRET'
 
-Add the other two members to the same SMB cluster:
+Create the first SMB share
+--------------------------
 
-.. code-block:: none
-
-   sudo microceph enable smb --cluster-id files --target node2
-   sudo microceph enable smb --cluster-id files --target node3
-
-MicroCeph submits the complete three-member placement to the Ceph SMB manager.
-Each member runs ``microceph.smbd``, ``microceph.ctdbd``, and
-``microceph.ctdb-nodes``.
-
-Create the SMB share
---------------------
+The Ceph SMB manager does not submit initial placement until a CephFS-backed
+share exists. Create the first share before adding another member.
 
 Create a file named :file:`share.yaml`:
 
@@ -93,6 +86,17 @@ Apply the resource:
 .. code-block:: none
 
    sudo microceph.ceph smb apply -i share.yaml
+
+Add the other two members
+-------------------------
+
+.. code-block:: none
+
+   sudo microceph enable smb --cluster-id files --target node2
+   sudo microceph enable smb --cluster-id files --target node3
+
+MicroCeph submits the updated placement to the Ceph SMB manager. Each member
+runs ``microceph.smbd``, ``microceph.ctdbd``, and ``microceph.ctdb-nodes``.
 
 Verify the cluster
 ------------------
