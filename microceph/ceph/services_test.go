@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/Rican7/retry/strategy"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/tests"
@@ -76,6 +78,11 @@ func (s *servicesSuite) TestRestartInvalidService() {
 func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 	ts := []string{"mon", "osd"} // test services
 
+	// Check the workers without sleeping.
+	strategies := restartServiceRetryStrategies
+	restartServiceRetryStrategies = []strategy.Strategy{strategy.Limit(10)}
+	defer func() { restartServiceRetryStrategies = strategies }()
+
 	r := mocks.NewRunner(s.T())
 	addMonDumpExpectations(r)
 	addOsdDumpExpectations(r)
@@ -93,6 +100,15 @@ func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 
 	err = RestartCephService(services, "osd", "foohost")
 	assert.NoError(s.T(), err)
+}
+
+// TestRestartServiceRetryDelaysAreSeconds guards the "strategy.Delay(5) slept 5ns
+// instead of 5s" unit bug directly: TestRestartServiceWorkerSuccess overrides
+// restartServiceRetryStrategies wholesale, so only an assertion on the extracted
+// constants themselves exercises the real production durations.
+func (s *servicesSuite) TestRestartServiceRetryDelaysAreSeconds() {
+	assert.Equal(s.T(), 5*time.Second, restartServiceInitialDelay)
+	assert.Equal(s.T(), 10*time.Second, restartServiceBackoffStep)
 }
 
 // TestCleanService tests the cleanService function.

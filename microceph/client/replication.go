@@ -6,15 +6,37 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/microceph/microceph/api/types"
 	microCli "github.com/canonical/microcluster/v2/client"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/constants"
 )
+
+const (
+	// replicationReadTimeout bounds the list and status replication requests.
+	replicationReadTimeout = 120 * time.Second
+	// replicationMutateTimeout bounds the requests that change state. The daemon
+	// handles them synchronously and may retry for several minutes (see
+	// ceph.DisablePoolMirroring), so the client must wait longer than that.
+	replicationMutateTimeout = 600 * time.Second
+)
+
+// replicationTimeout returns the client timeout for a replication request of the given
+// event type (see constants.Event*Replication).
+func replicationTimeout(eventType string) time.Duration {
+	switch eventType {
+	case constants.EventListReplication, constants.EventStatusReplication:
+		return replicationReadTimeout
+	default:
+		return replicationMutateTimeout
+	}
+}
 
 // SendReplicationRequest sends replication request for creating, deleting, getting, and listing remote replication.
 func SendReplicationRequest(ctx context.Context, c *microCli.Client, data types.ReplicationRequest) (string, error) {
 	var err error
 	var resp string
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	queryCtx, cancel := context.WithTimeout(ctx, replicationTimeout(data.GetWorkloadRequestType()))
 	defer cancel()
 
 	// If no API object provided, create API request to the root endpoint.
