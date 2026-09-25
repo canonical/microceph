@@ -92,6 +92,9 @@ func main() {
 	cmdLog := cmdLog{common: &commonCmd}
 	app.AddCommand(cmdLog.Command())
 
+	cmdAuth := cmdAuth{common: &commonCmd}
+	app.AddCommand(cmdAuth.Command())
+
 	app.InitDefaultHelpCmd()
 
 	err := app.Execute()
