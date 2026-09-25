@@ -265,7 +265,7 @@ func (smb *SMBServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 		if err != nil {
 			return cleanupFreshFailure(err)
 		}
-		err = writeSMBCTDBAddress(address)
+		err = writeSMBCTDBAddress(address, bindAddress)
 		if err != nil {
 			return cleanupFreshFailure(err)
 		}
@@ -367,7 +367,7 @@ func currentSMBClusterID() (string, error) {
 	return clusterID, nil
 }
 
-func writeSMBCTDBAddress(address string) error {
+func writeSMBCTDBAddress(address string, bindAddress string) error {
 	paths := constants.GetPathConst()
 	runtimeDir := filepath.Join(filepath.Dir(paths.ConfPath), "samba")
 	err := writeSMBFileAtomic(
@@ -384,7 +384,7 @@ func writeSMBCTDBAddress(address string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create SMB data directory: %w", err)
 	}
-	config := "[global]\nctdbd socket = /run/ctdb/ctdbd.socket\n"
+	config := fmt.Sprintf("[global]\nctdbd socket = /run/ctdb/ctdbd.socket\nbind interfaces only = yes\ninterfaces = %s\n", bindAddress)
 	err = writeSMBFileAtomic(
 		ctdbSMBConfigPath,
 		[]byte(config),
