@@ -22,6 +22,7 @@ with ``microceph help``.
    :maxdepth: 1
 
    commands/index
+   smb
 
 
 Release Notes

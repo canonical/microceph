@@ -1,0 +1,36 @@
+#!/bin/bash
+set -eu
+
+. "${SNAP}/commands/common"
+. "${SNAP}/commands/smb-common"
+
+wait_for_config
+smb_prepare_runtime
+
+if [ -f "${smb_identity_dir}/ctdb.json" ]; then
+    smb_prepare_ctdb_runtime
+    while ! "${SNAP}/commands/samba-command" ctdb pnn >/dev/null 2>&1; do
+        echo "Waiting for CTDB"
+        sleep 1
+    done
+    "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" import
+    "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" import-users
+    exec "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" \
+        run \
+        --setup=smb_ctdb \
+        --wait-for=ctdb \
+        smbd
+fi
+
+rm -f \
+    "${smb_data_dir}/registry.tdb" \
+    "${smb_data_dir}/private/passdb.tdb" \
+    "${smb_data_dir}/private/registry.tdb"
+"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" import
+"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" import-users
+
+exec smbd --foreground --no-process-group --configfile="${smb_config}" \
+    --option="lock directory=/var/lib/samba/lock" \
+    --option="pid directory=/var/lib/samba/run" \
+    --option="ncalrpc dir=/var/lib/samba/ncalrpc" \
+    --option="winbindd socket directory=/var/lib/samba/winbindd"

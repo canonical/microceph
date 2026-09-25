@@ -10,13 +10,18 @@ Run with pytest:
     pytest tests/robot/resources/test_harness_helpers.py
 """
 
+import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import types
 
 import placement_status
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
-from snap_services import enabled_active_services
+from snap_services import enabled_active_services, service_has_state
 from cephfs_replication import cephfs_replication_list_has_volume, verify_cephfs_list_entry_types
 from rbd_replication import (
     rbd_mirror_health,
@@ -24,6 +29,45 @@ from rbd_replication import (
     rbd_synced_image_count,
 )
 from streaming_process import run_streaming_process
+
+
+def test_restore_node_ip_on_network_uses_original_address_and_prefix(monkeypatch):
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, check):
+        calls.append((container, argv, timeout, check))
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+
+    harness.restore_node_ip_on_network("node-wrk1", "10.33.104.11", "10.33.104.1/24", "eth1")
+
+    assert calls == [("node-wrk1", ("ip", "addr", "add", "10.33.104.11/24", "dev", "eth1"), 10, True)]
+
+
+def test_get_node_ip_waits_for_public_ipv4_after_restart(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    outputs = iter(["10.101.181.88 fd42::1", "10.101.181.88 10.33.104.10 fd42::1"])
+    calls = []
+
+    def fake_exec(container, *argv, timeout):
+        calls.append((container, argv, timeout))
+        return _Res(0, next(outputs), "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    assert harness.get_node_ip("node-wrk1", "10.33.104.1/24") == "10.33.104.10"
+    assert calls == [("node-wrk1", ("hostname", "-I"), 30)] * 2
+
+
+def test_select_ip_on_network_skips_management_address():
+    assert H._select_ip_on_network("10.101.181.88 10.33.104.10", "10.33.104.1/24") == "10.33.104.10"
+
+
+def test_select_ip_on_network_reports_missing_address():
+    assert H._select_ip_on_network("10.101.181.88", "10.33.104.1/24") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +182,35 @@ def test_delete_instance_synced_never_gone_raises(monkeypatch):
     with pytest.raises(AssertionError) as exc:
         h._delete_instance_synced("microceph-test-vm")
     assert str(exc.value) == "microceph-test-vm still listed by lxc after delete"
+
+
+# ---------------------------------------------------------------------------
+# Robot CLI wrapper
+# ---------------------------------------------------------------------------
+
+def test_robot_wrapper_exports_snapd_channel(monkeypatch):
+    """The wrapper gives Robot and child scripts one snapd channel value."""
+    wrapper_path = Path(__file__).parents[1] / "robot.py"
+    spec = importlib.util.spec_from_file_location("microceph_robot_wrapper", wrapper_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    captured = {}
+
+    def fake_run(command, env):
+        captured["command"] = command
+        captured["env"] = env
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["robot.py", "--test-suite", "unit-tests", "--snapd-channel", "latest/edge"],
+    )
+
+    assert module.main() == 0
+    assert "SNAPD_CHANNEL:latest/edge" in captured["command"]
+    assert captured["env"]["SNAPD_CHANNEL"] == "latest/edge"
 
 
 # ---------------------------------------------------------------------------
@@ -719,6 +792,24 @@ def test_enabled_active_services_header_only():
     assert enabled_active_services("Service  Startup  Current  Notes\n") == []
 
 
+def test_service_has_state_matches_target_service():
+    output = (
+        "Service                 Startup   Current   Notes\n"
+        "microceph.daemon        enabled   active    -\n"
+        "microceph.smbd          disabled  inactive  -\n"
+    )
+    assert service_has_state(output, "microceph.smbd", "disabled", "inactive") is True
+
+
+def test_service_has_state_rejects_different_state_or_service():
+    output = (
+        "Service                 Startup   Current   Notes\n"
+        "microceph.smbd          enabled   active    -\n"
+    )
+    assert service_has_state(output, "microceph.smbd", "disabled", "inactive") is False
+    assert service_has_state(output, "microceph.mgr", "enabled", "active") is False
+
+
 # ---------------------------------------------------------------------------
 # cephfs_replication_list_has_volume (cephfs_replication.py)
 # ---------------------------------------------------------------------------
@@ -939,6 +1030,115 @@ def test_remote_list_has_garbage_is_false():
 
 def test_remote_list_has_null_is_false():
     assert H._remote_list_has("null", "name", "siteb") is False
+
+
+def test_export_cluster_token_retries_a_transient_control_socket_timeout(monkeypatch):
+    harness = H()
+    export_token = getattr(harness, "export_cluster_token", None)
+    assert export_token is not None, "cluster token export must retry transient control-socket failures"
+
+    results = iter(
+        [
+            _Res(1, "", 'Error: failed to fetch cluster state: Get "http://control.socket/1.0/cluster": context deadline exceeded\n'),
+            _Res(0, "token-for-sitea\n", ""),
+        ]
+    )
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return next(results)
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    token = export_token("node-wrk2", "sitea", attempts=2, interval=0)
+
+    assert token == "token-for-sitea"
+    assert calls == [
+        ("node-wrk2", ("microceph", "cluster", "export", "sitea"), 60, True),
+        ("node-wrk2", ("microceph", "cluster", "export", "sitea"), 60, True),
+    ]
+
+
+def test_export_cluster_token_does_not_retry_a_permanent_failure(monkeypatch):
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return _Res(1, "", "Error: access denied\n")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    with pytest.raises(AssertionError) as exc:
+        harness.export_cluster_token("node-wrk2", "sitea", attempts=2, interval=0)
+
+    assert str(exc.value) == "failed to export cluster token for sitea on node-wrk2; last error: Error: access denied"
+    assert calls == [
+        ("node-wrk2", ("microceph", "cluster", "export", "sitea"), 60, True),
+    ]
+
+
+def test_install_lxd_in_vm_retries_a_snap_store_nonce_timeout(monkeypatch):
+    harness = H()
+    install_lxd = getattr(harness, "install_lxd_in_vm", None)
+    assert install_lxd is not None, "LXD installation must retry transient Snap Store nonce timeouts"
+
+    results = iter(
+        [
+            _Res(1, "", "cannot get nonce from store: store server returned status 408\n"),
+            _Res(0, "lxd installed\n", ""),
+        ]
+    )
+    calls = []
+
+    def fake_run_in_vm(command, timeout, quiet):
+        calls.append((command, timeout, quiet))
+        return next(results)
+
+    monkeypatch.setattr(harness, "run_in_vm", fake_run_in_vm)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    install_lxd(attempts=2, interval=0)
+
+    assert calls == [
+        ("sudo snap install lxd", 300, True),
+        ("sudo snap install lxd", 300, True),
+    ]
+
+
+def test_microceph_api_put_in_container_until_success_retries_closed_connection(monkeypatch):
+    harness = H()
+    put_until_success = getattr(harness, "microceph_api_put_in_container_until_success", None)
+    assert put_until_success is not None, "placement PUT must retry a closed MicroCluster connection"
+
+    responses = iter(
+        [
+            '{"type":"error","error_code":500,"error":"failed to list cluster members: use of closed network connection"}',
+            '{"type":"sync","status_code":200,"metadata":null}',
+        ]
+    )
+    calls = []
+
+    def fake_put(container, path, body, query="", timeout=300):
+        calls.append((container, path, body, query, timeout))
+        return next(responses)
+
+    monkeypatch.setattr(harness, "microceph_api_put_in_container", fake_put)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    response = put_until_success(
+        "node-wrk0",
+        "placement",
+        '{"mode":"reconcile","members":{"node-wrk0":{"control":true},"node-wrk1":{"control":false}}}',
+        attempts=2,
+        interval=0,
+    )
+
+    assert response == '{"type":"sync","status_code":200,"metadata":null}'
+    assert len(calls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1686,6 +1886,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
     h = H()
     monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
+    monkeypatch.setattr(h, "_snapd_channel", lambda: "latest/edge")
     events = []
 
     def fake_run_in_vm(cmd, timeout=300, quiet=False):
@@ -1712,7 +1913,9 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     )
     monkeypatch.setattr(
         h, "run_in_container_with_snap_retry",
-        lambda container, cmd, timeout=300, shell="sh": events.append(("ct-snap-retry", container, cmd, timeout)),
+        lambda container, cmd, timeout=300, shell="sh": (
+            events.append(("ct-snap-retry", container, cmd, timeout)) or _Res(0, "", "")
+        ),
     )
     # Stubbed below apt_update / apt_install, so call-site tests see the exact apt-get
     # string those methods build (flags included) and the target they aim it at.
@@ -2173,6 +2376,46 @@ def test_store_install_is_split_so_only_the_snap_install_is_retried(monkeypatch)
 
 
 # ---------------------------------------------------------------------------
+# join_worker_nodes_to_cluster
+# ---------------------------------------------------------------------------
+
+def test_join_worker_nodes_to_cluster_honours_worker_count(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    added = []
+    joined = []
+    waited = []
+
+    monkeypatch.setattr(harness, "_network_cidr", lambda _mode: "10.0.0./24")
+
+    def fake_exec(container, *argv, timeout):
+        added.append((container, argv))
+        return _Res(0, f"token-{argv[-1]}", "")
+
+    def fake_run(container, cmd, timeout):
+        joined.append((container, cmd))
+        return _Res(0, "", "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(harness, "run_in_container", fake_run)
+    monkeypatch.setattr(
+        harness,
+        "run_in_container_unchecked",
+        lambda *_args, **_kwargs: _Res(0, "1\n", ""),
+    )
+    monkeypatch.setattr(
+        harness, "wait_for_n_nodes_in_cluster", lambda count: waited.append(count)
+    )
+
+    harness.join_worker_nodes_to_cluster("public", worker_count="2")
+
+    assert [call[1][-1] for call in added] == ["node-wrk1", "node-wrk2"]
+    join_calls = [call for call in joined if "microceph cluster join" in call[1]]
+    assert [call[0] for call in join_calls] == ["node-wrk1", "node-wrk2"]
+    assert waited == [3]
+
+
+# ---------------------------------------------------------------------------
 # wait_for_legacy_cephx_compatibility
 # ---------------------------------------------------------------------------
 
@@ -2200,6 +2443,129 @@ def test_wait_for_legacy_cephx_compatibility_checks_health_detail_json(monkeypat
         ("node-wrk0", ("microceph.ceph", "health", "detail", "-f", "json"), 30, True)
     ]
     assert "[health] Legacy CephX checks are the only remaining health checks" in cap.console_lines
+
+
+# ---------------------------------------------------------------------------
+# wait_for_smb_service (single-node VM vs multinode container polling)
+# ---------------------------------------------------------------------------
+
+def test_wait_for_smb_service_polls_the_outer_vm_by_default(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_run_in_vm(cmd, timeout, quiet):
+        calls.append((cmd, timeout, quiet))
+        return _Res(0, "Service                 Startup   Current   Notes\nmicroceph.smbd          enabled   active    -\n", "")
+
+    monkeypatch.setattr(harness, "run_in_vm", fake_run_in_vm)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_smb_service(tries=1, interval=0)
+
+    assert calls == [("snap services microceph.smbd", 15, True)]
+
+
+def test_wait_for_ctdb_service_polls_inside_a_container(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return _Res(0, "Service                 Startup   Current   Notes\nmicroceph.ctdbd         enabled   active    -\n", "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_ctdb_service(tries=1, interval=0, node="node-wrk1")
+
+    assert calls == [
+        ("node-wrk1", ("snap", "services", "microceph.ctdbd"), 15, True)
+    ]
+
+
+def test_wait_for_ctdb_nodes_service_polls_inside_a_container(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return _Res(0, "Service                    Startup   Current   Notes\nmicroceph.ctdb-nodes     enabled   active    -\n", "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_ctdb_nodes_service(tries=1, interval=0, node="node-wrk1")
+
+    assert calls == [
+        ("node-wrk1", ("snap", "services", "microceph.ctdb-nodes"), 15, True)
+    ]
+
+
+def test_run_in_vm_and_check_eventually_retries_transient_failure(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    results = iter([_Res(1, "tree connect failed", ""), _Res(0, "success", "")])
+    calls = []
+
+    def fake_run(command, timeout, quiet):
+        calls.append((command, timeout, quiet))
+        return next(results)
+
+    monkeypatch.setattr(harness, "run_in_vm", fake_run)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    result = harness.run_in_vm_and_check_eventually("smbclient ...", 3, 0, 30)
+
+    assert result.stdout == "success"
+    assert calls == [("smbclient ...", 30, True)] * 2
+
+
+def test_wait_for_ctdb_healthy_nodes_accepts_degraded_cluster(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    outputs = iter(
+        [
+            _Res(0, "Number of nodes:2\npnn:0 10.0.0.1 OK\npnn:1 10.0.0.2 OK\n", ""),
+            _Res(0, "Number of nodes:2\npnn:0 10.0.0.1 DISCONNECTED\npnn:1 10.0.0.2 OK\n", ""),
+        ]
+    )
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return next(outputs)
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_ctdb_healthy_nodes(2, 1, tries=2, interval=0, node="node-wrk2")
+
+    assert calls == [
+        ("node-wrk2", ("microceph.ctdb", "status"), 15, True),
+        ("node-wrk2", ("microceph.ctdb", "status"), 15, True),
+    ]
+
+
+def test_wait_for_smb_service_polls_inside_a_container_when_node_given(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append((container, argv, timeout, quiet))
+        return _Res(0, "Service                 Startup   Current   Notes\nmicroceph.smbd          enabled   active    -\n", "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    harness.wait_for_smb_service(tries=1, interval=0, node="node-wrk1")
+
+    assert calls == [
+        ("node-wrk1", ("snap", "services", "microceph.smbd"), 15, True)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -2336,26 +2702,121 @@ def test_resolute_ceph_client_setup_is_shared():
         assert "${CEPH_PPA}" not in suite
 
 
-def test_local_snap_install_caches_core26(monkeypatch):
-    """Local core26 snap installs prefetch their matching base snap."""
+def _fake_snapd_result(stdout=""):
+    class _Result:
+        rc = 0
+        stderr = ""
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    return _Result(stdout)
+
+
+def test_local_snap_install_refreshes_a_preinstalled_snapd(monkeypatch):
+    """An already-installed snapd is refreshed onto the configured channel."""
     _with_logger(monkeypatch)
     harness = H()
     commands = []
 
     def fake_run_in_vm_and_check(command, timeout):
         commands.append((command, timeout))
+        if "snap install snapd" in command:
+            return _fake_snapd_result(
+                'snap "snapd" is already installed, see \'snap refresh --help\'.'
+            )
+        return _fake_snapd_result("ok")
 
     retried = []
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
     monkeypatch.setattr(
         harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: retried.append((command, timeout))
     )
+    monkeypatch.setattr(harness, "_snapd_channel", lambda: "latest/edge")
 
     harness.install_microceph_from_local_snap("/tmp/microceph.snap")
 
-    assert commands[0] == ("sudo snap install core26 || true", 120)
+    assert commands[:3] == [
+        ("sudo snap install snapd --channel=latest/edge", 600),
+        ("sudo snap refresh snapd --channel=latest/edge", 600),
+        ("sudo snap install core26 || true", 120),
+    ]
     # The --dangerous install is where a swallowed core26 store error resurfaces.
     assert retried == [("sudo snap install --dangerous ~/microceph_*.snap", 600)]
+
+
+def test_local_snap_install_skips_refresh_for_a_fresh_snapd(monkeypatch):
+    """A fresh snapd install does not trigger a redundant refresh."""
+    _with_logger(monkeypatch)
+    harness = H()
+    commands = []
+
+    def fake_run_in_vm_and_check(command, timeout):
+        commands.append((command, timeout))
+        return _fake_snapd_result("snapd (edge) 2.78 installed")
+
+    monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
+    monkeypatch.setattr(harness, "_snapd_channel", lambda: "latest/edge")
+    monkeypatch.setattr(harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: None)
+
+    harness.install_microceph_from_local_snap("/tmp/microceph.snap")
+
+    assert commands[:2] == [
+        ("sudo snap install snapd --channel=latest/edge", 600),
+        ("sudo snap install core26 || true", 120),
+    ]
+
+
+def test_snapd_channel_flows_from_the_cli_wrapper_into_suites_and_scripts():
+    """The channel is chosen once by the wrapper and inherited everywhere else."""
+    robot_root = Path(__file__).parents[1]
+    resource = (robot_root / "resources" / "microceph_harness.resource").read_text()
+    dsl_suite = (robot_root / "dsl-functional-tests" / "dsl_functional_tests.robot").read_text()
+    adopt_suite = (robot_root / "cephadm-adopt-test" / "cephadm_adopt_tests.robot").read_text()
+    api_suite = (robot_root / "api-tests" / "api_tests.robot").read_text()
+
+    assert "${SNAPD_CHANNEL}      latest/stable" in resource
+    for suite in (dsl_suite, adopt_suite, api_suite):
+        assert "Set Environment Variable    SNAPD_CHANNEL" not in suite
+        assert "env SNAPD_CHANNEL=" not in suite
+
+
+def test_all_local_snap_install_paths_prepare_configured_snapd():
+    """Every guest path prepares snapd before installing the local snap."""
+    repo_root = Path(__file__).parents[3]
+    harness = (repo_root / "tests" / "robot" / "resources" / "microceph_harness.py").read_text()
+    actionutils = (repo_root / "tests" / "scripts" / "actionutils.sh").read_text()
+    adoptutils = (repo_root / "tests" / "scripts" / "adoptutils.sh").read_text()
+    dsl = (repo_root / "tests" / "scripts" / "test_dsl_functest.sh").read_text()
+
+    builder = harness.split("def build_base_lxd_image", 1)[1].split(
+        "def create_lxd_containers_with_loop_devices", 1
+    )[0]
+    assert "self._snapd_channel()" in builder
+    assert builder.index("snap install snapd") < builder.index("snap install --dangerous")
+
+    for script in (actionutils, adoptutils, dsl):
+        assert 'SNAPD_CHANNEL="${SNAPD_CHANNEL:-latest/stable}"' in script
+        assert "ensure_snapd_channel" in script
+        # Install first; refresh only when snap reports it was already installed.
+        assert "already installed" in script
+        assert script.index("snap install snapd") < script.index("snap refresh snapd")
+
+    # actionutils prepares snapd only in its one live local-install path
+    # (verify_pristine_check -> install_microceph); store-channel upgrade
+    # workflows and the dead multinode helpers must not be touched.
+    assert "ensure_snapd_channel_in_instance" not in actionutils
+    assert actionutils.count("    ensure_snapd_channel\n") == 1
+
+    assert actionutils.index("ensure_snapd_channel") < actionutils.index(
+        "sudo snap install --dangerous ~/microceph_*.snap"
+    )
+    assert adoptutils.index("ensure_snapd_channel") < adoptutils.index(
+        'sudo snap install --dangerous /root/microceph_*.snap'
+    )
+    assert dsl.index("ensure_snapd_channel") < dsl.index(
+        "snap install /tmp/microceph.snap --dangerous"
+    )
 
 
 def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
@@ -2371,3 +2832,336 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "dpkg-deb -x" not in script
     assert "cat >" not in script
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
+
+
+# ---------------------------------------------------------------------------
+# SMB Core26 packaging
+# ---------------------------------------------------------------------------
+
+def test_ci_runs_smb_on_edge_and_keeps_a_stable_snapd_gate():
+    """CI exercises SMB with 2.78 while stable compatibility remains blocking."""
+    repo_root = Path(__file__).parents[3]
+    workflow = (repo_root / ".github" / "workflows" / "tests.yml").read_text()
+    stable_suite = (
+        repo_root
+        / "tests"
+        / "robot"
+        / "snapd-stable-compatibility"
+        / "snapd_stable_compatibility.robot"
+    ).read_text()
+    smb_suite = (repo_root / "tests" / "robot" / "smb-test" / "smb_tests.robot").read_text()
+
+    assert "id: smb-test" in workflow
+    assert "suite: smb-test" in workflow
+    assert "id: smb-multinode-test" in workflow
+    assert "suite: smb-multinode-test" in workflow
+    assert "id: snapd-stable-compatibility" in workflow
+    assert "name: Snapd stable compatibility gate" in workflow
+    assert "snapd_channel: latest/stable" in workflow
+    assert "--snapd-channel '" in workflow
+    assert "matrix.snapd_channel || 'latest/edge'" in workflow
+
+    assert "${OUTER_VM_IMAGE}    ubuntu:26.04" in stable_suite
+    assert "Prepare Snapd In VM" in stable_suite
+    assert "sudo snap install core26 || true" in stable_suite
+    assert "sudo snap install --dangerous ~/microceph_*.snap" in stable_suite
+    assert "Install MicroCeph From Local Snap" not in stable_suite
+    assert "SMB_SNAPD_CHANNEL" not in smb_suite
+    assert "snap install snapd" not in smb_suite
+
+
+def test_multinode_smb_suite_covers_three_instance_failover():
+    """CI proves managed three-instance placement, member loss, and recovery."""
+    repo_root = Path(__file__).parents[3]
+    multinode_suite = (
+        repo_root
+        / "tests"
+        / "robot"
+        / "smb-multinode-test"
+        / "smb_multinode_tests.robot"
+    ).read_text()
+
+    for node in ("node-wrk0", "node-wrk1", "node-wrk2"):
+        assert (
+            f"microceph enable smb --cluster-id ${{SMB_CLUSTER}} --target {node}"
+            in multinode_suite
+        )
+    assert "Wait For CTDB Service" in multinode_suite
+    assert "Wait For CTDB Healthy Nodes    3    2" in multinode_suite
+    assert "Wait For CTDB Healthy Nodes    3    3" in multinode_suite
+    assert "lxc stop node-wrk1 --force" in multinode_suite
+    assert "lxc start node-wrk1" in multinode_suite
+    assert "microceph disable smb --cluster-id ${SMB_CLUSTER}" in multinode_suite
+    assert "smb share rm ${SMB_CLUSTER} ${SMB_SHARE}" in multinode_suite
+    assert "Join Worker Nodes To Cluster    public    2" in multinode_suite
+    assert multinode_suite.index("fs volume create") < multinode_suite.index(
+        "microceph enable smb"
+    )
+    # smbd state is polled per container, not on the outer VM.
+    assert "node=node-wrk" in multinode_suite
+    assert "smb-after-scale-down" in multinode_suite
+    test_cases = multinode_suite.split("*** Test Cases ***", 1)[1]
+    assert test_cases.count("\nTest ") == 1
+    assert "snap install snapd" not in multinode_suite
+
+
+def test_smb_manifest_uses_direct_ceph_new_and_scoped_identity_switching():
+    """The strict SMB service uses Core26's native Ceph VFS and only it can switch identities."""
+    repo_root = Path(__file__).parents[3]
+    snapcraft = (repo_root / "snap" / "snapcraft.yaml").read_text()
+
+    assert "assumes:\n  - snapd2.78\n" in snapcraft
+    assert "  smb-identity:\n    interface: microceph-support\n    user-identity-switching: true\n" in snapcraft
+    assert "  ctdb-run:\n    interface: system-files\n    write:\n      - /run/ctdb\n" in snapcraft
+    assert "  smbd:\n" in snapcraft
+    smbd_app = snapcraft.split("  smbd:\n", 1)[1].split("  osd:\n", 1)[0]
+    assert "    after:\n      - daemon\n      - ctdbd\n" in smbd_app
+    assert "    plugs:\n      - smb-identity\n" in smbd_app
+    assert "      - process-control\n" not in smbd_app
+    assert "  samba:\n" in snapcraft
+    assert "      - samba-vfs-ceph\n" in snapcraft
+    assert "      - ctdb\n" in snapcraft
+    assert "      - python3-samba\n" in snapcraft
+    assert "      - libnss-wrapper\n" in snapcraft
+    assert "      - libpopt0\n" in snapcraft
+    assert "      - libtirpc3t64\n" in snapcraft
+    assert "  sambacc:\n" in snapcraft
+    assert "--target=$CRAFT_PART_INSTALL/lib/python3.14/site-packages" in snapcraft
+    assert "$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba" in snapcraft
+    for target in (
+        "/etc/samba:",
+        "/etc/ctdb:",
+        "/usr/libexec/samba:",
+        "/usr/libexec/ctdb:",
+        "/usr/share/ctdb:",
+        "/var/cache/samba:",
+        "/var/lib/samba:",
+        "/var/lib/ctdb:",
+        "/var/log/samba:",
+    ):
+        assert target in snapcraft
+    assert "/run/samba:" not in snapcraft
+
+    wrapper = (repo_root / "snapcraft" / "commands" / "smbd.start").read_text()
+    runtime = (repo_root / "snapcraft" / "commands" / "smb-common").read_text()
+    assert 'for path in "${SNAP}"/lib/*/libnss_wrapper.so; do' in runtime
+    assert 'export LD_PRELOAD="${nss_wrapper}"' in runtime
+    assert "CRAFT_ARCH_TRIPLET_BUILD_FOR" not in runtime
+    assert 'export NSS_WRAPPER_PASSWD="${smb_identity_dir}/passwd"' in runtime
+    assert 'export NSS_WRAPPER_GROUP="${smb_identity_dir}/group"' in runtime
+    assert 'smb_cluster_id="$(cat "${smb_cluster_id_path}")"' in runtime
+    assert '"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start"' in wrapper
+    assert 'import-users' in wrapper
+    assert 'smb_config="${SNAP_DATA}/conf/samba/smb.conf"' in runtime
+    assert "\nlimits\n" not in wrapper
+    assert '--samba-command-prefix "${SNAP}/commands/samba-command"' in runtime
+    assert 'exec smbd --foreground --no-process-group --configfile="${smb_config}" \\\n    --option="lock directory=/var/lib/samba/lock" \\\n    --option="pid directory=/var/lib/samba/run" \\\n    --option="ncalrpc dir=/var/lib/samba/ncalrpc" \\\n    --option="winbindd socket directory=/var/lib/samba/winbindd"' in wrapper
+    assert 'head -c 4 "${path}"' in snapcraft
+    assert "printf '\\177ELF'" in snapcraft
+    assert 'strip -s "${path}"' in snapcraft
+
+
+def test_smb_manifest_runs_ctdb_services_before_clustered_smbd():
+    repo_root = Path(__file__).parents[3]
+    snapcraft = (repo_root / "snap" / "snapcraft.yaml").read_text()
+
+    assert "  ctdbd:\n" in snapcraft
+    assert "  ctdb-nodes:\n" in snapcraft
+    assert "  ctdb:\n" in snapcraft
+    ctdbd_app = snapcraft.split("  ctdbd:\n", 1)[1].split("  ctdb-nodes:\n", 1)[0]
+    nodes_app = snapcraft.split("  ctdb-nodes:\n", 1)[1].split("  ctdb:\n", 1)[0]
+    assert "    command: commands/ctdbd.start\n" in ctdbd_app
+    assert "    daemon: simple\n" in ctdbd_app
+    assert "      - smb-identity\n" in ctdbd_app
+    assert "      - ctdb-run\n" in ctdbd_app
+    assert "    command: commands/ctdb-nodes.start\n" in nodes_app
+    assert "      - ctdbd\n" in nodes_app
+    assert "      - ctdb-run\n" in nodes_app
+    assert "    command: commands/ctdb\n" in snapcraft
+
+    runtime = (repo_root / "snapcraft" / "commands" / "smb-common").read_text()
+    assert 'export CTDB_SOCKET="/run/ctdb/ctdbd.socket"' in runtime
+    assert 'export SAMBA_SPECIFICS="daemon_cli_debug_output"' in runtime
+
+    ctdbd = (repo_root / "snapcraft" / "commands" / "ctdbd.start").read_text()
+    assert "ctdb-set-node" in ctdbd
+    assert "ctdb-list-nodes" in ctdbd
+    assert "ctdb-must-have-node" not in ctdbd
+    assert "ctdb-migrate" not in ctdbd
+    assert "--setup=ctdb_config" in ctdbd
+    assert "--setup=ctdb_etc" in ctdbd
+    assert "etc/ctdb/functions: usr/share/ctdb/functions" in snapcraft
+    assert "etc/ctdb/notify.sh: usr/share/ctdb/notify.sh" in snapcraft
+
+    monitor = (repo_root / "snapcraft" / "commands" / "ctdb-nodes.start").read_text()
+    assert '"${SNAP}/commands/samba-command" ctdb pnn' in monitor
+    assert "ctdb_ready.py" in monitor
+    assert "ctdb-monitor-nodes" in monitor
+    assert "--reload=all" in monitor
+    assert "ctdb-manage-nodes" not in monitor
+
+    smbd = (repo_root / "snapcraft" / "commands" / "smbd.start").read_text()
+    assert "--setup=smb_ctdb" in smbd
+    assert "--wait-for=ctdb" in smbd
+
+
+def test_samba_command_does_not_inject_samba_options_into_ctdb(tmp_path):
+    repo_root = Path(__file__).parents[3]
+    command = repo_root / "snapcraft" / "commands" / "samba-command"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    target = bindir / "ctdb"
+    target.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+    target.chmod(0o755)
+
+    result = subprocess.run(
+        [command, "ctdb", "status"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "SNAP": str(tmp_path)},
+    )
+
+    assert result.stdout.splitlines() == ["status"]
+
+
+def test_ctdb_ready_marks_only_the_local_node_ready():
+    repo_root = Path(__file__).parents[3]
+    script = repo_root / "snapcraft" / "commands" / "ctdb_ready.py"
+    namespace = {"__name__": "ctdb_ready_test"}
+    exec(script.read_text(), namespace)
+    data = {
+        "nodes": [
+            {"identity": "smb.files.node-a", "pnn": 0, "state": "ready"},
+            {"identity": "smb.files.node-b", "pnn": 1, "state": "new"},
+        ]
+    }
+
+    updated = namespace["mark_ready"](data, "smb.files.node-b", 1)
+
+    assert updated["nodes"] == [
+        {"identity": "smb.files.node-a", "pnn": 0, "state": "ready"},
+        {"identity": "smb.files.node-b", "pnn": 1, "state": "ready"},
+    ]
+
+
+def test_sambacc_runtime_overrides_registry_incompatible_paths():
+    """The passdb loader overrides paths that the Samba registry cannot store."""
+    repo_root = Path(__file__).parents[3]
+    module_path = repo_root / "snapcraft" / "commands" / "sambacc_runtime.py"
+    namespace = {}
+    exec(module_path.read_text(), namespace)
+
+    class FakeLoadParm:
+        def __init__(self):
+            self.options = {}
+
+        def set(self, name, value):
+            self.options[name] = value
+
+    loadparm = FakeLoadParm()
+    namespace["configure_loadparm"](loadparm)
+
+    assert loadparm.options == {
+        "lock directory": "/var/lib/samba/lock",
+        "pid directory": "/var/lib/samba/run",
+        "ncalrpc dir": "/var/lib/samba/ncalrpc",
+        "winbindd socket directory": "/var/lib/samba/winbindd",
+    }
+
+
+def test_sambacc_runtime_creates_no_run_samba_directory(tmp_path):
+    """The sambacc replacement creates its state below the Samba data layout."""
+    repo_root = Path(__file__).parents[3]
+    module_path = repo_root / "snapcraft" / "commands" / "sambacc_runtime.py"
+    namespace = {}
+    exec(module_path.read_text(), namespace)
+
+    namespace["ensure_runtime_dirs"](tmp_path)
+
+    for relative_path in (
+        "var/lib/samba",
+        "var/lib/samba/private",
+        "var/lib/samba/lock",
+        "var/lib/samba/run",
+        "var/lib/samba/ncalrpc",
+        "var/lib/samba/winbindd",
+    ):
+        assert (tmp_path / relative_path).is_dir()
+    assert not (tmp_path / "run/samba").exists()
+
+
+def test_sambacc_runtime_sets_paths_before_loading_registry_config():
+    """LoadParm must receive runtime paths before a registry config is opened."""
+    repo_root = Path(__file__).parents[3]
+    module_path = repo_root / "snapcraft" / "commands" / "sambacc_runtime.py"
+    namespace = {}
+    exec(module_path.read_text(), namespace)
+    events = []
+
+    class FakeLoadParm:
+        def set(self, name, value):
+            events.append(("set", name, value))
+
+        def load_default(self):
+            events.append(("load_default",))
+
+    class FakeParam:
+        def get_context(self):
+            events.append(("get_context",))
+            return FakeLoadParm()
+
+    namespace["load_runtime_loadparm"](FakeParam())
+
+    assert events == [
+        ("get_context",),
+        ("set", "lock directory", "/var/lib/samba/lock"),
+        ("set", "pid directory", "/var/lib/samba/run"),
+        ("set", "ncalrpc dir", "/var/lib/samba/ncalrpc"),
+        ("set", "winbindd socket directory", "/var/lib/samba/winbindd"),
+        ("load_default",),
+    ]
+
+
+def test_samba_command_injects_runtime_paths(tmp_path):
+    """The sambacc command prefix keeps helper processes out of /run/samba."""
+    repo_root = Path(__file__).parents[3]
+    command = repo_root / "snapcraft" / "commands" / "samba-command"
+    target = tmp_path / "capture-args"
+    target.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+    target.chmod(0o755)
+
+    result = subprocess.run(
+        [command, target, "conf", "import", "config.smb"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.splitlines() == [
+        "--option=lock directory=/var/lib/samba/lock",
+        "--option=pid directory=/var/lib/samba/run",
+        "--option=ncalrpc dir=/var/lib/samba/ncalrpc",
+        "--option=winbindd socket directory=/var/lib/samba/winbindd",
+        "conf",
+        "import",
+        "config.smb",
+    ]
+
+
+def test_smb_service_api_is_registered():
+    """The upstream SMB orchestrator can place and remove native SMB members."""
+    repo_root = Path(__file__).parents[3]
+    servers = (repo_root / "microceph" / "api" / "servers.go").read_text()
+    services = (repo_root / "microceph" / "api" / "services.go").read_text()
+    orch_client = (repo_root / "microceph-orch" / "src" / "microceph" / "client" / "cluster.py").read_text()
+
+    assert "smbServiceCmd," in servers
+    assert 'Path:   "services/smb",' in services
+    assert "Delete: mcTypes.EndpointAction{Handler: cmdSMBDeleteService, ProxyTarget: true}," in services
+    assert "def apply_smb(" in orch_client
+    assert "def remove_smb(" in orch_client
+    assert '"/1.0/services/smb?{query}"' in orch_client
+    assert '"name": "smb"' in orch_client
+    assert '"bool": True' in orch_client
+    assert "json.dumps(payload)" in orch_client

@@ -29,7 +29,7 @@ from rbd_replication import (
     rbd_primary_image_count,
     rbd_synced_image_count,
 )
-from snap_services import enabled_active_services
+from snap_services import enabled_active_services, service_has_state
 from streaming_process import run_streaming_process
 
 # Attribute names are load-bearing: Robot suites read ${result.rc}, ${result.stdout},
@@ -312,6 +312,21 @@ class microceph_harness:
                 f"Command failed (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}"
             )
         return res
+
+    def run_in_vm_and_check_eventually(self, bash_cmd, tries=3, interval=5, timeout=60):
+        """Retry an outer-VM command until it succeeds, reporting the last failure."""
+        last_result = [None]
+
+        def predicate():
+            last_result[0] = self.run_in_vm(bash_cmd, timeout, quiet=True)
+            return last_result[0].rc == 0
+
+        self._poll_until(
+            predicate, tries, interval,
+            lambda: (f"Command did not succeed after {tries} attempts: {bash_cmd}\n"
+                     f"Last result: {last_result[0]}"),
+        )
+        return last_result[0]
 
     def run_in_vm_must_fail(self, bash_cmd, timeout=120, quiet=False):
         """Runs a bash command inside the outer VM and fails if it SUCCEEDS (expects non-zero)."""
@@ -738,7 +753,11 @@ class microceph_harness:
         exactly as the previous string form produced.
         """
         runner = ["bash", "-x"] if self._xtrace() else ["bash"]
-        argv = ["lxc", "exec", self._outer_vm(), "--", *runner, script]
+        snapd_channel = self._snapd_channel()
+        argv = [
+            "lxc", "exec", self._outer_vm(), "--",
+            "env", f"SNAPD_CHANNEL={snapd_channel}", *runner, script,
+        ]
         if args:
             argv.extend(str(args).split())
         return run_streaming_process(argv, timeout=timeout, xtrace=False)
@@ -1178,6 +1197,93 @@ class microceph_harness:
         return "no"
 
     # -----------------------------------------------------------------------
+    # Snap-service pollers
+    # -----------------------------------------------------------------------
+
+    def _wait_for_snap_service(self, service, startup, current, tries, interval, node):
+        """Polls until a MicroCeph snap service reaches the requested state."""
+        logger.console(
+            f"[service] Waiting for {service} to be {startup}/{current}"
+            + (f" on {node}" if node else "")
+            + "..."
+        )
+        last_output = [""]
+
+        def predicate():
+            if node:
+                result = self.exec_in_container(
+                    node, "snap", "services", service, timeout=15, quiet=True
+                )
+            else:
+                result = self.run_in_vm(
+                    f"snap services {service}", 15, quiet=True
+                )
+            last_output[0] = result.stdout
+            return result.rc == 0 and service_has_state(
+                result.stdout, service, startup, current
+            )
+
+        self._poll_until(
+            predicate,
+            attempts=int(tries),
+            interval=interval,
+            fail_msg=lambda: (
+                f"{service} did not reach "
+                f"{startup}/{current}; last output:\n{last_output[0]}"
+            ),
+        )
+
+    def wait_for_smb_service(self, startup="enabled", current="active", tries=30, interval=2, node=""):
+        """Polls until microceph.smbd reaches the requested snap service state."""
+        self._wait_for_snap_service(
+            "microceph.smbd", startup, current, tries, interval, node
+        )
+
+    def wait_for_ctdb_service(self, startup="enabled", current="active", tries=30, interval=2, node=""):
+        """Polls until microceph.ctdbd reaches the requested snap service state."""
+        self._wait_for_snap_service(
+            "microceph.ctdbd", startup, current, tries, interval, node
+        )
+
+    def wait_for_ctdb_nodes_service(self, startup="enabled", current="active", tries=30, interval=2, node=""):
+        """Polls until microceph.ctdb-nodes reaches the requested snap service state."""
+        self._wait_for_snap_service(
+            "microceph.ctdb-nodes", startup, current, tries, interval, node
+        )
+
+    def wait_for_ctdb_healthy_nodes(
+        self, total, healthy, tries=60, interval=2, node="node-wrk0"
+    ):
+        """Polls until CTDB reports the expected total and healthy node counts."""
+        total = int(total)
+        healthy = int(healthy)
+        last_output = [""]
+
+        def predicate():
+            result = self.exec_in_container(
+                node, "microceph.ctdb", "status", timeout=15, quiet=True
+            )
+            last_output[0] = result.stdout + result.stderr
+            healthy_nodes = re.findall(
+                r"^pnn:\d+ .*\bOK\b", result.stdout, re.MULTILINE
+            )
+            return (
+                result.rc == 0
+                and f"Number of nodes:{total}" in result.stdout
+                and len(healthy_nodes) == healthy
+            )
+
+        self._poll_until(
+            predicate,
+            attempts=int(tries),
+            interval=interval,
+            fail_msg=lambda: (
+                f"CTDB did not report {healthy}/{total} healthy nodes on {node}; "
+                f"last output:\n{last_output[0]}"
+            ),
+        )
+
+    # -----------------------------------------------------------------------
     # RGW pollers
     # -----------------------------------------------------------------------
 
@@ -1448,6 +1554,10 @@ class microceph_harness:
         """Returns the configured snap path from ${SNAP_PATH}, or "" when unset."""
         return BuiltIn().get_variable_value("${SNAP_PATH}", "") or ""
 
+    def _snapd_channel(self):
+        """Returns the snapd channel configured for test guests."""
+        return BuiltIn().get_variable_value("${SNAPD_CHANNEL}", "latest/stable")
+
     def _lxc_file_push(self, src, dest, timeout, errlabel):
         """Pushes *src* to *dest* via lxc file push, failing on non-zero rc."""
         res = self._exec(["lxc", "file", "push", src, dest], timeout)
@@ -1713,6 +1823,41 @@ class microceph_harness:
         self.apt_update()
         self.apt_install(VM_APT_TOOLS)
 
+    def install_lxd_in_vm(self, attempts=3, interval=5):
+        """Installs LXD, retrying only a transient Snap Store nonce timeout."""
+        last_error = [""]
+
+        def predicate():
+            result = self.run_in_vm("sudo snap install lxd", 300, quiet=True)
+            last_error[0] = (result.stderr or result.stdout).strip()
+            transient_nonce_timeout = (
+                "cannot get nonce from store" in result.stderr
+                and "store server returned status 408" in result.stderr
+            )
+            if result.rc != 0 and not transient_nonce_timeout:
+                raise AssertionError(f"failed to install LXD: {last_error[0]}")
+            return result.rc == 0
+
+        self._poll_until(
+            predicate,
+            attempts=int(attempts),
+            interval=interval,
+            fail_msg=lambda: f"failed to install LXD: {last_error[0]}",
+        )
+
+    def prepare_snapd_in_vm(self):
+        """Installs snapd from the configured channel, refreshing it if preinstalled."""
+        snapd_channel = self._snapd_channel()
+        result = self.run_in_vm_and_check(
+            f"sudo snap install snapd --channel={snapd_channel}", 600
+        )
+        # `snap install` exits 0 without switching channels when snapd is
+        # already installed as a snap; only then is a refresh needed.
+        if "already installed" in f"{result.stdout}{result.stderr}":
+            self.run_in_vm_and_check(
+                f"sudo snap refresh snapd --channel={snapd_channel}", 600
+            )
+
     def install_microceph_from_local_snap(self, snap_path=None):
         """Installs the locally-built snap and connects all interfaces (except dm-crypt)."""
         snap_path = snap_path or self._snap_path()
@@ -1722,6 +1867,7 @@ class microceph_harness:
         # snap_path only gates the skip above; the install uses the ~/microceph_*.snap
         # glob below, so the argument value is otherwise unused.
         logger.console("[install] Installing MicroCeph snap...")
+        self.prepare_snapd_in_vm()
         self.run_in_vm_and_check("sudo snap install core26 || true", 120)
         # The core26 prefetch above tolerates failure, so a transient store error
         # resurfaces here as 'cannot install snap base "core26": ...' and is retried.
@@ -1865,10 +2011,17 @@ class microceph_harness:
             raise_on_timeout=False,
         )
         self.probe_instance_network(builder)
-        # Two calls rather than one chained string, so a stalled install is retried
-        # without repeating the update, and each gets its own attempt budget.
+        # Keep network installs individually retryable without repeating the update.
         self.apt_update(builder)
         self.apt_install(VM_APT_TOOLS, builder)
+        snapd_channel = self._snapd_channel()
+        result = self.run_in_container_with_snap_retry(
+            builder, f"snap install snapd --channel={snapd_channel}", 600
+        )
+        if "already installed" in f"{result.stdout}{result.stderr}":
+            self.run_in_container_with_snap_retry(
+                builder, f"snap refresh snapd --channel={snapd_channel}", 600
+            )
         self.run_in_container_with_snap_retry(
             builder, f"snap install --dangerous {MNT_SNAP_GLOB}", 600
         )
@@ -2041,14 +2194,15 @@ class microceph_harness:
         self.run_in_container(head, "microceph status", 30)
         return [public_networks, mon_ip]
 
-    def join_worker_nodes_to_cluster(self, network_mode="public"):
-        """Joins node-wrk1..3 to the cluster."""
+    def join_worker_nodes_to_cluster(self, network_mode="public", worker_count=3):
+        """Joins the requested number of worker nodes to the cluster."""
+        worker_count = int(worker_count)
         logger.console(f"[cluster] Joining worker nodes to cluster ({network_mode})...")
         head = HEAD_NODE
         nw = self._network_cidr(network_mode)
         gw, mask = nw.split("/")
         mon_ips = [f"{gw}0"]
-        for i in range(1, len(NODES)):
+        for i in range(1, worker_count + 1):
             node = NODES[i]
             logger.console(f"[cluster] Joining {node}...")
             tok = self.exec_in_container(head, "microceph", "cluster", "add", node, timeout=60).stdout.strip()
@@ -2084,7 +2238,7 @@ class microceph_harness:
                         f"public_network = {nw} not exactly-once in {node} ceph.conf (mirrors verify_bootstrap_configs)"
                     )
                 mon_ips.append(f"{gw}{i}")
-        self.wait_for_n_nodes_in_cluster(len(NODES))
+        self.wait_for_n_nodes_in_cluster(worker_count + 1)
         self.run_in_container(head, "microceph status", 30)
         self.run_in_container(head, "microceph.ceph -s", 30)
 
@@ -2154,14 +2308,46 @@ class microceph_harness:
         """
         return self._is_member_not_found_error(stderr)
 
-    def get_node_ip(self, container):
-        """Returns the primary IP of *container* (first address from hostname -I), or "" if none.
+    def restore_node_ip_on_network(self, container, address, cidr, interface):
+        """Restore a manually assigned address lost when an LXD container restarts."""
+        network = ipaddress.ip_network(cidr, strict=False)
+        if ipaddress.ip_address(address) not in network:
+            raise ValueError(f"{address} does not belong to {cidr}")
+        self.exec_in_container(
+            container, "ip", "addr", "add", f"{address}/{network.prefixlen}",
+            "dev", interface, timeout=10, check=True,
+        )
 
-        Mirrors the pre-refactor ``hostname -I | cut -d ' ' -f1`` + ``.strip()`` which yielded
-        an empty string (not an IndexError) when the network was not yet up, so the single NFS
-        caller surfaces an informative mount failure rather than masking it with an IndexError.
+    @staticmethod
+    def _select_ip_on_network(addresses, cidr):
+        """Return the first address in *addresses* belonging to *cidr*, or an empty string."""
+        network = ipaddress.ip_network(cidr, strict=False)
+        for address in addresses.split():
+            if ipaddress.ip_address(address) in network:
+                return address
+        return ""
+
+    def get_node_ip(self, container, cidr=None):
+        """Return the primary IP of *container*, or its address on *cidr* when specified.
+
+        Without a CIDR, preserve the former empty-string result when no address is available.
         """
-        parts = self.exec_in_container(container, "hostname", "-I", timeout=30).stdout.split()
+        if cidr is not None:
+            addresses = [""]
+            selected = [""]
+
+            def predicate():
+                addresses[0] = self.exec_in_container(container, "hostname", "-I", timeout=30).stdout
+                selected[0] = self._select_ip_on_network(addresses[0], cidr)
+                return bool(selected[0])
+
+            self._poll_until(
+                predicate, 30, 2,
+                lambda: f"No address of {container} on network {cidr}: {addresses[0]}",
+            )
+            return selected[0]
+        addresses = self.exec_in_container(container, "hostname", "-I", timeout=30).stdout
+        parts = addresses.split()
         return parts[0] if parts else ""
 
     # -----------------------------------------------------------------------
@@ -2250,6 +2436,45 @@ class microceph_harness:
             ).stdout
         )
 
+    def export_cluster_token(self, node, remote_name, attempts=10, interval=3):
+        """Returns a cluster export token after transient control-socket failures clear."""
+        token = [""]
+        last_error = [""]
+
+        def predicate():
+            result = self.exec_in_container(
+                node,
+                "microceph",
+                "cluster",
+                "export",
+                remote_name,
+                timeout=60,
+                quiet=True,
+            )
+            token[0] = result.stdout.strip()
+            last_error[0] = result.stderr.strip()
+            transient_control_timeout = (
+                "http://control.socket" in result.stderr
+                and "context deadline exceeded" in result.stderr
+            )
+            if result.rc != 0 and not transient_control_timeout:
+                raise AssertionError(
+                    f"failed to export cluster token for {remote_name} on {node}; "
+                    f"last error: {last_error[0] or 'empty token'}"
+                )
+            return result.rc == 0 and token[0] != ""
+
+        self._poll_until(
+            predicate,
+            attempts=int(attempts),
+            interval=interval,
+            fail_msg=lambda: (
+                f"failed to export cluster token for {remote_name} on {node}; "
+                f"last error: {last_error[0] or 'empty token'}"
+            ),
+        )
+        return token[0]
+
     def assert_remote_list_has(self, node, field, value):
         """Asserts microceph remote list on *node* has an entry whose *field* == *value*.
 
@@ -2312,6 +2537,31 @@ class microceph_harness:
             f"http://localhost/1.0/{path}{query}", timeout=float(timeout), check=True,
         )
         return res.stdout
+
+    def microceph_api_put_in_container_until_success(
+        self, container, path, body, query="", timeout=300, attempts=3, interval=5
+    ):
+        """Retries a placement PUT only when MicroCluster closed its transport connection."""
+        last_response = [""]
+
+        def predicate():
+            response = self.microceph_api_put_in_container(
+                container, path, body, query=query, timeout=timeout
+            )
+            last_response[0] = response
+            if placement_status.response_code(response) == 200:
+                return True
+            if "use of closed network connection" not in response:
+                raise AssertionError(f"MicroCeph API PUT {path} failed: {response}")
+            return False
+
+        self._poll_until(
+            predicate,
+            attempts=int(attempts),
+            interval=interval,
+            fail_msg=lambda: f"MicroCeph API PUT {path} did not recover: {last_response[0]}",
+        )
+        return last_response[0]
 
     def microceph_api_delete_in_container(self, container, path):
         """DELETEs a path on the MicroCeph control socket inside an inner container.

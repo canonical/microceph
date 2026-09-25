@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+export CTDB_SOCKET="/run/ctdb/ctdbd.socket"
+exec "${SNAP}/bin/ctdb" "$@"
