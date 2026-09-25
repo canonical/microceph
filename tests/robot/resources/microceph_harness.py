@@ -22,6 +22,7 @@ from robot.api import logger
 from robot.libraries.BuiltIn import BuiltIn
 from robot.utils import timestr_to_secs
 
+import auth_status
 import placement_status
 from cephfs_replication import cephfs_replication_list_has_volume
 from rbd_replication import (
@@ -2553,3 +2554,53 @@ class microceph_harness:
             raise AssertionError(
                 f"Ceph config exists on {container} but Ceph should not be bootstrapped"
             )
+
+    def rotate_auth_keys(self, container=HEAD_NODE, key_type=None, client=None, check=True):
+        """Run 'microceph auth rotate' in *container* with optional *key_type* and *client*."""
+        cmd = ["microceph", "auth", "rotate"]
+        if key_type:
+            cmd.extend(["--key-type", key_type])
+        if client:
+            cmd.extend(["--client", client])
+        return self.exec_in_container(container, *cmd, check=check, timeout=600)
+
+    def get_auth_status(self, container=HEAD_NODE, as_json=True):
+        """Run 'microceph auth status' in *container* and return stdout."""
+        cmd = ["microceph", "auth", "status"]
+        if as_json:
+            cmd.append("--json")
+        res = self.exec_in_container(container, *cmd, check=True, timeout=60)
+        return res.stdout
+
+    def wait_for_auth_rotation_state(self, container, expected_state, tries=24, interval=5):
+        """Poll until auth rotation state matches *expected_state*."""
+        last = ""
+
+        def predicate():
+            nonlocal last
+            raw = self.get_auth_status(container, as_json=True)
+            status = auth_status.parse_auth_status(raw)
+            last = status.get("state", "")
+            return last == expected_state
+
+        self._poll_until(
+            predicate,
+            attempts=tries,
+            interval=interval,
+            fail_msg=lambda: f"Auth rotation state on {container} never became {expected_state}; last observed {last}",
+        )
+
+    def assert_auth_rotation_blocked(self, container, expected_blocker_substring=None):
+        """Assert that auth rotation is in 'blocked' state with optional blocker substring."""
+        raw = self.get_auth_status(container, as_json=True)
+        if not auth_status.is_auth_rotation_blocked(raw):
+            raise AssertionError(f"Expected auth rotation on {container} to be blocked; observed: {raw}")
+        if expected_blocker_substring and not auth_status.auth_status_blocker_contains(raw, expected_blocker_substring):
+            raise AssertionError(f"Expected blocker to contain {expected_blocker_substring!r}; observed: {raw}")
+
+    def assert_all_clients_use_cipher(self, container, cipher):
+        """Assert that all clients reported in auth status use *cipher*."""
+        raw = self.get_auth_status(container, as_json=True)
+        if not auth_status.all_clients_use_cipher(raw, cipher):
+            raise AssertionError(f"Expected all clients on {container} to use {cipher}; observed: {raw}")
+
