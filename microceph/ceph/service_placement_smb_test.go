@@ -624,6 +624,8 @@ func TestSMBServicePlacementDirectToClusteredStartsCTDBBeforeRestartingSMBD(t *t
 	assert.Equal(t, "10.10.10.12\n", readSMBConfigFile(t, filepath.Join(runtimePath, "ctdb-address")))
 	baseConfig := readSMBConfigFile(t, filepath.Join(confPath, "samba", "smb.conf"))
 	assert.Contains(t, baseConfig, "bind interfaces only = yes\ninterfaces = 10.0.0.12\n")
+	ctdbConfig := readSMBConfigFile(t, filepath.Join(tempDir, "data", "samba", "smb.ctdb.conf"))
+	assert.Contains(t, ctdbConfig, "bind interfaces only = yes\ninterfaces = 10.0.0.12\n")
 	configKeyring, err := os.ReadFile(filepath.Join(confPath, "ceph.client.smb.config.files.keyring"))
 	require.NoError(t, err)
 	assert.Equal(t, "[client.smb.config.files]\\nkey = config\\n", string(configKeyring))

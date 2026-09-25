@@ -249,11 +249,11 @@ func TestWriteSMBCTDBAddressWritesPrivateAddressAndSocketInclude(t *testing.T) {
 	}
 	err := os.MkdirAll(filepath.Join(tempDir, "samba"), 0700)
 	require.NoError(t, err)
-	err = writeSMBCTDBAddress("10.10.10.12")
+	err = writeSMBCTDBAddress("10.10.10.12", "10.0.0.12")
 
 	require.NoError(t, err)
 	assert.Equal(t, "10.10.10.12\n", readSMBConfigFile(t, filepath.Join(tempDir, "samba", "ctdb-address")))
-	assert.Equal(t, "[global]\nctdbd socket = /run/ctdb/ctdbd.socket\n", readSMBConfigFile(t, filepath.Join(dataPath, "samba", "smb.ctdb.conf")))
+	assert.Equal(t, "[global]\nctdbd socket = /run/ctdb/ctdbd.socket\nbind interfaces only = yes\ninterfaces = 10.0.0.12\n", readSMBConfigFile(t, filepath.Join(dataPath, "samba", "smb.ctdb.conf")))
 }
 
 func TestMaterializeSMBConfigRejectsNonDirectContainerBeforeWriting(t *testing.T) {

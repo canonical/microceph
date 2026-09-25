@@ -313,6 +313,21 @@ class microceph_harness:
             )
         return res
 
+    def run_in_vm_and_check_eventually(self, bash_cmd, tries=3, interval=5, timeout=60):
+        """Retry an outer-VM command until it succeeds, reporting the last failure."""
+        last_result = [None]
+
+        def predicate():
+            last_result[0] = self.run_in_vm(bash_cmd, timeout, quiet=True)
+            return last_result[0].rc == 0
+
+        self._poll_until(
+            predicate, tries, interval,
+            lambda: (f"Command did not succeed after {tries} attempts: {bash_cmd}\n"
+                     f"Last result: {last_result[0]}"),
+        )
+        return last_result[0]
+
     def run_in_vm_must_fail(self, bash_cmd, timeout=120, quiet=False):
         """Runs a bash command inside the outer VM and fails if it SUCCEEDS (expects non-zero)."""
         res = self.run_in_vm(bash_cmd, timeout, quiet)
@@ -2293,14 +2308,46 @@ class microceph_harness:
         """
         return self._is_member_not_found_error(stderr)
 
-    def get_node_ip(self, container):
-        """Returns the primary IP of *container* (first address from hostname -I), or "" if none.
+    def restore_node_ip_on_network(self, container, address, cidr, interface):
+        """Restore a manually assigned address lost when an LXD container restarts."""
+        network = ipaddress.ip_network(cidr, strict=False)
+        if ipaddress.ip_address(address) not in network:
+            raise ValueError(f"{address} does not belong to {cidr}")
+        self.exec_in_container(
+            container, "ip", "addr", "add", f"{address}/{network.prefixlen}",
+            "dev", interface, timeout=10, check=True,
+        )
 
-        Mirrors the pre-refactor ``hostname -I | cut -d ' ' -f1`` + ``.strip()`` which yielded
-        an empty string (not an IndexError) when the network was not yet up, so the single NFS
-        caller surfaces an informative mount failure rather than masking it with an IndexError.
+    @staticmethod
+    def _select_ip_on_network(addresses, cidr):
+        """Return the first address in *addresses* belonging to *cidr*, or an empty string."""
+        network = ipaddress.ip_network(cidr, strict=False)
+        for address in addresses.split():
+            if ipaddress.ip_address(address) in network:
+                return address
+        return ""
+
+    def get_node_ip(self, container, cidr=None):
+        """Return the primary IP of *container*, or its address on *cidr* when specified.
+
+        Without a CIDR, preserve the former empty-string result when no address is available.
         """
-        parts = self.exec_in_container(container, "hostname", "-I", timeout=30).stdout.split()
+        if cidr is not None:
+            addresses = [""]
+            selected = [""]
+
+            def predicate():
+                addresses[0] = self.exec_in_container(container, "hostname", "-I", timeout=30).stdout
+                selected[0] = self._select_ip_on_network(addresses[0], cidr)
+                return bool(selected[0])
+
+            self._poll_until(
+                predicate, 30, 2,
+                lambda: f"No address of {container} on network {cidr}: {addresses[0]}",
+            )
+            return selected[0]
+        addresses = self.exec_in_container(container, "hostname", "-I", timeout=30).stdout
+        parts = addresses.split()
         return parts[0] if parts else ""
 
     # -----------------------------------------------------------------------

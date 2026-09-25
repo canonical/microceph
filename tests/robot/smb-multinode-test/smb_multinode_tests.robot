@@ -56,13 +56,22 @@ Verify Three Instance Placement And Addresses
         Run In Container And Check    ${node}    grep -E '"vfs objects": ".*ceph_new' /var/snap/microceph/current/samba/container.json    30
         Run In Container And Check    ${node}    grep -F '"ceph_new:proxy": "no"' /var/snap/microceph/current/samba/container.json    30
         Run In Container And Check    ${node}    test -s /var/snap/microceph/current/samba/ctdb-address    30
-        Run In Container And Check    ${node}    grep -F 'bind interfaces only = yes' /var/snap/microceph/current/conf/samba/smb.conf    30
+        Run In Container And Check    ${node}    grep -F 'bind interfaces only = yes' /var/snap/microceph/common/data/samba/smb.ctdb.conf    30
+        ${ip}=    Get SMB Node IP    ${node}
+        Run In Container And Check    ${node}    grep -F 'interfaces = ${ip}' /var/snap/microceph/common/data/samba/smb.ctdb.conf    30
+        Run In Container And Check    ${node}    ss -ltn | grep -F '${ip}:445'    30
     END
 
+Get SMB Node IP
+    [Arguments]    ${node}
+    ${cidr}=    Get Public Network CIDR
+    ${ip}=    Get Node IP    ${node}    ${cidr}
+    RETURN    ${ip}
+
 Verify IO Through Every SMB Instance
-    ${ip0}=    Get Node IP    node-wrk0
-    ${ip1}=    Get Node IP    node-wrk1
-    ${ip2}=    Get Node IP    node-wrk2
+    ${ip0}=    Get SMB Node IP    node-wrk0
+    ${ip1}=    Get SMB Node IP    node-wrk1
+    ${ip2}=    Get SMB Node IP    node-wrk2
     Run In VM And Check    printf 'three instance smb test\n' > /tmp/smb-source    30
     Run In VM And Check    smbclient //${ip0}/${SMB_SHARE} -U '${SMB_USER}%${SMB_PASSWORD}' -c 'put /tmp/smb-source smb-file'    60
     Run In VM And Check    smbclient //${ip1}/${SMB_SHARE} -U '${SMB_USER}%${SMB_PASSWORD}' -c 'get smb-file /tmp/smb-result1'    60
@@ -71,34 +80,37 @@ Verify IO Through Every SMB Instance
     Run In VM And Check    cmp /tmp/smb-source /tmp/smb-result2    30
 
 Verify CTDB Member Loss And Recovery
-    ${ip0}=    Get Node IP    node-wrk0
-    ${ip2}=    Get Node IP    node-wrk2
+    ${ip0}=    Get SMB Node IP    node-wrk0
+    ${ip1}=    Get SMB Node IP    node-wrk1
+    ${ip2}=    Get SMB Node IP    node-wrk2
     Run In VM And Check    lxc stop node-wrk1 --force    60
     Wait For CTDB Healthy Nodes    3    2    node=node-wrk0
     Wait For CTDB Healthy Nodes    3    2    node=node-wrk2
-    Run In VM And Check    smbclient //${ip2}/${SMB_SHARE} -U '${SMB_USER}%${SMB_PASSWORD}' -c 'get smb-file /tmp/smb-after-failure'    60
+    Run In VM And Check Eventually    smbclient //${ip2}/${SMB_SHARE} -U '${SMB_USER}%${SMB_PASSWORD}' -c 'get smb-file /tmp/smb-after-failure'    4    5    60
     Run In VM And Check    cmp /tmp/smb-source /tmp/smb-after-failure    30
     Run In VM And Check    printf 'written during member loss\n' > /tmp/smb-failover-source    30
-    Run In VM And Check    smbclient //${ip0}/${SMB_SHARE} -U '${SMB_USER}%${SMB_PASSWORD}' -c 'put /tmp/smb-failover-source smb-failover-file'    60
+    Run In VM And Check Eventually    smbclient //${ip0}/${SMB_SHARE} -U '${SMB_USER}%${SMB_PASSWORD}' -c 'put /tmp/smb-failover-source smb-failover-file'    4    5    60
     Run In VM And Check    lxc start node-wrk1    60
+    ${cidr}=    Get Public Network CIDR
+    Restore Node IP On Network    node-wrk1    ${ip1}    ${cidr}    eth1
     Wait For SMB Service    enabled    active    node=node-wrk1
     Wait For CTDB Service    enabled    active    node=node-wrk1
     Wait For CTDB Nodes Service    enabled    active    node=node-wrk1
     FOR    ${node}    IN    node-wrk0    node-wrk1    node-wrk2
         Wait For CTDB Healthy Nodes    3    3    node=${node}
     END
-    ${ip1}=    Get Node IP    node-wrk1
-    Run In VM And Check    smbclient //${ip1}/${SMB_SHARE} -U '${SMB_USER}%${SMB_PASSWORD}' -c 'get smb-failover-file /tmp/smb-failover-result'    60
+    Run In VM And Check Eventually    smbclient //${ip1}/${SMB_SHARE} -U '${SMB_USER}%${SMB_PASSWORD}' -c 'get smb-failover-file /tmp/smb-failover-result'    4    5    60
     Run In VM And Check    cmp /tmp/smb-failover-source /tmp/smb-failover-result    30
 
 Scale Down And Remove Managed SMB Cluster
-    ${ip0}=    Get Node IP    node-wrk0
+    ${ip0}=    Get SMB Node IP    node-wrk0
     Run In Head Node    microceph disable smb --cluster-id ${SMB_CLUSTER} --target node-wrk2    180
     Wait For SMB Service    disabled    inactive    node=node-wrk2
     Wait For CTDB Service    disabled    inactive    node=node-wrk2
     Wait For CTDB Nodes Service    disabled    inactive    node=node-wrk2
-    Wait For CTDB Healthy Nodes    2    2    node=node-wrk0
-    Wait For CTDB Healthy Nodes    2    2    node=node-wrk1
+    # CTDB retains the removed member's PNN but marks it inactive.
+    Wait For CTDB Healthy Nodes    3    2    node=node-wrk0
+    Wait For CTDB Healthy Nodes    3    2    node=node-wrk1
     Run In VM And Check    smbclient //${ip0}/${SMB_SHARE} -U '${SMB_USER}%${SMB_PASSWORD}' -c 'get smb-failover-file /tmp/smb-after-scale-down'    60
     Run In VM And Check    cmp /tmp/smb-failover-source /tmp/smb-after-scale-down    30
     Run In Head Node    microceph disable smb --cluster-id ${SMB_CLUSTER} --target node-wrk1    180

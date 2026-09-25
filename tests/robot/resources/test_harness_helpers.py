@@ -31,6 +31,45 @@ from rbd_replication import (
 from streaming_process import run_streaming_process
 
 
+def test_restore_node_ip_on_network_uses_original_address_and_prefix(monkeypatch):
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, check):
+        calls.append((container, argv, timeout, check))
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+
+    harness.restore_node_ip_on_network("node-wrk1", "10.33.104.11", "10.33.104.1/24", "eth1")
+
+    assert calls == [("node-wrk1", ("ip", "addr", "add", "10.33.104.11/24", "dev", "eth1"), 10, True)]
+
+
+def test_get_node_ip_waits_for_public_ipv4_after_restart(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    outputs = iter(["10.101.181.88 fd42::1", "10.101.181.88 10.33.104.10 fd42::1"])
+    calls = []
+
+    def fake_exec(container, *argv, timeout):
+        calls.append((container, argv, timeout))
+        return _Res(0, next(outputs), "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    assert harness.get_node_ip("node-wrk1", "10.33.104.1/24") == "10.33.104.10"
+    assert calls == [("node-wrk1", ("hostname", "-I"), 30)] * 2
+
+
+def test_select_ip_on_network_skips_management_address():
+    assert H._select_ip_on_network("10.101.181.88 10.33.104.10", "10.33.104.1/24") == "10.33.104.10"
+
+
+def test_select_ip_on_network_reports_missing_address():
+    assert H._select_ip_on_network("10.101.181.88", "10.33.104.1/24") == ""
+
+
 # ---------------------------------------------------------------------------
 # _csv_lists_instance
 # ---------------------------------------------------------------------------
@@ -2463,6 +2502,25 @@ def test_wait_for_ctdb_nodes_service_polls_inside_a_container(monkeypatch):
     assert calls == [
         ("node-wrk1", ("snap", "services", "microceph.ctdb-nodes"), 15, True)
     ]
+
+
+def test_run_in_vm_and_check_eventually_retries_transient_failure(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    results = iter([_Res(1, "tree connect failed", ""), _Res(0, "success", "")])
+    calls = []
+
+    def fake_run(command, timeout, quiet):
+        calls.append((command, timeout, quiet))
+        return next(results)
+
+    monkeypatch.setattr(harness, "run_in_vm", fake_run)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    result = harness.run_in_vm_and_check_eventually("smbclient ...", 3, 0, 30)
+
+    assert result.stdout == "success"
+    assert calls == [("smbclient ...", 30, True)] * 2
 
 
 def test_wait_for_ctdb_healthy_nodes_accepts_degraded_cluster(monkeypatch):
