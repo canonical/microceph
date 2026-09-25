@@ -309,3 +309,30 @@ Ceph Only Bootstrap Target
     Log To Console    [deferred-ceph] Ceph-only bootstrap targeting ${target}...
     Run In Container    node-wrk0    microceph cluster bootstrap-ceph --target ${target} --public-network=${DEFERRED_PUBLIC_NETWORK}    300
     Sleep    5s
+
+# ---------------------------------------------------------------------------
+# CephX Auth Rotation
+# ---------------------------------------------------------------------------
+
+Rotate Auth Keys On Node
+    [Documentation]    Runs 'microceph auth rotate' on a specified node.
+    [Arguments]    ${container}=${HEAD_NODE}    ${key_type}=${EMPTY}    ${client}=${EMPTY}
+    ${res}=    Rotate Auth Keys    container=${container}    key_type=${key_type}    client=${client}
+    RETURN    ${res}
+
+Get Auth Status On Node
+    [Documentation]    Runs 'microceph auth status --json' on a specified node and returns parsed status.
+    [Arguments]    ${container}=${HEAD_NODE}
+    ${res}=    Get Auth Status    container=${container}    as_json=${True}
+    RETURN    ${res}
+
+Assert Auth Status Shows Completed
+    [Documentation]    Asserts that 'microceph auth status' reports completed.
+    [Arguments]    ${container}=${HEAD_NODE}
+    Wait For Auth Rotation State    ${container}    completed
+
+Assert Auth Status Shows Blocked
+    [Documentation]    Asserts that 'microceph auth status' reports blocked, optionally checking blocker message.
+    [Arguments]    ${container}=${HEAD_NODE}    ${expected_blocker}=${EMPTY}
+    Assert Auth Rotation Blocked    ${container}    expected_blocker_substring=${expected_blocker}
+
