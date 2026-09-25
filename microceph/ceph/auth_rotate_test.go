@@ -379,7 +379,7 @@ func TestCheckCipherCompatibilityAndQuorum(t *testing.T) {
 		Return(`{"min_mon_release": 16}`, nil).Once()
 	err = checkCipherCompatibility(context.Background(), "aes256k")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "older than Quincy")
+	assert.Contains(t, err.Error(), "older than Squid")
 
 	// Mon quorum check: mon.b is out of quorum
 	// mon dump

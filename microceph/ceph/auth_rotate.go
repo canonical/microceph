@@ -1696,7 +1696,7 @@ func parseClientSessions(output string) []ClientSessionInfo {
 var legacyInsecureReleases = []string{
 	"argonaut", "bobtail", "cuttlefish", "dumpling", "emperor", "firefly",
 	"giant", "hammer", "infernalis", "jewel", "kraken", "luminous",
-	"mimic", "nautilus", "octopus", "pacific", "quincy"
+	"mimic", "nautilus", "octopus", "pacific", "quincy",
 }
 
 // ClientSupportsKeyType reports whether a connected client's reported software release and features
