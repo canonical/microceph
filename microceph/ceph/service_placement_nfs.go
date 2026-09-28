@@ -96,7 +96,7 @@ func isAddressAvailable(address string) (bool, error) {
 	} else if err != nil {
 		return false, err
 	} else {
-		l.Close()
+		_ = l.Close()
 		return true, nil
 	}
 }

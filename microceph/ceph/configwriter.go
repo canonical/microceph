@@ -62,25 +62,25 @@ func (c *Config) WriteConfig(data map[string]any, mode int) error {
 	// the final renamed file has the requested permissions.
 	err = os.Chmod(tmpPath, os.FileMode(mode))
 	if err != nil {
-		fd.Close()
-		os.Remove(tmpPath)
+		_ = fd.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("Couldn't write %s: %w", c.configFile, err)
 	}
 
 	err = c.configTemplate.Execute(fd, data)
 	closeErr := fd.Close()
 	if err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("Couldn't render %s: %w", c.configFile, err)
 	}
 	if closeErr != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("Couldn't close %s: %w", c.configFile, closeErr)
 	}
 
 	err = os.Rename(tmpPath, destPath)
 	if err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("Couldn't rename %s: %w", c.configFile, err)
 	}
 

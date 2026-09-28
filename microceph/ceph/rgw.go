@@ -44,19 +44,19 @@ func writeSSLFiles(sslFilesPath string, sslCertificate string, sslPrivateKey str
 	}
 
 	if err := os.WriteFile(keyTmpPath, decodedKey, 0600); err != nil {
-		os.Remove(certTmpPath)
+		_ = os.Remove(certTmpPath)
 		return "", "", fmt.Errorf("failed to write SSL private key: %w", err)
 	}
 
 	// Both files written successfully — move them into place.
 	if err := os.Rename(certTmpPath, certPath); err != nil {
-		os.Remove(certTmpPath)
-		os.Remove(keyTmpPath)
+		_ = os.Remove(certTmpPath)
+		_ = os.Remove(keyTmpPath)
 		return "", "", fmt.Errorf("failed to install SSL certificate: %w", err)
 	}
 
 	if err := os.Rename(keyTmpPath, keyPath); err != nil {
-		os.Remove(keyTmpPath)
+		_ = os.Remove(keyTmpPath)
 		return "", "", fmt.Errorf("failed to install SSL private key: %w", err)
 	}
 
