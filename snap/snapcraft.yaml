@@ -232,6 +232,20 @@ parts:
     source: patches/
     override-prime: |
       craftctl default
+      # Patches that create files (the smb stub) write them into the stage
+      # directory in override-stage, where no part owns them, so craftctl
+      # default never primes them and the snap ships without them. Copy
+      # them in by hand. Without the stub the dashboard dies at start with
+      # "No module named 'smb'" and never listens.
+      if [ -d "$CRAFT_STAGE/share/ceph/mgr/smb" ]; then
+        mkdir -p share/ceph/mgr
+        cp -rf "$CRAFT_STAGE/share/ceph/mgr/smb" share/ceph/mgr/
+      fi
+      if [ -f share/ceph/mgr/dashboard/controllers/smb.py ] \
+          && [ ! -f share/ceph/mgr/smb/enums.py ]; then
+        echo "dashboard imports the smb mgr module but the snap does not ship it" >&2
+        exit 1
+      fi
       pkg_version=$(
             dpkg-deb -f \
             $CRAFT_PART_SRC/../stage_packages/ceph-common*.deb Version)
