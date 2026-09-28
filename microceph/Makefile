@@ -34,7 +34,7 @@ ifeq ($(shell command -v shellcheck 2> /dev/null),)
 	echo "Please install shellcheck"
 	exit 1
 endif
-	golangci-lint run --enable-only errcheck --fast-only --timeout 5m
+	golangci-lint run --enable-only errcheck --timeout 5m
 
 # Update targets.
 .PHONY: update-gomod
