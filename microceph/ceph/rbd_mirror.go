@@ -842,7 +842,9 @@ func writeRemotePeerToken(token string, remoteName string) error {
 		logger.Errorf("REPRBD: %s", ne.Error())
 		return ne
 	}
-	defer file.Close()
+	defer func() {
+        _ = file.Close()
+    }()
 
 	// write to file
 	_, err = file.WriteString(token)

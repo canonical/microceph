@@ -34,7 +34,7 @@ func (s *BaseSuite) CopyCephConfigs() {
 		if err != nil {
 			s.T().Fatal("error creating dir:", err)
 		}
-		os.Setenv(d, p)
+		_ = os.Setenv(d, p)
 	}
 	for _, d := range []string{"SNAP_DATA/conf", "SNAP_DATA/run", "SNAP_COMMON/data", "SNAP_COMMON/logs"} {
 		p := filepath.Join(s.Tmp, d)
@@ -71,12 +71,12 @@ func (s *BaseSuite) ReadCephConfig(conf string) string {
 
 func (s *BaseSuite) SetupTest() {
 	s.CreateTmp()
-	os.Setenv("TEST_ROOT_PATH", s.Tmp)
+	_ = os.Setenv("TEST_ROOT_PATH", s.Tmp)
 	_ = os.MkdirAll(filepath.Join(s.Tmp, "proc"), 0775)
 }
 
 func (s *BaseSuite) TearDownTest() {
-	os.RemoveAll(s.Tmp)
+	_ = os.RemoveAll(s.Tmp)
 }
 
 func CmdAny(cmd string, no int) []interface{} {

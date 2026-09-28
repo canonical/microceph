@@ -307,7 +307,7 @@ func fixConfigLine(confFile string, fn func(string) (string, bool)) (bool, error
 	}
 	err = os.Rename(tmpFile, confFile)
 	if err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return false, fmt.Errorf("failed to replace %s: %w", confFile, err)
 	}
 	return true, nil
