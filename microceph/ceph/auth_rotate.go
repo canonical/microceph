@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -65,38 +65,42 @@ type ClientSessionInfo struct {
 
 // Functions that can be patched for testing.
 var (
-	getMonCiphersFunc                = GetMonCiphers
-	setMonAllowedCiphersFunc         = SetMonAllowedCiphers
-	setMonPreferredCipherFunc        = SetMonPreferredCipher
-	setMonServiceCipherFunc          = SetMonServiceCipher
-	setMonAllowInsecureKeyFunc       = SetMonAllowInsecureKey
-	rotateEntityKeyFunc              = RotateEntityKey
-	rotateEntityKeyToFileFunc        = RotateEntityKeyToFile
-	getOrCreatePendingKeyFunc        = GetOrCreatePendingKey
-	commitPendingKeyFunc             = CommitPendingKey
-	clearPendingKeyFunc              = ClearPendingKey
-	wipeRotatingServiceKeysFunc      = WipeRotatingServiceKeys
-	setOSDBlueStoreLabelKeyFunc      = SetOSDBlueStoreLabelKey
-	dumpAuthKeysFunc                 = DumpAuthKeys
-	getAuthHealthWarningsFunc        = GetAuthHealthWarnings
-	getClientSessionsFunc            = GetClientSessions
-	resolveTargetKeyTypeFunc         = ResolveTargetKeyType
-	checkAuthRotationReadinessFunc   = CheckAuthRotationReadiness
-	checkClusterMembersReachableFunc = checkClusterMembersReachable
-	checkMonQuorumReadyFunc          = checkMonQuorumReady
-	checkCipherCompatibilityFunc     = checkCipherCompatibility
-	prepareAuthRotationFunc          = PrepareAuthRotation
-	snapStartFunc                    = snapStart
-	snapRestartFunc                  = snapRestart
-	waitForMonQuorumFunc             = waitForMonQuorum
-	waitForMGRReadyFunc              = waitForMGRReady
-	waitForMDSReadyFunc              = waitForMDSReady
-	waitForOSDUpFunc                 = waitForOSDUp
-	rotateMonitorKeyFunc             = RotateMonitorKey
-	rotateMGRKeyFunc                 = RotateMGRKey
-	rotateMDSKeyFunc                 = RotateMDSKey
-	rotateOSDKeyFunc                 = RotateOSDKey
-	rotateDaemonsFunc                = RotateDaemons
+	getMonCiphersFunc                       = GetMonCiphers
+	setMonAllowedCiphersFunc                = SetMonAllowedCiphers
+	setMonPreferredCipherFunc               = SetMonPreferredCipher
+	setMonServiceCipherFunc                 = SetMonServiceCipher
+	setMonAllowInsecureKeyFunc              = SetMonAllowInsecureKey
+	rotateEntityKeyFunc                     = RotateEntityKey
+	rotateEntityKeyToFileFunc               = RotateEntityKeyToFile
+	getOrCreatePendingKeyFunc               = GetOrCreatePendingKey
+	getEntityKeyringFunc                    = GetEntityKeyring
+	commitPendingKeyFunc                    = CommitPendingKey
+	clearPendingKeyFunc                     = ClearPendingKey
+	wipeRotatingServiceKeysFunc             = WipeRotatingServiceKeys
+	dumpAuthKeysFunc                        = DumpAuthKeys
+	getAuthHealthWarningsFunc               = GetAuthHealthWarnings
+	getClientSessionsFunc                   = GetClientSessions
+	resolveTargetKeyTypeFunc                = ResolveTargetKeyType
+	checkAuthRotationReadinessFunc          = CheckAuthRotationReadiness
+	checkClusterMembersReachableFunc        = checkClusterMembersReachable
+	checkMonQuorumReadyFunc                 = checkMonQuorumReady
+	checkCipherCompatibilityFunc            = checkCipherCompatibility
+	prepareAuthRotationFunc                 = PrepareAuthRotation
+	snapStartFunc                           = snapStart
+	snapRestartFunc                         = snapRestart
+	waitForMonQuorumFunc                    = waitForMonQuorum
+	waitForMGRReadyFunc                     = waitForMGRReady
+	waitForMDSReadyFunc                     = waitForMDSReady
+	waitForOSDUpFunc                        = waitForOSDUp
+	rotateMonKeyAuthFunc                    = RotateMonKeyAuth
+	deployMonKeyringAndRestartFunc          = deployMonKeyringAndRestart
+	rotateLocalMGRKeyFunc                   = RotateLocalMGRKey
+	rotateLocalMDSKeyFunc                   = RotateLocalMDSKey
+	rotateLocalOSDKeysFunc                  = RotateLocalOSDKeys
+	getLocalOSDIDsFunc                      = getLocalOSDIDs
+	rotateMemberDaemonsFunc                 = RotateMemberDaemons
+	sendMemberAuthRotateFunc                = client.SendMemberAuthRotateToClusterMembers
+	rotateDaemonsFunc                       = RotateDaemons
 	switchServiceAuthenticationFunc         = SwitchServiceAuthentication
 	preventNewInsecureKeysFunc              = PreventNewInsecureKeys
 	switchServiceAuthAndPreventInsecureFunc = SwitchServiceAuthAndPreventInsecure
@@ -401,7 +405,7 @@ func SwitchServiceAuthentication(ctx context.Context, targetKeyType string) erro
 	return nil
 }
 
-// This is upstream step 7: during secure-type migration, it sets 
+// This is upstream step 7: during secure-type migration, it sets
 // mon_auth_allow_insecure_key=false and verifies that AUTH_INSECURE_KEYS_CREATABLE clears.
 func PreventNewInsecureKeys(ctx context.Context, targetKeyType string) error {
 	// Only apply for secure cipher migration.
@@ -656,17 +660,13 @@ func IsMicroCephManagedClient(entityName string) bool {
 	}
 	if strings.HasPrefix(norm, "client.rbd-mirror.") ||
 		strings.HasPrefix(norm, "client.cephfs-mirror.") ||
+		strings.HasPrefix(norm, "client.nfs.") ||
 		strings.HasPrefix(norm, "client.bootstrap-") ||
 		strings.HasPrefix(norm, "client.fsmir-") {
 		return true
 	}
 
 	pathConst := constants.GetPathConst()
-	// NFS Ganesha client check
-	if _, err := os.Stat(filepath.Join(pathConst.ConfPath, "ganesha")); err == nil {
-		return true
-	}
-
 	// Remote cluster keyring check
 	remoteName := strings.TrimPrefix(norm, "client.")
 	if _, err := os.Stat(filepath.Join(pathConst.ConfPath, fmt.Sprintf("%s.keyring", remoteName))); err == nil {
@@ -699,10 +699,16 @@ func getClientKeyringPaths(clientName string) ([]string, string) {
 				filepath.Join(pathConst.DataPath, "cephfs-mirror", fmt.Sprintf("ceph-%s", host), "keyring"),
 			}, "cephfs-mirror"
 		}
-		// NFS Ganesha keyring
-		ganeshaKeyring := filepath.Join(pathConst.ConfPath, "ganesha", "keyring")
-		if _, err := os.Stat(ganeshaKeyring); err == nil {
-			return []string{ganeshaKeyring}, "nfs"
+		// NFS Ganesha client (client.nfs.<cluster-id>.<host>): its keyring lives
+		// in the ganesha config dir of the host running that NFS instance. The
+		// entity name, not the mere presence of the ganesha dir, identifies the
+		// client; on an NFS node every other client must stay unclassified here.
+		if strings.HasPrefix(norm, "client.nfs.") {
+			ganeshaKeyring := filepath.Join(pathConst.ConfPath, "ganesha", "keyring")
+			if _, err := os.Stat(ganeshaKeyring); err == nil {
+				return []string{ganeshaKeyring}, "nfs"
+			}
+			return nil, ""
 		}
 		// Remote cluster keyring
 		remoteName := strings.TrimPrefix(norm, "client.")
@@ -749,22 +755,31 @@ func RotateSingleClientKey(ctx context.Context, clientName string, targetKeyType
 		}
 	}
 
-	// 2. Issue pending key alongside current key
-	keyringContent, err := getOrCreatePendingKeyFunc(ctx, norm)
+	// 2. Issue a pending key alongside the current key.
+	pendingKey, err := getOrCreatePendingKeyFunc(ctx, norm)
 	if err != nil {
 		return fmt.Errorf("failed to issue pending key for %s: %w", norm, err)
 	}
 
-	// 3. Distribute to persistent copies
+	// 3. Distribute a loadable keyring carrying the PENDING key as the active key
+	//    to the persistent copies. get-or-create-pending's raw plaintext output
+	//    must never be written: KeyRing::decode has no notion of a pending key and
+	//    rejects the file with malformed_input, and its "key" field is the secret
+	//    the commit below retires anyway. A write failure is fatal: committing
+	//    (and thereby retiring the old key) without the new key distributed would
+	//    leave the consumer unable to re-authenticate.
 	paths, service := getClientKeyringPaths(norm)
 	for _, p := range paths {
-		err = writeKeyringAtomically(p, keyringContent, 0600)
+		err = writeClientKeyring(p, norm, pendingKey)
 		if err != nil {
-			logger.Warnf("failed to write client keyring %s: %v", p, err)
+			return fmt.Errorf("failed to write client keyring %s: %w", p, err)
 		}
 	}
 
-	// 4. Reload or restart service if associated
+	// 4. Reload or restart service if associated so it picks up the pending key.
+	//    The daemon authenticates with it; the monitor commits the pending key on
+	//    first use, and the explicit commit below covers the case where it has
+	//    not re-authenticated yet.
 	if service != "" {
 		_ = snapRestartFunc(service, true)
 	}
@@ -775,13 +790,47 @@ func RotateSingleClientKey(ctx context.Context, clientName string, targetKeyType
 		return fmt.Errorf("failed to commit pending key for %s: %w", norm, err)
 	}
 
+	// 6. Finalize the on-disk keyring with the canonical 'auth get' output (the
+	//    committed pending key is now the active key), so the file also carries
+	//    the entity caps and matches the auth DB state exactly.
+	committedKeyring, err := getEntityKeyringFunc(ctx, norm)
+	if err != nil {
+		return fmt.Errorf("failed to fetch committed keyring for %s: %w", norm, err)
+	}
+	for _, p := range paths {
+		err = writeKeyringAtomically(p, committedKeyring, 0600)
+		if err != nil {
+			return fmt.Errorf("failed to finalize client keyring %s: %w", p, err)
+		}
+	}
+
+	return nil
+}
+
+// writeClientKeyring renders a minimal loadable keyring (entity + secret) with
+// the shared keyring template and writes it atomically to destPath.
+func writeClientKeyring(destPath string, entity string, secret string) error {
+	err := os.MkdirAll(filepath.Dir(destPath), 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create directory for %s: %w", destPath, err)
+	}
+
+	keyring := NewCephKeyring(filepath.Dir(destPath), filepath.Base(destPath))
+	err = keyring.WriteConfig(map[string]any{
+		"name": entity,
+		"key":  secret,
+	}, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to render client keyring %s: %w", destPath, err)
+	}
+
 	return nil
 }
 
 // This function executes upstream step 9:
-// - Rotates and distributes MicroCeph-managed client keys one at a time.
-// - Skips clients with incompatible sessions, reports unmanaged clients,
-//   and returns the rotation result with blockers if any exist.
+//   - Rotates and distributes MicroCeph-managed client keys one at a time.
+//   - Skips clients with incompatible sessions, reports unmanaged clients,
+//     and returns the rotation result with blockers if any exist.
 func RotateManagedClients(ctx context.Context, targetKeyType string) (ClientRotationResult, error) {
 	result := ClientRotationResult{
 		BlockedClients: make(map[string]string),
@@ -1044,7 +1093,7 @@ func ExecuteAuthRotation(ctx context.Context, s interfaces.StateInterface, targe
 
 	// Stage 3: Rotate daemons (Upstream steps 3-4)
 	_ = setStage(database.AuthRotationStageRotateDaemons)
-	err = rotateDaemonsFunc(ctx, resolvedKeyType)
+	err = rotateDaemonsFunc(ctx, s, resolvedKeyType)
 	if err != nil {
 		return rec, fmt.Errorf("daemon key rotation failed: %w", err)
 	}
@@ -1139,41 +1188,182 @@ func RotateEntityKeyToFile(ctx context.Context, entity string, keyType string, d
 	return writeKeyringAtomically(destPath, content, perm)
 }
 
-// RotateMonitorKey rotates the mon. key in Ceph auth, updates on-disk keyrings,
-// and sequentially restarts monitors verifying quorum between each restart.
-func RotateMonitorKey(ctx context.Context, targetKeyType string, monNames []string) error {
-	pathConst := constants.GetPathConst()
+// MemberRotationSummary reports which of a member's own daemons were rotated locally.
+type MemberRotationSummary struct {
+	Hostname     string
+	MonRestarted bool
+	RotatedMgrs  []string
+	RotatedOSDs  []int64
+	RotatedMDSs  []string
+}
 
-	// Rotate the mon. credential in Ceph auth database.
-	monKeyring, err := rotateEntityKeyFunc(ctx, "mon.", targetKeyType)
+// RotateMemberDaemons rotates and restarts ONLY the daemons running on this member:
+//   - If monKeyring is non-empty and a local mon exists: writes the shared mon. keyring
+//     (rotated once by the coordinator), restarts the local mon, and waits for it to
+//     re-enter quorum.
+//   - Stops the local mgr, rotates mgr.<hostname>, updates the on-disk keyring,
+//     restarts, and verifies recovery. The stop happens before the auth-DB rotation so
+//     the running daemon never holds a stale in-memory key against a rotated auth entry.
+//   - Marks all local OSDs down, stops the osd service ONCE, rotates every local
+//     osd.<id> key, updates keyrings, restarts the osd service once, and verifies
+//     each OSD is back up.
+//   - Same stop/rotate/restart/verify cycle for the local mds.
+//
+// The coordinator invokes this on every member (one at a time, remote members via
+// the /auth/rotate/member endpoint, the local member directly) so each daemon's
+// keyring is written on the machine that runs it before that daemon restarts.
+func RotateMemberDaemons(ctx context.Context, s interfaces.StateInterface, keyType string, monKeyring string) (*MemberRotationSummary, error) {
+	summary := &MemberRotationSummary{}
+
+	if s == nil || s.ClusterState() == nil {
+		return summary, nil
+	}
+	hostname := s.ClusterState().Name()
+	summary.Hostname = hostname
+
+	// Phase 0: deploy the shared mon. keyring and restart the local mon.
+	if monKeyring != "" {
+		restarted, err := deployMonKeyringAndRestartFunc(ctx, hostname, monKeyring)
+		if err != nil {
+			return summary, err
+		}
+		summary.MonRestarted = restarted
+	}
+
+	// Phase 1: local mgr.
+	if localDaemonDataDirExists("mgr", hostname) {
+		err := rotateLocalMGRKeyFunc(ctx, keyType, hostname)
+		if err != nil {
+			return summary, fmt.Errorf("failed to rotate local mgr key: %w", err)
+		}
+		summary.RotatedMgrs = append(summary.RotatedMgrs, hostname)
+	}
+
+	// Phase 2: local OSDs (single osd service stop/start for all local OSDs).
+	osdIDs, err := getLocalOSDIDsFunc()
 	if err != nil {
-		return fmt.Errorf("failed to rotate mon. key: %w", err)
+		return summary, fmt.Errorf("failed to discover local OSDs: %w", err)
+	}
+	if len(osdIDs) > 0 {
+		err = rotateLocalOSDKeysFunc(ctx, keyType, osdIDs)
+		if err != nil {
+			return summary, fmt.Errorf("failed to rotate local OSD keys: %w", err)
+		}
+		summary.RotatedOSDs = osdIDs
 	}
 
-	// Update persistent on-disk copies for all monitors.
-	for _, monName := range monNames {
-		monDataDir := filepath.Join(pathConst.DataPath, "mon", fmt.Sprintf("ceph-%s", monName))
-		if _, err := os.Stat(monDataDir); err == nil {
-			keyringPath := filepath.Join(monDataDir, "keyring")
-			err = writeKeyringAtomically(keyringPath, monKeyring, 0600)
-			if err != nil {
-				return fmt.Errorf("failed to update mon keyring at %s: %w", keyringPath, err)
-			}
+	// Phase 3: local mds.
+	if localDaemonDataDirExists("mds", hostname) {
+		err := rotateLocalMDSKeyFunc(ctx, keyType, hostname)
+		if err != nil {
+			return summary, fmt.Errorf("failed to rotate local mds key: %w", err)
 		}
+		summary.RotatedMDSs = append(summary.RotatedMDSs, hostname)
 	}
 
-	// Sequentially restart monitors, verifying quorum between each restart.
-	for _, monName := range monNames {
-		logger.Infof("Restarting monitor %s after key rotation", monName)
-		err = snapRestartFunc("mon", false)
-		if err != nil {
-			return fmt.Errorf("failed to restart mon %s: %w", monName, err)
-		}
+	return summary, nil
+}
 
-		err = waitForMonQuorumFunc(ctx, monName, 2*time.Minute)
-		if err != nil {
-			return fmt.Errorf("monitor %s failed to re-enter quorum: %w", monName, err)
+// localDaemonDataDirExists reports whether the data directory for a daemon of the
+// given service type exists on this member, i.e. whether the daemon runs here.
+func localDaemonDataDirExists(service string, hostname string) bool {
+	dataDir := filepath.Join(constants.GetPathConst().DataPath, service, fmt.Sprintf("ceph-%s", hostname))
+	_, err := os.Stat(dataDir)
+	return err == nil
+}
+
+// deployMonKeyringAndRestart writes the shared mon. keyring to the local mon data
+// directory (if a mon runs on this member), restarts the local mon, and waits for it
+// to re-enter quorum. Returns false when this member runs no mon.
+func deployMonKeyringAndRestart(ctx context.Context, hostname string, monKeyring string) (bool, error) {
+	monDataDir := filepath.Join(constants.GetPathConst().DataPath, "mon", fmt.Sprintf("ceph-%s", hostname))
+	if _, err := os.Stat(monDataDir); err != nil {
+		// No local mon on this member: nothing to deploy.
+		return false, nil
+	}
+
+	keyringPath := filepath.Join(monDataDir, "keyring")
+	err := writeKeyringAtomically(keyringPath, monKeyring, 0600)
+	if err != nil {
+		return false, fmt.Errorf("failed to update mon keyring at %s: %w", keyringPath, err)
+	}
+
+	logger.Infof("Restarting local mon %s after key rotation", hostname)
+	err = snapRestartFunc("mon", false)
+	if err != nil {
+		return false, fmt.Errorf("failed to restart local mon %s: %w", hostname, err)
+	}
+
+	err = waitForMonQuorumFunc(ctx, hostname, 2*time.Minute)
+	if err != nil {
+		return false, fmt.Errorf("local mon %s failed to re-enter quorum: %w", hostname, err)
+	}
+
+	return true, nil
+}
+
+// RotateMonKeyAuth rotates the shared mon. credential in the Ceph auth database
+// exactly once and returns the new keyring content. This runs on the coordinator
+// only; each mon member then deploys the returned keyring via its own endpoint.
+func RotateMonKeyAuth(ctx context.Context, keyType string) (string, error) {
+	monKeyring, err := rotateEntityKeyFunc(ctx, "mon.", keyType)
+	if err != nil {
+		return "", fmt.Errorf("failed to rotate mon. key: %w", err)
+	}
+	if strings.TrimSpace(monKeyring) == "" {
+		return "", fmt.Errorf("rotated mon. keyring output is empty")
+	}
+
+	return monKeyring, nil
+}
+
+// RotateLocalMGRKey stops the local mgr, rotates mgr.<hostname>, updates the
+// on-disk keyring on this member, starts the daemon, and verifies its recovery.
+// If the rotation or keyring write fails, the daemon is restarted best-effort on
+// its on-disk keyring so the member is not left with a stopped daemon.
+func RotateLocalMGRKey(ctx context.Context, keyType string, hostname string) (retErr error) {
+	pathConst := constants.GetPathConst()
+	entity := fmt.Sprintf("mgr.%s", hostname)
+
+	logger.Infof("Rotating key for %s", entity)
+
+	// Stop first so the running daemon cannot attempt re-authentication with its
+	// stale in-memory key once the auth-DB entry is rotated.
+	_ = snapStopFunc("mgr", false)
+
+	// On failure, bring the daemon back up rather than leaving it stopped. Best
+	// effort: a failed restart is logged but must not mask the original error.
+	defer func() {
+		if retErr == nil {
+			return
 		}
+		err := snapStartFunc("mgr", false)
+		if err != nil {
+			logger.Warnf("failed to restart mgr.%s after rotation failure: %v", hostname, err)
+			return
+		}
+		logger.Infof("restarted mgr.%s after rotation failure", hostname)
+	}()
+
+	keyring, err := rotateEntityKeyFunc(ctx, entity, keyType)
+	if err != nil {
+		return fmt.Errorf("failed to rotate %s key: %w", entity, err)
+	}
+
+	keyringPath := filepath.Join(pathConst.DataPath, "mgr", fmt.Sprintf("ceph-%s", hostname), "keyring")
+	err = writeKeyringAtomically(keyringPath, keyring, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to update mgr keyring at %s: %w", keyringPath, err)
+	}
+
+	err = snapStartFunc("mgr", false)
+	if err != nil {
+		return fmt.Errorf("failed to start mgr.%s: %w", hostname, err)
+	}
+
+	err = waitForMGRReadyFunc(ctx, hostname, 2*time.Minute)
+	if err != nil {
+		return fmt.Errorf("mgr.%s did not recover: %w", hostname, err)
 	}
 
 	return nil
@@ -1197,43 +1387,6 @@ func waitForMonQuorum(ctx context.Context, monName string, timeout time.Duration
 	}
 }
 
-// RotateMGRKey stops the MGR daemon, rotates its key, updates on-disk keyring,
-// starts the daemon, and verifies its recovery.
-func RotateMGRKey(ctx context.Context, targetKeyType string, mgrName string) error {
-	pathConst := constants.GetPathConst()
-	entity := fmt.Sprintf("mgr.%s", mgrName)
-
-	logger.Infof("Rotating key for %s", entity)
-
-	_ = snapStopFunc("mgr", false)
-
-	keyring, err := rotateEntityKeyFunc(ctx, entity, targetKeyType)
-	if err != nil {
-		return fmt.Errorf("failed to rotate %s key: %w", entity, err)
-	}
-
-	mgrDataDir := filepath.Join(pathConst.DataPath, "mgr", fmt.Sprintf("ceph-%s", mgrName))
-	if _, err := os.Stat(mgrDataDir); err == nil {
-		keyringPath := filepath.Join(mgrDataDir, "keyring")
-		err = writeKeyringAtomically(keyringPath, keyring, 0600)
-		if err != nil {
-			return fmt.Errorf("failed to update mgr keyring at %s: %w", keyringPath, err)
-		}
-	}
-
-	err = snapStartFunc("mgr", false)
-	if err != nil {
-		return fmt.Errorf("failed to start mgr.%s: %w", mgrName, err)
-	}
-
-	err = waitForMGRReadyFunc(ctx, mgrName, 2*time.Minute)
-	if err != nil {
-		return fmt.Errorf("mgr.%s did not recover: %w", mgrName, err)
-	}
-
-	return nil
-}
-
 func waitForMGRReady(ctx context.Context, mgrName string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
@@ -1252,38 +1405,51 @@ func waitForMGRReady(ctx context.Context, mgrName string, timeout time.Duration)
 	}
 }
 
-// RotateMDSKey stops the MDS daemon, rotates its key, updates on-disk keyring,
-// starts the daemon, and verifies its recovery.
-func RotateMDSKey(ctx context.Context, targetKeyType string, mdsName string) error {
+// RotateLocalMDSKey stops the local mds, rotates mds.<hostname>, updates the
+// on-disk keyring on this member, starts the daemon, and verifies its recovery.
+// If the rotation or keyring write fails, the daemon is restarted best-effort on
+// its on-disk keyring so the member is not left with a stopped daemon.
+func RotateLocalMDSKey(ctx context.Context, keyType string, hostname string) (retErr error) {
 	pathConst := constants.GetPathConst()
-	entity := fmt.Sprintf("mds.%s", mdsName)
+	entity := fmt.Sprintf("mds.%s", hostname)
 
 	logger.Infof("Rotating key for %s", entity)
 
 	_ = snapStopFunc("mds", false)
 
-	keyring, err := rotateEntityKeyFunc(ctx, entity, targetKeyType)
+	// On failure, bring the daemon back up rather than leaving it stopped. Best
+	// effort: a failed restart is logged but must not mask the original error.
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		err := snapStartFunc("mds", false)
+		if err != nil {
+			logger.Warnf("failed to restart mds.%s after rotation failure: %v", hostname, err)
+			return
+		}
+		logger.Infof("restarted mds.%s after rotation failure", hostname)
+	}()
+
+	keyring, err := rotateEntityKeyFunc(ctx, entity, keyType)
 	if err != nil {
 		return fmt.Errorf("failed to rotate %s key: %w", entity, err)
 	}
 
-	mdsDataDir := filepath.Join(pathConst.DataPath, "mds", fmt.Sprintf("ceph-%s", mdsName))
-	if _, err := os.Stat(mdsDataDir); err == nil {
-		keyringPath := filepath.Join(mdsDataDir, "keyring")
-		err = writeKeyringAtomically(keyringPath, keyring, 0600)
-		if err != nil {
-			return fmt.Errorf("failed to update mds keyring at %s: %w", keyringPath, err)
-		}
+	keyringPath := filepath.Join(pathConst.DataPath, "mds", fmt.Sprintf("ceph-%s", hostname), "keyring")
+	err = writeKeyringAtomically(keyringPath, keyring, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to update mds keyring at %s: %w", keyringPath, err)
 	}
 
 	err = snapStartFunc("mds", false)
 	if err != nil {
-		return fmt.Errorf("failed to start mds.%s: %w", mdsName, err)
+		return fmt.Errorf("failed to start mds.%s: %w", hostname, err)
 	}
 
-	err = waitForMDSReadyFunc(ctx, mdsName, 2*time.Minute)
+	err = waitForMDSReadyFunc(ctx, hostname, 2*time.Minute)
 	if err != nil {
-		return fmt.Errorf("mds.%s did not recover: %w", mdsName, err)
+		return fmt.Errorf("mds.%s did not recover: %w", hostname, err)
 	}
 
 	return nil
@@ -1307,67 +1473,113 @@ func waitForMDSReady(ctx context.Context, mdsName string, timeout time.Duration)
 	}
 }
 
-// RotateOSDKey marks the OSD down, rotates its key, updates on-disk keyring and BlueStore
-// label key, restarts the OSD service, and verifies the OSD comes back up.
-func RotateOSDKey(ctx context.Context, targetKeyType string, osdID int64) error {
-	pathConst := constants.GetPathConst()
-	entity := fmt.Sprintf("osd.%d", osdID)
-
-	logger.Infof("Rotating key for %s", entity)
-
-	// 1. Mark OSD down
-	_, _ = cephRunContext(ctx, "osd", "down", strconv.FormatInt(osdID, 10))
-
-	// 2. Rotate key
-	keyring, err := rotateEntityKeyFunc(ctx, entity, targetKeyType)
+// getLocalOSDIDs discovers the OSDs hosted on this member by scanning the local
+// OSD data directories. Only directories carrying the ready marker are returned,
+// mirroring the osd snap service spawn loop (dirs without it are never spawned).
+func getLocalOSDIDs() ([]int64, error) {
+	osdRoot := filepath.Join(constants.GetPathConst().DataPath, "osd")
+	entries, err := os.ReadDir(osdRoot)
 	if err != nil {
-		return fmt.Errorf("failed to rotate %s key: %w", entity, err)
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read OSD data directory %s: %w", osdRoot, err)
 	}
 
-	// 3. Update keyring file
-	osdDataDir := filepath.Join(pathConst.DataPath, "osd", fmt.Sprintf("ceph-%d", osdID))
-	if _, err := os.Stat(osdDataDir); err == nil {
+	ids := []int64{}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "ceph-") {
+			continue
+		}
+		idStr := strings.TrimPrefix(entry.Name(), "ceph-")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		readyMarker := filepath.Join(osdRoot, entry.Name(), "ready")
+		if _, err := os.Stat(readyMarker); err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+
+	slices.Sort(ids)
+	return ids, nil
+}
+
+// RotateLocalOSDKeys rotates every OSD key hosted on this member with a single
+// osd service stop/start: marks all local OSDs down, stops the service once,
+// rotates each osd.<id> key and updates its on-disk keyring, starts the service
+// once, and verifies each OSD is back up. If a rotation or keyring write fails,
+// the osd service is restarted best-effort on its on-disk keyrings so the member
+// is not left with all of its OSDs stopped.
+func RotateLocalOSDKeys(ctx context.Context, keyType string, osdIDs []int64) (retErr error) {
+	pathConst := constants.GetPathConst()
+
+	logger.Infof("Rotating keys for local OSDs %v", osdIDs)
+
+	// 1. Mark all local OSDs down in the osdmap before stopping the service.
+	idArgs := make([]string, 0, len(osdIDs))
+	for _, id := range osdIDs {
+		idArgs = append(idArgs, strconv.FormatInt(id, 10))
+	}
+	downArgs := append([]string{"osd", "down"}, idArgs...)
+	_, err := cephRunContext(ctx, downArgs...)
+	if err != nil {
+		logger.Warnf("failed to mark local OSDs %v down: %v", osdIDs, err)
+	}
+
+	// 2. Stop the osd service ONCE for all local OSDs.
+	err = snapStopFunc("osd", false)
+	if err != nil {
+		return fmt.Errorf("failed to stop osd service: %w", err)
+	}
+
+	// On failure, bring the service back up rather than leaving every local OSD
+	// stopped. Best effort: a failed restart is logged but must not mask the
+	// original error.
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		err := snapStartFunc("osd", false)
+		if err != nil {
+			logger.Warnf("failed to restart osd service after rotation failure: %v", err)
+			return
+		}
+		logger.Infof("restarted osd service after rotation failure")
+	}()
+
+	// 3. Rotate each local OSD key and update its persistent copies.
+	for _, id := range osdIDs {
+		keyring, err := rotateEntityKeyFunc(ctx, fmt.Sprintf("osd.%d", id), keyType)
+		if err != nil {
+			return fmt.Errorf("failed to rotate osd.%d key: %w", id, err)
+		}
+
+		osdDataDir := filepath.Join(pathConst.DataPath, "osd", fmt.Sprintf("ceph-%d", id))
 		keyringPath := filepath.Join(osdDataDir, "keyring")
 		err = writeKeyringAtomically(keyringPath, keyring, 0600)
 		if err != nil {
 			return fmt.Errorf("failed to update osd keyring at %s: %w", keyringPath, err)
 		}
+	}
 
-		// 4. Update BlueStore label if block device exists
-		blockDev, err := getOSDBlockDevice(osdDataDir)
-		if err == nil && blockDev != "" {
-			err = setOSDBlueStoreLabelKeyFunc(ctx, blockDev, keyringPath)
-			if err != nil {
-				logger.Warnf("failed to update bluestore label for osd.%d on %s: %v", osdID, blockDev, err)
-			}
+	// 4. Start the osd service once.
+	err = snapStartFunc("osd", false)
+	if err != nil {
+		return fmt.Errorf("failed to start osd service: %w", err)
+	}
+
+	// 5. Verify every local OSD is back up.
+	for _, id := range osdIDs {
+		err = waitForOSDUpFunc(ctx, id, 2*time.Minute)
+		if err != nil {
+			return fmt.Errorf("osd.%d did not come back up: %w", id, err)
 		}
 	}
 
-	// 5. Restart OSD service
-	err = snapRestartFunc("osd", true)
-	if err != nil {
-		return fmt.Errorf("failed to restart osd service: %w", err)
-	}
-
-	// 6. Verify OSD is up
-	err = waitForOSDUpFunc(ctx, osdID, 2*time.Minute)
-	if err != nil {
-		return fmt.Errorf("osd.%d did not come back up: %w", osdID, err)
-	}
-
 	return nil
-}
-
-func getOSDBlockDevice(osdDataDir string) (string, error) {
-	blockLink := filepath.Join(osdDataDir, "block")
-	info, err := os.Lstat(blockLink)
-	if err != nil {
-		return "", err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return filepath.EvalSymlinks(blockLink)
-	}
-	return blockLink, nil
 }
 
 func isOSDUp(ctx context.Context, osdID int64) (bool, error) {
@@ -1402,65 +1614,45 @@ func waitForOSDUp(ctx context.Context, osdID int64, timeout time.Duration) error
 	}
 }
 
-// This function executes upstream steps 3 and 4:
-// - Rotates the monitor key first, updates persistent copies on disk, and sequentially restarts monitors with quorum checks.
-// - Rotates manager, storage, and metadata daemon keys, updating on-disk keyrings and BlueStore labels.
-// - Activates and verifies service recovery before proceeding.
-// - Verifies that AUTH_INSECURE_SERVICE_KEY_TYPE clears.
-func RotateDaemons(ctx context.Context, targetKeyType string) error {
-	// Rotate monitor key first
-	monNames, err := getMonmapNames(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get monitor names for rotation: %w", err)
-	}
-
-	err = rotateMonitorKeyFunc(ctx, targetKeyType, monNames)
+// RotateDaemons coordinates upstream steps 3-4 cluster-wide from the member that
+// received the rotation request:
+//  1. Rotates the shared mon. key exactly once (the authoritative copy now lives in
+//     the auth DB, replicated to every mon via paxos) and captures the keyring.
+//  2. Calls the per-member auth rotation endpoint on every OTHER member, one member
+//     at a time (sequential, mirroring client.SendRestartRequestToClusterMembers), so
+//     each member writes keyrings for, rotates, and restarts only its own daemons.
+//     Because the fan-out is sequential and each mon member waits for its own mon to
+//     re-enter quorum before replying, monitor quorum is verified between restarts.
+//  3. Runs the same per-member logic locally for the coordinator's own daemons.
+//  4. Verifies that AUTH_INSECURE_SERVICE_KEY_TYPE clears.
+//
+// Note: this health check reflects the auth DB only; the per-member keyring writes
+// and restarts in step 2 are what actually bring every daemon onto the new key.
+func RotateDaemons(ctx context.Context, s interfaces.StateInterface, targetKeyType string) error {
+	// 1. Rotate the shared mon. key once on the coordinator.
+	monKeyring, err := rotateMonKeyAuthFunc(ctx, targetKeyType)
 	if err != nil {
 		return fmt.Errorf("monitor key rotation failed: %w", err)
 	}
 
-	// Discover all daemon entities in Ceph auth database
-	entries, err := dumpAuthKeysFunc(ctx)
+	// 2. Fan out per-member rotation to remote members, one at a time.
+	if s != nil && s.ClusterState() != nil {
+		err = sendMemberAuthRotateFunc(ctx, s.ClusterState(), types.MemberAuthRotateRequest{
+			KeyType:    targetKeyType,
+			MonKeyring: monKeyring,
+		})
+		if err != nil {
+			return fmt.Errorf("remote member daemon rotation failed: %w", err)
+		}
+	}
+
+	// 3. Rotate the coordinator's own daemons.
+	_, err = rotateMemberDaemonsFunc(ctx, s, targetKeyType, monKeyring)
 	if err != nil {
-		return fmt.Errorf("failed to dump auth keys for daemon discovery: %w", err)
+		return fmt.Errorf("local member daemon rotation failed: %w", err)
 	}
 
-	// Rotate MGR daemons
-	for _, entry := range entries {
-		if entry.EntityType == "mgr" && entry.EntityID != "" {
-			err = rotateMGRKeyFunc(ctx, targetKeyType, entry.EntityID)
-			if err != nil {
-				return fmt.Errorf("failed to rotate mgr.%s key: %w", entry.EntityID, err)
-			}
-		}
-	}
-
-	// Rotate MDS daemons
-	for _, entry := range entries {
-		if entry.EntityType == "mds" && entry.EntityID != "" {
-			err = rotateMDSKeyFunc(ctx, targetKeyType, entry.EntityID)
-			if err != nil {
-				return fmt.Errorf("failed to rotate mds.%s key: %w", entry.EntityID, err)
-			}
-		}
-	}
-
-	// Rotate OSD daemons
-	for _, entry := range entries {
-		if entry.EntityType == "osd" && entry.EntityID != "" {
-			osdID, err := strconv.ParseInt(entry.EntityID, 10, 64)
-			if err != nil {
-				logger.Warnf("skipping unrecognized osd entity %s: %v", entry.EntityName, err)
-				continue
-			}
-			err = rotateOSDKeyFunc(ctx, targetKeyType, osdID)
-			if err != nil {
-				return fmt.Errorf("failed to rotate osd.%d key: %w", osdID, err)
-			}
-		}
-	}
-
-	// Upstream Step 4: Confirm AUTH_INSECURE_SERVICE_KEY_TYPE clears
+	// 4. Upstream Step 4: confirm AUTH_INSECURE_SERVICE_KEY_TYPE clears.
 	hw, err := getAuthHealthWarningsFunc(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check health warnings after daemon rotation: %w", err)
@@ -1473,14 +1665,64 @@ func RotateDaemons(ctx context.Context, targetKeyType string) error {
 	return nil
 }
 
-// GetOrCreatePendingKey issues a pending key alongside the current key for the given entity.
+// GetEntityKeyring fetches the current keyring for an entity in loadable keyring format.
+func GetEntityKeyring(ctx context.Context, entity string) (string, error) {
+	out, err := cephRunContext(ctx, "auth", "get", entity)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch keyring for %s: %w", entity, err)
+	}
+
+	return out, nil
+}
+
+// GetOrCreatePendingKey issues a pending key alongside the current key for the
+// given entity and returns the pending secret. The -f json output carries the
+// active key and the pending key as separate fields; the plaintext output must
+// not be written to keyring files because KeyRing::decode has no notion of a
+// pending key and rejects the file.
 func GetOrCreatePendingKey(ctx context.Context, entity string) (string, error) {
-	out, err := cephRunContext(ctx, "auth", "get-or-create-pending", entity)
+	out, err := cephRunContext(ctx, "auth", "get-or-create-pending", entity, "-f", "json")
 	if err != nil {
 		return "", fmt.Errorf("failed to get or create pending key for %s: %w", entity, err)
 	}
 
-	return out, nil
+	var doc any
+	err = json.Unmarshal([]byte(out), &doc)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse get-or-create-pending output for %s: %w", entity, err)
+	}
+
+	pendingKey, found := findJSONString(doc, "pending_key")
+	if !found {
+		// Deliberately exclude the raw output: it carries secrets.
+		return "", fmt.Errorf("no pending_key in get-or-create-pending output for %s", entity)
+	}
+
+	return pendingKey, nil
+}
+
+// findJSONString recursively searches decoded JSON for the first string value
+// stored under the given key, tolerating any wrapper shape the formatter emits.
+func findJSONString(v any, key string) (string, bool) {
+	switch typed := v.(type) {
+	case map[string]any:
+		if s, ok := typed[key].(string); ok && s != "" {
+			return s, true
+		}
+		for _, child := range typed {
+			if s, found := findJSONString(child, key); found {
+				return s, true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if s, found := findJSONString(child, key); found {
+				return s, true
+			}
+		}
+	}
+
+	return "", false
 }
 
 // CommitPendingKey rotates the pending key into the active position for the given entity.
@@ -1508,23 +1750,6 @@ func WipeRotatingServiceKeys(ctx context.Context) error {
 	_, err := cephRunContext(ctx, "auth", "wipe-rotating-service-keys")
 	if err != nil {
 		return fmt.Errorf("failed to wipe rotating service keys: %w", err)
-	}
-
-	return nil
-}
-
-// SetOSDBlueStoreLabelKey updates the osd_key label on an OSD's block device using ceph-bluestore-tool.
-func SetOSDBlueStoreLabelKey(ctx context.Context, devPath string, keyringPath string) error {
-	_, err := common.ProcessExec.RunCommandContext(
-		ctx,
-		"ceph-bluestore-tool",
-		"--dev", devPath,
-		"set-label-key",
-		"--key", "osd_key",
-		"-v", keyringPath,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to set bluestore osd_key label on %s: %w", devPath, err)
 	}
 
 	return nil
@@ -1728,6 +1953,7 @@ func ClientSupportsKeyType(session ClientSessionInfo, targetKeyType string) bool
 func BuildAuthStatus(ctx context.Context, s interfaces.StateInterface) (types.AuthStatusResponse, error) {
 	var resp types.AuthStatusResponse
 	resp.ClientDistribution = make(map[string][]string)
+	resp.ServiceDistribution = make(map[string][]string)
 
 	// 1. Read persistent record from database if available
 	if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
@@ -1737,6 +1963,7 @@ func BuildAuthStatus(ctx context.Context, s interfaces.StateInterface) (types.Au
 				return err
 			}
 			resp.State = rec.State
+			resp.Stage = rec.Stage
 			resp.Blocker = rec.Blocker
 			resp.TargetKeyType = rec.TargetKeyType
 			resp.Detail = rec.Detail
@@ -1747,23 +1974,54 @@ func BuildAuthStatus(ctx context.Context, s interfaces.StateInterface) (types.Au
 		}
 	}
 
-	// 2. Query Ceph auth keys to compute client cipher distribution
+	// 2. Query Ceph auth keys to compute the daemon and client cipher distributions
 	entries, err := dumpAuthKeysFunc(ctx)
 	if err != nil {
 		return resp, fmt.Errorf("failed to dump auth keys: %w", err)
 	}
 
 	for _, entry := range entries {
+		cipher := entry.KeyType
+		if cipher == "" {
+			cipher = "unknown"
+		}
 		if entry.EntityType == "client" {
-			cipher := entry.KeyType
-			if cipher == "" {
-				cipher = "unknown"
-			}
 			resp.ClientDistribution[cipher] = append(resp.ClientDistribution[cipher], entry.EntityName)
+		} else {
+			resp.ServiceDistribution[cipher] = append(resp.ServiceDistribution[cipher], entry.EntityName)
 		}
 	}
 
-	// 3. Format Status string based on state and distribution
+	// 3. Collect the CephX health checks Ceph is currently raising so the
+	//    operator can see e.g. that only the rotating service keys are left to
+	//    expire. Best effort: a health query failure must not hide the rest.
+	hw, err := getAuthHealthWarningsFunc(ctx)
+	if err != nil {
+		logger.Warnf("failed to fetch auth health warnings: %v", err)
+	} else {
+		if hw.InsecureServiceKeyType {
+			resp.HealthWarnings = append(resp.HealthWarnings, "AUTH_INSECURE_SERVICE_KEY_TYPE")
+		}
+		if hw.InsecureServiceTickets {
+			resp.HealthWarnings = append(resp.HealthWarnings, "AUTH_INSECURE_SERVICE_TICKETS")
+		}
+		if hw.InsecureRotatingKeyType {
+			resp.HealthWarnings = append(resp.HealthWarnings, "AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE")
+		}
+		if hw.InsecureKeysCreatable {
+			resp.HealthWarnings = append(resp.HealthWarnings, "AUTH_INSECURE_KEYS_CREATABLE")
+		}
+		if hw.InsecureClientKeyType {
+			resp.HealthWarnings = append(resp.HealthWarnings, "AUTH_INSECURE_CLIENT_KEY_TYPE")
+		}
+		if hw.InsecureKeysAllowed {
+			resp.HealthWarnings = append(resp.HealthWarnings, "AUTH_INSECURE_KEYS_ALLOWED")
+		}
+	}
+
+	// 4. Format Status string based on state and client distribution. The client
+	//    names themselves live in client_distribution; the status carries counts
+	//    only so a large mixed cluster does not produce one enormous line.
 	if resp.State == database.AuthRotationStateBlocked {
 		resp.Status = "blocked"
 	} else if len(resp.ClientDistribution) == 1 {
@@ -1772,25 +2030,25 @@ func BuildAuthStatus(ctx context.Context, s interfaces.StateInterface) (types.Au
 			resp.Status = fmt.Sprintf("All client %s", cipher)
 		}
 	} else if len(resp.ClientDistribution) > 1 {
-		// Mixed ciphers
-		var counts []string
-		var lists []string
-		// Sort keys for deterministic output
-		var ciphers []string
-		for c := range resp.ClientDistribution {
-			ciphers = append(ciphers, c)
+		counts := make([]string, 0, len(resp.ClientDistribution))
+		for _, cipher := range sortedCipherNames(resp.ClientDistribution) {
+			counts = append(counts, fmt.Sprintf("%d clients on %s", len(resp.ClientDistribution[cipher]), cipher))
 		}
-		slices.Sort(ciphers)
-
-		for _, c := range ciphers {
-			clients := resp.ClientDistribution[c]
-			counts = append(counts, fmt.Sprintf("%d clients on %s", len(clients), c))
-			lists = append(lists, fmt.Sprintf("%s: %s", c, strings.Join(clients, ", ")))
-		}
-		resp.Status = fmt.Sprintf("%s (%s)", strings.Join(counts, ", "), strings.Join(lists, ", "))
+		resp.Status = strings.Join(counts, ", ")
 	} else {
 		resp.Status = "idle"
 	}
 
 	return resp, nil
+}
+
+// sortedCipherNames returns the cipher keys of a distribution map in a stable
+// (alphabetical) order so status output is deterministic.
+func sortedCipherNames(dist map[string][]string) []string {
+	names := make([]string, 0, len(dist))
+	for cipher := range dist {
+		names = append(names, cipher)
+	}
+	slices.Sort(names)
+	return names
 }

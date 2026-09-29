@@ -45,13 +45,16 @@ Test Single Client Rotation
 
 Test Unmanaged Credential Blocker Detection
     [Documentation]    Creating an unmanaged client with an insecure cipher must be flagged
-    ...    as a blocker by 'microceph auth status' during rotation.
+    ...    as a blocker by 'microceph auth status' during rotation. The blocked
+    ...    rotation must also fail with the distinct exit code 3 so automation
+    ...    can tell it apart from success (0) and generic failures (1).
     [Tags]    auth    rotate    blocker
     # Create an unmanaged client with legacy aes cipher
     Run In VM And Check    sudo microceph.ceph auth get-or-create client.external-app mon 'allow r' osd 'allow r'    30
     # Run rotation targeting aes256k
-    ${rotate_res}=    Run In VM And Check    sudo microceph auth rotate --key-type aes256k    300
-    # Rotation must pause at the blocker rather than claiming full completion
+    ${rotate_res}=    Run In VM    sudo microceph auth rotate --key-type aes256k    300
+    # Rotation must pause at the blocker with the distinct blocked exit code
+    Should Be Equal As Integers    ${rotate_res.rc}    3
     Should Contain    ${rotate_res.stdout}    Rotation paused: Unmanaged credentials must be rotated manually
     # Verify auth status reports blocked state and blocker description
     ${status_res}=    Run In VM And Check    sudo microceph auth status    30

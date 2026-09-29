@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"os"
 
 	cli "github.com/canonical/lxd/shared/cmd"
@@ -99,6 +100,36 @@ func main() {
 
 	err := app.Execute()
 	if err != nil {
-		os.Exit(1)
+		os.Exit(processExitCode(err))
 	}
+}
+
+// exitCodeError carries an explicit process exit code for outcomes automation
+// needs to distinguish (e.g. a blocked auth rotation) from generic failures.
+type exitCodeError struct {
+	code int
+	err  error
+}
+
+func (e *exitCodeError) Error() string {
+	return e.err.Error()
+}
+
+func (e *exitCodeError) Unwrap() error {
+	return e.err
+}
+
+// processExitCode maps a command error to the process exit code: errors carrying
+// an explicit exit code return it verbatim, anything else maps to 1.
+func processExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+
+	var exitErr *exitCodeError
+	if errors.As(err, &exitErr) {
+		return exitErr.code
+	}
+
+	return 1
 }

@@ -12,6 +12,9 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
+
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -129,8 +132,8 @@ func TestPendingKeyOperations(t *testing.T) {
 	r := mocks.NewRunner(t)
 	common.ProcessExec = r
 
-	r.On("RunCommandContext", mock.Anything, "ceph", "auth", "get-or-create-pending", "client.rgw").
-		Return("[client.rgw]\n\tkey = ACTIVE\n\tpending_key = PENDING\n", nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "auth", "get-or-create-pending", "client.rgw", "-f", "json").
+		Return(`{"auth": {"client.rgw": {"key": "ACTIVE", "pending_key": "PENDING"}}}`, nil).Once()
 	r.On("RunCommandContext", mock.Anything, "ceph", "auth", "commit-pending", "client.rgw").
 		Return("", nil).Once()
 	r.On("RunCommandContext", mock.Anything, "ceph", "auth", "clear-pending", "client.rgw").
@@ -138,9 +141,9 @@ func TestPendingKeyOperations(t *testing.T) {
 	r.On("RunCommandContext", mock.Anything, "ceph", "auth", "wipe-rotating-service-keys").
 		Return("wiped rotating service keys!", nil).Once()
 
-	out, err := GetOrCreatePendingKey(context.Background(), "client.rgw")
+	pendingKey, err := GetOrCreatePendingKey(context.Background(), "client.rgw")
 	require.NoError(t, err)
-	assert.Contains(t, out, "pending_key")
+	assert.Equal(t, "PENDING", pendingKey)
 
 	err = CommitPendingKey(context.Background(), "client.rgw")
 	require.NoError(t, err)
@@ -152,15 +155,36 @@ func TestPendingKeyOperations(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestSetOSDBlueStoreLabelKey(t *testing.T) {
+func TestGetOrCreatePendingKey(t *testing.T) {
 	r := mocks.NewRunner(t)
 	common.ProcessExec = r
 
-	r.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "--dev", "/dev/sdb", "set-label-key", "--key", "osd_key", "-v", "/var/lib/ceph/osd/ceph-0/keyring").
-		Return("", nil).Once()
+	// 1. KeyRing::encode_formatted wraps the entity section; the pending key sits
+	//    beside the active key.
+	r.On("RunCommandContext", mock.Anything, "ceph", "auth", "get-or-create-pending", "client.rgw", "-f", "json").
+		Return(`{"auth": {"client.rgw": {"key": "AQOLD==", "pending_key": "AQNEW=="}}}`, nil).Once()
 
-	err := SetOSDBlueStoreLabelKey(context.Background(), "/dev/sdb", "/var/lib/ceph/osd/ceph-0/keyring")
+	pendingKey, err := GetOrCreatePendingKey(context.Background(), "client.rgw")
 	require.NoError(t, err)
+	assert.Equal(t, "AQNEW==", pendingKey)
+
+	// 2. A flat entity section is tolerated too.
+	r.On("RunCommandContext", mock.Anything, "ceph", "auth", "get-or-create-pending", "client.flat", "-f", "json").
+		Return(`{"key": "AQOLD==", "pending_key": "AQNEW=="}`, nil).Once()
+
+	pendingKey, err = GetOrCreatePendingKey(context.Background(), "client.flat")
+	require.NoError(t, err)
+	assert.Equal(t, "AQNEW==", pendingKey)
+
+	// 3. A missing pending_key is an error that must not leak the secrets from
+	//    the output.
+	r.On("RunCommandContext", mock.Anything, "ceph", "auth", "get-or-create-pending", "client.missing", "-f", "json").
+		Return(`{"key": "AQOLD=="}`, nil).Once()
+
+	_, err = GetOrCreatePendingKey(context.Background(), "client.missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no pending_key")
+	assert.NotContains(t, err.Error(), "AQOLD==")
 }
 
 func TestParseAuthDumpKeys(t *testing.T) {
@@ -450,37 +474,81 @@ func TestPrepareAuthRotation(t *testing.T) {
 	assert.Equal(t, 1, preferredCalls)
 }
 
-func TestRotateMonitorKey(t *testing.T) {
+func TestRotateMonKeyAuth(t *testing.T) {
 	origRotate := rotateEntityKeyFunc
-	origRestart := snapRestartFunc
-	origQuorumWait := waitForMonQuorumFunc
-	defer func() {
-		rotateEntityKeyFunc = origRotate
-		snapRestartFunc = origRestart
-		waitForMonQuorumFunc = origQuorumWait
-	}()
+	defer func() { rotateEntityKeyFunc = origRotate }()
 
-	restartedMons := []string{}
 	rotateEntityKeyFunc = func(ctx context.Context, entity string, keyType string) (string, error) {
 		assert.Equal(t, "mon.", entity)
 		assert.Equal(t, "aes256k", keyType)
 		return "[mon.]\n\tkey = AQB...==\n", nil
 	}
+
+	keyring, err := RotateMonKeyAuth(context.Background(), "aes256k")
+	require.NoError(t, err)
+	assert.Contains(t, keyring, "key = AQB")
+
+	// Empty output is an error.
+	rotateEntityKeyFunc = func(ctx context.Context, entity string, keyType string) (string, error) {
+		return "", nil
+	}
+	_, err = RotateMonKeyAuth(context.Background(), "aes256k")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty")
+}
+
+func TestDeployMonKeyringAndRestart(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_COMMON", tmpDir)
+
+	origRestart := snapRestartFunc
+	origQuorumWait := waitForMonQuorumFunc
+	defer func() {
+		snapRestartFunc = origRestart
+		waitForMonQuorumFunc = origQuorumWait
+	}()
+
+	restarted := false
+	quorumWaited := false
 	snapRestartFunc = func(service string, isReload bool) error {
 		assert.Equal(t, "mon", service)
+		restarted = true
 		return nil
 	}
 	waitForMonQuorumFunc = func(ctx context.Context, monName string, timeout time.Duration) error {
-		restartedMons = append(restartedMons, monName)
+		assert.Equal(t, "node-a", monName)
+		quorumWaited = true
 		return nil
 	}
 
-	err := RotateMonitorKey(context.Background(), "aes256k", []string{"mon-a", "mon-b"})
+	// 1. Member runs a mon: keyring written, restarted, quorum verified.
+	monDataDir := filepath.Join(tmpDir, "data", "mon", "ceph-node-a")
+	require.NoError(t, os.MkdirAll(monDataDir, 0700))
+
+	restartedFlag, err := deployMonKeyringAndRestart(context.Background(), "node-a", "[mon.]\n\tkey = MONKEY==\n")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"mon-a", "mon-b"}, restartedMons)
+	assert.True(t, restartedFlag)
+	assert.True(t, restarted)
+	assert.True(t, quorumWaited)
+
+	content, err := os.ReadFile(filepath.Join(monDataDir, "keyring"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "MONKEY")
+
+	// 2. Member runs no mon: no restart, no error.
+	restarted = false
+	quorumWaited = false
+	restartedFlag, err = deployMonKeyringAndRestart(context.Background(), "node-b", "[mon.]\n\tkey = MONKEY==\n")
+	require.NoError(t, err)
+	assert.False(t, restartedFlag)
+	assert.False(t, restarted)
+	assert.False(t, quorumWaited)
 }
 
-func TestRotateMGRKey(t *testing.T) {
+func TestRotateLocalMGRKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_COMMON", tmpDir)
+
 	origRotate := rotateEntityKeyFunc
 	origStop := snapStopFunc
 	origStart := snapStartFunc
@@ -519,14 +587,51 @@ func TestRotateMGRKey(t *testing.T) {
 		return nil
 	}
 
-	err := RotateMGRKey(context.Background(), "aes256k", "node-a")
+	err := RotateLocalMGRKey(context.Background(), "aes256k", "node-a")
 	require.NoError(t, err)
 	assert.True(t, stopped)
 	assert.True(t, started)
 	assert.True(t, verified)
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "data", "mgr", "ceph-node-a", "keyring"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "MGRKEY")
+
+	// Failure case: rotation error restarts the daemon best-effort and still returns the error.
+	startCalls := 0
+	started = false
+	snapStartFunc = func(service string, enable bool) error {
+		if service == "mgr" {
+			startCalls++
+			started = true
+		}
+		return nil
+	}
+	rotateEntityKeyFunc = func(ctx context.Context, entity string, keyType string) (string, error) {
+		return "", fmt.Errorf("auth rotate failed")
+	}
+	err = RotateLocalMGRKey(context.Background(), "aes256k", "node-a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to rotate mgr.node-a key")
+	assert.True(t, started, "daemon must be restarted on failure")
+	assert.Equal(t, 1, startCalls)
+
+	// Failure case: restart itself fails is logged, not masked.
+	startCalls = 0
+	snapStartFunc = func(service string, enable bool) error {
+		startCalls++
+		return fmt.Errorf("snapctl start failed")
+	}
+	err = RotateLocalMGRKey(context.Background(), "aes256k", "node-a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to rotate mgr.node-a key")
+	assert.Equal(t, 1, startCalls)
 }
 
-func TestRotateMDSKey(t *testing.T) {
+func TestRotateLocalMDSKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_COMMON", tmpDir)
+
 	origRotate := rotateEntityKeyFunc
 	origStop := snapStopFunc
 	origStart := snapStartFunc
@@ -565,127 +670,286 @@ func TestRotateMDSKey(t *testing.T) {
 		return nil
 	}
 
-	err := RotateMDSKey(context.Background(), "aes256k", "node-a")
+	err := RotateLocalMDSKey(context.Background(), "aes256k", "node-a")
 	require.NoError(t, err)
 	assert.True(t, stopped)
 	assert.True(t, started)
 	assert.True(t, verified)
+
+	// Failure case: rotation error restarts the daemon best-effort and still returns the error.
+	startCalls := 0
+	started = false
+	snapStartFunc = func(service string, enable bool) error {
+		if service == "mds" {
+			startCalls++
+			started = true
+		}
+		return nil
+	}
+	rotateEntityKeyFunc = func(ctx context.Context, entity string, keyType string) (string, error) {
+		return "", fmt.Errorf("auth rotate failed")
+	}
+	err = RotateLocalMDSKey(context.Background(), "aes256k", "node-a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to rotate mds.node-a key")
+	assert.True(t, started, "daemon must be restarted on failure")
+	assert.Equal(t, 1, startCalls)
 }
 
-func TestRotateOSDKey(t *testing.T) {
+func TestGetLocalOSDIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_COMMON", tmpDir)
+
+	osdRoot := filepath.Join(tmpDir, "data", "osd")
+	for _, dir := range []string{"ceph-0", "ceph-2", "ceph-10"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(osdRoot, dir, "ready"), 0700))
+	}
+	// No ready marker: the osd service never spawns it.
+	require.NoError(t, os.MkdirAll(filepath.Join(osdRoot, "ceph-3"), 0700))
+	// Not an OSD dir.
+	require.NoError(t, os.MkdirAll(filepath.Join(osdRoot, "junk"), 0700))
+
+	ids, err := getLocalOSDIDs()
+	require.NoError(t, err)
+	assert.Equal(t, []int64{0, 2, 10}, ids)
+
+	// No osd root at all: empty, no error.
+	t.Setenv("SNAP_COMMON", filepath.Join(tmpDir, "other"))
+	ids, err = getLocalOSDIDs()
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}
+
+func TestRotateLocalOSDKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_COMMON", tmpDir)
+
 	r := mocks.NewRunner(t)
 	common.ProcessExec = r
 
 	origRotate := rotateEntityKeyFunc
-	origRestart := snapRestartFunc
+	origStop := snapStopFunc
+	origStart := snapStartFunc
 	origOSDWait := waitForOSDUpFunc
-	origSetLabel := setOSDBlueStoreLabelKeyFunc
 	defer func() {
 		rotateEntityKeyFunc = origRotate
-		snapRestartFunc = origRestart
+		snapStopFunc = origStop
+		snapStartFunc = origStart
 		waitForOSDUpFunc = origOSDWait
-		setOSDBlueStoreLabelKeyFunc = origSetLabel
 	}()
 
+	// One osd down call covering both OSDs.
+	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "down", "0", "2").Return("", nil).Once()
+	// The failure-case retry below marks only osd.0 down.
 	r.On("RunCommandContext", mock.Anything, "ceph", "osd", "down", "0").Return("", nil).Once()
 
-	rotateEntityKeyFunc = func(ctx context.Context, entity string, keyType string) (string, error) {
-		assert.Equal(t, "osd.0", entity)
-		return "[osd.0]\n\tkey = OSDKEY==\n", nil
-	}
-	snapRestartFunc = func(service string, isReload bool) error {
+	stopCount := 0
+	startCount := 0
+	rotatedEntities := []string{}
+	verifiedOSDs := []int64{}
+
+	snapStopFunc = func(service string, disable bool) error {
 		assert.Equal(t, "osd", service)
+		stopCount++
 		return nil
+	}
+	snapStartFunc = func(service string, enable bool) error {
+		assert.Equal(t, "osd", service)
+		startCount++
+		return nil
+	}
+	rotateEntityKeyFunc = func(ctx context.Context, entity string, keyType string) (string, error) {
+		rotatedEntities = append(rotatedEntities, entity)
+		return fmt.Sprintf("[%s]\n\tkey = OSDKEY==\n", entity), nil
 	}
 	waitForOSDUpFunc = func(ctx context.Context, osdID int64, timeout time.Duration) error {
-		assert.Equal(t, int64(0), osdID)
+		verifiedOSDs = append(verifiedOSDs, osdID)
 		return nil
 	}
 
-	err := RotateOSDKey(context.Background(), "aes256k", 0)
+	err := RotateLocalOSDKeys(context.Background(), "aes256k", []int64{0, 2})
 	require.NoError(t, err)
+
+	// Single stop/start for the whole batch.
+	assert.Equal(t, 1, stopCount)
+	assert.Equal(t, 1, startCount)
+	assert.Equal(t, []string{"osd.0", "osd.2"}, rotatedEntities)
+	assert.Equal(t, []int64{0, 2}, verifiedOSDs)
+
+	// Keyrings written on this member for both OSDs.
+	for _, id := range []int64{0, 2} {
+		content, err := os.ReadFile(filepath.Join(tmpDir, "data", "osd", fmt.Sprintf("ceph-%d", id), "keyring"))
+		require.NoError(t, err)
+		assert.Contains(t, string(content), "OSDKEY")
+	}
+
+	// Failure case: rotate failure after stop propagates, and the service is
+	// restarted best-effort so the OSDs are not left stopped.
+	stopCount = 0
+	startCount = 0
+	rotateEntityKeyFunc = func(ctx context.Context, entity string, keyType string) (string, error) {
+		return "", fmt.Errorf("auth rotate failed")
+	}
+	err = RotateLocalOSDKeys(context.Background(), "aes256k", []int64{0})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to rotate osd.0 key")
+	assert.Equal(t, 1, stopCount)
+	assert.Equal(t, 1, startCount, "osd service must be restarted on failure")
 }
 
-func TestRotateDaemonsPipeline(t *testing.T) {
-	r := mocks.NewRunner(t)
-	common.ProcessExec = r
+func TestRotateMemberDaemons(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_COMMON", tmpDir)
 
-	origRotateMon := rotateMonitorKeyFunc
-	origRotateMGR := rotateMGRKeyFunc
-	origRotateMDS := rotateMDSKeyFunc
-	origRotateOSD := rotateOSDKeyFunc
-	origDumpKeys := dumpAuthKeysFunc
+	origDeploy := deployMonKeyringAndRestartFunc
+	origMGR := rotateLocalMGRKeyFunc
+	origOSD := rotateLocalOSDKeysFunc
+	origMDS := rotateLocalMDSKeyFunc
+	defer func() {
+		deployMonKeyringAndRestartFunc = origDeploy
+		rotateLocalMGRKeyFunc = origMGR
+		rotateLocalOSDKeysFunc = origOSD
+		rotateLocalMDSKeyFunc = origMDS
+	}()
+
+	// Local layout: mon + mgr + one OSD, no mds.
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "data", "mon", "ceph-node-a"), 0700))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "data", "mgr", "ceph-node-a"), 0700))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "data", "osd", "ceph-0", "ready"), 0700))
+
+	state := interfaces.CephState{State: &mocks.MockState{ClusterName: "node-a"}}
+
+	deployCalled := false
+	mgrRotated := false
+	mdsRotated := false
+	osdIDsSeen := []int64{}
+
+	deployMonKeyringAndRestartFunc = func(ctx context.Context, hostname string, monKeyring string) (bool, error) {
+		deployCalled = true
+		assert.Equal(t, "node-a", hostname)
+		assert.Equal(t, "[mon.]\n\tkey = MONKEY==\n", monKeyring)
+		return true, nil
+	}
+	rotateLocalMGRKeyFunc = func(ctx context.Context, keyType string, hostname string) error {
+		mgrRotated = true
+		assert.Equal(t, "aes256k", keyType)
+		return nil
+	}
+	rotateLocalOSDKeysFunc = func(ctx context.Context, keyType string, osdIDs []int64) error {
+		osdIDsSeen = osdIDs
+		return nil
+	}
+	rotateLocalMDSKeyFunc = func(ctx context.Context, keyType string, hostname string) error {
+		mdsRotated = true
+		return nil
+	}
+
+	summary, err := RotateMemberDaemons(context.Background(), state, "aes256k", "[mon.]\n\tkey = MONKEY==\n")
+	require.NoError(t, err)
+	assert.True(t, deployCalled)
+	assert.True(t, summary.MonRestarted)
+	assert.True(t, mgrRotated)
+	assert.Equal(t, []int64{0}, osdIDsSeen)
+	assert.Equal(t, summary.RotatedOSDs, []int64{0})
+	assert.False(t, mdsRotated)
+	assert.Empty(t, summary.RotatedMDSs)
+	assert.Equal(t, "node-a", summary.Hostname)
+
+	// Failure in the local mgr phase propagates.
+	rotateLocalMGRKeyFunc = func(ctx context.Context, keyType string, hostname string) error {
+		return fmt.Errorf("mgr start failed")
+	}
+	_, err = RotateMemberDaemons(context.Background(), state, "aes256k", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to rotate local mgr key")
+
+	// Empty monKeyring skips the mon phase entirely.
+	deployCalled = false
+	rotateLocalMGRKeyFunc = func(ctx context.Context, keyType string, hostname string) error {
+		return nil
+	}
+	_, err = RotateMemberDaemons(context.Background(), state, "aes256k", "")
+	require.NoError(t, err)
+	assert.False(t, deployCalled)
+}
+
+func TestRotateDaemonsCoordinator(t *testing.T) {
+	origRotateMon := rotateMonKeyAuthFunc
+	origSend := sendMemberAuthRotateFunc
+	origMember := rotateMemberDaemonsFunc
 	origHealth := getAuthHealthWarningsFunc
 	defer func() {
-		rotateMonitorKeyFunc = origRotateMon
-		rotateMGRKeyFunc = origRotateMGR
-		rotateMDSKeyFunc = origRotateMDS
-		rotateOSDKeyFunc = origRotateOSD
-		dumpAuthKeysFunc = origDumpKeys
+		rotateMonKeyAuthFunc = origRotateMon
+		sendMemberAuthRotateFunc = origSend
+		rotateMemberDaemonsFunc = origMember
 		getAuthHealthWarningsFunc = origHealth
 	}()
 
-	// Mock monitor map names
-	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
-		Return(`{"mons": [{"name": "node-a"}]}`, nil).Once()
+	state := interfaces.CephState{State: &mocks.MockState{ClusterName: "node-a"}}
 
-	monRotated := false
-	mgrRotated := false
-	mdsRotated := false
-	osdRotated := false
+	monKeyringRotated := false
+	fanOutRequests := []types.MemberAuthRotateRequest{}
+	memberCalls := []string{}
 
-	rotateMonitorKeyFunc = func(ctx context.Context, targetKeyType string, monNames []string) error {
-		monRotated = true
-		assert.Equal(t, []string{"node-a"}, monNames)
+	rotateMonKeyAuthFunc = func(ctx context.Context, keyType string) (string, error) {
+		monKeyringRotated = true
+		assert.Equal(t, "aes256k", keyType)
+		return "[mon.]\n\tkey = MONKEY==\n", nil
+	}
+	sendMemberAuthRotateFunc = func(ctx context.Context, s mcTypes.State, req types.MemberAuthRotateRequest) error {
+		fanOutRequests = append(fanOutRequests, req)
 		return nil
 	}
-
-	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
-		return []AuthKeyEntry{
-			{EntityName: "mgr.node-a", EntityType: "mgr", EntityID: "node-a"},
-			{EntityName: "mds.node-a", EntityType: "mds", EntityID: "node-a"},
-			{EntityName: "osd.0", EntityType: "osd", EntityID: "0"},
-		}, nil
+	rotateMemberDaemonsFunc = func(ctx context.Context, s interfaces.StateInterface, keyType string, monKeyring string) (*MemberRotationSummary, error) {
+		memberCalls = append(memberCalls, monKeyring)
+		return &MemberRotationSummary{Hostname: "node-a"}, nil
 	}
-
-	rotateMGRKeyFunc = func(ctx context.Context, targetKeyType string, mgrName string) error {
-		mgrRotated = true
-		assert.Equal(t, "node-a", mgrName)
-		return nil
-	}
-
-	rotateMDSKeyFunc = func(ctx context.Context, targetKeyType string, mdsName string) error {
-		mdsRotated = true
-		assert.Equal(t, "node-a", mdsName)
-		return nil
-	}
-
-	rotateOSDKeyFunc = func(ctx context.Context, targetKeyType string, osdID int64) error {
-		osdRotated = true
-		assert.Equal(t, int64(0), osdID)
-		return nil
-	}
-
-	// Health check clears
 	getAuthHealthWarningsFunc = func(ctx context.Context) (AuthHealthWarnings, error) {
 		return AuthHealthWarnings{InsecureServiceKeyType: false}, nil
 	}
 
-	err := RotateDaemons(context.Background(), "aes256k")
+	// 1. Success: mon. rotated exactly once, fan-out carries the shared keyring,
+	//    local member handler receives the same keyring.
+	err := RotateDaemons(context.Background(), state, "aes256k")
 	require.NoError(t, err)
-	assert.True(t, monRotated)
-	assert.True(t, mgrRotated)
-	assert.True(t, mdsRotated)
-	assert.True(t, osdRotated)
+	assert.True(t, monKeyringRotated)
+	require.Len(t, fanOutRequests, 1)
+	assert.Equal(t, "aes256k", fanOutRequests[0].KeyType)
+	assert.Equal(t, "[mon.]\n\tkey = MONKEY==\n", fanOutRequests[0].MonKeyring)
+	assert.Equal(t, []string{"[mon.]\n\tkey = MONKEY==\n"}, memberCalls)
 
-	// Failure case: AUTH_INSECURE_SERVICE_KEY_TYPE remains active
-	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
-		Return(`{"mons": [{"name": "node-a"}]}`, nil).Once()
+	// 2. Mon rotation failure aborts before any fan-out.
+	monKeyringRotated = false
+	fanOutRequests = nil
+	rotateMonKeyAuthFunc = func(ctx context.Context, keyType string) (string, error) {
+		return "", fmt.Errorf("mon rotate failed")
+	}
+	err = RotateDaemons(context.Background(), state, "aes256k")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "monitor key rotation failed")
+	assert.Empty(t, fanOutRequests)
+
+	// 3. Remote member failure aborts before local rotation.
+	rotateMonKeyAuthFunc = func(ctx context.Context, keyType string) (string, error) {
+		return "[mon.]\n\tkey = MONKEY==\n", nil
+	}
+	sendMemberAuthRotateFunc = func(ctx context.Context, s mcTypes.State, req types.MemberAuthRotateRequest) error {
+		return fmt.Errorf("member unreachable")
+	}
+	memberCalls = nil
+	err = RotateDaemons(context.Background(), state, "aes256k")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remote member daemon rotation failed")
+	assert.Empty(t, memberCalls)
+
+	// 4. AUTH_INSECURE_SERVICE_KEY_TYPE remaining active fails the stage.
+	sendMemberAuthRotateFunc = func(ctx context.Context, s mcTypes.State, req types.MemberAuthRotateRequest) error {
+		return nil
+	}
 	getAuthHealthWarningsFunc = func(ctx context.Context) (AuthHealthWarnings, error) {
 		return AuthHealthWarnings{InsecureServiceKeyType: true, InsecureServiceDetails: []string{"entity osd.1 using insecure key type: aes"}}, nil
 	}
-
-	err = RotateDaemons(context.Background(), "aes256k")
+	err = RotateDaemons(context.Background(), state, "aes256k")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "AUTH_INSECURE_SERVICE_KEY_TYPE remains active")
 }
@@ -958,12 +1222,72 @@ func TestNormalizeAndManagedClient(t *testing.T) {
 	assert.True(t, IsMicroCephManagedClient("client.radosgw.gateway"))
 	assert.True(t, IsMicroCephManagedClient("client.rbd-mirror.node1"))
 	assert.True(t, IsMicroCephManagedClient("client.cephfs-mirror.node1"))
+	assert.True(t, IsMicroCephManagedClient("client.nfs.foo.node-a"))
 	assert.True(t, IsMicroCephManagedClient("client.bootstrap-osd"))
 	assert.True(t, IsMicroCephManagedClient("client.fsmir-vol1-rem1"))
 
 	assert.False(t, IsMicroCephManagedClient("client.cinder"))
 	assert.False(t, IsMicroCephManagedClient("client.glance"))
 	assert.False(t, IsMicroCephManagedClient("client.external"))
+	// The dash form is not an NFS Ganesha client of ours.
+	assert.False(t, IsMicroCephManagedClient("client.nfs-ganesha"))
+}
+
+// TestManagedClientWithNFSDeployed is the regression for the blanket ganesha-dir
+// check: on a node with NFS enabled every client used to classify as managed.
+func TestManagedClientWithNFSDeployed(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_DATA", filepath.Join(tmpDir, "current"))
+
+	ganeshaDir := filepath.Join(tmpDir, "current", "conf", "ganesha")
+	require.NoError(t, os.MkdirAll(ganeshaDir, 0744))
+
+	// The NFS Ganesha client of this node is managed.
+	assert.True(t, IsMicroCephManagedClient("client.nfs.foo.node-a"))
+	// Every other client stays unmanaged even though the ganesha dir exists:
+	// with the old check these were all classified managed and, in
+	// getClientKeyringPaths, written over ganesha/keyring.
+	assert.False(t, IsMicroCephManagedClient("client.cinder"))
+	assert.False(t, IsMicroCephManagedClient("client.external-app"))
+}
+
+func TestGetClientKeyringPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_COMMON", tmpDir)
+	t.Setenv("SNAP_DATA", filepath.Join(tmpDir, "current"))
+
+	ganeshaKeyring := filepath.Join(tmpDir, "current", "conf", "ganesha", "keyring")
+
+	// 1. Without a local ganesha keyring, an NFS client has no distribution path
+	//    and no associated local service (e.g. an entity belonging to another
+	//    host must not restart this node's NFS).
+	paths, service := getClientKeyringPaths("client.nfs.foo.node-a")
+	assert.Empty(t, paths)
+	assert.Equal(t, "", service)
+
+	// 2. With the ganesha keyring present, the NFS client resolves to it.
+	require.NoError(t, os.MkdirAll(filepath.Dir(ganeshaKeyring), 0744))
+	require.NoError(t, os.WriteFile(ganeshaKeyring, []byte("x"), 0600))
+	paths, service = getClientKeyringPaths("client.nfs.foo.node-a")
+	assert.Equal(t, []string{ganeshaKeyring}, paths)
+	assert.Equal(t, "nfs", service)
+
+	// 3. On the same NFS node, other clients must not be written to the ganesha
+	//    keyring.
+	paths, service = getClientKeyringPaths("client.cinder")
+	assert.Empty(t, paths)
+	assert.Equal(t, "", service)
+
+	paths, service = getClientKeyringPaths("client.bootstrap-osd")
+	assert.Empty(t, paths)
+	assert.Equal(t, "", service)
+
+	// 4. Remote cluster keyring: matched by the entity name.
+	remoteKeyring := filepath.Join(tmpDir, "current", "conf", "siteb.keyring")
+	require.NoError(t, os.WriteFile(remoteKeyring, []byte("x"), 0600))
+	paths, service = getClientKeyringPaths("client.siteb")
+	assert.Equal(t, []string{remoteKeyring}, paths)
+	assert.Equal(t, "", service)
 }
 
 func TestInspectClientSessionBlockers(t *testing.T) {
@@ -986,37 +1310,70 @@ func TestInspectClientSessionBlockers(t *testing.T) {
 }
 
 func TestRotateSingleClientKey(t *testing.T) {
+	// Sandbox the snap paths: getClientKeyringPaths derives both the data and conf
+	// locations from the environment, and without them the write path would land
+	// in relative directories inside the package source tree.
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_COMMON", tmpDir)
+	t.Setenv("SNAP_DATA", filepath.Join(tmpDir, "current"))
+
 	origInspect := inspectClientSessionBlockersFunc
 	origPending := getOrCreatePendingKeyFunc
 	origCommit := commitPendingKeyFunc
+	origGetKeyring := getEntityKeyringFunc
 	origRestart := snapRestartFunc
 	defer func() {
 		inspectClientSessionBlockersFunc = origInspect
 		getOrCreatePendingKeyFunc = origPending
 		commitPendingKeyFunc = origCommit
+		getEntityKeyringFunc = origGetKeyring
 		snapRestartFunc = origRestart
 	}()
 
-	pendingIssued := false
-	committed := false
-	reloaded := false
+	// Valid base64 secrets, as a real keyring must carry for ceph-authtool or a
+	// daemon to load it.
+	oldKey := "AQB0ZXN0b2xka2V5AQIDBAUGBwgJCgsMDQ4PAA=="
+	newKey := "AQB0ZXN0bmV3a2V5AQIDBAUGBwgJCgsMDQ4PAA=="
 
 	inspectClientSessionBlockersFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
 		return nil, nil
 	}
+	pendingIssued := false
 	getOrCreatePendingKeyFunc = func(ctx context.Context, entity string) (string, error) {
 		pendingIssued = true
 		assert.Equal(t, "client.radosgw.gateway", entity)
-		return "[client.radosgw.gateway]\n\tkey = ACTIVE\n\tpending_key = PENDING\n", nil
+		// GetOrCreatePendingKey extracts the pending secret from the JSON output;
+		// the keyring rendering happens from this secret alone.
+		return newKey, nil
 	}
-	snapRestartFunc = func(service string, isReload bool) error {
-		reloaded = true
-		assert.Equal(t, "rgw", service)
-		return nil
-	}
+	committed := false
 	commitPendingKeyFunc = func(ctx context.Context, entity string) error {
 		committed = true
 		assert.Equal(t, "client.radosgw.gateway", entity)
+		return nil
+	}
+	// After the commit the pending key is the active key: 'ceph auth get' returns
+	// a loadable keyring holding only the new key.
+	getEntityKeyringFunc = func(ctx context.Context, entity string) (string, error) {
+		assert.True(t, committed, "keyring finalization must run after the commit")
+		return fmt.Sprintf("[client.radosgw.gateway]\n\tkey = %s\n\tcaps mon = \"allow rw\"\n\tcaps osd = \"allow rwx\"\n", newKey), nil
+	}
+
+	rgwKeyringPath := filepath.Join(tmpDir, "data", "radosgw", "ceph-radosgw.gateway", "keyring")
+	restarts := 0
+	restartTimeContent := ""
+	restartTimeReadErr := error(nil)
+	snapRestartFunc = func(service string, isReload bool) error {
+		restarts++
+		assert.Equal(t, "rgw", service)
+		// The daemon loads its keyring at this moment: it must already be a
+		// loadable keyring whose active key is the pending key. A file holding
+		// get-or-create-pending's raw two-key output would be rejected by
+		// KeyRing::decode (malformed_input on "pending key") and the daemon
+		// would not come back up.
+		content, err := os.ReadFile(rgwKeyringPath)
+		restartTimeContent = string(content)
+		restartTimeReadErr = err
 		return nil
 	}
 
@@ -1025,15 +1382,72 @@ func TestRotateSingleClientKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, pendingIssued)
 	assert.True(t, committed)
-	assert.True(t, reloaded)
+	assert.Equal(t, 1, restarts)
+	require.NoError(t, restartTimeReadErr)
 
-	// 2. Blocked case
-	inspectClientSessionBlockersFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
-		return map[string]string{"client.radosgw.gateway": "session incompatible"}, nil
+	// The keyring the daemon would have loaded at restart carries the pending
+	// key as the active key, with nothing KeyRing::decode would reject.
+	parsed, err := ParseKeyring(rgwKeyringPath)
+	require.NoError(t, err)
+	assert.Equal(t, newKey, parsed)
+	assert.NotContains(t, restartTimeContent, "pending")
+	assert.NotContains(t, restartTimeContent, oldKey)
+
+	// Feed the final written files back through the keyring parser: the active
+	// key must be the committed pending key, with no stale pending entry or
+	// retired key left behind.
+	for _, p := range []string{
+		rgwKeyringPath,
+		filepath.Join(tmpDir, "current", "conf", "ceph.client.radosgw.gateway.keyring"),
+	} {
+		parsed, err := ParseKeyring(p)
+		require.NoError(t, err)
+		assert.Equal(t, newKey, parsed)
+
+		content, err := os.ReadFile(p)
+		require.NoError(t, err)
+		assert.NotContains(t, string(content), "pending")
+		assert.NotContains(t, string(content), oldKey)
+	}
+
+	// 2. Finalization failure surfaces: the commit has happened, so the error must
+	//    not be swallowed.
+	getEntityKeyringFunc = func(ctx context.Context, entity string) (string, error) {
+		return "", fmt.Errorf("auth get failed")
 	}
 	err = RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch committed keyring")
+
+	// 3. Distribution failure aborts before the commit: the old key stays active
+	//    and the consumer keeps working on it.
+	commitCalls := 0
+	getOrCreatePendingKeyFunc = func(ctx context.Context, entity string) (string, error) {
+		return newKey, nil
+	}
+	commitPendingKeyFunc = func(ctx context.Context, entity string) error {
+		commitCalls++
+		return nil
+	}
+	// Make the distribution write fail: point SNAP_COMMON at a regular file so
+	// creating the keyring directory underneath it fails.
+	t.Setenv("SNAP_COMMON", filepath.Join(tmpDir, "not-a-dir"))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "not-a-dir"), []byte("x"), 0400))
+
+	err = RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to write client keyring")
+	assert.Equal(t, 0, commitCalls, "commit must not run when distribution fails")
+
+	// 4. Blocked case: no pending key is issued at all.
+	inspectClientSessionBlockersFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
+		return map[string]string{"client.radosgw.gateway": "session incompatible"}, nil
+	}
+	pendingIssued = false
+	err = RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "session incompatible")
+	assert.False(t, pendingIssued)
 }
 
 func TestRotateManagedClientsPipeline(t *testing.T) {
@@ -1170,6 +1584,82 @@ func TestDisallowInsecureLegacyCiphers(t *testing.T) {
 	assert.Equal(t, []string{"aes256k"}, currentAllowed)
 }
 
+func TestBuildAuthStatus(t *testing.T) {
+	origDumpKeys := dumpAuthKeysFunc
+	origHealth := getAuthHealthWarningsFunc
+	defer func() {
+		dumpAuthKeysFunc = origDumpKeys
+		getAuthHealthWarningsFunc = origHealth
+	}()
+
+	// 1. Mixed ciphers across daemons and clients, with active health warnings.
+	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
+		return []AuthKeyEntry{
+			{EntityName: "mon.", EntityType: "mon", KeyType: "aes256k"},
+			{EntityName: "mgr.node-a", EntityType: "mgr", KeyType: "aes"},
+			{EntityName: "osd.0", EntityType: "osd", KeyType: "aes"},
+			{EntityName: "client.admin", EntityType: "client", KeyType: "aes256k"},
+			{EntityName: "client.rgw", EntityType: "client", KeyType: "aes"},
+			{EntityName: "client.notype", EntityType: "client", KeyType: ""},
+		}, nil
+	}
+	getAuthHealthWarningsFunc = func(ctx context.Context) (AuthHealthWarnings, error) {
+		return AuthHealthWarnings{
+			InsecureRotatingKeyType: true,
+			InsecureKeysAllowed:     true,
+		}, nil
+	}
+
+	resp, err := BuildAuthStatus(context.Background(), nil)
+	require.NoError(t, err)
+
+	// Daemon keys are counted in their own distribution.
+	assert.Equal(t, map[string][]string{
+		"aes256k": {"mon."},
+		"aes":     {"mgr.node-a", "osd.0"},
+	}, resp.ServiceDistribution)
+
+	// Client keys keep their own distribution; a missing key type buckets as unknown.
+	assert.Equal(t, map[string][]string{
+		"aes256k": {"client.admin"},
+		"aes":     {"client.rgw"},
+		"unknown": {"client.notype"},
+	}, resp.ClientDistribution)
+
+	// Mixed Status carries counts only; names live in the distributions.
+	assert.Equal(t, "1 clients on aes, 1 clients on aes256k, 1 clients on unknown", resp.Status)
+
+	assert.Equal(t, []string{
+		"AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE",
+		"AUTH_INSECURE_KEYS_ALLOWED",
+	}, resp.HealthWarnings)
+
+	// 2. Uniform clients: spec "All client <cipher>" summary.
+	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
+		return []AuthKeyEntry{
+			{EntityName: "mon.", EntityType: "mon", KeyType: "aes256k"},
+			{EntityName: "client.admin", EntityType: "client", KeyType: "aes256k"},
+			{EntityName: "client.rgw", EntityType: "client", KeyType: "aes256k"},
+		}, nil
+	}
+	getAuthHealthWarningsFunc = func(ctx context.Context) (AuthHealthWarnings, error) {
+		return AuthHealthWarnings{}, nil
+	}
+
+	resp, err = BuildAuthStatus(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "All client aes256k", resp.Status)
+	assert.Empty(t, resp.HealthWarnings)
+
+	// 3. Health query failure is best effort and must not fail the status call.
+	getAuthHealthWarningsFunc = func(ctx context.Context) (AuthHealthWarnings, error) {
+		return AuthHealthWarnings{}, fmt.Errorf("ceph down")
+	}
+	resp, err = BuildAuthStatus(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Empty(t, resp.HealthWarnings)
+}
+
 func TestExecuteAuthRotationFullPipeline(t *testing.T) {
 	origResolve := resolveTargetKeyTypeFunc
 	origReadiness := checkAuthRotationReadinessFunc
@@ -1202,7 +1692,7 @@ func TestExecuteAuthRotationFullPipeline(t *testing.T) {
 		stages = append(stages, "prepare_auth")
 		return nil
 	}
-	rotateDaemonsFunc = func(ctx context.Context, targetKeyType string) error {
+	rotateDaemonsFunc = func(ctx context.Context, s interfaces.StateInterface, targetKeyType string) error {
 		stages = append(stages, "rotate_daemons")
 		return nil
 	}
@@ -1266,4 +1756,3 @@ func TestExecuteAuthRotationFullPipeline(t *testing.T) {
 	assert.True(t, singleClientRotated)
 	assert.Equal(t, "completed", rec.State)
 }
-

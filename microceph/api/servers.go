@@ -55,6 +55,7 @@ var Servers = map[string]mcTypes.Server{
 					// Auth rotation APIs
 					authCmd,
 					authRotateCmd,
+					authRotateMemberCmd,
 					authStatusCmd,
 				},
 			},

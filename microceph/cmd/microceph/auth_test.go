@@ -34,29 +34,118 @@ func TestAuthCommandHierarchy(t *testing.T) {
 	assert.NotNil(t, statusCmd.Flags().Lookup("json"))
 }
 
+func TestAuthRotateArgsRejectPositional(t *testing.T) {
+	commonCmd := &CmdControl{}
+	c := &cmdAuthRotate{common: commonCmd}
+	cmd := c.Command()
+
+	// 'microceph auth rotate aes256k' must fail with a --key-type hint instead of
+	// silently starting a full rotation with the default key type.
+	err := cmd.Args(cmd, []string{"aes256k"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--key-type")
+
+	// No positional arguments: accepted.
+	err = cmd.Args(cmd, nil)
+	require.NoError(t, err)
+}
+
+func TestAuthStatusArgsRejectPositional(t *testing.T) {
+	commonCmd := &CmdControl{}
+	c := &cmdAuthStatus{common: commonCmd}
+	cmd := c.Command()
+
+	err := cmd.Args(cmd, []string{"json"})
+	require.Error(t, err)
+
+	err = cmd.Args(cmd, nil)
+	require.NoError(t, err)
+}
+
+func TestProcessExitCode(t *testing.T) {
+	assert.Equal(t, 0, processExitCode(nil))
+	assert.Equal(t, 1, processExitCode(fmt.Errorf("generic failure")))
+	assert.Equal(t, authRotationBlockedExitCode, processExitCode(&exitCodeError{
+		code: authRotationBlockedExitCode,
+		err:  fmt.Errorf("auth rotation is blocked"),
+	}))
+	// Wrapped exit-code errors keep their code.
+	assert.Equal(t, authRotationBlockedExitCode, processExitCode(fmt.Errorf("outer: %w", &exitCodeError{
+		code: authRotationBlockedExitCode,
+		err:  fmt.Errorf("auth rotation is blocked"),
+	})))
+}
+
 func TestFormatAuthStatusText(t *testing.T) {
-	// 1. Blocked status with blocker
+	// 1. Blocked status with blocker: spec lines plus rotation record details.
 	respBlocked := &types.AuthStatusResponse{
-		Status:  "blocked",
-		Blocker: "Unmanaged credentials must be rotated manually before rotation can proceed",
+		Status:        "blocked",
+		State:         "blocked",
+		Stage:         "rotate_clients",
+		Blocker:       "Unmanaged credentials must be rotated manually before rotation can proceed",
+		TargetKeyType: "aes256k",
 	}
 	out := formatAuthStatusText(respBlocked)
 	assert.Contains(t, out, "Status: blocked\n")
 	assert.Contains(t, out, "Blocker: Unmanaged credentials must be rotated manually before rotation can proceed\n")
+	assert.Contains(t, out, "State: blocked\n")
+	assert.Contains(t, out, "Stage: rotate_clients\n")
+	assert.Contains(t, out, "Target key type: aes256k\n")
 
-	// 2. Uniform cipher status
+	// 2. Uniform cipher status: no per-client listing.
 	respUniform := &types.AuthStatusResponse{
 		Status: "All client aes256k",
+		State:  "idle",
+		ClientDistribution: map[string][]string{
+			"aes256k": {"client.admin", "client.rgw"},
+		},
 	}
 	out = formatAuthStatusText(respUniform)
-	assert.Equal(t, "Status: All client aes256k\n", out)
+	assert.Equal(t, "Status: All client aes256k\nState: idle\n", out)
 
-	// 3. Mixed client cipher status
+	// 3. Mixed client ciphers: counts on the Status line, names on indented
+	//    per-cipher lines instead of one enormous line.
 	respMixed := &types.AuthStatusResponse{
-		Status: "1 clients on aes, 1 clients on aes256k (aes: client.X, aes256k: client.Y)",
+		Status: "2 clients on aes, 1 clients on aes256k",
+		State:  "in_progress",
+		ClientDistribution: map[string][]string{
+			"aes":     {"client.X", "client.Y"},
+			"aes256k": {"client.Z"},
+		},
 	}
 	out = formatAuthStatusText(respMixed)
-	assert.Equal(t, "Status: 1 clients on aes, 1 clients on aes256k (aes: client.X, aes256k: client.Y)\n", out)
+	assert.Contains(t, out, "Status: 2 clients on aes, 1 clients on aes256k\n")
+	assert.Contains(t, out, "  aes: client.X, client.Y\n")
+	assert.Contains(t, out, "  aes256k: client.Z\n")
+	assert.NotContains(t, out, "(aes:")
+
+	// 4. Service keys line with per-cipher listing when mixed.
+	respServices := &types.AuthStatusResponse{
+		Status: "All client aes256k",
+		State:  "in_progress",
+		ServiceDistribution: map[string][]string{
+			"aes":     {"mon.", "mgr.node-a"},
+			"aes256k": {"osd.0", "mds.node-a"},
+		},
+	}
+	out = formatAuthStatusText(respServices)
+	assert.Contains(t, out, "Service keys: 2 on aes, 2 on aes256k\n")
+	assert.Contains(t, out, "  aes: mon., mgr.node-a\n")
+	assert.Contains(t, out, "  aes256k: osd.0, mds.node-a\n")
+
+	// 5. Warnings block, with the natural-expiry hint for rotating service keys.
+	respWarnings := &types.AuthStatusResponse{
+		Status: "All client aes256k",
+		State:  "in_progress",
+		HealthWarnings: []string{
+			"AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE",
+			"AUTH_INSECURE_KEYS_ALLOWED",
+		},
+	}
+	out = formatAuthStatusText(respWarnings)
+	assert.Contains(t, out, "Warnings:\n")
+	assert.Contains(t, out, "  AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE (waiting for old rotating service keys to expire)\n")
+	assert.Contains(t, out, "  AUTH_INSECURE_KEYS_ALLOWED\n")
 }
 
 func TestAuthRotateRun(t *testing.T) {
