@@ -100,6 +100,9 @@ func cmdMonGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 
 }
 
+// servicePlacementHandlerFunc allows handler tests to inject placement failures.
+var servicePlacementHandlerFunc = ceph.ServicePlacementHandler
+
 func cmdEnableServicePut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var payload types.EnableService
 
@@ -109,7 +112,7 @@ func cmdEnableServicePut(s mcTypes.State, r *http.Request) mcTypes.Response {
 		return mcTypes.BadRequest(err)
 	}
 
-	err = ceph.ServicePlacementHandler(r.Context(), interfaces.CephState{State: s}, payload)
+	err = servicePlacementHandlerFunc(r.Context(), interfaces.CephState{State: s}, payload)
 	if err != nil {
 		// Not SyncResponse(false, err), which would answer 200. See serviceErrorResponse.
 		return serviceErrorResponse(err)
