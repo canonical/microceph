@@ -170,9 +170,10 @@ func TestRGWFrontendCascadeOnMemberRemoval(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 
-	frontends, err := GetRGWFrontends(ctx, tx)
+	var count int
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rgw_frontends`).Scan(&count)
 	require.NoError(t, err)
-	assert.Empty(t, frontends, "removing the member must cascade-delete its frontend row")
+	assert.Zero(t, count, "removing the member must cascade-delete its frontend row")
 }
 
 func TestRGWFrontendRejectsUnknownMember(t *testing.T) {
