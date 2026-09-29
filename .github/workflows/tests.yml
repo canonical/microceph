@@ -149,6 +149,10 @@ jobs:
             name: Test with loopback file OSDs
             suite: loop-file-tests
 
+          - id: pebble-service-control-tests
+            name: Individual Pebble OSD service control
+            suite: pebble-service-control-tests
+
           - id: wal-db-tests
             name: Test WAL/DB device usage
             suite: wal-db-tests

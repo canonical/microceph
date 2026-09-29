@@ -20,23 +20,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/canonical/microceph/microceph/common"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/dsl"
-	"github.com/canonical/microceph/microceph/interfaces"
-
+	"github.com/canonical/lxd/shared"
+	"github.com/canonical/lxd/shared/api"
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
+	"github.com/pborman/uuid"
 	"github.com/spf13/afero"
 	"github.com/tidwall/gjson"
 
-	"github.com/canonical/lxd/shared/api"
-	"github.com/canonical/lxd/shared/revert"
-
-	"github.com/canonical/lxd/shared"
-	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
-	"github.com/pborman/uuid"
-
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/dsl"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
 )
 
@@ -780,11 +776,6 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 		return fmt.Errorf("failed to bootstrap OSD: %w", err)
 	}
 
-	// Write the stamp file.
-	err = afero.WriteFile(m.fs, filepath.Join(osdDataPath, "ready"), []byte(""), 0600)
-	if err != nil {
-		return fmt.Errorf("failed to write stamp file: %w", err)
-	}
 	logger.Infof("OSD %s bootstrapped successfully", osdDataPath)
 	return nil
 }
@@ -1064,17 +1055,33 @@ func (m *OSDManager) suppressOSDAutostart(osd int64) (func() error, bool, error)
 			if !os.IsNotExist(suppressedErr) {
 				return nil, false, fmt.Errorf("failed to inspect suppressed autostart marker for osd.%d: %w", osd, suppressedErr)
 			}
-			return func() error { return nil }, false, nil
+			_, pathErr := m.fs.Stat(osdDataPath)
+			if os.IsNotExist(pathErr) {
+				return func() error { return nil }, false, nil
+			}
+			if pathErr != nil {
+				return nil, false, pathErr
+			}
+			// Fence even an unpublished directory so a late ready publication
+			// cannot race retirement. There was no autostart state to restore.
+			writeErr := afero.WriteFile(m.fs, suppressedPath, nil, 0600)
+			if writeErr != nil {
+				return nil, false, writeErr
+			}
+			return func() error { return nil }, true, nil
 		}
 		return nil, false, fmt.Errorf("failed to inspect autostart marker for osd.%d: %w", osd, err)
 	}
 
 	_, err = m.fs.Stat(suppressedPath)
 	if err == nil {
-		removeErr := m.fs.Remove(suppressedPath)
+		// Suppression wins if both markers exist. Never expose even a brief
+		// eligible window by deleting the existing fence.
+		removeErr := m.fs.Remove(readyPath)
 		if removeErr != nil {
-			return nil, false, fmt.Errorf("failed to clear stale suppressed autostart marker for osd.%d: %w", osd, removeErr)
+			return nil, false, removeErr
 		}
+		return func() error { return m.restoreOSDAutostart(osd) }, true, nil
 	} else if !os.IsNotExist(err) {
 		return nil, false, fmt.Errorf("failed to inspect stale suppressed autostart marker for osd.%d: %w", osd, err)
 	}
@@ -1118,17 +1125,38 @@ func (m *OSDManager) restoreOSDAutostart(osd int64) error {
 	return nil
 }
 
-func (m *OSDManager) setupRevert(ctx context.Context, data *types.DiskParameter, osdDataPath string) *revert.Reverter {
-	revt := revert.New()
-	revt.Add(func() {
-		// try to cleanup, but don't fail
-		_ = m.fs.RemoveAll(osdDataPath)
-		_ = m.state.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			_ = database.DeleteDisk(ctx, tx, m.state.Name(), data.Path)
-			return nil
-		})
+// rollbackAddOSD fences any possibly published service before touching its
+// directory, generated WAL/DB devices, or database recovery record.
+func (m *OSDManager) rollbackAddOSD(ctx context.Context, data *types.DiskParameter, nr int64, generatedAux *generatedAuxDevicesManifest, published bool) error {
+	if nr >= 0 && published {
+		_, _, err := m.suppressOSDAutostart(nr)
+		if err != nil {
+			return err
+		}
+		err = m.killOSD(nr)
+		if err != nil {
+			return fmt.Errorf("preserving osd.%d storage and record: %w", nr, err)
+		}
+	}
+
+	cleanupID := nr
+	if cleanupID < 0 {
+		cleanupID = 0
+	}
+	err := m.cleanupGeneratedAuxEntries(ctx, generatedAux, cleanupID)
+	if err != nil {
+		return fmt.Errorf("failed to clean generated WAL/DB partitions: %w", err)
+	}
+	if nr < 0 {
+		return nil
+	}
+	err = m.fs.RemoveAll(getOSDDataPath(nr))
+	if err != nil {
+		return err
+	}
+	return m.state.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return database.DeleteDisk(ctx, tx, m.state.Name(), data.Path)
 	})
-	return revt
 }
 
 func (m *OSDManager) prepareOSDData(ctx context.Context, data *types.DiskParameter, osdDataPath string, nr int64) error {
@@ -1180,37 +1208,30 @@ func (m *OSDManager) generateOSDFiles(osdDataPath string, nr int64) error {
 func (m *OSDManager) spawnOSD(nr int64) error {
 	logger.Infof("Spawning OSD %d", nr)
 	err := snapRestart("osd", true)
-	if err == nil {
-		return nil
-	}
-
-	logger.Warnf("Initial OSD service restart failed for osd.%d, retrying after cooldown: %v", nr, err)
-	time.Sleep(15 * time.Second)
-
-	err = snapStart("osd", true)
 	if err != nil {
-		return fmt.Errorf("failed to start osd.%d: %w", nr, err)
+		logger.Warnf("Initial OSD service restart failed for osd.%d, retrying after cooldown: %v", nr, err)
+		time.Sleep(15 * time.Second)
+
+		err = snapStart("osd", true)
+		if err != nil {
+			return fmt.Errorf("failed to start osd.%d: %w", nr, err)
+		}
 	}
-	return nil
+	return pebbleCommand(m.runner, "wait-ready", fmt.Sprintf("osd-%d", nr))
 }
 
 func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskParameter, wal *types.DiskParameter, db *types.DiskParameter, storage *api.ResourcesStorage, generatedAux *generatedAuxDevicesManifest) (retErr error) {
 	var err error
 	nr := int64(-1)
+	publicationAttempted := false
 	defer func() {
-		if retErr == nil || generatedAux == nil {
+		if retErr == nil {
 			return
 		}
-
-		cleanupOSDID := nr
-		if cleanupOSDID < 0 {
-			cleanupOSDID = 0
-		}
-
-		cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, cleanupOSDID)
+		cleanupErr := m.rollbackAddOSD(ctx, &data, nr, generatedAux, publicationAttempted)
 		if cleanupErr != nil {
-			logger.Errorf("failed to clean generated WAL/DB partitions after add failure: %v", cleanupErr)
-			retErr = fmt.Errorf("%w (automatic cleanup of generated WAL/DB partitions also failed: %v)", retErr, cleanupErr)
+			logger.Errorf("failed-add cleanup incomplete: %v", cleanupErr)
+			retErr = errors.Join(retErr, fmt.Errorf("failed-add cleanup incomplete: %w", cleanupErr))
 		}
 	}()
 
@@ -1236,9 +1257,6 @@ func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskPar
 
 	osdDataPath := getOSDDataPath(nr)
 	logger.Infof("osd data path: %s", osdDataPath)
-	revert := m.setupRevert(ctx, &data, osdDataPath)
-	defer revert.Fail()
-
 	err = m.prepareOSDData(ctx, &data, osdDataPath, nr)
 	if err != nil {
 		logger.Errorf("failed to prepare OSD data for %s: %v", data.Path, err)
@@ -1287,6 +1305,14 @@ func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskPar
 		return err
 	}
 
+	// Mark the attempt before publishing: a lost response may still have made
+	// the OSD eligible for a concurrent raw Snap start or reload.
+	publicationAttempted = true
+	err = pebbleCommand(m.runner, "osd-ready", strconv.FormatInt(nr, 10))
+	if err != nil {
+		return fmt.Errorf("failed to publish osd.%d ready marker: %w", nr, err)
+	}
+
 	err = m.spawnOSD(nr)
 	if err != nil {
 		logger.Errorf("failed to spawn OSD %d: %v", nr, err)
@@ -1305,7 +1331,6 @@ func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskPar
 		return err
 	}
 
-	revert.Success()
 	logger.Infof("Added osd.%d", nr)
 	return nil
 }
@@ -2065,9 +2090,8 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 			return err
 		}
 	}
-	// Stop-gap until we have per-OSD systemd units: suppress the per-OSD ready marker before
-	// stopping the shared microceph.osd service so systemd restarts cannot immediately respawn
-	// the OSD we are trying to remove.
+	// Suppress eligibility before retiring the named Pebble service so a raw
+	// Snap restart or reload cannot respawn the OSD during cleanup.
 	restoreAutostart, autostartSuppressed, err := m.suppressOSDAutostart(osd)
 	if err != nil {
 		return fmt.Errorf("failed to suppress autostart for osd.%d before removal: %w", osd, err)
@@ -2086,7 +2110,8 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	// stop the OSD process before touching local storage, even if the OSD is not yet visible in Ceph.
 	err = m.killOSD(osd)
 	if err != nil {
-		logger.Warnf("Failed to stop local osd.%d process prior to storage cleanup: %v", osd, err)
+		restoreAutostartOnError = false
+		return fmt.Errorf("failed to stop local osd.%d; preserving storage and autostart fence: %w", osd, err)
 	}
 	if !isPresent {
 		isPresent, err = m.waitForOSDPresence(osd, osdPresenceRetryWindow)
@@ -2356,39 +2381,12 @@ func (m *OSDManager) haveOSDInCeph(osd int64) (bool, error) {
 }
 
 var (
-	osdKillGracePeriod      = 10 * time.Second
-	osdKillForceGracePeriod = 5 * time.Second
-	osdKillPollInterval     = 250 * time.Millisecond
 	osdPresenceRetryWindow  = 5 * time.Second
 	osdPresencePollInterval = 250 * time.Millisecond
 	// purgeRetrySleepFunc is the sleep function used between purgeOSD retry attempts.
 	// Replaced in tests to avoid slow backoff delays.
 	purgeRetrySleepFunc = time.Sleep
 )
-
-func isExitCode(err error, code int) bool {
-	var exitError *exec.ExitError
-	return errors.As(err, &exitError) && exitError.ExitCode() == code
-}
-
-func (m *OSDManager) waitForOSDExit(cmdline string, timeout time.Duration) (bool, error) {
-	deadline := time.Now().Add(timeout)
-	for {
-		_, err := m.runner.RunCommand("pgrep", "-f", cmdline)
-		if err != nil {
-			if isExitCode(err, 1) {
-				return true, nil
-			}
-			return false, fmt.Errorf("failed to query OSD process state for %q: %w", cmdline, err)
-		}
-
-		if time.Now().After(deadline) {
-			return false, nil
-		}
-
-		time.Sleep(osdKillPollInterval)
-	}
-}
 
 func (m *OSDManager) waitForOSDPresence(osd int64, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
@@ -2407,43 +2405,11 @@ func (m *OSDManager) waitForOSDPresence(osd int64, timeout time.Duration) (bool,
 	}
 }
 
-// killOSD terminates the osd process for an osd.id.
+// killOSD retires a named service and requires independently verified exit.
+// The caller must suppress autostart before invoking it. There is no PID-regex
+// fallback: any uncertain result must prevent destructive cleanup.
 func (m *OSDManager) killOSD(osd int64) error {
-	cmdline := fmt.Sprintf("ceph-osd .* --id %d$", osd)
-	_, err := m.runner.RunCommand("pkill", "-f", cmdline)
-	if err != nil {
-		if isExitCode(err, 1) {
-			logger.Infof("osd.%d process is already stopped", osd)
-			return nil
-		}
-		logger.Errorf("Failed to kill osd.%d: %v", osd, err)
-		return fmt.Errorf("failed to kill osd.%d: %w", osd, err)
-	}
-
-	exited, err := m.waitForOSDExit(cmdline, osdKillGracePeriod)
-	if err != nil {
-		return err
-	}
-	if exited {
-		return nil
-	}
-
-	logger.Warnf("osd.%d did not exit after SIGTERM, sending SIGKILL", osd)
-	_, err = m.runner.RunCommand("pkill", "-9", "-f", cmdline)
-	if err != nil {
-		logger.Errorf("Failed to force kill osd.%d: %v", osd, err)
-		return fmt.Errorf("failed to force kill osd.%d: %w", osd, err)
-	}
-
-	exited, err = m.waitForOSDExit(cmdline, osdKillForceGracePeriod)
-	if err != nil {
-		return err
-	}
-	if !exited {
-		return fmt.Errorf("timed out waiting for osd.%d to exit after SIGKILL", osd)
-	}
-
-	return nil
+	return pebbleCommand(m.runner, "osd-stop", strconv.FormatInt(osd, 10))
 }
 
 func SetReplicationFactor(pools []string, size int64) error {
