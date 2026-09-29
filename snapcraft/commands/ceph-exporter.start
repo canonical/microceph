@@ -1,0 +1,7 @@
+#!/bin/bash
+
+. "${SNAP}/commands/common"
+
+limits
+
+exec ceph-exporter -f --cluster ceph --id "ceph-exporter.$(hostname)"
