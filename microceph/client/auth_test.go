@@ -44,6 +44,10 @@ func (f *fakeAuthClient) Query(ctx context.Context, method string, prefix mcType
 			if resp, ok := f.out.(*types.AuthStatusResponse); ok {
 				*o = *resp
 			}
+		case *types.MemberAuthRotateResponse:
+			if resp, ok := f.out.(*types.MemberAuthRotateResponse); ok {
+				*o = *resp
+			}
 		}
 	}
 
@@ -115,4 +119,33 @@ func TestGetAuthStatusClient(t *testing.T) {
 	assert.Equal(t, "/auth/status", c.url)
 	assert.Equal(t, "All client aes256k", resp.Status)
 	assert.Equal(t, "completed", resp.State)
+}
+
+func TestRotateAuthMemberClient(t *testing.T) {
+	c := &fakeAuthClient{
+		out: &types.MemberAuthRotateResponse{
+			Hostname:     "node-b",
+			MonRestarted: true,
+			RotatedMgrs:  []string{"node-b"},
+			RotatedOSDs:  []string{"0"},
+		},
+	}
+
+	req := &types.MemberAuthRotateRequest{
+		KeyType:    "aes256k",
+		MonKeyring: "[mon.]\n\tkey = MONKEY==\n",
+	}
+	resp, err := RotateAuthMember(context.Background(), c, req)
+	require.NoError(t, err)
+	assert.Equal(t, "POST", c.method)
+	assert.Equal(t, types.ExtendedPathPrefix, c.prefix)
+	assert.Equal(t, "/auth/rotate/member", c.url)
+
+	sent, ok := c.in.(*types.MemberAuthRotateRequest)
+	require.True(t, ok)
+	assert.Equal(t, "aes256k", sent.KeyType)
+	assert.Equal(t, "[mon.]\n\tkey = MONKEY==\n", sent.MonKeyring)
+
+	assert.Equal(t, "node-b", resp.Hostname)
+	assert.True(t, resp.MonRestarted)
 }

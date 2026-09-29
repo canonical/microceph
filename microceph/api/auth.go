@@ -30,9 +30,18 @@ var authStatusCmd = mcTypes.Endpoint{
 	Get:  mcTypes.EndpointAction{Handler: cmdAuthStatusGet, ProxyTarget: true},
 }
 
+// /1.0/auth/rotate/member endpoint: the per-member daemon rotation step. The
+// coordinator calls this on each member (one at a time) so every member rotates
+// and restarts only its own daemons, writing keyrings on the machine that runs them.
+var authRotateMemberCmd = mcTypes.Endpoint{
+	Path: "auth/rotate/member",
+	Post: mcTypes.EndpointAction{Handler: cmdAuthRotateMemberPost, ProxyTarget: true},
+}
+
 var (
 	executeAuthRotationFunc = ceph.ExecuteAuthRotation
 	buildAuthStatusFunc     = ceph.BuildAuthStatus
+	rotateMemberDaemonsFunc = ceph.RotateMemberDaemons
 )
 
 // cmdAuthRotatePost handles auth rotation initiation or resumption.
@@ -70,6 +79,43 @@ func cmdAuthStatusGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 	if err != nil {
 		logger.Errorf("Failed building auth status: %v", err)
 		return mcTypes.InternalError(err)
+	}
+
+	return mcTypes.SyncResponse(true, resp)
+}
+
+// cmdAuthRotateMemberPost handles the per-member daemon rotation step: this member
+// deploys the shared mon. keyring (if it runs a mon), then stops, rotates, and
+// restarts only its own mgr/osd/mds daemons, verifying recovery before replying.
+func cmdAuthRotateMemberPost(s mcTypes.State, r *http.Request) mcTypes.Response {
+	var req types.MemberAuthRotateRequest
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		return mcTypes.BadRequest(fmt.Errorf("failed to decode request body: %w", err))
+	}
+
+	if req.KeyType == "" {
+		return mcTypes.BadRequest(fmt.Errorf("key_type is required for per-member daemon rotation"))
+	}
+
+	summary, err := rotateMemberDaemonsFunc(r.Context(), interfaces.CephState{State: s}, req.KeyType, req.MonKeyring)
+	if err != nil {
+		logger.Errorf("Failed member daemon rotation: %v", err)
+		return mcTypes.InternalError(err)
+	}
+
+	osdIDs := make([]string, 0, len(summary.RotatedOSDs))
+	for _, id := range summary.RotatedOSDs {
+		osdIDs = append(osdIDs, fmt.Sprintf("%d", id))
+	}
+
+	resp := types.MemberAuthRotateResponse{
+		Hostname:     summary.Hostname,
+		MonRestarted: summary.MonRestarted,
+		RotatedMgrs:  summary.RotatedMgrs,
+		RotatedOSDs:  osdIDs,
+		RotatedMDSs:  summary.RotatedMDSs,
 	}
 
 	return mcTypes.SyncResponse(true, resp)

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
@@ -104,4 +105,61 @@ func TestCmdAuthStatusGet(t *testing.T) {
 	assert.Equal(t, "All client aes256k", raw.Metadata.Status)
 	assert.Equal(t, "completed", raw.Metadata.State)
 	assert.Len(t, raw.Metadata.ClientDistribution["aes256k"], 2)
+}
+
+func TestCmdAuthRotateMemberPost(t *testing.T) {
+	origMember := rotateMemberDaemonsFunc
+	defer func() { rotateMemberDaemonsFunc = origMember }()
+
+	// 1. Success: summary mapped onto the response.
+	rotateMemberDaemonsFunc = func(ctx context.Context, s interfaces.StateInterface, keyType string, monKeyring string) (*ceph.MemberRotationSummary, error) {
+		assert.Equal(t, "aes256k", keyType)
+		assert.Equal(t, "[mon.]\n\tkey = MONKEY==\n", monKeyring)
+		return &ceph.MemberRotationSummary{
+			Hostname:     "node-a",
+			MonRestarted: true,
+			RotatedMgrs:  []string{"node-a"},
+			RotatedOSDs:  []int64{0, 2},
+		}, nil
+	}
+
+	body := strings.NewReader(`{"key_type": "aes256k", "mon_keyring": "[mon.]\n\tkey = MONKEY==\n"}`)
+	req := httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate/member", body)
+	rec := httptest.NewRecorder()
+
+	resp := cmdAuthRotateMemberPost(nil, req)
+	err := resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var raw struct {
+		Metadata types.MemberAuthRotateResponse `json:"metadata"`
+	}
+	err = json.NewDecoder(rec.Body).Decode(&raw)
+	require.NoError(t, err)
+	assert.Equal(t, "node-a", raw.Metadata.Hostname)
+	assert.True(t, raw.Metadata.MonRestarted)
+	assert.Equal(t, []string{"node-a"}, raw.Metadata.RotatedMgrs)
+	assert.Equal(t, []string{"0", "2"}, raw.Metadata.RotatedOSDs)
+
+	// 2. Missing key_type is rejected.
+	body = strings.NewReader(`{"mon_keyring": "[mon.]"}`)
+	req = httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate/member", body)
+	rec = httptest.NewRecorder()
+	resp = cmdAuthRotateMemberPost(nil, req)
+	err = resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// 3. Member rotation failure surfaces as an internal error.
+	rotateMemberDaemonsFunc = func(ctx context.Context, s interfaces.StateInterface, keyType string, monKeyring string) (*ceph.MemberRotationSummary, error) {
+		return nil, fmt.Errorf("mgr start failed")
+	}
+	body = strings.NewReader(`{"key_type": "aes256k"}`)
+	req = httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate/member", body)
+	rec = httptest.NewRecorder()
+	resp = cmdAuthRotateMemberPost(nil, req)
+	err = resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }

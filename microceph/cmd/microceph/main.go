@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"os"
 
 	cli "github.com/canonical/lxd/shared/cmd"
@@ -114,3 +115,4 @@ func newRootCommand() *cobra.Command {
 
 	return app
 }
+
