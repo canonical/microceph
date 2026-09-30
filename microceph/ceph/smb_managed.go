@@ -3,189 +3,191 @@ package ceph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
-	"time"
+
+	"github.com/pborman/uuid"
 
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
 
 var ensureManagedSMBBackendFunc = ensureManagedSMBBackend
-var getManagedSMBMembersFunc = getManagedSMBMembers
 var createManagedSMBClusterFunc = createManagedSMBCluster
 var loadManagedSMBClusterFunc = loadManagedSMBCluster
 var applyManagedSMBClusterFunc = applyManagedSMBCluster
 var removeManagedSMBClusterFunc = removeManagedSMBCluster
+var disableSMBLocalFunc = DisableSMB
 
-const managedSMBMemberWaitTimeout = time.Minute
+// ErrManagedSMBOutcomeUnknown means remote work may still be running or partially
+// applied. Inspect upstream state rather than blindly retrying the mutation.
+var ErrManagedSMBOutcomeUnknown = errors.New("SMB update outcome is uncertain; inspect Ceph state before retrying")
 
-// EnableManagedSMB adds the local target member to a managed SMB cluster.
+// EnableManagedSMB submits a target's configuration to Ceph's SMB manager.
+// Concurrent full-placement updates follow upstream replacement semantics.
+// Initial creation succeeds without member callbacks: Ceph waits for a share.
 func EnableManagedSMB(ctx context.Context, s interfaces.StateInterface, request types.ManagedSMBService) error {
-	members, err := getManagedSMBMembersFunc(ctx, s, request.ClusterID)
+	err := ensureManagedSMBBackendFunc(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to list managed SMB members: %w", err)
+		return err
 	}
-
-	target := s.ClusterState().Name()
-	if len(members) == 0 && len(request.DefineUserPass) == 0 && len(request.UserGroupRefs) == 0 {
-		_, loadErr := loadManagedSMBClusterFunc(request.ClusterID)
-		if loadErr != nil {
+	resource, err := loadManagedSMBClusterFunc(ctx, request.ClusterID)
+	if errors.Is(err, os.ErrNotExist) {
+		if request.Credentials == nil && len(request.UserGroupRefs) == 0 {
 			return fmt.Errorf("new managed SMB cluster requires a user or user-group resource")
 		}
-		waitCtx, cancel := context.WithTimeout(ctx, managedSMBMemberWaitTimeout)
-		defer cancel()
-		members, err = waitForManagedSMBMembers(waitCtx, s, request.ClusterID)
-		if err != nil {
-			return fmt.Errorf("failed waiting for initial managed SMB member: %w", err)
-		}
+		return createManagedSMBClusterFunc(ctx, request, []string{s.ClusterState().Name()})
 	}
-	if len(members) == 0 {
-		err = ensureManagedSMBBackendFunc(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to prepare managed SMB backend: %w", err)
-		}
-		err = createManagedSMBClusterFunc(request, []string{target})
-		if err != nil {
-			return fmt.Errorf("failed to create managed SMB cluster: %w", err)
-		}
-		return nil
+	if err != nil {
+		return fmt.Errorf("failed to load managed SMB cluster: %w", err)
 	}
-
-	if len(request.DefineUserPass) > 0 || len(request.UserGroupRefs) > 0 {
+	if request.Credentials != nil || len(request.UserGroupRefs) > 0 {
 		return fmt.Errorf("SMB user configuration can only be supplied when creating the cluster")
 	}
-	if containsManagedSMBMember(members, target) && len(request.BindAddresses) == 0 && len(request.BindNetworks) == 0 && request.Port == 0 {
-		return nil
-	}
-
-	members = appendUniqueSMBMember(members, target)
-	resource, err := loadManagedSMBClusterFunc(request.ClusterID)
+	members, err := managedSMBMembersFromResource(resource)
 	if err != nil {
-		return fmt.Errorf("failed to load managed SMB cluster: %w", err)
+		return err
+	}
+	mode, ok := resource["clustering"].(string)
+	if !ok || (mode != "always" && mode != "never") {
+		return fmt.Errorf("managed SMB requires an explicit upstream clustering mode (always or never)")
+	}
+	if request.Clustering != nil && *request.Clustering != mode {
+		return fmt.Errorf("SMB clustering mode %q cannot be changed", mode)
+	}
+	members = appendUniqueSMBMember(members, s.ClusterState().Name())
+	if mode == "never" && len(members) > 1 {
+		return fmt.Errorf("non-clustered SMB cannot accept additional members; recreate with --clustering always")
 	}
 	updateManagedSMBResource(resource, members, request)
-	err = applyManagedSMBClusterFunc(resource)
-	if err != nil {
-		return fmt.Errorf("failed to update managed SMB cluster: %w", err)
-	}
-	return nil
+	// Reapply even an existing desired member: a previous attempt may not have
+	// placed it. Node-local effective-config checks avoid unnecessary restarts.
+	return applyManagedSMBClusterFunc(ctx, resource)
 }
 
-// DisableManagedSMB removes the local target member from a managed SMB cluster.
+// DisableManagedSMB removes a target from upstream desired placement, including
+// a target which never reached the observed member database.
 func DisableManagedSMB(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
-	members, err := getManagedSMBMembersFunc(ctx, s, clusterID)
-	if err != nil {
-		return fmt.Errorf("failed to list managed SMB members: %w", err)
+	resource, err := loadManagedSMBClusterFunc(ctx, clusterID)
+	if errors.Is(err, os.ErrNotExist) {
+		return disableSMBLocalFunc(ctx, s, clusterID)
 	}
-
-	target := s.ClusterState().Name()
-	remaining, found := removeManagedSMBMember(members, target)
-	if !found {
-		return fmt.Errorf("SMB cluster %q is not enabled on target %q", clusterID, target)
-	}
-	if len(remaining) == 0 {
-		err = removeManagedSMBClusterFunc(clusterID)
-		if err != nil {
-			return fmt.Errorf("failed to remove managed SMB cluster: %w", err)
-		}
-		return nil
-	}
-
-	resource, err := loadManagedSMBClusterFunc(clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to load managed SMB cluster: %w", err)
 	}
-	updateManagedSMBResource(resource, remaining, types.ManagedSMBService{})
-	err = applyManagedSMBClusterFunc(resource)
+	members, err := managedSMBMembersFromResource(resource)
 	if err != nil {
-		return fmt.Errorf("failed to update managed SMB cluster: %w", err)
+		return err
 	}
-	return nil
+	remaining, _ := removeManagedSMBMember(members, s.ClusterState().Name())
+	if len(remaining) == 0 {
+		err = removeManagedSMBClusterFunc(ctx, clusterID)
+	} else {
+		updateManagedSMBResource(resource, remaining, types.ManagedSMBService{})
+		err = applyManagedSMBClusterFunc(ctx, resource)
+	}
+	if err != nil {
+		return err
+	}
+	// The backend removes observed members only. Also clean this target after
+	// successful upstream removal in case its earlier placement was interrupted
+	// before a grouped_services record was written. This path is idempotent.
+	return disableSMBLocalFunc(ctx, s, clusterID)
 }
 
 func ensureManagedSMBBackend(ctx context.Context) error {
-	err := EnableMgrModule(ctx, "microceph", "", "")
-	if err != nil {
-		return err
+	commands := [][]string{
+		{"mgr", "module", "enable", "microceph"},
+		{"orch", "set", "backend", "microceph"},
+		{"mgr", "module", "enable", "smb"},
 	}
-	_, err = cephRun("orch", "set", "backend", "microceph")
-	if err != nil {
-		return err
-	}
-	err = EnableMgrModule(ctx, "smb", "", "")
-	if err != nil {
-		return err
+	for _, args := range commands {
+		_, err := cephRunContext(ctx, args...)
+		if err != nil {
+			return fmt.Errorf("failed preparing SMB manager: %w", ErrManagedSMBOutcomeUnknown)
+		}
 	}
 	return nil
 }
 
-func getManagedSMBMembers(ctx context.Context, s interfaces.StateInterface, clusterID string) ([]string, error) {
-	services, err := database.GroupedServicesQuery.GetGroupedServices(ctx, s)
-	if err != nil {
-		return nil, err
-	}
-	members := []string{}
-	for _, service := range services {
-		if service.Service == "smb" && service.GroupID == clusterID {
-			members = append(members, service.Member)
-		}
-	}
-	sort.Strings(members)
-	return members, nil
-}
-
-func createManagedSMBCluster(request types.ManagedSMBService, targets []string) error {
-	// Ceph cannot enable clustering after creating a single-member cluster.
-	// Start clustered so subsequent members can be added without replacing it.
-	args := []string{
-		"smb", "cluster", "create", request.ClusterID, "user",
-		"--placement", managedSMBPlacement(targets),
-		"--clustering", "always",
-	}
-	for _, ref := range request.UserGroupRefs {
-		args = append(args, "--user-group-ref", ref)
-	}
-	for _, userPass := range request.DefineUserPass {
-		args = append(args, "--define-user-pass", userPass)
-	}
-	_, err := cephRun(args...)
+func createManagedSMBCluster(ctx context.Context, request types.ManagedSMBService, targets []string) error {
+	err := request.Credentials.Validate()
 	if err != nil {
 		return err
 	}
-
-	if len(request.BindAddresses) == 0 && len(request.BindNetworks) == 0 && request.Port == 0 {
-		return nil
+	if request.Credentials != nil && len(request.UserGroupRefs) > 0 {
+		return fmt.Errorf("provide either credentials or user-group references, not both")
 	}
-	resource, err := loadManagedSMBClusterFunc(request.ClusterID)
-	if err != nil {
-		return err
+	resources := []any{}
+	refs := append([]string(nil), request.UserGroupRefs...)
+	if request.Credentials != nil {
+		// Tentacle resource IDs are at most 18 alphanumeric/hyphen characters.
+		ref := strings.ReplaceAll(uuid.NewRandom().String(), "-", "")[:18]
+		refs = append(refs, ref)
+		resources = append(resources, map[string]any{
+			"resource_type":     "ceph.smb.usersgroups",
+			"users_groups_id":   ref,
+			"linked_to_cluster": request.ClusterID,
+			"values":            map[string]any{"users": request.Credentials.Users, "groups": []any{}},
+		})
+	}
+	sources := make([]map[string]string, 0, len(refs))
+	for _, ref := range refs {
+		sources = append(sources, map[string]string{"source_type": "resource", "ref": ref})
+	}
+	mode := "always"
+	if request.Clustering != nil {
+		mode = *request.Clustering
+	}
+	if mode != "always" && mode != "never" {
+		return fmt.Errorf("SMB clustering must be always or never")
+	}
+	if mode == "never" && len(targets) != 1 {
+		return fmt.Errorf("non-clustered SMB requires exactly one member")
+	}
+	resource := map[string]any{
+		"resource_type": "ceph.smb.cluster", "cluster_id": request.ClusterID,
+		"auth_mode": "user", "clustering": mode, "user_group_settings": sources,
 	}
 	updateManagedSMBResource(resource, targets, request)
-	return applyManagedSMBClusterFunc(resource)
+	resources = append(resources, resource)
+	return applyManagedSMBResources(ctx, resources)
 }
 
-func loadManagedSMBCluster(clusterID string) (map[string]any, error) {
+func loadManagedSMBCluster(ctx context.Context, clusterID string) (map[string]any, error) {
 	name := fmt.Sprintf("ceph.smb.cluster.%s", clusterID)
-	output, err := cephRun("smb", "show", name, "--format", "json")
+	output, err := cephRunContext(ctx, "smb", "show", name, "--format", "json")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed querying SMB resource: %w", err)
 	}
 	resource := map[string]any{}
 	err = json.Unmarshal([]byte(output), &resource)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode SMB cluster resource: %w", err)
+		return nil, fmt.Errorf("invalid SMB cluster response")
+	}
+	if _, failed := resource["error"]; failed {
+		return nil, fmt.Errorf("Ceph could not read the SMB cluster resource")
+	}
+	if resources, ok := resource["resources"].([]any); ok && len(resources) == 0 {
+		return nil, os.ErrNotExist
+	}
+	if resource["resource_type"] != "ceph.smb.cluster" || resource["cluster_id"] != clusterID {
+		return nil, fmt.Errorf("unexpected SMB cluster response")
 	}
 	return resource, nil
 }
 
-func applyManagedSMBCluster(resource map[string]any) error {
+func applyManagedSMBCluster(ctx context.Context, resource map[string]any) error {
+	return applyManagedSMBResources(ctx, resource)
+}
+
+func applyManagedSMBResources(ctx context.Context, resource any) error {
 	data, err := json.Marshal(resource)
 	if err != nil {
-		return fmt.Errorf("failed to encode SMB cluster resource: %w", err)
+		return fmt.Errorf("failed to encode SMB cluster resource")
 	}
 	file, err := os.CreateTemp("", "microceph-managed-smb-*.json")
 	if err != nil {
@@ -193,7 +195,6 @@ func applyManagedSMBCluster(resource map[string]any) error {
 	}
 	path := file.Name()
 	defer os.Remove(path)
-
 	_, err = file.Write(data)
 	if err != nil {
 		file.Close()
@@ -203,21 +204,71 @@ func applyManagedSMBCluster(resource map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("failed to close SMB resource file: %w", err)
 	}
-	_, err = cephRun("smb", "apply", "-i", path)
-	return err
+	return runManagedSMBMutation(ctx, "smb", "apply", "-i", path, "--format", "json", "--password-filter-out", "hidden")
 }
 
-func removeManagedSMBCluster(clusterID string) error {
-	_, err := cephRun("smb", "cluster", "rm", clusterID)
-	return err
+func removeManagedSMBCluster(ctx context.Context, clusterID string) error {
+	return runManagedSMBMutation(ctx, "smb", "cluster", "rm", clusterID, "--format", "json")
+}
+
+func runManagedSMBMutation(ctx context.Context, args ...string) error {
+	output, err := cephRunContext(ctx, args...)
+	if err != nil {
+		// A RunError contains argv/stderr, which may include credentials. A
+		// failed process also does not prove remote callbacks have stopped.
+		return ErrManagedSMBOutcomeUnknown
+	}
+	var result struct {
+		Success *bool `json:"success"`
+		Results []struct {
+			Success *bool `json:"success"`
+		} `json:"results"`
+	}
+	err = json.Unmarshal([]byte(output), &result)
+	if err != nil || result.Success == nil || !*result.Success {
+		return ErrManagedSMBOutcomeUnknown
+	}
+	for _, item := range result.Results {
+		if item.Success == nil || !*item.Success {
+			return ErrManagedSMBOutcomeUnknown
+		}
+	}
+	return nil
+}
+
+// managedSMBMembersFromResource refuses placement expressions that a host-list
+// edit would silently reinterpret. Direct Ceph callers can manage those specs.
+func managedSMBMembersFromResource(resource map[string]any) ([]string, error) {
+	placement, ok := resource["placement"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("managed SMB requires explicit host placement")
+	}
+	for key := range placement {
+		if key != "hosts" && key != "count" {
+			return nil, fmt.Errorf("managed SMB cannot edit placement option %q; use ceph smb apply", key)
+		}
+	}
+	hosts, ok := placement["hosts"].([]any)
+	if !ok || len(hosts) == 0 {
+		return nil, fmt.Errorf("managed SMB requires explicit host placement")
+	}
+	members := make([]string, 0, len(hosts))
+	for _, entry := range hosts {
+		host, ok := entry.(string)
+		if !ok || host == "" || strings.ContainsAny(host, " :=\t\n\r") {
+			return nil, fmt.Errorf("managed SMB requires plain member names in placement")
+		}
+		members = appendUniqueSMBMember(members, host)
+	}
+	if count, exists := placement["count"]; exists && count != float64(len(members)) {
+		return nil, fmt.Errorf("managed SMB requires placement count to match explicit hosts")
+	}
+	return members, nil
 }
 
 func updateManagedSMBResource(resource map[string]any, members []string, request types.ManagedSMBService) {
 	sort.Strings(members)
-	resource["placement"] = map[string]any{
-		"hosts": append([]string(nil), members...),
-		"count": len(members),
-	}
+	resource["placement"] = map[string]any{"hosts": append([]string(nil), members...), "count": len(members)}
 	if len(request.BindAddresses) > 0 {
 		binds := make([]map[string]string, 0, len(request.BindAddresses))
 		for _, address := range request.BindAddresses {
@@ -232,49 +283,16 @@ func updateManagedSMBResource(resource map[string]any, members []string, request
 		resource["bind_addrs"] = binds
 	}
 	if request.Port != 0 {
-		ports := map[string]int{}
+		ports := map[string]any{}
 		existing, ok := resource["custom_ports"].(map[string]any)
 		if ok {
 			for name, value := range existing {
-				number, isNumber := value.(float64)
-				if isNumber {
-					ports[name] = int(number)
-				}
+				ports[name] = value
 			}
 		}
 		ports["smb"] = request.Port
 		resource["custom_ports"] = ports
 	}
-}
-
-func waitForManagedSMBMembers(ctx context.Context, s interfaces.StateInterface, clusterID string) ([]string, error) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
-	for {
-		members, err := getManagedSMBMembersFunc(ctx, s, clusterID)
-		if err == nil && len(members) > 0 {
-			return members, nil
-		}
-
-		select {
-		case <-ctx.Done():
-			if err != nil {
-				return nil, err
-			}
-			return nil, ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-func containsManagedSMBMember(members []string, target string) bool {
-	for _, member := range members {
-		if member == target {
-			return true
-		}
-	}
-	return false
 }
 
 func appendUniqueSMBMember(members []string, target string) []string {
@@ -301,9 +319,4 @@ func removeManagedSMBMember(members []string, target string) ([]string, bool) {
 	}
 	sort.Strings(remaining)
 	return remaining, found
-}
-
-func managedSMBPlacement(targets []string) string {
-	sort.Strings(targets)
-	return fmt.Sprintf("%d %s", len(targets), strings.Join(targets, " "))
 }
