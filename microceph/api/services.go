@@ -116,7 +116,7 @@ func cmdEnableServicePut(s mcTypes.State, r *http.Request) mcTypes.Response {
 
 	err = ceph.ServicePlacementHandler(r.Context(), interfaces.CephState{State: s}, payload)
 	if err != nil {
-		return mcTypes.SyncResponse(false, err)
+		return mcTypes.SmartError(err)
 	}
 
 	return mcTypes.SyncResponse(true, nil)

@@ -137,8 +137,11 @@ func materializeSMBConfig(ctx context.Context, placement *SMBServicePlacement) e
 }
 
 func materializeSMBCTDBConfig(runtimeDir string, placement *SMBServicePlacement) error {
-	command := filepath.Join(os.Getenv("SNAP"), "bin", "python3") + " " +
-		filepath.Join(os.Getenv("SNAP"), "commands", "sambacc.start")
+	// CTDB compares the complete recovery-lock command between members. Snap
+	// revisions can differ by host and change on refresh, so persist stable paths.
+	const snapRoot = "/snap/microceph/current"
+	command := filepath.Join(snapRoot, "bin", "python3") + " " +
+		filepath.Join(snapRoot, "commands", "sambacc.start")
 	config := struct {
 		Version string `json:"samba-container-config"`
 		CTDB    struct {
@@ -149,7 +152,7 @@ func materializeSMBCTDBConfig(runtimeDir string, placement *SMBServicePlacement)
 		} `json:"ctdb"`
 	}{Version: "v0"}
 	config.CTDB.RecoveryLock = "!" + command +
-		" --samba-command-prefix " + filepath.Join(os.Getenv("SNAP"), "commands", "samba-command") +
+		" --samba-command-prefix " + filepath.Join(snapRoot, "commands", "samba-command") +
 		" ctdb-rados-mutex " + placement.ClusterLockURI
 	config.CTDB.ClusterMetaURI = placement.ClusterMetaURI
 	config.CTDB.NodesCommand = command + " ctdb-list-nodes"

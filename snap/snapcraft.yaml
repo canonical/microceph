@@ -394,6 +394,8 @@ parts:
       - bin/radosgw-admin
       - bin/rbd-mirror
       - bin/cephfs-mirror
+      - bin/timeout
+      - lib/cargo/bin/coreutils/timeout
       - bin/truncate
       - lib/cargo/bin/coreutils/truncate
       - bin/uuidgen
