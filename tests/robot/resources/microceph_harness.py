@@ -1863,38 +1863,16 @@ class microceph_harness:
         self.apt_update()
         self.apt_install(VM_APT_TOOLS)
 
-    def install_lxd_in_vm(self, attempts=3, interval=5):
-        """Installs LXD, retrying only a transient Snap Store nonce timeout."""
-        last_error = [""]
-
-        def predicate():
-            result = self.run_in_vm("sudo snap install lxd", 300, quiet=True)
-            last_error[0] = (result.stderr or result.stdout).strip()
-            transient_nonce_timeout = (
-                "cannot get nonce from store" in result.stderr
-                and "store server returned status 408" in result.stderr
-            )
-            if result.rc != 0 and not transient_nonce_timeout:
-                raise AssertionError(f"failed to install LXD: {last_error[0]}")
-            return result.rc == 0
-
-        self._poll_until(
-            predicate,
-            attempts=int(attempts),
-            interval=interval,
-            fail_msg=lambda: f"failed to install LXD: {last_error[0]}",
-        )
-
     def prepare_snapd_in_vm(self):
         """Installs snapd from the configured channel, refreshing it if preinstalled."""
         snapd_channel = self._snapd_channel()
-        result = self.run_in_vm_and_check(
+        result = self.run_in_vm_with_snap_retry(
             f"sudo snap install snapd --channel={snapd_channel}", 600
         )
         # `snap install` exits 0 without switching channels when snapd is
         # already installed as a snap; only then is a refresh needed.
         if "already installed" in f"{result.stdout}{result.stderr}":
-            self.run_in_vm_and_check(
+            self.run_in_vm_with_snap_retry(
                 f"sudo snap refresh snapd --channel={snapd_channel}", 600
             )
 
@@ -2577,31 +2555,6 @@ class microceph_harness:
             f"http://localhost/1.0/{path}{query}", timeout=float(timeout), check=True,
         )
         return res.stdout
-
-    def microceph_api_put_in_container_until_success(
-        self, container, path, body, query="", timeout=300, attempts=3, interval=5
-    ):
-        """Retries a placement PUT only when MicroCluster closed its transport connection."""
-        last_response = [""]
-
-        def predicate():
-            response = self.microceph_api_put_in_container(
-                container, path, body, query=query, timeout=timeout
-            )
-            last_response[0] = response
-            if placement_status.response_code(response) == 200:
-                return True
-            if "use of closed network connection" not in response:
-                raise AssertionError(f"MicroCeph API PUT {path} failed: {response}")
-            return False
-
-        self._poll_until(
-            predicate,
-            attempts=int(attempts),
-            interval=interval,
-            fail_msg=lambda: f"MicroCeph API PUT {path} did not recover: {last_response[0]}",
-        )
-        return last_response[0]
 
     def microceph_api_delete_in_container(self, container, path):
         """DELETEs a path on the MicroCeph control socket inside an inner container.

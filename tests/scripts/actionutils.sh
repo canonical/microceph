@@ -36,7 +36,7 @@ function ensure_snapd_channel() {
 
 function install_microceph() {
     # Install locally built microceph snap and connect interfaces
-    ensure_snapd_channel
+    ensure_snapd_channel || return 1
     sudo snap install --dangerous ~/microceph_*.snap
     sudo snap connect microceph:block-devices
     sudo snap connect microceph:hardware-observe
