@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -247,4 +248,38 @@ func TestAuthStatusRunJSON(t *testing.T) {
 	assert.Equal(t, "All client aes256k", decoded.Status)
 	assert.Equal(t, "completed", decoded.State)
 	assert.Len(t, decoded.ClientDistribution["aes256k"], 2)
+}
+
+func TestWatchAuthRotation(t *testing.T) {
+	origInterval := authRotationPollInterval
+	authRotationPollInterval = time.Millisecond
+	defer func() { authRotationPollInterval = origInterval }()
+
+	// 1. Polls until the rotation leaves in_progress.
+	calls := 0
+	status, err := watchAuthRotation(context.Background(), func() (*types.AuthStatusResponse, error) {
+		calls++
+		if calls < 3 {
+			return &types.AuthStatusResponse{State: "in_progress", Stage: "rotate_daemons"}, nil
+		}
+		return &types.AuthStatusResponse{State: "completed", Stage: "finish_safely"}, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, calls)
+	assert.Equal(t, "completed", status.State)
+
+	// 2. Terminal states are returned immediately without polling again.
+	status, err = watchAuthRotation(context.Background(), func() (*types.AuthStatusResponse, error) {
+		return &types.AuthStatusResponse{State: "blocked", Blocker: "Unmanaged credentials"}, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "blocked", status.State)
+
+	// 3. Losing track (daemon unreachable) surfaces an error that says the
+	//    rotation keeps running.
+	_, err = watchAuthRotation(context.Background(), func() (*types.AuthStatusResponse, error) {
+		return nil, fmt.Errorf("connection refused")
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "keeps running in the background")
 }

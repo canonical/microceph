@@ -36,6 +36,9 @@ type AuthStatusResponse struct {
 type MemberAuthRotateRequest struct {
 	KeyType    string `json:"key_type" yaml:"key_type"`
 	MonKeyring string `json:"mon_keyring,omitempty" yaml:"mon_keyring,omitempty"`
+	// Skip lists members whose daemon rotation already completed on a previous
+	// attempt (resume progress); a member named here replies without rotating.
+	Skip []string `json:"skip,omitempty" yaml:"skip,omitempty"`
 }
 
 // MemberAuthRotateResponse reports which of a member's own daemons were rotated.
