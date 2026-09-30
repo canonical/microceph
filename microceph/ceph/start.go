@@ -381,6 +381,26 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 			continue
 		}
 		seen[gs.Service] = true
+		smbReady := true
+		if gs.Service == "smb" {
+			// CTDB's private node service and daemon must be ready before smbd.
+			if isSMBClusteredLocal() {
+				for _, name := range []string{"ctdbd", "ctdb-nodes"} {
+					if snapCheckActive(name) != nil {
+						logger.Infof("start: re-enabling inactive SMB service %q", name)
+						err := snapStart(name, true)
+						if err != nil {
+							logger.Warnf("start: failed to re-enable SMB service %q: %v", name, err)
+							smbReady = false
+							break
+						}
+					}
+				}
+			}
+		}
+		if !smbReady {
+			continue
+		}
 		snapService := snapServiceForRecordedService(gs.Service)
 		err := snapCheckActive(snapService)
 		if err != nil {

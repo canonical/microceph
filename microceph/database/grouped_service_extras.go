@@ -123,10 +123,17 @@ func (g GroupedServiceQueryImpl) AddOrUpdate(ctx context.Context, s interfaces.S
 
 func addOrUpdateGroupedService(ctx context.Context, tx *sql.Tx, member, service, groupID, groupConfig, serviceInfo string) error {
 	var serviceGroupID int64
+	var existingConfig string
 	err := tx.QueryRowContext(ctx, `
-SELECT id FROM service_groups WHERE service = ? AND group_id = ?
-`, service, groupID).Scan(&serviceGroupID)
+SELECT id, config FROM service_groups WHERE service = ? AND group_id = ?
+`, service, groupID).Scan(&serviceGroupID, &existingConfig)
 	if errors.Is(err, sql.ErrNoRows) {
+		if service == "smb" {
+			groupConfig, err = mergeSMBGroupConfig(`{}`, groupConfig)
+			if err != nil {
+				return fmt.Errorf("failed to validate SMB group configuration: %w", err)
+			}
+		}
 		result, createErr := tx.ExecContext(ctx, `
 INSERT INTO service_groups (service, group_id, config) VALUES (?, ?, ?)
 `, service, groupID, groupConfig)
@@ -140,6 +147,12 @@ INSERT INTO service_groups (service, group_id, config) VALUES (?, ?, ?)
 	} else if err != nil {
 		return fmt.Errorf("failed to get service group record: %w", err)
 	} else {
+		if service == "smb" {
+			groupConfig, err = mergeSMBGroupConfig(existingConfig, groupConfig)
+			if err != nil {
+				return fmt.Errorf("failed to merge SMB group configuration: %w", err)
+			}
+		}
 		_, err = tx.ExecContext(ctx, `
 UPDATE service_groups SET config = ? WHERE id = ?
 `, groupConfig, serviceGroupID)
@@ -174,6 +187,57 @@ UPDATE grouped_services SET info = ? WHERE id = ?
 	}
 
 	return nil
+}
+
+// mergeSMBGroupConfig keeps CTDB allocations even when a member sends a stale
+// snapshot of the shared config. New identities may only claim unused ranks.
+func mergeSMBGroupConfig(existingJSON, incomingJSON string) (string, error) {
+	var existing, incoming SMBServiceGroupConfig
+	err := json.Unmarshal([]byte(existingJSON), &existing)
+	if err != nil {
+		return "", fmt.Errorf("invalid stored SMB group config: %w", err)
+	}
+	err = json.Unmarshal([]byte(incomingJSON), &incoming)
+	if err != nil {
+		return "", fmt.Errorf("invalid incoming SMB group config: %w", err)
+	}
+
+	if existing.NextCTDBRank < 0 || incoming.NextCTDBRank < 0 {
+		return "", fmt.Errorf("negative next CTDB rank")
+	}
+	if incoming.CTDBRanks == nil {
+		incoming.CTDBRanks = make(map[string]int)
+	}
+	for identity, rank := range existing.CTDBRanks {
+		if previous, ok := incoming.CTDBRanks[identity]; ok && previous != rank {
+			return "", fmt.Errorf("CTDB rank changed for %q from %d to %d", identity, rank, previous)
+		}
+		incoming.CTDBRanks[identity] = rank
+	}
+	used := make(map[int]string)
+	for identity, rank := range incoming.CTDBRanks {
+		if _, known := existing.CTDBRanks[identity]; !known && rank < existing.NextCTDBRank {
+			return "", fmt.Errorf("CTDB rank %d is retired and cannot be assigned to %q", rank, identity)
+		}
+		if identity == "" || rank < 0 {
+			return "", fmt.Errorf("invalid CTDB rank allocation for %q: %d", identity, rank)
+		}
+		if other, ok := used[rank]; ok {
+			return "", fmt.Errorf("CTDB rank %d already belongs to %q, not %q", rank, other, identity)
+		}
+		used[rank] = identity
+		if incoming.NextCTDBRank <= rank {
+			incoming.NextCTDBRank = rank + 1
+		}
+	}
+	if incoming.NextCTDBRank < existing.NextCTDBRank {
+		incoming.NextCTDBRank = existing.NextCTDBRank
+	}
+	merged, err := json.Marshal(incoming)
+	if err != nil {
+		return "", err
+	}
+	return string(merged), nil
 }
 
 // GetGroupedServices returns an array of grouped services.

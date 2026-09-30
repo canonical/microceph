@@ -2925,13 +2925,16 @@ def test_smb_manifest_uses_direct_ceph_new_and_scoped_identity_switching():
     assert 'export NSS_WRAPPER_GROUP="${smb_identity_dir}/group"' in runtime
     assert 'smb_cluster_id="$(cat "${smb_cluster_id_path}")"' in runtime
     assert '"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start"' in wrapper
-    assert 'import-users' in wrapper
+    assert 'smb_import_users' in wrapper
+    assert 'import-users' in runtime
+    assert 'cp /etc/passwd' not in runtime
+    assert 'cp /etc/group' not in runtime
     assert 'smb_config="${SNAP_DATA}/conf/samba/smb.conf"' in runtime
     assert "\nlimits\n" not in wrapper
     assert '--samba-command-prefix "${SNAP}/commands/samba-command"' in runtime
     assert 'exec smbd --foreground --no-process-group --configfile="${smb_config}" \\\n    --option="lock directory=/var/lib/samba/lock" \\\n    --option="pid directory=/var/lib/samba/run" \\\n    --option="ncalrpc dir=/var/lib/samba/ncalrpc" \\\n    --option="winbindd socket directory=/var/lib/samba/winbindd"' in wrapper
     assert 'head -c 4 "${path}"' in snapcraft
-    assert "printf '\\177ELF'" in snapcraft
+    assert 'printf "\\177ELF"' in snapcraft
     assert 'strip -s "${path}"' in snapcraft
 
 
@@ -2968,7 +2971,8 @@ def test_smb_manifest_runs_ctdb_services_before_clustered_smbd():
     assert "etc/ctdb/notify.sh: usr/share/ctdb/notify.sh" in snapcraft
 
     monitor = (repo_root / "snapcraft" / "commands" / "ctdb-nodes.start").read_text()
-    assert '"${SNAP}/commands/samba-command" ctdb pnn' in monitor
+    assert 'smb_wait_for_ctdb_ready' in monitor
+    assert '"${SNAP}/commands/samba-command" ctdb pnn' in runtime
     assert "ctdb_ready.py" in monitor
     assert "ctdb-monitor-nodes" in monitor
     assert "--reload=all" in monitor
@@ -3017,6 +3021,69 @@ def test_ctdb_ready_marks_only_the_local_node_ready():
         {"identity": "smb.files.node-a", "pnn": 0, "state": "ready"},
         {"identity": "smb.files.node-b", "pnn": 1, "state": "ready"},
     ]
+
+
+def _sambacc_runtime_namespace():
+    path = Path(__file__).parents[3] / "snapcraft" / "commands" / "sambacc_runtime.py"
+    namespace = {"__name__": "sambacc_runtime_test"}
+    exec(compile(path.read_text(), str(path), "exec"), namespace)
+    return namespace
+
+
+def test_ctdb_nodes_preserve_missing_and_removed_slots():
+    render = _sambacc_runtime_namespace()["ctdb_nodes_with_reserved_slots"]
+    nodes = [{"identity": "node-b", "pnn": 1, "node": "192.0.2.2", "state": "ready"}]
+    assert render(nodes) == ["#", "192.0.2.2"]
+    nodes.append({"identity": "node-a", "pnn": 0, "node": "192.0.2.1", "state": "ready"})
+    assert render(nodes) == ["192.0.2.1", "192.0.2.2"]
+    nodes[1]["state"] = "gone"
+    assert render(nodes) == ["#", "192.0.2.2"]
+    nodes.append({"identity": "node-c", "pnn": 2, "node": "192.0.2.3", "state": "new"})
+    assert render(nodes) == ["#", "192.0.2.2", "192.0.2.3"]
+    assert render([]) == []
+
+
+def test_ctdb_nodes_reject_invalid_or_duplicate_ranks():
+    render = _sambacc_runtime_namespace()["ctdb_nodes_with_reserved_slots"]
+    for ranks in ([-1], [True], [0, 0]):
+        nodes = [{"pnn": rank, "node": "192.0.2.1", "state": "ready"} for rank in ranks]
+        with pytest.raises(ValueError):
+            render(nodes)
+
+
+def test_ctdb_retirement_is_idempotent_and_keeps_survivor():
+    path = Path(__file__).parents[3] / "snapcraft" / "commands" / "ctdb_ready.py"
+    namespace = {"__name__": "ctdb_metadata_test"}
+    exec(compile(path.read_text(), str(path), "exec"), namespace)
+    retire = namespace["mark_removed"]
+    data = {"nodes": [
+        {"identity": "node-a", "pnn": 0, "node": "192.0.2.1", "state": "ready"},
+        {"identity": "node-b", "pnn": 1, "node": "192.0.2.2", "state": "ready"},
+    ]}
+    retire(data, "node-a", 0)
+    retire(data, "node-a", 0)
+    retire(data, "different-identity", 1)
+    assert data["nodes"][0]["state"] == "gone"
+    assert data["nodes"][1]["state"] == "ready"
+    assert retire({"nodes": []}, "never-started", 2) == {"nodes": []}
+
+
+def test_ctdb_clean_removal_allows_same_address_rejoin_without_renumbering():
+    path = Path(__file__).parents[3] / "snapcraft" / "commands" / "ctdb_ready.py"
+    namespace = {"__name__": "ctdb_metadata_test"}
+    exec(compile(path.read_text(), str(path), "exec"), namespace)
+    data = {"nodes": [
+        {"identity": "node-a", "pnn": 0, "node": "192.0.2.1", "state": "ready"},
+        {"identity": "node-b", "pnn": 1, "node": "192.0.2.2", "state": "ready"},
+    ]}
+    namespace["mark_removed"](data, "node-a", 0)
+    namespace["prepare_node"](data, "node-a", 0, "192.0.2.1")
+    assert [entry["pnn"] for entry in data["nodes"]] == [0, 1]
+    assert [entry["state"] for entry in data["nodes"]] == ["ready", "ready"]
+    with pytest.raises(ValueError, match="address change"):
+        namespace["prepare_node"](data, "node-a", 0, "192.0.2.99")
+    assert data["nodes"][0]["node"] == "192.0.2.1"
+    assert data["nodes"][0]["state"] == "ready"
 
 
 def test_sambacc_runtime_overrides_registry_incompatible_paths():
@@ -3121,6 +3188,96 @@ def test_samba_command_injects_runtime_paths(tmp_path):
         "import",
         "config.smb",
     ]
+
+
+def _run_smb_helper(script, *args, timeout=10):
+    common = Path(__file__).parents[3] / "snapcraft" / "commands" / "smb-common"
+    return subprocess.run(
+        ["bash", "-eu", "-c", '. "$1"; shift; ' + script, "test-smb", str(common), *map(str, args)],
+        capture_output=True, text=True, timeout=timeout,
+    )
+
+
+def test_smb_file_wait_reports_all_missing_and_empty_files(tmp_path):
+    empty = tmp_path / "empty"
+    empty.touch()
+    missing = tmp_path / "missing"
+    result = _run_smb_helper('SMB_WAIT_TIMEOUT=0; smb_wait_for_files "configuration" "$@"', empty, missing)
+    assert result.returncode != 0
+    assert "Timed out" in result.stderr
+    assert str(empty) in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_smb_file_wait_succeeds_when_all_files_ready(tmp_path):
+    ready = tmp_path / "ready"
+    ready.write_text("configured")
+    result = _run_smb_helper('SMB_WAIT_TIMEOUT=0; smb_wait_for_files "configuration" "$@"', ready)
+    assert result.returncode == 0, result.stderr
+
+
+def test_smb_file_wait_observes_files_appearing(tmp_path):
+    path = tmp_path / "delayed"
+    result = _run_smb_helper('sleep() { printf ready > "$file"; }; file="$1"; SMB_WAIT_TIMEOUT=2; smb_wait_for_files configuration "$file"', path)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("probe", ["exit 1", "trap '' TERM; sleep 30"])
+def test_smb_ctdb_wait_bounds_failed_and_hung_probes(tmp_path, probe):
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    executable = commands / "samba-command"
+    executable.write_text("#!/bin/bash\n" + probe + "\n")
+    executable.chmod(0o755)
+    result = _run_smb_helper('SNAP="$1"; SMB_WAIT_TIMEOUT=1; SMB_POLL_INTERVAL=0.01; SMB_CTDB_PROBE_TIMEOUT=0.1; smb_wait_for_ctdb_ready', tmp_path, timeout=8)
+    assert result.returncode != 0
+    assert "Timed out waiting for CTDB" in result.stderr
+
+
+def test_smb_ctdb_wait_accepts_successful_probe(tmp_path):
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    executable = commands / "samba-command"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    result = _run_smb_helper('SNAP="$1"; SMB_WAIT_TIMEOUT=2; smb_wait_for_ctdb_ready', tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+def test_smb_identity_baseline_is_minimal_and_not_reset_by_ctdb(tmp_path):
+    result = _run_smb_helper('smb_identity_dir="$1"; smb_prepare_identity_files', tmp_path)
+    assert result.returncode == 0, result.stderr
+    passwd = tmp_path / "passwd"
+    group = tmp_path / "group"
+    assert [line.split(":")[0] for line in passwd.read_text().splitlines()] == ["root", "nobody"]
+    assert [line.split(":")[0] for line in group.read_text().splitlines()] == ["root", "nogroup"]
+    passwd.write_text(passwd.read_text() + "alice:x:1000:1000::/invalid:/bin/false\n")
+    result = _run_smb_helper('smb_identity_dir="$1"; smb_prepare_identity_files', tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "alice:" in passwd.read_text(), "CTDB's independent startup must preserve active Samba identities"
+
+
+def test_smb_identity_import_publishes_only_after_success(tmp_path):
+    identity = tmp_path / "identity"
+    identity.mkdir()
+    (identity / "passwd").write_text("old-passwd\n")
+    (identity / "group").write_text("old-group\n")
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    importer = binary / "python3"
+    importer.write_text('#!/bin/sh\nprintf new-passwd > "$NSS_WRAPPER_PASSWD"\nprintf new-group > "$NSS_WRAPPER_GROUP"\nexit 1\n')
+    importer.chmod(0o755)
+    script = 'SNAP="$1"; smb_identity_dir="$1/identity"; smb_sambacc_args=(); smb_import_users'
+    failed = _run_smb_helper(script, tmp_path)
+    assert failed.returncode != 0
+    assert (identity / "passwd").read_text() == "old-passwd\n"
+    assert (identity / "group").read_text() == "old-group\n"
+    importer.write_text(importer.read_text().replace("exit 1", "exit 0"))
+    succeeded = _run_smb_helper(script, tmp_path)
+    assert succeeded.returncode == 0, succeeded.stderr
+    assert (identity / "passwd").read_text() == "new-passwd"
+    assert (identity / "group").read_text() == "new-group"
+    assert not list(identity.glob("identity-import.*"))
 
 
 def test_smb_service_api_is_registered():
