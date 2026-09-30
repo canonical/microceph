@@ -133,12 +133,13 @@ Flags:
 
    --bind-address stringArray  Client-facing IP address for smbd (repeatable)
    --bind-network stringArray  Client-facing network from which smbd selects an address (repeatable)
-   --cluster-id string         SMB Cluster ID (must match regex: '^[\w][\w.-]{1,61}[\w]$')
-   --define-user-pass stringArray   Define a local SMB user as username%password (creation only, repeatable)
+   --cluster-id string         SMB Cluster ID (must match regex: '^[A-Za-z0-9]([A-Za-z0-9-]{0,16}[A-Za-z0-9])?$')
+   --clustering string         always or never (creation default: always; updates inherit)
+   --credentials-file string   Read creation credentials from a JSON file, or - for stdin
    --port int                  SMB listening port (default 445)
    --target string             Server hostname (default: this server)
    --user-group-ref stringArray     Reference an SMB users-and-groups resource (creation only, repeatable)
-   --wait                      Wait for the SMB service instance to be ready (default true)
+   --wait                      Wait for the managed request; initial deployment requires the first share (default true)
 
 See :ref:`smb-reference` for lifecycle and configuration details.
 
