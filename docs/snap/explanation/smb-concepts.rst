@@ -14,8 +14,9 @@ SMB clusters, instances, and shares
 -----------------------------------
 
 An **SMB cluster** is the cluster-level configuration identified by a cluster
-ID. It contains authentication configuration, service placement, and one or
-more shares.
+ID. It contains authentication configuration and desired service placement.
+Shares are added separately; initial daemon deployment waits for the first
+CephFS-backed share.
 
 An **SMB instance** is the set of node-local services running on one selected
 MicroCeph member. Administrators add an instance with
@@ -66,10 +67,11 @@ CephFS mount or a proxy daemon.
 CTDB coordination
 -----------------
 
-When an SMB cluster has multiple instances, the Ceph SMB manager marks it as
-clustered and MicroCeph starts CTDB before Samba. CTDB coordinates the Samba
-cluster metadata and recovery state; it does not store the shared file data.
-The data remains in CephFS.
+The default ``always`` mode runs CTDB even for a single instance. Explicit
+``never`` mode runs one instance without CTDB and cannot accept a second member.
+Mode changes are not supported; recreate the SMB cluster to change its mode.
+For clustered deployments, MicroCeph starts CTDB before Samba. CTDB coordinates
+Samba metadata and recovery state; shared file data remains in CephFS.
 
 Each instance has a stable CTDB rank and identity. A RADOS object provides the
 cluster metadata and a RADOS-backed mutex provides the recovery lock.
@@ -83,7 +85,8 @@ endpoint.
 
 ``smbd`` uses a client-facing address selected from Ceph's ``public_network``
 unless an explicit SMB bind address or network is configured. SMB clients
-connect to the selected member address, normally on TCP port 445.
+connect to the selected member address, normally on TCP port 445. A cluster-wide
+custom SMB port changes the client-facing listener, not CTDB's TCP port 4379.
 
 The two addresses may be the same when MicroCluster and Ceph use the same
 network, but they have different roles and are resolved independently.

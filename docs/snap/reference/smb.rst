@@ -18,28 +18,40 @@ Enable an SMB instance
 
    microceph enable smb --cluster-id <cluster-id> [--target <member>] [flags]
 
-The first member creates the SMB cluster and requires at least one local-user
-configuration source. Managed clusters use CTDB even with one member, so
-connect ``microceph:ctdb-run`` before applying a share. The Ceph SMB manager
-defers initial service placement until a CephFS-backed share exists: create
-and apply the first share before enabling a second member. Later commands add
-members to the existing cluster and must not repeat creation-only user options.
+The first member creates the SMB cluster and requires a local-user
+configuration source. The default clustering mode uses CTDB even with one
+member: connect ``microceph:smb-identity`` and ``microceph:ctdb-run`` before
+applying a share. With explicit ``--clustering never``, only ``smb-identity``
+is required and only one member is supported.
+
+Initial enable completes when Ceph accepts the cluster and credential resources;
+it does not mean that SMB daemons are running. Ceph defers initial deployment
+until a CephFS-backed share exists. Apply the first share before adding another
+member. Later enables do not require credentials again.
 
 Options
 ~~~~~~~
 
 ``--cluster-id``
-   Required. Identifies the managed SMB cluster. It must contain 3 to 63 word,
-   dot, or hyphen characters and must start and end with a word character.
+   Required. Identifies the managed SMB cluster. It must contain 1 to 18 ASCII
+   alphanumeric or hyphen characters, with alphanumeric first and last characters,
+   matching the upstream Ceph SMB resource rules.
 
 ``--target``
    The MicroCeph member on which to enable an SMB instance. The local member is
    used when omitted.
 
-``--define-user-pass``
-   Define a local SMB user as ``username%password`` when creating the cluster.
-   The option is repeatable. Supplying credentials on a command line can expose
-   them through shell history or process inspection.
+``--credentials-file``
+   Read creation-only credentials from a JSON file, or from stdin with ``-``.
+   The format is ``{"users":[{"name":"alice","password":"..."}]}``.
+   Protect files with mode ``0600``. Password arguments and interactive prompts
+   are not supported. This option cannot be combined with ``--user-group-ref``.
+
+``--clustering``
+   ``always`` enables CTDB; ``never`` runs a single instance without CTDB.
+   Omission defaults to ``always`` on creation and preserves the existing mode
+   on updates. Explicit mode changes are rejected; remove and recreate the
+   cluster to change its mode.
 
 ``--user-group-ref``
    Reference an existing Ceph SMB users-and-groups resource when creating the
@@ -57,15 +69,21 @@ Options
 
 ``--port``
    Set the SMB listening port. The default is 445. Valid explicit values are
-   from 1 through 65535.
+   from 1 through 65535. Clients using a custom port must specify it too (for
+   example, ``smbclient -p 1445 //member/share``). CTDB continues to use 4379.
 
 ``--wait``
-   Wait for orchestration and node-local service checks to complete. The
-   default is true.
+   Wait for the managed request to complete (default true). Initial creation
+   still requires a first share before deployment. With ``false``, a successful
+   response means acceptance, not completion; subsequent errors appear in the
+   daemon log. Desired resources and placement ordering are owned by the Ceph
+   SMB manager.
 
 The bind and port options are cluster-wide. When they are supplied while
 adding another member, MicroCeph updates the complete SMB cluster
-configuration rather than only the target member.
+configuration rather than only the target member. A new bind list replaces
+rather than extends the existing list, so repeat every address or network that
+other members still require.
 
 Disable an SMB instance
 -----------------------
@@ -82,8 +100,9 @@ be removed.
 Runtime services
 ----------------
 
-A managed cluster runs these snap services on every selected member, including
-when only one member remains:
+A clustered deployment runs these snap services on every selected member,
+including when only one member remains. Non-clustered deployments run only
+``microceph.smbd``:
 
 ``microceph.smbd``
    Serves SMB clients and accesses CephFS through ``vfs_ceph_new``.
@@ -121,10 +140,16 @@ Placement rules
 ---------------
 
 * A member can run at most one SMB cluster because there is one local Samba
-  configuration and one default SMB port.
-* One SMB cluster can contain multiple MicroCeph members.
-* Managed clusters start in CTDB mode. Adding or removing members does not
-  change the clustering mode, including when only one member remains.
+  configuration, even when SMB clusters use different ports.
+* A clustered SMB cluster can contain multiple MicroCeph members.
+* A non-clustered SMB cluster supports one member only.
+* Adding or removing members does not change the clustering mode.
+* Failed placement updates preserve existing members: removals are attempted
+  only after all requested placements succeed. Retry the apply after fixing
+  the reported failure.
+* Removed CTDB members retain commented rank slots. New members do not renumber
+  survivors. Rejoining the same member identity requires its original
+  MicroCluster address; in-place address migration is not supported.
 * Labels, host patterns, per-host daemon names, and unknown members are not
   supported by the native MicroCeph SMB orchestrator.
 
@@ -133,8 +158,8 @@ Supported configuration
 
 The managed CLI supports local-user authentication, direct
 ``samba-vfs/new`` CephFS access, an optional SMB bind address or network, and
-an optional SMB port. The underlying orchestrator accepts only the
-``clustered`` feature generated by the Ceph SMB manager.
+an optional SMB port. The orchestrator supports clustered and single-member
+non-clustered specifications. It rejects other SMB features.
 
 The following are not currently supported:
 
@@ -142,8 +167,45 @@ The following are not currently supported:
 * ``cephfs-proxy``;
 * CTDB public or floating addresses;
 * custom CTDB ports;
-* custom DNS, remote-control TLS, metrics sidecars, and unmanaged services;
+* custom DNS, remote-control TLS, metrics sidecars, unmanaged services, and
+  preview-only services;
+* placement network restrictions and arbitrary Ceph configuration overrides;
+* additional Ceph users beyond the cluster's generated SMB identity; and
 * arbitrary container arguments or Samba configuration files.
+
+Local user identity limitations
+-------------------------------
+
+Samba uses a minimal passwd/group database plus users imported from Ceph, not
+copies of the host's complete account databases. MicroCeph follows Sambacc 0.9:
+without explicit upstream IDs, users receive UID and primary GID ``1000 + list
+position``. Configured groups also receive positional GIDs; missing user groups
+are generated by Sambacc.
+
+Identical ordered resources produce identical current mappings on each member.
+They do not preserve historical ownership across resource edits. For example,
+if Alice is UID 1000 and Bob is UID 1001, deleting Alice makes Bob UID 1000 after
+regeneration. Existing CephFS file ownership remains numeric: Bob may inherit
+Alice's ownership interpretation and lose his previous one. Append users to
+preserve earlier positions; do not reorder entries. Deletion, insertion, or
+reordering requires careful consideration of existing file permissions.
+Active Directory support is not yet available.
+
+Request completion and retries
+------------------------------
+
+MicroCeph reads the current upstream placement and submits a complete updated
+resource to the Ceph SMB manager. A successful manager response confirms
+acceptance. It does not merge competing placement snapshots: concurrent managed
+or direct Ceph updates follow upstream replacement semantics. Run membership
+changes sequentially when every addition or removal must be preserved.
+
+After a timeout or daemon crash, remote work may still continue. Do not assume
+a failed command left no upstream resources. Inspect Ceph configuration, member
+services, and daemon logs before retrying. Credentials are not retained in the
+database: resubmit them if creation must be retried. Partial or conflicting
+creation requires operator attention, not blind overwrite. No managed-request
+lock or SQL lock reset is involved.
 
 Share operations
 ----------------
