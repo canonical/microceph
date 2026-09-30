@@ -259,6 +259,27 @@ func (s *startSuite) TestReEnableOSDRestarted() {
 	reEnableServices(context.Background(), s.newState())
 }
 
+func (s *startSuite) TestReEnableSMBStartsCTDBBeforeSMBD() {
+	originalPaths := constants.GetPathConst
+	s.T().Cleanup(func() { constants.GetPathConst = originalPaths })
+	root := s.T().TempDir()
+	constants.GetPathConst = func() constants.PathConst { return constants.PathConst{ConfPath: filepath.Join(root, "conf")} }
+	runtimeDir := filepath.Join(root, "samba")
+	assert.NoError(s.T(), os.MkdirAll(runtimeDir, 0700))
+	assert.NoError(s.T(), os.WriteFile(filepath.Join(runtimeDir, "ctdb.json"), []byte("{}"), 0600))
+	r := s.setupReEnable([]database.Service{{Service: "mon", Member: "node1"}}, []database.GroupedService{{Service: "smb", GroupID: "files", Member: "node1"}})
+	r.On("RunCommand", "snapctl", "services", "microceph.mon").Return("active", nil).Once()
+	r.On("RunCommand", "snapctl", "services", "microceph.osd").Return("active", nil).Once()
+	var started []string
+	for _, name := range []string{"ctdbd", "ctdb-nodes", "smbd"} {
+		r.On("RunCommand", "snapctl", "services", "microceph."+name).Return("inactive", nil).Once()
+		serviceName := name
+		r.On("RunCommand", "snapctl", "start", "microceph."+name, "--enable").Run(func(_ mock.Arguments) { started = append(started, serviceName) }).Return("ok", nil).Once()
+	}
+	reEnableServices(context.Background(), s.newState())
+	assert.Equal(s.T(), []string{"ctdbd", "ctdb-nodes", "smbd"}, started)
+}
+
 func (s *startSuite) TestReEnableGroupedServiceRestarted() {
 	r := s.setupReEnable(
 		[]database.Service{{Service: "mon", Member: "node1"}},

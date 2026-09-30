@@ -1,13 +1,20 @@
 #!/bin/bash
 set -eu
 
+# shellcheck source=snapcraft/commands/common
 . "${SNAP}/commands/common"
+# shellcheck source=snapcraft/commands/smb-common
 . "${SNAP}/commands/smb-common"
 
 wait_for_config
 smb_prepare_runtime
 smb_prepare_ctdb_runtime
 mkdir -p /run/ctdb
+
+smb_ctdb_meta_uri="$("${SNAP}/bin/python3" -c 'import json, sys; print(json.load(open(sys.argv[1]))["ctdb"]["cluster_meta_uri"])' "${smb_ctdb_config}")"
+"${SNAP}/bin/python3" "${SNAP}/commands/ctdb_ready.py" \
+    "${smb_ctdb_meta_uri}" "${smb_cluster_id}" "${smb_ctdb_identity}" "${smb_ctdb_rank}" \
+    --state prepare --address "${smb_ctdb_address}"
 
 "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" \
     ctdb-set-node \
