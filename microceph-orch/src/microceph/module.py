@@ -205,14 +205,27 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
     ) -> List[ServiceDescription]:
         """Build SMB descriptions from grouped-service configuration."""
         descriptions = []
-        for cluster_id, group in self._smb_service_groups(records).items():
+        smb_records = [record for record in records if record.get("service") == "smb"]
+        cluster_ids = sorted({
+            record.get("group_id")
+            for record in smb_records
+            if isinstance(record.get("group_id"), str) and record.get("group_id")
+        })
+        for cluster_id in cluster_ids:
+            cluster_records = [
+                record for record in smb_records
+                if record.get("group_id") == cluster_id
+            ]
+            try:
+                group = self._smb_service_groups(cluster_records)[cluster_id]
+                spec = SMBSpec.from_json(group["desired_spec"])
+            except Exception as err:
+                logger.error("skipping invalid SMB service %s: %s", cluster_id, err)
+                continue
             expected_service_name = f"smb.{cluster_id}"
             if service_name and service_name != expected_service_name:
                 continue
-            descriptions.append(ServiceDescription(
-                spec=SMBSpec.from_json(group["desired_spec"]),
-                running=0,
-            ))
+            descriptions.append(ServiceDescription(spec=spec, running=0))
         return descriptions
 
     @handle_orch_error
@@ -371,9 +384,12 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
                 names = ", ".join(unknown_hosts)
                 raise ValueError(f"unknown MicroCeph members: {names}")
         else:
-            candidates = member_names
+            # Count-based placement must not consume a slot on an offline node.
+            candidates = [host.hostname for host in hosts if host.status.upper() == "ONLINE"]
 
         target_count = placement.get_target_count(hosts)
+        if not explicit_hosts and placement.count is None:
+            target_count = len(candidates)
         if target_count > len(candidates):
             raise ValueError(
                 f"SMB placement requests {target_count} daemons but only "
@@ -443,26 +459,82 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
         if ceph_users.difference({allowed_user}):
             raise ValueError("native SMB does not support additional Ceph users")
 
+    @staticmethod
+    def _smb_rank_state(cluster_id: str, records: List[Dict[str, Any]]) -> Tuple[Dict[str, int], int]:
+        """Recover all assigned ranks, including retired hosts, from shared state."""
+        ranks: Dict[str, int] = {}
+        next_rank = 0
+        for record in records:
+            raw_config = record.get("group_config")
+            if raw_config is None:
+                continue
+            try:
+                config = json.loads(raw_config)
+            except (TypeError, ValueError) as err:
+                raise ValueError(f"invalid SMB group configuration for '{cluster_id}'") from err
+            stored = config.get("ctdb_ranks", {})
+            counter = config.get("next_ctdb_rank", 0)
+            if not isinstance(stored, dict) or type(counter) is not int or counter < 0:
+                raise ValueError(f"invalid CTDB rank state for '{cluster_id}'")
+            next_rank = max(next_rank, counter)
+            for identity, rank in stored.items():
+                if not isinstance(identity, str) or not identity or type(rank) is not int or rank < 0:
+                    raise ValueError(f"invalid CTDB rank state for '{cluster_id}'")
+                if identity in ranks and ranks[identity] != rank:
+                    raise ValueError(f"inconsistent CTDB rank for '{identity}'")
+                ranks[identity] = rank
+
+        # Older records can carry a node rank without the shared rank map.
+        for record in records:
+            raw_info = record.get("info")
+            if not raw_info:
+                continue
+            try:
+                info = json.loads(raw_info)
+            except (TypeError, ValueError) as err:
+                raise ValueError(f"invalid SMB member info for '{cluster_id}'") from err
+            rank = info.get("ctdb_rank")
+            if rank is None:
+                continue
+            identity = info.get("ctdb_identity") or f"smb.{cluster_id}.{record['location']}"
+            if type(rank) is not int or rank < 0 or not isinstance(identity, str):
+                raise ValueError(f"invalid CTDB rank for '{identity}'")
+            if identity in ranks and ranks[identity] != rank:
+                raise ValueError(f"inconsistent CTDB rank for '{identity}'")
+            ranks[identity] = rank
+
+        if len(set(ranks.values())) != len(ranks):
+            raise ValueError(f"duplicate CTDB ranks for '{cluster_id}'")
+        next_rank = max(next_rank, max(ranks.values(), default=-1) + 1)
+        # When upgrading records without rank metadata, reserve a rank for each
+        # existing member before allocating any newly placed host.
+        for record in sorted(records, key=lambda item: item["location"]):
+            identity = f"smb.{cluster_id}.{record['location']}"
+            if identity not in ranks:
+                ranks[identity] = next_rank
+                next_rank += 1
+        return ranks, next_rank
+
     def _smb_payloads(
-        self, spec: SMBSpec, targets: List[str]
+        self, spec: SMBSpec, targets: List[str], ranks: Dict[str, int], next_rank: int
     ) -> Dict[str, Dict[str, Any]]:
-        """Return each target's upstream spec and optional CTDB node metadata."""
+        """Return each target's upstream spec and persistent CTDB rank state."""
         desired_spec = spec.to_json()
         if "clustered" not in (getattr(spec, "features", []) or []):
             return {target: desired_spec for target in targets}
-
-        ordered_targets = sorted(targets)
         return {
             target: {
                 "service_spec": desired_spec,
                 "microceph": {
                     "ctdb": {
-                        "rank": rank,
+                        "rank": ranks[f"smb.{spec.cluster_id}.{target}"],
                         "identity": f"smb.{spec.cluster_id}.{target}",
-                    }
+                    },
+                    "ctdb_ranks": ranks.copy(),
+                    "next_ctdb_rank": next_rank,
                 },
             }
-            for rank, target in enumerate(ordered_targets)
+            for target in targets
         }
 
     @handle_orch_error
@@ -502,17 +574,62 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             for record in current
             if record['group_id'] == spec.cluster_id
         }
-        payloads = self._smb_payloads(spec, targets)
+        cluster_records = [record for record in current if record['group_id'] == spec.cluster_id]
+        clustered = "clustered" in (getattr(spec, "features", []) or [])
+        if not clustered and len(targets) != 1:
+            raise ValueError("non-clustered SMB requires exactly one member")
+        for record in cluster_records:
+            if not record.get("group_config"):
+                continue
+            config = json.loads(record["group_config"])
+            previous = config.get("desired_spec")
+            if previous is not None:
+                previous = previous.get("spec", previous)
+                if ("clustered" in (previous.get("features") or [])) != clustered:
+                    raise ValueError("SMB clustering mode cannot be changed; recreate the cluster")
+        if not clustered and current_hosts.difference(target_set):
+            raise ValueError("remove the existing non-clustered member before relocating SMB")
+        ranks, next_rank = {}, 0
+        if clustered:
+            ranks, next_rank = self._smb_rank_state(spec.cluster_id, cluster_records)
+            for target in sorted(targets):
+                identity = f"smb.{spec.cluster_id}.{target}"
+                if identity not in ranks:
+                    ranks[identity] = next_rank
+                    next_rank += 1
+        payloads = self._smb_payloads(spec, targets, ranks, next_rank)
+        failures = []
         for target in sorted(targets):
-            self.microceph.services.apply_smb(target, payloads[target])
+            try:
+                self.microceph.services.apply_smb(target, payloads[target])
+            except Exception as err:
+                failures.append(("apply", target, err))
 
-        for target in sorted(current_hosts.difference(target_set)):
-            self.microceph.services.remove_smb(target, spec.cluster_id)
+        # A failed replacement must not turn into removal of its healthy source.
+        # Retry additions on the next apply before attempting scale-down again.
+        if not failures:
+            for target in sorted(current_hosts.difference(target_set)):
+                try:
+                    self.microceph.services.remove_smb(target, spec.cluster_id)
+                except Exception as err:
+                    failures.append(("remove", target, err))
+
+        if failures:
+            details = "; ".join(
+                f"{operation} {target}: {err}"
+                for operation, target, err in failures
+            )
+            raise RuntimeError(f"SMB reconciliation incomplete: {details}")
 
         return f"Applied SMB service '{spec.cluster_id}'"
 
     @handle_orch_error
-    def remove_service(self, service_name: str, force: bool = False) -> str:
+    def remove_service(
+        self,
+        service_name: str,
+        force: bool = False,
+        force_delete_data: bool = False,
+    ) -> str:
         """Remove a native SMB service from every currently placed member."""
         service_type, separator, cluster_id = service_name.partition('.')
         if service_type != 'smb' or not separator or not cluster_id:
@@ -524,8 +641,15 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             for record in records
             if record['service'] == 'smb' and record['group_id'] == cluster_id
         )
+        failures = []
         for member in members:
-            self.microceph.services.remove_smb(member, cluster_id)
+            try:
+                self.microceph.services.remove_smb(member, cluster_id)
+            except Exception as err:
+                failures.append((member, err))
+        if failures:
+            details = "; ".join(f"remove {member}: {err}" for member, err in failures)
+            raise RuntimeError(f"SMB removal incomplete: {details}")
 
         return f"Removed SMB service '{cluster_id}'"
 

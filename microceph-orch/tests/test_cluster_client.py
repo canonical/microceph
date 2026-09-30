@@ -10,6 +10,50 @@ from pathlib import Path
 SOURCE_ROOT = Path(__file__).parents[1] / "src" / "microceph" / "client"
 
 
+def _load_client_module(monkeypatch):
+    """Load the top-level client with lightweight dependency stubs."""
+    package_name = "test_microceph_top_client"
+    package = types.ModuleType(package_name)
+    package.__path__ = [str(SOURCE_ROOT)]
+    monkeypatch.setitem(sys.modules, package_name, package)
+
+    class Session:
+        def mount(self, *_args):
+            pass
+
+    requests = types.ModuleType("requests")
+    requests.sessions = types.SimpleNamespace(Session=Session)
+    unixsocket = types.ModuleType("requests_unixsocket")
+    unixsocket.DEFAULT_SCHEME = "http+unix://"
+    unixsocket.UnixAdapter = object
+    snaphelpers = types.ModuleType("snaphelpers")
+    snaphelpers.Snap = object
+    monkeypatch.setitem(sys.modules, "requests", requests)
+    monkeypatch.setitem(sys.modules, "requests_unixsocket", unixsocket)
+    monkeypatch.setitem(sys.modules, "snaphelpers", snaphelpers)
+
+    cluster_name = f"{package_name}.cluster"
+    cluster = types.ModuleType(cluster_name)
+
+    class Service:
+        def __init__(self, session, endpoint, certs, timeout=None):
+            self.timeout = timeout
+
+    cluster.StatusService = Service
+    cluster.ExtendedAPIService = Service
+    cluster.MicroClusterService = Service
+    monkeypatch.setitem(sys.modules, cluster_name, cluster)
+
+    module_name = f"{package_name}.client"
+    spec = importlib.util.spec_from_file_location(module_name, SOURCE_ROOT / "client.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, module_name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load_cluster_module(monkeypatch):
     """Load the client modules without importing the Ceph manager package."""
     package_name = "test_microceph_client"
@@ -35,6 +79,14 @@ def _load_cluster_module(monkeypatch):
     spec.loader.exec_module(module)
 
     return module
+
+
+def test_client_sets_bounded_extended_api_timeout(monkeypatch):
+    client_module = _load_client_module(monkeypatch)
+
+    client = client_module.Client("http+unix://socket")
+
+    assert client.services.timeout == 300
 
 
 class _RequestRecorder:
