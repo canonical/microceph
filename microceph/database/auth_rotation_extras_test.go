@@ -266,3 +266,91 @@ func TestAuthRotationLockAcquireReleaseAndContention(t *testing.T) {
 		assert.False(t, released)
 	})
 }
+
+func TestAuthRotationLockRenewal(t *testing.T) {
+	db := setupAuthRotationDB(t)
+
+	now := time.Now().UnixNano()
+	token1 := now
+	// The lease is short; the holder renews it before it goes stale.
+	staleBefore := now - int64(10*time.Second)
+
+	// 1. Acquire free lock.
+	lockTx(t, db, func(tx *sql.Tx) {
+		acquired, err := TryAcquireAuthRotationLock(context.Background(), tx, token1, staleBefore)
+		require.NoError(t, err)
+		assert.True(t, acquired)
+	})
+
+	// 2. Renewal moves the holder's token forward.
+	token1Renewed := token1 + int64(5*time.Second)
+	lockTx(t, db, func(tx *sql.Tx) {
+		renewed, err := RenewAuthRotationLock(context.Background(), tx, token1, token1Renewed)
+		require.NoError(t, err)
+		assert.True(t, renewed)
+	})
+
+	// 3. The renewed holder is not stale: the old token cannot be reclaimed
+	//    even past the original lease duration.
+	lockTx(t, db, func(tx *sql.Tx) {
+		acquired, err := TryAcquireAuthRotationLock(context.Background(), tx, token1+int64(time.Minute), staleBefore)
+		require.NoError(t, err)
+		assert.False(t, acquired)
+	})
+
+	// 4. Renewal with a stale token (lock lost or released) fails.
+	lockTx(t, db, func(tx *sql.Tx) {
+		renewed, err := RenewAuthRotationLock(context.Background(), tx, token1, token1+int64(2*time.Minute))
+		require.NoError(t, err)
+		assert.False(t, renewed)
+	})
+
+	// 5. Renewal with the current token succeeds again.
+	lockTx(t, db, func(tx *sql.Tx) {
+		renewed, err := RenewAuthRotationLock(context.Background(), tx, token1Renewed, token1+int64(2*time.Minute))
+		require.NoError(t, err)
+		assert.True(t, renewed)
+	})
+
+	// 6. The holder releases with the latest token.
+	lockTx(t, db, func(tx *sql.Tx) {
+		released, err := ReleaseAuthRotationLock(context.Background(), tx, token1+int64(2*time.Minute))
+		require.NoError(t, err)
+		assert.True(t, released)
+	})
+}
+
+func TestInitOrResumeAdminSubStep(t *testing.T) {
+	db := setupAuthRotationDB(t)
+
+	// Seed an incomplete full-run record (no client filter).
+	tx, err := db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	err = SetAuthRotation(context.Background(), tx, AuthRotationRecord{
+		TargetKeyType: "aes256k",
+		State:         AuthRotationStateBlocked,
+		Stage:         AuthRotationStageFinishSafely,
+		Blocker:       "client.admin still uses cipher",
+	})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	// The explicit admin rotation is a sub-step of the paused full run: it is
+	// allowed despite the empty client filter, and the record keeps it.
+	tx, err = db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	rec, resumed, err := InitOrResumeAuthRotation(context.Background(), tx, "aes256k", "client.admin")
+	require.NoError(t, err)
+	assert.True(t, resumed)
+	assert.Equal(t, AuthRotationStateInProgress, rec.State)
+	assert.Equal(t, "", rec.ClientName)
+	require.NoError(t, tx.Commit())
+
+	// Any other client filter is still refused while the full run is incomplete.
+	tx, err = db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	_, _, err = InitOrResumeAuthRotation(context.Background(), tx, "aes256k", "client.rgw")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot change client")
+	require.NoError(t, tx.Rollback())
+}

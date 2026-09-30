@@ -16,19 +16,22 @@ import (
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/mocks"
 )
 
 func TestCmdAuthRotatePostSuccess(t *testing.T) {
 	origExec := executeAuthRotationFunc
 	defer func() { executeAuthRotationFunc = origExec }()
 
+	// The handler returns the initialized record: the rotation itself runs
+	// detached on the daemon and is tracked via auth status.
 	executeAuthRotationFunc = func(ctx context.Context, s interfaces.StateInterface, targetKeyType string, clientName string) (*database.AuthRotationRecord, error) {
 		assert.Equal(t, "aes256k", targetKeyType)
 		assert.Equal(t, "client.rgw", clientName)
 		return &database.AuthRotationRecord{
 			TargetKeyType: "aes256k",
-			State:         database.AuthRotationStateCompleted,
-			Stage:         database.AuthRotationStageFinishSafely,
+			State:         database.AuthRotationStateInProgress,
+			Stage:         database.AuthRotationStageReadiness,
 			ClientName:    "client.rgw",
 		}, nil
 	}
@@ -50,7 +53,7 @@ func TestCmdAuthRotatePostSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "aes256k", raw.Metadata.TargetKeyType)
-	assert.Equal(t, "completed", raw.Metadata.State)
+	assert.Equal(t, "in_progress", raw.Metadata.State)
 	assert.Equal(t, "client.rgw", raw.Metadata.ClientName)
 }
 
@@ -162,4 +165,25 @@ func TestCmdAuthRotateMemberPost(t *testing.T) {
 	err = resp.Render(rec, req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	// 4. Resume progress: a member named in the request's skip list replies
+	//    without rotating anything again.
+	rotateMemberDaemonsFunc = func(ctx context.Context, s interfaces.StateInterface, keyType string, monKeyring string) (*ceph.MemberRotationSummary, error) {
+		t.Error("member handler must not rotate a member in the skip list")
+		return nil, fmt.Errorf("must not be called")
+	}
+	body = strings.NewReader(`{"key_type": "aes256k", "skip": ["node-a"]}`)
+	req = httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate/member", body)
+	rec = httptest.NewRecorder()
+	resp = cmdAuthRotateMemberPost(&mocks.MockState{ClusterName: "node-a"}, req)
+	err = resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	raw.Metadata = types.MemberAuthRotateResponse{}
+	err = json.NewDecoder(rec.Body).Decode(&raw)
+	require.NoError(t, err)
+	assert.Equal(t, "node-a", raw.Metadata.Hostname)
+	assert.False(t, raw.Metadata.MonRestarted)
+	assert.Empty(t, raw.Metadata.RotatedMgrs)
 }

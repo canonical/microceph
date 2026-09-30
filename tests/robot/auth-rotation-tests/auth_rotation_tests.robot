@@ -64,10 +64,23 @@ Test Unmanaged Credential Blocker Detection
     Run In VM And Check    sudo microceph.ceph auth del client.external-app    30
 
 Test Resume Rotation To Completion
-    [Documentation]    Re-running rotation after resolving the blocker resumes and finishes.
+    [Documentation]    Re-running rotation after resolving the blocker resumes. The full
+    ...    run pauses before disallowing insecure ciphers until client.admin is
+    ...    rotated explicitly: the admin key is shared beyond the cluster (e.g.
+    ...    MicroCloud's LXD via the ceph-conf interface) and is never rotated
+    ...    automatically.
     [Tags]    auth    rotate    resume
-    ${res}=    Run In VM And Check    sudo microceph auth rotate --key-type aes256k    300
-    Should Contain    ${res.stdout}    Successfully completed auth key rotation to aes256k
+    # The pipeline pauses at the finish step because client.admin is still on aes
+    ${res}=    Run In VM    sudo microceph auth rotate --key-type aes256k    300
+    Should Be Equal As Integers    ${res.rc}    3
+    Should Contain    ${res.stdout}    client.admin still uses cipher
+    Should Contain    ${res.stdout}    microceph auth rotate --client client.admin
+    # Rotate the admin key explicitly through the protected admin rotation
+    ${admin_res}=    Run In VM And Check    sudo microceph auth rotate --client client.admin    300
+    Should Contain    ${admin_res.stdout}    Successfully rotated key for client.admin
+    # Re-run: resumes past the completed stages and disallows insecure ciphers
+    ${res2}=    Run In VM And Check    sudo microceph auth rotate --key-type aes256k    300
+    Should Contain    ${res2.stdout}    Successfully completed auth key rotation to aes256k
     # Verify auth status reports all clients on aes256k
     ${status_res}=    Run In VM And Check    sudo microceph auth status    30
     Should Contain    ${status_res.stdout}    Status: All client aes256k

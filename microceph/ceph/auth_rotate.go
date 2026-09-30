@@ -2,7 +2,9 @@ package ceph
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
@@ -65,58 +68,57 @@ type ClientSessionInfo struct {
 
 // Functions that can be patched for testing.
 var (
-	getMonCiphersFunc                       = GetMonCiphers
-	setMonAllowedCiphersFunc                = SetMonAllowedCiphers
-	setMonPreferredCipherFunc               = SetMonPreferredCipher
-	setMonServiceCipherFunc                 = SetMonServiceCipher
-	setMonAllowInsecureKeyFunc              = SetMonAllowInsecureKey
-	rotateEntityKeyFunc                     = RotateEntityKey
-	rotateEntityKeyToFileFunc               = RotateEntityKeyToFile
-	getOrCreatePendingKeyFunc               = GetOrCreatePendingKey
-	getEntityKeyringFunc                    = GetEntityKeyring
-	commitPendingKeyFunc                    = CommitPendingKey
-	clearPendingKeyFunc                     = ClearPendingKey
-	wipeRotatingServiceKeysFunc             = WipeRotatingServiceKeys
-	dumpAuthKeysFunc                        = DumpAuthKeys
-	getAuthHealthWarningsFunc               = GetAuthHealthWarnings
-	getClientSessionsFunc                   = GetClientSessions
-	resolveTargetKeyTypeFunc                = ResolveTargetKeyType
-	checkAuthRotationReadinessFunc          = CheckAuthRotationReadiness
-	checkClusterMembersReachableFunc        = checkClusterMembersReachable
-	checkMonQuorumReadyFunc                 = checkMonQuorumReady
-	checkCipherCompatibilityFunc            = checkCipherCompatibility
-	prepareAuthRotationFunc                 = PrepareAuthRotation
-	snapStartFunc                           = snapStart
-	snapRestartFunc                         = snapRestart
-	waitForMonQuorumFunc                    = waitForMonQuorum
-	waitForMGRReadyFunc                     = waitForMGRReady
-	waitForMDSReadyFunc                     = waitForMDSReady
-	waitForOSDUpFunc                        = waitForOSDUp
-	rotateMonKeyAuthFunc                    = RotateMonKeyAuth
-	deployMonKeyringAndRestartFunc          = deployMonKeyringAndRestart
-	rotateLocalMGRKeyFunc                   = RotateLocalMGRKey
-	rotateLocalMDSKeyFunc                   = RotateLocalMDSKey
-	rotateLocalOSDKeysFunc                  = RotateLocalOSDKeys
-	getLocalOSDIDsFunc                      = getLocalOSDIDs
-	rotateMemberDaemonsFunc                 = RotateMemberDaemons
-	sendMemberAuthRotateFunc                = client.SendMemberAuthRotateToClusterMembers
-	rotateDaemonsFunc                       = RotateDaemons
-	switchServiceAuthenticationFunc         = SwitchServiceAuthentication
-	preventNewInsecureKeysFunc              = PreventNewInsecureKeys
-	switchServiceAuthAndPreventInsecureFunc = SwitchServiceAuthAndPreventInsecure
-	createAdminBackupKeyFunc                = createAdminBackupKey
-	verifyAdminAccessFunc                   = verifyAdminAccess
-	deleteAdminBackupKeyFunc                = deleteAdminBackupKey
-	updateAdminKeyringInDBFunc              = updateAdminKeyringInDB
-	updateAdminKeyringFilesFunc             = updateAdminKeyringFiles
-	rotateAdminKeyFunc                      = RotateAdminKey
-	rotateSingleClientKeyFunc               = RotateSingleClientKey
-	rotateManagedClientsFunc                = RotateManagedClients
-	inspectClientSessionBlockersFunc        = InspectClientSessionBlockers
-	disallowInsecureLegacyCiphersFunc       = DisallowInsecureLegacyCiphers
-	finalizeAuthRotationFunc                = FinalizeAuthRotation
-	executeAuthRotationFunc                 = ExecuteAuthRotation
-	buildAuthStatusFunc                     = BuildAuthStatus
+	getMonCiphersFunc                 = GetMonCiphers
+	setMonAllowedCiphersFunc          = SetMonAllowedCiphers
+	setMonPreferredCipherFunc         = SetMonPreferredCipher
+	setMonServiceCipherFunc           = SetMonServiceCipher
+	setMonAllowInsecureKeyFunc        = SetMonAllowInsecureKey
+	rotateEntityKeyFunc               = RotateEntityKey
+	rotateEntityKeyToFileFunc         = RotateEntityKeyToFile
+	getOrCreatePendingKeyFunc         = GetOrCreatePendingKey
+	getEntityKeyringFunc              = GetEntityKeyring
+	commitPendingKeyFunc              = CommitPendingKey
+	clearPendingKeyFunc               = ClearPendingKey
+	wipeRotatingServiceKeysFunc       = WipeRotatingServiceKeys
+	dumpAuthKeysFunc                  = DumpAuthKeys
+	getAuthHealthWarningsFunc         = GetAuthHealthWarnings
+	getClientSessionsFunc             = GetClientSessions
+	resolveTargetKeyTypeFunc          = ResolveTargetKeyType
+	checkAuthRotationReadinessFunc    = CheckAuthRotationReadiness
+	checkClusterMembersReachableFunc  = checkClusterMembersReachable
+	checkMonQuorumReadyFunc           = checkMonQuorumReady
+	checkCipherCompatibilityFunc      = checkCipherCompatibility
+	prepareAuthRotationFunc           = PrepareAuthRotation
+	snapStartFunc                     = snapStart
+	snapRestartFunc                   = snapRestart
+	waitForMonQuorumFunc              = waitForMonQuorum
+	waitForMGRReadyFunc               = waitForMGRReady
+	waitForMDSReadyFunc               = waitForMDSReady
+	waitForOSDUpFunc                  = waitForOSDUp
+	rotateMonKeyAuthFunc              = RotateMonKeyAuth
+	deployMonKeyringAndRestartFunc    = deployMonKeyringAndRestart
+	rotateLocalMGRKeyFunc             = RotateLocalMGRKey
+	rotateLocalMDSKeyFunc             = RotateLocalMDSKey
+	rotateLocalOSDKeysFunc            = RotateLocalOSDKeys
+	getLocalOSDIDsFunc                = getLocalOSDIDs
+	rotateMemberDaemonsFunc           = RotateMemberDaemons
+	sendMemberAuthRotateFunc          = client.SendMemberAuthRotateToClusterMembers
+	rotateDaemonsFunc                 = RotateDaemons
+	activateAndCheckFunc              = ActivateAndCheck
+	switchServiceAuthenticationFunc   = SwitchServiceAuthentication
+	preventNewInsecureKeysFunc        = PreventNewInsecureKeys
+	createAdminBackupKeyFunc          = createAdminBackupKey
+	verifyAdminAccessFunc             = verifyAdminAccess
+	deleteAdminBackupKeyFunc          = deleteAdminBackupKey
+	updateAdminKeyringInDBFunc        = updateAdminKeyringInDB
+	updateAdminKeyringFilesFunc       = updateAdminKeyringFiles
+	rotateAdminKeyFunc                = RotateAdminKey
+	rotateSingleClientKeyFunc         = RotateSingleClientKey
+	rotateManagedClientsFunc          = RotateManagedClients
+	inspectClientSessionBlockersFunc  = InspectClientSessionBlockers
+	disallowInsecureLegacyCiphersFunc = DisallowInsecureLegacyCiphers
+	finalizeAuthRotationFunc          = FinalizeAuthRotation
+	buildAuthStatusFunc               = BuildAuthStatus
 )
 
 // Query the monitor map and return the current cipher config.
@@ -430,21 +432,19 @@ func PreventNewInsecureKeys(ctx context.Context, targetKeyType string) error {
 	return nil
 }
 
-// This function bridges upstream steps 5 to 7:
-// - Switch auth_service_cipher to the target type and verify AUTH_INSECURE_SERVICE_TICKETS clears.
-// - Honors the recommended natural-expiry path for rotating service keys without wiping.
-// - Sets mon_auth_allow_insecure_key=false and verifies AUTH_INSECURE_KEYS_CREATABLE clears.
-func SwitchServiceAuthAndPreventInsecure(ctx context.Context, targetKeyType string) error {
-	err := switchServiceAuthenticationFunc(ctx, targetKeyType)
+// ActivateAndCheck confirms upstream step 4: after daemon rotation every
+// service daemon has re-authenticated with its new key and the
+// AUTH_INSECURE_SERVICE_KEY_TYPE warning has cleared. Split from
+// RotateDaemons so a resumed rotation re-checks health without re-rotating
+// and restarting every daemon again.
+func ActivateAndCheck(ctx context.Context) error {
+	hw, err := getAuthHealthWarningsFunc(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check health warnings after daemon rotation: %w", err)
 	}
 
-	// Upstream Step 6: Allow existing rotating service keys to expire naturally per recommended path.
-
-	err = preventNewInsecureKeysFunc(ctx, targetKeyType)
-	if err != nil {
-		return err
+	if hw.InsecureServiceKeyType {
+		return fmt.Errorf("AUTH_INSECURE_SERVICE_KEY_TYPE remains active after daemon rotation: %v", hw.InsecureServiceDetails)
 	}
 
 	return nil
@@ -473,72 +473,116 @@ func ParseKeyringData(data string) (string, error) {
 // - Updates MicroCeph shared database (keyring.client.admin) and admin-keyring files.
 // - Verifies admin access works with the new key.
 // - Removes the temporary recovery credential.
+// RotateAdminKey rotates client.admin with recovery safeguards (upstream step
+// 8). A run-unique backup credential is created first and kept — together with
+// a 0600 copy of its keyring under the snap's conf dir — until the new key is
+// verified, so a failure never removes the recovery path; errors past that
+// point reference the backup instead. The new key is issued as a pending key
+// and persisted to the shared DB row and the keyring files before commit-pending
+// makes it active, so a crash at any point leaves a consistent, recoverable
+// state.
 func RotateAdminKey(ctx context.Context, s interfaces.StateInterface, targetKeyType string) error {
 	pathConst := constants.GetPathConst()
-	tmpDir, err := os.MkdirTemp("", "microceph-admin-rotate-*")
+
+	// client.admin-backup is the name the upstream procedure tells operators
+	// to create by hand: never touch one of those. A run-unique name also
+	// keeps retried runs from clobbering each other's recovery credential.
+	suffix := make([]byte, 4)
+	_, err := rand.Read(suffix)
 	if err != nil {
-		return fmt.Errorf("failed to create temporary directory for admin rotation: %w", err)
+		return fmt.Errorf("failed to generate admin recovery credential name: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	backupName := fmt.Sprintf("client.admin-backup-%s", hex.EncodeToString(suffix))
+	backupKeyringPath := filepath.Join(pathConst.ConfPath, backupName+".keyring")
 
-	backupKeyringPath := filepath.Join(tmpDir, "client.admin-backup.keyring")
-
-	// Create and test temporary recovery credential
-	err = createAdminBackupKeyFunc(ctx, backupKeyringPath)
+	// Create the recovery credential; its keyring is durable, not private
+	// tmp, so it survives a crash and can be referenced in error messages.
+	err = createAdminBackupKeyFunc(ctx, backupName, backupKeyringPath)
 	if err != nil {
-		return fmt.Errorf("failed to create temporary admin recovery credential: %w", err)
-	}
-	// Always attempt to delete backup key on exit
-	defer func() {
-		_ = deleteAdminBackupKeyFunc(context.Background())
-	}()
-
-	err = verifyAdminAccessFunc(ctx, "client.admin-backup", backupKeyringPath)
-	if err != nil {
-		return fmt.Errorf("temporary recovery credential failed verification: %w", err)
+		return fmt.Errorf("failed to create admin recovery credential: %w", err)
 	}
 
-	// Rotate client.admin
-	keyringContent, err := rotateEntityKeyFunc(ctx, "client.admin", targetKeyType)
+	err = verifyAdminAccessFunc(ctx, backupName, backupKeyringPath)
 	if err != nil {
-		return fmt.Errorf("failed to rotate client.admin key: %w", err)
+		// The backup itself is unusable and nothing was changed yet: remove
+		// it rather than leaving a broken credential behind.
+		_ = deleteAdminBackupKeyFunc(context.Background(), backupName)
+		_ = os.Remove(backupKeyringPath)
+		return fmt.Errorf("admin recovery credential failed verification: %w", err)
 	}
 
-	secretKey, err := ParseKeyringData(keyringContent)
-	if err != nil {
-		return fmt.Errorf("failed to parse secret key from rotated client.admin output: %w", err)
+	// From the point a pending key exists, the backup is the recovery path
+	// and must never be removed automatically; failures reference it instead.
+	failAfterIssue := func(step string, err error) error {
+		return fmt.Errorf(
+			"%s: %w; the recovery credential %s remains available (keyring: %s); use it to restore access if needed, then remove it with 'ceph auth del %s' and delete the keyring file",
+			step, err, backupName, backupKeyringPath, backupName)
 	}
 
-	// Update MicroCeph shared database value
-	err = updateAdminKeyringInDBFunc(ctx, s, secretKey)
+	// Issue the new admin key as a pending key alongside the active one so
+	// the secret is persisted before it becomes active.
+	pendingKey, err := getOrCreatePendingKeyFunc(ctx, "client.admin")
 	if err != nil {
-		return fmt.Errorf("failed to update admin keyring in database: %w", err)
+		return failAfterIssue("failed to issue pending key for client.admin", err)
 	}
 
-	// Update local and cluster admin-keyring files
-	err = updateAdminKeyringFilesFunc(ctx, s, secretKey)
+	// get-or-create-pending mints with the mon's auth_preferred_cipher, which
+	// a single-client admin run does not prepare; verify and remint if stale.
+	pendingKey, err = ensurePendingKeyType(ctx, "client.admin", pendingKey, targetKeyType)
 	if err != nil {
-		return fmt.Errorf("failed to update admin keyring files: %w", err)
+		return failAfterIssue("pending key cipher verification failed", err)
 	}
 
-	// Verify access before removing temporary credential
+	// Persist the pending secret before it becomes active: the shared DB row
+	// (every member's daemon re-renders ceph.keyring from it) and the local
+	// keyring files. A crash here leaves either the old key active with the
+	// old files, or the pending key active with the new files: both work.
+	err = updateAdminKeyringInDBFunc(ctx, s, pendingKey)
+	if err != nil {
+		return failAfterIssue("failed to update admin keyring in database", err)
+	}
+
+	err = updateAdminKeyringFilesFunc(ctx, s, pendingKey)
+	if err != nil {
+		return failAfterIssue("failed to update admin keyring files", err)
+	}
+
+	// Commit: the pending key becomes the active key, retiring the old one.
+	err = commitPendingKeyFunc(ctx, "client.admin")
+	if err != nil {
+		return failAfterIssue("failed to commit pending key for client.admin", err)
+	}
+
+	// Verify access with the newly deployed keyring before removing the
+	// recovery credential: the backup is removed only once everything checks
+	// out.
 	adminKeyringPath := filepath.Join(pathConst.ConfPath, constants.CephAdminKeyringFileName)
 	err = verifyAdminAccessFunc(ctx, "client.admin", adminKeyringPath)
 	if err != nil {
-		return fmt.Errorf("new client.admin key failed verification: %w", err)
+		return failAfterIssue("new client.admin key failed verification", err)
+	}
+
+	// Success: remove the recovery credential.
+	err = deleteAdminBackupKeyFunc(context.Background(), backupName)
+	if err != nil {
+		logger.Warnf("failed to delete admin recovery credential %s after successful rotation: %v", backupName, err)
+	}
+	err = os.Remove(backupKeyringPath)
+	if err != nil && !os.IsNotExist(err) {
+		logger.Warnf("failed to remove admin recovery keyring %s after successful rotation: %v", backupKeyringPath, err)
 	}
 
 	return nil
 }
 
-func createAdminBackupKey(ctx context.Context, backupKeyringPath string) error {
+func createAdminBackupKey(ctx context.Context, backupName string, backupKeyringPath string) error {
 	dir := filepath.Dir(backupKeyringPath)
 	err := os.MkdirAll(dir, 0700)
 	if err != nil {
 		return fmt.Errorf("failed to create directory for admin backup keyring: %w", err)
 	}
 
-	_, err = cephRunContext(ctx, "auth", "get-or-create", "client.admin-backup",
+	_, err = cephRunContext(ctx, "auth", "get-or-create", backupName,
 		"mon", "allow *",
 		"osd", "allow *",
 		"mds", "allow *",
@@ -546,7 +590,14 @@ func createAdminBackupKey(ctx context.Context, backupKeyringPath string) error {
 		"-o", backupKeyringPath,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create client.admin-backup credential: %w", err)
+		return fmt.Errorf("failed to create %s credential: %w", backupName, err)
+	}
+
+	// The keyring holds a full-caps admin-equivalent secret: restrict it to
+	// the owner regardless of the umask ceph wrote it with.
+	err = os.Chmod(backupKeyringPath, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to restrict admin backup keyring permissions: %w", err)
 	}
 
 	return nil
@@ -560,10 +611,10 @@ func verifyAdminAccess(ctx context.Context, entityName string, keyringPath strin
 	return nil
 }
 
-func deleteAdminBackupKey(ctx context.Context) error {
-	_, err := cephRunContext(ctx, "auth", "del", "client.admin-backup")
+func deleteAdminBackupKey(ctx context.Context, backupName string) error {
+	_, err := cephRunContext(ctx, "auth", "del", backupName)
 	if err != nil {
-		logger.Warnf("failed to delete temporary backup credential client.admin-backup: %v", err)
+		logger.Warnf("failed to delete temporary backup credential %s: %v", backupName, err)
 		return err
 	}
 	return nil
@@ -653,27 +704,27 @@ func NormalizeClientName(name string) string {
 }
 
 // Check whether a client entity is managed by MicroCeph.
+//
+// Managed entities are those whose keys MicroCeph deploys locally and can
+// redistribute after rotation. Credentials held by other parties are NOT
+// managed, even though the entities exist in this cluster's auth DB:
+//   - client.<remote> (cluster export): the peer holds this key.
+//   - <remote>.keyring files on disk are the remote cluster's key for our
+//     identity there (remote import), used to reach the remote; they are not
+//     a local entity's keyring and must never be used as a distribution path.
+//   - client.fsmir-* (fs mirror peer bootstrap): the remote site's
+//     cephfs-mirror daemon holds this key.
+//
+// Such entities are reported as unmanaged (manual rotation) instead.
 func IsMicroCephManagedClient(entityName string) bool {
 	norm := NormalizeClientName(entityName)
 	if norm == "client.admin" || norm == "client.radosgw.gateway" {
 		return true
 	}
-	if strings.HasPrefix(norm, "client.rbd-mirror.") ||
+	return strings.HasPrefix(norm, "client.rbd-mirror.") ||
 		strings.HasPrefix(norm, "client.cephfs-mirror.") ||
 		strings.HasPrefix(norm, "client.nfs.") ||
-		strings.HasPrefix(norm, "client.bootstrap-") ||
-		strings.HasPrefix(norm, "client.fsmir-") {
-		return true
-	}
-
-	pathConst := constants.GetPathConst()
-	// Remote cluster keyring check
-	remoteName := strings.TrimPrefix(norm, "client.")
-	if _, err := os.Stat(filepath.Join(pathConst.ConfPath, fmt.Sprintf("%s.keyring", remoteName))); err == nil {
-		return true
-	}
-
-	return false
+		strings.HasPrefix(norm, "client.bootstrap-")
 }
 
 func getClientKeyringPaths(clientName string) ([]string, string) {
@@ -709,12 +760,6 @@ func getClientKeyringPaths(clientName string) ([]string, string) {
 				return []string{ganeshaKeyring}, "nfs"
 			}
 			return nil, ""
-		}
-		// Remote cluster keyring
-		remoteName := strings.TrimPrefix(norm, "client.")
-		remoteKeyring := filepath.Join(pathConst.ConfPath, fmt.Sprintf("%s.keyring", remoteName))
-		if _, err := os.Stat(remoteKeyring); err == nil {
-			return []string{remoteKeyring}, ""
 		}
 	}
 	return nil, ""
@@ -759,6 +804,18 @@ func RotateSingleClientKey(ctx context.Context, clientName string, targetKeyType
 	pendingKey, err := getOrCreatePendingKeyFunc(ctx, norm)
 	if err != nil {
 		return fmt.Errorf("failed to issue pending key for %s: %w", norm, err)
+	}
+
+	// 2b. Verify the minted pending key cipher before anything is distributed.
+	//     get-or-create-pending takes no key-type argument: AuthMonitor mints
+	//     pending keys with the mon's auth_preferred_cipher, which the full
+	//     pipeline sets in PrepareAuthRotation but single-client mode must not
+	//     touch (it is a cluster-wide setting). Committing an unverified key
+	//     would silently install a weaker cipher than requested on clusters
+	//     that were never prepared.
+	pendingKey, err = ensurePendingKeyType(ctx, norm, pendingKey, targetKeyType)
+	if err != nil {
+		return err
 	}
 
 	// 3. Distribute a loadable keyring carrying the PENDING key as the active key
@@ -807,6 +864,65 @@ func RotateSingleClientKey(ctx context.Context, clientName string, targetKeyType
 	return nil
 }
 
+// getPendingKeyType looks up the entity's pending key cipher in the auth dump.
+func getPendingKeyType(ctx context.Context, entity string) (string, error) {
+	entries, err := dumpAuthKeysFunc(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to verify pending key cipher for %s: %w", entity, err)
+	}
+	for _, entry := range entries {
+		if entry.EntityName == entity {
+			return entry.PendingKeyType, nil
+		}
+	}
+	return "", fmt.Errorf("failed to verify pending key cipher for %s: entity not found in auth dump", entity)
+}
+
+// ensurePendingKeyType verifies that the pending key minted for the entity
+// matches the requested cipher type, reminting once if a stale pending key was
+// minted before the cluster's auth_preferred_cipher was prepared:
+// get-or-create-pending reuses an existing pending key regardless of its
+// cipher, so the stale one must be cleared first (it was never distributed,
+// since verification failed before that point). Returns the verified pending
+// secret. A dump that does not report a pending key type ("none") cannot be
+// verified for this format and proceeds with a warning only.
+func ensurePendingKeyType(ctx context.Context, entity string, pendingKey string, targetKeyType string) (string, error) {
+	pendingType, err := getPendingKeyType(ctx, entity)
+	if err != nil {
+		return "", err
+	}
+	if pendingType == "" || pendingType == "none" {
+		logger.Warnf("pending key cipher for %s not reported by auth dump (%q); proceeding without verification", entity, pendingType)
+		return pendingKey, nil
+	}
+	if pendingType == targetKeyType {
+		return pendingKey, nil
+	}
+
+	logger.Warnf("pending key for %s minted as cipher %q instead of %q; reminting", entity, pendingType, targetKeyType)
+	err = clearPendingKeyFunc(ctx, entity)
+	if err != nil {
+		return "", fmt.Errorf("failed to clear stale pending key for %s (minted as %q, expected %q): %w", entity, pendingType, targetKeyType, err)
+	}
+
+	pendingKey, err = getOrCreatePendingKeyFunc(ctx, entity)
+	if err != nil {
+		return "", fmt.Errorf("failed to remint pending key for %s: %w", entity, err)
+	}
+
+	pendingType, err = getPendingKeyType(ctx, entity)
+	if err != nil {
+		return "", err
+	}
+	if pendingType != targetKeyType {
+		return "", fmt.Errorf(
+			"pending key for %s was minted as cipher %q, but %q was requested: the mon's auth_preferred_cipher is not prepared; run 'microceph auth rotate' to prepare the cluster before rotating single clients",
+			entity, pendingType, targetKeyType)
+	}
+
+	return pendingKey, nil
+}
+
 // writeClientKeyring renders a minimal loadable keyring (entity + secret) with
 // the shared keyring template and writes it atomically to destPath.
 func writeClientKeyring(destPath string, entity string, secret string) error {
@@ -831,7 +947,14 @@ func writeClientKeyring(destPath string, entity string, secret string) error {
 //   - Rotates and distributes MicroCeph-managed client keys one at a time.
 //   - Skips clients with incompatible sessions, reports unmanaged clients,
 //     and returns the rotation result with blockers if any exist.
-func RotateManagedClients(ctx context.Context, targetKeyType string) (ClientRotationResult, error) {
+//   - Skips clients already rotated on a previous attempt (recorded in
+//     progress) and appends each completed client to it as it goes, so a
+//     resumed rotation does not re-rotate finished credentials.
+func RotateManagedClients(ctx context.Context, targetKeyType string, progress *AuthRotationProgress) (ClientRotationResult, error) {
+	if progress == nil {
+		progress = &AuthRotationProgress{}
+	}
+
 	result := ClientRotationResult{
 		BlockedClients: make(map[string]string),
 	}
@@ -868,6 +991,11 @@ func RotateManagedClients(ctx context.Context, targetKeyType string) (ClientRota
 			continue
 		}
 
+		// Resume progress: skip entities already rotated on a previous attempt.
+		if slices.Contains(progress.RotatedClients, norm) {
+			continue
+		}
+
 		// Check session blocker
 		if reason, blocked := sessionBlockers[norm]; blocked {
 			result.BlockedClients[norm] = reason
@@ -879,6 +1007,7 @@ func RotateManagedClients(ctx context.Context, targetKeyType string) (ClientRota
 		if err != nil {
 			return result, fmt.Errorf("failed to rotate managed client %s: %w", norm, err)
 		}
+		progress.RotatedClients = append(progress.RotatedClients, norm)
 		result.RotatedClients = append(result.RotatedClients, norm)
 	}
 
@@ -979,63 +1108,301 @@ func FinalizeAuthRotation(ctx context.Context, s interfaces.StateInterface, targ
 	return nil
 }
 
-// ExecuteAuthRotation is the primary orchestrator that executes or resumes
-// CephX key rotation across all stages.
-func ExecuteAuthRotation(ctx context.Context, s interfaces.StateInterface, targetKeyType string, clientName string) (*database.AuthRotationRecord, error) {
-	// Acquire rotation concurrency lock
-	token := time.Now().UnixNano()
-	staleBefore := token - int64(10*time.Minute)
-
-	if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-		var acquired bool
-		err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			var err error
-			acquired, err = database.TryAcquireAuthRotationLock(ctx, tx, token, staleBefore)
-			return err
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to acquire rotation lock: %w", err)
+// isDaemonEntityName checks whether the name is a non-client Ceph entity
+// (mon., mgr.<host>, osd.<id>, mds.<host>).
+func isDaemonEntityName(name string) bool {
+	for _, prefix := range []string{"mon.", "mgr.", "osd.", "mds."} {
+		if strings.HasPrefix(name, prefix) {
+			return true
 		}
-		if !acquired {
-			return nil, fmt.Errorf("another auth rotation operation is currently in progress")
-		}
-		defer func() {
-			_ = s.ClusterState().Database().Transaction(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
-				_, err := database.ReleaseAuthRotationLock(ctx, tx, token)
-				return err
-			})
-		}()
 	}
+	return false
+}
 
-	// Resolve target key type
-	resolvedKeyType, err := resolveTargetKeyTypeFunc(ctx, targetKeyType)
+// validateSingleClientTarget checks that a --client rotation request targets
+// an entity MicroCeph can rotate through the single-client path: it must exist
+// in the cluster auth DB, be a client-type entity, and be locally managed
+// (client.admin is managed and routed to the protected admin rotation by the
+// caller). Daemon credentials (mon., mgr., osd., mds.) are rejected: they are
+// rotated by the cluster-wide pipeline only. Unmanaged or unknown entities are
+// rejected before any rotation state is persisted.
+func validateSingleClientTarget(ctx context.Context, clientName string) (*AuthKeyEntry, error) {
+	entries, err := dumpAuthKeysFunc(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to dump auth keys for client validation: %w", err)
 	}
 
-	if clientName != "" {
-		clientName = NormalizeClientName(clientName)
+	for _, entry := range entries {
+		if entry.EntityName != clientName {
+			continue
+		}
+		if entry.EntityType != "client" {
+			return nil, fmt.Errorf("entity %q is a daemon credential: it is rotated by cluster-wide rotation and cannot be targeted with --client", clientName)
+		}
+		if !IsMicroCephManagedClient(clientName) {
+			return nil, fmt.Errorf("client %q is not managed by MicroCeph: unmanaged credentials must be rotated manually", clientName)
+		}
+		return &entry, nil
 	}
 
-	// Initialize or resume rotation record in database
-	var rec *database.AuthRotationRecord
-	if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-		err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			var err error
-			rec, _, err = database.InitOrResumeAuthRotation(ctx, tx, resolvedKeyType, clientName)
-			return err
-		})
+	return nil, fmt.Errorf("unknown client %q: no such entity in the cluster auth DB", clientName)
+}
+
+// AuthRotationProgress records per-entity progress inside the rotation
+// pipeline's step_progress column so a resumed rotation skips entities that
+// already rotated on a previous attempt.
+type AuthRotationProgress struct {
+	// MonRotated records that the shared mon. key was rotated and is active;
+	// a resumed rotation fetches it instead of rotating again.
+	MonRotated bool `json:"mon_rotated,omitempty"`
+	// RotatedMembers lists cluster members whose daemon rotation completed.
+	RotatedMembers []string `json:"rotated_members,omitempty"`
+	// RotatedClients lists managed client entities whose rotation completed.
+	RotatedClients []string `json:"rotated_clients,omitempty"`
+}
+
+// parseAuthRotationProgress decodes a step_progress payload; a missing or
+// undecodable payload yields empty progress (nothing is skipped).
+func parseAuthRotationProgress(raw string) *AuthRotationProgress {
+	progress := &AuthRotationProgress{}
+	if raw == "" {
+		return progress
+	}
+
+	err := json.Unmarshal([]byte(raw), progress)
+	if err != nil {
+		logger.Warnf("failed to parse rotation step progress; resuming without it: %v", err)
+	}
+
+	return progress
+}
+
+// String encodes the progress for the step_progress column.
+func (p *AuthRotationProgress) String() string {
+	data, err := json.Marshal(p)
+	if err != nil {
+		// Marshalling a plain struct cannot fail.
+		return "{}"
+	}
+
+	return string(data)
+}
+
+// authStageOrder lists the full-pipeline stages in execution order.
+// AuthRotationStageProtectAdmin has no pipeline stage of its own: client.admin
+// is not rotated automatically (see ensureAdminReadyForFinish). It stays in
+// the order so records from older runs that paused at it resume sensibly.
+var authStageOrder = []string{
+	database.AuthRotationStageReadiness,
+	database.AuthRotationStagePrepareAuth,
+	database.AuthRotationStageRotateDaemons,
+	database.AuthRotationStageActivateAndCheck,
+	database.AuthRotationStageSwitchServiceAuth,
+	database.AuthRotationStagePreventInsecureKeys,
+	database.AuthRotationStageProtectAdmin,
+	database.AuthRotationStageRotateClients,
+	database.AuthRotationStageFinishSafely,
+}
+
+// authStageIndex returns the stage's position in the pipeline order, or -1 for
+// unknown or empty stages (those resume from the beginning).
+func authStageIndex(stage string) int {
+	return slices.Index(authStageOrder, stage)
+}
+
+// runAuthRotationPipeline executes the full-cluster rotation stages. The record's
+// stage is persisted before a stage runs, so on resume every stage before
+// rec.Stage already completed and is skipped; per-entity progress recorded in
+// the record's step_progress column keeps partially completed stages from
+// re-rotating finished entities.
+func runAuthRotationPipeline(ctx context.Context, s interfaces.StateInterface, rec *database.AuthRotationRecord, resolvedKeyType string) (*database.AuthRotationRecord, error) {
+	progress := parseAuthRotationProgress(rec.StepProgress)
+
+	// Helper to update database stage (carrying the current progress payload).
+	setStage := func(stage string) error {
+		rec.Stage = stage
+		rec.StepProgress = progress.String()
+		if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
+			return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				return database.SetAuthRotationStage(ctx, tx, stage, rec.StepProgress)
+			})
+		}
+		return nil
+	}
+
+	// Helper to persist mid-stage progress updates without touching the stage.
+	saveProgress := func() {
+		rec.StepProgress = progress.String()
+		if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
+			_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				return database.SetAuthRotationStage(ctx, tx, rec.Stage, rec.StepProgress)
+			})
+		}
+	}
+
+	// failRun records the failed state so auth status can tell a dead run from
+	// a live one, persisting the partial progress along with it.
+	failRun := func(msg string, err error) (*database.AuthRotationRecord, error) {
+		rec.State = database.AuthRotationStateFailed
+		rec.Detail = fmt.Sprintf("%s: %v", msg, err)
+		rec.StepProgress = progress.String()
+		if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
+			_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				return database.SetAuthRotation(ctx, tx, *rec)
+			})
+		}
+		return rec, fmt.Errorf("%s: %w", msg, err)
+	}
+
+	// Resume semantics: the stage is persisted before it runs, so every stage
+	// before the record's stage already completed on a previous attempt.
+	resumeFrom := authStageIndex(rec.Stage)
+	shouldRun := func(stage string) bool {
+		return authStageIndex(stage) >= resumeFrom
+	}
+
+	// Stage 1: Readiness checks
+	if shouldRun(database.AuthRotationStageReadiness) {
+		_ = setStage(database.AuthRotationStageReadiness)
+		err := checkAuthRotationReadinessFunc(ctx, s, resolvedKeyType)
 		if err != nil {
-			return nil, err
-		}
-	} else {
-		rec = &database.AuthRotationRecord{
-			TargetKeyType: resolvedKeyType,
-			State:         database.AuthRotationStateInProgress,
-			Stage:         database.AuthRotationStageReadiness,
-			ClientName:    clientName,
+			return failRun("readiness check failed", err)
 		}
 	}
+
+	// Stage 2: Prepare auth (Upstream steps 1-2)
+	if shouldRun(database.AuthRotationStagePrepareAuth) {
+		_ = setStage(database.AuthRotationStagePrepareAuth)
+		err := prepareAuthRotationFunc(ctx, resolvedKeyType)
+		if err != nil {
+			return failRun("auth preparation failed", err)
+		}
+	}
+
+	// Stage 3: Rotate daemons (Upstream step 3)
+	if shouldRun(database.AuthRotationStageRotateDaemons) {
+		_ = setStage(database.AuthRotationStageRotateDaemons)
+		err := rotateDaemonsFunc(ctx, s, resolvedKeyType, progress)
+		if err != nil {
+			return failRun("daemon key rotation failed", err)
+		}
+		saveProgress()
+	}
+
+	// Stage 4: Activate and check (Upstream step 4)
+	if shouldRun(database.AuthRotationStageActivateAndCheck) {
+		_ = setStage(database.AuthRotationStageActivateAndCheck)
+		err := activateAndCheckFunc(ctx)
+		if err != nil {
+			return failRun("daemon activation check failed", err)
+		}
+	}
+
+	// Stage 5: Switch service authentication (Upstream step 5)
+	if shouldRun(database.AuthRotationStageSwitchServiceAuth) {
+		_ = setStage(database.AuthRotationStageSwitchServiceAuth)
+		err := switchServiceAuthenticationFunc(ctx, resolvedKeyType)
+		if err != nil {
+			return failRun("service auth switch failed", err)
+		}
+	}
+
+	// Stage 6: Prevent new insecure keys (Upstream steps 6-7)
+	if shouldRun(database.AuthRotationStagePreventInsecureKeys) {
+		_ = setStage(database.AuthRotationStagePreventInsecureKeys)
+		err := preventNewInsecureKeysFunc(ctx, resolvedKeyType)
+		if err != nil {
+			return failRun("insecure key prevention failed", err)
+		}
+	}
+
+	// Stage 7: Rotate client credentials (Upstream step 9)
+	if shouldRun(database.AuthRotationStageRotateClients) {
+		_ = setStage(database.AuthRotationStageRotateClients)
+		clientResult, err := rotateManagedClientsFunc(ctx, resolvedKeyType, progress)
+		if err != nil {
+			return failRun("client key rotation failed", err)
+		}
+		saveProgress()
+
+		if clientResult.HasBlockers {
+			rec.State = database.AuthRotationStateBlocked
+			rec.Blocker = clientResult.BlockerMessage
+			saveProgress()
+			if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
+				_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+					return database.SetAuthRotationBlocker(ctx, tx, clientResult.BlockerMessage, "")
+				})
+			}
+			return rec, nil
+		}
+	}
+
+	// Stage 8: Finish safely (Upstream step 10). client.admin is deliberately
+	// NOT rotated by the pipeline: the credential is shared beyond this
+	// cluster, so rotating it is an explicit operator decision. The finish
+	// pauses until it is done, because disallowing the insecure ciphers while
+	// client.admin still holds one would lock out its holders (including
+	// MicroCeph itself).
+	if shouldRun(database.AuthRotationStageFinishSafely) {
+		_ = setStage(database.AuthRotationStageFinishSafely)
+		err := ensureAdminReadyForFinish(ctx, resolvedKeyType)
+		if err != nil {
+			rec.State = database.AuthRotationStateBlocked
+			rec.Blocker = err.Error()
+			saveProgress()
+			if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
+				_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+					return database.SetAuthRotationBlocker(ctx, tx, err.Error(), "")
+				})
+			}
+			return rec, nil
+		}
+
+		err = finalizeAuthRotationFunc(ctx, s, resolvedKeyType)
+		if err != nil {
+			return failRun("safe finalization failed", err)
+		}
+	}
+
+	// Persist the completed state: the record must leave in_progress, or auth
+	// status would keep reporting a live run and every later rotation would
+	// resume past all stages without ever closing the record.
+	rec.State = database.AuthRotationStateCompleted
+	rec.Blocker = ""
+	rec.Detail = ""
+	if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
+		_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			return database.SetAuthRotation(ctx, tx, *rec)
+		})
+	}
+
+	return rec, nil
+}
+
+// authRotationLockLease is how long an unrenewed rotation lock lease is
+// honored before another attempt may reclaim it as stale.
+const authRotationLockLease = 10 * time.Minute
+
+// authRotationHeartbeatInterval is how often the running rotation renews its
+// lock lease. It must stay well below the lease duration so that clock skew
+// between members cannot expire a live holder.
+const authRotationHeartbeatInterval = time.Minute
+
+// runSingleClientRotation executes a --client rotation. client.admin routes to
+// the protected admin rotation (the generic pending-key path matches no admin
+// keyring paths, so commit-pending would retire the admin key while the
+// keyring.client.admin DB row and the conf keyrings still hold the old one,
+// locking MicroCeph out of the cluster). Mutates rec in place.
+//
+// A dedicated run (the record's filter matches the request) owns the record
+// and completes it. client.admin can also run as a sub-step of an incomplete
+// full run — the pipeline pauses before disallowing insecure ciphers until
+// admin is rotated explicitly — in which case the record is handed back to
+// the full pipeline (state back to in_progress, blocker cleared, stage
+// untouched) instead of being completed.
+func runSingleClientRotation(ctx context.Context, s interfaces.StateInterface, rec *database.AuthRotationRecord, requestedClient string, resolvedKeyType string) (*database.AuthRotationRecord, error) {
+	dedicated := rec.ClientName == requestedClient
 
 	// Helper to update database stage
 	setStage := func(stage string) error {
@@ -1048,96 +1415,230 @@ func ExecuteAuthRotation(ctx context.Context, s interfaces.StateInterface, targe
 		return nil
 	}
 
-	// Handle Single-Client Mode (--client NAME)
-	if clientName != "" {
-		err = rotateSingleClientKeyFunc(ctx, clientName, resolvedKeyType)
-		if err != nil {
-			if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-				_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-					return database.SetAuthRotationBlocker(ctx, tx, err.Error(), "")
-				})
-			}
-			rec.State = database.AuthRotationStateBlocked
-			rec.Blocker = err.Error()
-			return rec, err
+	var rotateErr error
+	if requestedClient == "client.admin" {
+		if dedicated {
+			_ = setStage(database.AuthRotationStageProtectAdmin)
 		}
-
-		// Mark completed for single client
+		rotateErr = rotateAdminKeyFunc(ctx, s, resolvedKeyType)
+	} else {
+		_ = setStage(database.AuthRotationStageRotateClients)
+		rotateErr = rotateSingleClientKeyFunc(ctx, requestedClient, resolvedKeyType)
+	}
+	if rotateErr != nil {
 		if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
 			_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-				rec.State = database.AuthRotationStateCompleted
-				rec.Stage = database.AuthRotationStageFinishSafely
-				rec.Blocker = ""
+				return database.SetAuthRotationBlocker(ctx, tx, rotateErr.Error(), "")
+			})
+		}
+		rec.State = database.AuthRotationStateBlocked
+		rec.Blocker = rotateErr.Error()
+		return rec, rotateErr
+	}
+
+	if dedicated {
+		// Mark completed for dedicated single-client run
+		rec.State = database.AuthRotationStateCompleted
+		rec.Stage = database.AuthRotationStageFinishSafely
+		rec.Blocker = ""
+		if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
+			_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 				return database.SetAuthRotation(ctx, tx, *rec)
 			})
 		}
-		rec.State = database.AuthRotationStateCompleted
 		return rec, nil
 	}
 
-	// Full cluster rotation pipeline
+	// Sub-step of an incomplete full run: leave the record to the full
+	// pipeline, which resumes and finishes on the next plain run.
+	rec.State = database.AuthRotationStateInProgress
+	rec.Blocker = ""
+	rec.Detail = ""
+	if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
+		_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			return database.SetAuthRotation(ctx, tx, *rec)
+		})
+	}
+	return rec, nil
+}
 
-	// Stage 1: Readiness checks
-	_ = setStage(database.AuthRotationStageReadiness)
-	err = checkAuthRotationReadinessFunc(ctx, s, resolvedKeyType)
+// ensureAdminReadyForFinish verifies client.admin is on the target cipher
+// before insecure ciphers are disallowed. The pipeline deliberately does not
+// rotate client.admin: the credential is shared beyond this cluster — it is
+// distributed through the ceph-conf content interface (e.g. to MicroCloud's
+// LXD) and often copied to other nodes, and holders that already loaded it
+// into memory cannot re-authenticate once their ticket expires. It must be
+// rotated explicitly with 'microceph auth rotate --client client.admin'.
+func ensureAdminReadyForFinish(ctx context.Context, targetKeyType string) error {
+	entries, err := dumpAuthKeysFunc(ctx)
 	if err != nil {
-		return rec, fmt.Errorf("readiness check failed: %w", err)
+		return fmt.Errorf("failed to verify client.admin cipher before finalization: %w", err)
 	}
 
-	// Stage 2: Prepare auth (Upstream steps 1-2)
-	_ = setStage(database.AuthRotationStagePrepareAuth)
-	err = prepareAuthRotationFunc(ctx, resolvedKeyType)
-	if err != nil {
-		return rec, fmt.Errorf("auth preparation failed: %w", err)
+	for _, entry := range entries {
+		if entry.EntityName == "client.admin" && entry.KeyType != targetKeyType {
+			return fmt.Errorf(
+				"client.admin still uses cipher %q: the admin key is shared beyond this cluster (ceph-conf content interface, e.g. MicroCloud's LXD, and copies on other nodes) and is not rotated automatically; rotate it explicitly with 'microceph auth rotate --client client.admin', then re-run this command to disallow insecure ciphers",
+				entry.KeyType)
+		}
 	}
 
-	// Stage 3: Rotate daemons (Upstream steps 3-4)
-	_ = setStage(database.AuthRotationStageRotateDaemons)
-	err = rotateDaemonsFunc(ctx, s, resolvedKeyType)
-	if err != nil {
-		return rec, fmt.Errorf("daemon key rotation failed: %w", err)
+	return nil
+}
+
+// ExecuteAuthRotation starts or resumes a CephX key rotation and returns the
+// initialized record. Validation, lock acquisition, and record init/resume run
+// synchronously; the rotation itself then runs detached from the caller's
+// context in a background goroutine: daemon restart waves routinely outlast
+// CLI timeouts, and a cancelled request context must not stop a rotation in
+// the middle of a key change. The running rotation is reported by auth status,
+// which the CLI polls. While it runs, the rotation lock is renewed by a
+// heartbeat so long stages cannot be joined by a retry that treats the lease
+// as stale; losing the heartbeat (the lock was taken over) cancels the run.
+func ExecuteAuthRotation(ctx context.Context, s interfaces.StateInterface, targetKeyType string, clientName string) (*database.AuthRotationRecord, error) {
+	// Acquire rotation concurrency lock
+	token := time.Now().UnixNano()
+	staleBefore := token - int64(authRotationLockLease)
+
+	hasDB := s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil
+	if hasDB {
+		var acquired bool
+		err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			var err error
+			acquired, err = database.TryAcquireAuthRotationLock(ctx, tx, token, staleBefore)
+			return err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to acquire rotation lock: %w", err)
+		}
+		if !acquired {
+			return nil, fmt.Errorf("another auth rotation operation is currently in progress")
+		}
 	}
 
-	// Stage 4: Switch service authentication & prevent insecure keys (Upstream steps 5-7)
-	_ = setStage(database.AuthRotationStageSwitchServiceAuth)
-	err = switchServiceAuthAndPreventInsecureFunc(ctx, resolvedKeyType)
-	if err != nil {
-		return rec, fmt.Errorf("service auth switch failed: %w", err)
-	}
-
-	// Stage 5: Protect admin access (Upstream step 8)
-	_ = setStage(database.AuthRotationStageProtectAdmin)
-	err = rotateAdminKeyFunc(ctx, s, resolvedKeyType)
-	if err != nil {
-		return rec, fmt.Errorf("admin key rotation failed: %w", err)
-	}
-
-	// Stage 6: Rotate client credentials (Upstream step 9)
-	_ = setStage(database.AuthRotationStageRotateClients)
-	clientResult, err := rotateManagedClientsFunc(ctx, resolvedKeyType)
-	if err != nil {
-		return rec, fmt.Errorf("client key rotation failed: %w", err)
-	}
-
-	if clientResult.HasBlockers {
-		rec.State = database.AuthRotationStateBlocked
-		rec.Blocker = clientResult.BlockerMessage
-		if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-			_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-				return database.SetAuthRotationBlocker(ctx, tx, clientResult.BlockerMessage, "")
+	// The synchronous error paths release the lock themselves; the detached
+	// runner releases it with the latest heartbeat-renewed token.
+	releaseLock := func() {
+		if hasDB {
+			_ = s.ClusterState().Database().Transaction(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+				_, err := database.ReleaseAuthRotationLock(ctx, tx, token)
+				return err
 			})
 		}
-		return rec, nil
 	}
 
-	// Stage 7: Finish safely (Upstream step 10)
-	_ = setStage(database.AuthRotationStageFinishSafely)
-	err = finalizeAuthRotationFunc(ctx, s, resolvedKeyType)
+	// Resolve target key type
+	resolvedKeyType, err := resolveTargetKeyTypeFunc(ctx, targetKeyType)
 	if err != nil {
-		return rec, fmt.Errorf("safe finalization failed: %w", err)
+		releaseLock()
+		return nil, err
 	}
 
-	rec.State = database.AuthRotationStateCompleted
+	if clientName != "" && !isDaemonEntityName(clientName) {
+		clientName = NormalizeClientName(clientName)
+	}
+
+	// Validate the single-client target before the rotation record is
+	// initialised: a bad --client filter must never be persisted.
+	if clientName != "" {
+		_, err = validateSingleClientTarget(ctx, clientName)
+		if err != nil {
+			releaseLock()
+			return nil, err
+		}
+	}
+
+	// Initialize or resume rotation record in database
+	var rec *database.AuthRotationRecord
+	if hasDB {
+		err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			var err error
+			rec, _, err = database.InitOrResumeAuthRotation(ctx, tx, resolvedKeyType, clientName)
+			return err
+		})
+		if err != nil {
+			releaseLock()
+			return nil, err
+		}
+	} else {
+		rec = &database.AuthRotationRecord{
+			TargetKeyType: resolvedKeyType,
+			State:         database.AuthRotationStateInProgress,
+			Stage:         database.AuthRotationStageReadiness,
+			ClientName:    clientName,
+		}
+	}
+
+	if !hasDB {
+		// No cluster database (unit tests): run inline so the result is
+		// deterministic.
+		if clientName != "" {
+			return runSingleClientRotation(ctx, s, rec, clientName, resolvedKeyType)
+		}
+		return runAuthRotationPipeline(ctx, s, rec, resolvedKeyType)
+	}
+
+	// Detach the rotation. runCtx is deliberately not derived from the
+	// request context: the rotation outlives the triggering request.
+	runCtx, cancelRotation := context.WithCancel(context.Background())
+
+	var currentToken atomic.Int64
+	currentToken.Store(token)
+
+	// Heartbeat: renew the lock lease for as long as the rotation runs, and
+	// cancel the rotation if the lease is lost (another attempt took the
+	// lock, e.g. after this holder was declared stale).
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(authRotationHeartbeatInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+				newToken := time.Now().UnixNano()
+				var renewed bool
+				err := s.ClusterState().Database().Transaction(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+					var err error
+					renewed, err = database.RenewAuthRotationLock(ctx, tx, currentToken.Load(), newToken)
+					return err
+				})
+				if err != nil || !renewed {
+					logger.Errorf("auth rotation lock renewal failed; aborting rotation: renewed=%v err=%v", renewed, err)
+					cancelRotation()
+					return
+				}
+				currentToken.Store(newToken)
+			}
+		}
+	}()
+
+	go func() {
+		defer func() {
+			// Wait for the heartbeat so release uses the latest renewed
+			// token, then give the lock back.
+			cancelRotation()
+			<-heartbeatDone
+			_ = s.ClusterState().Database().Transaction(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+				_, err := database.ReleaseAuthRotationLock(ctx, tx, currentToken.Load())
+				return err
+			})
+		}()
+
+		var runErr error
+		if clientName != "" {
+			_, runErr = runSingleClientRotation(runCtx, s, rec, clientName, resolvedKeyType)
+		} else {
+			_, runErr = runAuthRotationPipeline(runCtx, s, rec, resolvedKeyType)
+		}
+		if runErr != nil {
+			logger.Errorf("auth rotation ended with error: %v", runErr)
+		}
+	}()
+
 	return rec, nil
 }
 
@@ -1628,38 +2129,69 @@ func waitForOSDUp(ctx context.Context, osdID int64, timeout time.Duration) error
 //
 // Note: this health check reflects the auth DB only; the per-member keyring writes
 // and restarts in step 2 are what actually bring every daemon onto the new key.
-func RotateDaemons(ctx context.Context, s interfaces.StateInterface, targetKeyType string) error {
-	// 1. Rotate the shared mon. key once on the coordinator.
-	monKeyring, err := rotateMonKeyAuthFunc(ctx, targetKeyType)
-	if err != nil {
-		return fmt.Errorf("monitor key rotation failed: %w", err)
+// RotateDaemons rotates the cluster-wide daemon credentials (Upstream step 3):
+// the shared mon. key once on the coordinator, then every remote member's own
+// daemons one at a time, then the coordinator's own. Units already completed on
+// a previous attempt (recorded in progress) are skipped, so a resumed rotation
+// does not re-rotate the mon. key or restart the daemons of finished members.
+func RotateDaemons(ctx context.Context, s interfaces.StateInterface, targetKeyType string, progress *AuthRotationProgress) error {
+	if progress == nil {
+		progress = &AuthRotationProgress{}
 	}
 
-	// 2. Fan out per-member rotation to remote members, one at a time.
+	// 1. Rotate the shared mon. key once on the coordinator.
+	monKeyring := ""
+	if progress.MonRotated {
+		// Resume: the rotated key is already active; fetch it for the
+		// remaining member deployments.
+		fetched, err := getEntityKeyringFunc(ctx, "mon.")
+		if err != nil {
+			return fmt.Errorf("failed to fetch rotated mon. keyring: %w", err)
+		}
+		monKeyring = fetched
+	} else {
+		rotated, err := rotateMonKeyAuthFunc(ctx, targetKeyType)
+		if err != nil {
+			return fmt.Errorf("monitor key rotation failed: %w", err)
+		}
+		monKeyring = rotated
+		progress.MonRotated = true
+	}
+
+	// 2. Fan out per-member rotation to remote members, one at a time, asking
+	//    already-rotated members to no-op.
 	if s != nil && s.ClusterState() != nil {
-		err = sendMemberAuthRotateFunc(ctx, s.ClusterState(), types.MemberAuthRotateRequest{
+		req := types.MemberAuthRotateRequest{
 			KeyType:    targetKeyType,
 			MonKeyring: monKeyring,
-		})
+			Skip:       progress.RotatedMembers,
+		}
+		completed, err := sendMemberAuthRotateFunc(ctx, s.ClusterState(), req)
+		for _, hostname := range completed {
+			if !slices.Contains(progress.RotatedMembers, hostname) {
+				progress.RotatedMembers = append(progress.RotatedMembers, hostname)
+			}
+		}
 		if err != nil {
 			return fmt.Errorf("remote member daemon rotation failed: %w", err)
 		}
 	}
 
-	// 3. Rotate the coordinator's own daemons.
-	_, err = rotateMemberDaemonsFunc(ctx, s, targetKeyType, monKeyring)
-	if err != nil {
-		return fmt.Errorf("local member daemon rotation failed: %w", err)
+	// 3. Rotate the coordinator's own daemons unless its rotation already
+	//    completed on a previous attempt. Without a cluster state the local
+	//    member name is unknown and the rotation always runs.
+	localName := ""
+	if s != nil && s.ClusterState() != nil {
+		localName = s.ClusterState().Name()
 	}
-
-	// 4. Upstream Step 4: confirm AUTH_INSECURE_SERVICE_KEY_TYPE clears.
-	hw, err := getAuthHealthWarningsFunc(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to check health warnings after daemon rotation: %w", err)
-	}
-
-	if hw.InsecureServiceKeyType {
-		return fmt.Errorf("AUTH_INSECURE_SERVICE_KEY_TYPE remains active after daemon rotation: %v", hw.InsecureServiceDetails)
+	if localName == "" || !slices.Contains(progress.RotatedMembers, localName) {
+		summary, err := rotateMemberDaemonsFunc(ctx, s, targetKeyType, monKeyring)
+		if err != nil {
+			return fmt.Errorf("local member daemon rotation failed: %w", err)
+		}
+		if summary != nil && summary.Hostname != "" && !slices.Contains(progress.RotatedMembers, summary.Hostname) {
+			progress.RotatedMembers = append(progress.RotatedMembers, summary.Hostname)
+		}
 	}
 
 	return nil

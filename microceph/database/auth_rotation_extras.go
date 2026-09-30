@@ -174,7 +174,13 @@ func InitOrResumeAuthRotation(ctx context.Context, tx *sql.Tx, targetKeyType str
 		}
 
 		if clientName != rec.ClientName {
-			return nil, false, fmt.Errorf("an incomplete rotation with client filter %q is in progress; cannot change client to %q while incomplete", rec.ClientName, clientName)
+			// The admin rotation is an explicit operator sub-step of a full
+			// run: the pipeline does not rotate client.admin automatically
+			// (the credential is shared beyond the cluster), so it may proceed
+			// while a full rotation is paused.
+			if clientName != "client.admin" || rec.ClientName != "" {
+				return nil, false, fmt.Errorf("an incomplete rotation with client filter %q is in progress; cannot change client to %q while incomplete", rec.ClientName, clientName)
+			}
 		}
 
 		if rec.State == AuthRotationStateBlocked || rec.State == AuthRotationStateFailed {
@@ -293,6 +299,27 @@ func ReleaseAuthRotationLock(ctx context.Context, tx *sql.Tx, token int64) (bool
 UPDATE auth_rotation SET apply_lock_token = 0 WHERE id = 1 AND apply_lock_token = ?`, token)
 	if err != nil {
 		return false, fmt.Errorf("failed to release auth rotation apply lock: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to check rows affected: %w", err)
+	}
+
+	return rows == 1, nil
+}
+
+// RenewAuthRotationLock renews the rotation lock lease held by the given
+// token, moving the holder's timestamp forward so long-running rotations are
+// not treated as stale. It returns false when the lock is no longer held by
+// this token (reclaimed by another attempt or released).
+func RenewAuthRotationLock(ctx context.Context, tx *sql.Tx, currentToken int64, newToken int64) (bool, error) {
+	result, err := tx.ExecContext(ctx, `
+UPDATE auth_rotation
+   SET apply_lock_token = ?
+ WHERE id = 1 AND apply_lock_token = ?`, newToken, currentToken)
+	if err != nil {
+		return false, fmt.Errorf("failed to renew auth rotation apply lock: %w", err)
 	}
 
 	rows, err := result.RowsAffected()

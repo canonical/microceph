@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 
 	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 
@@ -44,7 +45,10 @@ var (
 	rotateMemberDaemonsFunc = ceph.RotateMemberDaemons
 )
 
-// cmdAuthRotatePost handles auth rotation initiation or resumption.
+// cmdAuthRotatePost handles auth rotation initiation or resumption. The
+// rotation runs detached on the daemon (so it outlives this request and any
+// CLI timeout) and is reported by auth status; this returns the initialized
+// record immediately.
 func cmdAuthRotatePost(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var req types.AuthRotateRequest
 
@@ -99,7 +103,15 @@ func cmdAuthRotateMemberPost(s mcTypes.State, r *http.Request) mcTypes.Response 
 		return mcTypes.BadRequest(fmt.Errorf("key_type is required for per-member daemon rotation"))
 	}
 
-	summary, err := rotateMemberDaemonsFunc(r.Context(), interfaces.CephState{State: s}, req.KeyType, req.MonKeyring)
+	cephState := interfaces.CephState{State: s}
+
+	// Resume progress: a member whose daemon rotation already completed on a
+	// previous attempt replies without rotating anything again.
+	if cephState.ClusterState() != nil && slices.Contains(req.Skip, cephState.ClusterState().Name()) {
+		return mcTypes.SyncResponse(true, types.MemberAuthRotateResponse{Hostname: cephState.ClusterState().Name()})
+	}
+
+	summary, err := rotateMemberDaemonsFunc(r.Context(), cephState, req.KeyType, req.MonKeyring)
 	if err != nil {
 		logger.Errorf("Failed member daemon rotation: %v", err)
 		return mcTypes.InternalError(err)
