@@ -1,16 +1,15 @@
 #!/bin/bash
 set -eu
 
+# shellcheck source=snapcraft/commands/common
 . "${SNAP}/commands/common"
+# shellcheck source=snapcraft/commands/smb-common
 . "${SNAP}/commands/smb-common"
 
 wait_for_config
 smb_prepare_runtime
 smb_prepare_ctdb_runtime
-while ! "${SNAP}/commands/samba-command" ctdb pnn >/dev/null 2>&1; do
-    echo "Waiting for CTDB"
-    sleep 1
-done
+smb_wait_for_ctdb_ready
 
 smb_ctdb_meta_uri="$("${SNAP}/bin/python3" -c 'import json, sys; print(json.load(open(sys.argv[1]))["ctdb"]["cluster_meta_uri"])' "${smb_ctdb_config}")"
 "${SNAP}/bin/python3" "${SNAP}/commands/ctdb_ready.py" \

@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,37 +17,56 @@ var fetchSMBSourceFunc = fetchSMBSource
 var writeSMBFileFunc = os.WriteFile
 var renameSMBFileFunc = os.Rename
 
-func materializeSMBConfig(placement *SMBServicePlacement) error {
+type smbSourceData struct {
+	container []byte
+	users     [][]byte
+}
+
+func fetchSMBConfigSources(ctx context.Context, placement *SMBServicePlacement) (*smbSourceData, error) {
 	err := validateSMBConfigURI(placement.ClusterID, placement.ConfigURI)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	for _, source := range placement.UserSources {
 		err = validateSMBUserSourceURI(placement.ClusterID, source)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	container, err := fetchSMBSourceFunc(ctx, placement.ConfigURI)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch SMB container configuration: %w", err)
+	}
+	err = validateSMBContainerConfig(container)
+	if err != nil {
+		return nil, err
+	}
+	data := &smbSourceData{container: container}
+	for _, source := range placement.UserSources {
+		user, err := fetchSMBSourceFunc(ctx, source)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch SMB user configuration: %w", err)
+		}
+		data.users = append(data.users, user)
+	}
+	return data, nil
+}
+
+func materializeSMBConfig(ctx context.Context, placement *SMBServicePlacement) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	data := placement.configData
+	var err error
+	if data == nil {
+		data, err = fetchSMBConfigSources(ctx, placement)
 		if err != nil {
 			return err
 		}
 	}
-
-	containerConfig, err := fetchSMBSourceFunc(placement.ConfigURI)
-	if err != nil {
-		return fmt.Errorf("failed to fetch SMB container configuration: %w", err)
-	}
-
-	err = validateSMBContainerConfig(containerConfig)
-	if err != nil {
-		return err
-	}
-
-	userConfigs := make([][]byte, 0, len(placement.UserSources))
-	for _, source := range placement.UserSources {
-		userConfig, err := fetchSMBSourceFunc(source)
-		if err != nil {
-			return fmt.Errorf("failed to fetch SMB user configuration: %w", err)
-		}
-		userConfigs = append(userConfigs, userConfig)
-	}
+	containerConfig := data.container
+	userConfigs := data.users
 
 	paths := constants.GetPathConst()
 	configDir := filepath.Join(paths.ConfPath, "samba")
@@ -80,6 +100,10 @@ func materializeSMBConfig(placement *SMBServicePlacement) error {
 			"bind interfaces only = yes\ninterfaces = %s\n",
 			placement.bindAddress,
 		)
+	}
+	smbPort := placement.CustomPorts["smb"]
+	if smbPort != 0 {
+		baseConfig += fmt.Sprintf("smb ports = %d\n", smbPort)
 	}
 	err = writeSMBFileAtomic(filepath.Join(configDir, "smb.conf"), []byte(baseConfig), constants.PermissionUserRwWorldRAccess)
 	if err != nil {
@@ -172,15 +196,15 @@ func removeSMBCTDBConfig(runtimeDir string) error {
 	return nil
 }
 
-func fetchSMBSource(uri string) ([]byte, error) {
+func fetchSMBSource(ctx context.Context, uri string) ([]byte, error) {
 	if strings.HasPrefix(uri, "rados://") {
-		return fetchSMBRADOSSource(uri)
+		return fetchSMBRADOSSource(ctx, uri)
 	}
 
 	const configKeyPrefix = "rados:mon-config-key:"
 	if strings.HasPrefix(uri, configKeyPrefix) {
 		key := strings.TrimPrefix(uri, configKeyPrefix)
-		output, err := cephRun("config-key", "get", key)
+		output, err := runSMBCommand(ctx, "ceph", "config-key", "get", key)
 		if err != nil {
 			return nil, err
 		}
@@ -190,7 +214,7 @@ func fetchSMBSource(uri string) ([]byte, error) {
 	return nil, fmt.Errorf("unsupported SMB configuration URI %q", uri)
 }
 
-func fetchSMBRADOSSource(uri string) ([]byte, error) {
+func fetchSMBRADOSSource(ctx context.Context, uri string) ([]byte, error) {
 	matches := smbRADOSURIRegex.FindStringSubmatch(uri)
 	if matches == nil {
 		return nil, fmt.Errorf("invalid SMB RADOS URI %q", uri)
@@ -211,7 +235,7 @@ func fetchSMBRADOSSource(uri string) ([]byte, error) {
 	pool := ".smb"
 	namespace := matches[1]
 	object := matches[2]
-	_, err = radosRun("--pool", pool, "-N", namespace, "get", object, tempPath)
+	_, err = runSMBCommand(ctx, "rados", "--pool", pool, "-N", namespace, "get", object, tempPath)
 	if err != nil {
 		return nil, err
 	}

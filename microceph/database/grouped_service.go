@@ -48,10 +48,16 @@ type NFSServiceInfo struct {
 // SMBServiceGroupConfig holds SMB configuration shared by all placed members.
 type SMBServiceGroupConfig struct {
 	// DesiredSpec is the complete upstream SMBSpec envelope requested by mgr/smb.
-	DesiredSpec json.RawMessage `json:"desired_spec"`
+	DesiredSpec  json.RawMessage `json:"desired_spec"`
+	CTDBRanks    map[string]int  `json:"ctdb_ranks,omitempty"`
+	NextCTDBRank int             `json:"next_ctdb_rank,omitempty"`
 }
 
 // SMBServiceInfo holds node-local SMB service metadata.
 type SMBServiceInfo struct {
-	ConfigURI string `json:"config_uri"`
+	ConfigURI    string          `json:"config_uri"`
+	CTDBRank     *int            `json:"ctdb_rank,omitempty"`
+	CTDBIdentity string          `json:"ctdb_identity,omitempty"`
+	AppliedSpec  json.RawMessage `json:"applied_spec,omitempty"`
+	ConfigDigest string          `json:"config_digest,omitempty"`
 }

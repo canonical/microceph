@@ -43,8 +43,33 @@ def load_runtime_loadparm(param, smbconf=None):
     return loadparm
 
 
+def ctdb_nodes_with_reserved_slots(nodes):
+    """Render missing/retired PNNs as comments, never ignorable blank lines.
+
+    Sambacc 0.9 fills absent ranks with empty strings. CTDB skips those lines
+    and renumbers later nodes. Use the same renderer for initial lists and the
+    long-lived metadata monitor so a reload cannot reintroduce that problem.
+    """
+    entries = {}
+    for entry in nodes:
+        rank = entry["pnn"]
+        if type(rank) is not int or rank < 0 or rank in entries:
+            raise ValueError("invalid or duplicate CTDB PNN")
+        entries[rank] = entry
+    result = ["#"] * (max(entries, default=-1) + 1)
+    for rank, entry in entries.items():
+        if entry["state"] in ("gone", "changed"):
+            continue
+        address = entry["node"]
+        if not isinstance(address, str) or not address.strip():
+            raise ValueError("missing CTDB node address")
+        result[rank] = address
+    return result
+
+
 def run():
     """Invoke sambacc after replacing its passdb loader with a confined one."""
+    from sambacc import ctdb
     from sambacc import passdb_loader
     from sambacc import paths
     from sambacc.commands.main import main
@@ -52,6 +77,7 @@ def run():
     # sambacc 0.9 otherwise creates /run/samba before importing the
     # registry. That path is not writable by a strict snap.
     paths.ensure_samba_dirs = ensure_runtime_dirs
+    ctdb._cluster_meta_to_ctdb_nodes = ctdb_nodes_with_reserved_slots
     parent_loader = passdb_loader.PassDBLoader
 
     class MicroCephPassDBLoader(parent_loader):

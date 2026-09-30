@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -32,7 +33,7 @@ func TestMaterializeSMBConfigWritesCurrentSourcesAndRemovesStaleUsers(t *testing
 	defer func() {
 		fetchSMBSourceFunc = originalFetch
 	}()
-	fetchSMBSourceFunc = func(uri string) ([]byte, error) {
+	fetchSMBSourceFunc = func(_ context.Context, uri string) ([]byte, error) {
 		sources := map[string]string{
 			"rados://.smb/files/config.smb": `{
 				"samba-container-config": "v0",
@@ -70,14 +71,24 @@ func TestMaterializeSMBConfigWritesCurrentSourcesAndRemovesStaleUsers(t *testing
 		},
 	}
 
-	err = materializeSMBConfig(placement)
+	err = materializeSMBConfig(context.Background(), placement)
 
 	require.NoError(t, err)
 	assert.FileExists(t, configPath)
 	assert.FileExists(t, userPath)
 	assert.NoFileExists(t, staleUserPath)
 	assert.Equal(t, "files\n", readSMBConfigFile(t, filepath.Join(runtimePath, "cluster-id")))
-	assert.Equal(t, "[global]\nconfig backend = registry\nlock directory = /var/lib/samba/lock\npid directory = /var/lib/samba/run\nncalrpc dir = /var/lib/samba/ncalrpc\nwinbindd socket directory = /var/lib/samba/winbindd\nstate directory = /var/lib/samba/state\ncache directory = /var/cache/samba\nprivate dir = /var/lib/samba/private\n", readSMBConfigFile(t, filepath.Join(confPath, "samba", "smb.conf")))
+	assert.Equal(t, smbBaseConfig, readSMBConfigFile(t, filepath.Join(confPath, "samba", "smb.conf")))
+
+	placement.CustomPorts = map[string]int{"smb": 1445}
+	err = materializeSMBConfig(context.Background(), placement)
+	require.NoError(t, err)
+	assert.Equal(t, smbBaseConfig+"smb ports = 1445\n", readSMBConfigFile(t, filepath.Join(confPath, "samba", "smb.conf")))
+
+	placement.CustomPorts = nil
+	err = materializeSMBConfig(context.Background(), placement)
+	require.NoError(t, err)
+	assert.Equal(t, smbBaseConfig, readSMBConfigFile(t, filepath.Join(confPath, "samba", "smb.conf")))
 }
 
 func TestMaterializeSMBConfigReportsSourceFailuresBeforeWriting(t *testing.T) {
@@ -114,7 +125,7 @@ func TestMaterializeSMBConfigReportsSourceFailuresBeforeWriting(t *testing.T) {
 			defer func() {
 				fetchSMBSourceFunc = originalFetch
 			}()
-			fetchSMBSourceFunc = func(uri string) ([]byte, error) {
+			fetchSMBSourceFunc = func(_ context.Context, uri string) ([]byte, error) {
 				if test.userSource && uri == "rados://.smb/files/config.smb" {
 					return []byte(`{"shares":{"files":{"options":{"vfs objects":"ceph_new","ceph_new:proxy":"no"}}}}`), nil
 				}
@@ -131,7 +142,7 @@ func TestMaterializeSMBConfigReportsSourceFailuresBeforeWriting(t *testing.T) {
 				}
 			}
 
-			err := materializeSMBConfig(placement)
+			err := materializeSMBConfig(context.Background(), placement)
 
 			assert.ErrorContains(t, err, test.expected)
 			assert.NoDirExists(t, runtimePath)
@@ -157,7 +168,7 @@ func TestMaterializeSMBConfigWritesClusteredRuntimeConfiguration(t *testing.T) {
 	defer func() {
 		fetchSMBSourceFunc = originalFetch
 	}()
-	fetchSMBSourceFunc = func(_ string) ([]byte, error) {
+	fetchSMBSourceFunc = func(_ context.Context, _ string) ([]byte, error) {
 		return []byte(`{
 			"samba-container-config": "v0",
 			"configs": {"files": {"instance_features": ["ctdb"]}},
@@ -183,7 +194,7 @@ func TestMaterializeSMBConfigWritesClusteredRuntimeConfiguration(t *testing.T) {
 		},
 	}
 
-	err := materializeSMBConfig(placement)
+	err := materializeSMBConfig(context.Background(), placement)
 
 	require.NoError(t, err)
 	assert.Equal(t, "1\n", readSMBConfigFile(t, filepath.Join(runtimePath, "ctdb-rank")))
@@ -200,7 +211,7 @@ func TestMaterializeSMBConfigWritesClusteredRuntimeConfiguration(t *testing.T) {
 
 	placement.ctdb.Rank = 0
 	placement.ctdb.Identity = "smb.files.node-a"
-	err = materializeSMBConfig(placement)
+	err = materializeSMBConfig(context.Background(), placement)
 
 	require.NoError(t, err)
 	assert.Equal(t, "0\n", readSMBConfigFile(t, filepath.Join(runtimePath, "ctdb-rank")))
@@ -249,11 +260,17 @@ func TestWriteSMBCTDBAddressWritesPrivateAddressAndSocketInclude(t *testing.T) {
 	}
 	err := os.MkdirAll(filepath.Join(tempDir, "samba"), 0700)
 	require.NoError(t, err)
-	err = writeSMBCTDBAddress("10.10.10.12", "10.0.0.12")
+	err = writeSMBCTDBAddress("10.10.10.12", "10.0.0.12", 1445)
 
 	require.NoError(t, err)
 	assert.Equal(t, "10.10.10.12\n", readSMBConfigFile(t, filepath.Join(tempDir, "samba", "ctdb-address")))
-	assert.Equal(t, "[global]\nctdbd socket = /run/ctdb/ctdbd.socket\nbind interfaces only = yes\ninterfaces = 10.0.0.12\n", readSMBConfigFile(t, filepath.Join(dataPath, "samba", "smb.ctdb.conf")))
+	ctdbIncludePath := filepath.Join(dataPath, "samba", "smb.ctdb.conf")
+	defaultInclude := "[global]\nctdbd socket = /run/ctdb/ctdbd.socket\nbind interfaces only = yes\ninterfaces = 10.0.0.12\n"
+	assert.Equal(t, defaultInclude+"smb ports = 1445\n", readSMBConfigFile(t, ctdbIncludePath))
+
+	err = writeSMBCTDBAddress("10.10.10.12", "10.0.0.12", 0)
+	require.NoError(t, err)
+	assert.Equal(t, defaultInclude, readSMBConfigFile(t, ctdbIncludePath))
 }
 
 func TestMaterializeSMBConfigRejectsNonDirectContainerBeforeWriting(t *testing.T) {
@@ -273,7 +290,7 @@ func TestMaterializeSMBConfigRejectsNonDirectContainerBeforeWriting(t *testing.T
 	defer func() {
 		fetchSMBSourceFunc = originalFetch
 	}()
-	fetchSMBSourceFunc = func(_ string) ([]byte, error) {
+	fetchSMBSourceFunc = func(_ context.Context, _ string) ([]byte, error) {
 		return []byte(`{
 			"shares": {
 				"files": {
@@ -288,7 +305,7 @@ func TestMaterializeSMBConfigRejectsNonDirectContainerBeforeWriting(t *testing.T
 		ConfigURI: "rados://.smb/files/config.smb",
 	}
 
-	err := materializeSMBConfig(placement)
+	err := materializeSMBConfig(context.Background(), placement)
 
 	assert.ErrorContains(t, err, "direct samba-vfs/new")
 	assert.NoFileExists(t, filepath.Join(runtimePath, "container.json"))
