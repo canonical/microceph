@@ -218,6 +218,26 @@ func TestMaterializeSMBConfigWritesClusteredRuntimeConfiguration(t *testing.T) {
 	assert.Equal(t, "smb.files.node-a\n", readSMBConfigFile(t, filepath.Join(runtimePath, "ctdb-identity")))
 }
 
+func TestMaterializeSMBCTDBConfigUsesRevisionIndependentHelpers(t *testing.T) {
+	placement := &SMBServicePlacement{
+		ClusterID: "files", ClusterMetaURI: "rados://.smb/files/cluster.meta.json",
+		ClusterLockURI: "rados://.smb/files/cluster.meta.lock",
+		ctdb:           &smbCTDBPlacement{Rank: 0, Identity: "smb.files.node-a"},
+	}
+	for _, revision := range []string{"x3", "x4", "1234"} {
+		t.Run(revision, func(t *testing.T) {
+			t.Setenv("SNAP", "/snap/microceph/"+revision)
+			dir := t.TempDir()
+			require.NoError(t, materializeSMBCTDBConfig(dir, placement))
+			config := readSMBConfigFile(t, filepath.Join(dir, "ctdb.json"))
+			assert.Contains(t, config, "/snap/microceph/current/bin/python3")
+			assert.Contains(t, config, "/snap/microceph/current/commands/sambacc.start")
+			assert.Contains(t, config, "/snap/microceph/current/commands/samba-command")
+			assert.NotContains(t, config, "/snap/microceph/"+revision+"/")
+		})
+	}
+}
+
 func TestMaterializeSMBCTDBConfigReportsTheFailedArtifact(t *testing.T) {
 	runtimeDir := t.TempDir()
 	originalWrite := writeSMBFileFunc

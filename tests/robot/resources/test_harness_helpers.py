@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import types
@@ -3222,8 +3223,37 @@ def test_smb_file_wait_observes_files_appearing(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def _stage_test_timeout(root):
+    binary = root / "bin"
+    binary.mkdir()
+    (binary / "timeout").symlink_to(shutil.which("timeout"))
+
+
+def test_smb_ctdb_wait_uses_packaged_timeout(tmp_path):
+    _stage_test_timeout(tmp_path)
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    probe = commands / "samba-command"
+    probe.write_text("#!/bin/sh\nexit 0\n")
+    probe.chmod(0o755)
+    result = _run_smb_helper(
+        'timeout() { return 126; }; SNAP="$1"; SMB_WAIT_TIMEOUT=1; '
+        'SMB_POLL_INTERVAL=0.01; smb_wait_for_ctdb_ready', tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_smb_timeout_and_its_core26_symlink_target_are_primed():
+    recipe = (Path(__file__).parents[3] / "snap" / "snapcraft.yaml").read_text()
+    ceph = recipe.split("\n  ceph:\n", 1)[1].split("\n  dqlite:\n", 1)[0]
+    prime = ceph.split("\n    prime:\n", 1)[1]
+    assert "      - bin/timeout\n" in prime
+    assert "      - lib/cargo/bin/coreutils/timeout\n" in prime
+
+
 @pytest.mark.parametrize("probe", ["exit 1", "trap '' TERM; sleep 30"])
 def test_smb_ctdb_wait_bounds_failed_and_hung_probes(tmp_path, probe):
+    _stage_test_timeout(tmp_path)
     commands = tmp_path / "commands"
     commands.mkdir()
     executable = commands / "samba-command"
@@ -3235,6 +3265,7 @@ def test_smb_ctdb_wait_bounds_failed_and_hung_probes(tmp_path, probe):
 
 
 def test_smb_ctdb_wait_accepts_successful_probe(tmp_path):
+    _stage_test_timeout(tmp_path)
     commands = tmp_path / "commands"
     commands.mkdir()
     executable = commands / "samba-command"
