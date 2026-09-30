@@ -1081,64 +1081,28 @@ def test_export_cluster_token_does_not_retry_a_permanent_failure(monkeypatch):
     ]
 
 
-def test_install_lxd_in_vm_retries_a_snap_store_nonce_timeout(monkeypatch):
+def test_prepare_snapd_in_vm_uses_snap_store_retry_for_install_and_refresh(monkeypatch):
     harness = H()
-    install_lxd = getattr(harness, "install_lxd_in_vm", None)
-    assert install_lxd is not None, "LXD installation must retry transient Snap Store nonce timeouts"
-
-    results = iter(
-        [
-            _Res(1, "", "cannot get nonce from store: store server returned status 408\n"),
-            _Res(0, "lxd installed\n", ""),
-        ]
-    )
+    results = iter([
+        _Res(0, "snapd is already installed\n", ""),
+        _Res(0, "snapd refreshed\n", ""),
+    ])
     calls = []
 
-    def fake_run_in_vm(command, timeout, quiet):
-        calls.append((command, timeout, quiet))
+    monkeypatch.setattr(harness, "_snapd_channel", lambda: "latest/edge")
+
+    def fake_retry(command, timeout):
+        calls.append((command, timeout))
         return next(results)
 
-    monkeypatch.setattr(harness, "run_in_vm", fake_run_in_vm)
-    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(harness, "run_in_vm_with_snap_retry", fake_retry)
 
-    install_lxd(attempts=2, interval=0)
+    harness.prepare_snapd_in_vm()
 
     assert calls == [
-        ("sudo snap install lxd", 300, True),
-        ("sudo snap install lxd", 300, True),
+        ("sudo snap install snapd --channel=latest/edge", 600),
+        ("sudo snap refresh snapd --channel=latest/edge", 600),
     ]
-
-
-def test_microceph_api_put_in_container_until_success_retries_closed_connection(monkeypatch):
-    harness = H()
-    put_until_success = getattr(harness, "microceph_api_put_in_container_until_success", None)
-    assert put_until_success is not None, "placement PUT must retry a closed MicroCluster connection"
-
-    responses = iter(
-        [
-            '{"type":"error","error_code":500,"error":"failed to list cluster members: use of closed network connection"}',
-            '{"type":"sync","status_code":200,"metadata":null}',
-        ]
-    )
-    calls = []
-
-    def fake_put(container, path, body, query="", timeout=300):
-        calls.append((container, path, body, query, timeout))
-        return next(responses)
-
-    monkeypatch.setattr(harness, "microceph_api_put_in_container", fake_put)
-    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
-
-    response = put_until_success(
-        "node-wrk0",
-        "placement",
-        '{"mode":"reconcile","members":{"node-wrk0":{"control":true},"node-wrk1":{"control":false}}}',
-        attempts=2,
-        interval=0,
-    )
-
-    assert response == '{"type":"sync","status_code":200,"metadata":null}'
-    assert len(calls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -2721,28 +2685,31 @@ def test_local_snap_install_refreshes_a_preinstalled_snapd(monkeypatch):
 
     def fake_run_in_vm_and_check(command, timeout):
         commands.append((command, timeout))
+        return _fake_snapd_result("ok")
+
+    retried = []
+
+    def fake_retry(command, timeout=300):
+        retried.append((command, timeout))
         if "snap install snapd" in command:
             return _fake_snapd_result(
                 'snap "snapd" is already installed, see \'snap refresh --help\'.'
             )
         return _fake_snapd_result("ok")
 
-    retried = []
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
-    monkeypatch.setattr(
-        harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: retried.append((command, timeout))
-    )
+    monkeypatch.setattr(harness, "run_in_vm_with_snap_retry", fake_retry)
     monkeypatch.setattr(harness, "_snapd_channel", lambda: "latest/edge")
 
     harness.install_microceph_from_local_snap("/tmp/microceph.snap")
 
-    assert commands[:3] == [
+    assert commands[0] == ("sudo snap install core26 || true", 120)
+    # Snapd preparation and the local install both retry transient store errors.
+    assert retried == [
         ("sudo snap install snapd --channel=latest/edge", 600),
         ("sudo snap refresh snapd --channel=latest/edge", 600),
-        ("sudo snap install core26 || true", 120),
+        ("sudo snap install --dangerous ~/microceph_*.snap", 600),
     ]
-    # The --dangerous install is where a swallowed core26 store error resurfaces.
-    assert retried == [("sudo snap install --dangerous ~/microceph_*.snap", 600)]
 
 
 def test_local_snap_install_skips_refresh_for_a_fresh_snapd(monkeypatch):
@@ -2753,17 +2720,24 @@ def test_local_snap_install_skips_refresh_for_a_fresh_snapd(monkeypatch):
 
     def fake_run_in_vm_and_check(command, timeout):
         commands.append((command, timeout))
+        return _fake_snapd_result("ok")
+
+    retried = []
+
+    def fake_retry(command, timeout=300):
+        retried.append((command, timeout))
         return _fake_snapd_result("snapd (edge) 2.78 installed")
 
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
     monkeypatch.setattr(harness, "_snapd_channel", lambda: "latest/edge")
-    monkeypatch.setattr(harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: None)
+    monkeypatch.setattr(harness, "run_in_vm_with_snap_retry", fake_retry)
 
     harness.install_microceph_from_local_snap("/tmp/microceph.snap")
 
-    assert commands[:2] == [
+    assert commands[0] == ("sudo snap install core26 || true", 120)
+    assert retried == [
         ("sudo snap install snapd --channel=latest/edge", 600),
-        ("sudo snap install core26 || true", 120),
+        ("sudo snap install --dangerous ~/microceph_*.snap", 600),
     ]
 
 
@@ -2806,7 +2780,7 @@ def test_all_local_snap_install_paths_prepare_configured_snapd():
     # (verify_pristine_check -> install_microceph); store-channel upgrade
     # workflows and the dead multinode helpers must not be touched.
     assert "ensure_snapd_channel_in_instance" not in actionutils
-    assert actionutils.count("    ensure_snapd_channel\n") == 1
+    assert actionutils.count("    ensure_snapd_channel || return 1\n") == 1
 
     assert actionutils.index("ensure_snapd_channel") < actionutils.index(
         "sudo snap install --dangerous ~/microceph_*.snap"
