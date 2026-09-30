@@ -65,7 +65,7 @@ Flags:
 
 .. code-block:: none
 
-   --cluster-id string   SMB Cluster ID (must match regex: '^[\w][\w.-]{1,61}[\w]$')
+   --cluster-id string   SMB Cluster ID (must match regex: '^[A-Za-z0-9]([A-Za-z0-9-]{0,16}[A-Za-z0-9])?$')
    --target string       Server hostname (default: this server)
 
 See :ref:`smb-reference` for member removal and final-cluster cleanup semantics.
