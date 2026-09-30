@@ -65,7 +65,7 @@ type SMBServicePlacement struct {
 }
 
 // PopulateParams validates an SMB placement payload before it is applied locally.
-func (smb *SMBServicePlacement) PopulateParams(s interfaces.StateInterface, payload string) error {
+func (smb *SMBServicePlacement) PopulateParams(_ interfaces.StateInterface, payload string) error {
 	err := smb.decodePayload(payload)
 	if err != nil {
 		return err
@@ -108,20 +108,6 @@ func (smb *SMBServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 		if err != nil {
 			return err
 		}
-	}
-	if s != nil {
-		// PlacementIntf's validation hook has no context argument. Bound this
-		// short preflight and do not hold its transaction across service work.
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			err := database.CheckSMBPlacementMode(ctx, tx, smb.ClusterID, s.ClusterState().Name(), smb.isClustered())
-			if err != nil {
-				return err
-			}
-			smb.recordedClustered, err = database.GetSMBPlacementMode(ctx, tx, smb.ClusterID)
-			return err
-		})
 	}
 
 	return nil
@@ -256,6 +242,24 @@ func (smb *SMBServicePlacement) HospitalityCheck(_ interfaces.StateInterface) er
 // ServiceInit materializes the current SMB configuration and starts or restarts its services.
 func (smb *SMBServicePlacement) ServiceInit(ctx context.Context, s interfaces.StateInterface) error {
 	smb.placementCtx = ctx
+	if s != nil {
+		// MicroCluster transactions require the logger in the supplied context.
+		// Bound the preflight and reject mode changes before local mutation.
+		preflightCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		state := s.ClusterState()
+		err := state.Database().Transaction(preflightCtx, func(ctx context.Context, tx *sql.Tx) error {
+			err := database.CheckSMBPlacementMode(ctx, tx, smb.ClusterID, state.Name(), smb.isClustered())
+			if err != nil {
+				return err
+			}
+			smb.recordedClustered, err = database.GetSMBPlacementMode(ctx, tx, smb.ClusterID)
+			return err
+		})
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
 	clusterID, stateErr := currentSMBClusterID()
 	freshPlacement := os.IsNotExist(stateErr)
 	if stateErr != nil && !freshPlacement {

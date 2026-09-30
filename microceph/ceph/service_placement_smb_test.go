@@ -475,7 +475,8 @@ func TestSMBServicePlacementFreshInitFailureRemovesLocalState(t *testing.T) {
 	err := placement.ServiceInit(context.Background(), nil)
 
 	assert.ErrorContains(t, err, "failed to start SMB service smbd")
-	assert.NoDirExists(t, filepath.Join(confPath, "samba"))
+	assert.DirExists(t, filepath.Join(confPath, "samba"))
+	assert.NoFileExists(t, filepath.Join(confPath, "samba", "smb.conf"))
 	assert.NoDirExists(t, runtimePath)
 	assert.NoFileExists(t, filepath.Join(confPath, "ceph.client.smb.fs.cluster.files.keyring"))
 }
@@ -595,7 +596,7 @@ func TestSMBServicePlacementFreshClusteredStartsCTDBBeforeSMBD(t *testing.T) {
 	url := api.NewURL()
 	url.Host("10.10.10.12:7443")
 	state := mocks.NewStateInterface(t)
-	state.On("ClusterState").Return(&mocks.MockState{URL: url}).Once()
+	state.On("ClusterState").Return(&mocks.MockState{URL: url, DBObj: newSMBPlacementTestDB(t)}).Twice()
 	err = placement.ServiceInit(context.Background(), state)
 
 	require.NoError(t, err)
@@ -807,7 +808,8 @@ func TestDisableSMBStopsServiceAndRemovesLocalState(t *testing.T) {
 	err = DisableSMB(context.Background(), state, "files")
 
 	require.NoError(t, err)
-	assert.NoDirExists(t, filepath.Join(confPath, "samba"))
+	assert.DirExists(t, filepath.Join(confPath, "samba"))
+	assert.NoFileExists(t, filepath.Join(confPath, "samba", "smb.conf"))
 	assert.NoDirExists(t, runtimePath)
 	assert.NoFileExists(t, keyringPath)
 }
@@ -982,6 +984,7 @@ func TestSMBPlacementReceiptSkipsOnlyCurrentEffectiveConfig(t *testing.T) {
 	info, err := json.Marshal(database.SMBServiceInfo{AppliedSpec: placement.upstreamSpec, ConfigDigest: digest})
 	require.NoError(t, err)
 	state := mocks.NewStateInterface(t)
+	state.On("ClusterState").Return(&mocks.MockState{DBObj: newSMBPlacementTestDB(t)}).Once()
 	db := mocks.NewGroupedServiceQueryIntf(t)
 	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{{Service: "smb", GroupID: "files", Info: string(info)}}, nil).Times(4)
 	originalDB := database.GroupedServicesQuery
@@ -1069,6 +1072,7 @@ func TestSMBPartialUpdateRestoresPreviousFiles(t *testing.T) {
 	t.Cleanup(func() { common.ProcessExec = originalRunner })
 	common.ProcessExec = runner
 	state := mocks.NewStateInterface(t)
+	state.On("ClusterState").Return(&mocks.MockState{DBObj: newSMBPlacementTestDB(t)}).Once()
 	db := mocks.NewGroupedServiceQueryIntf(t)
 	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{}, nil).Once()
 	originalDB := database.GroupedServicesQuery

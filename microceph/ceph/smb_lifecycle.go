@@ -120,14 +120,16 @@ type smbSavedFile struct {
 }
 
 type smbLocalSnapshot struct {
-	roots []string
-	files []smbSavedFile
+	configDir string
+	roots     []string
+	files     []smbSavedFile
 }
 
 func snapshotSMBLocalState(clusterID string) (*smbLocalSnapshot, error) {
 	paths := constants.GetPathConst()
-	snapshot := &smbLocalSnapshot{roots: []string{
-		filepath.Join(paths.ConfPath, "samba"),
+	configDir := filepath.Join(paths.ConfPath, "samba")
+	snapshot := &smbLocalSnapshot{configDir: configDir, roots: []string{
+		configDir,
 		filepath.Join(filepath.Dir(paths.ConfPath), "samba"),
 		filepath.Join(paths.ConfPath, fmt.Sprintf("ceph.client.smb.fs.cluster.%s.keyring", clusterID)),
 		filepath.Join(paths.ConfPath, fmt.Sprintf("ceph.client.smb.config.%s.keyring", clusterID)),
@@ -169,7 +171,12 @@ func snapshotSMBLocalState(clusterID string) (*smbLocalSnapshot, error) {
 
 func (snapshot *smbLocalSnapshot) restore() error {
 	for _, root := range snapshot.roots {
-		err := os.RemoveAll(root)
+		var err error
+		if root == snapshot.configDir {
+			err = clearSMBConfigDirectory(root)
+		} else {
+			err = os.RemoveAll(root)
+		}
 		if err != nil {
 			return err
 		}
@@ -205,6 +212,25 @@ func isSMBClusteredLocal() bool {
 	return err == nil
 }
 
+// clearSMBConfigDirectory keeps the inode bind-mounted at /etc/samba. Removing
+// and recreating it leaves the snap mount namespace attached to a deleted directory.
+func clearSMBConfigDirectory(path string) error {
+	entries, err := os.ReadDir(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		err = os.RemoveAll(filepath.Join(path, entry.Name()))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func removeSMBLocalState(clusterID string) error {
 	paths := constants.GetPathConst()
 	configDir := filepath.Join(paths.ConfPath, "samba")
@@ -214,9 +240,9 @@ func removeSMBLocalState(clusterID string) error {
 		filepath.Join(paths.ConfPath, fmt.Sprintf("ceph.client.smb.config.%s.keyring", clusterID)),
 	}
 
-	err := os.RemoveAll(configDir)
+	err := clearSMBConfigDirectory(configDir)
 	if err != nil {
-		return fmt.Errorf("failed to remove SMB configuration directory: %w", err)
+		return fmt.Errorf("failed to clear SMB configuration directory: %w", err)
 	}
 
 	err = os.RemoveAll(runtimeDir)

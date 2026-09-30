@@ -24,7 +24,8 @@ smb_wait_for_files() {
 smb_wait_for_ctdb_ready() {
     local deadline=$((SECONDS + ${SMB_WAIT_TIMEOUT:-300}))
     while [ "${SECONDS}" -lt "${deadline}" ]; do
-        if timeout --kill-after=1s "${SMB_CTDB_PROBE_TIMEOUT:-5}" \
+        # Core26's base timeout resolves outside the permitted executable paths.
+        if "${SNAP}/bin/timeout" --kill-after=1s "${SMB_CTDB_PROBE_TIMEOUT:-5}" \
             "${SNAP}/commands/samba-command" ctdb pnn >/dev/null 2>&1; then
             return 0
         fi

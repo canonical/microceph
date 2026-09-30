@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -13,6 +14,23 @@ import (
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
 )
+
+func TestEnableServiceFailureReturnsHTTPError(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPut, "/1.0/services/smb", strings.NewReader(`{"name":"not-a-service","bool":true}`))
+	recorder := httptest.NewRecorder()
+	response := cmdEnableServicePut(nil, request)
+	require.NoError(t, response.Render(recorder, request))
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	var result struct {
+		Type      string `json:"type"`
+		Error     string `json:"error"`
+		ErrorCode int    `json:"error_code"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &result))
+	require.Equal(t, "error", result.Type)
+	require.Equal(t, http.StatusInternalServerError, result.ErrorCode)
+	require.Contains(t, result.Error, "enablement is not supported")
+}
 
 func TestServicesGetExposesGroupedServiceConfiguration(t *testing.T) {
 	state := &mocks.MockState{}
