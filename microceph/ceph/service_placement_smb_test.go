@@ -9,274 +9,120 @@ import (
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
-
-	"github.com/canonical/microceph/microceph/common"
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/database"
-	"github.com/canonical/microceph/microceph/interfaces"
-	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/mocks"
 )
 
 func TestGetServicePlacementTableIncludesSMB(t *testing.T) {
 	placement, ok := GetServicePlacementTable()["smb"]
-
-	assert.True(t, ok)
+	require.True(t, ok)
 	assert.IsType(t, &SMBServicePlacement{}, placement)
 }
 
-func TestSMBServicePlacementPopulateParamsAcceptsDirectVFS(t *testing.T) {
-	placement := &SMBServicePlacement{}
-	payload := `{
-		"cluster_id": "files",
-		"config_uri": "rados://.smb/files/config.smb",
-		"provider": "samba-vfs/new",
-		"user_sources": [
-			"rados:mon-config-key:smb/config/files/users-groups.0.json"
-		]
-	}`
-
-	err := placement.PopulateParams(nil, payload)
-
-	assert.NoError(t, err)
-	assert.Equal(t, "files", placement.ClusterID)
-	assert.Equal(t, "rados://.smb/files/config.smb", placement.ConfigURI)
-	assert.Equal(t, []string{"rados:mon-config-key:smb/config/files/users-groups.0.json"}, placement.UserSources)
-}
-
-func TestSMBServicePlacementPopulateParamsAcceptsNestedUpstreamSMBSpec(t *testing.T) {
-	placement := &SMBServicePlacement{}
-	payload := `{
-		"service_type": "smb",
-		"service_id": "files",
-		"service_name": "smb.files",
-		"placement": {
-			"hosts": ["node-a"],
-			"count": 1
-		},
-		"spec": {
-			"cluster_id": "files",
-			"config_uri": "rados://.smb/files/config.smb",
-			"user_sources": [
-				"rados:mon-config-key:smb/config/files/users-groups.0.json"
-			]
-		}
-	}`
-
-	err := placement.PopulateParams(nil, payload)
-
-	require.NoError(t, err)
-	assert.Equal(t, "files", placement.ClusterID)
-	assert.Equal(t, "rados://.smb/files/config.smb", placement.ConfigURI)
-	assert.Equal(t, []string{"rados:mon-config-key:smb/config/files/users-groups.0.json"}, placement.UserSources)
-
-	carrier, ok := any(placement).(interface{ upstreamSpecJSON() []byte })
-	require.True(t, ok, "SMB placement must retain the complete upstream SMBSpec")
-	assert.JSONEq(t, payload, string(carrier.upstreamSpecJSON()))
-}
-
-func TestSMBServicePlacementPopulateParamsAcceptsClusteredMetadata(t *testing.T) {
-	placement := &SMBServicePlacement{}
-	payload := `{
-		"service_spec": {
-			"service_type": "smb",
-			"service_id": "files",
-			"placement": {"hosts": ["node-a", "node-b"], "count": 2},
-			"spec": {
-				"cluster_id": "files",
-				"config_uri": "rados://.smb/files/config.smb",
-				"features": ["clustered"],
-				"cluster_meta_uri": "rados://.smb/files/cluster.meta.json",
-				"cluster_lock_uri": "rados://.smb/files/cluster.meta.lock",
-				"bind_addrs": [{"network": "10.0.0.0/24"}],
-				"custom_ports": {"smb": 1445}
-			}
-		},
-		"microceph": {
-			"ctdb": {
-				"rank": 1,
-				"identity": "smb.files.node-b"
-			},
-			"ctdb_ranks": {"node-a": 0, "node-b": 1},
-			"next_ctdb_rank": 2
-		}
-	}`
-
-	err := placement.PopulateParams(nil, payload)
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{"clustered"}, placement.Features)
-	assert.Equal(t, "rados://.smb/files/cluster.meta.json", placement.ClusterMetaURI)
-	assert.Equal(t, "rados://.smb/files/cluster.meta.lock", placement.ClusterLockURI)
-	require.NotNil(t, placement.ctdb)
-	assert.Equal(t, 1, placement.ctdb.Rank)
-	assert.Equal(t, "smb.files.node-b", placement.ctdb.Identity)
-	assert.Equal(t, map[string]int{"node-a": 0, "node-b": 1}, placement.ctdbRanks)
-	assert.Equal(t, 2, placement.nextCTDBRank)
-	assert.Equal(t, []smbBindAddress{{Network: "10.0.0.0/24"}}, placement.BindAddrs)
-	assert.Equal(t, map[string]int{"smb": 1445}, placement.CustomPorts)
-	assert.JSONEq(t, `{
-		"service_type": "smb",
-		"service_id": "files",
-		"placement": {"hosts": ["node-a", "node-b"], "count": 2},
-		"spec": {
-			"cluster_id": "files",
-			"config_uri": "rados://.smb/files/config.smb",
-			"features": ["clustered"],
-			"cluster_meta_uri": "rados://.smb/files/cluster.meta.json",
-			"cluster_lock_uri": "rados://.smb/files/cluster.meta.lock",
-			"bind_addrs": [{"network": "10.0.0.0/24"}],
-			"custom_ports": {"smb": 1445}
-		}
-	}`, string(placement.upstreamSpecJSON()))
-}
-
-func TestSMBServicePlacementPopulateParamsRejectsClusteredWithoutMetadata(t *testing.T) {
-	placement := &SMBServicePlacement{}
-	payload := `{
-		"cluster_id": "files",
-		"config_uri": "rados://.smb/files/config.smb",
-		"features": ["clustered"],
-		"cluster_meta_uri": "rados://.smb/files/cluster.meta.json",
-		"cluster_lock_uri": "rados://.smb/files/cluster.meta.lock"
-	}`
-
-	err := placement.PopulateParams(nil, payload)
-
-	assert.ErrorContains(t, err, "requires CTDB node metadata")
-}
-
-func TestSMBServicePlacementNonclusteredRejectsCTDBURIs(t *testing.T) {
-	for _, field := range []string{"cluster_meta_uri", "cluster_lock_uri"} {
-		placement := &SMBServicePlacement{}
-		payload := fmt.Sprintf(`{"cluster_id":"files","config_uri":"rados://.smb/files/config.smb",%q:"rados://.smb/files/cluster.meta.json"}`, field)
-		require.ErrorContains(t, placement.PopulateParams(nil, payload), "requires the clustered SMB feature")
-	}
-}
-
-func TestSMBServicePlacementPopulateParamsRejectsInvalidNetworkOptions(t *testing.T) {
-	tests := []struct {
-		name     string
-		options  string
-		expected string
+func TestSMBServicePlacementPayloadShapes(t *testing.T) {
+	const userURI = "rados:mon-config-key:smb/config/files/users-groups.0.json"
+	const direct = `{"cluster_id":"files","config_uri":"rados://.smb/files/config.smb","provider":"samba-vfs/new","user_sources":["` + userURI + `"]}`
+	for _, tc := range []struct {
+		name, payload string
+		users         []string
 	}{
-		{
-			name:     "bind entry without selector",
-			options:  `"bind_addrs": [{}]`,
-			expected: "must set exactly one",
-		},
-		{
-			name:     "bind entry with address and network",
-			options:  `"bind_addrs": [{"address":"192.0.2.10","network":"192.0.2.0/24"}]`,
-			expected: "must set exactly one",
-		},
-		{
-			name:     "out of range port",
-			options:  `"custom_ports": {"smb": 65536}`,
-			expected: "custom port smb is invalid",
-		},
-		{
-			name:     "unsupported port name",
-			options:  `"custom_ports": {"metrics": 9922}`,
-			expected: "does not support custom port 'metrics'",
-		},
-		{
-			name:     "custom CTDB port",
-			options:  `"custom_ports": {"ctdb": 14379}`,
-			expected: "does not support a custom CTDB port",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+		{"direct", direct, []string{userURI}},
+		{"nested", `{"service_type":"smb","service_id":"files","service_name":"smb.files","placement":{"hosts":["node-a"],"count":1},"spec":` + direct + `}`, []string{userURI}},
+		{"provider omitted", `{"service_type":"smb","service_id":"files","spec":` + smbTestPayload + `}`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			placement := &SMBServicePlacement{}
-			payload := fmt.Sprintf(`{
-				"cluster_id": "files",
-				"config_uri": "rados://.smb/files/config.smb",
-				%s
-			}`, test.options)
-
-			err := placement.PopulateParams(nil, payload)
-
-			assert.ErrorContains(t, err, test.expected)
+			require.NoError(t, placement.PopulateParams(nil, tc.payload))
+			assert.Equal(t, "files", placement.ClusterID)
+			assert.Equal(t, "rados://.smb/files/config.smb", placement.ConfigURI)
+			assert.Equal(t, tc.users, placement.UserSources)
+			assert.JSONEq(t, tc.payload, string(placement.upstreamSpecJSON()))
 		})
 	}
 }
 
-func TestSMBServicePlacementPopulateParamsRejectsUnsupportedFeatures(t *testing.T) {
+func TestSMBServicePlacementPopulateParamsAcceptsClusteredMetadata(t *testing.T) {
+	const spec = `{"service_type":"smb","service_id":"files","placement":{"hosts":["node-a","node-b"],"count":2},"spec":{
+		"cluster_id":"files","config_uri":"rados://.smb/files/config.smb","features":["clustered"],
+		"cluster_meta_uri":"rados://.smb/files/cluster.meta.json","cluster_lock_uri":"rados://.smb/files/cluster.meta.lock",
+		"bind_addrs":[{"network":"10.0.0.0/24"}],"custom_ports":{"smb":1445}}}`
+	payload := `{"service_spec":` + spec + `,"microceph":{"ctdb":{"rank":1,"identity":"smb.files.node-b"},"ctdb_ranks":{"node-a":0,"node-b":1},"next_ctdb_rank":2}}`
 	placement := &SMBServicePlacement{}
-	payload := `{
-		"cluster_id": "files",
-		"config_uri": "rados://.smb/files/config.smb",
-		"features": ["cephfs-proxy"]
-	}`
-
-	err := placement.PopulateParams(nil, payload)
-
-	assert.ErrorContains(t, err, "does not support SMB feature 'cephfs-proxy'")
+	require.NoError(t, placement.PopulateParams(nil, payload))
+	assert.Equal(t, []string{"clustered"}, placement.Features)
+	assert.Equal(t, "rados://.smb/files/cluster.meta.json", placement.ClusterMetaURI)
+	assert.Equal(t, "rados://.smb/files/cluster.meta.lock", placement.ClusterLockURI)
+	require.Equal(t, &smbCTDBPlacement{Rank: 1, Identity: "smb.files.node-b"}, placement.ctdb)
+	assert.Equal(t, map[string]int{"node-a": 0, "node-b": 1}, placement.ctdbRanks)
+	assert.Equal(t, 2, placement.nextCTDBRank)
+	assert.Equal(t, []smbBindAddress{{Network: "10.0.0.0/24"}}, placement.BindAddrs)
+	assert.Equal(t, map[string]int{"smb": 1445}, placement.CustomPorts)
+	assert.JSONEq(t, spec, string(placement.upstreamSpecJSON()))
 }
 
-func TestSMBServicePlacementPopulateParamsAcceptsUpstreamSpecWithoutProvider(t *testing.T) {
-	placement := &SMBServicePlacement{}
-	payload := `{
-		"service_type": "smb",
-		"service_id": "files",
-		"spec": {
-			"cluster_id": "files",
-			"config_uri": "rados://.smb/files/config.smb"
-		}
-	}`
-
-	err := placement.PopulateParams(nil, payload)
-
-	assert.NoError(t, err)
+func TestSMBServicePlacementRejectsInvalidPayload(t *testing.T) {
+	for _, tc := range []struct{ name, options, message string }{
+		{"missing CTDB identity", `"features":["clustered"],"cluster_meta_uri":"rados://.smb/files/cluster.meta.json","cluster_lock_uri":"rados://.smb/files/cluster.meta.lock"`, "requires CTDB node metadata"},
+		{"nonclustered metadata", `"cluster_meta_uri":"rados://.smb/files/cluster.meta.json"`, "requires the clustered SMB feature"},
+		{"nonclustered lock", `"cluster_lock_uri":"rados://.smb/files/cluster.meta.lock"`, "requires the clustered SMB feature"},
+		{"empty bind", `"bind_addrs":[{}]`, "must set exactly one"},
+		{"conflicting bind", `"bind_addrs":[{"address":"192.0.2.10","network":"192.0.2.0/24"}]`, "must set exactly one"},
+		{"port range", `"custom_ports":{"smb":65536}`, "custom port smb is invalid"},
+		{"unknown port", `"custom_ports":{"metrics":9922}`, "does not support custom port 'metrics'"},
+		{"CTDB port", `"custom_ports":{"ctdb":14379}`, "does not support a custom CTDB port"},
+		{"unsupported feature", `"features":["cephfs-proxy"]`, "does not support SMB feature 'cephfs-proxy'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := smbTestPayload[:len(smbTestPayload)-1] + "," + tc.options + "}"
+			require.ErrorContains(t, (&SMBServicePlacement{}).PopulateParams(nil, payload), tc.message)
+		})
+	}
+	payload := `{"cluster_id":"files","config_uri":"rados://.smb/other/config.smb","provider":"samba-vfs/new"}`
+	require.ErrorContains(t, (&SMBServicePlacement{}).PopulateParams(nil, payload), "must use SMB cluster namespace 'files'")
 }
 
-func TestSMBServicePlacementPopulateParamsRejectsOtherClusterNamespace(t *testing.T) {
-	placement := &SMBServicePlacement{}
-	payload := `{
-		"cluster_id": "files",
-		"config_uri": "rados://.smb/other/config.smb",
-		"provider": "samba-vfs/new"
-	}`
-
-	err := placement.PopulateParams(nil, payload)
-
-	assert.ErrorContains(t, err, "must use SMB cluster namespace 'files'")
-}
-
-func TestValidateSMBContainerConfigRequiresDirectCephNew(t *testing.T) {
-	config := []byte(`{
-		"shares": {
-			"files": {
-				"options": {
-					"vfs objects": "acl_xattr ceph_snapshots ceph_new",
-					"ceph_new:proxy": "no"
-				}
+func TestValidateSMBContainerConfigVFS(t *testing.T) {
+	for _, tc := range []struct {
+		name, options string
+		valid         bool
+	}{
+		{"direct", `"vfs objects":"acl_xattr ceph_snapshots ceph_new","ceph_new:proxy":"no"`, true},
+		{"proxy", `"vfs objects":"acl_xattr ceph_new","ceph_new:proxy":"yes"`, false},
+		{"missing proxy setting", `"vfs objects":"acl_xattr ceph_new"`, false},
+		{"classic", `"vfs objects":"acl_xattr ceph"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSMBContainerConfig([]byte(`{"shares":{"files":{"options":{` + tc.options + `}}}}`))
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "direct samba-vfs/new")
 			}
-		}
-	}`)
-
-	err := validateSMBContainerConfig(config)
-
-	assert.NoError(t, err)
+		})
+	}
 }
 
-func TestSMBServicePlacementHospitalityRequiresIdentitySwitching(t *testing.T) {
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "is-connected", "smb-identity").Return("", assert.AnError).Once()
-	originalRunner := common.ProcessExec
-	defer func() {
-		common.ProcessExec = originalRunner
-	}()
-	common.ProcessExec = runner
-
-	placement := &SMBServicePlacement{ClusterID: "files"}
-	err := placement.HospitalityCheck(nil)
-
-	assert.ErrorContains(t, err, "requires the smb-identity interface connection")
+func TestSMBServicePlacementHospitalityRequiresInterfaces(t *testing.T) {
+	for _, clustered := range []bool{false, true} {
+		t.Run(fmt.Sprint(clustered), func(t *testing.T) {
+			runner := smbTestRunner(t)
+			placement := &SMBServicePlacement{ClusterID: "files"}
+			plug := "smb-identity"
+			if clustered {
+				placement.Features = []string{"clustered"}
+				smbTestCommand(runner, "snapctl", "is-connected", plug).Return("", nil).Once()
+				plug = "ctdb-run"
+			}
+			smbTestCommand(runner, "snapctl", "is-connected", plug).Return("", assert.AnError).Once()
+			require.ErrorContains(t, placement.HospitalityCheck(nil), "requires the "+plug+" interface connection")
+		})
+	}
 }
 
 func TestResolveSMBCTDBAddressUsesMicroClusterAddress(t *testing.T) {
@@ -284,542 +130,222 @@ func TestResolveSMBCTDBAddressUsesMicroClusterAddress(t *testing.T) {
 	url.Host("10.10.10.12:7443")
 	state := mocks.NewStateInterface(t)
 	state.On("ClusterState").Return(&mocks.MockState{URL: url}).Once()
-
 	address, err := resolveSMBCTDBAddress(state)
-
 	require.NoError(t, err)
 	assert.Equal(t, "10.10.10.12", address)
 }
 
 func TestResolveSMBBindAddressDefaultsToPublicNetwork(t *testing.T) {
-	originalFetchConfig := fetchConfigDb
-	defer func() {
-		fetchConfigDb = originalFetchConfig
-	}()
-	fetchConfigDb = func(_ context.Context, _ interfaces.StateInterface) (map[string]string, error) {
-		return map[string]string{"public_network": "10.0.0.0/24,192.0.2.0/24"}, nil
-	}
-
-	network := mocks.NewNetworkIntf(t)
-	network.On("FindIpOnSubnet", "10.0.0.0/24,192.0.2.0/24").Return("10.0.0.12", nil).Once()
-	originalNetwork := common.Network
-	defer func() {
-		common.Network = originalNetwork
-	}()
-	common.Network = network
-
+	mockSMBPublicAddress(t, "10.0.0.0/24,192.0.2.0/24", "10.0.0.12")
 	address, err := resolveSMBBindAddress(context.Background(), nil, &SMBServicePlacement{})
-
 	require.NoError(t, err)
 	assert.Equal(t, "10.0.0.12", address)
 }
 
-func TestResolveSMBBindAddressUsesFirstResolvableBind(t *testing.T) {
-	network := mocks.NewNetworkIntf(t)
-	network.On("FindIpOnSubnet", "198.51.100.0/24").Return("", assert.AnError).Once()
-	network.On("FindNetworkAddress", "192.0.2.12").Return("192.0.2.0/24", nil).Once()
-	originalNetwork := common.Network
-	defer func() {
-		common.Network = originalNetwork
-	}()
-	common.Network = network
-
-	placement := &SMBServicePlacement{
-		BindAddrs: []smbBindAddress{
-			{Network: "198.51.100.0/24"},
-			{Address: "192.0.2.12"},
-			{Network: "203.0.113.0/24"},
-		},
-	}
-	address, err := resolveSMBBindAddress(context.Background(), nil, placement)
-
-	require.NoError(t, err)
-	assert.Equal(t, "192.0.2.12", address)
-}
-
-func TestResolveSMBBindAddressReportsCandidateFailure(t *testing.T) {
-	network := mocks.NewNetworkIntf(t)
-	network.On("FindIpOnSubnet", "198.51.100.0/24").Return("", assert.AnError).Once()
-	network.On("FindNetworkAddress", "not-an-address").Return("", assert.AnError).Once()
-	originalNetwork := common.Network
-	defer func() {
-		common.Network = originalNetwork
-	}()
-	common.Network = network
-
-	placement := &SMBServicePlacement{
-		BindAddrs: []smbBindAddress{
-			{Network: "198.51.100.0/24"},
-			{Address: "not-an-address"},
-		},
-	}
-	_, err := resolveSMBBindAddress(context.Background(), nil, placement)
-
-	assert.ErrorContains(t, err, "failed to resolve an SMB bind address")
-}
-
-func TestSMBServicePlacementClusteredHospitalityRequiresCTDBRun(t *testing.T) {
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "is-connected", "smb-identity").Return("", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "is-connected", "ctdb-run").Return("", assert.AnError).Once()
-	originalRunner := common.ProcessExec
-	defer func() {
-		common.ProcessExec = originalRunner
-	}()
-	common.ProcessExec = runner
-
-	placement := &SMBServicePlacement{ClusterID: "files", Features: []string{"clustered"}}
-	err := placement.HospitalityCheck(nil)
-
-	assert.ErrorContains(t, err, "requires the ctdb-run interface connection")
-}
-
-func TestSMBServicePlacementServiceInitMaterializesConfigAndStartsSMBD(t *testing.T) {
-	tempDir := t.TempDir()
-	confPath := filepath.Join(tempDir, "conf")
-	mockSMBPublicAddress(t, "192.0.2.0/24", "192.0.2.12")
-
-	originalPaths := constants.GetPathConst
-	defer func() {
-		constants.GetPathConst = originalPaths
-	}()
-	constants.GetPathConst = func() constants.PathConst {
-		return constants.PathConst{ConfPath: confPath}
-	}
-
-	originalFetch := fetchSMBSourceFunc
-	defer func() {
-		fetchSMBSourceFunc = originalFetch
-	}()
-	fetchSMBSourceFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return []byte(`{
-			"samba-container-config": "v0",
-			"shares": {
-				"files": {
-					"options": {
-						"vfs objects": "acl_xattr ceph_snapshots ceph_new",
-						"ceph_new:proxy": "no"
-					}
-				}
+func TestResolveSMBBindAddressCandidates(t *testing.T) {
+	for _, found := range []bool{false, true} {
+		t.Run(fmt.Sprint(found), func(t *testing.T) {
+			preserveSMBTestGlobal(t, &common.Network)
+			network := mocks.NewNetworkIntf(t)
+			common.Network = network
+			network.On("FindIpOnSubnet", "198.51.100.0/24").Return("", assert.AnError).Once()
+			candidate, subnet, lookupErr := "not-an-address", "", assert.AnError
+			if found {
+				candidate, subnet, lookupErr = "192.0.2.12", "192.0.2.0/24", nil
 			}
-		}`), nil
+			network.On("FindNetworkAddress", candidate).Return(subnet, lookupErr).Once()
+			placement := &SMBServicePlacement{BindAddrs: []smbBindAddress{{Network: "198.51.100.0/24"}, {Address: candidate}}}
+			if found {
+				placement.BindAddrs = append(placement.BindAddrs, smbBindAddress{Network: "203.0.113.0/24"})
+			}
+			address, err := resolveSMBBindAddress(context.Background(), nil, placement)
+			if found {
+				require.NoError(t, err)
+				assert.Equal(t, candidate, address)
+			} else {
+				require.ErrorContains(t, err, "failed to resolve an SMB bind address")
+			}
+		})
 	}
-
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "ceph", "auth", "get", "client.smb.fs.cluster.files").Return("[client.smb.fs.cluster.files]\\nkey = key\\n", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "services", "microceph.smbd").Return("microceph.smbd disabled inactive", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "start", "microceph.smbd", "--enable").Return("ok", nil).Once()
-	originalRunner := common.ProcessExec
-	defer func() {
-		common.ProcessExec = originalRunner
-	}()
-	common.ProcessExec = runner
-
-	placement := &SMBServicePlacement{
-		ClusterID:   "files",
-		ConfigURI:   "rados://.smb/files/config.smb",
-		CustomPorts: map[string]int{"smb": 1445},
-	}
-
-	err := placement.ServiceInit(context.Background(), nil)
-
-	require.NoError(t, err)
-	keyringPath := filepath.Join(confPath, "ceph.client.smb.fs.cluster.files.keyring")
-	data, err := os.ReadFile(keyringPath)
-	require.NoError(t, err)
-	assert.Equal(t, "[client.smb.fs.cluster.files]\\nkey = key\\n", string(data))
-	baseConfig := readSMBConfigFile(t, filepath.Join(confPath, "samba", "smb.conf"))
-	assert.Contains(t, baseConfig, "bind interfaces only = yes\ninterfaces = 192.0.2.12\nsmb ports = 1445\n")
 }
 
-func TestSMBServicePlacementFreshInitFailureRemovesLocalState(t *testing.T) {
-	tempDir := t.TempDir()
-	confPath := filepath.Join(tempDir, "conf")
-	runtimePath := filepath.Join(tempDir, "samba")
-	mockSMBPublicAddress(t, "192.0.2.0/24", "192.0.2.12")
-
-	originalPaths := constants.GetPathConst
-	defer func() {
-		constants.GetPathConst = originalPaths
-	}()
-	constants.GetPathConst = func() constants.PathConst {
-		return constants.PathConst{ConfPath: confPath, DataPath: filepath.Join(tempDir, "data")}
+func TestSMBServicePlacementFreshInit(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			_, conf, runtime := smbTestPaths(t, fail)
+			mockSMBPublicAddress(t, "192.0.2.0/24", "192.0.2.12")
+			smbTestSource(t, smbTestContainer)
+			runner := smbTestRunner(t)
+			const key = "[client.smb.fs.cluster.files]\\nkey = key\\n"
+			smbTestCommand(runner, "ceph", "auth", "get", "client.smb.fs.cluster.files").Return(key, nil).Once()
+			smbTestCommand(runner, "snapctl", "services", "microceph.smbd").Return("microceph.smbd disabled inactive", nil).Once()
+			var startErr error
+			if fail {
+				startErr = assert.AnError
+				smbTestCommand(runner, "snapctl", "stop", "microceph.smbd", "--disable").Return("", nil).Once()
+			}
+			smbTestCommand(runner, "snapctl", "start", "microceph.smbd", "--enable").Return("ok", startErr).Once()
+			placement := &SMBServicePlacement{ClusterID: "files", ConfigURI: "rados://.smb/files/config.smb", CustomPorts: map[string]int{"smb": 1445}}
+			err := placement.ServiceInit(context.Background(), nil)
+			keyring := filepath.Join(conf, "ceph.client.smb.fs.cluster.files.keyring")
+			config := filepath.Join(conf, "samba", "smb.conf")
+			if fail {
+				require.ErrorContains(t, err, "failed to start SMB service smbd")
+				assert.DirExists(t, filepath.Dir(config))
+				assert.NoFileExists(t, config)
+				assert.NoDirExists(t, runtime)
+				assert.NoFileExists(t, keyring)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, key, readSMBConfigFile(t, keyring))
+				assert.Contains(t, readSMBConfigFile(t, config), "bind interfaces only = yes\ninterfaces = 192.0.2.12\nsmb ports = 1445\n")
+			}
+		})
 	}
-
-	originalFetch := fetchSMBSourceFunc
-	defer func() {
-		fetchSMBSourceFunc = originalFetch
-	}()
-	fetchSMBSourceFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return []byte(`{"shares":{"files":{"options":{"vfs objects":"ceph_new","ceph_new:proxy":"no"}}}}`), nil
-	}
-
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "ceph", "auth", "get", "client.smb.fs.cluster.files").
-		Return("key", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "services", "microceph.smbd").
-		Return("microceph.smbd disabled inactive", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "start", "microceph.smbd", "--enable").
-		Return("", assert.AnError).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "stop", "microceph.smbd", "--disable").Return("", nil).Once()
-	originalRunner := common.ProcessExec
-	defer func() {
-		common.ProcessExec = originalRunner
-	}()
-	common.ProcessExec = runner
-
-	placement := &SMBServicePlacement{
-		ClusterID: "files",
-		ConfigURI: "rados://.smb/files/config.smb",
-	}
-	err := placement.ServiceInit(context.Background(), nil)
-
-	assert.ErrorContains(t, err, "failed to start SMB service smbd")
-	assert.DirExists(t, filepath.Join(confPath, "samba"))
-	assert.NoFileExists(t, filepath.Join(confPath, "samba", "smb.conf"))
-	assert.NoDirExists(t, runtimePath)
-	assert.NoFileExists(t, filepath.Join(confPath, "ceph.client.smb.fs.cluster.files.keyring"))
 }
 
 func TestSMBServicePlacementRejectsModeTransitionsBeforeIO(t *testing.T) {
 	for _, wasClustered := range []bool{false, true} {
 		t.Run(fmt.Sprint(wasClustered), func(t *testing.T) {
-			root := t.TempDir()
-			runtimePath := filepath.Join(root, "samba")
-			require.NoError(t, os.MkdirAll(runtimePath, 0700))
-			require.NoError(t, os.WriteFile(filepath.Join(runtimePath, "cluster-id"), []byte("files\n"), 0600))
+			_, _, runtime := smbTestPaths(t, false)
+			smbTestWrite(t, filepath.Join(runtime, "cluster-id"), "files\n")
 			if wasClustered {
-				require.NoError(t, os.WriteFile(filepath.Join(runtimePath, "ctdb.json"), []byte("original"), 0600))
+				smbTestWrite(t, filepath.Join(runtime, "ctdb.json"), "original")
 			}
-			originalPaths := constants.GetPathConst
-			t.Cleanup(func() { constants.GetPathConst = originalPaths })
-			constants.GetPathConst = func() constants.PathConst { return constants.PathConst{ConfPath: filepath.Join(root, "conf")} }
 			placement := &SMBServicePlacement{ClusterID: "files", ConfigURI: "rados://.smb/files/config.smb", recordedClustered: &wasClustered}
 			if !wasClustered {
 				placement.Features = []string{"clustered"}
 			}
-			err := placement.ServiceInit(context.Background(), nil)
-			require.ErrorContains(t, err, "cannot be changed")
-			require.Equal(t, "files\n", readSMBConfigFile(t, filepath.Join(runtimePath, "cluster-id")))
+			require.ErrorContains(t, placement.ServiceInit(context.Background(), nil), "cannot be changed")
+			require.Equal(t, "files\n", readSMBConfigFile(t, filepath.Join(runtime, "cluster-id")))
 			if wasClustered {
-				require.Equal(t, "original", readSMBConfigFile(t, filepath.Join(runtimePath, "ctdb.json")))
+				require.Equal(t, "original", readSMBConfigFile(t, filepath.Join(runtime, "ctdb.json")))
 			}
 		})
 	}
 }
 
 func TestSMBServicePlacementFreshClusteredStartsCTDBBeforeSMBD(t *testing.T) {
-	tempDir := t.TempDir()
-	confPath := filepath.Join(tempDir, "conf")
-	runtimePath := filepath.Join(tempDir, "samba")
+	root, conf, runtime := smbTestPaths(t, true)
 	t.Setenv("SNAP", "/snap/microceph/current")
-
-	originalPaths := constants.GetPathConst
-	defer func() {
-		constants.GetPathConst = originalPaths
-	}()
-	constants.GetPathConst = func() constants.PathConst {
-		return constants.PathConst{ConfPath: confPath, DataPath: filepath.Join(tempDir, "data")}
-	}
-	err := os.MkdirAll(runtimePath, 0700)
-	require.NoError(t, err)
-
-	originalFetch := fetchSMBSourceFunc
-	defer func() {
-		fetchSMBSourceFunc = originalFetch
-	}()
-	fetchSMBSourceFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return []byte(`{
-			"samba-container-config": "v0",
-			"configs": {"files": {"instance_features": ["ctdb"]}},
-			"shares": {"files": {"options": {
-				"vfs objects": "acl_xattr ceph_new",
-				"ceph_new:proxy": "no"
-			}}}
-		}`), nil
-	}
-
-	originalFetchConfig := fetchConfigDb
-	defer func() {
-		fetchConfigDb = originalFetchConfig
-	}()
-	fetchConfigDb = func(_ context.Context, _ interfaces.StateInterface) (map[string]string, error) {
-		return map[string]string{"public_network": "10.0.0.0/24"}, nil
-	}
-
-	network := mocks.NewNetworkIntf(t)
-	network.On("FindIpOnSubnet", "10.0.0.0/24").Return("10.0.0.12", nil).Once()
-	originalNetwork := common.Network
-	defer func() {
-		common.Network = originalNetwork
-	}()
-	common.Network = network
-
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "ceph", "auth", "get", "client.smb.fs.cluster.files").Return("[client.smb.fs.cluster.files]\\nkey = data\\n", nil).Once()
-	runner.On("RunCommandContext", mock.Anything,
-
-		"ceph",
-		"auth",
-		"get-or-create",
-		"client.smb.config.files",
-		"mon",
-		"allow r",
-		"osd",
-		"allow rwx pool=.smb namespace=files object_prefix cluster.meta.").
-		Return("[client.smb.config.files]\\nkey = config\\n", nil).Once()
+	require.NoError(t, os.MkdirAll(runtime, 0700))
+	smbTestSource(t, `{"samba-container-config":"v0","configs":{"files":{"instance_features":["ctdb"]}},"shares":{"files":{"options":{"vfs objects":"acl_xattr ceph_new","ceph_new:proxy":"no"}}}}`)
+	mockSMBPublicAddress(t, "10.0.0.0/24", "10.0.0.12")
+	runner := smbTestRunner(t)
+	smbTestCommand(runner, "ceph", "auth", "get", "client.smb.fs.cluster.files").Return("[client.smb.fs.cluster.files]\\nkey = data\\n", nil).Once()
+	smbTestCommand(runner, "ceph", "auth", "get-or-create", "client.smb.config.files", "mon", "allow r", "osd", "allow rwx pool=.smb namespace=files object_prefix cluster.meta.").Return("[client.smb.config.files]\\nkey = config\\n", nil).Once()
+	var starts []*mock.Call
 	for _, service := range []string{"ctdbd", "ctdb-nodes"} {
-		runner.On("RunCommandContext", mock.Anything, "snapctl", "services", "microceph."+service).Return("microceph."+service+" disabled inactive", nil).Once()
-		runner.On("RunCommandContext", mock.Anything, "snapctl", "start", "microceph."+service, "--enable").Return("ok", nil).Once()
+		smbTestCommand(runner, "snapctl", "services", "microceph."+service).Return("microceph."+service+" disabled inactive", nil).Once()
+		starts = append(starts, smbTestCommand(runner, "snapctl", "start", "microceph."+service, "--enable").Return("ok", nil).Once())
 	}
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "services", "microceph.smbd").Return("microceph.smbd enabled active", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "restart", "microceph.smbd").Return("ok", nil).Once()
-	originalRunner := common.ProcessExec
-	defer func() {
-		common.ProcessExec = originalRunner
-	}()
-	common.ProcessExec = runner
-
+	smbTestCommand(runner, "snapctl", "services", "microceph.smbd").Return("microceph.smbd enabled active", nil).Once()
+	starts = append(starts, smbTestCommand(runner, "snapctl", "restart", "microceph.smbd").Return("ok", nil).Once())
+	mock.InOrder(starts...)
 	placement := &SMBServicePlacement{
-		ClusterID:      "files",
-		ConfigURI:      "rados://.smb/files/config.smb",
-		Features:       []string{"clustered"},
-		ClusterMetaURI: "rados://.smb/files/cluster.meta.json",
-		ClusterLockURI: "rados://.smb/files/cluster.meta.lock",
-		CustomPorts:    map[string]int{"smb": 1445},
-		ctdb: &smbCTDBPlacement{
-			Rank:     1,
-			Identity: "smb.files.node-b",
-		},
+		ClusterID: "files", ConfigURI: "rados://.smb/files/config.smb", Features: []string{"clustered"},
+		ClusterMetaURI: "rados://.smb/files/cluster.meta.json", ClusterLockURI: "rados://.smb/files/cluster.meta.lock",
+		CustomPorts: map[string]int{"smb": 1445}, ctdb: &smbCTDBPlacement{Rank: 1, Identity: "smb.files.node-b"},
 	}
-
 	url := api.NewURL()
 	url.Host("10.10.10.12:7443")
 	state := mocks.NewStateInterface(t)
 	state.On("ClusterState").Return(&mocks.MockState{URL: url, DBObj: newSMBPlacementTestDB(t)}).Twice()
-	err = placement.ServiceInit(context.Background(), state)
-
-	require.NoError(t, err)
-	assert.Equal(t, "10.10.10.12\n", readSMBConfigFile(t, filepath.Join(runtimePath, "ctdb-address")))
-	baseConfig := readSMBConfigFile(t, filepath.Join(confPath, "samba", "smb.conf"))
-	assert.Contains(t, baseConfig, "bind interfaces only = yes\ninterfaces = 10.0.0.12\nsmb ports = 1445\n")
-	ctdbConfig := readSMBConfigFile(t, filepath.Join(tempDir, "data", "samba", "smb.ctdb.conf"))
-	assert.Equal(t, "[global]\nctdbd socket = /run/ctdb/ctdbd.socket\nbind interfaces only = yes\ninterfaces = 10.0.0.12\nsmb ports = 1445\n", ctdbConfig)
-	configKeyring, err := os.ReadFile(filepath.Join(confPath, "ceph.client.smb.config.files.keyring"))
-	require.NoError(t, err)
-	assert.Equal(t, "[client.smb.config.files]\\nkey = config\\n", string(configKeyring))
+	require.NoError(t, placement.ServiceInit(context.Background(), state))
+	assert.Equal(t, "10.10.10.12\n", readSMBConfigFile(t, filepath.Join(runtime, "ctdb-address")))
+	const bind = "bind interfaces only = yes\ninterfaces = 10.0.0.12\nsmb ports = 1445\n"
+	assert.Contains(t, readSMBConfigFile(t, filepath.Join(conf, "samba", "smb.conf")), bind)
+	assert.Equal(t, "[global]\nctdbd socket = /run/ctdb/ctdbd.socket\n"+bind, readSMBConfigFile(t, filepath.Join(root, "data", "samba", "smb.ctdb.conf")))
+	assert.Equal(t, "[client.smb.config.files]\\nkey = config\\n", readSMBConfigFile(t, filepath.Join(conf, "ceph.client.smb.config.files.keyring")))
 }
 
-func TestStartOrRestartSMBServicesRollsBackNewServices(t *testing.T) {
-	runner := mocks.NewRunner(t)
-	for _, service := range []string{"ctdbd", "ctdb-nodes", "smbd"} {
-		runner.On("RunCommandContext", mock.Anything, "snapctl", "services", "microceph."+service).
-			Return("microceph."+service+" disabled inactive", nil).Once()
-		if service == "smbd" {
-			runner.On("RunCommandContext", mock.Anything, "snapctl", "start", "microceph.smbd", "--enable").
-				Return("", assert.AnError).Once()
-			continue
-		}
-		runner.On("RunCommandContext", mock.Anything, "snapctl", "start", "microceph."+service, "--enable").
-			Return("ok", nil).Once()
+func TestStartOrRestartSMBServicesRollback(t *testing.T) {
+	for _, alreadyActive := range []bool{false, true} {
+		t.Run(fmt.Sprint(alreadyActive), func(t *testing.T) {
+			runner := smbTestRunner(t)
+			failedService := "smbd"
+			if alreadyActive {
+				failedService = "ctdb-nodes"
+			}
+			for _, service := range []string{"ctdbd", "ctdb-nodes", "smbd"} {
+				status, action := "disabled inactive", "start"
+				args := []string{action, "microceph." + service, "--enable"}
+				if alreadyActive && service == "ctdbd" {
+					status, args = "enabled active", []string{"restart", "microceph.ctdbd"}
+				}
+				smbTestCommand(runner, "snapctl", "services", "microceph."+service).Return("microceph."+service+" "+status, nil).Once()
+				var err error
+				if service == failedService {
+					err = assert.AnError
+				}
+				smbTestCommand(runner, "snapctl", args...).Return("", err).Once()
+				if err != nil {
+					break
+				}
+			}
+			if !alreadyActive {
+				first := smbTestCommand(runner, "snapctl", "stop", "microceph.ctdb-nodes", "--disable").Return("", nil).Once()
+				last := smbTestCommand(runner, "snapctl", "stop", "microceph.ctdbd", "--disable").Return("", nil).Once()
+				mock.InOrder(first, last)
+			}
+			err := startOrRestartSMBServices(context.Background(), []string{"ctdbd", "ctdb-nodes", "smbd"})
+			require.ErrorContains(t, err, "failed to start SMB service "+failedService)
+		})
 	}
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "stop", "microceph.ctdb-nodes", "--disable").
-		Return("ok", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "stop", "microceph.ctdbd", "--disable").
-		Return("ok", nil).Once()
-	originalRunner := common.ProcessExec
-	defer func() {
-		common.ProcessExec = originalRunner
-	}()
-	common.ProcessExec = runner
-
-	err := startOrRestartSMBServices(context.Background(), []string{"ctdbd", "ctdb-nodes", "smbd"})
-
-	assert.ErrorContains(t, err, "failed to start SMB service smbd")
-}
-
-func TestStartOrRestartSMBServicesKeepsPreviouslyActiveServicesOnFailure(t *testing.T) {
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "services", "microceph.ctdbd").
-		Return("microceph.ctdbd enabled active", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "restart", "microceph.ctdbd").
-		Return("ok", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "services", "microceph.ctdb-nodes").
-		Return("microceph.ctdb-nodes disabled inactive", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "start", "microceph.ctdb-nodes", "--enable").
-		Return("", assert.AnError).Once()
-	originalRunner := common.ProcessExec
-	defer func() {
-		common.ProcessExec = originalRunner
-	}()
-	common.ProcessExec = runner
-
-	err := startOrRestartSMBServices(context.Background(), []string{"ctdbd", "ctdb-nodes", "smbd"})
-
-	assert.ErrorContains(t, err, "failed to start SMB service ctdb-nodes")
 }
 
 func TestSMBServicePlacementClusteredPostCheckVerifiesAllServices(t *testing.T) {
-	originalCheck := smbPostPlacementCheckFunc
-	defer func() {
-		smbPostPlacementCheckFunc = originalCheck
-	}()
+	preserveSMBTestGlobal(t, &smbPostPlacementCheckFunc)
 	checked := []string{}
-	smbPostPlacementCheckFunc = func(_ context.Context, service string) error {
-		checked = append(checked, service)
-		return nil
-	}
+	smbPostPlacementCheckFunc = func(_ context.Context, service string) error { checked = append(checked, service); return nil }
 	t.Setenv("SNAP", "/snap/microceph/current")
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "/snap/microceph/current/commands/samba-command", "ctdb", "pnn").Return("0\n", nil).Once()
-	originalRunner := common.ProcessExec
-	t.Cleanup(func() { common.ProcessExec = originalRunner })
-	common.ProcessExec = runner
+	runner := smbTestRunner(t)
+	smbTestCommand(runner, "/snap/microceph/current/commands/samba-command", "ctdb", "pnn").Return("0\n", nil).Once()
 	placement := &SMBServicePlacement{Features: []string{"clustered"}, ctdb: &smbCTDBPlacement{Rank: 0}}
-
-	err := placement.PostPlacementCheck(nil)
-
-	require.NoError(t, err)
+	require.NoError(t, placement.PostPlacementCheck(nil))
 	assert.Equal(t, []string{"ctdbd", "ctdb-nodes", "smbd"}, checked)
 }
 
-func TestSMBServicePlacementDbUpdatePersistsCompleteUpstreamSpec(t *testing.T) {
-	payload := `{
-		"service_type": "smb",
-		"service_id": "files",
-		"service_name": "smb.files",
-		"placement": {"hosts": ["node-a", "node-b"]},
-		"spec": {
-			"cluster_id": "files",
-			"config_uri": "rados://.smb/files/config.smb",
-			"user_sources": ["rados:mon-config-key:smb/config/files/users-groups.0.json"],
-			"provider": "samba-vfs/new"
-		}
-	}`
-	placement := &SMBServicePlacement{}
-	err := placement.PopulateParams(nil, payload)
-	require.NoError(t, err)
-
-	expectedGroupConfig, err := json.Marshal(struct {
-		DesiredSpec json.RawMessage `json:"desired_spec"`
-	}{DesiredSpec: json.RawMessage(payload)})
-	require.NoError(t, err)
-
-	state := mocks.NewStateInterface(t)
-	databaseMock := mocks.NewGroupedServiceQueryIntf(t)
-	ctx := context.Background()
-	databaseMock.On(
-		"AddOrUpdate",
-		ctx,
-		state,
-		"smb",
-		"files",
-		mock.Anything,
-		mock.Anything,
-	).Run(func(args mock.Arguments) {
-		info, ok := args.Get(5).(database.SMBServiceInfo)
-		require.True(t, ok)
-		assert.JSONEq(t, payload, string(info.AppliedSpec))
-		assert.Equal(t, placement.configDigest, info.ConfigDigest)
-		groupConfig, ok := args.Get(4).(database.SMBServiceGroupConfig)
-		require.True(t, ok)
-
-		groupConfigJSON, err := json.Marshal(groupConfig)
-		require.NoError(t, err)
-		assert.JSONEq(t, string(expectedGroupConfig), string(groupConfigJSON))
-	}).Return(nil).Once()
-	originalDatabase := database.GroupedServicesQuery
-	defer func() {
-		database.GroupedServicesQuery = originalDatabase
-	}()
-	database.GroupedServicesQuery = databaseMock
-
-	placement.configDigest = "applied-digest"
-	err = placement.DbUpdate(ctx, state)
-
-	assert.NoError(t, err)
-}
-
-func TestSMBServicePlacementDbUpdateRecordsCTDBRanksAndReceipt(t *testing.T) {
-	payload := `{"service_spec":{"spec":{"cluster_id":"files","config_uri":"rados://.smb/files/config.smb","features":["clustered"],"cluster_meta_uri":"rados://.smb/files/cluster.meta.json","cluster_lock_uri":"rados://.smb/files/cluster.meta.lock"}},"microceph":{"ctdb":{"rank":0,"identity":"smb.files.node-a"},"ctdb_ranks":{"node-a":0,"node-b":1},"next_ctdb_rank":2}}`
-	placement := &SMBServicePlacement{}
-	require.NoError(t, placement.PopulateParams(nil, payload))
-	placement.configDigest = "successful-apply"
-	ctx := context.Background()
-	state := mocks.NewStateInterface(t)
-	db := mocks.NewGroupedServiceQueryIntf(t)
-	db.On("AddOrUpdate", ctx, state, "smb", "files", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		group := args.Get(4).(database.SMBServiceGroupConfig)
-		assert.Equal(t, map[string]int{"node-a": 0, "node-b": 1}, group.CTDBRanks)
-		assert.Equal(t, 2, group.NextCTDBRank)
-		info := args.Get(5).(database.SMBServiceInfo)
-		require.NotNil(t, info.CTDBRank)
-		assert.Equal(t, 0, *info.CTDBRank)
-		assert.Equal(t, "smb.files.node-a", info.CTDBIdentity)
-		assert.Equal(t, "successful-apply", info.ConfigDigest)
-		assert.JSONEq(t, string(placement.upstreamSpecJSON()), string(info.AppliedSpec))
-	}).Return(nil).Once()
-	original := database.GroupedServicesQuery
-	t.Cleanup(func() { database.GroupedServicesQuery = original })
-	database.GroupedServicesQuery = db
-	require.NoError(t, placement.DbUpdate(ctx, state))
-}
-
-func TestDisableSMBStopsServiceAndRemovesLocalState(t *testing.T) {
-	stubSMBRecordedMode(t, nil)
-	tempDir := t.TempDir()
-	confPath := filepath.Join(tempDir, "conf")
-	runtimePath := filepath.Join(tempDir, "samba")
-	keyringPath := filepath.Join(confPath, "ceph.client.smb.fs.cluster.files.keyring")
-
-	originalPaths := constants.GetPathConst
-	defer func() {
-		constants.GetPathConst = originalPaths
-	}()
-	constants.GetPathConst = func() constants.PathConst {
-		return constants.PathConst{ConfPath: confPath}
+func TestSMBServicePlacementDbUpdatePersistsSpecAndReceipt(t *testing.T) {
+	for _, clustered := range []bool{false, true} {
+		t.Run(fmt.Sprint(clustered), func(t *testing.T) {
+			payload := `{"service_type":"smb","service_id":"files","service_name":"smb.files","placement":{"hosts":["node-a","node-b"]},"spec":{"cluster_id":"files","config_uri":"rados://.smb/files/config.smb","user_sources":["rados:mon-config-key:smb/config/files/users-groups.0.json"],"provider":"samba-vfs/new"}}`
+			if clustered {
+				payload = `{"service_spec":{"spec":{"cluster_id":"files","config_uri":"rados://.smb/files/config.smb","features":["clustered"],"cluster_meta_uri":"rados://.smb/files/cluster.meta.json","cluster_lock_uri":"rados://.smb/files/cluster.meta.lock"}},"microceph":{"ctdb":{"rank":0,"identity":"smb.files.node-a"},"ctdb_ranks":{"node-a":0,"node-b":1},"next_ctdb_rank":2}}`
+			}
+			placement := &SMBServicePlacement{}
+			require.NoError(t, placement.PopulateParams(nil, payload))
+			placement.configDigest = "successful-apply"
+			state := mocks.NewStateInterface(t)
+			db := smbTestGroupedDB(t)
+			db.On("AddOrUpdate", context.Background(), state, "smb", "files", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				group := args.Get(4).(database.SMBServiceGroupConfig)
+				info := args.Get(5).(database.SMBServiceInfo)
+				assert.JSONEq(t, string(placement.upstreamSpecJSON()), string(group.DesiredSpec))
+				assert.JSONEq(t, string(placement.upstreamSpecJSON()), string(info.AppliedSpec))
+				assert.Equal(t, placement.configDigest, info.ConfigDigest)
+				if clustered {
+					assert.Equal(t, map[string]int{"node-a": 0, "node-b": 1}, group.CTDBRanks)
+					assert.Equal(t, 2, group.NextCTDBRank)
+					require.NotNil(t, info.CTDBRank)
+					assert.Zero(t, *info.CTDBRank)
+					assert.Equal(t, "smb.files.node-a", info.CTDBIdentity)
+				} else {
+					assert.Empty(t, group.CTDBRanks)
+					assert.Zero(t, group.NextCTDBRank)
+				}
+			}).Return(nil).Once()
+			require.NoError(t, placement.DbUpdate(context.Background(), state))
+		})
 	}
-
-	err := os.MkdirAll(filepath.Join(confPath, "samba"), 0700)
-	require.NoError(t, err)
-	err = os.MkdirAll(runtimePath, 0700)
-	require.NoError(t, err)
-	err = os.WriteFile(keyringPath, []byte("keyring"), 0600)
-	require.NoError(t, err)
-
-	state := mocks.NewStateInterface(t)
-	databaseMock := mocks.NewGroupedServiceQueryIntf(t)
-	databaseMock.On("ExistsOnHost", []interface{}{context.Background(), state, "smb", "files"}...).Return(true, nil).Once()
-	databaseMock.On("RemoveForHost", []interface{}{context.Background(), state, "smb", "files"}...).Return(nil).Once()
-	originalDatabase := database.GroupedServicesQuery
-	defer func() {
-		database.GroupedServicesQuery = originalDatabase
-	}()
-	database.GroupedServicesQuery = databaseMock
-
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "stop", "microceph.smbd", "--disable").Return("ok", nil).Once()
-	originalRunner := common.ProcessExec
-	defer func() {
-		common.ProcessExec = originalRunner
-	}()
-	common.ProcessExec = runner
-
-	err = DisableSMB(context.Background(), state, "files")
-
-	require.NoError(t, err)
-	assert.DirExists(t, filepath.Join(confPath, "samba"))
-	assert.NoFileExists(t, filepath.Join(confPath, "samba", "smb.conf"))
-	assert.NoDirExists(t, runtimePath)
-	assert.NoFileExists(t, keyringPath)
 }
 
 func expectSMBRetirement(t *testing.T) {
 	t.Helper()
 	stubSMBRecordedMode(t, nil)
-	original := retireSMBCTDBMemberFunc
+	preserveSMBTestGlobal(t, &retireSMBCTDBMemberFunc)
 	called := false
-	t.Cleanup(func() { retireSMBCTDBMemberFunc = original; require.True(t, called) })
+	t.Cleanup(func() { require.True(t, called) })
 	retireSMBCTDBMemberFunc = func(ctx context.Context, clusterID string) error {
 		require.NoError(t, ctx.Err())
 		require.Equal(t, "files", clusterID)
@@ -829,147 +355,83 @@ func expectSMBRetirement(t *testing.T) {
 	}
 }
 
-func TestDisableSMBCompletesWhenClusteredAuthCleanupFails(t *testing.T) {
-	expectSMBRetirement(t)
-	tempDir := t.TempDir()
-	confPath := filepath.Join(tempDir, "conf")
-	dataPath := filepath.Join(tempDir, "data")
-	runtimePath := filepath.Join(tempDir, "samba")
-	ctdbIncludePath := filepath.Join(dataPath, "samba", "smb.ctdb.conf")
-	dataKeyringPath := filepath.Join(confPath, "ceph.client.smb.fs.cluster.files.keyring")
-	configKeyringPath := filepath.Join(confPath, "ceph.client.smb.config.files.keyring")
-
-	originalPaths := constants.GetPathConst
-	defer func() {
-		constants.GetPathConst = originalPaths
-	}()
-	constants.GetPathConst = func() constants.PathConst {
-		return constants.PathConst{ConfPath: confPath, DataPath: dataPath}
+func TestDisableSMBLocalCleanup(t *testing.T) {
+	for _, scenario := range []string{"direct", "clustered auth failure", "clustered survivor"} {
+		t.Run(scenario, func(t *testing.T) {
+			clustered := scenario != "direct"
+			if clustered {
+				expectSMBRetirement(t)
+			} else {
+				stubSMBRecordedMode(t, nil)
+			}
+			root, conf, runtime := smbTestPaths(t, scenario == "clustered auth failure")
+			dataKey := filepath.Join(conf, "ceph.client.smb.fs.cluster.files.keyring")
+			configKey := filepath.Join(conf, "ceph.client.smb.config.files.keyring")
+			include := filepath.Join(root, "data", "samba", "smb.ctdb.conf")
+			require.NoError(t, os.MkdirAll(filepath.Join(conf, "samba"), 0700))
+			require.NoError(t, os.MkdirAll(runtime, 0700))
+			smbTestWrite(t, dataKey, "keyring")
+			services := []string{"smbd"}
+			if clustered {
+				smbTestWrite(t, filepath.Join(runtime, "ctdb.json"), "{}")
+				services = append(services, "ctdb-nodes", "ctdbd")
+			}
+			if scenario == "clustered auth failure" {
+				smbTestWrite(t, configKey, "keyring")
+				smbTestWrite(t, include, "stale")
+			}
+			state := mocks.NewStateInterface(t)
+			db := smbTestGroupedDB(t)
+			db.On("ExistsOnHost", context.Background(), state, "smb", "files").Return(true, nil).Once()
+			db.On("RemoveForHost", context.Background(), state, "smb", "files").Return(nil).Once()
+			if clustered {
+				remaining := []database.GroupedService{}
+				if scenario == "clustered survivor" {
+					remaining = append(remaining, database.GroupedService{Service: "smb", GroupID: "files", Member: "node-b"})
+				}
+				db.On("GetGroupedServices", context.Background(), state).Return(remaining, nil).Once()
+			}
+			runner := smbTestRunner(t)
+			for _, service := range services {
+				smbTestCommand(runner, "snapctl", "stop", "microceph."+service, "--disable").Return("", nil).Once()
+			}
+			if scenario == "clustered auth failure" {
+				smbTestCommand(runner, "ceph", "auth", "del", "client.smb.config.files").Return("", assert.AnError).Once()
+			}
+			require.NoError(t, DisableSMB(context.Background(), state, "files"))
+			assert.DirExists(t, filepath.Join(conf, "samba"))
+			assert.NoFileExists(t, filepath.Join(conf, "samba", "smb.conf"))
+			assert.NoDirExists(t, runtime)
+			assert.NoFileExists(t, dataKey)
+			if scenario == "clustered auth failure" {
+				assert.NoFileExists(t, configKey)
+				assert.NoFileExists(t, include)
+			}
+		})
 	}
-
-	err := os.MkdirAll(filepath.Join(confPath, "samba"), 0700)
-	require.NoError(t, err)
-	err = os.MkdirAll(runtimePath, 0700)
-	require.NoError(t, err)
-	err = os.WriteFile(filepath.Join(runtimePath, "ctdb.json"), []byte("{}"), 0600)
-	require.NoError(t, err)
-	err = os.MkdirAll(filepath.Dir(ctdbIncludePath), 0700)
-	require.NoError(t, err)
-	err = os.WriteFile(ctdbIncludePath, []byte("stale"), 0600)
-	require.NoError(t, err)
-	for _, path := range []string{dataKeyringPath, configKeyringPath} {
-		err = os.WriteFile(path, []byte("keyring"), 0600)
-		require.NoError(t, err)
-	}
-
-	state := mocks.NewStateInterface(t)
-	databaseMock := mocks.NewGroupedServiceQueryIntf(t)
-	databaseMock.On("ExistsOnHost", []interface{}{context.Background(), state, "smb", "files"}...).Return(true, nil).Once()
-	databaseMock.On("RemoveForHost", []interface{}{context.Background(), state, "smb", "files"}...).Return(nil).Once()
-	databaseMock.On("GetGroupedServices", context.Background(), state).Return([]database.GroupedService{}, nil).Once()
-	originalDatabase := database.GroupedServicesQuery
-	defer func() {
-		database.GroupedServicesQuery = originalDatabase
-	}()
-	database.GroupedServicesQuery = databaseMock
-
-	runner := mocks.NewRunner(t)
-	for _, service := range []string{"smbd", "ctdb-nodes", "ctdbd"} {
-		runner.On("RunCommandContext", mock.Anything, "snapctl", "stop", "microceph."+service, "--disable").Return("ok", nil).Once()
-	}
-	runner.On("RunCommandContext", mock.Anything, "ceph", "auth", "del", "client.smb.config.files").Return("", assert.AnError).Once()
-	originalRunner := common.ProcessExec
-	defer func() {
-		common.ProcessExec = originalRunner
-	}()
-	common.ProcessExec = runner
-
-	err = DisableSMB(context.Background(), state, "files")
-
-	require.NoError(t, err)
-	assert.NoFileExists(t, dataKeyringPath)
-	assert.NoFileExists(t, configKeyringPath)
-	assert.NoFileExists(t, ctdbIncludePath)
-}
-
-func TestDisableSMBOnOneMemberKeepsSharedConfigurationIdentity(t *testing.T) {
-	expectSMBRetirement(t)
-	tempDir := t.TempDir()
-	confPath := filepath.Join(tempDir, "conf")
-	runtimePath := filepath.Join(tempDir, "samba")
-
-	originalPaths := constants.GetPathConst
-	defer func() {
-		constants.GetPathConst = originalPaths
-	}()
-	constants.GetPathConst = func() constants.PathConst {
-		return constants.PathConst{ConfPath: confPath}
-	}
-	err := os.MkdirAll(runtimePath, 0700)
-	require.NoError(t, err)
-	err = os.WriteFile(filepath.Join(runtimePath, "ctdb.json"), []byte("{}"), 0600)
-	require.NoError(t, err)
-
-	state := mocks.NewStateInterface(t)
-	databaseMock := mocks.NewGroupedServiceQueryIntf(t)
-	ctx := context.Background()
-	databaseMock.On("ExistsOnHost", ctx, state, "smb", "files").Return(true, nil).Once()
-	databaseMock.On("RemoveForHost", ctx, state, "smb", "files").Return(nil).Once()
-	databaseMock.On("GetGroupedServices", ctx, state).Return([]database.GroupedService{
-		{Service: "smb", GroupID: "files", Member: "node-b"},
-	}, nil).Once()
-	originalDatabase := database.GroupedServicesQuery
-	defer func() {
-		database.GroupedServicesQuery = originalDatabase
-	}()
-	database.GroupedServicesQuery = databaseMock
-
-	runner := mocks.NewRunner(t)
-	for _, service := range []string{"smbd", "ctdb-nodes", "ctdbd"} {
-		runner.On("RunCommandContext", mock.Anything, "snapctl", "stop", "microceph."+service, "--disable").
-			Return("ok", nil).Once()
-	}
-	originalRunner := common.ProcessExec
-	defer func() {
-		common.ProcessExec = originalRunner
-	}()
-	common.ProcessExec = runner
-
-	err = DisableSMB(ctx, state, "files")
-
-	require.NoError(t, err)
-	assert.NoDirExists(t, runtimePath)
 }
 
 func TestSMBPlacementReceiptSkipsOnlyCurrentEffectiveConfig(t *testing.T) {
-	paths := constants.GetPathConst
-	t.Cleanup(func() { constants.GetPathConst = paths })
-	root := t.TempDir()
-	constants.GetPathConst = func() constants.PathConst { return constants.PathConst{ConfPath: filepath.Join(root, "conf")} }
-	runtimeDir := filepath.Join(root, "samba")
-	require.NoError(t, os.MkdirAll(runtimeDir, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "cluster-id"), []byte("files\n"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "container.json"), []byte("{}"), 0600))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "conf", "samba"), 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "conf", "samba", "smb.conf"), []byte("config"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "conf", "ceph.client.smb.fs.cluster.files.keyring"), []byte("key"), 0600))
+	_, conf, runtime := smbTestPaths(t, false)
+	for path, content := range map[string]string{
+		filepath.Join(runtime, "cluster-id"):                            "files\n",
+		filepath.Join(conf, "samba", "smb.conf"):                        "config",
+		filepath.Join(conf, "ceph.client.smb.fs.cluster.files.keyring"): "key",
+	} {
+		smbTestWrite(t, path, content)
+	}
 	mockSMBPublicAddress(t, "192.0.2.0/24", "192.0.2.12")
-	// The same URI can refer to new shares or user credentials.
-	container := []byte(`{"shares":{"files":{"options":{"vfs objects":"ceph_new","ceph_new:proxy":"no"}}}}`)
-	user := []byte(`{"users":["alice"]}`)
-	originalFetch := fetchSMBSourceFunc
-	t.Cleanup(func() { fetchSMBSourceFunc = originalFetch })
+	// The same URI can refer to changed shares or credentials.
+	container, user := []byte(smbTestContainer), []byte(`{"users":["alice"]}`)
+	preserveSMBTestGlobal(t, &fetchSMBSourceFunc)
 	fetchSMBSourceFunc = func(_ context.Context, uri string) ([]byte, error) {
 		if uri == "rados://.smb/files/config.smb" {
 			return container, nil
 		}
 		return user, nil
 	}
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "services", "microceph.smbd").Return("microceph.smbd enabled active", nil).Once()
-	originalRunner := common.ProcessExec
-	t.Cleanup(func() { common.ProcessExec = originalRunner })
-	common.ProcessExec = runner
+	runner := smbTestRunner(t)
+	smbTestCommand(runner, "snapctl", "services", "microceph.smbd").Return("microceph.smbd enabled active", nil).Once()
 	payload := `{"cluster_id":"files","config_uri":"rados://.smb/files/config.smb","user_sources":["rados:mon-config-key:smb/config/files/users-groups.0.json"]}`
 	placement := &SMBServicePlacement{}
 	require.NoError(t, placement.PopulateParams(nil, payload))
@@ -977,122 +439,90 @@ func TestSMBPlacementReceiptSkipsOnlyCurrentEffectiveConfig(t *testing.T) {
 	data, err := fetchSMBConfigSources(context.Background(), placement)
 	require.NoError(t, err)
 	placement.configData = data
-	require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "container.json"), container, 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "users-0.json"), user, 0600))
+	smbTestWrite(t, filepath.Join(runtime, "container.json"), string(container))
+	smbTestWrite(t, filepath.Join(runtime, "users-0.json"), string(user))
 	digest, err := placement.effectiveConfigDigest()
 	require.NoError(t, err)
 	info, err := json.Marshal(database.SMBServiceInfo{AppliedSpec: placement.upstreamSpec, ConfigDigest: digest})
 	require.NoError(t, err)
 	state := mocks.NewStateInterface(t)
 	state.On("ClusterState").Return(&mocks.MockState{DBObj: newSMBPlacementTestDB(t)}).Once()
-	db := mocks.NewGroupedServiceQueryIntf(t)
+	db := smbTestGroupedDB(t)
 	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{{Service: "smb", GroupID: "files", Info: string(info)}}, nil).Times(4)
-	originalDB := database.GroupedServicesQuery
-	t.Cleanup(func() { database.GroupedServicesQuery = originalDB })
-	database.GroupedServicesQuery = db
-
 	fresh := &SMBServicePlacement{}
 	require.NoError(t, fresh.PopulateParams(nil, payload))
 	require.NoError(t, fresh.ServiceInit(context.Background(), state))
 	assert.True(t, fresh.unchanged)
-	originalCheck := smbPostPlacementCheckFunc
-	t.Cleanup(func() { smbPostPlacementCheckFunc = originalCheck })
+	preserveSMBTestGlobal(t, &smbPostPlacementCheckFunc)
 	smbPostPlacementCheckFunc = func(_ context.Context, service string) error { require.Equal(t, "smbd", service); return nil }
 	require.NoError(t, fresh.PostPlacementCheck(state))
 	db.On("AddOrUpdate", context.Background(), state, "smb", "files", mock.Anything, mock.Anything).Return(nil).Once()
 	require.NoError(t, fresh.DbUpdate(context.Background(), state))
 
-	user = []byte(`{"users":["bob"]}`)
 	changed := &SMBServicePlacement{}
 	require.NoError(t, changed.PopulateParams(nil, payload))
 	changed.bindAddress = "192.0.2.12"
-	changed.configData, err = fetchSMBConfigSources(context.Background(), changed)
+	for _, change := range []string{"credentials", "shares"} {
+		if change == "credentials" {
+			user = []byte(`{"users":["bob"]}`)
+		} else {
+			user = []byte(`{"users":["alice"]}`)
+			container = []byte(`{"shares":{"new-share":{"options":{"vfs objects":"ceph_new","ceph_new:proxy":"no"}}}}`)
+		}
+		changed.configData, err = fetchSMBConfigSources(context.Background(), changed)
+		require.NoError(t, err)
+		changedDigest, err := changed.effectiveConfigDigest()
+		require.NoError(t, err)
+		assert.NotEqual(t, digest, changedDigest, change)
+		matched, err := changed.matchesAppliedReceipt(context.Background(), state)
+		require.NoError(t, err)
+		assert.False(t, matched, change)
+	}
+	// A receipt does not mask a missing node-local file.
+	require.NoError(t, os.Remove(filepath.Join(conf, "samba", "smb.conf")))
+	matched, err := fresh.matchesAppliedReceipt(context.Background(), state)
 	require.NoError(t, err)
-	changedDigest, err := changed.effectiveConfigDigest()
-	require.NoError(t, err)
-	assert.NotEqual(t, digest, changedDigest)
-	match, err := changed.matchesAppliedReceipt(context.Background(), state)
-	require.NoError(t, err)
-	assert.False(t, match)
-
-	user = []byte(`{"users":["alice"]}`)
-	container = []byte(`{"shares":{"new-share":{"options":{"vfs objects":"ceph_new","ceph_new:proxy":"no"}}}}`)
-	changed.configData, err = fetchSMBConfigSources(context.Background(), changed)
-	require.NoError(t, err)
-	changedDigest, err = changed.effectiveConfigDigest()
-	require.NoError(t, err)
-	assert.NotEqual(t, digest, changedDigest)
-	match, err = changed.matchesAppliedReceipt(context.Background(), state)
-	require.NoError(t, err)
-	assert.False(t, match)
-
-	// A receipt does not mask missing node-local files.
-	require.NoError(t, os.Remove(filepath.Join(root, "conf", "samba", "smb.conf")))
-	match, err = fresh.matchesAppliedReceipt(context.Background(), state)
-	require.NoError(t, err)
-	assert.False(t, match)
+	assert.False(t, matched)
 }
 
 func TestSMBPartialUpdateRestoresPreviousFiles(t *testing.T) {
-	originalPaths := constants.GetPathConst
-	t.Cleanup(func() { constants.GetPathConst = originalPaths })
-	root := t.TempDir()
-	confDir := filepath.Join(root, "conf")
-	constants.GetPathConst = func() constants.PathConst { return constants.PathConst{ConfPath: confDir} }
-	runtimeDir := filepath.Join(root, "samba")
-	require.NoError(t, os.MkdirAll(runtimeDir, 0700))
-	require.NoError(t, os.MkdirAll(filepath.Join(confDir, "samba"), 0700))
-	for path, contents := range map[string]string{
-		filepath.Join(runtimeDir, "cluster-id"):     "files\n",
-		filepath.Join(runtimeDir, "container.json"): "old container",
-		filepath.Join(confDir, "samba", "smb.conf"): "old smb config",
+	_, conf, runtime := smbTestPaths(t, false)
+	for path, content := range map[string]string{
+		filepath.Join(runtime, "cluster-id"):     "files\n",
+		filepath.Join(runtime, "container.json"): "old container",
+		filepath.Join(conf, "samba", "smb.conf"): "old smb config",
 	} {
-		require.NoError(t, os.WriteFile(path, []byte(contents), 0600))
+		smbTestWrite(t, path, content)
 	}
 	mockSMBPublicAddress(t, "192.0.2.0/24", "192.0.2.12")
-	originalFetch := fetchSMBSourceFunc
-	t.Cleanup(func() { fetchSMBSourceFunc = originalFetch })
-	fetchSMBSourceFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return []byte(`{"shares":{"files":{"options":{"vfs objects":"ceph_new","ceph_new:proxy":"no"}}}}`), nil
-	}
-	originalWrite := writeSMBFileFunc
-	t.Cleanup(func() { writeSMBFileFunc = originalWrite })
+	smbTestSource(t, smbTestContainer)
+	preserveSMBTestGlobal(t, &writeSMBFileFunc)
 	failed := false
 	writeSMBFileFunc = func(path string, data []byte, mode os.FileMode) error {
-		if path == filepath.Join(runtimeDir, "container.json.tmp") && !failed {
+		if path == filepath.Join(runtime, "container.json.tmp") && !failed {
 			failed = true
 			return assert.AnError
 		}
 		return os.WriteFile(path, data, mode)
 	}
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "services", "microceph.smbd").Return("active", nil).Once()
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "restart", "microceph.smbd").Return("ok", nil).Once()
-	originalRunner := common.ProcessExec
-	t.Cleanup(func() { common.ProcessExec = originalRunner })
-	common.ProcessExec = runner
+	runner := smbTestRunner(t)
+	smbTestCommand(runner, "snapctl", "services", "microceph.smbd").Return("active", nil).Once()
+	smbTestCommand(runner, "snapctl", "restart", "microceph.smbd").Return("ok", nil).Once()
 	state := mocks.NewStateInterface(t)
 	state.On("ClusterState").Return(&mocks.MockState{DBObj: newSMBPlacementTestDB(t)}).Once()
-	db := mocks.NewGroupedServiceQueryIntf(t)
+	db := smbTestGroupedDB(t)
 	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{}, nil).Once()
-	originalDB := database.GroupedServicesQuery
-	t.Cleanup(func() { database.GroupedServicesQuery = originalDB })
-	database.GroupedServicesQuery = db
 	placement := &SMBServicePlacement{ClusterID: "files", ConfigURI: "rados://.smb/files/config.smb"}
-	err := placement.ServiceInit(context.Background(), state)
-	assert.ErrorContains(t, err, "failed to write SMB container configuration")
-	assert.Equal(t, "old smb config", readSMBConfigFile(t, filepath.Join(confDir, "samba", "smb.conf")))
-	assert.Equal(t, "old container", readSMBConfigFile(t, filepath.Join(runtimeDir, "container.json")))
+	require.ErrorContains(t, placement.ServiceInit(context.Background(), state), "failed to write SMB container configuration")
+	assert.Equal(t, "old smb config", readSMBConfigFile(t, filepath.Join(conf, "samba", "smb.conf")))
+	assert.Equal(t, "old container", readSMBConfigFile(t, filepath.Join(runtime, "container.json")))
 }
 
 func TestSMBPlacementLegacyReceiptNeverSkips(t *testing.T) {
 	placement := &SMBServicePlacement{ClusterID: "files", configDigest: "digest"}
 	state := mocks.NewStateInterface(t)
-	db := mocks.NewGroupedServiceQueryIntf(t)
+	db := smbTestGroupedDB(t)
 	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{{Service: "smb", GroupID: "files", Info: `{"config_uri":"rados://.smb/files/config.smb"}`}}, nil).Once()
-	original := database.GroupedServicesQuery
-	t.Cleanup(func() { database.GroupedServicesQuery = original })
-	database.GroupedServicesQuery = db
 	matched, err := placement.matchesAppliedReceipt(context.Background(), state)
 	require.NoError(t, err)
 	assert.False(t, matched)
@@ -1100,114 +530,38 @@ func TestSMBPlacementLegacyReceiptNeverSkips(t *testing.T) {
 
 func TestDisableSMBCleansMatchingLocalStateWithoutMemberRecord(t *testing.T) {
 	stubSMBRecordedMode(t, nil)
-	root := t.TempDir()
-	originalPaths := constants.GetPathConst
-	t.Cleanup(func() { constants.GetPathConst = originalPaths })
-	constants.GetPathConst = func() constants.PathConst { return constants.PathConst{ConfPath: filepath.Join(root, "conf")} }
-	runtimeDir := filepath.Join(root, "samba")
-	require.NoError(t, os.MkdirAll(runtimeDir, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "cluster-id"), []byte("files\n"), 0600))
+	_, _, runtime := smbTestPaths(t, false)
+	smbTestWrite(t, filepath.Join(runtime, "cluster-id"), "files\n")
 	state := mocks.NewStateInterface(t)
-	db := mocks.NewGroupedServiceQueryIntf(t)
+	db := smbTestGroupedDB(t)
 	db.On("ExistsOnHost", context.Background(), state, "smb", "files").Return(false, nil).Once()
 	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{}, nil).Once()
-	originalDB := database.GroupedServicesQuery
-	t.Cleanup(func() { database.GroupedServicesQuery = originalDB })
-	database.GroupedServicesQuery = db
-	runner := mocks.NewRunner(t)
-	runner.On("RunCommandContext", mock.Anything, "snapctl", "stop", "microceph.smbd", "--disable").Return("", nil).Once()
-	originalRunner := common.ProcessExec
-	t.Cleanup(func() { common.ProcessExec = originalRunner })
-	common.ProcessExec = runner
+	runner := smbTestRunner(t)
+	smbTestCommand(runner, "snapctl", "stop", "microceph.smbd", "--disable").Return("", nil).Once()
 	require.NoError(t, DisableSMB(context.Background(), state, "files"))
-	require.NoDirExists(t, runtimeDir)
+	require.NoDirExists(t, runtime)
 }
 
 func TestDisableSMBAbsentAndWrongCluster(t *testing.T) {
-	originalPaths := constants.GetPathConst
-	t.Cleanup(func() { constants.GetPathConst = originalPaths })
-	root := t.TempDir()
-	constants.GetPathConst = func() constants.PathConst { return constants.PathConst{ConfPath: filepath.Join(root, "conf")} }
+	_, _, runtime := smbTestPaths(t, false)
 	state := mocks.NewStateInterface(t)
-	db := mocks.NewGroupedServiceQueryIntf(t)
+	db := smbTestGroupedDB(t)
 	db.On("ExistsOnHost", context.Background(), state, "smb", "files").Return(false, nil).Once()
 	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{}, nil).Once()
-	originalDB := database.GroupedServicesQuery
-	t.Cleanup(func() { database.GroupedServicesQuery = originalDB })
-	database.GroupedServicesQuery = db
 	require.NoError(t, DisableSMB(context.Background(), state, "files"))
-	runtimeDir := filepath.Join(root, "samba")
-	require.NoError(t, os.MkdirAll(runtimeDir, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "cluster-id"), []byte("other\n"), 0600))
+	smbTestWrite(t, filepath.Join(runtime, "cluster-id"), "other\n")
 	assert.ErrorContains(t, DisableSMB(context.Background(), state, "files"), "other")
-	assert.FileExists(t, filepath.Join(runtimeDir, "cluster-id"))
+	assert.FileExists(t, filepath.Join(runtime, "cluster-id"))
 }
 
-func mockSMBPublicAddress(t *testing.T, network string, address string) {
+func mockSMBPublicAddress(t *testing.T, network, address string) {
 	t.Helper()
-	originalFetchConfig := fetchConfigDb
-	originalNetwork := common.Network
-	t.Cleanup(func() {
-		fetchConfigDb = originalFetchConfig
-		common.Network = originalNetwork
-	})
-	fetchConfigDb = func(_ context.Context, _ interfaces.StateInterface) (map[string]string, error) {
+	preserveSMBTestGlobal(t, &fetchConfigDb)
+	preserveSMBTestGlobal(t, &common.Network)
+	fetchConfigDb = func(context.Context, interfaces.StateInterface) (map[string]string, error) {
 		return map[string]string{"public_network": network}, nil
 	}
-	networkMock := mocks.NewNetworkIntf(t)
-	networkMock.On("FindIpOnSubnet", network).Return(address, nil).Once()
-	common.Network = networkMock
-}
-
-func TestValidateSMBContainerConfigRejectsNonDirectVFS(t *testing.T) {
-	tests := []struct {
-		name   string
-		config string
-	}{
-		{
-			name: "proxy",
-			config: `{
-				"shares": {
-					"files": {
-						"options": {
-							"vfs objects": "acl_xattr ceph_new",
-							"ceph_new:proxy": "yes"
-						}
-					}
-				}
-			}`,
-		},
-		{
-			name: "missing proxy setting",
-			config: `{
-				"shares": {
-					"files": {
-						"options": {
-							"vfs objects": "acl_xattr ceph_new"
-						}
-					}
-				}
-			}`,
-		},
-		{
-			name: "classic",
-			config: `{
-				"shares": {
-					"files": {
-						"options": {
-							"vfs objects": "acl_xattr ceph"
-						}
-					}
-				}
-			}`,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := validateSMBContainerConfig([]byte(test.config))
-
-			assert.ErrorContains(t, err, "direct samba-vfs/new")
-		})
-	}
+	stub := mocks.NewNetworkIntf(t)
+	stub.On("FindIpOnSubnet", network).Return(address, nil).Once()
+	common.Network = stub
 }

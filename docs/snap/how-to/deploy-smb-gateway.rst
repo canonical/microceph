@@ -143,7 +143,7 @@ three nodes in the ``OK`` state.
 
 On the SMB client, prepare a mode-``0600`` Samba authentication file named
 :file:`smb-auth` with ``username = smbuser`` and ``password = <your secret>``.
-Create a test file and connect without placing the password in argv:
+Create a test file and connect without placing the password in command-line arguments:
 
 .. code-block:: none
 

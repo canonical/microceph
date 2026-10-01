@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 )
@@ -87,6 +86,20 @@ func TestEnableManagedSMBReadsDesiredPlacementNotObservedMembers(t *testing.T) {
 	assert.Equal(t, map[string]any{"smb": 1445}, applied["custom_ports"])
 }
 
+func TestManagedSMBResourceCanonicalizesBindNetworks(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"10.107.88.1/24", "10.107.88.0/24"},
+		{"2001:db8::1/64", "2001:db8::/64"},
+		{"192.0.2.0/24", "192.0.2.0/24"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			resource := managedResource("node-a")
+			updateManagedSMBResource(resource, []string{"node-a"}, types.ManagedSMBService{BindNetworks: []string{tc.input}})
+			require.Equal(t, []map[string]string{{"network": tc.want}}, resource["bind_addrs"])
+		})
+	}
+}
+
 func TestEnableManagedSMBLookupFailureDoesNotCreate(t *testing.T) {
 	preserveManagedSMBFuncs(t)
 	ensureManagedSMBBackendFunc = func(context.Context) error { return nil }
@@ -149,15 +162,12 @@ func TestDisableManagedSMBRemovesFinalMember(t *testing.T) {
 }
 
 func TestEnsureManagedSMBBackendUsesContext(t *testing.T) {
-	runner := mocks.NewRunner(t)
+	runner := smbTestRunner(t)
 	ctx := context.Background()
 	for _, module := range []string{"microceph", "smb"} {
 		runner.On("RunCommandContext", ctx, "ceph", "mgr", "module", "enable", module).Return("", nil).Once()
 	}
 	runner.On("RunCommandContext", ctx, "ceph", "orch", "set", "backend", "microceph").Return("", nil).Once()
-	original := common.ProcessExec
-	t.Cleanup(func() { common.ProcessExec = original })
-	common.ProcessExec = runner
 	require.NoError(t, ensureManagedSMBBackend(ctx))
 }
 
@@ -172,11 +182,8 @@ func TestLoadManagedSMBClusterDistinguishesAbsenceAndErrors(t *testing.T) {
 		{"present", `{"resource_type":"ceph.smb.cluster","cluster_id":"files"}`, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			runner := mocks.NewRunner(t)
+			runner := smbTestRunner(t)
 			runner.On("RunCommandContext", mock.Anything, "ceph", "smb", "show", "ceph.smb.cluster.files", "--format", "json").Return(tc.output, nil).Once()
-			original := common.ProcessExec
-			t.Cleanup(func() { common.ProcessExec = original })
-			common.ProcessExec = runner
 			_, err := loadManagedSMBCluster(context.Background(), "files")
 			require.Equal(t, tc.fail, err != nil)
 			require.Equal(t, tc.absent, errors.Is(err, os.ErrNotExist))
@@ -187,10 +194,7 @@ func TestLoadManagedSMBClusterDistinguishesAbsenceAndErrors(t *testing.T) {
 func TestCreateManagedSMBCredentialsStayInProtectedResourceFile(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "error"}[fail], func(t *testing.T) {
-			runner := mocks.NewRunner(t)
-			original := common.ProcessExec
-			t.Cleanup(func() { common.ProcessExec = original })
-			common.ProcessExec = runner
+			runner := smbTestRunner(t)
 			path := ""
 			var runErr error
 			if fail {
@@ -229,12 +233,9 @@ func TestCreateManagedSMBCredentialsStayInProtectedResourceFile(t *testing.T) {
 
 func TestManagedSMBMutationRequiresPositiveResourceResult(t *testing.T) {
 	for _, output := range []string{`{"success":false,"resource":{"password":"secret-password"}}`, `{}`, `not-json`, `{"success":true,"results":[{"success":false}]}`} {
-		runner := mocks.NewRunner(t)
+		runner := smbTestRunner(t)
 		runner.On("RunCommandContext", mock.Anything, "ceph", "smb", "apply").Return(output, nil).Once()
-		original := common.ProcessExec
-		common.ProcessExec = runner
 		err := runManagedSMBMutation(context.Background(), "smb", "apply")
-		common.ProcessExec = original
 		require.ErrorIs(t, err, ErrManagedSMBOutcomeUnknown)
 		require.NotContains(t, err.Error(), "secret-password")
 	}

@@ -6,18 +6,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/canonical/microceph/microceph/constants"
 )
 
 func TestSMBLifecyclePreservesConfigurationMountRoot(t *testing.T) {
 	for _, operation := range []string{"remove", "restore"} {
 		t.Run(operation, func(t *testing.T) {
-			originalPaths := constants.GetPathConst
-			t.Cleanup(func() { constants.GetPathConst = originalPaths })
-			root := t.TempDir()
-			confPath := filepath.Join(root, "conf")
-			constants.GetPathConst = func() constants.PathConst { return constants.PathConst{ConfPath: confPath} }
+			_, confPath, _ := smbTestPaths(t, false)
 			configDir := filepath.Join(confPath, "samba")
 			require.NoError(t, os.MkdirAll(configDir, 0750))
 			config := filepath.Join(configDir, "smb.conf")

@@ -38,6 +38,7 @@ func cmdManagedSMBPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var extra any
 	if err != nil || decoder.Decode(&extra) != io.EOF {
 		// Decoder errors can contain unknown field names or other secret input.
+		logger.Error("failed decoding managed SMB enable request: invalid JSON")
 		return mcTypes.BadRequest(fmt.Errorf("invalid managed SMB request JSON"))
 	}
 	err = validateManagedSMBRequest(request)

@@ -6,6 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/interfaces"
+	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/mocks"
 )
 
@@ -116,17 +120,58 @@ func TestManagedSMBPutEnablesTargetThroughOrchestrator(t *testing.T) {
 }
 
 func TestManagedSMBPutRejectsInvalidSecretInputWithoutEcho(t *testing.T) {
+	// Other tests launch workers which may still be logging after cancellation.
+	// Isolate capture of the process-global logger rather than race those workers.
+	const childEnv = "MICROCEPH_TEST_SMB_DECODE_LOG"
+	if os.Getenv(childEnv) != "1" {
+		executable, err := os.Executable()
+		require.NoError(t, err)
+		command := exec.Command(executable, "-test.run=^TestManagedSMBPutRejectsInvalidSecretInputWithoutEcho$")
+		command.Env = append(os.Environ(), childEnv+"=1")
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
+
+	logFile, err := os.Create(filepath.Join(t.TempDir(), "daemon.log"))
+	require.NoError(t, err)
+	originalLogger := logger.DaemonLogger
+	t.Cleanup(func() {
+		logger.DaemonLogger = originalLogger
+		_ = logFile.Close()
+	})
+	// NewLogger captures stdout when its handler is constructed.
+	originalStdout := os.Stdout
+	os.Stdout = logFile
+	capturedLogger, err := logger.NewLogger("")
+	os.Stdout = originalStdout
+	require.NoError(t, err)
+	logger.DaemonLogger = capturedLogger
+
 	for _, body := range []string{
 		`{"cluster_id":"files","secret-as-field":true}`,
 		`{"cluster_id":"files","credentials":{"users":"secret-as-value"}}`,
+		`{"cluster_id":"files","credentials":{"users":[{"name":"alice","password":"secret"}]}`, // Truncated JSON.
+		`{"cluster_id":"files"} {"secret":true}`,
 		`{"cluster_id":"files"}` + strings.Repeat(" ", 2<<20) + `{"secret":true}`,
 	} {
+		before, err := logFile.Stat()
+		require.NoError(t, err)
 		request := httptest.NewRequest(http.MethodPut, "/1.0/managed-services/smb", strings.NewReader(body))
 		recorder := httptest.NewRecorder()
 		response := cmdManagedSMBPut(nil, request)
 		require.NoError(t, response.Render(recorder, request))
 		require.Equal(t, http.StatusBadRequest, recorder.Code)
 		require.NotContains(t, recorder.Body.String(), "secret")
+		logs, err := os.ReadFile(logFile.Name())
+		require.NoError(t, err)
+		entry := string(logs[before.Size():])
+		require.Contains(t, entry, "level=ERROR")
+		require.Contains(t, entry, `msg="failed decoding managed SMB enable request: invalid JSON"`)
+		require.NotContains(t, entry, "secret")
+		require.NotContains(t, entry, "alice")
+		require.NotContains(t, entry, "unknown field")
+		require.NotContains(t, entry, "unexpected EOF")
 	}
 }
 
