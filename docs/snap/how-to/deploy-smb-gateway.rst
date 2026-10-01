@@ -6,13 +6,9 @@
 Deploy a highly available SMB gateway
 =====================================
 
-This guide deploys one managed SMB cluster with an SMB and CTDB instance on
-all three members of a MicroCeph cluster. It then verifies access through every
-instance, continued service after one member fails, and recovery of that member.
-
-The deployed service exports a CephFS subvolume through Samba's direct
-``ceph_new`` VFS provider. MicroCeph does not provide a floating SMB address;
-clients must reconnect to another member address after a failure.
+This guide deploys an SMB cluster on three MicroCeph members and verifies
+access, member failure, and recovery. Clients must reconnect to another member
+after a failure because MicroCeph does not provide a floating SMB address.
 
 Prerequisites
 -------------
@@ -36,9 +32,6 @@ Connect the required snap interfaces on every member:
    sudo snap connect microceph:smb-identity
    sudo snap connect microceph:ctdb-run
 
-The ``smb-identity`` interface permits Samba to assume the authenticated local
-user's UID and groups. The ``ctdb-run`` interface provides the shared CTDB
-runtime socket directory.
 
 Create CephFS storage
 ---------------------
@@ -53,9 +46,8 @@ Create a CephFS volume and a dedicated subvolume for the share:
 Enable the first SMB instance
 -----------------------------
 
-The first command configures the cluster and its initial user. Deployment starts
-when the first share is applied. The default mode uses CTDB from the first
-instance.
+The first command configures the cluster and its initial user. Deployment
+starts when the first share is applied.
 
 Create :file:`smb-users.json` with mode ``0600`` using your secret-management
 workflow. Do not put the password in command arguments or shell history:
@@ -74,17 +66,13 @@ Then submit the file:
       --credentials-file smb-users.json \
       --port 1445
 
-Alternatively, pipe the JSON from a secret manager and use
-``--credentials-file -``. Keep the source available until creation is confirmed;
-MicroCeph does not persist credentials for retry. The first user receives UID/GID
-1000, matching the subvolume owner above. See :ref:`smb-reference` before editing
-or reordering local users.
+Alternatively, pipe the JSON from a secret manager with
+``--credentials-file -``. The first user receives UID/GID 1000, matching the
+subvolume owner. See :ref:`smb-reference` before changing user order.
 
-This example uses TCP port 1445 instead of the default 445. The port applies
-to every member of the cluster; configure client access accordingly. To bind
-to a specific client-facing subnet as well, add ``--bind-network <CIDR>`` on
-the first command. Each member must have an address on that subnet. Alternatively,
-use repeatable ``--bind-address`` options for individual member addresses.
+This example uses TCP port 1445. The port applies to every member; configure
+clients accordingly. See :ref:`smb-reference` for bind-address and network
+options.
 
 Create the first SMB share
 --------------------------
@@ -118,8 +106,8 @@ Add the other two members
    sudo microceph enable smb --cluster-id files --target node2
    sudo microceph enable smb --cluster-id files --target node3
 
-MicroCeph submits the updated placement to the Ceph SMB manager. Each member
-runs ``microceph.smbd``, ``microceph.ctdbd``, and ``microceph.ctdb-nodes``.
+Each member runs ``microceph.smbd``, ``microceph.ctdbd``, and
+``microceph.ctdb-nodes``.
 
 Verify the cluster
 ------------------
@@ -141,9 +129,8 @@ On each member, verify the snap services and CTDB membership:
 All three services should be ``enabled`` and ``active``. CTDB should report
 three nodes in the ``OK`` state.
 
-On the SMB client, prepare a mode-``0600`` Samba authentication file named
-:file:`smb-auth` with ``username = smbuser`` and ``password = <your secret>``.
-Create a test file and connect without placing the password in command-line arguments:
+On an SMB client, create a mode-``0600`` :file:`smb-auth` file with
+``username = smbuser`` and ``password = <your secret>``, then test each member:
 
 .. code-block:: none
 
@@ -162,17 +149,11 @@ platform. On either surviving member, poll:
 
    microceph.ctdb status
 
-The status should continue to list three nodes, with two nodes in the ``OK``
-state and the failed member unavailable.
+The status should list two nodes in the ``OK`` state and the failed member
+as unavailable. Connect to a surviving member and verify reads and writes.
 
-Connect a new SMB client session to either surviving member and verify that the
-existing file can be read and a new file can be written. Existing connections
-to the failed member address are not moved automatically.
-
-Restore the failed member. Verify that its three snap services return to the
-``enabled`` and ``active`` state and that ``microceph.ctdb status`` reports all
-three nodes as ``OK``. Data written during the outage should be accessible
-through the recovered member.
+Restore the failed member. Verify that its services are ``enabled`` and
+``active`` and that CTDB reports all three nodes as ``OK``.
 
 Remove the SMB cluster
 ----------------------
@@ -191,9 +172,7 @@ Remove the instances one target at a time:
    sudo microceph disable smb --cluster-id files --target node2
    sudo microceph disable smb --cluster-id files --target node1
 
-Removing a non-final member updates CTDB placement while keeping the remaining
-SMB instances available. Removing the final member removes the managed SMB
-cluster.
+Removing the final member removes the managed SMB cluster.
 
-See :ref:`smb-reference` for command options and constraints, and
-:ref:`smb-concepts` for the relevant architecture and network model.
+See :ref:`smb-reference` for configuration and :ref:`smb-concepts` for the
+architecture and network model.

@@ -5,33 +5,6 @@ Release notes
 
 The following provides details on major MicroCeph releases, beginning with the MicroCeph squid release.
 
-Unreleased: SMB gateway (Phase 1)
----------------------------------
-
-This work adds CephFS-backed SMB shares using local username/password
-authentication and Samba's direct ``vfs_ceph_new`` data path. Operators can
-manage shares through the upstream :command:`microceph.ceph smb` interface
-and place SMB instances through either that interface or :command:`microceph
-enable smb`. Placements use CTDB by default, including the first member;
-explicit ``--clustering never`` supports one member without CTDB. The mode
-cannot be changed after creation. Credentials are read non-interactively from
-``--credentials-file <path|->`` or referenced with ``--user-group-ref``, not
-supplied as password arguments. SMB can bind to a selected address or network and use a
-custom client port (445 by default). Separate SMB clusters can use disjoint
-MicroCeph members.
-
-Prerequisites: a healthy CephFS-enabled MicroCeph cluster, snapd 2.78 or later,
-and the ``microceph:smb-identity`` plug connected on each selected member.
-Clustered mode also requires ``microceph:ctdb-run``. Permit client traffic to TCP 445 or the configured
-SMB port, and inter-member CTDB traffic to TCP 4379. Create a CephFS-backed
-share before adding a second member; the Ceph SMB manager defers initial
-placement until the first share is applied.
-
-Phase 1 does not support Active Directory, ``cephfs-proxy``, or CTDB-managed
-public/floating addresses. Clients must reconnect to a surviving member after
-failure (or use an external load balancer). See :ref:`deploy-smb-gateway` and
-:ref:`smb-reference` for deployment and configuration details.
-
 MicroCeph Tentacle
 ------------------
 
