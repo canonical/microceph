@@ -11,7 +11,8 @@ import (
 	"github.com/canonical/microceph/microceph/constants"
 )
 
-const smbBaseConfig = "[global]\nconfig backend = registry\nlock directory = /var/lib/samba/lock\npid directory = /var/lib/samba/run\nncalrpc dir = /var/lib/samba/ncalrpc\nwinbindd socket directory = /var/lib/samba/winbindd\nstate directory = /var/lib/samba/state\ncache directory = /var/cache/samba\nprivate dir = /var/lib/samba/private\n"
+// Include the registry instead of switching backends, which discards local overrides.
+const smbBaseConfig = "[global]\nregistry shares = yes\ninclude = registry\nlock directory = /var/lib/samba/lock\npid directory = /var/lib/samba/run\nncalrpc dir = /var/lib/samba/ncalrpc\nwinbindd socket directory = /var/lib/samba/winbindd\nstate directory = /var/lib/samba/state\ncache directory = /var/cache/samba\nprivate dir = /var/lib/samba/private\n"
 
 var fetchSMBSourceFunc = fetchSMBSource
 var writeSMBFileFunc = os.WriteFile

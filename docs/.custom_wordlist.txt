@@ -420,6 +420,7 @@ msgr
 orchestrator
 CTDB
 Samba
+Sambacc
 smbd
 libcephfs
 mutex

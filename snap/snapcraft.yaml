@@ -335,6 +335,7 @@ parts:
       # Verify the workaround against the actual manager module before
       # applying it to the staging tree.
       bash "$CRAFT_PROJECT_DIR/tests/scripts/test_ceph_mgr_notify_patch.sh" "$CRAFT_STAGE"
+      python3 -I -B "$CRAFT_PROJECT_DIR/tests/scripts/test_cephfs_mirror_patch.py" "$CRAFT_STAGE"
 
       # Apply patches to the staging environment to ensure
       # the microceph orchestrator is enabled.

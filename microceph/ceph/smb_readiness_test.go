@@ -7,17 +7,11 @@ import (
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-
-	"github.com/canonical/microceph/microceph/common"
-	"github.com/canonical/microceph/microceph/mocks"
 )
 
 func TestSMBReadinessNeedsDaemonResponseNotOnlyActiveShell(t *testing.T) {
 	t.Setenv("SNAP", "/snap/microceph/current")
-	runner := mocks.NewRunner(t)
-	original := common.ProcessExec
-	t.Cleanup(func() { common.ProcessExec = original })
-	common.ProcessExec = runner
+	runner := smbTestRunner(t)
 	runner.On("RunCommandContext", mock.Anything, "snapctl", "services", "microceph.smbd").Return("Service Startup Current Notes\nmicroceph.smbd enabled active -\n", nil).Twice()
 	runner.On("RunCommandContext", mock.Anything, "/snap/microceph/current/commands/samba-command", "smbcontrol", "smbd", "ping").Return("", context.DeadlineExceeded).Once()
 	runner.On("RunCommandContext", mock.Anything, "/snap/microceph/current/commands/samba-command", "smbcontrol", "smbd", "ping").Return("PONG from pid 123\n", nil).Once()
@@ -49,10 +43,7 @@ func TestSMBReadinessVerifiesAssignedPNN(t *testing.T) {
 	t.Setenv("SNAP", "/snap/microceph/current")
 	for _, output := range []string{"0\n", "1\n", "invalid"} {
 		t.Run(output, func(t *testing.T) {
-			runner := mocks.NewRunner(t)
-			original := common.ProcessExec
-			t.Cleanup(func() { common.ProcessExec = original })
-			common.ProcessExec = runner
+			runner := smbTestRunner(t)
 			runner.On("RunCommandContext", mock.Anything, "/snap/microceph/current/commands/samba-command", "ctdb", "pnn").Return(output, nil).Once()
 			err := checkSMBCTDBPNN(context.Background(), 1)
 			if output == "1\n" {
