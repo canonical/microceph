@@ -488,7 +488,7 @@ func TestDisableRGWConvergent(t *testing.T) {
 		filepath.Join(keyringDir, "keyring"):                                      "keyring",
 		filepath.Join(pathConsts.ConfPath, "ceph.client.radosgw.gateway.keyring"): "keyring symlink",
 	} {
-		_, statErr := os.Stat(path)
+		_, statErr := os.Lstat(path)
 		assert.True(t, os.IsNotExist(statErr), "disable must remove the "+desc)
 	}
 	assert.Equal(t, 1, rec.stops)
