@@ -647,8 +647,8 @@ class microceph_harness:
         """Runs one apt-get *cmd* in *container* (outer VM when empty) with one retry when it stalls.
 
         *timeout* bounds each attempt inside the instance; *label* names the command in
-        the kind=apt Infra annotation on exhaustion. Only apt_update / apt_install call
-        this, so *cmd* always comes from _apt_cmd.
+        the kind=apt Infra annotation on exhaustion. apt_update / apt_install call
+        this for apt-get; add_apt_repository also uses it for repository metadata.
         """
         bounded = self._apt_bounded_cmd(cmd, timeout)
         harness_timeout = int(timeout) + APT_HARNESS_MARGIN
@@ -668,6 +668,11 @@ class microceph_harness:
             self._is_transient_apt_stall,
             APT_RETRY_ATTEMPTS, APT_RETRY_BACKOFF, "apt", f"'{label}' in {where}",
         )
+
+    def add_apt_repository(self, repository, timeout=120):
+        """Adds a repository with bounded execution and retry on silent network stalls."""
+        cmd = f"sudo add-apt-repository --yes --no-update {shlex.quote(repository)}"
+        return self._run_apt("", cmd, timeout, "add-apt-repository")
 
     def apt_update(self, container="", timeout=120):
         """Runs 'apt-get update' in *container*, or in the outer VM when *container* is empty.
@@ -804,7 +809,7 @@ class microceph_harness:
 
     def get_public_network_cidr(self):
         """Returns the CIDR of the LXD public network (e.g. 10.0.0.0/24) from the outer VM."""
-        return self._network_cidr("public")
+        return str(ipaddress.ip_network(self._network_cidr("public"), strict=False))
 
     def _network_cidr(self, network_type):
         """Returns the CIDR of the LXD network of *network_type* from the outer VM.
@@ -2055,7 +2060,8 @@ class microceph_harness:
             30,
         )
         self.run_in_vm_and_check(f"lxc stop {builder}", 60)
-        self.run_in_vm_and_check(f"lxc publish {builder} --alias {MICROCEPH_IMAGE_ALIAS}", 300)
+        # This is a throwaway local template. Avoid CPU-heavy compression on CI runners.
+        self.run_in_vm_and_check(f"lxc publish {builder} --alias {MICROCEPH_IMAGE_ALIAS} --compression none", 300)
         self.run_in_vm_and_check(f"lxc delete {builder}", 10)
         logger.console("[setup] Base image ubuntu-22.04-microceph ready.")
 

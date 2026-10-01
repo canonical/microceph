@@ -73,7 +73,7 @@ Verify Share Update With Unchanged Cluster Config URI
     Run In VM And Check    printf '%s' '{"resource_type":"ceph.smb.share","cluster_id":"${SMB_CLUSTER}","share_id":"${SMB_OTHER_SHARE}","cephfs":{"volume":"${SMB_VOLUME}","subvolume":"${SMB_SUBVOLUME}","provider":"samba-vfs/new"}}' | sudo microceph.ceph smb apply -i -    120
     Run In VM And Check Eventually    smbclient //${ip}/${SMB_OTHER_SHARE} -U '${SMB_USERNAME}%${SMB_PASSWORD}' -c 'get smb-e2e-file /tmp/smb-other-result'    5    3    60
     Run In VM And Check    cmp /tmp/smb-e2e-source /tmp/smb-other-result    30
-    Run In VM And Check    printf '%s' '{"resource_type":"ceph.smb.share","cluster_id":"${SMB_CLUSTER}","share_id":"${SMB_OTHER_SHARE}","share_name":"auxiliary-renamed","cephfs":{"volume":"${SMB_VOLUME}","subvolume":"${SMB_SUBVOLUME}","provider":"samba-vfs/new"}}' | sudo microceph.ceph smb apply -i -    120
+    Run In VM And Check    printf '%s' '{"resource_type":"ceph.smb.share","cluster_id":"${SMB_CLUSTER}","share_id":"${SMB_OTHER_SHARE}","name":"auxiliary-renamed","cephfs":{"volume":"${SMB_VOLUME}","subvolume":"${SMB_SUBVOLUME}","provider":"samba-vfs/new"}}' | sudo microceph.ceph smb apply -i -    120
     Run In VM And Check Eventually    smbclient //${ip}/auxiliary-renamed -U '${SMB_USERNAME}%${SMB_PASSWORD}' -c 'get smb-e2e-file /tmp/smb-renamed-result'    5    3    60
     Run In VM And Check    cmp /tmp/smb-e2e-source /tmp/smb-renamed-result    30
     Run In VM Must Fail    timeout 30s smbclient //${ip}/${SMB_OTHER_SHARE} -U '${SMB_USERNAME}%${SMB_PASSWORD}' -c 'ls'    45
@@ -107,14 +107,16 @@ Verify Native SMB Share And Cluster Removal
     Run In VM And Check    test ! -e /var/snap/microceph/current/samba/container.json    30
 
 Verify Nonclustered Managed Lifecycle
+    # A different cluster must not reuse a subvolume earmarked for smbtest.
+    Run In VM And Check    sudo microceph.ceph fs subvolume create ${SMB_VOLUME} ${SMB_SUBVOLUME}-standalone --mode 777    120
     Run In VM And Check    printf '%s' '{"users":[{"name":"${SMB_USERNAME}","password":"${SMB_PASSWORD}"}]}' | sudo microceph enable smb --cluster-id smbstandalone --clustering never --credentials-file -    120
-    Run In VM And Check    printf '%s' '{"resource_type":"ceph.smb.share","cluster_id":"smbstandalone","share_id":"${SMB_SHARE}","cephfs":{"volume":"${SMB_VOLUME}","subvolume":"${SMB_SUBVOLUME}","provider":"samba-vfs/new"}}' | sudo microceph.ceph smb apply -i -    180
+    Run In VM And Check    printf '%s' '{"resource_type":"ceph.smb.share","cluster_id":"smbstandalone","share_id":"${SMB_SHARE}","cephfs":{"volume":"${SMB_VOLUME}","subvolume":"${SMB_SUBVOLUME}-standalone","provider":"samba-vfs/new"}}' | sudo microceph.ceph smb apply -i -    180
     Wait For SMB Service    enabled    active
     Wait For CTDB Service    disabled    inactive
     Wait For CTDB Nodes Service    disabled    inactive
     Run In VM And Check    test ! -e /var/snap/microceph/current/samba/ctdb.json    30
     ${ip}=    Get VM IP
-    Run In VM And Check    smbclient //${ip}/${SMB_SHARE} -U '${SMB_USERNAME}%${SMB_PASSWORD}' -c 'get smb-e2e-file /tmp/smb-standalone-result'    60
+    Run In VM And Check    smbclient //${ip}/${SMB_SHARE} -U '${SMB_USERNAME}%${SMB_PASSWORD}' -c 'put /tmp/smb-e2e-source smb-e2e-file; get smb-e2e-file /tmp/smb-standalone-result'    60
     Run In VM And Check    cmp /tmp/smb-e2e-source /tmp/smb-standalone-result    30
     # Omission must preserve never; an explicit transition must fail before mutation.
     Run In VM And Check    sudo microceph enable smb --cluster-id smbstandalone --port 1445    180

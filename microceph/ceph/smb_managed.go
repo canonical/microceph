@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"sort"
 	"strings"
@@ -269,16 +270,23 @@ func managedSMBMembersFromResource(resource map[string]any) ([]string, error) {
 func updateManagedSMBResource(resource map[string]any, members []string, request types.ManagedSMBService) {
 	sort.Strings(members)
 	resource["placement"] = map[string]any{"hosts": append([]string(nil), members...), "count": len(members)}
+	bindType := "network"
+	bindValues := request.BindNetworks
 	if len(request.BindAddresses) > 0 {
-		binds := make([]map[string]string, 0, len(request.BindAddresses))
-		for _, address := range request.BindAddresses {
-			binds = append(binds, map[string]string{"address": address})
-		}
-		resource["bind_addrs"] = binds
-	} else if len(request.BindNetworks) > 0 {
-		binds := make([]map[string]string, 0, len(request.BindNetworks))
-		for _, network := range request.BindNetworks {
-			binds = append(binds, map[string]string{"network": network})
+		bindType = "address"
+		bindValues = request.BindAddresses
+	}
+	if len(bindValues) > 0 {
+		binds := make([]map[string]string, 0, len(bindValues))
+		for _, value := range bindValues {
+			if bindType == "network" {
+				// Go accepts host bits in a CIDR; Ceph requires the canonical network.
+				_, subnet, err := net.ParseCIDR(value)
+				if err == nil {
+					value = subnet.String()
+				}
+			}
+			binds = append(binds, map[string]string{bindType: value})
 		}
 		resource["bind_addrs"] = binds
 	}
