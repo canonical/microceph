@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/interfaces"
 
+	"github.com/Rican7/retry/strategy"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/tests"
@@ -80,6 +82,11 @@ func (s *servicesSuite) TestRestartInvalidService() {
 func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 	ts := []string{"mon", "osd"} // test services
 
+	// Check the workers without sleeping.
+	strategies := restartServiceRetryStrategies
+	restartServiceRetryStrategies = []strategy.Strategy{strategy.Limit(10)}
+	defer func() { restartServiceRetryStrategies = strategies }()
+
 	r := mocks.NewRunner(s.T())
 	addMonDumpExpectations(r)
 	addOsdDumpExpectations(r)
@@ -99,6 +106,15 @@ func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 	assert.NoError(s.T(), err)
 }
 
+// TestRestartServiceRetryDelaysAreSeconds guards the "strategy.Delay(5) slept 5ns
+// instead of 5s" unit bug directly: TestRestartServiceWorkerSuccess overrides
+// restartServiceRetryStrategies wholesale, so only an assertion on the extracted
+// constants themselves exercises the real production durations.
+func (s *servicesSuite) TestRestartServiceRetryDelaysAreSeconds() {
+	assert.Equal(s.T(), 5*time.Second, restartServiceInitialDelay)
+	assert.Equal(s.T(), 10*time.Second, restartServiceBackoffStep)
+}
+
 // TestCleanService tests the cleanService function.
 func (s *servicesSuite) TestCleanService() {
 	s.CopyCephConfigs()
@@ -108,9 +124,11 @@ func (s *servicesSuite) TestCleanService() {
 	assert.NoDirExists(s.T(), svcPath)
 }
 
-// installDeleteServiceRecorder replaces the external deletion phases and
-// records their exact order. The originals are restored after each test.
+// installDeleteServiceRecorder replaces the config render and the external
+// deletion phases and records their exact order. The originals are restored
+// after each test.
 func installDeleteServiceRecorder(t *testing.T, stopErr error) *[]string {
+	origUpdateConfig := updateConfigFunc
 	origEnsureMonAbsent := ensureMonAbsentFunc
 	origEnsureMgrAbsent := ensureMgrAbsentFunc
 	origEnsureMdsAbsent := ensureMdsAbsentFunc
@@ -118,6 +136,7 @@ func installDeleteServiceRecorder(t *testing.T, stopErr error) *[]string {
 	origCleanService := cleanServiceFunc
 	origRemoveServiceDatabase := removeServiceDatabaseFunc
 	t.Cleanup(func() {
+		updateConfigFunc = origUpdateConfig
 		ensureMonAbsentFunc = origEnsureMonAbsent
 		ensureMgrAbsentFunc = origEnsureMgrAbsent
 		ensureMdsAbsentFunc = origEnsureMdsAbsent
@@ -127,6 +146,10 @@ func installDeleteServiceRecorder(t *testing.T, stopErr error) *[]string {
 	})
 
 	events := []string{}
+	updateConfigFunc = func(_ context.Context, _ interfaces.StateInterface) error {
+		events = append(events, "config")
+		return nil
+	}
 	ensureMonAbsentFunc = func(_ context.Context, hostname string) error {
 		events = append(events, "monmap:"+hostname)
 		return nil
@@ -160,6 +183,7 @@ func (s *servicesSuite) TestDeleteMonRemovesMembershipBeforeStoppingDaemon() {
 	err := DeleteService(context.Background(), s.TestStateInterface, "mon")
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), []string{
+		"config",
 		"monmap:foohost",
 		"stop:mon:true",
 		"clean:mon:foohost",
@@ -177,7 +201,7 @@ func (s *servicesSuite) TestDeleteMonMembershipFailureLeavesDaemonRunning() {
 
 	err := DeleteService(context.Background(), s.TestStateInterface, "mon")
 	assert.ErrorIs(s.T(), err, membershipErr)
-	assert.Equal(s.T(), []string{"monmap:foohost"}, *events)
+	assert.Equal(s.T(), []string{"config", "monmap:foohost"}, *events)
 }
 
 func (s *servicesSuite) TestDeleteMonResumesAfterStopFailure() {
@@ -201,8 +225,10 @@ func (s *servicesSuite) TestDeleteMonResumesAfterStopFailure() {
 	err = DeleteService(context.Background(), s.TestStateInterface, "mon")
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), []string{
+		"config",
 		"monmap:foohost",
 		"stop:mon:true",
+		"config",
 		"monmap:foohost",
 		"stop:mon:true",
 		"clean:mon:foohost",
@@ -216,6 +242,7 @@ func (s *servicesSuite) TestDeleteMgrEvictsMapAfterStoppingDaemon() {
 	err := DeleteService(context.Background(), s.TestStateInterface, "mgr")
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), []string{
+		"config",
 		"stop:mgr:true",
 		"mgrmap:foohost",
 		"clean:mgr:foohost",
@@ -229,6 +256,7 @@ func (s *servicesSuite) TestDeleteMdsEvictsMapAfterStoppingDaemon() {
 	err := DeleteService(context.Background(), s.TestStateInterface, "mds")
 	assert.NoError(s.T(), err)
 	assert.Equal(s.T(), []string{
+		"config",
 		"stop:mds:true",
 		"mdsmap:foohost",
 		"clean:mds:foohost",
@@ -249,7 +277,41 @@ func (s *servicesSuite) TestDeleteMgrMapFailureLeavesCleanupPending() {
 	// The daemon is stopped and eviction attempted, but on-disk and DB cleanup
 	// must not run so a retry resumes teardown.
 	assert.Equal(s.T(), []string{
+		"config",
 		"stop:mgr:true",
 		"mgrmap:foohost",
+	}, *events)
+}
+
+func (s *servicesSuite) TestDeleteConfigRenderFailureAbortsBeforeTouchingCeph() {
+	events := installDeleteServiceRecorder(s.T(), nil)
+	renderErr := errors.New("failed to locate IP on public network")
+	updateConfigFunc = func(_ context.Context, _ interfaces.StateInterface) error {
+		*events = append(*events, "config")
+		return renderErr
+	}
+
+	for _, service := range []string{"mon", "mgr", "mds"} {
+		*events = nil
+		err := DeleteService(context.Background(), s.TestStateInterface, service)
+		assert.ErrorIs(s.T(), err, renderErr)
+		// With a stale ceph.conf the ensure*Absent phases would hang on an
+		// unreachable monitor, so nothing may run before a successful render.
+		assert.Equal(s.T(), []string{"config"}, *events)
+	}
+}
+
+func (s *servicesSuite) TestDeleteClientServiceSkipsConfigRender() {
+	events := installDeleteServiceRecorder(s.T(), nil)
+
+	// Services without a Ceph map eviction never run ceph commands during
+	// teardown. They must not gain the render's public network requirement,
+	// which would block `cluster remove` on a node that lost its Ceph NIC.
+	err := DeleteService(context.Background(), s.TestStateInterface, "rbd-mirror")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{
+		"stop:rbd-mirror:true",
+		"clean:rbd-mirror:foohost",
+		"db:rbd-mirror",
 	}, *events)
 }

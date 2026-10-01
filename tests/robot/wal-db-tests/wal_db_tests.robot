@@ -23,6 +23,7 @@ Test Encrypted WAL DB Startup Inline
     Log To Console    [osd] Testing encrypted WAL/DB startup (expected_osds=${expected_osds})...
     Run In VM And Check    sudo snap connect microceph:dm-crypt    30
     Run In VM And Check    sudo snap restart microceph.daemon    60
+    Run In VM And Check    sudo microceph waitready --timeout 30    60
     # Create 3 loop devices for data (sdid), WAL (sdie), DB (sdif)
     FOR    ${l}    IN    d    e    f
         Create Loop Device At    /dev/sdi${l}
@@ -44,7 +45,7 @@ Test Encrypted WAL DB Startup Inline
     FOR    ${vol}    IN    luksosd-${osd_id}    luksosd.wal-${osd_id}    luksosd.db-${osd_id}
         FOR    ${i}    IN RANGE    24
             ${exists}=    Run In VM    test -e /dev/mapper/${vol} && echo yes || echo no    15
-            IF    "${exists.stdout.strip()}" == "yes"    BREAK
+            IF    $exists.stdout.strip() == "yes"    BREAK
             IF    ${i} == 23    Fail    LUKS volume ${vol} not reopened after 120s
             Sleep    5s
         END

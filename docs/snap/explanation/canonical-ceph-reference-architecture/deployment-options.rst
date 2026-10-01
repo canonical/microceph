@@ -48,9 +48,7 @@ deployments like developer workstations, Continuous Integration (CI)
 environments, or training setups. The snap handles daemon lifecycle and upgrades
 with minimal configuration.
 
-See an example of a MicroCeph cluster below.. The `MicroCeph architecture
-section
-<https://canonical-microceph.readthedocs-hosted.com/latest/snap/explanation/microceph-architecture/>`_
+See an example of a MicroCeph cluster below.. The :ref:`MicroCeph architecture section <microceph-architecture>`
 provides more details about MicroCeph components.
 
 .. image:: ../assets/ex-microceph-cluster.png

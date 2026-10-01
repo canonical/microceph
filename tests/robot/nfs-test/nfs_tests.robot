@@ -23,7 +23,7 @@ NFS Tests Suite Setup
 Skip If Log Rotate App Not Available
     [Documentation]    Skips the test if the microceph.log-rotate snap app is absent.
     ${has_app}=    Run In VM    test -e /snap/microceph/current/commands/log-rotate.start && echo yes || echo no    30
-    IF    "${has_app.stdout.strip()}" != "yes"
+    IF    $has_app.stdout.strip() != "yes"
         Skip    microceph.log-rotate app not available in this snap version — skipping
     END
 
@@ -31,7 +31,7 @@ Wait For Ganesha Log
     [Documentation]    Polls until /var/snap/microceph/common/logs/ganesha/ganesha.log exists (30 s max).
     FOR    ${i}    IN RANGE    30
         ${found}=    Run In VM    test -f /var/snap/microceph/common/logs/ganesha/ganesha.log && echo yes || echo no    10
-        IF    "${found.stdout.strip()}" == "yes"    RETURN
+        IF    $found.stdout.strip() == "yes"    RETURN
         IF    ${i} == 29    Fail    Ganesha log not found after 30s
         Sleep    1s
     END
@@ -86,7 +86,7 @@ Test NFS Stale Run Dir Migration Inline
     # Wait for migration log message
     FOR    ${i}    IN RANGE    30
         ${found}=    Run In VM    sudo snap logs microceph.daemon -n 100 | grep -q "fixed stale run dir.*ganesha.conf" && echo yes || echo no    15
-        IF    "${found.stdout.strip()}" == "yes"
+        IF    $found.stdout.strip() == "yes"
             Log To Console    [nfs] Daemon logged ganesha migration complete
             BREAK
         END
