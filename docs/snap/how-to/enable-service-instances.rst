@@ -101,11 +101,9 @@ Finally, view cluster status again and verify expected changes:
 Enable an SMB service
 ---------------------
 
-SMB instances sharing a cluster ID are reconciled as one managed SMB cluster.
-Managed clusters use CTDB even with one member. Apply a CephFS-backed share
-after creating the first member and before adding more members. See
-:ref:`deploy-smb-gateway` for the complete three-node procedure and
-:ref:`smb-reference` for command options.
+SMB instances with the same cluster ID form one managed SMB cluster. Apply a
+CephFS-backed share after the first member and before adding others. See
+:ref:`deploy-smb-gateway` and :ref:`smb-reference`.
 
 Enable an NFS service
 ---------------------
