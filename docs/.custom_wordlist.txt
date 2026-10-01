@@ -418,4 +418,12 @@ refactor
 quincy
 msgr
 orchestrator
+CTDB
+Samba
+Sambacc
+smbd
+libcephfs
+mutex
+unmanaged
+UserPerm
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -16,11 +17,13 @@ var _ = api.ServerEnvironment{}
 
 //go:generate mockery --name GroupedServiceQueryIntf
 type GroupedServiceQueryIntf interface {
-	// Add Method
+	// Add Methods
 	AddNew(ctx context.Context, s interfaces.StateInterface, service, groupID string, groupConfig, serviceInfo any) error
+	AddOrUpdate(ctx context.Context, s interfaces.StateInterface, service, groupID string, groupConfig, serviceInfo any) error
 
 	// Get Methods
 	GetGroupedServices(ctx context.Context, s interfaces.StateInterface) ([]GroupedService, error)
+	GetGroupedServicesWithGroupConfig(ctx context.Context, s interfaces.StateInterface) ([]GroupedServiceWithGroupConfig, error)
 	GetGroupedServicesOnHost(ctx context.Context, s interfaces.StateInterface) ([]GroupedService, error)
 
 	// Exists Methods
@@ -31,6 +34,13 @@ type GroupedServiceQueryIntf interface {
 }
 
 type GroupedServiceQueryImpl struct{}
+
+// GroupedServiceWithGroupConfig combines a member placement with its shared
+// non-secret service-group configuration.
+type GroupedServiceWithGroupConfig struct {
+	GroupedService
+	GroupConfig string
+}
 
 // AddNew creates a service record in the service_groups database if it doesn't exist already,
 // and creates a record referencing it in the grouped_services database.
@@ -83,6 +93,153 @@ func (g GroupedServiceQueryImpl) AddNew(ctx context.Context, s interfaces.StateI
 	return err
 }
 
+// AddOrUpdate atomically creates or updates a service group and its local member record.
+func (g GroupedServiceQueryImpl) AddOrUpdate(ctx context.Context, s interfaces.StateInterface, service, groupID string, groupConfig, serviceInfo any) error {
+	if s.ClusterState().ServerCert() == nil {
+		return fmt.Errorf("no server certificate")
+	}
+
+	groupConfigBytes, err := json.Marshal(groupConfig)
+	if err != nil {
+		return fmt.Errorf("error while marshalling group config: %w", err)
+	}
+	serviceInfoBytes, err := json.Marshal(serviceInfo)
+	if err != nil {
+		return fmt.Errorf("error while marshalling group service info: %w", err)
+	}
+
+	return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return addOrUpdateGroupedService(
+			ctx,
+			tx,
+			s.ClusterState().Name(),
+			service,
+			groupID,
+			string(groupConfigBytes),
+			string(serviceInfoBytes),
+		)
+	})
+}
+
+func addOrUpdateGroupedService(ctx context.Context, tx *sql.Tx, member, service, groupID, groupConfig, serviceInfo string) error {
+	var serviceGroupID int64
+	var existingConfig string
+	err := tx.QueryRowContext(ctx, `
+SELECT id, config FROM service_groups WHERE service = ? AND group_id = ?
+`, service, groupID).Scan(&serviceGroupID, &existingConfig)
+	if errors.Is(err, sql.ErrNoRows) {
+		if service == "smb" {
+			groupConfig, err = mergeSMBGroupConfig(`{}`, groupConfig)
+			if err != nil {
+				return fmt.Errorf("failed to validate SMB group configuration: %w", err)
+			}
+		}
+		result, createErr := tx.ExecContext(ctx, `
+INSERT INTO service_groups (service, group_id, config) VALUES (?, ?, ?)
+`, service, groupID, groupConfig)
+		if createErr != nil {
+			return fmt.Errorf("failed to create service group: %w", createErr)
+		}
+		serviceGroupID, err = result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("failed to get service group ID: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to get service group record: %w", err)
+	} else {
+		if service == "smb" {
+			groupConfig, err = mergeSMBGroupConfig(existingConfig, groupConfig)
+			if err != nil {
+				return fmt.Errorf("failed to merge SMB group configuration: %w", err)
+			}
+		}
+		_, err = tx.ExecContext(ctx, `
+UPDATE service_groups SET config = ? WHERE id = ?
+`, groupConfig, serviceGroupID)
+		if err != nil {
+			return fmt.Errorf("failed to update service group: %w", err)
+		}
+	}
+
+	var groupedServiceID int64
+	err = tx.QueryRowContext(ctx, `
+SELECT id FROM grouped_services WHERE service_group_id = ? AND member_id = (
+  SELECT id FROM core_cluster_members WHERE name = ?
+)
+`, serviceGroupID, member).Scan(&groupedServiceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = tx.ExecContext(ctx, `
+INSERT INTO grouped_services (service_group_id, member_id, info)
+VALUES (?, (SELECT id FROM core_cluster_members WHERE name = ?), ?)
+`, serviceGroupID, member, serviceInfo)
+		if err != nil {
+			return fmt.Errorf("failed to create grouped service: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to get grouped service record: %w", err)
+	} else {
+		_, err = tx.ExecContext(ctx, `
+UPDATE grouped_services SET info = ? WHERE id = ?
+`, serviceInfo, groupedServiceID)
+		if err != nil {
+			return fmt.Errorf("failed to update grouped service: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// mergeSMBGroupConfig keeps CTDB allocations even when a member sends a stale
+// snapshot of the shared config. New identities may only claim unused ranks.
+func mergeSMBGroupConfig(existingJSON, incomingJSON string) (string, error) {
+	var existing, incoming SMBServiceGroupConfig
+	err := json.Unmarshal([]byte(existingJSON), &existing)
+	if err != nil {
+		return "", fmt.Errorf("invalid stored SMB group config: %w", err)
+	}
+	err = json.Unmarshal([]byte(incomingJSON), &incoming)
+	if err != nil {
+		return "", fmt.Errorf("invalid incoming SMB group config: %w", err)
+	}
+
+	if existing.NextCTDBRank < 0 || incoming.NextCTDBRank < 0 {
+		return "", fmt.Errorf("negative next CTDB rank")
+	}
+	if incoming.CTDBRanks == nil {
+		incoming.CTDBRanks = make(map[string]int)
+	}
+	for identity, rank := range existing.CTDBRanks {
+		if previous, ok := incoming.CTDBRanks[identity]; ok && previous != rank {
+			return "", fmt.Errorf("CTDB rank changed for %q from %d to %d", identity, rank, previous)
+		}
+		incoming.CTDBRanks[identity] = rank
+	}
+	used := make(map[int]string)
+	for identity, rank := range incoming.CTDBRanks {
+		if _, known := existing.CTDBRanks[identity]; !known && rank < existing.NextCTDBRank {
+			return "", fmt.Errorf("CTDB rank %d is retired and cannot be assigned to %q", rank, identity)
+		}
+		if identity == "" || rank < 0 {
+			return "", fmt.Errorf("invalid CTDB rank allocation for %q: %d", identity, rank)
+		}
+		if other, ok := used[rank]; ok {
+			return "", fmt.Errorf("CTDB rank %d already belongs to %q, not %q", rank, other, identity)
+		}
+		used[rank] = identity
+		if incoming.NextCTDBRank <= rank {
+			incoming.NextCTDBRank = rank + 1
+		}
+	}
+	if incoming.NextCTDBRank < existing.NextCTDBRank {
+		incoming.NextCTDBRank = existing.NextCTDBRank
+	}
+	merged, err := json.Marshal(incoming)
+	if err != nil {
+		return "", err
+	}
+	return string(merged), nil
+}
+
 // GetGroupedServices returns an array of grouped services.
 func (g GroupedServiceQueryImpl) GetGroupedServices(ctx context.Context, s interfaces.StateInterface) ([]GroupedService, error) {
 	if s.ClusterState().ServerCert() == nil {
@@ -102,6 +259,69 @@ func (g GroupedServiceQueryImpl) GetGroupedServices(ctx context.Context, s inter
 	})
 
 	return services, err
+}
+
+// GetGroupedServicesWithGroupConfig returns grouped services with their shared configuration.
+func (g GroupedServiceQueryImpl) GetGroupedServicesWithGroupConfig(ctx context.Context, s interfaces.StateInterface) ([]GroupedServiceWithGroupConfig, error) {
+	if s.ClusterState().ServerCert() == nil {
+		return []GroupedServiceWithGroupConfig{}, fmt.Errorf("no server certificate")
+	}
+
+	var services []GroupedServiceWithGroupConfig
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		services, err = getGroupedServicesWithGroupConfig(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("failed to get grouped services with group configuration: %w", err)
+		}
+
+		return nil
+	})
+
+	return services, err
+}
+
+func getGroupedServicesWithGroupConfig(ctx context.Context, tx *sql.Tx) ([]GroupedServiceWithGroupConfig, error) {
+	rows, err := tx.QueryContext(ctx, `
+SELECT grouped_services.id,
+       service_groups.service,
+       service_groups.group_id,
+       core_cluster_members.name,
+       grouped_services.info,
+       service_groups.config
+  FROM grouped_services
+  JOIN service_groups ON grouped_services.service_group_id = service_groups.id
+  JOIN core_cluster_members ON grouped_services.member_id = core_cluster_members.id
+ ORDER BY service_groups.id, service_groups.group_id, core_cluster_members.id
+`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	services := make([]GroupedServiceWithGroupConfig, 0)
+	for rows.Next() {
+		service := GroupedServiceWithGroupConfig{}
+		err = rows.Scan(
+			&service.ID,
+			&service.Service,
+			&service.GroupID,
+			&service.Member,
+			&service.Info,
+			&service.GroupConfig,
+		)
+		if err != nil {
+			return nil, err
+		}
+		services = append(services, service)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		return nil, err
+	}
+
+	return services, nil
 }
 
 // GetGroupedServicesOnHost returns an array of grouped services present on the host.

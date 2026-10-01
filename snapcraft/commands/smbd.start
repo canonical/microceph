@@ -1,0 +1,35 @@
+#!/bin/bash
+set -eu
+
+# shellcheck source=snapcraft/commands/common
+. "${SNAP}/commands/common"
+# shellcheck source=snapcraft/commands/smb-common
+. "${SNAP}/commands/smb-common"
+
+wait_for_config
+smb_prepare_runtime
+
+if [ -f "${smb_identity_dir}/ctdb.json" ]; then
+    smb_prepare_ctdb_runtime
+    smb_wait_for_ctdb_ready
+    "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" import
+    smb_import_users
+    exec "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" \
+        run \
+        --setup=smb_ctdb \
+        --wait-for=ctdb \
+        smbd
+fi
+
+rm -f \
+    "${smb_data_dir}/registry.tdb" \
+    "${smb_data_dir}/private/passdb.tdb" \
+    "${smb_data_dir}/private/registry.tdb"
+"${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" import
+smb_import_users
+
+exec smbd --foreground --no-process-group --configfile="${smb_config}" \
+    --option="lock directory=/var/lib/samba/lock" \
+    --option="pid directory=/var/lib/samba/run" \
+    --option="ncalrpc dir=/var/lib/samba/ncalrpc" \
+    --option="winbindd socket directory=/var/lib/samba/winbindd"

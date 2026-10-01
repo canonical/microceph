@@ -10,10 +10,11 @@ type Services []Service
 
 // Service consist of a name and location
 type Service struct {
-	Service  string `json:"service" yaml:"service"`
-	Location string `json:"location" yaml:"location"`
-	GroupID  string `json:"group_id" yaml:"group_id"`
-	Info     string `json:"info" yaml:"info"`
+	Service     string `json:"service" yaml:"service"`
+	Location    string `json:"location" yaml:"location"`
+	GroupID     string `json:"group_id" yaml:"group_id"`
+	Info        string `json:"info" yaml:"info"`
+	GroupConfig string `json:"group_config,omitempty" yaml:"group_config,omitempty"`
 }
 
 // Name: Name of the service to be enabled
@@ -28,6 +29,11 @@ type EnableService struct {
 
 // NFSService holds the Cluster ID of the NFS Service.
 type NFSService struct {
+	ClusterID string `json:"cluster_id" yaml:"cluster_id"`
+}
+
+// SMBService holds the Cluster ID of the SMB service.
+type SMBService struct {
 	ClusterID string `json:"cluster_id" yaml:"cluster_id"`
 }
 

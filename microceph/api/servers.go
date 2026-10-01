@@ -25,6 +25,8 @@ var Servers = map[string]mcTypes.Server{
 					mgrServiceCmd,
 					monServiceCmd,
 					nfsServiceCmd,
+					smbServiceCmd,
+					managedSMBServiceCmd,
 					poolsOpCmd,
 					rgwServiceCmd,
 					rbdMirroServiceCmd,
