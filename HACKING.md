@@ -200,6 +200,7 @@ MicroCeph can place the RADOS Gateway (RGW) on cluster members from the placemen
 - **`rgw_frontend` in `GET /1.0/placement` is the last applied setting,** read from the `rgw_frontends` table. It is not a health check. If it is absent, the setting is unknown, not plaintext.
 - **One owner per member.** Do not use `microceph enable rgw` or `microceph disable rgw` on a member whose policy entry has an `rgw` object. The next `PUT` applies the policy again without warning. `microceph certificate set rgw` is safe and never changes the policy.
 - **Applying is safe to repeat.** The same settings cause no restart. A failed change puts the previous config and gateway back. A first gateway start can use the whole 2 minute readiness wait, and the call to each member times out after 5 minutes.
+- **Certificate updates have the same 5 minute request budget.** `microceph certificate set rgw --restart` can wait up to 2 minutes for readiness and then roll back on failure; the client timeout leaves time for both.
 
 ### What a `PUT` returns for RGW
 
