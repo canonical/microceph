@@ -24,16 +24,14 @@ func cmdCertificatesRGWPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 		return mcTypes.InternalError(err)
 	}
 
-	err = ceph.UpdateRGWCertificates(interfaces.CephState{State: s}, req.SSLCertificate, req.SSLPrivateKey)
+	// UpdateRGWCertificates handles the --restart flag itself: the restart is
+	// part of the same serialized lifecycle, so a failure cannot leave a
+	// published-but-unservable certificate behind. Input failures (bad base64,
+	// mismatched pair) carry ceph.ErrRgwFrontendInvalid and map to 400;
+	// operational failures map to 500 (see serviceErrorResponse).
+	err = ceph.UpdateRGWCertificates(r.Context(), interfaces.CephState{State: s}, req.SSLCertificate, req.SSLPrivateKey, req.Restart)
 	if err != nil {
-		return mcTypes.SmartError(err)
-	}
-
-	if req.Restart {
-		err = ceph.RestartRGW()
-		if err != nil {
-			return mcTypes.SmartError(err)
-		}
+		return serviceErrorResponse(err)
 	}
 
 	return mcTypes.EmptySyncResponse
