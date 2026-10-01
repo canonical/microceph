@@ -108,6 +108,27 @@ func (s *servicesPlacementSuite) TestHospitalityCheckFailure() {
 	assert.ErrorContains(s.T(), err, "host failed hospitality check")
 }
 
+// TestEnableServicePreservesErrorSentinels verifies the pipeline wraps phase
+// errors with %w, so caller-classifying sentinels (e.g.
+// ceph.ErrRgwFrontendInvalid for malformed RGW payloads) survive to the API
+// layer's status classification.
+func (s *servicesPlacementSuite) TestEnableServicePreservesErrorSentinels() {
+	payload := types.EnableService{
+		Name:    "rgw",
+		Wait:    true,
+		Payload: "{}",
+	}
+
+	sp := mocks.NewPlacementIntf(s.T())
+	sp.On("PopulateParams", s.TestStateInterface, payload.Payload).Return(nil).Once()
+	sp.On("HospitalityCheck", s.TestStateInterface).Return(nil).Once()
+	sp.On("ServiceInit", s.TestStateInterface).Return(fmt.Errorf("%w: bad material", ErrRgwFrontendInvalid)).Once()
+
+	err := EnableService(context.Background(), s.TestStateInterface, payload, sp)
+	assert.ErrorContains(s.T(), err, "failed to initialise")
+	assert.ErrorIs(s.T(), err, ErrRgwFrontendInvalid, "the sentinel must survive the pipeline wrapping")
+}
+
 func (s *servicesPlacementSuite) TestServiceInitFailure() {
 	service := "mon"
 	payload := types.EnableService{
