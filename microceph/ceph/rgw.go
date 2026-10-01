@@ -567,9 +567,17 @@ func checkRGWFrontend(spec rgwFrontendSpec) error {
 	if !spec.ssl {
 		return nil
 	}
-	certificate, _ := pem.Decode(spec.certPEM)
-	if certificate == nil {
-		return errors.New("expected RGW certificate is unavailable")
+	// Match tls.X509KeyPair: skip other PEM types and pin the first certificate.
+	var certificate *pem.Block
+	rest := spec.certPEM
+	for {
+		certificate, rest = pem.Decode(rest)
+		if certificate == nil {
+			return errors.New("expected RGW certificate is unavailable")
+		}
+		if certificate.Type == "CERTIFICATE" {
+			break
+		}
 	}
 	conn, err := dialer.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(spec.sslPort)))
 	if err != nil {

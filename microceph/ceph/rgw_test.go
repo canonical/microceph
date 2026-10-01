@@ -608,12 +608,27 @@ func TestCheckRGWFrontendPinsCertificate(t *testing.T) {
 	}()
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	err = checkRGWFrontend(rgwFrontendSpec{ssl: true, sslPort: port, certPEM: servedPEM})
-	assert.NoError(t, err, "the served certificate must be accepted")
-
-	err = checkRGWFrontend(rgwFrontendSpec{ssl: true, sslPort: port, certPEM: otherPEM})
-	require.Error(t, err, "a different served certificate must be rejected")
-	assert.Contains(t, err.Error(), "expected certificate")
+	cases := []struct {
+		name    string
+		certPEM []byte
+		wantErr bool
+	}{
+		{"matching certificate", servedPEM, false},
+		{"private key before certificate", append(append([]byte(nil), servedKey...), servedPEM...), false},
+		{"different certificate", otherPEM, true},
+		{"only later certificate matches", append(append([]byte(nil), otherPEM...), servedPEM...), true},
+		{"no certificate", servedKey, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkRGWFrontend(rgwFrontendSpec{ssl: true, sslPort: port, certPEM: tc.certPEM})
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 // The mock-runner suite below predates the recorder-based tests above. Only its
