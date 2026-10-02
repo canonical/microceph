@@ -261,9 +261,9 @@ Test Combined Refusal Retains Both Causes
     ...    refuse: every remaining retainer is itself a removal target) while
     ...    its RGW addition fails on the unreachable vm2 and its RGW removal
     ...    would take vm1's gateway: the response is an operational 500, the
-    ...    recorded refusal retains BOTH the keep-one cause and the RGW member
-    ...    failure, vm1 keeps serving (the removal is held), and the cluster
-    ...    keeps its mons (the removals are refused).
+    ...    recorded refusal retains BOTH the keep-one cause and an explicit
+    ...    failure enabling RGW on vm2. vm1 keeps serving (the removal is held),
+    ...    and the cluster keeps its mons (the removals are refused).
     [Tags]    placement    control    faults
     ${mons_before}=    Mon Count In VM    vm_name=${GUEST_VM0}
     ${policy}=    Set Variable    {"mode":"reconcile","members":{"${GUEST_VM0}":{"control":false},"${GUEST_VM1}":{"control":false,"rgw":{"enabled":false}},"${GUEST_VM2}":{"control":false,"rgw":{"enabled":true,"ssl":false,"port":8081}}}}
@@ -273,7 +273,8 @@ Test Combined Refusal Retains Both Causes
     ${status}=    Get Placement Status JSON In VM    ${GUEST_VM0}
     ${refusal}=    Placement Refusal Text    ${status}
     Should Contain    ${refusal}    keep-one    msg=refusal must retain the control safety refusal: ${refusal}
-    Should Contain    ${refusal}    ${GUEST_VM2}    msg=refusal must retain the RGW failure cause: ${refusal}
+    # The guest name can also occur in keep-one; require the RGW action and exact member.
+    Should Contain    ${refusal}    enabling RGW on ${GUEST_VM2}:    msg=refusal must retain the RGW failure cause: ${refusal}
     RGW Endpoint Serves In VM    ${VM1_IP}    8080    /testbucket/starved.txt    hello-rgw-placement-starved    vm_name=${GUEST_VM0}
     ${mons}=    Mon Count In VM    vm_name=${GUEST_VM0}
     Should Be Equal As Integers    ${mons}    ${mons_before}    msg=keep-one must have refused every control removal: ${mons_before} mon(s) before, ${mons} after
