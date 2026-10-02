@@ -3,7 +3,9 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/canonical/microceph/microceph/logger"
 )
@@ -21,6 +23,11 @@ const (
 	// AuthRotationStateFailed means rotation encountered an unrecoverable failure.
 	AuthRotationStateFailed = "failed"
 )
+
+// ErrAuthRotationRunning is returned by AbortAuthRotation when the rotation
+// lock is held by a live holder, so the abort is refused rather than clearing
+// the record out from under a running rotation.
+var ErrAuthRotationRunning = errors.New("a rotation appears to be running")
 
 // Auth rotation stages corresponding to upstream migration procedure.
 const (
@@ -328,6 +335,47 @@ UPDATE auth_rotation
 	}
 
 	return rows == 1, nil
+}
+
+// AbortAuthRotation atomically aborts an incomplete rotation record: the lock
+// is reclaimed when its lease went stale (a crashed holder), refused while a
+// live holder keeps renewing it (ErrAuthRotationRunning), and the record is
+// reset to idle otherwise. Returns the pre-reset record and whether an
+// incomplete rotation was actually aborted (idle and completed records are
+// left alone). The whole operation runs in the caller's transaction so the
+// lock check and the reset cannot race a rotation starting in between.
+func AbortAuthRotation(ctx context.Context, tx *sql.Tx, lease time.Duration) (*AuthRotationRecord, bool, error) {
+	token := time.Now().UnixNano()
+	staleBefore := token - int64(lease)
+
+	acquired, err := TryAcquireAuthRotationLock(ctx, tx, token, staleBefore)
+	if err != nil {
+		return nil, false, err
+	}
+	if !acquired {
+		return nil, false, ErrAuthRotationRunning
+	}
+
+	defer func() {
+		_, _ = ReleaseAuthRotationLock(ctx, tx, token)
+	}()
+
+	rec, err := GetAuthRotation(ctx, tx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if rec.State != AuthRotationStateInProgress && rec.State != AuthRotationStateBlocked && rec.State != AuthRotationStateFailed {
+		// idle or completed: nothing incomplete to abort.
+		return rec, false, nil
+	}
+
+	err = ResetAuthRotation(ctx, tx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return rec, true, nil
 }
 
 func sqlNullStringFromStr(s string) any {

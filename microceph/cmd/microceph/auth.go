@@ -18,6 +18,7 @@ import (
 
 var (
 	rotateAuthFunc    = client.RotateAuth
+	abortAuthFunc     = client.AbortAuth
 	getAuthStatusFunc = client.GetAuthStatus
 )
 
@@ -49,6 +50,7 @@ type cmdAuthRotate struct {
 
 	flagKeyType string
 	flagClient  string
+	flagAbort   bool
 }
 
 // authRotationBlockedExitCode is the distinct process exit code returned when a
@@ -76,6 +78,12 @@ Rotate it explicitly with --client client.admin when you are ready; a full
 run pauses before disallowing insecure ciphers until then, and re-running
 this command afterwards resumes and finishes.
 
+Use --abort to clear an incomplete rotation (blocked or failed, e.g. a
+--client filter whose rotation cannot succeed, or a key type you no longer
+want) so new rotations are accepted again. A rotation that is actually
+running cannot be aborted. Note that aborting does not undo keys that were
+already rotated.
+
 Exits with status 3 when rotation is blocked (e.g. unmanaged credentials,
 incompatible client sessions, or a pending admin rotation); a re-run with
 the same key type resumes.`,
@@ -88,11 +96,15 @@ the same key type resumes.`,
 		if len(args) > 0 {
 			return fmt.Errorf("unknown argument %q; to select the key type use --key-type", args[0])
 		}
+		if c.flagAbort && (c.flagKeyType != "" || c.flagClient != "") {
+			return fmt.Errorf("--abort cannot be combined with --key-type or --client")
+		}
 		return nil
 	}
 
 	cmd.Flags().StringVar(&c.flagKeyType, "key-type", "", "Key type/cipher to rotate keys to (defaults to auth_preferred_cipher)")
 	cmd.Flags().StringVar(&c.flagClient, "client", "", "Rotate and distribute only the specified client key (--client client.admin runs the protected admin rotation, which the full run does not do automatically)")
+	cmd.Flags().BoolVar(&c.flagAbort, "abort", false, "Clear an incomplete rotation record so new rotations are accepted again (does not undo keys that were already rotated)")
 
 	return cmd
 }
@@ -124,6 +136,23 @@ func (c *cmdAuthRotate) Run(cmd *cobra.Command, args []string) error {
 	cli, err := m.LocalClient()
 	if err != nil {
 		return err
+	}
+
+	if c.flagAbort {
+		resp, err := abortAuthFunc(cmd.Context(), cli)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("Aborted the %s rotation", resp.State)
+		if resp.TargetKeyType != "" {
+			fmt.Printf(" to %s", resp.TargetKeyType)
+		}
+		if resp.ClientName != "" {
+			fmt.Printf(" (client: %s)", resp.ClientName)
+		}
+		fmt.Print("; rotation state cleared\n")
+		return nil
 	}
 
 	resp, err := rotateAuthFunc(cmd.Context(), cli, c.flagKeyType, c.flagClient)

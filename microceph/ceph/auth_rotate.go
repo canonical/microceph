@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -68,57 +69,59 @@ type ClientSessionInfo struct {
 
 // Functions that can be patched for testing.
 var (
-	getMonCiphersFunc                 = GetMonCiphers
-	setMonAllowedCiphersFunc          = SetMonAllowedCiphers
-	setMonPreferredCipherFunc         = SetMonPreferredCipher
-	setMonServiceCipherFunc           = SetMonServiceCipher
-	setMonAllowInsecureKeyFunc        = SetMonAllowInsecureKey
-	rotateEntityKeyFunc               = RotateEntityKey
-	rotateEntityKeyToFileFunc         = RotateEntityKeyToFile
-	getOrCreatePendingKeyFunc         = GetOrCreatePendingKey
-	getEntityKeyringFunc              = GetEntityKeyring
-	commitPendingKeyFunc              = CommitPendingKey
-	clearPendingKeyFunc               = ClearPendingKey
-	wipeRotatingServiceKeysFunc       = WipeRotatingServiceKeys
-	dumpAuthKeysFunc                  = DumpAuthKeys
-	getAuthHealthWarningsFunc         = GetAuthHealthWarnings
-	getClientSessionsFunc             = GetClientSessions
-	resolveTargetKeyTypeFunc          = ResolveTargetKeyType
-	checkAuthRotationReadinessFunc    = CheckAuthRotationReadiness
-	checkClusterMembersReachableFunc  = checkClusterMembersReachable
-	checkMonQuorumReadyFunc           = checkMonQuorumReady
-	checkCipherCompatibilityFunc      = checkCipherCompatibility
-	prepareAuthRotationFunc           = PrepareAuthRotation
-	snapStartFunc                     = snapStart
-	snapRestartFunc                   = snapRestart
-	waitForMonQuorumFunc              = waitForMonQuorum
-	waitForMGRReadyFunc               = waitForMGRReady
-	waitForMDSReadyFunc               = waitForMDSReady
-	waitForOSDUpFunc                  = waitForOSDUp
-	rotateMonKeyAuthFunc              = RotateMonKeyAuth
-	deployMonKeyringAndRestartFunc    = deployMonKeyringAndRestart
-	rotateLocalMGRKeyFunc             = RotateLocalMGRKey
-	rotateLocalMDSKeyFunc             = RotateLocalMDSKey
-	rotateLocalOSDKeysFunc            = RotateLocalOSDKeys
-	getLocalOSDIDsFunc                = getLocalOSDIDs
-	rotateMemberDaemonsFunc           = RotateMemberDaemons
-	sendMemberAuthRotateFunc          = client.SendMemberAuthRotateToClusterMembers
-	rotateDaemonsFunc                 = RotateDaemons
-	activateAndCheckFunc              = ActivateAndCheck
-	switchServiceAuthenticationFunc   = SwitchServiceAuthentication
-	preventNewInsecureKeysFunc        = PreventNewInsecureKeys
-	createAdminBackupKeyFunc          = createAdminBackupKey
-	verifyAdminAccessFunc             = verifyAdminAccess
-	deleteAdminBackupKeyFunc          = deleteAdminBackupKey
-	updateAdminKeyringInDBFunc        = updateAdminKeyringInDB
-	updateAdminKeyringFilesFunc       = updateAdminKeyringFiles
-	rotateAdminKeyFunc                = RotateAdminKey
-	rotateSingleClientKeyFunc         = RotateSingleClientKey
-	rotateManagedClientsFunc          = RotateManagedClients
-	inspectClientSessionBlockersFunc  = InspectClientSessionBlockers
-	disallowInsecureLegacyCiphersFunc = DisallowInsecureLegacyCiphers
-	finalizeAuthRotationFunc          = FinalizeAuthRotation
-	buildAuthStatusFunc               = BuildAuthStatus
+	getMonCiphersFunc                  = GetMonCiphers
+	setMonAllowedCiphersFunc           = SetMonAllowedCiphers
+	setMonPreferredCipherFunc          = SetMonPreferredCipher
+	setMonServiceCipherFunc            = SetMonServiceCipher
+	setMonAllowInsecureKeyFunc         = SetMonAllowInsecureKey
+	getMonAllowInsecureKeyFunc         = GetMonAllowInsecureKey
+	rotateEntityKeyFunc                = RotateEntityKey
+	rotateEntityKeyToFileFunc          = RotateEntityKeyToFile
+	getOrCreatePendingKeyFunc          = GetOrCreatePendingKey
+	getEntityKeyringFunc               = GetEntityKeyring
+	commitPendingKeyFunc               = CommitPendingKey
+	clearPendingKeyFunc                = ClearPendingKey
+	wipeRotatingServiceKeysFunc        = WipeRotatingServiceKeys
+	dumpAuthKeysFunc                   = DumpAuthKeys
+	getAuthHealthWarningsFunc          = GetAuthHealthWarnings
+	getClientSessionsFunc              = GetClientSessions
+	resolveTargetKeyTypeFunc           = ResolveTargetKeyType
+	checkAuthRotationReadinessFunc     = CheckAuthRotationReadiness
+	checkClusterMembersReachableFunc   = checkClusterMembersReachable
+	checkMonQuorumReadyFunc            = checkMonQuorumReady
+	checkCipherCompatibilityFunc       = checkCipherCompatibility
+	prepareAuthRotationFunc            = PrepareAuthRotation
+	snapStartFunc                      = snapStart
+	snapRestartFunc                    = snapRestart
+	waitForMonQuorumFunc               = waitForMonQuorum
+	waitForMGRReadyFunc                = waitForMGRReady
+	waitForMDSReadyFunc                = waitForMDSReady
+	waitForOSDUpFunc                   = waitForOSDUp
+	rotateMonKeyAuthFunc               = RotateMonKeyAuth
+	deployMonKeyringAndRestartFunc     = deployMonKeyringAndRestart
+	rotateLocalMGRKeyFunc              = RotateLocalMGRKey
+	rotateLocalMDSKeyFunc              = RotateLocalMDSKey
+	rotateLocalOSDKeysFunc             = RotateLocalOSDKeys
+	getLocalOSDIDsFunc                 = getLocalOSDIDs
+	rotateMemberDaemonsFunc            = RotateMemberDaemons
+	sendMemberAuthRotateFunc           = client.SendMemberAuthRotateToClusterMembers
+	sendUpdateClientConfFunc           = client.SendUpdateClientConfRequestToClusterMembers
+	rotateDaemonsFunc                  = RotateDaemons
+	activateAndCheckFunc               = ActivateAndCheck
+	switchServiceAuthenticationFunc    = SwitchServiceAuthentication
+	preventNewInsecureKeysFunc         = PreventNewInsecureKeys
+	createAdminBackupKeyFunc           = createAdminBackupKey
+	verifyAdminAccessFunc              = verifyAdminAccess
+	deleteAdminBackupKeyFunc           = deleteAdminBackupKey
+	updateAdminKeyringInDBFunc         = updateAdminKeyringInDB
+	updateAdminKeyringFilesFunc        = updateAdminKeyringFiles
+	rotateAdminKeyFunc                 = RotateAdminKey
+	rotateSingleClientKeyFunc          = RotateSingleClientKey
+	rotateManagedClientsFunc           = RotateManagedClients
+	inspectClientSessionAdvisoriesFunc = InspectClientSessionAdvisories
+	disallowInsecureLegacyCiphersFunc  = DisallowInsecureLegacyCiphers
+	finalizeAuthRotationFunc           = FinalizeAuthRotation
+	buildAuthStatusFunc                = BuildAuthStatus
 )
 
 // Query the monitor map and return the current cipher config.
@@ -215,6 +218,20 @@ func SetMonAllowInsecureKey(ctx context.Context, allow bool) error {
 	return nil
 }
 
+// GetMonAllowInsecureKey reads whether monitors will create keys with
+// insecure ciphers (the mon_auth_allow_insecure_key option, effective value
+// including defaults).
+func GetMonAllowInsecureKey(ctx context.Context) (bool, error) {
+	output, err := cephRunContext(ctx, "config", "get", "mon", "mon_auth_allow_insecure_key", "-f", "json")
+	if err != nil {
+		return false, fmt.Errorf("failed to read mon_auth_allow_insecure_key: %w", err)
+	}
+
+	// The formatter may wrap the value as a JSON string, a JSON bool or bare
+	// text; only an explicit "false" means disabled.
+	return !strings.Contains(strings.ToLower(output), "false"), nil
+}
+
 // Determine the effective key type for rotation.
 // If requestedType is empty, it queries Ceph's current auth_preferred_cipher.
 func ResolveTargetKeyType(ctx context.Context, requestedType string) (string, error) {
@@ -257,23 +274,110 @@ func CheckAuthRotationReadiness(ctx context.Context, s interfaces.StateInterface
 	return nil
 }
 
+// resolveRotationTargetKeyType determines the key type a rotation runs with.
+// A fresh rotation resolves an empty request from the current preferred
+// cipher. A resume of an incomplete record must NOT resolve: the preferred
+// cipher is only switched by prepare_auth, so resolving an empty request
+// would reject resuming a rotation that stopped before it (its target still
+// differs from the yet-unswitched preferred cipher). Instead the explicit
+// value is passed through as-is (possibly empty) for InitOrResumeAuthRotation
+// to match against the record, whose target the caller inherits after init.
+// A record without a target (legacy state) resolves as before.
+func resolveRotationTargetKeyType(ctx context.Context, resuming bool, recordTarget string, targetKeyType string) (string, error) {
+	if resuming && recordTarget != "" {
+		return targetKeyType, nil
+	}
+
+	return resolveTargetKeyTypeFunc(ctx, targetKeyType)
+}
+
 func checkCipherCompatibility(ctx context.Context, targetKeyType string) error {
 	switch targetKeyType {
 	case "aes":
 		return nil
 	case "aes256k":
-		output, err := cephRunContext(ctx, "mon", "dump", "-f", "json")
+		// The monitors themselves gate aes256k key minting on the
+		// cephx_auth_aes256k mon feature. min_mon_release cannot tell support
+		// apart: the cipher arrived in point releases (19.2.6, 20.2.4) that
+		// share their major version with releases lacking it.
+		output, err := cephRunContext(ctx, "mon", "feature", "ls", "-f", "json")
 		if err != nil {
-			return fmt.Errorf("failed to fetch monitor dump for compatibility check: %w", err)
+			return fmt.Errorf("failed to fetch monitor features for compatibility check: %w", err)
 		}
-		// If min_mon_release is present and below Squid (19), aes256k is not supported.
-		minRelease := gjson.Get(output, "min_mon_release").Int()
-		if minRelease > 0 && minRelease < 19 {
-			return fmt.Errorf("ceph min_mon_release (%d) is older than Squid (19); cannot use aes256k", minRelease)
+		if !strings.Contains(output, "cephx_auth_aes256k") {
+			return fmt.Errorf("monitors do not support the cephx_auth_aes256k feature; upgrade Ceph to a release with aes256k support (19.2.6, 20.2.4 or newer) before rotating to aes256k")
 		}
+
+		// Cluster members are refreshed one at a time, so a member running
+		// daemons whose binaries cannot use aes256k would be locked out the
+		// next time those daemons re-authenticate with their new keys. Refuse
+		// until every daemon the cluster knows about runs a supporting release.
+		output, err = cephRunContext(ctx, "versions", "-f", "json")
+		if err != nil {
+			return fmt.Errorf("failed to fetch daemon versions for compatibility check: %w", err)
+		}
+		err = checkDaemonVersionsSupportAES256K(output)
+		if err != nil {
+			return err
+		}
+
 		return nil
 	default:
 		return fmt.Errorf("unsupported key type %q; supported types are 'aes' and 'aes256k'", targetKeyType)
+	}
+}
+
+// checkDaemonVersionsSupportAES256K verifies that every daemon the cluster
+// reports in 'ceph versions' output runs a release that supports aes256k.
+func checkDaemonVersionsSupportAES256K(output string) error {
+	for daemonType, versions := range gjson.Parse(output).Map() {
+		if daemonType == "overall" {
+			// Aggregate over the per-daemon entries already checked.
+			continue
+		}
+		for version := range versions.Map() {
+			if !versionSupportsAES256K(version) {
+				return fmt.Errorf(
+					"%s daemons on release %s do not support aes256k (supported from 19.2.6, 20.2.4 or any newer release); upgrade every cluster member before rotating to aes256k",
+					daemonType, version)
+			}
+		}
+	}
+
+	return nil
+}
+
+// versionSupportsAES256K reports whether a Ceph release supports aes256k: the
+// cipher arrived in squid 19.2.6 and tentacle 20.2.4, and is present in any
+// later release series.
+func versionSupportsAES256K(version string) bool {
+	parts := strings.SplitN(version, ".", 3)
+	if len(parts) < 3 {
+		return false
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return false
+	}
+	patch, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return false
+	}
+
+	switch {
+	case major >= 21:
+		return true
+	case major == 20:
+		return minor > 2 || (minor == 2 && patch >= 4)
+	case major == 19:
+		return minor == 2 && patch >= 6
+	default:
+		return false
 	}
 }
 
@@ -331,8 +435,34 @@ func PrepareAuthRotation(ctx context.Context, targetKeyType string) error {
 		return fmt.Errorf("failed to get monitor ciphers: %w", err)
 	}
 
+	// Refuse to weaken a hardened cluster: an insecure target is only
+	// acceptable when it is already allowed and insecure key creation has
+	// not been disabled. 'mon set' does not gate these changes, and allowing
+	// an insecure cipher flips mon_auth_allow_insecure_key back to its
+	// permissive default (AuthMonitor::check_health), so this step must
+	// never re-allow an insecure cipher that has been removed.
+	if targetKeyType != "aes256k" {
+		if !slices.Contains(ciphers.AuthAllowedCiphers, targetKeyType) {
+			return fmt.Errorf(
+				"target cipher %q is insecure and not allowed by auth_allowed_ciphers %v: MicroCeph never re-allows insecure ciphers; rotate to aes256k or adjust the cluster's cipher policy manually",
+				targetKeyType, ciphers.AuthAllowedCiphers)
+		}
+
+		allowInsecure, err := getMonAllowInsecureKeyFunc(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to read mon_auth_allow_insecure_key: %w", err)
+		}
+		if !allowInsecure {
+			return fmt.Errorf(
+				"target cipher %q is insecure and mon_auth_allow_insecure_key is false: this cluster is hardened against insecure keys, so rotating back to %q is refused",
+				targetKeyType, targetKeyType)
+		}
+	}
+
 	// Step 1: Allow the requested type without dropping existing clients.
 	if !slices.Contains(ciphers.AuthAllowedCiphers, targetKeyType) {
+		// Only reachable for the secure target: insecure targets were
+		// refused above and are never re-added here.
 		newAllowed := append(ciphers.AuthAllowedCiphers, targetKeyType)
 		err = setMonAllowedCiphersFunc(ctx, newAllowed)
 		if err != nil {
@@ -674,21 +804,25 @@ func updateAdminKeyringFiles(ctx context.Context, s interfaces.StateInterface, s
 		return fmt.Errorf("failed to render ceph.client.admin.keyring: %w", err)
 	}
 
-	// Update remote members if cluster is available
+	// Update remote members if cluster is available. A member that misses the
+	// update keeps authenticating with the key that the commit below revokes,
+	// so the failure must fail the rotation: at this point the pending key is
+	// not yet active, so a retry resumes cleanly and re-distributes.
 	if s != nil && s.ClusterState() != nil && s.ClusterState().Connect() != nil {
-		err = client.SendUpdateClientConfRequestToClusterMembers(ctx, s)
+		err = sendUpdateClientConfFunc(ctx, s)
 		if err != nil {
-			logger.Warnf("failed to distribute updated admin keyring to remote members: %v", err)
+			return fmt.Errorf("failed to distribute updated admin keyring to remote members: %w", err)
 		}
 	}
 
 	return nil
 }
 
-// The outcome of rotating managed clients plus any blockers.
+// The outcome of rotating managed clients plus any blockers. External
+// consumers are only ever blocked by name (unmanaged credentials); session
+// compatibility is advisory and never blocks.
 type ClientRotationResult struct {
 	RotatedClients   []string
-	BlockedClients   map[string]string
 	UnmanagedClients []string
 	HasBlockers      bool
 	BlockerMessage   string
@@ -765,25 +899,33 @@ func getClientKeyringPaths(clientName string) ([]string, string) {
 	return nil, ""
 }
 
-// Check active client sessions for incompatible library/kernel versions.
-func InspectClientSessionBlockers(ctx context.Context, targetKeyType string) (map[string]string, error) {
+// InspectClientSessionAdvisories reports connected clients whose reported
+// release is known to predate aes256k. ADVISORY ONLY — the result must not
+// gate rotation: con_features_release is derived from connection feature
+// bits, and aes256k added no client feature bit, so a client from a point
+// release without the cipher reports the same release name as one with it,
+// and kernel clients report stale release names regardless of capability.
+// Sessions are only visible while open, and client.admin is not covered.
+// External consumers are instead gated by the explicit unmanaged-credential
+// blocker, which makes the operator deal with them by name.
+func InspectClientSessionAdvisories(ctx context.Context, targetKeyType string) (map[string]string, error) {
 	sessions, err := getClientSessionsFunc(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query client sessions: %w", err)
 	}
 
-	blockers := make(map[string]string)
+	advisories := make(map[string]string)
 	for _, s := range sessions {
 		if !s.Open {
 			continue
 		}
 		if !ClientSupportsKeyType(s, targetKeyType) {
 			entity := NormalizeClientName(s.EntityName)
-			blockers[entity] = fmt.Sprintf("connected session on host %q has incompatible client release %q; cannot use %s", s.RemoteHost, s.ConFeaturesRelease, targetKeyType)
+			advisories[entity] = fmt.Sprintf("connected session on host %q reports client release %q which predates aes256k", s.RemoteHost, s.ConFeaturesRelease)
 		}
 	}
 
-	return blockers, nil
+	return advisories, nil
 }
 
 // RotateSingleClientKey issues a pending key alongside the old key, distributes it to
@@ -792,21 +934,13 @@ func RotateSingleClientKey(ctx context.Context, clientName string, targetKeyType
 	norm := NormalizeClientName(clientName)
 	logger.Infof("Rotating client credential for %s to %s", norm, targetKeyType)
 
-	// 1. Check if client has a session blocker
-	blockers, err := inspectClientSessionBlockersFunc(ctx, targetKeyType)
-	if err == nil {
-		if reason, ok := blockers[norm]; ok {
-			return fmt.Errorf("client %s cannot be rotated: %s", norm, reason)
-		}
-	}
-
-	// 2. Issue a pending key alongside the current key.
+	// 1. Issue a pending key alongside the old key.
 	pendingKey, err := getOrCreatePendingKeyFunc(ctx, norm)
 	if err != nil {
 		return fmt.Errorf("failed to issue pending key for %s: %w", norm, err)
 	}
 
-	// 2b. Verify the minted pending key cipher before anything is distributed.
+	// 1b. Verify the minted pending key cipher before anything is distributed.
 	//     get-or-create-pending takes no key-type argument: AuthMonitor mints
 	//     pending keys with the mon's auth_preferred_cipher, which the full
 	//     pipeline sets in PrepareAuthRotation but single-client mode must not
@@ -955,20 +1089,25 @@ func RotateManagedClients(ctx context.Context, targetKeyType string, progress *A
 		progress = &AuthRotationProgress{}
 	}
 
-	result := ClientRotationResult{
-		BlockedClients: make(map[string]string),
-	}
+	result := ClientRotationResult{}
 
 	entries, err := dumpAuthKeysFunc(ctx)
 	if err != nil {
 		return result, fmt.Errorf("failed to dump auth keys for client discovery: %w", err)
 	}
 
-	// Check active session blockers across the cluster
-	sessionBlockers, err := inspectClientSessionBlockersFunc(ctx, targetKeyType)
+	// Session compatibility is advisory only: connection feature bits cannot
+	// show aes256k support (see InspectClientSessionAdvisories), so connected
+	// clients with known-legacy releases are reported but never block the
+	// rotation. External consumers are gated by the explicit
+	// unmanaged-credential blocker below, which makes the operator deal with
+	// them by name.
+	advisories, err := inspectClientSessionAdvisoriesFunc(ctx, targetKeyType)
 	if err != nil {
-		logger.Warnf("failed to inspect client session blockers: %v", err)
-		sessionBlockers = make(map[string]string)
+		logger.Warnf("failed to inspect client sessions: %v", err)
+	}
+	for entity, reason := range advisories {
+		logger.Warnf("client %s: %s (advisory: verify support for %s manually)", entity, reason, targetKeyType)
 	}
 
 	for _, entry := range entries {
@@ -996,12 +1135,6 @@ func RotateManagedClients(ctx context.Context, targetKeyType string, progress *A
 			continue
 		}
 
-		// Check session blocker
-		if reason, blocked := sessionBlockers[norm]; blocked {
-			result.BlockedClients[norm] = reason
-			continue
-		}
-
 		// Rotate managed client
 		err = rotateSingleClientKeyFunc(ctx, norm, targetKeyType)
 		if err != nil {
@@ -1015,13 +1148,6 @@ func RotateManagedClients(ctx context.Context, targetKeyType string, progress *A
 	if len(result.UnmanagedClients) > 0 {
 		result.HasBlockers = true
 		result.BlockerMessage = fmt.Sprintf("Unmanaged credentials must be rotated manually before rotation can proceed (unmanaged: %s)", strings.Join(result.UnmanagedClients, ", "))
-	} else if len(result.BlockedClients) > 0 {
-		result.HasBlockers = true
-		var reasons []string
-		for client, r := range result.BlockedClients {
-			reasons = append(reasons, fmt.Sprintf("%s: %s", client, r))
-		}
-		result.BlockerMessage = fmt.Sprintf("Connected clients have incompatible library/kernel: %s", strings.Join(reasons, "; "))
 	}
 
 	return result, nil
@@ -1389,6 +1515,35 @@ const authRotationLockLease = 10 * time.Minute
 // between members cannot expire a live holder.
 const authRotationHeartbeatInterval = time.Minute
 
+// AbortAuthRotation clears an incomplete rotation record so a wedged rotation
+// (a --client filter whose rotation cannot succeed, or a key type the operator
+// no longer wants) stops rejecting new rotations. A rotation that is actually
+// running cannot be aborted mid-flight: the abort is refused while the lock is
+// live, and a lock left behind by a crashed daemon is reclaimable once its
+// lease expires. Returns the pre-reset record and whether an incomplete
+// rotation was actually aborted.
+func AbortAuthRotation(ctx context.Context, s interfaces.StateInterface) (*database.AuthRotationRecord, bool, error) {
+	if s == nil || s.ClusterState() == nil || s.ClusterState().Database() == nil {
+		return nil, false, fmt.Errorf("no cluster database available")
+	}
+
+	var rec *database.AuthRotationRecord
+	aborted := false
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		rec, aborted, err = database.AbortAuthRotation(ctx, tx, authRotationLockLease)
+		return err
+	})
+	if errors.Is(err, database.ErrAuthRotationRunning) {
+		return nil, false, fmt.Errorf("cannot abort: %w; if the daemon restarted mid-rotation, retry once its lock lease (%s) expires", err, authRotationLockLease)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+
+	return rec, aborted, nil
+}
+
 // runSingleClientRotation executes a --client rotation. client.admin routes to
 // the protected admin rotation (the generic pending-key path matches no admin
 // keyring paths, so commit-pending would retire the admin key while the
@@ -1527,8 +1682,32 @@ func ExecuteAuthRotation(ctx context.Context, s interfaces.StateInterface, targe
 		}
 	}
 
+	// Peek at the record to decide whether this invocation resumes an incomplete
+	// rotation; a resume must not resolve an empty --key-type from the
+	// preferred cipher (see resolveRotationTargetKeyType).
+	resuming := false
+	recordTarget := ""
+	var err error
+	if hasDB {
+		err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			existing, err := database.GetAuthRotation(ctx, tx)
+			if err != nil {
+				return err
+			}
+			resuming = existing.State == database.AuthRotationStateInProgress ||
+				existing.State == database.AuthRotationStateBlocked ||
+				existing.State == database.AuthRotationStateFailed
+			recordTarget = existing.TargetKeyType
+			return nil
+		})
+		if err != nil {
+			releaseLock()
+			return nil, fmt.Errorf("failed to read rotation record: %w", err)
+		}
+	}
+
 	// Resolve target key type
-	resolvedKeyType, err := resolveTargetKeyTypeFunc(ctx, targetKeyType)
+	resolvedKeyType, err := resolveRotationTargetKeyType(ctx, resuming, recordTarget, targetKeyType)
 	if err != nil {
 		releaseLock()
 		return nil, err
@@ -1567,6 +1746,13 @@ func ExecuteAuthRotation(ctx context.Context, s interfaces.StateInterface, targe
 			Stage:         database.AuthRotationStageReadiness,
 			ClientName:    clientName,
 		}
+	}
+
+	// The stages run against the run's actual target: on a resume this is the
+	// record's target (inherited via the empty --key-type exemption), on a
+	// fresh run it is identical to the resolved type.
+	if rec.TargetKeyType != "" {
+		resolvedKeyType = rec.TargetKeyType
 	}
 
 	if !hasDB {
@@ -2401,26 +2587,30 @@ func GetClientSessions(ctx context.Context) ([]ClientSessionInfo, error) {
 // Parse the JSON output from monitor sessions commands.
 func parseClientSessions(output string) []ClientSessionInfo {
 	var sessions []ClientSessionInfo
-
-	parsed := gjson.Parse(output)
 	var rawSessions []gjson.Result
 
-	if parsed.IsArray() {
-		for _, item := range parsed.Array() {
-			// Some ceph versions return an array of {response: [...]} per monitor.
-			resp := item.Get("response")
-			if resp.IsArray() {
+	for _, segment := range splitMonTellOutput(output) {
+		parsed := gjson.Parse(segment)
+
+		if parsed.IsArray() {
+			for _, item := range parsed.Array() {
+				// Some ceph versions return an array of {response: [...]} per monitor.
+				resp := item.Get("response")
+				if resp.IsArray() {
+					rawSessions = append(rawSessions, resp.Array()...)
+				} else {
+					rawSessions = append(rawSessions, item)
+				}
+			}
+		} else if parsed.IsObject() {
+			// Single object response or wrapped in a 'sessions' key.
+			if sessArr := parsed.Get("sessions"); sessArr.IsArray() {
+				rawSessions = append(rawSessions, sessArr.Array()...)
+			} else if resp := parsed.Get("response"); resp.IsArray() {
 				rawSessions = append(rawSessions, resp.Array()...)
 			} else {
-				rawSessions = append(rawSessions, item)
+				rawSessions = append(rawSessions, parsed)
 			}
-		}
-	} else if parsed.IsObject() {
-		// Single object response or wrapped in a 'sessions' key.
-		if sessArr := parsed.Get("sessions"); sessArr.IsArray() {
-			rawSessions = append(rawSessions, sessArr.Array()...)
-		} else {
-			rawSessions = append(rawSessions, parsed)
 		}
 	}
 
@@ -2447,6 +2637,40 @@ func parseClientSessions(output string) []ClientSessionInfo {
 	}
 
 	return sessions
+}
+
+// splitMonTellOutput splits 'tell mon.*' output into per-monitor JSON
+// documents: with more than one monitor, ceph's wildcard tell prefixes each
+// target's output with 'mon.<id>: ', which makes the whole output unparseable
+// as a single document. Prefixed output is split on the prefix lines;
+// unprefixed output (single monitor or fallback commands) passes through.
+func splitMonTellOutput(output string) []string {
+	trimmed := strings.TrimSpace(output)
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return []string{trimmed}
+	}
+
+	var segments []string
+	var current strings.Builder
+	for _, line := range strings.Split(trimmed, "\n") {
+		if strings.HasPrefix(line, "mon.") {
+			if current.Len() > 0 {
+				segments = append(segments, current.String())
+				current.Reset()
+			}
+			// Strip the "mon.<id>: " prefix from the target line.
+			if idx := strings.Index(line, ": "); idx != -1 {
+				line = line[idx+2:]
+			}
+		}
+		current.WriteString(line)
+		current.WriteString("\n")
+	}
+	if current.Len() > 0 {
+		segments = append(segments, current.String())
+	}
+
+	return segments
 }
 
 // Known older Ceph releases that lack AES256K support.

@@ -4,6 +4,9 @@ package types
 type AuthRotateRequest struct {
 	KeyType string `json:"key_type" yaml:"key_type"`
 	Client  string `json:"client" yaml:"client"`
+	// Abort clears an incomplete rotation record instead of starting or
+	// resuming one; it cannot be combined with key_type or client.
+	Abort bool `json:"abort,omitempty" yaml:"abort,omitempty"`
 }
 
 // AuthRotateResponse represents the outcome of an auth rotate command.

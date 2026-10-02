@@ -32,6 +32,23 @@ func RotateAuth(ctx context.Context, c mcTypes.Client, keyType string, clientNam
 	return &resp, nil
 }
 
+// AbortAuth clears an incomplete CephX key rotation record. The response
+// describes the record that was aborted.
+func AbortAuth(ctx context.Context, c mcTypes.Client) (*types.AuthRotateResponse, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+
+	req := types.AuthRotateRequest{Abort: true}
+	var resp types.AuthRotateResponse
+
+	err := c.Query(queryCtx, "POST", types.ExtendedPathPrefix, &api.NewURL().Path("auth", "rotate").URL, req, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to abort auth rotation: %w", err)
+	}
+
+	return &resp, nil
+}
+
 // RotateAuthMember asks a single member to rotate and restart only its own daemons:
 // deploy the shared mon. keyring (if it runs a mon) and restart it, then stop, rotate,
 // and restart its local mgr/osd/mds daemons. Called by the coordinator one member at

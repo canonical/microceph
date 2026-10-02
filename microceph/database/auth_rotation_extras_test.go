@@ -186,6 +186,39 @@ func TestInitOrResumeFromBlockedAndFailed(t *testing.T) {
 	assert.Equal(t, "", rec.Blocker)
 	assert.Equal(t, "", rec.Detail)
 	require.NoError(t, tx2.Commit())
+
+	// Bare resume: an empty key type must be exempt from the target check and
+	// inherit the record's target, so a rotation that stopped before
+	// prepare_auth (preferred cipher still differs) can be resumed with a
+	// bare command.
+	tx3, err := db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	err = SetAuthRotationBlocker(context.Background(), tx3, "readiness check failed", "")
+	require.NoError(t, err)
+	require.NoError(t, tx3.Commit())
+
+	tx4, err := db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	rec, resumed, err = InitOrResumeAuthRotation(context.Background(), tx4, "", "")
+	require.NoError(t, err)
+	assert.True(t, resumed)
+	assert.Equal(t, "aes256k", rec.TargetKeyType)
+	assert.Equal(t, AuthRotationStateInProgress, rec.State)
+	require.NoError(t, tx4.Commit())
+
+	// A mismatching explicit type is still rejected on resume.
+	tx5, err := db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	err = SetAuthRotationBlocker(context.Background(), tx5, "readiness check failed", "")
+	require.NoError(t, err)
+	require.NoError(t, tx5.Commit())
+
+	tx6, err := db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	_, _, err = InitOrResumeAuthRotation(context.Background(), tx6, "aes", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot rotate to")
+	require.NoError(t, tx6.Rollback())
 }
 
 func TestInitOrResumeAfterCompleted(t *testing.T) {
@@ -353,4 +386,77 @@ func TestInitOrResumeAdminSubStep(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot change client")
 	require.NoError(t, tx.Rollback())
+}
+
+func TestAbortAuthRotation(t *testing.T) {
+	lease := 10 * time.Second
+
+	// 1. Idle record: nothing incomplete to abort, record untouched.
+	db := setupAuthRotationDB(t)
+	lockTx(t, db, func(tx *sql.Tx) {
+		rec, aborted, err := AbortAuthRotation(context.Background(), tx, lease)
+		require.NoError(t, err)
+		assert.False(t, aborted)
+		assert.Equal(t, AuthRotationStateIdle, rec.State)
+	})
+
+	// 2. Blocked record: aborted and reset to idle with all fields cleared.
+	db = setupAuthRotationDB(t)
+	lockTx(t, db, func(tx *sql.Tx) {
+		err := SetAuthRotation(context.Background(), tx, AuthRotationRecord{
+			TargetKeyType: "aes256k",
+			State:         AuthRotationStateBlocked,
+			Stage:         AuthRotationStageRotateClients,
+			ClientName:    "client.radosgw.gateway",
+			StepProgress:  `{"rotated_clients":["client.rgw"]}`,
+			Blocker:       "session incompatible",
+		})
+		require.NoError(t, err)
+	})
+	lockTx(t, db, func(tx *sql.Tx) {
+		rec, aborted, err := AbortAuthRotation(context.Background(), tx, lease)
+		require.NoError(t, err)
+		assert.True(t, aborted)
+		assert.Equal(t, AuthRotationStateBlocked, rec.State, "the returned record describes the aborted rotation")
+	})
+	lockTx(t, db, func(tx *sql.Tx) {
+		rec, err := GetAuthRotation(context.Background(), tx)
+		require.NoError(t, err)
+		assert.Equal(t, AuthRotationStateIdle, rec.State)
+		assert.Empty(t, rec.TargetKeyType)
+		assert.Empty(t, rec.Stage)
+		assert.Empty(t, rec.ClientName)
+		assert.Empty(t, rec.StepProgress)
+		assert.Empty(t, rec.Blocker)
+	})
+
+	// 3. Live lock (fresh lease): a running rotation cannot be aborted.
+	db = setupAuthRotationDB(t)
+	now := time.Now().UnixNano()
+	lockTx(t, db, func(tx *sql.Tx) {
+		err := SetAuthRotation(context.Background(), tx, AuthRotationRecord{
+			TargetKeyType: "aes256k",
+			State:         AuthRotationStateInProgress,
+			Stage:         AuthRotationStageRotateDaemons,
+		})
+		require.NoError(t, err)
+	})
+	lockTx(t, db, func(tx *sql.Tx) {
+		acquired, err := TryAcquireAuthRotationLock(context.Background(), tx, now, now-int64(lease))
+		require.NoError(t, err)
+		assert.True(t, acquired)
+	})
+	lockTx(t, db, func(tx *sql.Tx) {
+		_, _, err := AbortAuthRotation(context.Background(), tx, lease)
+		require.ErrorIs(t, err, ErrAuthRotationRunning)
+	})
+
+	// 4. Stale lock (lease expired, e.g. a crashed daemon): reclaimed, and
+	//    the incomplete record is aborted.
+	lockTx(t, db, func(tx *sql.Tx) {
+		rec, aborted, err := AbortAuthRotation(context.Background(), tx, 0)
+		require.NoError(t, err)
+		assert.True(t, aborted)
+		assert.Equal(t, AuthRotationStateInProgress, rec.State)
+	})
 }

@@ -12,11 +12,12 @@ import (
 type MockState struct {
 	mcTypes.State
 
-	URL         *api.URL
-	ClusterName string
-	Cert        *shared.CertInfo
-	DBObj       mcTypes.DB
-	StoreObj    mcTypes.Store
+	URL          *api.URL
+	ClusterName  string
+	Cert         *shared.CertInfo
+	DBObj        mcTypes.DB
+	StoreObj     mcTypes.Store
+	ConnectorObj mcTypes.Connector
 }
 
 // Name returns the name supplied to MockState.
@@ -47,4 +48,9 @@ func (m *MockState) Database() mcTypes.DB {
 // Truststore returns the Store supplied to MockState, or nil when unset.
 func (m *MockState) Truststore() mcTypes.Store {
 	return m.StoreObj
+}
+
+// Connect returns the Connector supplied to MockState, or nil when unset.
+func (m *MockState) Connect() mcTypes.Connector {
+	return m.ConnectorObj
 }

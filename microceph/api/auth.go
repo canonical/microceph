@@ -41,6 +41,7 @@ var authRotateMemberCmd = mcTypes.Endpoint{
 
 var (
 	executeAuthRotationFunc = ceph.ExecuteAuthRotation
+	abortAuthRotationFunc   = ceph.AbortAuthRotation
 	buildAuthStatusFunc     = ceph.BuildAuthStatus
 	rotateMemberDaemonsFunc = ceph.RotateMemberDaemons
 )
@@ -48,7 +49,8 @@ var (
 // cmdAuthRotatePost handles auth rotation initiation or resumption. The
 // rotation runs detached on the daemon (so it outlives this request and any
 // CLI timeout) and is reported by auth status; this returns the initialized
-// record immediately.
+// record immediately. With abort set, an incomplete rotation record is
+// cleared instead; the response then describes the record that was aborted.
 func cmdAuthRotatePost(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var req types.AuthRotateRequest
 
@@ -57,6 +59,30 @@ func cmdAuthRotatePost(s mcTypes.State, r *http.Request) mcTypes.Response {
 		if err != nil && err.Error() != "EOF" {
 			return mcTypes.BadRequest(fmt.Errorf("failed to decode request body: %w", err))
 		}
+	}
+
+	if req.Abort {
+		if req.KeyType != "" || req.Client != "" {
+			return mcTypes.BadRequest(fmt.Errorf("abort cannot be combined with key_type or client"))
+		}
+
+		record, aborted, err := abortAuthRotationFunc(r.Context(), interfaces.CephState{State: s})
+		if err != nil {
+			logger.Errorf("Failed aborting auth rotation: %v", err)
+			return mcTypes.InternalError(err)
+		}
+		if !aborted {
+			return mcTypes.BadRequest(fmt.Errorf("no incomplete rotation to abort (state: %s)", record.State))
+		}
+
+		return mcTypes.SyncResponse(true, types.AuthRotateResponse{
+			TargetKeyType: record.TargetKeyType,
+			State:         record.State,
+			Stage:         record.Stage,
+			ClientName:    record.ClientName,
+			Blocker:       record.Blocker,
+			Detail:        record.Detail,
+		})
 	}
 
 	record, err := executeAuthRotationFunc(r.Context(), interfaces.CephState{State: s}, req.KeyType, req.Client)
