@@ -49,6 +49,23 @@ func TestAuthRotateArgsRejectPositional(t *testing.T) {
 	// No positional arguments: accepted.
 	err = cmd.Args(cmd, nil)
 	require.NoError(t, err)
+
+	// --abort cannot be combined with a filter.
+	c.flagAbort = true
+	c.flagKeyType = "aes256k"
+	err = cmd.Args(cmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--abort cannot be combined")
+
+	c.flagKeyType = ""
+	c.flagClient = "client.rgw"
+	err = cmd.Args(cmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--abort cannot be combined")
+
+	c.flagClient = ""
+	err = cmd.Args(cmd, nil)
+	require.NoError(t, err)
 }
 
 func TestAuthStatusArgsRejectPositional(t *testing.T) {

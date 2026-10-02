@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
@@ -12,6 +13,9 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
+
+// updateClientConfFunc can be patched for testing.
+var updateClientConfFunc = UpdateClientConf
 
 func SetClientConfig(ctx context.Context, c mcTypes.Client, data *types.ClientConfig) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
@@ -78,7 +82,10 @@ func UpdateClientConf(ctx context.Context, c mcTypes.Client) error {
 	return nil
 }
 
-// Sends the update conf request to every other member of the cluster.
+// Sends the update conf request to every other member of the cluster. Every
+// member is attempted even if one fails, so a single unreachable member does
+// not leave the rest of the cluster stale; the returned error names every
+// member update that failed.
 func SendUpdateClientConfRequestToClusterMembers(ctx context.Context, s interfaces.StateInterface) error {
 	// Get a collection of clients to every other cluster member, with the notification user-agent set.
 	cluster, err := s.ClusterState().Connect().Cluster(false)
@@ -87,13 +94,17 @@ func SendUpdateClientConfRequestToClusterMembers(ctx context.Context, s interfac
 		return err
 	}
 
+	var failures []string
 	for _, remoteClient := range cluster {
 		// In order send restart to each cluster member and wait.
-		err = UpdateClientConf(ctx, remoteClient)
+		err = updateClientConfFunc(ctx, remoteClient)
 		if err != nil {
 			clilogger.Errorf("update conf error: %v", err)
-			return err
+			failures = append(failures, err.Error())
 		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("failed to update client configs on %d member(s): %s", len(failures), strings.Join(failures, "; "))
 	}
 
 	return nil

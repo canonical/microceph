@@ -187,3 +187,71 @@ func TestCmdAuthRotateMemberPost(t *testing.T) {
 	assert.False(t, raw.Metadata.MonRestarted)
 	assert.Empty(t, raw.Metadata.RotatedMgrs)
 }
+
+func TestCmdAuthRotatePostAbort(t *testing.T) {
+	origExec := executeAuthRotationFunc
+	origAbort := abortAuthRotationFunc
+	defer func() {
+		executeAuthRotationFunc = origExec
+		abortAuthRotationFunc = origAbort
+	}()
+
+	executeAuthRotationFunc = func(ctx context.Context, s interfaces.StateInterface, targetKeyType string, clientName string) (*database.AuthRotationRecord, error) {
+		t.Error("abort must not start a rotation")
+		return nil, fmt.Errorf("must not be called")
+	}
+
+	// 1. Aborting an incomplete rotation: the response describes the record
+	//    that was aborted.
+	abortAuthRotationFunc = func(ctx context.Context, s interfaces.StateInterface) (*database.AuthRotationRecord, bool, error) {
+		return &database.AuthRotationRecord{
+			TargetKeyType: "aes256k",
+			State:         database.AuthRotationStateBlocked,
+			Stage:         database.AuthRotationStageRotateClients,
+			ClientName:    "client.radosgw.gateway",
+			Blocker:       "session incompatible",
+		}, true, nil
+	}
+
+	body := strings.NewReader(`{"abort": true}`)
+	req := httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate", body)
+	rec := httptest.NewRecorder()
+	resp := cmdAuthRotatePost(nil, req)
+	err := resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var raw struct {
+		Metadata types.AuthRotateResponse `json:"metadata"`
+	}
+	err = json.NewDecoder(rec.Body).Decode(&raw)
+	require.NoError(t, err)
+	assert.Equal(t, "blocked", raw.Metadata.State)
+	assert.Equal(t, "aes256k", raw.Metadata.TargetKeyType)
+	assert.Equal(t, "client.radosgw.gateway", raw.Metadata.ClientName)
+
+	// 2. Nothing incomplete: refused.
+	abortAuthRotationFunc = func(ctx context.Context, s interfaces.StateInterface) (*database.AuthRotationRecord, bool, error) {
+		return &database.AuthRotationRecord{State: database.AuthRotationStateIdle}, false, nil
+	}
+	body = strings.NewReader(`{"abort": true}`)
+	req = httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate", body)
+	rec = httptest.NewRecorder()
+	resp = cmdAuthRotatePost(nil, req)
+	err = resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// 3. Abort combined with a filter is rejected.
+	abortAuthRotationFunc = func(ctx context.Context, s interfaces.StateInterface) (*database.AuthRotationRecord, bool, error) {
+		t.Error("abort with a filter must be rejected before touching the record")
+		return nil, false, fmt.Errorf("must not be called")
+	}
+	body = strings.NewReader(`{"abort": true, "key_type": "aes256k"}`)
+	req = httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate", body)
+	rec = httptest.NewRecorder()
+	resp = cmdAuthRotatePost(nil, req)
+	err = resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}

@@ -308,6 +308,22 @@ func TestParseClientSessionsAndCompatibility(t *testing.T) {
 	// aes is supported by both
 	assert.True(t, ClientSupportsKeyType(sessions[0], "aes"))
 	assert.True(t, ClientSupportsKeyType(sessions[1], "aes"))
+
+	// Multi-mon wildcard tell: ceph prefixes each target's output with
+	// 'mon.<id>: ', which made the whole payload unparseable before, so no
+	// client was ever reported on a normal 3-mon cluster.
+	tellOutput := "mon.a: " + strings.ReplaceAll(jsonSample, "\n", "") + "\n" +
+		"mon.b: [{\"name\":\"client.cinder\",\"entity_name\":\"client.cinder\",\"con_features_release\":\"quincy\",\"con_features\":1152921504606846975,\"remote_host\":\"node3\",\"open\":true}]\n"
+	sessions = parseClientSessions(tellOutput)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, "client.admin", sessions[0].EntityName)
+	assert.Equal(t, "client.cinder", sessions[2].EntityName)
+	assert.False(t, ClientSupportsKeyType(sessions[2], "aes256k"))
+
+	// The {response: [...]} per-monitor wrapper shape also parses.
+	sessions = parseClientSessions(`[{"response": [{"name": "client.rgw", "entity_name": "client.rgw", "con_features_release": "squid", "con_features": 1, "remote_host": "node1", "open": true}]}]`)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, "client.rgw", sessions[0].EntityName)
 }
 
 func TestResolveTargetKeyType(t *testing.T) {
@@ -394,18 +410,23 @@ func TestCheckCipherCompatibilityAndQuorum(t *testing.T) {
 	err = checkCipherCompatibility(context.Background(), "aes")
 	require.NoError(t, err)
 
-	// aes256k with modern release (e.g. 19 for Squid)
-	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
-		Return(`{"min_mon_release": 19}`, nil).Once()
+	// aes256k with monitors advertising the cephx_auth_aes256k feature and every
+	// daemon on a supporting release.
+	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "feature", "ls", "-f", "json").
+		Return(`{"persistent": [{"features": "0x...", "names": ["cephx_auth_aes256k"]}]}`, nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "versions", "-f", "json").
+		Return(`{"mon": {"19.2.6": 1}, "osd": {"19.2.6": 3}}`, nil).Once()
 	err = checkCipherCompatibility(context.Background(), "aes256k")
 	require.NoError(t, err)
 
-	// aes256k with ancient release (< 17)
-	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
-		Return(`{"min_mon_release": 16}`, nil).Once()
+	// aes256k with monitors lacking the cephx_auth_aes256k feature: point
+	// releases share their major with versions that cannot mint the cipher,
+	// so min_mon_release alone cannot tell support apart.
+	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "feature", "ls", "-f", "json").
+		Return(`{"persistent": [{"features": "0x...", "names": ["luminous"]}]}`, nil).Once()
 	err = checkCipherCompatibility(context.Background(), "aes256k")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "older than Squid")
+	assert.Contains(t, err.Error(), "cephx_auth_aes256k")
 
 	// Mon quorum check: mon.b is out of quorum
 	// mon dump
@@ -431,16 +452,19 @@ func TestPrepareAuthRotation(t *testing.T) {
 	origGetMonCiphers := getMonCiphersFunc
 	origSetAllowed := setMonAllowedCiphersFunc
 	origSetPreferred := setMonPreferredCipherFunc
+	origGetAllowInsecure := getMonAllowInsecureKeyFunc
 	defer func() {
 		getMonCiphersFunc = origGetMonCiphers
 		setMonAllowedCiphersFunc = origSetAllowed
 		setMonPreferredCipherFunc = origSetPreferred
+		getMonAllowInsecureKeyFunc = origGetAllowInsecure
 	}()
 
 	// 1. Initial migration: aes -> aes256k
 	allowedCalls := 0
 	preferredCalls := 0
 
+	allowInsecure := true
 	stateCiphers := MonCiphers{
 		AuthAllowedCiphers:  []string{"aes"},
 		AuthPreferredCipher: "aes",
@@ -460,6 +484,9 @@ func TestPrepareAuthRotation(t *testing.T) {
 		stateCiphers.AuthPreferredCipher = cipher
 		return nil
 	}
+	getMonAllowInsecureKeyFunc = func(ctx context.Context) (bool, error) {
+		return allowInsecure, nil
+	}
 
 	err := PrepareAuthRotation(context.Background(), "aes256k")
 	require.NoError(t, err)
@@ -474,6 +501,69 @@ func TestPrepareAuthRotation(t *testing.T) {
 	// Should not have made any more calls
 	assert.Equal(t, 1, allowedCalls)
 	assert.Equal(t, 1, preferredCalls)
+
+	// 3. Rotating back to aes on a hardened cluster (aes256k-only, insecure
+	//    key creation disabled): refused before any mon state changes, so no
+	//    partial application can leave the cluster weaker or wedge the
+	//    record against an aes256k resume.
+	allowedCalls = 0
+	preferredCalls = 0
+	stateCiphers = MonCiphers{
+		AuthAllowedCiphers:  []string{"aes256k"},
+		AuthPreferredCipher: "aes256k",
+	}
+	allowInsecure = false
+	err = PrepareAuthRotation(context.Background(), "aes")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "insecure and not allowed")
+	assert.Equal(t, 0, allowedCalls)
+	assert.Equal(t, 0, preferredCalls)
+
+	// 4. aes already allowed but mon_auth_allow_insecure_key explicitly
+	//    false: still refused (the EPERM/policy case).
+	stateCiphers = MonCiphers{
+		AuthAllowedCiphers:  []string{"aes", "aes256k"},
+		AuthPreferredCipher: "aes256k",
+	}
+	err = PrepareAuthRotation(context.Background(), "aes")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mon_auth_allow_insecure_key is false")
+	assert.Equal(t, 0, allowedCalls)
+	assert.Equal(t, 0, preferredCalls)
+
+	// 5. Never-migrated cluster (aes allowed, insecure key creation
+	//    permissive): rotating to aes is legitimate and changes nothing.
+	allowInsecure = true
+	stateCiphers = MonCiphers{
+		AuthAllowedCiphers:  []string{"aes"},
+		AuthPreferredCipher: "aes",
+	}
+	err = PrepareAuthRotation(context.Background(), "aes")
+	require.NoError(t, err)
+	assert.Equal(t, 0, allowedCalls)
+	assert.Equal(t, 0, preferredCalls)
+}
+
+func TestGetMonAllowInsecureKey(t *testing.T) {
+	r := mocks.NewRunner(t)
+	common.ProcessExec = r
+
+	r.On("RunCommandContext", mock.Anything, "ceph", "config", "get", "mon", "mon_auth_allow_insecure_key", "-f", "json").
+		Return(`"false"`, nil).Once()
+	allowed, err := GetMonAllowInsecureKey(context.Background())
+	require.NoError(t, err)
+	assert.False(t, allowed)
+
+	r.On("RunCommandContext", mock.Anything, "ceph", "config", "get", "mon", "mon_auth_allow_insecure_key", "-f", "json").
+		Return("true", nil).Once()
+	allowed, err = GetMonAllowInsecureKey(context.Background())
+	require.NoError(t, err)
+	assert.True(t, allowed)
+
+	r.On("RunCommandContext", mock.Anything, "ceph", "config", "get", "mon", "mon_auth_allow_insecure_key", "-f", "json").
+		Return("", fmt.Errorf("mon unreachable")).Once()
+	_, err = GetMonAllowInsecureKey(context.Background())
+	require.Error(t, err)
 }
 
 func TestRotateMonKeyAuth(t *testing.T) {
@@ -1453,7 +1543,7 @@ func TestGetClientKeyringPaths(t *testing.T) {
 	assert.Equal(t, "", service)
 }
 
-func TestInspectClientSessionBlockers(t *testing.T) {
+func TestInspectClientSessionAdvisories(t *testing.T) {
 	origSessions := getClientSessionsFunc
 	defer func() { getClientSessionsFunc = origSessions }()
 
@@ -1465,11 +1555,11 @@ func TestInspectClientSessionBlockers(t *testing.T) {
 		}, nil
 	}
 
-	blockers, err := InspectClientSessionBlockers(context.Background(), "aes256k")
+	blockers, err := InspectClientSessionAdvisories(context.Background(), "aes256k")
 	require.NoError(t, err)
 	assert.Len(t, blockers, 1)
 	assert.Contains(t, blockers, "client.legacy")
-	assert.Contains(t, blockers["client.legacy"], "incompatible client release")
+	assert.Contains(t, blockers["client.legacy"], "predates aes256k")
 }
 
 func TestRotateSingleClientKey(t *testing.T) {
@@ -1480,7 +1570,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 	t.Setenv("SNAP_COMMON", tmpDir)
 	t.Setenv("SNAP_DATA", filepath.Join(tmpDir, "current"))
 
-	origInspect := inspectClientSessionBlockersFunc
+	origInspect := inspectClientSessionAdvisoriesFunc
 	origPending := getOrCreatePendingKeyFunc
 	origCommit := commitPendingKeyFunc
 	origGetKeyring := getEntityKeyringFunc
@@ -1488,7 +1578,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 	origDumpKeys := dumpAuthKeysFunc
 	origClear := clearPendingKeyFunc
 	defer func() {
-		inspectClientSessionBlockersFunc = origInspect
+		inspectClientSessionAdvisoriesFunc = origInspect
 		getOrCreatePendingKeyFunc = origPending
 		commitPendingKeyFunc = origCommit
 		getEntityKeyringFunc = origGetKeyring
@@ -1503,7 +1593,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 	newKey := "AQB0ZXN0bmV3a2V5AQIDBAUGBwgJCgsMDQ4PAA=="
 	remintKey := "AQB0ZXN0cmVtaW50AQIDBAUGBwgJCgsMDQ4PAA=="
 
-	inspectClientSessionBlockersFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
+	inspectClientSessionAdvisoriesFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
 		return nil, nil
 	}
 	// The dump reports the minted pending key's cipher; cases consume the queue in
@@ -1629,21 +1719,39 @@ func TestRotateSingleClientKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to write client keyring")
 	assert.Equal(t, 0, commitCalls, "commit must not run when distribution fails")
 
-	// 4. Blocked case: no pending key is issued at all.
-	inspectClientSessionBlockersFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
-		return map[string]string{"client.radosgw.gateway": "session incompatible"}, nil
-	}
+	// 4. Session advisories do not block a single-client rotation: connection
+	//    feature bits cannot show aes256k support, so the rotation proceeds
+	//    even with a legacy-release session connected.
+	t.Setenv("SNAP_COMMON", tmpDir)
 	pendingCalls = 0
+	committed = false
+	dumpPendingTypes = nil
+	inspectClientSessionAdvisoriesFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
+		return map[string]string{"client.radosgw.gateway": "reports client release octopus"}, nil
+	}
+	getOrCreatePendingKeyFunc = func(ctx context.Context, entity string) (string, error) {
+		pendingCalls++
+		assert.Equal(t, "client.radosgw.gateway", entity)
+		return newKey, nil
+	}
+	commitPendingKeyFunc = func(ctx context.Context, entity string) error {
+		committed = true
+		return nil
+	}
+	getEntityKeyringFunc = func(ctx context.Context, entity string) (string, error) {
+		assert.True(t, committed, "keyring finalization must run after the commit")
+		return fmt.Sprintf("[client.radosgw.gateway]\n\tkey = %s\n", newKey), nil
+	}
 	err = RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "session incompatible")
-	assert.Equal(t, 0, pendingCalls)
+	require.NoError(t, err)
+	assert.Equal(t, 1, pendingCalls)
+	assert.True(t, committed)
 
 	// 5. Stale pending key remediation: get-or-create-pending reuses an
 	//    existing pending key regardless of its cipher, so a pending key
 	//    minted before the cluster was prepared is cleared and reminted, and
 	//    the reminted secret is what gets distributed and finalized.
-	inspectClientSessionBlockersFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
+	inspectClientSessionAdvisoriesFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
 		return nil, nil
 	}
 	t.Setenv("SNAP_COMMON", tmpDir)
@@ -1706,11 +1814,11 @@ func TestRotateSingleClientKey(t *testing.T) {
 
 func TestRotateManagedClientsPipeline(t *testing.T) {
 	origDumpKeys := dumpAuthKeysFunc
-	origInspect := inspectClientSessionBlockersFunc
+	origInspect := inspectClientSessionAdvisoriesFunc
 	origRotateSingle := rotateSingleClientKeyFunc
 	defer func() {
 		dumpAuthKeysFunc = origDumpKeys
-		inspectClientSessionBlockersFunc = origInspect
+		inspectClientSessionAdvisoriesFunc = origInspect
 		rotateSingleClientKeyFunc = origRotateSingle
 	}()
 
@@ -1728,7 +1836,7 @@ func TestRotateManagedClientsPipeline(t *testing.T) {
 			{EntityName: "client.rbd-mirror.node1", EntityType: "client", KeyType: "aes"},
 		}, nil
 	}
-	inspectClientSessionBlockersFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
+	inspectClientSessionAdvisoriesFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
 		return nil, nil
 	}
 
@@ -1764,9 +1872,13 @@ func TestRotateManagedClientsPipeline(t *testing.T) {
 	assert.False(t, res.HasBlockers)
 	assert.Empty(t, res.UnmanagedClients)
 
-	// 4. Session blocker present on managed client
-	inspectClientSessionBlockersFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
-		return map[string]string{"client.radosgw.gateway": "incompatible kernel driver"}, nil
+	// 4. Session advisories are advisory only: a connected client reporting a
+	//    known-legacy release is logged but the managed rotation proceeds —
+	//    connection feature bits cannot show aes256k support (kernel clients
+	//    report stale release names), so inferring incompatibility blocked
+	//    legitimate rotations.
+	inspectClientSessionAdvisoriesFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
+		return map[string]string{"client.radosgw.gateway": "reports client release octopus"}, nil
 	}
 	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
 		return []AuthKeyEntry{
@@ -1775,13 +1887,12 @@ func TestRotateManagedClientsPipeline(t *testing.T) {
 	}
 	res, err = RotateManagedClients(context.Background(), "aes256k", nil)
 	require.NoError(t, err)
-	assert.True(t, res.HasBlockers)
-	assert.Contains(t, res.BlockedClients, "client.radosgw.gateway")
-	assert.Contains(t, res.BlockerMessage, "incompatible")
+	assert.False(t, res.HasBlockers, "session compatibility must not gate rotation")
+	assert.Equal(t, []string{"client.radosgw.gateway"}, res.RotatedClients)
 
 	// 5. Resume progress: clients already rotated on a previous attempt are
 	//    skipped and progress is extended as the remaining ones complete.
-	inspectClientSessionBlockersFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
+	inspectClientSessionAdvisoriesFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
 		return nil, nil
 	}
 	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
@@ -2249,14 +2360,14 @@ func TestRunAuthRotationPipelineFailedState(t *testing.T) {
 	origClients := rotateManagedClientsFunc
 	origDump := dumpAuthKeysFunc
 	origSingle := rotateSingleClientKeyFunc
-	origInspect := inspectClientSessionBlockersFunc
+	origInspect := inspectClientSessionAdvisoriesFunc
 	defer func() {
 		prepareAuthRotationFunc = origPrepare
 		checkAuthRotationReadinessFunc = origReadiness
 		rotateManagedClientsFunc = origClients
 		dumpAuthKeysFunc = origDump
 		rotateSingleClientKeyFunc = origSingle
-		inspectClientSessionBlockersFunc = origInspect
+		inspectClientSessionAdvisoriesFunc = origInspect
 	}()
 
 	// 1. Stage failure records the failed state with the error detail, and a
@@ -2288,7 +2399,7 @@ func TestRunAuthRotationPipelineFailedState(t *testing.T) {
 		}, nil
 	}
 	rotateManagedClientsFunc = RotateManagedClients
-	inspectClientSessionBlockersFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
+	inspectClientSessionAdvisoriesFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
 		return nil, nil
 	}
 	rotateSingleClientKeyFunc = func(ctx context.Context, clientName string, targetKeyType string) error {
@@ -2433,4 +2544,186 @@ func TestRunSingleClientRotationAdminSubStep(t *testing.T) {
 	assert.Equal(t, database.AuthRotationStateInProgress, rec.State)
 	assert.Equal(t, database.AuthRotationStageFinishSafely, rec.Stage, "the full run's stage must not be clobbered")
 	assert.Empty(t, rec.Blocker)
+}
+
+func TestUpdateAdminKeyringFiles(t *testing.T) {
+	// Sandbox the snap paths.
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_COMMON", tmpDir)
+	t.Setenv("SNAP_DATA", filepath.Join(tmpDir, "current"))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "current", "conf"), 0755))
+
+	origSend := sendUpdateClientConfFunc
+	defer func() { sendUpdateClientConfFunc = origSend }()
+
+	secret := "AQB0ZXN0c2VjcmV0AQIDBAUGBwgJCgsMDQ4PAA=="
+
+	// 1. Without a cluster: both local admin keyring files carry the secret.
+	err := updateAdminKeyringFiles(context.Background(), nil, secret)
+	require.NoError(t, err)
+	for _, name := range []string{"ceph.keyring", "ceph.client.admin.keyring"} {
+		parsed, err := ParseKeyring(filepath.Join(tmpDir, "current", "conf", name))
+		require.NoError(t, err, name)
+		assert.Equal(t, secret, parsed, name)
+	}
+
+	// 2. With a cluster: a distribution failure must fail the function. A
+	//    member that misses the update would keep authenticating with the
+	//    key the commit is about to revoke, so swallowing this used to
+	//    complete the rotation with the cluster broken.
+	si := mocks.NewStateInterface(t)
+	si.On("ClusterState").Return(&mocks.MockState{ConnectorObj: mocks.NewConnectorInterface(t)}).Maybe()
+	sendUpdateClientConfFunc = func(ctx context.Context, s interfaces.StateInterface) error {
+		return fmt.Errorf("member unreachable")
+	}
+	err = updateAdminKeyringFiles(context.Background(), si, secret)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to distribute updated admin keyring")
+}
+
+func TestVersionSupportsAES256K(t *testing.T) {
+	cases := map[string]bool{
+		"18.2.4":  false,
+		"19.2.0":  false,
+		"19.2.5":  false,
+		"19.2.6":  true,
+		"19.2.7":  true,
+		"20.2.0":  false,
+		"20.2.3":  false,
+		"20.2.4":  true,
+		"20.2.5":  true,
+		"20.3.0":  true,
+		"21.0.0":  true,
+		"21.1.4":  true,
+		"19.2":    false, // incomplete version string
+		"garbage": false,
+		"":        false,
+	}
+
+	for version, expected := range cases {
+		assert.Equal(t, expected, versionSupportsAES256K(version), version)
+	}
+}
+
+func TestCheckDaemonVersionsSupportAES256K(t *testing.T) {
+	// Every daemon on a supporting release: passes.
+	err := checkDaemonVersionsSupportAES256K(`{
+		"mon": {"19.2.6": 1},
+		"mgr": {"19.2.6": 1},
+		"osd": {"19.2.6": 3, "20.2.4": 1},
+		"overall": {"19.2.6": 5, "20.2.4": 1}
+	}`)
+	require.NoError(t, err)
+
+	// One daemon type on a release that predates the cipher: named in the error.
+	err = checkDaemonVersionsSupportAES256K(`{
+		"mon": {"19.2.6": 1},
+		"osd": {"19.2.6": 2, "19.2.5": 1}
+	}`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "osd")
+	assert.Contains(t, err.Error(), "19.2.5")
+	assert.Contains(t, err.Error(), "upgrade every cluster member")
+}
+
+func TestCheckCipherCompatibilityAES256K(t *testing.T) {
+	r := mocks.NewRunner(t)
+	common.ProcessExec = r
+
+	featureOutput := `{
+		"persistent": [{"features": "0x...", "names": ["cephx_auth_aes256k"]}]
+	}`
+	versionsSupported := `{"mon": {"19.2.6": 1}, "osd": {"19.2.6": 3}}`
+	versionsMixed := `{"mon": {"19.2.6": 1}, "osd": {"19.2.6": 2, "19.2.5": 1}}`
+
+	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "feature", "ls", "-f", "json").
+		Return(featureOutput, nil).Maybe()
+	r.On("RunCommandContext", mock.Anything, "ceph", "versions", "-f", "json").
+		Return(versionsSupported, nil).Once()
+
+	// Feature present and every daemon on a supporting release: passes.
+	err := checkCipherCompatibility(context.Background(), "aes256k")
+	require.NoError(t, err)
+
+	// Daemon on a pre-cipher release: refused before any key changes.
+	r2 := mocks.NewRunner(t)
+	common.ProcessExec = r2
+	r2.On("RunCommandContext", mock.Anything, "ceph", "mon", "feature", "ls", "-f", "json").
+		Return(featureOutput, nil).Maybe()
+	r2.On("RunCommandContext", mock.Anything, "ceph", "versions", "-f", "json").
+		Return(versionsMixed, nil).Once()
+	err = checkCipherCompatibility(context.Background(), "aes256k")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "osd daemons on release 19.2.5")
+
+	// Monitors without the cephx_auth_aes256k feature (e.g. 19.2.0-19.2.5 or
+	// 20.2.0-20.2.3 share their major with supporting point releases):
+	// refused regardless of min_mon_release.
+	r3 := mocks.NewRunner(t)
+	common.ProcessExec = r3
+	r3.On("RunCommandContext", mock.Anything, "ceph", "mon", "feature", "ls", "-f", "json").
+		Return(`{"persistent": [{"features": "0x...", "names": ["luminous"]}]}`, nil).Once()
+	err = checkCipherCompatibility(context.Background(), "aes256k")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cephx_auth_aes256k")
+
+	// Feature query failure: refused (safe direction).
+	r4 := mocks.NewRunner(t)
+	common.ProcessExec = r4
+	r4.On("RunCommandContext", mock.Anything, "ceph", "mon", "feature", "ls", "-f", "json").
+		Return("", fmt.Errorf("mon unreachable")).Once()
+	err = checkCipherCompatibility(context.Background(), "aes256k")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch monitor features")
+
+	// aes stays unconditional.
+	r5 := mocks.NewRunner(t)
+	common.ProcessExec = r5
+	err = checkCipherCompatibility(context.Background(), "aes")
+	require.NoError(t, err)
+}
+
+func TestResolveRotationTargetKeyType(t *testing.T) {
+	origResolve := resolveTargetKeyTypeFunc
+	defer func() { resolveTargetKeyTypeFunc = origResolve }()
+
+	resolveCalls := []string{}
+	resolveTargetKeyTypeFunc = func(ctx context.Context, requestedType string) (string, error) {
+		resolveCalls = append(resolveCalls, requestedType)
+		if requestedType == "" {
+			return "aes", nil
+		}
+		return requestedType, nil
+	}
+
+	// Fresh rotation with an explicit type: resolved (validated) normally.
+	resolved, err := resolveRotationTargetKeyType(context.Background(), false, "", "aes256k")
+	require.NoError(t, err)
+	assert.Equal(t, "aes256k", resolved)
+
+	// Fresh rotation with an empty request: resolved from the preferred cipher.
+	resolved, err = resolveRotationTargetKeyType(context.Background(), false, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "aes", resolved)
+
+	// Resume with an empty request: the value passes through unresolved so
+	// InitOrResumeAuthRotation inherits the record's target. Resolving here
+	// would read the still-unchanged preferred cipher and reject resuming a
+	// rotation that stopped before prepare_auth (the user-facing regression).
+	resolved, err = resolveRotationTargetKeyType(context.Background(), true, "aes256k", "")
+	require.NoError(t, err)
+	assert.Equal(t, "", resolved)
+
+	// Resume with an explicit type: passed through for the record check.
+	resolved, err = resolveRotationTargetKeyType(context.Background(), true, "aes256k", "aes256k")
+	require.NoError(t, err)
+	assert.Equal(t, "aes256k", resolved)
+
+	// Legacy record without a target: resolves as before.
+	resolved, err = resolveRotationTargetKeyType(context.Background(), true, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "aes", resolved)
+
+	// Resolution must only have run for the non-inherit cases.
+	assert.Equal(t, []string{"aes256k", "", ""}, resolveCalls)
 }
