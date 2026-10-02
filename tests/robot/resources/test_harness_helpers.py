@@ -544,6 +544,73 @@ def test_count_configured_disks_entry_without_path_is_skipped():
 
 
 # ---------------------------------------------------------------------------
+# cluster_list_names
+#
+# Pure replacement for `microceph cluster list -f json | jq '.[]["name"]' |
+# grep -q <host>`: the remote command only fetches the JSON.
+# ---------------------------------------------------------------------------
+
+def test_cluster_list_names_returns_each_member_name():
+    payload = json.dumps(
+        [
+            {"name": "node-a", "address": "10.0.0.1:7443", "role": "voter", "status": "ONLINE"},
+            {"name": "node-b", "address": "10.0.0.2:7443", "role": "voter", "status": "ONLINE"},
+        ]
+    )
+    assert H.cluster_list_names(payload) == ["node-a", "node-b"]
+
+
+def test_cluster_list_names_accepts_the_cli_trailing_newline():
+    # The CLI encodes the list with a json.Encoder, which ends the document with a newline.
+    assert H.cluster_list_names('[{"name": "node-a"}]\n') == ["node-a"]
+
+
+def test_cluster_list_names_empty_list_is_empty():
+    assert H.cluster_list_names("[]") == []
+
+
+def test_cluster_list_names_malformed_json_raises_clear_error():
+    with pytest.raises(AssertionError) as exc:
+        H.cluster_list_names("Error: not a cluster")
+    assert "not valid JSON" in str(exc.value)
+    assert "Error: not a cluster" in str(exc.value)
+
+
+def test_cluster_list_names_empty_output_raises_clear_error():
+    with pytest.raises(AssertionError) as exc:
+        H.cluster_list_names("")
+    assert "not valid JSON" in str(exc.value)
+
+
+def test_cluster_list_names_non_array_raises():
+    with pytest.raises(AssertionError) as exc:
+        H.cluster_list_names('{"name": "node-a"}')
+    assert "not an array" in str(exc.value)
+
+
+def test_cluster_list_names_member_without_name_raises():
+    with pytest.raises(AssertionError) as exc:
+        H.cluster_list_names('[{"address": "10.0.0.1:7443"}]')
+    assert "no string name" in str(exc.value)
+
+
+def test_cluster_list_names_malformed_member_raises():
+    # Neither a member that is not an object nor a name that is not a string is skipped or returned.
+    for payload in ('["node-a"]', "[null]", '[{"name": 5}]', '[{"name": null}]'):
+        with pytest.raises(AssertionError) as exc:
+            H.cluster_list_names(payload)
+        assert "no string name" in str(exc.value), payload
+        assert repr(json.loads(payload)[0]) in str(exc.value), payload
+
+
+def test_cluster_list_names_quotes_only_the_start_of_long_output():
+    with pytest.raises(AssertionError) as exc:
+        H.cluster_list_names("x" * 500)
+    assert "x" * 150 in str(exc.value)
+    assert "x" * 250 not in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
 # _poll_until
 # ---------------------------------------------------------------------------
 

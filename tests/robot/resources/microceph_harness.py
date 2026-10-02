@@ -979,6 +979,30 @@ class microceph_harness:
         return count
 
     @staticmethod
+    def cluster_list_names(stdout):
+        """Returns the member names in ``microceph cluster list -f json`` output.
+
+        Replaces the remote ``... -f json | jq '.[]["name"]' | grep -q <host>`` pipeline: the
+        remote command now only fetches the JSON, and callers assert on the returned list, so a
+        failed assertion shows the names the cluster reported.
+        Raises AssertionError, quoting the start of *stdout*, when it is not valid JSON or not an
+        array, and quoting the member when a member has no string ``name``.
+        """
+        shown = repr(stdout)[:200]
+        try:
+            members = json.loads(stdout)
+        except (ValueError, TypeError) as exc:
+            raise AssertionError(f"cluster list output is not valid JSON ({exc}): {shown}")
+        if not isinstance(members, list):
+            raise AssertionError(f"cluster list JSON is not an array of members: {shown}")
+        names = []
+        for member in members:
+            if not isinstance(member, dict) or not isinstance(member.get("name"), str):
+                raise AssertionError(f"cluster list member has no string name: {member!r}")
+            names.append(member["name"])
+        return names
+
+    @staticmethod
     def _remote_list_has(remote_list_json, field, value):
         """Returns True if any `microceph remote list --json` entry has *field* == *value*.
 
