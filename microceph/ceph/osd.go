@@ -1949,31 +1949,82 @@ func (m *OSDManager) doPurge(osd int64) error {
 	return err
 }
 
-func (m *OSDManager) purgeOSD(osd int64) error {
-	logger.Infof("Purging osd.%d", osd)
+// isOSDNotDownError reports whether err is the monitors' refusal to purge an OSD that is still
+// marked up: "Error EBUSY: osd.N is not `down`." The message is matched, not the exit status of the
+// ceph CLI.
+func isOSDNotDownError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "is not `down`")
+}
+
+// purgeWithRetries runs `ceph osd purge` with an exponential backoff between attempts. The OSD
+// process is gone by now, so when the monitors refuse because they still have the OSD up, it is
+// marked down again: its first boot can be committed after the earlier down.
+func (m *OSDManager) purgeWithRetries(osd int64) error {
 	var err error
 	retries := 10
-	var backoff time.Duration
 
 	for i := 0; i < retries; i++ {
 		err = m.doPurge(osd)
 		if err == nil {
+			return nil
+		}
+		if i == retries-1 {
+			// Out of attempts: nothing left to re-down for and no reason to sleep.
 			break
 		}
-		// Retry on any failure: the OSD process may still be shutting down
-		// when purge is attempted, causing transient errors. ceph CLI exits
-		// with 1 (not errno 16) in these cases.
+		if isOSDNotDownError(err) {
+			logger.Infof("osd.%d is still up in the OSD map, marking it down again", osd)
+			downErr := m.downOSD(osd)
+			if downErr != nil {
+				// The next purge attempt reports whether the OSD is still up.
+				logger.Warnf("Failed to mark osd.%d down before retrying the purge: %v", osd, downErr)
+			}
+		}
+		// Retry on any failure with a backoff, not only on that refusal.
+		backoff := time.Duration(math.Pow(2, float64(i))) * time.Millisecond * 100
 		logger.Infof("Purge attempt %d failed: %v, retrying in %v", i+1, err, backoff)
-		backoff = time.Duration(math.Pow(2, float64(i))) * time.Millisecond * 100
 		purgeRetrySleepFunc(backoff)
 	}
 
-	if err != nil {
-		logger.Errorf("Failed to purge osd.%d: %v", osd, err)
-		return fmt.Errorf("failed to purge osd.%d: %w", osd, err)
+	logger.Errorf("Failed to purge osd.%d: %v", osd, err)
+	return fmt.Errorf("failed to purge osd.%d: %w", osd, err)
+}
+
+// purgeOSD purges the OSD and checks that its id is really gone from the OSD map. The OSD process
+// must be stopped before it is called: a running OSD marks itself up again, so neither marking it
+// down nor purging it would stick.
+func (m *OSDManager) purgeOSD(osd int64) error {
+	logger.Infof("Purging osd.%d", osd)
+
+	// A boot message the OSD sent before it was stopped can still be committed together with, or
+	// after, the purge. That brings the id back as an up OSD without a process, so check the OSD
+	// map and, if the id is there, mark it down and purge once more.
+	const purgeRounds = 2
+	for round := 1; round <= purgeRounds; round++ {
+		err := m.purgeWithRetries(osd)
+		if err != nil {
+			return err
+		}
+
+		inMap, err := m.haveOSDInOSDMap(osd)
+		if err != nil {
+			return fmt.Errorf("failed to check that osd.%d was purged: %w", osd, err)
+		}
+		if !inMap {
+			logger.Infof("osd.%d purged", osd)
+			return nil
+		}
+		if round < purgeRounds {
+			logger.Warnf("osd.%d is still in the OSD map after it was purged, marking it down and purging it again", osd)
+			err = m.downOSD(osd)
+			if err != nil {
+				return err
+			}
+		}
 	}
-	logger.Infof("osd.%d purged", osd)
-	return nil
+
+	logger.Errorf("osd.%d is still in the OSD map after %d purges", osd, purgeRounds)
+	return fmt.Errorf("osd.%d is still in the OSD map after %d purges", osd, purgeRounds)
 }
 
 func (m *OSDManager) wipeDevice(ctx context.Context, path string) {
@@ -2058,9 +2109,9 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 			return err
 		}
 	}
-	// take the OSD out and down
+	// take the OSD out; it is marked down once its process is gone, see below
 	if isPresent {
-		err = m.outDownOSD(osd)
+		err = m.outOSD(osd)
 		if err != nil {
 			return err
 		}
@@ -2084,9 +2135,20 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	}()
 
 	// stop the OSD process before touching local storage, even if the OSD is not yet visible in Ceph.
+	// An OSD whose process is already gone, e.g. after its disk failed, counts as stopped.
 	err = m.killOSD(osd)
 	if err != nil {
-		logger.Warnf("Failed to stop local osd.%d process prior to storage cleanup: %v", osd, err)
+		return fmt.Errorf("failed to stop osd.%d, not marking it down: %w", osd, err)
+	}
+	// Mark the OSD down only now that its process is gone. A down does not stick while the process
+	// runs: a running OSD marks itself up again, and one that is still booting is not up in the
+	// committed map yet, so the down changes nothing and its boot is committed after it. Purge is
+	// then refused ("osd.N is not down") or the purged id returns to the OSD map.
+	if isPresent {
+		err = m.downOSD(osd)
+		if err != nil {
+			return err
+		}
 	}
 	if !isPresent {
 		isPresent, err = m.waitForOSDPresence(osd, osdPresenceRetryWindow)
@@ -2108,6 +2170,23 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 			}
 		}
 	}
+	// An id can be in the OSD map without being in the CRUSH tree, as when an earlier removal failed
+	// because a purged id came back. Take it down and purge it as well, or this removal would report
+	// success and leave the id in the OSD map.
+	inOSDMapOnly := false
+	if !isPresent {
+		inOSDMapOnly, err = m.haveOSDInOSDMap(osd)
+		if err != nil {
+			return fmt.Errorf("failed to check if osd.%d is in the OSD map: %w", osd, err)
+		}
+		if inOSDMapOnly {
+			logger.Infof("osd.%d is in the OSD map but not in the CRUSH tree; marking it down and purging it", osd)
+			err = m.downOSD(osd)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	// From this point onward we are committed to local teardown. Keep autostart suppressed on any
 	// later failure so the shared OSD service cannot race the cleanup by respawning this OSD.
 	restoreAutostartOnError = false
@@ -2120,7 +2199,7 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 		}
 	}
 	// purge the OSD
-	if isPresent {
+	if isPresent || inOSDMapOnly {
 		err = m.purgeOSD(osd)
 		if err != nil {
 			return err
@@ -2196,18 +2275,34 @@ func checkMinOSDs(ctx context.Context, s interfaces.StateInterface, osd int64) e
 	return nil
 }
 
-func (m *OSDManager) outDownOSD(osd int64) error {
+// outOSD takes the OSD out of the cluster.
+func (m *OSDManager) outOSD(osd int64) error {
 	_, err := m.runner.RunCommand("ceph", "osd", "out", fmt.Sprintf("osd.%d", osd))
 	if err != nil {
 		logger.Errorf("Failed to take osd.%d out: %v", osd, err)
 		return fmt.Errorf("failed to take osd.%d out: %w", osd, err)
 	}
-	_, err = m.runner.RunCommand("ceph", "osd", "down", fmt.Sprintf("osd.%d", osd))
+	return nil
+}
+
+// downOSD marks the OSD down. It only sticks once the OSD process is gone, a running OSD marks
+// itself up again.
+func (m *OSDManager) downOSD(osd int64) error {
+	_, err := m.runner.RunCommand("ceph", "osd", "down", fmt.Sprintf("osd.%d", osd))
 	if err != nil {
 		logger.Errorf("Failed to take osd.%d down: %v", osd, err)
 		return fmt.Errorf("failed to take osd.%d down: %w", osd, err)
 	}
 	return nil
+}
+
+// outDownOSD takes the OSD out and then down. Only call it once the OSD process is gone.
+func (m *OSDManager) outDownOSD(osd int64) error {
+	err := m.outOSD(osd)
+	if err != nil {
+		return err
+	}
+	return m.downOSD(osd)
 }
 
 func setOsdNooutFlag(set bool) error {
@@ -2349,6 +2444,28 @@ func (m *OSDManager) haveOSDInCeph(osd int64) (bool, error) {
 	// query the tree for the given OSD
 	for _, node := range tree.Nodes {
 		if node.Type == "osd" && node.ID == osd {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// haveOSDInOSDMap checks if the given OSD id exists in the OSD map. Unlike haveOSDInCeph, which
+// only reads the nodes of the CRUSH tree, this also sees an id that is not in the CRUSH map.
+func (m *OSDManager) haveOSDInOSDMap(osd int64) (bool, error) {
+	out, err := m.runner.RunCommand("ceph", "osd", "ls", "-f", "json")
+	if err != nil {
+		logger.Errorf("Failed to list the OSDs in the OSD map: %v", err)
+		return false, fmt.Errorf("failed to list the OSDs in the OSD map: %w", err)
+	}
+	var ids []int64
+	err = json.Unmarshal([]byte(out), &ids)
+	if err != nil {
+		logger.Errorf("Failed to parse ceph osd ls: %v", err)
+		return false, fmt.Errorf("failed to parse ceph osd ls: %w", err)
+	}
+	for _, id := range ids {
+		if id == osd {
 			return true, nil
 		}
 	}
