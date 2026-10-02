@@ -11,6 +11,7 @@ from robot.api import logger
 import placement_status
 from microceph_harness import MICROCEPH_CONTROL_SOCKET, microceph_harness
 
+
 class rgw_placement:
     """Keep gateway-specific operations out of the shared execution harness."""
 
@@ -63,6 +64,33 @@ class rgw_placement:
             attempts=tries,
             interval=5,
             fail_msg=f"rgw systemd unit on {where} never became {want}",
+        )
+
+    def get_rgw_daemon_count_in_vm(self, vm_name=None):
+        """Returns the RGW daemon count from ceph -s inside *vm_name* (None on failure)."""
+        res = self._harness.run_in_vm("sudo microceph.ceph -s", 30, quiet=True, vm_name=vm_name)
+        if res.rc != 0:
+            return None
+        return self._harness._rgw_daemon_count(res.stdout)
+
+    def wait_for_rgw_count_in_vm(self, expect, tries=20, vm_name=None):
+        """Polls ceph -s inside *vm_name* until at least *expect* RGW daemons run."""
+        last = [0]
+
+        def predicate():
+            count = self.get_rgw_daemon_count_in_vm(vm_name)
+            last[0] = count if count is not None else 0
+            return last[0] >= int(expect)
+
+        def on_fail():
+            self._harness.run_in_vm("sudo microceph.ceph -s", 30, vm_name=vm_name)
+
+        self._harness._poll_until(
+            predicate,
+            attempts=tries,
+            interval=5,
+            fail_msg=lambda: f"Never reached {expect} RGW daemon(s) (last saw {last[0]})",
+            on_fail=on_fail,
         )
 
     def get_rgw_frontend_conf_ports(self, vm_name=None):
@@ -310,6 +338,73 @@ class rgw_placement:
         )
         self._harness.run_in_vm_and_check(cmd, 30, vm_name=vm_name)
         return body_path
+
+    # -----------------------------------------------------------------------
+    # Foreground placement scenarios
+    # -----------------------------------------------------------------------
+
+    def install_rgw_scenario_runner_in_vm(self, vm_name):
+        """Copy the runner from beside this library to /root in the named guest.
+
+        Suite setup calls this once, before scenarios run. The harness uses
+        lxc file push to transfer the Python source; this does not execute it.
+        Installing it up front avoids rewriting the script while another
+        invocation might be starting. No per-request files are created.
+        """
+        self._harness._lxc_file_push(
+            str(Path(__file__).with_name("rgw_scenario.py")),
+            f"{vm_name}/root/rgw_scenario.py", 30, "copy RGW scenario runner",
+        )
+
+    def _run_rgw_scenario(self, vm_name, arguments, timeout):
+        """Run the guest script synchronously and decode its JSON result.
+
+        _exec passes an argument list through the harness to lxc exec, which
+        starts Python inside vm_name. The host waits for that process to exit;
+        only the guest runner's own workers run concurrently. No shell parses
+        these arguments, so the policy JSON remains a single argument.
+
+        stdout contains the outer result object. Placement responses inside
+        it remain JSON strings for Robot's Response Status Code keyword.
+        A non-zero runner exit raises in _exec rather than returning a verdict.
+        """
+        command = [
+            "python3", "/root/rgw_scenario.py", "--socket", MICROCEPH_CONTROL_SOCKET,
+            "--timeout", str(timeout), *arguments,
+        ]
+        # Leave time for curl's timeout cleanup and the sampler's final reads.
+        return json.loads(self._exec(command, vm_name, timeout=float(timeout) + 5).stdout)
+
+    def run_rgw_migration_in_vm(self, vm_name, body, old_host, new_host, port, path, expected, timeout=600):
+        """Run one policy PUT while sampling the old and replacement gateways.
+
+        The guest runner sends body to its local MicroCeph control socket.
+        In parallel, a sampler thread fetches path from old_host then new_host
+        on port, comparing each response with expected. These object reads use
+        the gateways' network addresses, not the daemon's control socket.
+
+        Return only after the PUT and sampler finish: response is the raw API
+        response, and observation holds samples, available, and replacement_ready.
+        Robot owns the assertions; this helper only runs and collects the scenario.
+        """
+        return self._run_rgw_scenario(
+            vm_name, ["migration", body, old_host, new_host, str(int(port)), path, expected], timeout,
+        )
+
+    def run_concurrent_placement_puts_in_vm(self, vm_name, body_a, body_b, target_b, timeout=600):
+        """Run two policy PUTs concurrently and return both raw response strings.
+
+        Both requests enter through vm_name's control socket. The guest runner
+        sends A locally and adds ?target=target_b to B, asking MicroCeph to
+        forward B to that member. A two-worker barrier aligns their launch,
+        but does not determine which member acquires the placement lock first.
+
+        The runner joins both workers and returns responses in A, B order,
+        regardless of completion order. Robot checks for one 200 and one 409.
+        """
+        return self._run_rgw_scenario(
+            vm_name, ["concurrent", body_a, body_b, target_b], timeout,
+        )["responses"]
 
     # -----------------------------------------------------------------------
     # Stored-policy / observed-state parsers (Python decisions for Robot asserts)
