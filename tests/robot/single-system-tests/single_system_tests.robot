@@ -227,7 +227,8 @@ Verify Post-Bootstrap State
     [Documentation]    Checks metadata.yaml contains ceph-version, verifies OSD pool crush rule.
     [Tags]    waitready
     Run In VM And Check    grep -q ceph-version /var/snap/microceph/current/conf/metadata.yaml    30
-    Run In VM And Check    sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"    30
+    ${health}=    Run In VM And Check    sudo microceph.ceph health    30
+    Should Contain    ${health.stdout}    OSD count 0 < osd_pool_default_size 3
     Run In VM And Check    sudo microceph.ceph osd crush rule ls | grep -F microceph_auto_osd    30
 
 Test Waitready Storage Insufficient

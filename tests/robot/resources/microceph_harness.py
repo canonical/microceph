@@ -2161,17 +2161,16 @@ class microceph_harness:
 
         DEAD KEYWORD (pre-existing): no suite calls "Enable Services On Node"; the multi-node
         suite uses its own "Enable Services On Head Node For" (a different, node-wrk0-driven
-        implementation). Ported from the pre-refactor harness as-is; flagged for a maintainer to
+        implementation). Ported from the pre-refactor harness as-is, except that the ceph -s
+        probe decides in Python instead of piping into grep -q; flagged for a maintainer to
         confirm before removing rather than silently dropped.
         """
         logger.console(f"[cluster] Enabling mon/mds/mgr on {node}...")
         for svc in ("mon", "mds", "mgr"):
             self.run_in_vm_and_check(f"sudo microceph enable {svc} --target {node}", 120)
         for _ in range(8):
-            result = self.run_in_vm(
-                f'sudo microceph.ceph -s | grep -q "mon: .*daemons.*{node}" && echo yes || echo no', 30
-            )
-            if result.stdout.strip() == "yes":
+            result = self.run_in_vm("sudo microceph.ceph -s", 30, quiet=True)
+            if result.rc == 0 and re.search(rf"mon: .*daemons.*{re.escape(node)}", result.stdout):
                 break
             time.sleep(2)
         self.run_in_vm_and_check("sudo microceph.ceph -s", 30)
@@ -2181,15 +2180,14 @@ class microceph_harness:
 
         DEAD KEYWORD (pre-existing): no suite calls "Remove Node"; the multi-node suite uses its
         own "Remove Node Head Node" (node-wrk0-driven, with health-wait and retry). Ported from
-        the pre-refactor harness as-is; flagged for a maintainer to confirm before removing.
+        the pre-refactor harness as-is, except that the ceph -s probe decides in Python instead
+        of piping into grep -q; flagged for a maintainer to confirm before removing.
         """
         logger.console(f"[cluster] Removing node {node}...")
         self.run_in_vm_and_check(f"sudo microceph cluster remove {node}", 120)
         for _ in range(8):
-            result = self.run_in_vm(
-                f'sudo microceph.ceph -s | grep -q "mon: .*daemons.*{node}" && echo yes || echo no', 30
-            )
-            if result.stdout.strip() != "yes":
+            result = self.run_in_vm("sudo microceph.ceph -s", 30, quiet=True)
+            if result.rc != 0 or not re.search(rf"mon: .*daemons.*{re.escape(node)}", result.stdout):
                 break
             time.sleep(5)
         time.sleep(1)
