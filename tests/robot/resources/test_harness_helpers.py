@@ -331,6 +331,46 @@ def test_legacy_cephx_health_rejects_non_health_or_empty_checks():
 
 
 # ---------------------------------------------------------------------------
+# _health_is_ok_ignoring
+# ---------------------------------------------------------------------------
+
+def test_health_is_ok_ignoring_accepts_health_ok():
+    assert H._health_is_ok_ignoring(json.dumps({"status": "HEALTH_OK", "checks": {}})) is True
+    assert H._health_is_ok_ignoring(json.dumps({"status": "HEALTH_OK", "checks": {}}), {"MON_CLOCK_SKEW"}) is True
+
+
+def test_health_is_ok_ignoring_accepts_warn_made_only_of_ignored_checks():
+    payload = json.dumps(
+        {"status": "HEALTH_WARN", "checks": {"MON_CLOCK_SKEW": {"severity": "HEALTH_WARN"}}}
+    )
+
+    assert H._health_is_ok_ignoring(payload, {"MON_CLOCK_SKEW"}) is True
+    assert H._health_is_ok_ignoring(payload, ()) is False
+    assert H._health_is_ok_ignoring(payload) is False
+
+
+def test_health_is_ok_ignoring_rejects_other_checks_err_and_malformed():
+    mixed = json.dumps(
+        {
+            "status": "HEALTH_WARN",
+            "checks": {
+                "MON_CLOCK_SKEW": {"severity": "HEALTH_WARN"},
+                "OSD_DOWN": {"severity": "HEALTH_WARN"},
+            },
+        }
+    )
+    err = json.dumps(
+        {"status": "HEALTH_ERR", "checks": {"MON_CLOCK_SKEW": {"severity": "HEALTH_WARN"}}}
+    )
+
+    assert H._health_is_ok_ignoring(mixed, {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring(err, {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring(json.dumps({"status": "HEALTH_WARN", "checks": {}}), {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring("not json", {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring(json.dumps([]), {"MON_CLOCK_SKEW"}) is False
+
+
+# ---------------------------------------------------------------------------
 # _rgw_daemon_count
 # ---------------------------------------------------------------------------
 
