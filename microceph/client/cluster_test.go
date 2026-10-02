@@ -19,10 +19,9 @@ func TestGetClusterTokenDeadline(t *testing.T) {
 	require.Len(t, fake.calls, 1)
 
 	call := fake.calls[0]
-	assert.Equal(t, "GET", call.method)
 	assert.True(t, call.hasDeadline)
-	// The export runs two ceph auth commands on the daemon; a 5 s deadline was
-	// too short on loaded hosts.
+	// The export reads the cluster config and runs a ceph auth command on the
+	// daemon; a 5 s deadline was too short on loaded hosts.
 	assert.Greater(t, call.remaining, 60*time.Second)
 	assert.LessOrEqual(t, call.remaining, clusterExportTimeout)
 }

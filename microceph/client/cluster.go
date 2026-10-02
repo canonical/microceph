@@ -11,8 +11,9 @@ import (
 )
 
 // clusterExportTimeout bounds the cluster export request. The daemon reads the
-// cluster config and runs two ceph auth commands, which take several seconds on
-// a loaded host, so it matches the 120 s used by the other remote requests.
+// cluster config and runs a ceph auth command, which together take several
+// seconds on a loaded host, so it matches the 120 s used by the other remote
+// requests.
 const clusterExportTimeout = 120 * time.Second
 
 // GetClusterToken fetches the token that lets another cluster import this one as a remote.
