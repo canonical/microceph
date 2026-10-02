@@ -1466,6 +1466,47 @@ def test_rgw_frontend_tls_paths_quoted_values_via_shlex():
 
 
 # ---------------------------------------------------------------------------
+# cluster_member_names
+# ---------------------------------------------------------------------------
+
+_DEPLOYMENT_SUMMARY = (
+    "MicroCeph deployment summary:\n"
+    "- rgw-mvm-first (10.0.0.11)\n"
+    "  Services: mds, mgr, mon, osd\n"
+    "  Disks: 1\n"
+    "- rgw-mvm-first-2 (10.0.0.12)\n"
+    "  Services: osd\n"
+    "  Disks: 1\n"
+)
+
+
+def test_cluster_member_names_parses_deployment_summary():
+    assert placement_status.cluster_member_names(_DEPLOYMENT_SUMMARY) == {
+        "rgw-mvm-first", "rgw-mvm-first-2",
+    }
+
+
+def test_cluster_member_names_does_not_treat_prefix_as_present():
+    # "rgw-mvm-first" is a substring of "rgw-mvm-first-2"; only the member
+    # whose own line actually names it may count as present.
+    text = "MicroCeph deployment summary:\n- rgw-mvm-first-2 (10.0.0.12)\n"
+    names = placement_status.cluster_member_names(text)
+    assert "rgw-mvm-first-2" in names
+    assert "rgw-mvm-first" not in names
+
+
+def test_cluster_member_names_ignores_service_and_disk_lines():
+    text = "MicroCeph deployment summary:\n- node-a (10.0.0.1)\n  Services: osd\n  Disks: 1\n"
+    assert placement_status.cluster_member_names(text) == {"node-a"}
+
+
+def test_cluster_member_names_empty_or_no_members_is_empty_set():
+    assert placement_status.cluster_member_names("") == set()
+    assert placement_status.cluster_member_names(None) == set()
+    assert placement_status.cluster_member_names("MicroCeph deployment summary:\n") == set()
+
+
+# ---------------------------------------------------------------------------
 # rgw_probe.material_needles
 # ---------------------------------------------------------------------------
 
@@ -1941,7 +1982,7 @@ def _probe_harness(monkeypatch, rc_for):
     calls = []
     seen = {}
 
-    def fake_exec(container, argv, timeout):
+    def fake_exec(container, argv, timeout, vm_name=None):
         calls.append((container, argv, timeout))
         url = argv[-1]
         seen[url] = seen.get(url, 0) + 1
@@ -2041,7 +2082,9 @@ def test_preflight_exec_targets_the_vm_or_the_container(monkeypatch):
     _with_logger(monkeypatch)
     h = H()
     vm_calls, ct_calls = [], []
-    monkeypatch.setattr(h, "run_in_vm", lambda cmd, timeout, quiet=False: vm_calls.append((cmd, timeout, quiet)))
+    monkeypatch.setattr(
+        h, "run_in_vm", lambda cmd, timeout, quiet=False, vm_name=None: vm_calls.append((cmd, timeout, quiet, vm_name))
+    )
     monkeypatch.setattr(
         h, "exec_in_container",
         lambda container, *argv, timeout, quiet: ct_calls.append((container, argv, timeout, quiet)),
@@ -2049,8 +2092,12 @@ def test_preflight_exec_targets_the_vm_or_the_container(monkeypatch):
 
     h._preflight_exec("", ["curl", "-H", "Snap-Device-Series: 16", "http://x/"], 20)
     h._preflight_exec("node-wrk0", ["curl", "http://x/"], 20)
+    h._preflight_exec("", ["curl", "http://x/"], 20, vm_name="guest-vm")
 
-    assert vm_calls == [("curl -H 'Snap-Device-Series: 16' http://x/", 20, True)]
+    assert vm_calls == [
+        ("curl -H 'Snap-Device-Series: 16' http://x/", 20, True, None),
+        ("curl http://x/", 20, True, "guest-vm"),
+    ]
     assert ct_calls == [("node-wrk0", ("curl", "http://x/"), 20, True)]
 
 
@@ -2066,7 +2113,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
     events = []
 
-    def fake_run_in_vm(cmd, timeout=300, quiet=False):
+    def fake_run_in_vm(cmd, timeout=300, quiet=False, vm_name=None):
         events.append(("vm", cmd, timeout))
         return _Res(0, snap_list_count + "\n" if "snap list" in cmd else "", "")
 
@@ -2078,7 +2125,9 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
         events.append(("exec", container, argv))
         return _Res(0, "", "")
 
-    monkeypatch.setattr(h, "probe_instance_network", lambda container="", *extra: events.append(("probe", container)))
+    monkeypatch.setattr(
+        h, "probe_instance_network", lambda container="", *extra, vm_name=None: events.append(("probe", container))
+    )
     monkeypatch.setattr(h, "run_in_vm", fake_run_in_vm)
     monkeypatch.setattr(h, "run_in_vm_and_check", fake_run_in_vm)
     monkeypatch.setattr(h, "run_in_container_unchecked", fake_run_in_container)
@@ -2086,7 +2135,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     monkeypatch.setattr(h, "exec_in_container", fake_exec_in_container)
     monkeypatch.setattr(
         h, "run_in_vm_with_snap_retry",
-        lambda cmd, timeout=300: events.append(("vm-snap-retry", cmd, timeout)),
+        lambda cmd, timeout=300, vm_name=None: events.append(("vm-snap-retry", cmd, timeout)),
     )
     monkeypatch.setattr(
         h, "run_in_container_with_snap_retry",
@@ -2096,7 +2145,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     # string those methods build (flags included) and the target they aim it at.
     monkeypatch.setattr(
         h, "_run_apt",
-        lambda container, cmd, timeout, label: events.append(("apt", container, cmd, timeout)),
+        lambda container, cmd, timeout, label, vm_name=None: events.append(("apt", container, cmd, timeout)),
     )
     return h, events
 
@@ -2396,7 +2445,8 @@ def _apt_target_harness(monkeypatch):
     h = H()
     calls = []
     monkeypatch.setattr(
-        h, "_run_apt", lambda container, cmd, timeout, label: calls.append((container, cmd, timeout, label))
+        h, "_run_apt",
+        lambda container, cmd, timeout, label, vm_name=None: calls.append((container, cmd, timeout, label)),
     )
     return h, calls
 
@@ -2673,6 +2723,41 @@ def test_wait_for_control_services_absent_timeout_on_persistent_bad_output(monke
 
 
 # ---------------------------------------------------------------------------
+# wait_for_cluster_members_in_vm (must decide via cluster_member_names, not a
+# substring search over the raw `microceph status` text)
+# ---------------------------------------------------------------------------
+
+def test_wait_for_cluster_members_in_vm_rejects_prefix_match(monkeypatch):
+    # Only "rgw-mvm-first-2" is actually a member; a substring search would
+    # wrongly report "rgw-mvm-first" present too.
+    h = H()
+    status_text = (
+        "MicroCeph deployment summary:\n"
+        "- rgw-mvm-first-2 (10.0.0.12)\n"
+        "  Services: osd\n"
+        "  Disks: 1\n"
+    )
+    monkeypatch.setattr(h, "run_in_vm", lambda *a, **k: _Res(0, status_text, ""))
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    with pytest.raises(AssertionError) as exc:
+        h.wait_for_cluster_members_in_vm("rgw-mvm-first", tries=1)
+    assert "rgw-mvm-first" in str(exc.value)
+
+
+def test_wait_for_cluster_members_in_vm_succeeds_on_exact_names(monkeypatch):
+    h = H()
+    status_text = (
+        "MicroCeph deployment summary:\n"
+        "- rgw-mvm-first (10.0.0.11)\n"
+        "- rgw-mvm-later (10.0.0.13)\n"
+    )
+    monkeypatch.setattr(h, "run_in_vm", lambda *a, **k: _Res(0, status_text, ""))
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    # Must not raise: both requested members are exact matches.
+    h.wait_for_cluster_members_in_vm("rgw-mvm-first", "rgw-mvm-later", tries=1)
+
+
+# ---------------------------------------------------------------------------
 # Single-system suite state sequencing
 # ---------------------------------------------------------------------------
 
@@ -2727,7 +2812,8 @@ def test_local_snap_install_caches_core26(monkeypatch):
     retried = []
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
     monkeypatch.setattr(
-        harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: retried.append((command, timeout))
+        harness, "run_in_vm_with_snap_retry",
+        lambda command, timeout=300, vm_name=None: retried.append((command, timeout)),
     )
 
     harness.install_microceph_from_local_snap("/tmp/microceph.snap")
@@ -2751,3 +2837,25 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "cat >" not in script
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
 
+
+def test_migration_samples_counts_only_in_flight_reads():
+    text = "0 0 1\n0 0 1\n1 0 1\n1 1 0\n1 1 0\nEND\n"
+    assert placement_status.migration_samples(text) == {
+        "samples": 3, "available": True, "replacement_ready": True, "complete": True,
+    }
+
+
+def test_migration_samples_detects_an_outage_and_an_unfinished_sampler():
+    outage = "1 0 1\n1 0 0\n1 1 0\nEND\n"
+    assert placement_status.migration_samples(outage)["available"] is False
+    unfinished = placement_status.migration_samples("1 0 1\n")
+    assert unfinished["complete"] is False and unfinished["samples"] == 1
+    empty = placement_status.migration_samples("END\n")
+    assert empty == {"samples": 0, "available": False, "replacement_ready": False, "complete": True}
+
+
+def test_migration_samples_rejects_malformed_lines():
+    with pytest.raises(ValueError):
+        placement_status.migration_samples("1 2 3\n")
+    with pytest.raises(ValueError):
+        placement_status.migration_samples("garbage\n")
