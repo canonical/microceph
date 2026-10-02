@@ -58,6 +58,7 @@ RGW MultiVM Suite Setup
         Install MicroCeph From Local Snap    vm_name=${vm}
         Wait For MicroCeph Control Socket    tries=36    vm_name=${vm}
     END
+    Install RGW Scenario Runner In VM    ${GUEST_VM0}
     Log To Console    [rgw-mvm] Bootstrapping cluster on ${GUEST_VM0}...
     Run In VM And Check    sudo microceph cluster bootstrap    300    vm_name=${GUEST_VM0}
     # Debug logging on every member so the RGW leak/journal checks that run later
@@ -121,27 +122,32 @@ Test Port Update Requested From Another Member
     Exercise RGW S3 In VM    ${VM1_IP}    8081    vm_name=${GUEST_VM2}    filename=crossvm2
 
 Test Migration Keeps A Gateway Serving Throughout
-    [Documentation]    One policy moves the gateway vm1 -> vm2. A sampler running
-    ...    inside vm0 reads the real S3 object /testbucket/crossvm2.txt (uploaded
-    ...    earlier through vm1) every 100 ms from vm2's then vm1's address for the
-    ...    whole time the background PUT is in flight: genuine object reads, not
-    ...    a Ceph daemon count (which lags the real service state), and fast
-    ...    enough that even a sub-second apply yields samples. add-before-remove
-    ...    means every in-flight sample must be served by one of the two
-    ...    gateways, and the replacement (vm2) must be seen serving before the
-    ...    apply finishes. Afterwards vm2 serves on the moved port, vm1's unit is
-    ...    stopped, and vm1's observed frontend is gone.
+    [Documentation]    Requires state left by the two preceding tests:
+    ...    Test Cross Machine Enable Serves S3 From Another Member enables RGW
+    ...    on vm1 at port 8080. Test Port Update Requested From Another Member
+    ...    changes that gateway to port 8081 and uploads /testbucket/crossvm2.txt
+    ...    through it, using vm2 as the client. This test reuses that gateway and
+    ...    object; it is not standalone and does not copy the object between VMs.
+    ...    One policy moves the gateway vm1 -> vm2. A foreground
+    ...    runner in vm0 samples /testbucket/crossvm2.txt from old vm1, then new vm2,
+    ...    and pauses 100 ms after each pair of reads. Reading old first avoids
+    ...    missing a valid handover between the requests: if old has stopped,
+    ...    add-before-remove requires new to be ready for the following read.
+    ...    Always read new too, even when old succeeds, to observe the replacement.
+    ...    Every in-flight pair must include a successful object read, and new
+    ...    must be observed serving before the sampler finishes. These samples
+    ...    are not an atomic snapshot of both gateways. Afterwards vm2 serves
+    ...    on the moved port, vm1's unit is stopped, and its frontend is gone.
     [Tags]    placement    rgw    migration
     ${ip2}=    Get Guest VM IP    ${GUEST_VM2}
     Set Suite Variable    ${VM2_IP}    ${ip2}
     ${policy}=    Set Variable    {"mode":"reconcile","members":{"${GUEST_VM1}":{"rgw":{"enabled":false}},"${GUEST_VM2}":{"rgw":{"enabled":true,"ssl":false,"port":8081}}}}
-    Start RGW Migration Sampler In VM    ${GUEST_VM0}    migrate    ${VM1_IP}    ${VM2_IP}    8081
-    ...    /testbucket/crossvm2.txt    hello-rgw-placement-crossvm2
-    Start Placement Put In VM    ${GUEST_VM0}    ${policy}    migrate
-    ${resp}=    Wait For Background Put In VM    ${GUEST_VM0}    migrate    timeout=600
+    ${result}=    Run RGW Migration In VM    ${GUEST_VM0}    ${policy}    ${VM1_IP}    ${VM2_IP}    8081
+    ...    /testbucket/crossvm2.txt    hello-rgw-placement-crossvm2    timeout=600
+    ${resp}=    Set Variable    ${result}[response]
     ${code}=    Response Status Code    ${resp}
     Should Be Equal As Integers    ${code}    200    msg=gateway migration failed: ${resp}
-    ${observation}=    Collect RGW Migration Samples In VM    ${GUEST_VM0}    migrate
+    ${observation}=    Set Variable    ${result}[observation]
     Should Be True    ${observation}[samples] > 0    msg=no in-flight object-read samples were taken during the migration: ${observation}
     Should Be Equal    ${observation}[available]    ${True}
     ...    msg=the object went unavailable during migration (add-before-remove violated): ${observation}
@@ -153,38 +159,32 @@ Test Migration Keeps A Gateway Serving Throughout
     Exercise RGW S3 In VM    ${VM2_IP}    8081    vm_name=${GUEST_VM1}    filename=migrated
 
 Test Concurrent Cross Member Applies Return 409
-    [Documentation]    Two placement PUTs applied by different members are made to
-    ...    genuinely OVERLAP: PUT A (two gateway additions, applied by vm0) and
-    ...    PUT B (forwarded to and applied by vm1 through ?target=) are launched
-    ...    from one shell milliseconds apart, far inside the time A needs. The
-    ...    cluster-wide lock is only ever held while an apply is running, so an
-    ...    exact HTTP 409 for B is itself the proof that B arrived while A was
-    ...    applying; A must then finish 200. Whether A was still unfinished when
-    ...    B's response was read back is logged for context only, because that
-    ...    read-back costs another round trip A can complete within. One retry
-    ...    is allowed for the rare case where A completes before B reaches the
-    ...    lock; a second failure to observe the 409 is a real lock defect.
+    [Documentation]    One guest runner releases two PUT workers from a barrier:
+    ...    A applies on vm0, while B is forwarded to vm1 through ?target=.
+    ...    Neither submission nor response order determines the lock winner.
+    ...    Require one HTTP 200 and one HTTP 409, in either order: the rejected
+    ...    request must have arrived while the winner held the cluster-wide lock.
+    ...    The runner joins both workers before returning their responses.
+    ...    Retry once if no 200/409 pair was observed; two 200s can mean the
+    ...    requests did not overlap at the daemon despite the shared barrier.
     [Tags]    placement    concurrency
     ${clear}=    Set Variable    {"mode":"reconcile","members":{"${GUEST_VM1}":{"rgw":{"enabled":false}},"${GUEST_VM2}":{"rgw":{"enabled":false}}}}
     ${policy_a}=    Set Variable    {"mode":"reconcile","members":{"${GUEST_VM1}":{"rgw":{"enabled":true,"ssl":false,"port":8080}},"${GUEST_VM2}":{"rgw":{"enabled":true,"ssl":false,"port":8080}}}}
     ${policy_b}=    Set Variable    {"mode":"reconcile","members":{"${GUEST_VM2}":{"rgw":{"enabled":true,"ssl":false,"port":8081}}}}
     ${overlapped}=    Set Variable    ${False}
     FOR    ${attempt}    IN RANGE    2
-        # Stand down first so the winner's apply performs fresh (slow) additions,
-        # giving B a real window to land while A is still running.
+        # Stand down first so either winner performs fresh additions, giving
+        # the competing request a window to contend for the lock.
         ${resp}=    MicroCeph API Put In VM    ${GUEST_VM0}    placement    ${clear}    timeout=600
         ${code}=    Response Status Code    ${resp}
         Should Be Equal As Integers    ${code}    200    msg=conflict reset failed: ${resp}
         Wait For RGW Unit State In VM    inactive=${True}    vm_name=${GUEST_VM1}
         Wait For RGW Unit State In VM    inactive=${True}    vm_name=${GUEST_VM2}
-        Start Concurrent Placement Puts In VM    ${GUEST_VM0}    ${policy_a}    conflict-a    ${policy_b}    conflict-b    ${GUEST_VM1}
-        ${resp_b}=    Wait For Background Put In VM    ${GUEST_VM0}    conflict-b    timeout=600
-        ${a_done_at_b}=    Background Put Done In VM    ${GUEST_VM0}    conflict-a
-        ${code_b}=    Response Status Code    ${resp_b}
-        ${resp_a}=    Wait For Background Put In VM    ${GUEST_VM0}    conflict-a    timeout=600
+        ${resp_a}    ${resp_b}=    Run Concurrent Placement Puts In VM    ${GUEST_VM0}    ${policy_a}    ${policy_b}    ${GUEST_VM1}    timeout=600
         ${code_a}=    Response Status Code    ${resp_a}
-        Log To Console    [conflict] attempt ${attempt}: code_a=${code_a} code_b=${code_b} a_done_when_b_finished=${a_done_at_b}
-        IF    ${code_b} == 409 and ${code_a} == 200
+        ${code_b}=    Response Status Code    ${resp_b}
+        Log To Console    [conflict] attempt ${attempt}: code_a=${code_a} code_b=${code_b}
+        IF    sorted([${code_a}, ${code_b}]) == [200, 409]
             ${overlapped}=    Set Variable    ${True}
             Exit For Loop
         ELSE IF    ${attempt} == 0

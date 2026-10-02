@@ -349,37 +349,6 @@ def cluster_member_names(status_text):
     return names
 
 
-def migration_samples(text):
-    """Return the verdict of an in-guest migration sampler's output.
-
-    Each line is ``<started> <new_ok> <old_ok>`` (0/1); a final ``END`` line
-    marks a finished sampler. Only samples taken after the PUT started count
-    as in-flight. ``available`` is True only when every in-flight sample read
-    the object from one of the two gateways; ``replacement_ready`` is True when
-    the new gateway served it at least once.
-    """
-    in_flight = []
-    replacement = False
-    complete = False
-    for line in (text or "").splitlines():
-        if line.strip() == "END":
-            complete = True
-            continue
-        fields = line.split()
-        if len(fields) != 3 or any(f not in ("0", "1") for f in fields):
-            raise ValueError(f"malformed migration sample: {line!r}")
-        started, new_ok, old_ok = (f == "1" for f in fields)
-        replacement = replacement or new_ok
-        if started:
-            in_flight.append(new_ok or old_ok)
-    return {
-        "samples": len(in_flight),
-        "available": bool(in_flight) and all(in_flight),
-        "replacement_ready": replacement,
-        "complete": complete,
-    }
-
-
 def rgw_frontend_conf_ports(conf_text):
     """Return listener settings from the generated Beast frontend line."""
     fields = _rgw_frontend_fields(conf_text)
