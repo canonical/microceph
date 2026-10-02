@@ -11,15 +11,22 @@ Run with pytest:
 """
 
 import base64
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import os
 import socket
 import sys
 from pathlib import Path
+import socketserver
+import subprocess
+import sys
+import threading
 
 import pytest
 
 import placement_status
 import rgw_probe
+import rgw_scenario
 import rgw_placement
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
@@ -3081,24 +3088,156 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
 
 
-def test_migration_samples_counts_only_in_flight_reads():
-    text = "0 0 1\n0 0 1\n1 0 1\n1 1 0\n1 1 0\nEND\n"
-    assert placement_status.migration_samples(text) == {
-        "samples": 3, "available": True, "replacement_ready": True, "complete": True,
-    }
+class _ScenarioControlServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    pass
 
 
-def test_migration_samples_detects_an_outage_and_an_unfinished_sampler():
-    outage = "1 0 1\n1 0 0\n1 1 0\nEND\n"
-    assert placement_status.migration_samples(outage)["available"] is False
-    unfinished = placement_status.migration_samples("1 0 1\n")
-    assert unfinished["complete"] is False and unfinished["samples"] == 1
-    empty = placement_status.migration_samples("END\n")
-    assert empty == {"samples": 0, "available": False, "replacement_ready": False, "complete": True}
+@pytest.fixture
+def rgw_scenario_servers():
+    servers = []
+
+    def start(server):
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        servers.append((server, thread))
+        return server
+
+    yield start
+    for server, thread in servers:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
-def test_migration_samples_rejects_malformed_lines():
-    with pytest.raises(ValueError):
-        placement_status.migration_samples("1 2 3\n")
-    with pytest.raises(ValueError):
-        placement_status.migration_samples("garbage\n")
+def _run_rgw_scenario(*arguments):
+    return subprocess.run(
+        [sys.executable, rgw_scenario.__file__, *arguments],
+        env={**os.environ, "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"},
+        capture_output=True, text=True, timeout=10,
+    )
+
+
+@pytest.mark.parametrize("scenario", ["handover", "outage", "wrong object"])
+def test_rgw_scenario_migration(scenario, tmp_path, rgw_scenario_servers):
+    # Complete a handover between the old and new object reads. The PUT stays
+    # in flight until the sampler has observed that pair of HTTP responses.
+    sampled = threading.Event()
+    ready = {"old": scenario != "outage", "new": scenario == "wrong object"}
+    requests = 0
+
+    class ObjectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            nonlocal requests
+            gateway = "new" if self.headers["Host"].startswith("localhost:") else "old"
+            serves = ready[gateway]
+            requests += 1
+            if scenario == "handover" and requests == 1:
+                ready["new"] = True
+                ready["old"] = False
+            self.send_response(200 if serves else 503)
+            self.end_headers()
+            self.wfile.write(b"wrong object" if scenario == "wrong object" else b"expected object")
+            if requests >= 2:
+                sampled.set()
+
+        def log_message(self, *args):
+            pass
+
+    class ControlHandler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            observed = sampled.wait(5)
+            self.send_response(200 if observed else 500)
+            self.end_headers()
+            self.wfile.write(json.dumps({"status_code": 200 if observed else 500}).encode())
+
+        def log_message(self, *args):
+            pass
+
+    objects = rgw_scenario_servers(HTTPServer(("127.0.0.1", 0), ObjectHandler))
+    socket_path = str(tmp_path / "control.socket")
+    rgw_scenario_servers(_ScenarioControlServer(socket_path, ControlHandler))
+    result = _run_rgw_scenario(
+        "--socket", socket_path, "--timeout", "5", "migration", "{}",
+        "127.0.0.1", "localhost", str(objects.server_port), "/object", "expected object",
+    )
+    assert result.returncode == 0, result.stderr
+    result = json.loads(result.stdout)
+    assert placement_status.response_code(result["response"]) == 200
+    assert result["observation"]["samples"] > 0
+    assert result["observation"]["available"] is (scenario == "handover")
+    assert result["observation"]["replacement_ready"] is (scenario == "handover")
+
+
+@pytest.mark.parametrize("winner", ["a", "b"])
+def test_rgw_scenario_concurrent_requests_accept_either_winner(winner, tmp_path, rgw_scenario_servers):
+    locked = threading.Event()
+    rejected = threading.Event()
+    lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            name = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if name != winner:
+                locked.wait(5)
+            if lock.acquire(blocking=False):
+                locked.set()
+                overlapped = rejected.wait(5)
+                lock.release()
+                code = 200 if overlapped else 500
+            else:
+                rejected.set()
+                code = 409
+            self.send_response(code)
+            self.end_headers()
+            self.wfile.write(json.dumps({"status_code" if code == 200 else "error_code": code}).encode())
+
+        def log_message(self, *args):
+            pass
+
+    socket_path = str(tmp_path / "control.socket")
+    rgw_scenario_servers(_ScenarioControlServer(socket_path, Handler))
+    result = _run_rgw_scenario(
+        "--socket", socket_path, "--timeout", "5", "concurrent", '"a"', '"b"', "member-b",
+    )
+    assert result.returncode == 0, result.stderr
+    codes = [placement_status.response_code(response) for response in json.loads(result.stdout)["responses"]]
+    assert codes == ([200, 409] if winner == "a" else [409, 200])
+
+
+@pytest.mark.parametrize("failure", ["connection refused", "timeout"])
+def test_rgw_scenario_stops_sampler_when_request_fails(failure, tmp_path, rgw_scenario_servers):
+    release = threading.Event()
+
+    class ObjectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"expected object")
+
+        def log_message(self, *args):
+            pass
+
+    class StalledControlHandler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            release.wait(5)
+
+        def log_message(self, *args):
+            pass
+
+    objects = rgw_scenario_servers(HTTPServer(("127.0.0.1", 0), ObjectHandler))
+    socket_path = str(tmp_path / "control.socket")
+    if failure == "timeout":
+        rgw_scenario_servers(_ScenarioControlServer(socket_path, StalledControlHandler))
+    try:
+        # A lost stop signal would leave the non-daemon sampler running and
+        # make the foreground process exceed the outer test deadline.
+        result = _run_rgw_scenario(
+            "--socket", socket_path, "--timeout", "0.25", "migration", "{}",
+            "127.0.0.1", "localhost", str(objects.server_port), "/object", "expected object",
+        )
+        assert result.returncode != 0
+        assert result.stdout == ""
+    finally:
+        release.set()
