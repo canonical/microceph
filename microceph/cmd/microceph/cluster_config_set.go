@@ -24,6 +24,7 @@ func (c *cmdClusterConfigSet) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set <Key> <Value>",
 		Short: "Set specified Ceph Cluster config",
+		Args:  cobra.ExactArgs(2),
 		RunE:  c.Run,
 	}
 
@@ -33,10 +34,6 @@ func (c *cmdClusterConfigSet) Command() *cobra.Command {
 }
 
 func (c *cmdClusterConfigSet) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 2 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return fmt.Errorf("unable to configure MicroCeph: %w", err)

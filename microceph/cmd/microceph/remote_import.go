@@ -23,6 +23,7 @@ func (c *cmdRemoteImport) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "import <name> <token>",
 		Short: "Import external MicroCeph cluster as a remote",
+		Args:  cobra.ExactArgs(2),
 		RunE:  c.Run,
 	}
 
@@ -31,10 +32,6 @@ func (c *cmdRemoteImport) Command() *cobra.Command {
 }
 
 func (c *cmdRemoteImport) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 2 {
-		return cmd.Help()
-	}
-
 	if len(c.localName) == 0 {
 		return fmt.Errorf("please provide a local name using `--local-name` flag")
 	}

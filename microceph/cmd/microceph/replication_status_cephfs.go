@@ -23,6 +23,7 @@ func (c *cmdReplicationStatusCephfs) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cephfs <volume>",
 		Short: "Show CephFS resource replication status",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
@@ -31,10 +32,6 @@ func (c *cmdReplicationStatusCephfs) Command() *cobra.Command {
 }
 
 func (c *cmdReplicationStatusCephfs) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

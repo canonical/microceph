@@ -19,6 +19,7 @@ func (c *cmdClusterSQL) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sql <query>",
 		Short: "Runs a SQL query against the cluster database",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
@@ -26,17 +27,6 @@ func (c *cmdClusterSQL) Command() *cobra.Command {
 }
 
 func (c *cmdClusterSQL) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		err := cmd.Help()
-		if err != nil {
-			return fmt.Errorf("Unable to load help: %w", err)
-		}
-
-		if len(args) == 0 {
-			return nil
-		}
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

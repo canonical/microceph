@@ -19,6 +19,7 @@ func (c *cmdReplicationDemote) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "demote",
 		Short: "Demote a primary cluster to non-primary status",
+		Args:  cobra.NoArgs,
 		RunE:  c.Run,
 	}
 
@@ -29,10 +30,6 @@ func (c *cmdReplicationDemote) Command() *cobra.Command {
 }
 
 func (c *cmdReplicationDemote) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

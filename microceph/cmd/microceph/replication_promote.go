@@ -19,6 +19,7 @@ func (c *cmdReplicationPromote) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "promote",
 		Short: "Promote a non-primary cluster to primary status",
+		Args:  cobra.NoArgs,
 		RunE:  c.Run,
 	}
 
@@ -29,10 +30,6 @@ func (c *cmdReplicationPromote) Command() *cobra.Command {
 }
 
 func (c *cmdReplicationPromote) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

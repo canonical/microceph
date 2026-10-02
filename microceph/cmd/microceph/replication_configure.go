@@ -34,6 +34,7 @@ func (c *cmdReplicationConfigureRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rbd <resource>",
 		Short: "Configure replication parameters for RBD resource",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
@@ -42,10 +43,6 @@ func (c *cmdReplicationConfigureRbd) Command() *cobra.Command {
 }
 
 func (c *cmdReplicationConfigureRbd) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

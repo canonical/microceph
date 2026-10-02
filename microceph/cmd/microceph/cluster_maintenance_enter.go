@@ -24,6 +24,7 @@ func (c *cmdClusterMaintenanceEnter) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "enter <NODE_NAME>",
 		Short: "Enter maintenance mode.",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
@@ -38,10 +39,6 @@ func (c *cmdClusterMaintenanceEnter) Command() *cobra.Command {
 }
 
 func (c *cmdClusterMaintenanceEnter) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

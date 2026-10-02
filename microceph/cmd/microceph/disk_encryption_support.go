@@ -31,6 +31,7 @@ func (c *cmdDiskEncryptionSupport) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "encryption-support",
 		Short: "Check if disk encryption is supported. Exits non-zero with reason if not.",
+		Args:  cobra.NoArgs,
 		RunE:  c.Run,
 	}
 
@@ -38,10 +39,6 @@ func (c *cmdDiskEncryptionSupport) Command() *cobra.Command {
 }
 
 func (c *cmdDiskEncryptionSupport) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return cmd.Help()
-	}
-
 	supported, reason, err := getEncryptionSupportFunc(context.Background(), c.common.FlagStateDir)
 	if err != nil {
 		return err

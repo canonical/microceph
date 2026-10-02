@@ -25,6 +25,7 @@ func (c *cmdClientConfigSet) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set <Key> <Value>",
 		Short: "Sets specified Ceph Client config",
+		Args:  cobra.ExactArgs(2),
 		RunE:  c.Run,
 	}
 
@@ -36,9 +37,6 @@ func (c *cmdClientConfigSet) Command() *cobra.Command {
 
 func (c *cmdClientConfigSet) Run(cmd *cobra.Command, args []string) error {
 	allowList := ceph.GetClientConfigSet()
-	if len(args) != 2 {
-		return cmd.Help()
-	}
 
 	_, ok := allowList[args[0]]
 	if !ok {

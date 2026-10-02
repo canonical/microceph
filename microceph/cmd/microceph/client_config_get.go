@@ -25,6 +25,7 @@ func (c *cmdClientConfigGet) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <key>",
 		Short: "Fetches specified Ceph Client config",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
@@ -35,11 +36,6 @@ func (c *cmdClientConfigGet) Command() *cobra.Command {
 
 func (c *cmdClientConfigGet) Run(cmd *cobra.Command, args []string) error {
 	allowList := ceph.GetClientConfigSet()
-
-	// Get can be called with a single key.
-	if len(args) != 1 {
-		return cmd.Help()
-	}
 
 	_, ok := allowList[args[0]]
 	if !ok {

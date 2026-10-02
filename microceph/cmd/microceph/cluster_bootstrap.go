@@ -31,6 +31,7 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bootstrap",
 		Short: "Sets up a new cluster",
+		Args:  cobra.NoArgs,
 		RunE:  c.Run,
 	}
 
@@ -45,10 +46,6 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 }
 
 func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return fmt.Errorf("unable to configure MicroCeph: %w", err)

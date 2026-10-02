@@ -22,6 +22,7 @@ func (c *cmdClusterConfigGet) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <key>",
 		Short: "Get specified Ceph Cluster config",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
@@ -29,11 +30,6 @@ func (c *cmdClusterConfigGet) Command() *cobra.Command {
 }
 
 func (c *cmdClusterConfigGet) Run(cmd *cobra.Command, args []string) error {
-	// Get can be called with a single key.
-	if len(args) != 1 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return fmt.Errorf("unable to configure MicroCeph: %w", err)
