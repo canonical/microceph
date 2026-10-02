@@ -13,6 +13,7 @@ Run with pytest:
 import json
 from pathlib import Path
 
+import auth_status
 import placement_status
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
@@ -2371,3 +2372,84 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "dpkg-deb -x" not in script
     assert "cat >" not in script
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
+
+
+# ---------------------------------------------------------------------------
+# auth_status pure helpers
+# ---------------------------------------------------------------------------
+
+def test_parse_auth_status_valid_json():
+    raw = json.dumps({
+        "status": "All client aes256k",
+        "state": "completed",
+        "blocker": "",
+        "target_key_type": "aes256k",
+        "client_distribution": {"aes256k": ["client.admin", "client.rgw"]},
+    })
+    status = auth_status.parse_auth_status(raw)
+    assert status["status"] == "All client aes256k"
+    assert status["state"] == "completed"
+    assert status["blocker"] == ""
+    assert status["target_key_type"] == "aes256k"
+    assert status["client_distribution"] == {"aes256k": ["client.admin", "client.rgw"]}
+
+
+def test_parse_auth_status_wrapped_metadata():
+    raw = json.dumps({
+        "status_code": 200,
+        "metadata": {
+            "status": "blocked",
+            "state": "blocked",
+            "blocker": "Unmanaged credentials must be rotated manually",
+            "client_distribution": {"aes": ["client.cinder"]},
+        }
+    })
+    status = auth_status.parse_auth_status(raw)
+    assert status["status"] == "blocked"
+    assert status["state"] == "blocked"
+    assert "Unmanaged credentials" in status["blocker"]
+
+
+def test_parse_auth_status_invalid_json():
+    status = auth_status.parse_auth_status("not valid json")
+    assert status["status"] == ""
+    assert status["state"] == ""
+    assert status["blocker"] == ""
+
+
+def test_parse_auth_status_text():
+    text = "Status: blocked\nBlocker: Unmanaged credentials must be rotated manually before rotation can proceed\n"
+    parsed = auth_status.parse_auth_status_text(text)
+    assert parsed["status"] == "blocked"
+    assert "Unmanaged credentials" in parsed["blocker"]
+
+
+def test_is_auth_rotation_completed():
+    raw_completed = json.dumps({"state": "completed"})
+    raw_blocked = json.dumps({"state": "blocked"})
+    assert auth_status.is_auth_rotation_completed(raw_completed) is True
+    assert auth_status.is_auth_rotation_completed(raw_blocked) is False
+
+
+def test_is_auth_rotation_blocked():
+    raw_blocked = json.dumps({"state": "blocked"})
+    raw_idle = json.dumps({"state": "idle"})
+    assert auth_status.is_auth_rotation_blocked(raw_blocked) is True
+    assert auth_status.is_auth_rotation_blocked(raw_idle) is False
+
+
+def test_auth_status_blocker_contains():
+    raw_json = json.dumps({"state": "blocked", "blocker": "Unmanaged credentials must be rotated manually"})
+    assert auth_status.auth_status_blocker_contains(raw_json, "unmanaged credentials") is True
+    assert auth_status.auth_status_blocker_contains(raw_json, "incompatible release") is False
+
+    text = "Status: blocked\nBlocker: Client client.legacy is incompatible\n"
+    assert auth_status.auth_status_blocker_contains(text, "incompatible") is True
+
+
+def test_all_clients_use_cipher():
+    raw_uniform = json.dumps({"client_distribution": {"aes256k": ["client.admin"]}})
+    raw_mixed = json.dumps({"client_distribution": {"aes": ["client.admin"], "aes256k": ["client.rgw"]}})
+    assert auth_status.all_clients_use_cipher(raw_uniform, "aes256k") is True
+    assert auth_status.all_clients_use_cipher(raw_mixed, "aes256k") is False
+
