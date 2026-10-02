@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -191,6 +192,45 @@ func TestDiskAddReportsAFlagConflictWithoutUsage(t *testing.T) {
 	}
 }
 
+// commandGroups returns the path below the root of every command that only groups subcommands.
+func commandGroups(cmd *cobra.Command) [][]string {
+	var groups [][]string
+
+	for _, sub := range cmd.Commands() {
+		if sub.HasSubCommands() {
+			groups = append(groups, strings.Fields(sub.CommandPath())[1:])
+		}
+		groups = append(groups, commandGroups(sub)...)
+	}
+
+	return groups
+}
+
+// TestCommandGroupsRejectUnknownSubcommands checks that a command group prints its usage when it is
+// called alone, and fails when it is called with a subcommand that does not exist.
+func TestCommandGroupsRejectUnknownSubcommands(t *testing.T) {
+	groups := commandGroups(newRootCommand())
+
+	var names []string
+	for _, group := range groups {
+		names = append(names, strings.Join(group, " "))
+	}
+	require.Subset(t, names, []string{"cluster", "disk", "replication", "replication enable", "replication configure"})
+
+	for _, group := range groups {
+		t.Run(strings.Join(group, " "), func(t *testing.T) {
+			out, err := executeRoot(group...)
+			require.NoError(t, err)
+			assert.Contains(t, out, "Usage:")
+
+			typo := append(append([]string{}, group...), "bogus")
+			_, err = executeRoot(typo...)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, `unknown command "bogus"`)
+		})
+	}
+}
+
 // TestRemoteImportWithoutTokenIsAUsageError is the case of the cluster export flake: an empty token
 // left remote import with one argument, and it printed its help and exited 0.
 func TestRemoteImportWithoutTokenIsAUsageError(t *testing.T) {
@@ -237,6 +277,7 @@ func TestMainExitStatus(t *testing.T) {
 		{"remote import without a token", "remote import siteb --local-name=sitea", 1, "accepts 2 arg(s), received 1"},
 		{"remote list with an argument", "remote list siteb", 1, `unknown command "siteb" for "microceph remote list"`},
 		{"disk add without a disk", "disk add", 1, "no disks given"},
+		{"command group with an unknown subcommand", "replication enable rbdd", 1, `unknown command "rbdd" for "microceph replication enable"`},
 		{"command group without a subcommand", "cluster", 0, "Usage:"},
 		{"help flag", "remote import --help", 0, "Usage:"},
 	}
