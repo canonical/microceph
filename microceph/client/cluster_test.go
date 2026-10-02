@@ -51,7 +51,7 @@ func TestGetClusterTokenDeadline(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, exportToken, token)
 	assert.True(t, transport.hasDeadline)
-	// The export reads the cluster config and runs two ceph auth commands on the
+	// The export reads the cluster config and runs a ceph auth command on the
 	// daemon; a 5 s deadline was too short on loaded hosts. microcluster adds a
 	// 30 s deadline to a request that has none, which this must not fall back to.
 	assert.Greater(t, transport.remaining, 60*time.Second)
