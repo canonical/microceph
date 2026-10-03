@@ -741,6 +741,58 @@ function remote_configure_rbd_mirroring() {
     lxc exec node-wrk0 -- sh -c "microceph replication enable rbd pool_two/image_two --type snapshot --remote siteb"
 }
 
+# create_hwe_mount_vm creates a noble VM running the HWE 24.04 kernel (7.0).
+# Ceph 19.2.6 mints cephx keys of the new aes256k type, which the GA 6.8
+# kernel cannot parse ("libceph: secret too big 32"); cephfs client mounts
+# have to run on the HWE kernel until GA kernels learn the new key format.
+function create_hwe_mount_vm() {
+    set -eux
+    lxc delete -f mountvm >/dev/null 2>&1 || true
+    lxc launch ubuntu:24.04 mountvm --vm
+    for i in $(seq 1 60); do
+        lxc exec mountvm -- true >/dev/null 2>&1 && break
+        sleep 5
+    done
+    lxc exec mountvm -- true
+
+    local ga_kernel
+    ga_kernel=$(lxc exec mountvm -- sh -c "uname -r")
+    lxc exec mountvm -- sh -c \
+        "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq linux-image-generic-hwe-24.04"
+    lxc restart mountvm
+    for i in $(seq 1 60); do
+        if lxc exec mountvm -- sh -c "uname -r" 2>/dev/null | grep -qv "^${ga_kernel}$"; then
+            echo "HWE kernel ready: $(lxc exec mountvm -- sh -c "uname -r")"
+            return 0
+        fi
+        sleep 5
+    done
+    echo "HWE kernel did not come up in mountvm"
+    lxc exec mountvm -- sh -c "uname -r || true"
+    exit 1
+}
+
+# vm_mount_cephfs mounts the (single) cephfs of cluster node $1 at $2 inside
+# the HWE mount VM, authenticating with the node's client.admin key.
+# An empty $1 means the cluster running on the local host.
+function vm_mount_cephfs() {
+    set -eux
+    local node="${1?missing}" mnt="${2?missing}"
+    local ceph=(lxc exec "$node" -- microceph.ceph)
+    if [ -z "${node}" ]; then
+        ceph=(sudo microceph.ceph)
+    fi
+    local mon_addr secret
+    mon_addr=$("${ceph[@]}" mon dump \
+        | grep -oE 'v1:[0-9.]+:6789' | head -1 | cut -d: -f2-)
+    secret=$("${ceph[@]}" auth get-key client.admin)
+    lxc exec mountvm -- sh -c "mkdir -p '${mnt}'"
+    # mount -i bypasses mount.ceph, whose keyring parser predates the aes256k
+    # key type; the HWE kernel parses the secret itself.
+    lxc exec mountvm -- sh -c \
+        "mount -i -t ceph '${mon_addr}:/' '${mnt}' -o name=admin,secret='${secret}'"
+}
+
 function remote_configure_cephfs_mirroring() {
     set -eux
     for i in 0 2; do
@@ -752,20 +804,14 @@ function remote_configure_cephfs_mirroring() {
     lxc exec "node-wrk0" -- bash -c "sudo microceph replication enable cephfs --volume vol --dir-path /dir1/ --remote siteb"
     lxc exec "node-wrk0" -- bash -c "sudo microceph replication enable cephfs --volume vol --dir-path /dir2/ --remote siteb"
 
-    # install primary cluster keys/conf
-    sudo lxc file pull node-wrk0/var/snap/microceph/current/conf/ceph.conf /etc/ceph/
-    sudo lxc file pull node-wrk0/var/snap/microceph/current/conf/ceph.keyring /etc/ceph/
-    sudo cat /etc/ceph/ceph.conf
-
-    # mount primary filesystem
-    sudo mkdir /mnt/primary
-    sudo mount -t ceph :/ /mnt/primary/ -o name=admin,fs=vol
+    # mount primary filesystem on the HWE kernel VM: the runner's GA kernel
+    # cannot parse the aes256k cephx keys Ceph 19.2.6 mints.
+    vm_mount_cephfs node-wrk0 /mnt/primary
 
     # perform FS IO on primary cluster mount
-    sudo mkdir /mnt/primary/dir1
-    sudo mkdir /mnt/primary/dir2
-    echo $STR1 | sudo tee /mnt/primary/dir1/test_file
-    echo $STR2 | sudo tee /mnt/primary/dir2/test_file
+    lxc exec mountvm -- sh -c "mkdir /mnt/primary/dir1 /mnt/primary/dir2"
+    echo $STR1 | lxc exec mountvm -- sh -c "cat > /mnt/primary/dir1/test_file"
+    echo $STR2 | lxc exec mountvm -- sh -c "cat > /mnt/primary/dir2/test_file"
 }
 
 function replication_verify_cephfs_list_output() {
@@ -869,8 +915,8 @@ function remote_wait_cephfs_for_secondary_to_sync() {
     local attempts="${1?missing}"
 
     # take snapshots
-    sudo mkdir /mnt/primary/dir1/.snap/two-snap
-    sudo mkdir /mnt/primary/dir2/.snap/two-snap
+    lxc exec mountvm -- sh -c "mkdir /mnt/primary/dir1/.snap/two-snap"
+    lxc exec mountvm -- sh -c "mkdir /mnt/primary/dir2/.snap/two-snap"
     sleep 20s
 
     echo "waiting for cephfs resources to replicate"
@@ -917,21 +963,15 @@ function remote_verify_cephfs_mirroring() {
     set -eux
 
     # fetch primary files for comparison later
-    node0_file1=$(< /mnt/primary/dir1/test_file)
-    node0_file2=$(< /mnt/primary/dir2/test_file)
+    node0_file1=$(lxc exec mountvm -- sh -c "cat /mnt/primary/dir1/test_file")
+    node0_file2=$(lxc exec mountvm -- sh -c "cat /mnt/primary/dir2/test_file")
 
-    # install secondary cluster keys/conf
-    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.conf /etc/ceph/
-    sudo lxc file pull node-wrk2/var/snap/microceph/current/conf/ceph.keyring /etc/ceph/
-    cat /etc/ceph/ceph.conf
-
-    # mount secondary filesystem
-    sudo mkdir /mnt/secondary
-    sudo mount -t ceph :/ /mnt/secondary/ -o name=admin,fs=vol
+    # mount secondary filesystem on the HWE kernel VM
+    vm_mount_cephfs node-wrk2 /mnt/secondary
 
     # fetch secondary files for comparison
-    node2_file1=$(< /mnt/secondary/dir1/test_file)
-    node2_file2=$(< /mnt/secondary/dir2/test_file)
+    node2_file1=$(lxc exec mountvm -- sh -c "cat /mnt/secondary/dir1/test_file")
+    node2_file2=$(lxc exec mountvm -- sh -c "cat /mnt/secondary/dir2/test_file")
 
     if [[ "$node0_file1" != "$node2_file1" ]]; then
       echo "Contents of primary: $node0_file1 are different from secondary: $node2_file1";
@@ -1312,8 +1352,22 @@ function test_sequential_join_mon_hosts() {
 }
 
 function verify_health() {
+    local ignores="${*:-}"
     for i in {0..100}; do
-        if [ "$( sudo microceph.ceph health )" = "HEALTH_OK" ] ; then
+        if [ -n "${ignores}" ] ; then
+            # Wait for the cluster to be healthy apart from the health
+            # checks matching the given ignore pattern(s). Drop every
+            # matching check block (a "[WRN]"/"[ERR]" header plus its
+            # indented detail lines) before deciding.
+            local remaining
+            remaining=$( sudo microceph.ceph health detail 2>/dev/null | \
+                awk -v ig="${ignores}" '/^\[/ { keep = ($0 !~ ig) } keep' | \
+                grep -E '^\[(WRN|ERR)\]' || true )
+            if [ -z "${remaining}" ] ; then
+                echo "HEALTH_OK found (ignoring: ${ignores})"
+                return
+            fi
+        elif [ "$( sudo microceph.ceph health )" = "HEALTH_OK" ] ; then
             echo "HEALTH_OK found"
             return
         fi

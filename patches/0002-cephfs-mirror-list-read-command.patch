@@ -1,0 +1,14 @@
+Ceph 19.2.6 provides the mirror-list command, but registers it as a write
+command. Preserve MicroCeph's existing read-only command permissions.
+
+--- a/share/ceph/mgr/mirroring/module.py
++++ b/share/ceph/mgr/mirroring/module.py
+@@ -84,7 +84,7 @@
+         """Remove a snapshot mirrored directory"""
+         return self.fs_snapshot_mirror.remove_dir(fs_name, path)
+ 
+-    @CLIWriteCommand('fs snapshot mirror ls')
++    @CLIReadCommand('fs snapshot mirror ls')
+     def snapshot_mirror_ls(self,
+                            fs_name: str):
+         """List the snapshot mirrored directories"""

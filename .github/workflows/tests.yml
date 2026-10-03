@@ -242,6 +242,9 @@ jobs:
           ~/actionutils.sh install_tools
           ~/actionutils.sh test_waitready
 
+      - name: Verify Ceph version
+        run: sudo microceph.ceph version | grep -E '^ceph version 19\.2\.6 '
+
       - name: Verify post-bootstrap state
         run: |
           set -uex
@@ -1049,7 +1052,7 @@ jobs:
         run: ~/actionutils.sh headexec wait_for_osds 3
 
       - name: Verify health
-        run: ~/actionutils.sh headexec verify_health
+        run: ~/actionutils.sh headexec verify_health AUTH_INSECURE
 
       - name: Exercise RGW again
         run: ~/actionutils.sh headexec testrgw
@@ -1121,7 +1124,7 @@ jobs:
         run: ~/actionutils.sh headexec wait_for_osds 3
 
       - name: Verify health
-        run: ~/actionutils.sh headexec verify_health
+        run: ~/actionutils.sh headexec verify_health AUTH_INSECURE
 
       - name: Exercise RGW again
         run: ~/actionutils.sh headexec testrgw
@@ -1309,8 +1312,8 @@ jobs:
       - name: Enable Cephfs Mirror Daemon
         run: ~/actionutils.sh remote_enable_mirror_daemon "cephfs-mirror"
 
-      - name: Install ceph-common on host
-        run: sudo apt install ceph-common -y
+      - name: Create HWE mount VM
+        run: ~/actionutils.sh create_hwe_mount_vm
 
       - name: Configure CephFS mirror
         run: ~/actionutils.sh remote_configure_cephfs_mirroring
@@ -1374,23 +1377,23 @@ jobs:
       - name: Create NFS export
         run: ~/actionutils.sh create_nfs_export foo testfs
 
+      - name: Create HWE mount VM
+        run: |
+          ~/actionutils.sh setup_lxd
+          ~/actionutils.sh create_hwe_mount_vm
+
       - name: Mount and test NFS
         run: |
           set -uex
 
-          # Needed to mount the Ceph NFS share.
-          sudo apt install ceph-common
-          sudo mkdir /mnt/nfs
-          sudo cp /var/snap/microceph/current/conf/ceph.conf /etc/ceph/
-          sudo cp /var/snap/microceph/current/conf/ceph.client.admin.keyring /etc/ceph/
+          # Mount the cephfs from the HWE kernel VM: the runner's GA kernel
+          # cannot parse the aes256k cephx keys Ceph 19.2.6 mints.
+          ~/actionutils.sh vm_mount_cephfs "" /mnt/nfs
 
-          addr="$(hostname -I | cut -d ' ' -f1)"
-          sudo mount -t ceph "${addr}:/" /mnt/nfs -o name=admin
+          echo "Hello there!" | lxc exec mountvm -- sh -c "cat > /mnt/nfs/general.kenobi"
+          lxc exec mountvm -- sh -c "cat /mnt/nfs/general.kenobi"
 
-          echo "Hello there!" | sudo tee /mnt/nfs/general.kenobi
-          cat /mnt/nfs/general.kenobi
-
-          sudo umount /mnt/nfs
+          lxc exec mountvm -- sh -c "umount /mnt/nfs"
 
       - name: Test log rotation
         run: ~/actionutils.sh test_log_rotation
