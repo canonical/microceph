@@ -242,6 +242,9 @@ jobs:
           ~/actionutils.sh install_tools
           ~/actionutils.sh test_waitready
 
+      - name: Verify Ceph version
+        run: sudo microceph.ceph version | grep -E '^ceph version 19\.2\.6 '
+
       - name: Verify post-bootstrap state
         run: |
           set -uex
