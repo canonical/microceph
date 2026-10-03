@@ -2226,10 +2226,40 @@ function test_dsl_remove_osd_cleanup_survives_daemon_restart() {
     wait_for_path_missing_in_vm "$db_target" 240
 }
 
+# The disk a partition is on, as /dev/<name>, or nothing if that cannot be told.
+# It only feeds failure reports, so it must not fail the test itself.
+function get_partition_parent_disk() {
+    local partition="$1"
+    local parent
+
+    parent=$(vm_shell "lsblk -no PKNAME '$partition' | head -n1") || true
+    if [[ -n "$parent" ]]; then
+        echo "/dev/$parent"
+    fi
+}
+
+# Print what is needed to name the error behind a failed generated WAL/DB
+# partition cleanup: the daemon log, and for each carrier disk the partition
+# table on disk (partx, sfdisk) and the kernel's view of it (lsblk).
+function collect_waldb_cleanup_diagnostics() {
+    local carrier
+
+    log "Collecting WAL/DB cleanup diagnostics from VM '$VM_NAME'"
+    vm_exec snap logs microceph.daemon -n 200 || true
+    for carrier in "$@"; do
+        [[ -n "$carrier" ]] || continue
+        log "Carrier $carrier"
+        vm_exec partx --show "$carrier" || true
+        vm_exec sfdisk --dump "$carrier" || true
+        vm_exec lsblk -o NAME,PATH,PKNAME,TYPE,SIZE,FSTYPE,RO,MOUNTPOINTS "$carrier" || true
+    done
+}
+
 function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     log "Test: removing one of two OSDs only cleans its generated WAL/DB partitions"
     local output osd1_path osd2_path osd1_id osd2_id osd1_dir osd2_dir
     local osd1_wal osd1_db osd2_wal osd2_db
+    local osd1_wal_carrier osd1_db_carrier remove_status remove_output
 
     osd1_path=$(get_available_disk_path_by_size "10GiB")
     osd2_path=$(get_available_disk_path_by_size "11GiB")
@@ -2253,7 +2283,17 @@ function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     assert_path_exists_in_vm "$osd2_wal"
     assert_path_exists_in_vm "$osd2_db"
 
-    vm_exec_expect_success "first OSD remove should succeed" microceph disk remove "$osd1_id" --bypass-safety-checks >/dev/null
+    # Look the carriers up while the partitions still exist, to be able to report
+    # on them if the removal fails.
+    osd1_wal_carrier=$(get_partition_parent_disk "$osd1_wal")
+    osd1_db_carrier=$(get_partition_parent_disk "$osd1_db")
+
+    run_and_capture remove_status remove_output vm_exec microceph disk remove "$osd1_id" --bypass-safety-checks
+    echo "$remove_output" >&2
+    if [[ "$remove_status" != "0" ]]; then
+        collect_waldb_cleanup_diagnostics "$osd1_wal_carrier" "$osd1_db_carrier"
+        fail "first OSD remove should succeed (expected exit 0, got $remove_status)"
+    fi
     wait_for_configured_disk_count_eq 1 360
     wait_for_path_missing_in_vm "$osd1_wal" 240
     wait_for_path_missing_in_vm "$osd1_db" 240
