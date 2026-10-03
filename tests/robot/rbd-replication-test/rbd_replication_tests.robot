@@ -63,7 +63,7 @@ Verify RBD Mirroring List
     Run In VM And Check    lxc exec node-wrk1 -- sudo microceph replication list rbd | grep "pool_one.*image_two"    30
     Run In VM And Check    lxc exec node-wrk2 -- sudo microceph replication list rbd | grep "pool_two.*image_one"    30
     Run In VM And Check    lxc exec node-wrk3 -- sudo microceph replication list rbd | grep "pool_two.*image_two"    30
-    Run In Container    node-wrk0    sudo microceph replication status rbd --json    30
+    Run In Container    node-wrk0    sudo microceph replication status rbd pool_one --json    30
 
 Failover To Site B
     [Documentation]    Promotes siteb to primary and demotes sitea; verifies image ownership transfer.
