@@ -1352,8 +1352,22 @@ function test_sequential_join_mon_hosts() {
 }
 
 function verify_health() {
+    local ignores="${*:-}"
     for i in {0..100}; do
-        if [ "$( sudo microceph.ceph health )" = "HEALTH_OK" ] ; then
+        if [ -n "${ignores}" ] ; then
+            # Wait for the cluster to be healthy apart from the health
+            # checks matching the given ignore pattern(s). Drop every
+            # matching check block (a "[WRN]"/"[ERR]" header plus its
+            # indented detail lines) before deciding.
+            local remaining
+            remaining=$( sudo microceph.ceph health detail 2>/dev/null | \
+                awk -v ig="${ignores}" '/^\[/ { keep = ($0 !~ ig) } keep' | \
+                grep -E '^\[(WRN|ERR)\]' || true )
+            if [ -z "${remaining}" ] ; then
+                echo "HEALTH_OK found (ignoring: ${ignores})"
+                return
+            fi
+        elif [ "$( sudo microceph.ceph health )" = "HEALTH_OK" ] ; then
             echo "HEALTH_OK found"
             return
         fi

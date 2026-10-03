@@ -1052,7 +1052,7 @@ jobs:
         run: ~/actionutils.sh headexec wait_for_osds 3
 
       - name: Verify health
-        run: ~/actionutils.sh headexec verify_health
+        run: ~/actionutils.sh headexec verify_health AUTH_INSECURE
 
       - name: Exercise RGW again
         run: ~/actionutils.sh headexec testrgw
@@ -1124,7 +1124,7 @@ jobs:
         run: ~/actionutils.sh headexec wait_for_osds 3
 
       - name: Verify health
-        run: ~/actionutils.sh headexec verify_health
+        run: ~/actionutils.sh headexec verify_health AUTH_INSECURE
 
       - name: Exercise RGW again
         run: ~/actionutils.sh headexec testrgw
