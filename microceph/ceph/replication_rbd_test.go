@@ -291,6 +291,58 @@ func (s *RbdReplicationSuite) TestDisableHandlerOneMatchingRemote() {
 	assert.NoError(s.T(), err)
 }
 
+// TestDisableHandlerPeerSelectsRemote checks that with several remotes configured the
+// pool's peer decides which one is used, not the first row of the remote table: the
+// records are listed by name, so "adecoy" comes first, and the local names that "adecoy"
+// and "zeta" carry would show up in the rbd commands if either were picked.
+func (s *RbdReplicationSuite) TestDisableHandlerPeerSelectsRemote() {
+	s.stubRemotes(
+		types.RemoteRecord{ID: 3, Name: "adecoy", LocalName: "decoy"},
+		types.RemoteRecord{ID: 1, Name: "simple", LocalName: "magical"},
+		types.RemoteRecord{ID: 2, Name: "zeta", LocalName: "other"},
+	)
+	r := mocks.NewRunner(s.T())
+	expectNoPoolImages(r)
+	expectPoolDisable(r)
+	common.ProcessExec = r
+
+	err := s.disable(poolHandler(types.RbdResourcePool, simplePeer))
+	assert.NoError(s.T(), err)
+}
+
+// TestDisableHandlerNamedRemote checks a request that names its remote, which the API
+// allows although the CLI does not.
+func (s *RbdReplicationSuite) TestDisableHandlerNamedRemote() {
+	s.stubRemotes(
+		types.RemoteRecord{ID: 3, Name: "adecoy", LocalName: "decoy"},
+		types.RemoteRecord{ID: 1, Name: "simple", LocalName: "magical"},
+	)
+	r := mocks.NewRunner(s.T())
+	expectNoPoolImages(r)
+	expectPoolDisable(r)
+	common.ProcessExec = r
+
+	rh := poolHandler(types.RbdResourcePool, simplePeer)
+	rh.Request.RemoteName = "simple"
+	err := s.disable(rh)
+	assert.NoError(s.T(), err)
+}
+
+// TestDisableHandlerNamedRemoteNotAPeer checks that a named remote the pool is not
+// mirrored with is refused before any image is touched.
+func (s *RbdReplicationSuite) TestDisableHandlerNamedRemoteNotAPeer() {
+	s.stubRemotes(
+		types.RemoteRecord{ID: 3, Name: "adecoy", LocalName: "decoy"},
+		types.RemoteRecord{ID: 1, Name: "simple", LocalName: "magical"},
+	)
+	s.noCommands()
+
+	rh := poolHandler(types.RbdResourcePool, simplePeer)
+	rh.Request.RemoteName = "adecoy"
+	err := s.disable(rh)
+	assert.ErrorContains(s.T(), err, "no matching remote is configured")
+}
+
 // TestDisableHandlerNoPeers checks that a pool that has mirroring enabled but no peer is
 // refused before any image is touched. The peer used to be indexed unchecked, so this
 // panicked.
@@ -300,6 +352,18 @@ func (s *RbdReplicationSuite) TestDisableHandlerNoPeers() {
 
 	err := s.disable(poolHandler(types.RbdResourcePool))
 	assert.ErrorContains(s.T(), err, "no mirror peer registered")
+}
+
+// TestDisableHandlerPeerNotARemote checks that a pool mirrored with a site this site has
+// no remote for, the case of a missed import next to an unrelated remote, is refused
+// with an error that names both.
+func (s *RbdReplicationSuite) TestDisableHandlerPeerNotARemote() {
+	s.stubRemotes(types.RemoteRecord{ID: 3, Name: "adecoy", LocalName: "decoy"})
+	s.noCommands()
+
+	err := s.disable(poolHandler(types.RbdResourcePool, simplePeer))
+	assert.ErrorContains(s.T(), err, "pool (pool) is mirrored with simple")
+	assert.ErrorContains(s.T(), err, "configured: adecoy")
 }
 
 // TestDisableHandlerPoolAlreadyDisabled checks that disabling a pool that is not
@@ -353,4 +417,82 @@ func (s *RbdReplicationSuite) TestDisableHandlerImageNeedsNoPeer() {
 
 	err := s.disable(imageHandler(types.RbdResourceImage))
 	assert.NoError(s.T(), err)
+}
+
+// TestResolvePoolRemote checks which remote record, if any, a pool's peers select.
+func (s *RbdReplicationSuite) TestResolvePoolRemote() {
+	simple := types.RemoteRecord{ID: 1, Name: "simple", LocalName: "magical"}
+	decoy := types.RemoteRecord{ID: 2, Name: "adecoy", LocalName: "decoy"}
+	other := types.RemoteRecord{ID: 3, Name: "other", LocalName: "magical"}
+	otherPeer := RbdReplicationPeer{Id: "c1b3a0de", RemoteName: "other", Direction: types.RbdReplicationDirectionRXTX}
+	ghostPeer := RbdReplicationPeer{Id: "0b0d3f3c", RemoteName: "simple", Direction: "tx-only"}
+
+	cases := []struct {
+		name    string
+		peers   []RbdReplicationPeer
+		remotes types.RemoteRecords
+		remote  types.RemoteRecord
+		peer    RbdReplicationPeer
+		errText string
+	}{
+		{
+			name:    "one remote that is the peer",
+			peers:   []RbdReplicationPeer{simplePeer},
+			remotes: types.RemoteRecords{simple},
+			remote:  simple,
+			peer:    simplePeer,
+		},
+		{
+			name:    "the peer picks the remote that is not first",
+			peers:   []RbdReplicationPeer{simplePeer},
+			remotes: types.RemoteRecords{decoy, simple, other},
+			remote:  simple,
+			peer:    simplePeer,
+		},
+		{
+			name:    "a re-registered peer counts once",
+			peers:   []RbdReplicationPeer{simplePeer, ghostPeer},
+			remotes: types.RemoteRecords{decoy, simple},
+			remote:  simple,
+			peer:    simplePeer,
+		},
+		{
+			name:    "a peer that is not a remote is ignored while another is",
+			peers:   []RbdReplicationPeer{otherPeer, simplePeer},
+			remotes: types.RemoteRecords{decoy, simple},
+			remote:  simple,
+			peer:    simplePeer,
+		},
+		{
+			name:    "no peers",
+			remotes: types.RemoteRecords{simple},
+			errText: "pool (pool) has no mirror peer registered, cannot tell which remote to disable it on",
+		},
+		{
+			name:    "no peer is a remote",
+			peers:   []RbdReplicationPeer{simplePeer, otherPeer},
+			remotes: types.RemoteRecords{decoy},
+			errText: `pool (pool) is mirrored with simple, other but no matching remote is configured on this site (configured: adecoy), import it with "microceph remote import"`,
+		},
+		{
+			name:    "peers of several remotes",
+			peers:   []RbdReplicationPeer{simplePeer, otherPeer},
+			remotes: types.RemoteRecords{decoy, other, simple},
+			errText: "pool (pool) is mirrored with several configured remotes (simple, other), cannot tell which one to disable",
+		},
+	}
+
+	for _, c := range cases {
+		remote, peer, err := resolvePoolRemote("pool", c.peers, c.remotes)
+		if c.errText != "" {
+			assert.EqualError(s.T(), err, c.errText, c.name)
+			assert.Equal(s.T(), types.RemoteRecord{}, remote, c.name)
+			assert.Equal(s.T(), RbdReplicationPeer{}, peer, c.name)
+			continue
+		}
+
+		assert.NoError(s.T(), err, c.name)
+		assert.Equal(s.T(), c.remote, remote, c.name)
+		assert.Equal(s.T(), c.peer, peer, c.name)
+	}
 }
