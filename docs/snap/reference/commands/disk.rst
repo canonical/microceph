@@ -247,4 +247,4 @@ Flags:
 
    --bypass-safety-checks               Bypass safety checks
    --confirm-failure-domain-downgrade   Confirm failure domain downgrade if required
-   --timeout int                        Timeout to wait for safe removal (seconds) (default: 300)
+   --timeout int                        Timeout to wait for safe removal (seconds) (default: 1800)
