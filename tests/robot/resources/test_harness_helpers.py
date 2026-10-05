@@ -1358,12 +1358,11 @@ def _with_logger(monkeypatch):
     return cap
 
 
-def test_run_in_container_with_retry_retries_until_success(monkeypatch):
+def test_remove_cluster_member_with_retry_accepts_not_found_after_transient_failure(monkeypatch):
     harness = H()
     results = iter([
         _Res(1, "", "context deadline exceeded"),
-        _Res(1, "", "context deadline exceeded"),
-        _Res(0, "removed", ""),
+        _Res(1, "", 'Error: cluster member "node-wrk3" not found'),
     ])
     calls = []
 
@@ -1373,15 +1372,37 @@ def test_run_in_container_with_retry_retries_until_success(monkeypatch):
 
     monkeypatch.setattr(harness, "run_in_container_unchecked", run_in_container_unchecked)
 
-    result = harness.run_in_container_with_retry(
-        "node-wrk0", "microceph cluster remove node-wrk3 --force", 3, 0, 120
+    result = harness.remove_cluster_member_with_retry(
+        "node-wrk0", "node-wrk3", force=True, attempts=3, interval=0, timeout=120
     )
 
-    assert result == _Res(0, "removed", "")
+    assert result == _Res(1, "", 'Error: cluster member "node-wrk3" not found')
     assert calls == [
         ("node-wrk0", "microceph cluster remove node-wrk3 --force", 120, False),
         ("node-wrk0", "microceph cluster remove node-wrk3 --force", 120, False),
-        ("node-wrk0", "microceph cluster remove node-wrk3 --force", 120, False),
+    ]
+
+
+def test_remove_cluster_member_with_retry_rejects_initial_not_found(monkeypatch):
+    harness = H()
+    result = _Res(1, "", 'Error: cluster member "node-wrk3" not found')
+    calls = []
+
+    def run_in_container_unchecked(container, cmd, timeout, quiet):
+        calls.append((container, cmd, timeout, quiet))
+        return result
+
+    monkeypatch.setattr(harness, "run_in_container_unchecked", run_in_container_unchecked)
+
+    with pytest.raises(AssertionError, match="Command failed after 3 attempts"):
+        harness.remove_cluster_member_with_retry(
+            "node-wrk0", "node-wrk3", force=False, attempts=3, interval=0, timeout=120
+        )
+
+    assert calls == [
+        ("node-wrk0", "microceph cluster remove node-wrk3", 120, False),
+        ("node-wrk0", "microceph cluster remove node-wrk3", 120, False),
+        ("node-wrk0", "microceph cluster remove node-wrk3", 120, False),
     ]
 
 

@@ -716,13 +716,34 @@ class microceph_harness:
             raise AssertionError(f"Command failed (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}")
         return res
 
-    def run_in_container_with_retry(self, container, cmd, attempts, interval, timeout=300):
-        """Runs a container command until it succeeds or retries are exhausted."""
+    def remove_cluster_member_with_retry(
+        self, container, node, force=False, attempts=3, interval="10s", timeout=120
+    ):
+        """Removes a cluster member, tolerating an ambiguous completed retry.
+
+        A timed-out remove may complete on the server, causing the next attempt
+        to report that the member was not found. Treat that sequence as success,
+        but reject an initial not-found response so a bad member name is not
+        silently accepted.
+        """
+        command = f"microceph cluster remove {node}"
+        if force:
+            command += " --force"
+
         last_result = [None]
+        saw_other_failure = [False]
 
         def predicate():
-            last_result[0] = self.run_in_container_unchecked(container, cmd, timeout, quiet=False)
-            return last_result[0].rc == 0
+            last_result[0] = self.run_in_container_unchecked(container, command, timeout, quiet=False)
+            if last_result[0].rc == 0:
+                return True
+
+            not_found = self._is_member_not_found_error(last_result[0].stderr)
+            if not_found and saw_other_failure[0]:
+                return True
+            if not not_found:
+                saw_other_failure[0] = True
+            return False
 
         self._poll_until(
             predicate,
@@ -2162,16 +2183,6 @@ class microceph_harness:
         if not stderr:
             return False
         return re.search(r'cluster member .* not found', stderr) is not None
-
-    def is_member_not_found_error(self, stderr):
-        """Returns True when *stderr* is a 'cluster member ... not found' error.
-
-        Robot keyword wrapper around the pure _is_member_not_found_error
-        staticmethod, so Remove Node Head Node can decide this in Python
-        (see AGENTS.md, "Purify: fetch raw, decide in Python") instead of an
-        inline Evaluate with no unit test.
-        """
-        return self._is_member_not_found_error(stderr)
 
     def get_node_ip(self, container):
         """Returns the primary IP of *container* (first address from hostname -I), or "" if none.
