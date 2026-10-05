@@ -209,16 +209,16 @@ llms_txt_description = textwrap.dedent(
 linkcheck_ignore = [
     "http://127.0.0.1:8000",
     "https://github.com/canonical/ACME/*",
-    "https://github.com",
-    "https://matrix\.to/.*",
-    "https://example.com",
-    "https://tracker.ceph.com/.*",
+    r"https://github\.com/.*",
+    r"https://matrix\.to/.*",
+    r"https://example\.com/.*",
+    r"https://tracker\.ceph\.com/.*",
 ]
 
 # A regex list of URLs where anchors are ignored by 'make linkcheck
 linkcheck_anchors_ignore_for_url = [
     r"https://github\.com/.*",
-    r"https://matrix.to/*",
+    r"https://matrix\.to/*",
     # SourceForge domains often block linkcheck
     r"https://.*\.sourceforge\.(net|io)/.*",
     ]
