@@ -8,11 +8,14 @@ import (
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/suite"
 )
 
 type rgwSuite struct {
@@ -78,7 +81,42 @@ func (s *rgwSuite) TestEnableRGW() {
 	assert.Contains(s.T(), conf, "run dir = "+filepath.Join(s.Tmp, "current", "run"))
 }
 
-// Test enabling RGW
+// TestServiceInitFallsBackToActiveMonitorWhenConfigIsStale verifies that RGW
+// uses the backward-compatibility lookup when no active monitor is represented
+// by the persisted mon.host config entries.
+func (s *rgwSuite) TestServiceInitFallsBackToActiveMonitorWhenConfigIsStale() {
+	origFetch := fetchConfigDb
+	s.T().Cleanup(func() { fetchConfigDb = origFetch })
+	fetchConfigDb = func(_ context.Context, _ interfaces.StateInterface) (map[string]string, error) {
+		return map[string]string{"mon.host.removed-monitor": "10.0.0.1"}, nil
+	}
+
+	origActiveMonitors := getActiveMonitorMembersFunc
+	s.T().Cleanup(func() { getActiveMonitorMembersFunc = origActiveMonitors })
+	getActiveMonitorMembersFunc = func(_ context.Context, _ interfaces.StateInterface) (map[string]struct{}, error) {
+		return map[string]struct{}{}, nil
+	}
+
+	origBackwardCompatMonitors := backwardCompatMonitorsFunc
+	s.T().Cleanup(func() { backwardCompatMonitorsFunc = origBackwardCompatMonitors })
+	backwardCompatMonitorsCalled := false
+	backwardCompatMonitorsFunc = func(_ context.Context, _ interfaces.StateInterface) ([]string, error) {
+		backwardCompatMonitorsCalled = true
+		return []string{"10.0.0.2"}, nil
+	}
+
+	r := mocks.NewRunner(s.T())
+	addRGWEnableExpectations(r)
+	common.ProcessExec = r
+
+	err := (&RgwServicePlacement{Port: 8081}).ServiceInit(context.Background(), s.TestStateInterface)
+	require.NoError(s.T(), err)
+	assert.True(s.T(), backwardCompatMonitorsCalled)
+
+	conf := s.ReadCephConfig("radosgw.conf")
+	assert.Contains(s.T(), conf, "mon host = 10.0.0.2")
+}
+
 func (s *rgwSuite) TestEnableRGWWithInvalidSSLCertificate() {
 	r := mocks.NewRunner(s.T())
 

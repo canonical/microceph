@@ -109,7 +109,7 @@ The MicroCeph [Makefile](/microceph/Makefile) has targets for running unit tests
 sudo apt install gcc make shellcheck
 
 # Add libdqlite-dev, required for building microceph
-# you may need a specific version such as libdqlite1.17-dev
+# you may need a specific version such as libdqlite1.18-dev
 sudo add-apt-repository ppa:dqlite/dev -y
 sudo apt install -y libdqlite-dev
 
