@@ -79,6 +79,20 @@ class ExtendedAPIService(service.BaseService):
         )
         return response.get("metadata", {})
 
+    def get_smb_group(self, cluster_id: str) -> dict:
+        """Return persisted SMB group state, including pending rank reservations."""
+        query = urlencode({"cluster_id": cluster_id})
+        response = self._get(f"/1.0/services/smb?{query}")
+        return response.get("metadata", {})
+
+    def finalize_smb(self, cluster_id: str, group_config: str) -> dict:
+        """Clear unchanged SMB placement state after local teardown."""
+        response = self._delete(
+            "/1.0/services/smb",
+            json={"cluster_id": cluster_id, "finalize": True, "group_config": group_config},
+        )
+        return response.get("metadata", {})
+
     def list_resources(self) -> list[dict]:
         """List all resources."""
         nodes = self._get("/1.0/resources")

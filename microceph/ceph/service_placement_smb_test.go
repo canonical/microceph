@@ -534,10 +534,22 @@ func TestDisableSMBCleansMatchingLocalStateWithoutMemberRecord(t *testing.T) {
 	smbTestWrite(t, filepath.Join(runtime, "cluster-id"), "files\n")
 	state := mocks.NewStateInterface(t)
 	db := smbTestGroupedDB(t)
-	db.On("ExistsOnHost", context.Background(), state, "smb", "files").Return(false, nil).Once()
-	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{}, nil).Once()
+	db.On("ExistsOnHost", context.Background(), state, "smb", "files").Return(false, nil).Twice()
+	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{}, nil).Twice()
 	runner := smbTestRunner(t)
-	smbTestCommand(runner, "snapctl", "stop", "microceph.smbd", "--disable").Return("", nil).Once()
+	smbTestCommand(runner, "snapctl", "stop", "microceph.smbd", "--disable").Return("", nil).Twice()
+	require.NoError(t, DisableSMB(context.Background(), state, "files"))
+	require.NoDirExists(t, runtime)
+
+	// Interrupted clustered cleanup can leave the marker and CTDB configuration
+	// after its retirement inputs and receipt are already gone.
+	smbTestWrite(t, filepath.Join(runtime, "cluster-id"), "files\n")
+	smbTestWrite(t, filepath.Join(runtime, "ctdb.json"), "{}")
+	db.On("GetGroupedServices", context.Background(), state).Return([]database.GroupedService{}, nil).Once()
+	for _, service := range []string{"ctdb-nodes", "ctdbd"} {
+		smbTestCommand(runner, "snapctl", "stop", "microceph."+service, "--disable").Return("", nil).Once()
+	}
+	smbTestCommand(runner, "ceph", "auth", "del", "client.smb.config.files").Return("", nil).Once()
 	require.NoError(t, DisableSMB(context.Background(), state, "files"))
 	require.NoDirExists(t, runtime)
 }

@@ -34,7 +34,15 @@ type NFSService struct {
 
 // SMBService holds the Cluster ID of the SMB service.
 type SMBService struct {
-	ClusterID string `json:"cluster_id" yaml:"cluster_id"`
+	ClusterID   string `json:"cluster_id" yaml:"cluster_id"`
+	Finalize    bool   `json:"finalize,omitempty" yaml:"finalize,omitempty"`
+	GroupConfig string `json:"group_config,omitempty" yaml:"group_config,omitempty"`
+}
+
+// SMBServiceGroup holds internal SMB state used to drain reservations safely.
+type SMBServiceGroup struct {
+	ClusterID   string `json:"cluster_id"`
+	GroupConfig string `json:"group_config"`
 }
 
 // NFSClusterIDRegex is a regex for acceptable ClusterIDs.

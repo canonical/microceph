@@ -253,7 +253,20 @@ func (smb *SMBServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 				return err
 			}
 			smb.recordedClustered, err = database.GetSMBPlacementMode(ctx, tx, smb.ClusterID)
-			return err
+			if err != nil {
+				return err
+			}
+			if !smb.isClustered() {
+				return nil
+			}
+			config, rank, err := database.ReserveSMBCTDBRank(ctx, tx, smb.ClusterID, smb.upstreamSpecJSON(), smb.ctdb.Identity)
+			if err != nil {
+				return err
+			}
+			smb.ctdb.Rank = rank
+			smb.ctdbRanks = config.CTDBRanks
+			smb.nextCTDBRank = config.NextCTDBRank
+			return nil
 		})
 		cancel()
 		if err != nil {

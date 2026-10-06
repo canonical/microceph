@@ -136,6 +136,7 @@ class _SMBSpec:
 class _SMBServices:
     def __init__(self, records):
         self.records = records
+        self.group_configs = {}
         self.applied, self.removed, self.events = [], [], []
         self.apply_failures, self.remove_failures = {}, {}
 
@@ -154,6 +155,14 @@ class _SMBServices:
         if target in self.remove_failures:
             raise self.remove_failures[target]
 
+    def get_smb_group(self, cluster_id):
+        config = next((r.get("group_config", "") for r in self.records
+                       if r["service"] == "smb" and r["group_id"] == cluster_id), "")
+        return {"cluster_id": cluster_id, "group_config": self.group_configs.get(cluster_id, config)}
+
+    def finalize_smb(self, cluster_id, group_config):
+        self.events.append(("finalize", cluster_id))
+
 
 def _manager(monkeypatch, records=(), members=("node-a", "node-b"), offline=()):
     module = _load_module(monkeypatch)
@@ -162,6 +171,7 @@ def _manager(monkeypatch, records=(), members=("node-a", "node-b"), offline=()):
              for i, name in enumerate(members, 1)]
     manager.microceph = types.SimpleNamespace(
         cluster=types.SimpleNamespace(get_cluster_members=lambda: hosts), services=_SMBServices(list(records)))
+    manager.remote = lambda _module, _method, _resources: {"resources": []}
     return manager
 
 
@@ -411,9 +421,11 @@ def test_remove_absent_smb_service_is_idempotent_and_accepts_force(monkeypatch):
     assert manager.microceph.services.removed == []
 
 
-@pytest.mark.parametrize("failure", [False, True])
-def test_remove_smb_service_attempts_every_member(monkeypatch, failure):
+@pytest.mark.parametrize(("failure", "resource_survives"), [(False, False), (True, False), (False, True)])
+def test_remove_smb_service_attempts_every_member(monkeypatch, failure, resource_survives):
     manager = _manager(monkeypatch, [_smb_record(n) for n in ("node-a", "node-b")])
+    if resource_survives:
+        manager.remote = lambda *_args: {"resource_type": "ceph.smb.cluster", "cluster_id": "files"}
     if failure:
         manager.microceph.services.remove_failures["node-a"] = RuntimeError("node-a unavailable")
         with pytest.raises(RuntimeError, match="node-a unavailable"):
@@ -421,3 +433,36 @@ def test_remove_smb_service_attempts_every_member(monkeypatch, failure):
     else:
         assert manager.remove_service("smb.files") == "Removed SMB service 'files'"
     assert manager.microceph.services.removed == [("node-a", "files"), ("node-b", "files")]
+    expected = [("remove", "node-a"), ("remove", "node-b")]
+    if not failure and not resource_survives:
+        expected.append(("finalize", "files"))
+    assert manager.microceph.services.events == expected
+
+
+@pytest.mark.parametrize("offline", [(), ("node-pending",)])
+def test_remove_smb_service_drains_zero_receipt_reservations(monkeypatch, offline):
+    manager = _manager(monkeypatch, members=("node-a", "node-b", "node-pending"), offline=offline)
+    manager.microceph.services.group_configs["files"] = json.dumps(
+        {"ctdb_ranks": {"smb.files.node-pending": 0}, "next_ctdb_rank": 1})
+    manager.remove_service("smb.files")
+    assert manager.microceph.services.removed == [("node-pending", "files")]
+    assert manager.microceph.services.events == [("remove", "node-pending"), ("finalize", "files")]
+
+
+@pytest.mark.parametrize("retired_state", ["removed_member", "different_cluster"])
+def test_remove_smb_service_skips_confirmed_retired_rank_owner(monkeypatch, retired_state):
+    records = [_smb_record("node-a")]
+    members = ("node-a",)
+    if retired_state == "different_cluster":
+        members = ("node-a", "node-retired")
+        records.append(_smb_record("node-retired", group="other"))
+    manager = _manager(monkeypatch, records, members=members)
+    manager.microceph.services.group_configs["files"] = json.dumps(
+        {"ctdb_ranks": {"smb.files.node-retired": 0, "smb.files.node-a": 1}, "next_ctdb_rank": 2})
+    manager.microceph.services.remove_failures["node-retired"] = RuntimeError(
+        "target is no longer a cluster member" if retired_state == "removed_member"
+        else "SMB service already manages cluster 'other' on this host"
+    )
+
+    assert manager.remove_service("smb.files") == "Removed SMB service 'files'"
+    assert manager.microceph.services.removed == [("node-a", "files")]

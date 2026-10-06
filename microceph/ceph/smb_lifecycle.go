@@ -15,8 +15,17 @@ import (
 
 const smbSnapService = "smbd"
 
+// FinalizeSMBServiceGroup clears local SMB rank reservations after upstream
+// confirms the SMB cluster resource has been removed.
+func FinalizeSMBServiceGroup(ctx context.Context, s interfaces.StateInterface, clusterID string, expectedConfig ...string) error {
+	return database.FinalizeSMBServiceGroup(ctx, s, clusterID, expectedConfig...)
+}
+
 // DisableSMB stops a node-local SMB service and removes its local configuration.
 func DisableSMB(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+
 	localID, localErr := currentSMBClusterID()
 	if localErr != nil && !os.IsNotExist(localErr) {
 		return fmt.Errorf("failed to read local SMB cluster ID: %w", localErr)
@@ -64,23 +73,24 @@ func DisableSMB(ctx context.Context, s interfaces.StateInterface, clusterID stri
 		}
 	}
 
-	if clustered {
+	if clustered && (exists || hasSMBCTDBRetirementInputs(clusterID)) {
 		err = retireSMBCTDBMemberFunc(ctx, clusterID)
 		if err != nil {
 			return err
 		}
 	}
-	err = removeSMBLocalState(clusterID)
-	if err != nil {
-		return err
-	}
-
 	if exists {
 		err = database.GroupedServicesQuery.RemoveForHost(ctx, s, "smb", clusterID)
 		if err != nil {
 			return fmt.Errorf("failed to remove SMB service record: %w", err)
 		}
 	}
+
+	err = removeSMBLocalState(clusterID)
+	if err != nil {
+		return err
+	}
+
 	if clustered {
 		err = removeSMBConfigAuthIfUnused(ctx, s, clusterID)
 		if err != nil {
@@ -212,6 +222,23 @@ func isSMBClusteredLocal() bool {
 	return err == nil
 }
 
+func hasSMBCTDBRetirementInputs(clusterID string) bool {
+	paths := constants.GetPathConst()
+	runtimeDir := filepath.Join(filepath.Dir(paths.ConfPath), "samba")
+	pathsToCheck := []string{
+		filepath.Join(runtimeDir, "ctdb-rank"),
+		filepath.Join(runtimeDir, "ctdb-identity"),
+		filepath.Join(paths.ConfPath, fmt.Sprintf("ceph.client.smb.fs.cluster.%s.keyring", clusterID)),
+	}
+	for _, path := range pathsToCheck {
+		_, err := os.Stat(path)
+		if err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // clearSMBConfigDirectory keeps the inode bind-mounted at /etc/samba. Removing
 // and recreating it leaves the snap mount namespace attached to a deleted directory.
 func clearSMBConfigDirectory(path string) error {
@@ -245,11 +272,6 @@ func removeSMBLocalState(clusterID string) error {
 		return fmt.Errorf("failed to clear SMB configuration directory: %w", err)
 	}
 
-	err = os.RemoveAll(runtimeDir)
-	if err != nil {
-		return fmt.Errorf("failed to remove SMB runtime directory: %w", err)
-	}
-
 	if paths.DataPath != "" {
 		ctdbIncludePath := filepath.Join(paths.DataPath, "samba", "smb.ctdb.conf")
 		err = os.Remove(ctdbIncludePath)
@@ -265,5 +287,41 @@ func removeSMBLocalState(clusterID string) error {
 		}
 	}
 
+	err = clearSMBRuntimeDirectory(runtimeDir)
+	if err != nil {
+		return fmt.Errorf("failed to clear SMB runtime directory: %w", err)
+	}
+	markerPath := filepath.Join(runtimeDir, "cluster-id")
+	err = os.Remove(markerPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove SMB cluster marker: %w", err)
+	}
+	err = os.Remove(runtimeDir)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove SMB runtime directory: %w", err)
+	}
+
+	return nil
+}
+
+// clearSMBRuntimeDirectory removes runtime state while retaining the ownership
+// marker so interrupted cleanup can safely resume.
+func clearSMBRuntimeDirectory(path string) error {
+	entries, err := os.ReadDir(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "cluster-id" {
+			continue
+		}
+		err = os.RemoveAll(filepath.Join(path, entry.Name()))
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -69,8 +70,13 @@ var nfsServiceCmd = mcTypes.Endpoint{
 	Put:    mcTypes.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
 	Delete: mcTypes.EndpointAction{Handler: cmdNFSDeleteService, ProxyTarget: true},
 }
+var finalizeSMBServiceGroupIfUnchangedFunc = func(ctx context.Context, s interfaces.StateInterface, clusterID, config string) error {
+	return ceph.FinalizeSMBServiceGroup(ctx, s, clusterID, config)
+}
+
 var smbServiceCmd = mcTypes.Endpoint{
 	Path:   "services/smb",
+	Get:    mcTypes.EndpointAction{Handler: cmdSMBServiceGroupGet, ProxyTarget: true},
 	Put:    mcTypes.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
 	Delete: mcTypes.EndpointAction{Handler: cmdSMBDeleteService, ProxyTarget: true},
 }
@@ -207,6 +213,21 @@ func cmdNFSDeleteService(s mcTypes.State, r *http.Request) mcTypes.Response {
 	return mcTypes.EmptySyncResponse
 }
 
+func cmdSMBServiceGroupGet(s mcTypes.State, r *http.Request) mcTypes.Response {
+	clusterID := r.URL.Query().Get("cluster_id")
+	if !types.SMBClusterIDRegex.MatchString(clusterID) {
+		return mcTypes.SmartError(fmt.Errorf("expected cluster_id to be valid (regex: '%s')", types.SMBClusterIDRegex.String()))
+	}
+	config, found, err := database.GetSMBServiceGroupConfig(r.Context(), interfaces.CephState{State: s}, clusterID)
+	if err != nil {
+		return mcTypes.SmartError(err)
+	}
+	if !found {
+		config = ""
+	}
+	return mcTypes.SyncResponse(true, types.SMBServiceGroup{ClusterID: clusterID, GroupConfig: config})
+}
+
 func cmdSMBDeleteService(s mcTypes.State, r *http.Request) mcTypes.Response {
 	var svc types.SMBService
 
@@ -221,7 +242,17 @@ func cmdSMBDeleteService(s mcTypes.State, r *http.Request) mcTypes.Response {
 		return mcTypes.SmartError(err)
 	}
 
-	err = ceph.DisableSMB(r.Context(), interfaces.CephState{State: s}, svc.ClusterID)
+	state := interfaces.CephState{State: s}
+	if svc.Finalize {
+		err = finalizeSMBServiceGroupIfUnchangedFunc(r.Context(), state, svc.ClusterID, svc.GroupConfig)
+		if err != nil {
+			logger.Errorf("failed finalizing SMB: %v", err)
+			return mcTypes.SmartError(err)
+		}
+		return mcTypes.EmptySyncResponse
+	}
+
+	err = ceph.DisableSMB(r.Context(), state, svc.ClusterID)
 	if err != nil {
 		logger.Errorf("failed disabling SMB: %v", err)
 		return mcTypes.SmartError(err)

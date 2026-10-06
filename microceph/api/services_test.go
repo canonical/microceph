@@ -1,12 +1,16 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/canonical/lxd/shared"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
@@ -30,6 +34,64 @@ func TestEnableServiceFailureReturnsHTTPError(t *testing.T) {
 	require.Equal(t, "error", result.Type)
 	require.Equal(t, http.StatusInternalServerError, result.ErrorCode)
 	require.Contains(t, result.Error, "enablement is not supported")
+}
+
+func TestSMBServiceGroupGetReturnsEmptySnapshotWhenAbsentOrFinalized(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.Exec(`
+CREATE TABLE service_groups (id INTEGER PRIMARY KEY, service TEXT, group_id TEXT, config TEXT);
+CREATE TABLE grouped_services (id INTEGER PRIMARY KEY, service_group_id INTEGER);
+INSERT INTO service_groups VALUES (1, 'smb', 'files', '{}'), (2, 'smb', 'empty-config', '');`)
+	require.NoError(t, err)
+
+	state := &mocks.MockState{
+		Cert: &shared.CertInfo{},
+		DBObj: &mocks.MockDB{TxFn: func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+			tx, err := db.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			err = f(ctx, tx)
+			if err == nil {
+				return tx.Commit()
+			}
+			require.NoError(t, tx.Rollback())
+			return err
+		}},
+	}
+	getGroup := func(clusterID string) types.SMBServiceGroup {
+		request := httptest.NewRequest(http.MethodGet, "/1.0/services/smb?cluster_id="+clusterID, nil)
+		recorder := httptest.NewRecorder()
+		response := cmdSMBServiceGroupGet(state, request)
+		require.NoError(t, response.Render(recorder, request))
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var result struct {
+			Metadata types.SMBServiceGroup `json:"metadata"`
+		}
+		require.NoError(t, json.NewDecoder(recorder.Body).Decode(&result))
+		return result.Metadata
+	}
+
+	// A never-deployed cluster has no persisted group.
+	require.Equal(t, types.SMBServiceGroup{ClusterID: "empty"}, getGroup("empty"))
+	require.Equal(t, types.SMBServiceGroup{ClusterID: "files", GroupConfig: "{}"}, getGroup("files"))
+	// Explicit finalization must work even when the captured configuration is empty.
+	for _, body := range []string{
+		`{"cluster_id":"files","finalize":true,"group_config":"{}"}`,
+		`{"cluster_id":"empty-config","finalize":true}`,
+		`{"cluster_id":"files","finalize":true}`,
+	} {
+		request := httptest.NewRequest(http.MethodDelete, "/1.0/services/smb", strings.NewReader(body))
+		recorder := httptest.NewRecorder()
+		response := cmdSMBDeleteService(state, request)
+		require.NoError(t, response.Render(recorder, request))
+		require.Equal(t, http.StatusOK, recorder.Code)
+	}
+	require.Equal(t, types.SMBServiceGroup{ClusterID: "files"}, getGroup("files"))
+	var groups int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM service_groups`).Scan(&groups))
+	require.Zero(t, groups)
 }
 
 func TestServicesGetExposesGroupedServiceConfiguration(t *testing.T) {
