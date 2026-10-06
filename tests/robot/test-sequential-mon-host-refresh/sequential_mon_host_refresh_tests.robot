@@ -42,19 +42,20 @@ Public Network Should Be Set Once
     Should Be Equal As Strings    ${count.stdout.strip()}    1    msg=public_network = ${cidr} not exactly-once in ${node} ceph.conf
 
 Derive Node IPs
-    [Documentation]    Computes node0 and node1 IPs from the public network gateway and saves
-    ...    them as suite variables for use across test cases.
+    [Documentation]    Gets node0 and node1 IPs on the public network and saves them as suite
+    ...    variables for use across test cases.
     ${nw}=    Get Public Network CIDR
-    ${gw}=    Evaluate    '${nw}'.split('/')[0]
-    Set Suite Variable    ${NODE0_IP}    ${gw}0
-    Set Suite Variable    ${NODE1_IP}    ${gw}1
+    ${node0_ip}=    Get Node IP    node-wrk0    ${nw}
+    ${node1_ip}=    Get Node IP    node-wrk1    ${nw}
+    Set Suite Variable    ${NODE0_IP}    ${node0_ip}
+    Set Suite Variable    ${NODE1_IP}    ${node1_ip}
     Set Suite Variable    ${NW}          ${nw}
     Log To Console    [mon] nw=${NW} node0_ip=${NODE0_IP}, node1_ip=${NODE1_IP}
 
 *** Test Cases ***
 Test Derive Network IPs
-    [Documentation]    Derives the expected IP addresses for node-wrk0 and node-wrk1 from the
-    ...    public network configuration and stores them for subsequent tests.
+    [Documentation]    Gets the node-wrk0 and node-wrk1 addresses on the public network and
+    ...    stores them for subsequent tests.
     [Tags]    multi-node    regression    mon
     Derive Node IPs
 

@@ -20,6 +20,7 @@ import sys
 import types
 
 import yaml
+from robot.api import TestSuiteBuilder as RobotSuiteBuilder
 
 import placement_status
 from microceph_harness import microceph_harness as H
@@ -71,6 +72,25 @@ def test_select_ip_on_network_skips_management_address():
 
 def test_select_ip_on_network_reports_missing_address():
     assert H._select_ip_on_network("10.101.181.88", "10.33.104.1/24") == ""
+
+
+def test_sequential_monitor_derives_provisioned_node_ips_from_canonical_cidr(monkeypatch):
+    """The monitor refresh suite must not derive host IPs from a CIDR address."""
+    suite_path = Path(__file__).parents[1] / "test-sequential-mon-host-refresh" / "sequential_mon_host_refresh_tests.robot"
+    calls = []
+
+    def fake_node_ip(self, container, cidr=None):
+        calls.append((container, cidr))
+        return {"node-wrk0": "10.33.104.10", "node-wrk1": "10.33.104.11"}[container]
+
+    monkeypatch.setattr(H, "get_public_network_cidr", lambda self: "10.33.104.0/24")
+    monkeypatch.setattr(H, "get_node_ip", fake_node_ip)
+
+    suite = RobotSuiteBuilder().build(suite_path)
+    suite.setup = None
+    suite.tests = [suite.tests[0]]
+    assert suite.run(output=None, log=None, report=None).return_code == 0
+    assert calls == [("node-wrk0", "10.33.104.0/24"), ("node-wrk1", "10.33.104.0/24")]
 
 
 # ---------------------------------------------------------------------------
