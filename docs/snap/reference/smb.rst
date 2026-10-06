@@ -72,6 +72,15 @@ A member can run one SMB cluster. Clustered clusters support multiple members;
 non-clustered clusters support one. Adding or removing members does not change
 the clustering mode. If placement fails, existing members remain in place.
 
+Before removing a MicroCeph member, explicitly remove it from the desired SMB
+placement with the existing ``microceph disable smb --cluster-id <cluster-id>
+--target <member>`` operation before removing the member. This updates the
+placement even when the target has never deployed: initial SMB placement is
+desired before the first share is applied. Cephadm host removal does not rewrite
+SMB specs, and draining only guards specs that have already been submitted; a
+shareless SMB cluster has not submitted a spec yet. MicroCeph does not
+automatically clean up desired-only placement references.
+
 MicroCeph supports local-user authentication, direct ``samba-vfs/new`` CephFS
 access, client bind addresses or networks, and a custom SMB port. Active
 Directory, ``cephfs-proxy``, CTDB public or floating addresses, custom CTDB
