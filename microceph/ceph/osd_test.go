@@ -1694,5 +1694,5 @@ INSERT INTO placement_policy (id, active, policy_json) VALUES (1, 0, '');
 		DBObj:       &mocks.MockDB{TxFn: txFn},
 	}
 
-	return state, db, func() { db.Close() }
+	return state, db, func() { _ = db.Close() }
 }

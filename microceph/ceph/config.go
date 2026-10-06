@@ -485,7 +485,7 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 	}
 	logger.Debugf("updated ceph.conf: %v", conf.GetPath())
 
-	// Generate ceph.client.admin.keyring
+	// Render ceph.keyring
 	keyring := NewCephKeyring(confPath, "ceph.keyring")
 	err = keyring.WriteConfig(
 		map[string]any{
@@ -495,7 +495,26 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 		0640,
 	)
 	if err != nil {
-		return fmt.Errorf("couldn't render ceph.client.admin.keyring: %w", err)
+		return fmt.Errorf("couldn't render ceph.keyring: %w", err)
+	}
+
+	// Render ceph.client.admin.keyring with the same secret: the file is
+	// written at bootstrap time and comes first in Ceph's default keyring
+	// search path ($cluster.$name.keyring), so leaving it stale would keep
+	// bootstrap nodes authenticating with a revoked key after a rotation.
+	// An empty DB row (pre-bootstrap state) writes nothing.
+	if config["keyring.client.admin"] != "" {
+		adminKeyring := NewCephKeyring(confPath, "ceph.client.admin.keyring")
+		err = adminKeyring.WriteConfig(
+			map[string]any{
+				"name": "client.admin",
+				"key":  config["keyring.client.admin"],
+			},
+			0640,
+		)
+		if err != nil {
+			return fmt.Errorf("couldn't render ceph.client.admin.keyring: %w", err)
+		}
 	}
 
 	return nil

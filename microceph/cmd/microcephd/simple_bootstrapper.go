@@ -103,7 +103,9 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 	}
 
 	path, err := ceph.CreateKeyrings(pathConsts.ConfPath)
-	defer os.RemoveAll(path)
+	defer func() {
+        _ = os.RemoveAll(path)
+    }()
 	if err != nil {
 		return err
 	}

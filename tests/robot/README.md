@@ -71,16 +71,16 @@ Each directory under `tests/robot/` is a suite:
 
 ```
 api-tests                          nfs-test
-availability-zone-tests            nfs-multinode-test
-cephadm-adopt-test                 rbd-replication-test
-cephfs-replication-test            single-system-tests
-cluster-tests                      static-checks
-dsl-functional-tests               test-maintenance-modes
-loop-file-tests                    test-sequential-mon-host-refresh
-messenger-v2-tests                 unit-tests
-multi-node-tests                   upgrade-squid-tests
+auth-rotation-tests                nfs-multinode-test
+availability-zone-tests            rbd-replication-test
+cephadm-adopt-test                 single-system-tests
+cephfs-replication-test            static-checks
+cluster-tests                      test-maintenance-modes
+dsl-functional-tests               test-sequential-mon-host-refresh
+loop-file-tests                    unit-tests
+messenger-v2-tests                 upgrade-squid-tests
+multi-node-tests                   wal-db-tests
 multi-node-tests-with-custom-microceph-ip
-                                   wal-db-tests
                                    wiping-test
 ```
 

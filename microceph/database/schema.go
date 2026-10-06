@@ -299,12 +299,36 @@ INSERT INTO placement_policy (id) VALUES (1);
 	return err
 }
 
-// schemaUpdate10 removes stale member-named monitor-host config during
+// schemaUpdate10 adds the auth_rotation table. It is a single-row
+// table tracking CephX authentication key rotation state, stage progress,
+// blockers, and concurrency lock tokens.
+func schemaUpdate10(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE auth_rotation (
+  id               INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
+  target_key_type  TEXT,
+  state            TEXT NOT NULL DEFAULT 'idle',
+  stage            TEXT NOT NULL DEFAULT '',
+  client_name      TEXT DEFAULT NULL,
+  step_progress    TEXT,
+  blocker          TEXT,
+  detail           TEXT,
+  apply_lock_token INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT singleton CHECK (id = 1)
+);
+INSERT INTO auth_rotation (id) VALUES (1);
+  `
+	_, err := tx.ExecContext(ctx, stmt)
+
+	return err
+}
+
+// schemaUpdate11 removes stale member-named monitor-host config during
 // upgrade and ensures a member's monitor-host config is removed atomically
 // when MicroCluster removes that member. Numeric config suffixes are retained
 // because they are used for monitor entries adopted from an external Ceph
 // cluster rather than names of MicroCeph members.
-func schemaUpdate10(ctx context.Context, tx *sql.Tx) error {
+func schemaUpdate11(ctx context.Context, tx *sql.Tx) error {
 	tableName, err := getClusterTableName(ctx, tx)
 	if err != nil {
 		return err

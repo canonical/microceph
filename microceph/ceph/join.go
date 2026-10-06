@@ -23,7 +23,9 @@ func msgrv2OnlyFile(path string) (bool, error) {
 		return false, err
 	}
 
-	defer file.Close()
+	defer func() {
+        _ = file.Close()
+    }()
 	scanner := bufio.NewScanner(file)
 
 	for scanner.Scan() {

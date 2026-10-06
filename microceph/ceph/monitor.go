@@ -88,7 +88,9 @@ func joinMon(hostname string, path string) error {
 	if err != nil {
 		return fmt.Errorf("unable to create temporary path: %w", err)
 	}
-	defer os.RemoveAll(tmpPath)
+	defer func() {
+        _ = os.RemoveAll(tmpPath)
+    }()
 
 	monmap := filepath.Join(tmpPath, "mon.map")
 	_, err = cephRun("mon", "getmap", "-o", monmap)

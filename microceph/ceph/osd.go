@@ -252,7 +252,7 @@ func encryptDevice(path string, key []byte) error {
 	if err != nil {
 		return fmt.Errorf("error writing key to cryptsetup pipe: %s", err)
 	}
-	stdin.Close()
+	_ = stdin.Close()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to luksFormat device: %s, %s, %s", path, err, out)
@@ -289,7 +289,7 @@ func openEncryptedDevice(path string, osdID int64, key []byte, suffix string) (s
 	if err != nil {
 		return "", fmt.Errorf("error writing key to cryptsetup pipe: %s", err)
 	}
-	stdin.Close()
+	_ = stdin.Close()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf(`failed to luksOpen: %s, %s, %s
