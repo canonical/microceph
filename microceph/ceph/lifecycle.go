@@ -18,7 +18,7 @@ import (
 // the lifecycle state reflects reality for clusters created after the
 // cluster_lifecycle schema was introduced (CE142). Without this, a fresh
 // non-deferred cluster would be left not_bootstrapped even though Ceph is up,
-// breaking ApplyPlacement's pre-bootstrap guard and BootstrapCeph's
+// breaking ValidatePlacement's pre-bootstrap guard and BootstrapCeph's
 // idempotence.
 //
 // It no-ops when no server certificate is available, mirroring
@@ -67,7 +67,7 @@ func configIndicatesBootstrapped(ctx context.Context, tx *sql.Tx) (bool, error) 
 
 // cephBootstrappedFromConfigFunc is the standalone (own-transaction) wrapper
 // around configIndicatesBootstrapped, for callers not already inside a
-// transaction (e.g. the ApplyPlacement pre-bootstrap guard). Injectable.
+// transaction (e.g. the ValidatePlacement pre-bootstrap guard). Injectable.
 var cephBootstrappedFromConfigFunc = func(ctx context.Context, s interfaces.StateInterface) (bool, error) {
 	var bootstrapped bool
 	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {

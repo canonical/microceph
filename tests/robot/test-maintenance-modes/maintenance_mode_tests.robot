@@ -59,7 +59,7 @@ Wait For OSD Removed From Cluster
     [Arguments]    ${head_node}    ${osd_id}
     FOR    ${i}    IN RANGE    8
         ${gone}=    Run In VM    lxc exec ${head_node} -- sh -c "microceph.ceph osd info osd.${osd_id} 2>/dev/null && echo exists || echo gone"    30
-        IF    "${gone.stdout.strip()}" == "gone"
+        IF    $gone.stdout.strip() == "gone"
             Log To Console    [maintenance] osd.${osd_id} confirmed removed
             RETURN
         END

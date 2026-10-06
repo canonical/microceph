@@ -227,7 +227,8 @@ Verify Post-Bootstrap State
     [Documentation]    Checks metadata.yaml contains ceph-version, verifies OSD pool crush rule.
     [Tags]    waitready
     Run In VM And Check    grep -q ceph-version /var/snap/microceph/current/conf/metadata.yaml    30
-    Run In VM And Check    sudo microceph.ceph health | grep -q "OSD count 0 < osd_pool_default_size 3"    30
+    ${health}=    Run In VM And Check    sudo microceph.ceph health    30
+    Should Contain    ${health.stdout}    OSD count 0 < osd_pool_default_size 3
     Run In VM And Check    sudo microceph.ceph osd crush rule ls | grep -F microceph_auto_osd    30
 
 Test Waitready Storage Insufficient
@@ -246,6 +247,13 @@ Test Orchestrator Module
     Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mon" | grep -F ${hn}    30
     Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mds" | grep -F ${hn}    30
     Run In VM And Check    sudo microceph.ceph orch ls | grep -F "mgr" | grep -F ${hn}    30
+
+Test Mgr Remote Module Call
+    [Documentation]    Verifies that a mgr remote call returns its serialized result on the
+    ...    cluster bootstrapped by Test Waitready.
+    [Tags]    mgr
+    Run In VM And Check    sudo microceph.ceph mgr module enable selftest    30
+    Run In VM And Check    sudo microceph.ceph mgr self-test eval "mgr.remote('selftest', 'python_version')" | grep -F "(0,"    30
 
 Add OSD With Failure
     [Documentation]    Verifies adding an encrypted OSD fails without dm-crypt,

@@ -9,11 +9,13 @@ import (
 )
 
 // PlacementPolicyRecord is the single-row record tracking the active role-managed
-// declarative placement policy (CE142). PolicyJSON holds the last accepted
-// placement policy as a JSON blob; Active records whether a role-managed
-// placement policy is currently in effect. LastRefusal holds the most recent
-// placement refusal reason (e.g. keep-one invariant) so operators and charms
-// polling GET /1.0/placement can inspect why the last PUT was rejected.
+// declarative placement policy (CE142). PolicyJSON holds the canonical desired
+// placement policy as a JSON blob -- the complete snapshot installed by the
+// last accepted PUT, never a merge of successive requests; Active records
+// whether a role-managed placement policy is currently in effect. LastRefusal
+// holds the most recent placement refusal reason (e.g. keep-one invariant) so
+// operators and charms polling GET /1.0/placement can inspect why the last PUT
+// was rejected.
 type PlacementPolicyRecord struct {
 	Active      bool
 	PolicyJSON  string
@@ -34,8 +36,11 @@ SELECT active, coalesce(policy_json, ''), last_refusal FROM placement_policy WHE
 	return &PlacementPolicyRecord{Active: active != 0, PolicyJSON: policyJSON, LastRefusal: lastRefusal.String}, nil
 }
 
-// SetPlacementPolicy updates the single-row placement policy record (the row
-// is created by the schema migration; a missing row is an error).
+// SetPlacementPolicy replaces the policy stored in the single-row placement
+// policy record (the row is created by the schema migration; a missing row is
+// an error). policyJSON overwrites any previously stored policy in full; this
+// layer performs no merge, so the caller must pass the complete desired
+// snapshot.
 func SetPlacementPolicy(ctx context.Context, tx *sql.Tx, active bool, policyJSON string) error {
 	a := 0
 	if active {
@@ -56,9 +61,10 @@ UPDATE placement_policy SET active = ?, policy_json = ? WHERE id = 1`, a, policy
 	return nil
 }
 
-// ClearPlacementPolicy clears the active role-managed placement policy without
-// touching services. It sets Active to false and clears the stored policy JSON
-// and the last refusal reason.
+// ClearPlacementPolicy clears the canonical desired role-managed placement
+// policy without touching services. It sets Active to false and clears the
+// stored policy JSON and the last refusal reason, leaving no desired placement
+// state behind for a later PUT to inherit.
 func ClearPlacementPolicy(ctx context.Context, tx *sql.Tx) error {
 	result, err := tx.ExecContext(ctx, `UPDATE placement_policy SET active = 0, policy_json = NULL, last_refusal = NULL WHERE id = 1`)
 	if err != nil {

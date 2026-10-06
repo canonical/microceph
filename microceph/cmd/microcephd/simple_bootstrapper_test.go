@@ -157,7 +157,7 @@ func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 // TestSimpleBootstrapMarksLifecycle verifies that a successful non-deferred
 // (Simple) bootstrap marks the Ceph lifecycle as bootstrapped (CE142 blocker
 // fix: a fresh legacy cluster must not be left not_bootstrapped, otherwise
-// ApplyPlacement rejects it and bootstrap-ceph is not idempotent).
+// ValidatePlacement rejects it and bootstrap-ceph is not idempotent).
 func (s *simpleBootstrapSuite) TestSimpleBootstrapMarksLifecycle() {
 	r := mocks.NewRunner(s.T())
 	nw := mocks.NewNetworkIntf(s.T())

@@ -1,0 +1,16 @@
+{
+    "sync_status": {
+        "info": {
+            "status": "init",
+            "num_shards": 0,
+            "period": "",
+            "realm_epoch": 0
+        },
+        "markers": []
+    },
+    "full_sync": {
+        "total": 0,
+        "complete": 0
+    },
+    "current_time": "2026-07-23T00:22:24Z"
+}

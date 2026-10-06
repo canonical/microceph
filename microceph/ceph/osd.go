@@ -826,7 +826,17 @@ func prepareValidationFailureResp(disks []types.DiskParameter, err error) types.
 	return ret
 }
 
-// Verify that the local member is allowed to enroll OSD's.
+// checkStorageEligibility verifies that the local member is allowed to enroll
+// OSDs under the active declarative placement policy (CE142).
+//
+// Storage is the one fail-closed dimension of the policy. With no active policy
+// storage is unmanaged and enrollment proceeds, but once a policy is active the
+// stored snapshot is the authoritative allow-list: enrollment requires this
+// member to be present in it with an explicit storage_eligible:true. A member
+// that is absent from the snapshot, or present with the field omitted, is
+// denied -- because PUT replaces the whole policy, a grant made by an earlier
+// policy is not inherited by the one that supersedes it. Only new enrollment is
+// gated; existing OSDs are untouched.
 func (m *OSDManager) checkStorageEligibility(ctx context.Context) error {
 	if m.state == nil {
 		return nil

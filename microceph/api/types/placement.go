@@ -8,21 +8,33 @@ type NFSPlacement struct {
 }
 
 // MemberPlacement describes the desired placement for a single MicroCeph member.
-// Pointer fields distinguish "explicitly false/empty" (remove) from "omitted"
-// (leave untouched). This is the generic, non-OS106 payload consumed by the
-// snap placement engine (CE142).
+// This is the generic, non-OS106 payload consumed by the snap placement engine
+// (CE142).
+//
+// Every field is read from the submitted document alone. Because PUT
+// /1.0/placement replaces the whole policy (see PlacementPolicy), a nil field
+// is unmanaged by the new policy; it never inherits the declaration the
+// replaced policy made for that field. Pointer fields distinguish "explicitly
+// false/empty" (remove) from "omitted" (unmanaged).
 type MemberPlacement struct {
-	// Control governs MON, MGR, and MDS placement. nil means untouched.
+	// Control governs MON, MGR, and MDS placement. nil means unmanaged:
+	// reconciliation neither adds nor removes control services on this member.
 	Control *bool `json:"control,omitempty" yaml:"control,omitempty"`
-	// Rgw governs RGW placement. nil means untouched.
+	// Rgw governs RGW placement. nil means unmanaged: reconciliation does not
+	// change RGW on this member.
 	Rgw *bool `json:"rgw,omitempty" yaml:"rgw,omitempty"`
-	// Nfs governs role-driven NFS placement. nil means untouched; an empty
+	// Nfs governs role-driven NFS placement. nil means unmanaged; an empty
 	// (non-nil) slice means remove role-driven NFS on that member. The json
 	// tag intentionally omits the omitempty modifier so that an empty slice
 	// (remove intent) round-trips through json.Marshal/Unmarshal as "nfs":[]
 	// rather than being silently dropped.
 	Nfs []NFSPlacement `json:"nfs" yaml:"nfs"`
-	// StorageEligible governs OSD enrollment eligibility. nil means untouched.
+	// StorageEligible governs OSD enrollment eligibility. It is the only
+	// fail-closed dimension: while a policy is active, this member may enroll
+	// new OSDs only on an explicit storage_eligible:true. nil means unmanaged,
+	// and unmanaged storage denies enrollment rather than leaving it as it
+	// was, so a replacement policy that drops a previous grant revokes it.
+	// Existing OSDs are never removed by placement.
 	StorageEligible *bool `json:"storage_eligible,omitempty" yaml:"storage_eligible,omitempty"`
 }
 
@@ -32,9 +44,24 @@ type MemberPlacement struct {
 // snap fails loudly instead of being silently applied as a reconcile.
 const PlacementModeReconcile = "reconcile"
 
-// PlacementPolicy is the body of PUT /1.0/placement. Members maps MicroCeph
-// member names to their desired placement. Members absent from the map are not
-// touched for service placement.
+// PlacementPolicy is the body of PUT /1.0/placement and the canonical desired
+// placement policy the snap stores. PUT is a full replacement, never a delta:
+// the submitted document becomes the complete desired policy, and no member
+// entry or field value survives from the policy it replaces. A second PUT that
+// omits a declaration therefore revokes it rather than inheriting it.
+//
+// Members maps MicroCeph member names to their desired placement. A member
+// absent from the map is unmanaged: reconciliation neither adds nor removes
+// role-managed services on it. Absence is not a grant, though -- an absent
+// member is not on the storage_eligible allow-list, so while the policy is
+// active it cannot enroll new OSDs.
+//
+// An empty or absent Members map is the CE142 waiting policy: no service
+// operations on any member, and an empty storage allow-list, so no member may
+// enroll new OSDs until a policy naming it is installed. It is accepted before
+// Ceph is bootstrapped. DELETE /1.0/placement is the way to stand down
+// entirely: it clears the policy, leaves services untouched, and returns
+// storage eligibility to unmanaged (allowed).
 type PlacementPolicy struct {
 	Mode    string                     `json:"mode" yaml:"mode"`
 	Members map[string]MemberPlacement `json:"members" yaml:"members"`
@@ -51,8 +78,10 @@ type PlacementObservedMember struct {
 }
 
 // PlacementStatus is the response body of GET /1.0/placement. It returns the
-// last accepted policy, current observed placement, lifecycle state, and any
-// blocked or in-progress reasons.
+// canonical desired policy (Policy, the complete snapshot installed by the
+// last accepted PUT), the current observed placement, lifecycle state, and any
+// blocked or in-progress reasons. Policy is the whole desired state, so a
+// declaration missing from it is not in effect.
 //
 // BootstrapState is one of: "not_bootstrapped", "in_progress",
 // "bootstrapped", or "failed" (see database.CephState* constants).

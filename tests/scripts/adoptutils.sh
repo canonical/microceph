@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Ceph 19.2.6 defaults CephX to AES256KRB5 as part of CVE-2025-30156.
+# The bundled MicroCeph Ceph 20.2.1 client cannot read that key format, so
+# keep this fixture on the compatible Squid 19.2.5 image. Remove this pin
+# once MicroCeph bundles Ceph 20.2.4 or later; tracked in #826.
+readonly CEPHADM_TEST_IMAGE="quay.io/ceph/ceph:v19.2.5"
+
 function create_cephadm_vm() {
   set -eu
   input=$1
@@ -54,6 +60,72 @@ function exec_ls_on_vm() {
   lxc exec $name -- sh -c "ls"
 }
 
+function dump_osd_diagnostics() {
+  local name=$1
+
+  echo "=== Cephadm OSD diagnostics for ${name} ==="
+
+  echo "--- host block-device identity and mappings ---"
+  lxc exec "$name" -- sh -c "lsblk --all --paths --output NAME,KNAME,TYPE,SIZE,MODEL,SERIAL,WWN,FSTYPE,MOUNTPOINTS" || true
+  lxc exec "$name" -- sh -c "ls -l /dev/disk/by-id /dev/mapper 2>&1 || true" || true
+  lxc exec "$name" -- sh -c "command -v dmsetup >/dev/null && dmsetup ls --tree || true" || true
+  lxc exec "$name" -- sh -c "command -v multipath >/dev/null && multipath -ll || true" || true
+  lxc exec "$name" -- sh -c "systemctl is-active multipathd.service multipathd.socket || true" || true
+  lxc exec "$name" -- sh -c "command -v pvs >/dev/null && pvs --all -o pv_name,pv_uuid,vg_name,vg_uuid,devices || true" || true
+  lxc exec "$name" -- sh -c "command -v vgs >/dev/null && vgs --all -o vg_name,vg_uuid,vg_attr,vg_size,vg_free,pv_count || true" || true
+  lxc exec "$name" -- sh -c "command -v lvs >/dev/null && lvs --all -o vg_name,lv_name,lv_attr,lv_size,lv_path,devices || true" || true
+  # Do not use ceph-volume inventory here. In this fixture it can report an
+  # escaped /dev/mapper alias as missing after an OSD is active; the direct
+  # LVM reports above distinguish that false diagnostic from a real failure.
+
+  echo "--- Ceph cluster and orchestrator state ---"
+  lxc exec "$name" -- sh -c "timeout 30s cephadm shell -- ceph -s" || true
+  lxc exec "$name" -- sh -c "timeout 30s cephadm shell -- ceph health detail" || true
+  lxc exec "$name" -- sh -c "timeout 30s cephadm shell -- ceph osd stat --format json-pretty" || true
+  lxc exec "$name" -- sh -c "timeout 30s cephadm shell -- ceph osd tree" || true
+  lxc exec "$name" -- sh -c "timeout 30s cephadm shell -- ceph orch ps --daemon_type osd --format json-pretty" || true
+  lxc exec "$name" -- sh -c "timeout 30s cephadm shell -- ceph orch device ls --wide" || true
+  lxc exec "$name" -- sh -c "timeout 30s cephadm ls" || true
+
+  echo "--- local service and container state ---"
+  lxc exec "$name" -- sh -c "systemctl --no-pager --failed" || true
+  lxc exec "$name" -- sh -c "if command -v podman >/dev/null; then podman ps --all --no-trunc; elif command -v docker >/dev/null; then docker ps --all --no-trunc; else echo 'No container engine found'; fi" || true
+
+  echo "--- OSD and kernel journal ---"
+  lxc exec "$name" -- sh -c "journalctl --no-pager -b -u 'ceph-*@osd.*' -n 500" || true
+  lxc exec "$name" -- sh -c "journalctl --no-pager -k -b -n 200" || true
+
+  echo "=== End Cephadm OSD diagnostics for ${name} ==="
+}
+
+function wait_for_up_osds() {
+  local name=$1
+  local expected_osds=${2:-3}
+  local attempts=${3:-30}
+  local up_osds
+
+  for i in $(seq 1 "$attempts"); do
+    up_osds=$(lxc exec "$name" -- sh -c "cephadm shell -- ceph osd stat --format json 2>/dev/null" | jq -r '.num_up_osds // 0' 2>/dev/null || printf '0')
+    if [[ ! "$up_osds" =~ ^[0-9]+$ ]]; then
+      up_osds=0
+    fi
+
+    if [[ "$up_osds" -ge "$expected_osds" ]]; then
+      echo "All ${expected_osds} OSDs are up on ${name}"
+      return 0
+    fi
+
+    if [[ "$i" -lt "$attempts" ]]; then
+      echo "Waiting for ${expected_osds} OSDs on ${name}; found ${up_osds} (attempt ${i}/${attempts})"
+      sleep 10s
+    fi
+  done
+
+  echo "Expected ${expected_osds} up OSDs on ${name}, found ${up_osds}; failing bootstrap"
+  dump_osd_diagnostics "$name"
+  return 1
+}
+
 function bootstrap_cephadm() {
   set -eux
   name=$1
@@ -65,8 +137,17 @@ function bootstrap_cephadm() {
 
   ip=$(echo "$ip_info" | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
 
-  lxc exec $name -- sh -c "cephadm bootstrap --mon-ip $ip --single-host-defaults --skip-dashboard --skip-monitoring-stack"
-  lxc exec $name -- sh -c "cephadm shell -- ceph orch apply osd --all-available-devices"
+  if ! lxc exec "$name" -- sh -c "cephadm --image ${CEPHADM_TEST_IMAGE} bootstrap --mon-ip ${ip} --single-host-defaults --skip-dashboard --skip-monitoring-stack"; then
+    echo "cephadm bootstrap failed on ${name}; collecting diagnostics"
+    dump_osd_diagnostics "$name"
+    return 1
+  fi
+
+  if ! lxc exec "$name" -- sh -c "cephadm shell -- ceph orch apply osd --all-available-devices"; then
+    echo "OSD provisioning request failed on ${name}; collecting diagnostics"
+    dump_osd_diagnostics "$name"
+    return 1
+  fi
 
   # Wait for the cluster to settle before adopt can connect
   echo "Waiting for ceph cluster to become healthy..."
@@ -85,19 +166,17 @@ function bootstrap_cephadm() {
     echo "Waiting for cluster health... attempt $i/30"
     sleep 10s
   done
-  lxc exec $name -- sh -c "cephadm shell -- ceph -s"
+  lxc exec "$name" -- sh -c "cephadm shell -- ceph -s" || true
   if [[ $healthy -ne 1 ]]; then
-    echo "Cluster on $name did not reach HEALTH_OK; failing bootstrap"
+    echo "Cluster on $name did not reach HEALTH_OK; collecting diagnostics"
+    dump_osd_diagnostics "$name"
     return 1
   fi
 
-  # HEALTH_OK with zero OSDs is impossible, but be explicit: every later
-  # stage (fs volume create, MDS activation, mirroring) silently wedges if
-  # the OSDs were never created, so verify all 3 are up before moving on.
-  up_osds=$(lxc exec $name -- sh -c "cephadm shell -- ceph osd stat --format json 2>/dev/null" | jq -r '.num_up_osds // 0')
-  if [[ "${up_osds}" -lt 3 ]]; then
-    echo "Expected 3 up OSDs on $name, found ${up_osds}; failing bootstrap"
-    lxc exec $name -- sh -c "cephadm shell -- ceph-volume inventory" || true
+  # HEALTH_OK does not require OSDs when the cluster has no pools. OSD
+  # provisioning is asynchronous, so wait for all attached block volumes to
+  # become usable before later CephFS and replication stages depend on them.
+  if ! wait_for_up_osds "$name" 3; then
     return 1
   fi
 }
@@ -117,8 +196,10 @@ function adopt_cephadm() {
   ip_info=$(lxc exec $name -- sh -c "ip -4 -j route")
   mon_ip=$(echo "$ip_info" | jq -r '.[] | select(.dst | contains("default")) | .prefsrc' | tr -d '[:space:]')
 
-  # Admin Key
-  key=$(lxc exec $name -- sh -c "cat /etc/ceph/ceph.client.admin.keyring" | grep key | cut -d " " -f 3)
+  # Keep the admin key out of xtrace and host command arguments.
+  set +x
+  key=$(lxc exec "$name" -- sh -c "cat /etc/ceph/ceph.client.admin.keyring" | grep key | cut -d " " -f 3)
+  set -x
 
   lxc --quiet file push $snap_glob $name/root/
 
@@ -129,7 +210,10 @@ function adopt_cephadm() {
   done
 
   # Adopt cephadm cluster using microceph --public-network=10.230.118.167/24 --cluster-network=10.230.118.167/247/24
-  lxc exec $name -- bash -c "echo $key | sudo microceph cluster adopt --fsid=$fsid --mon-hosts=$mon_ip -"
+  set +x
+  printf '%s\n' "$key" | lxc exec "$name" -- bash -c "sudo microceph cluster adopt --fsid=${fsid} --mon-hosts=${mon_ip} -"
+  unset key
+  set -x
 }
 
 function exchange_adopt_remote_tokens() {

@@ -56,8 +56,11 @@ Test Cluster List
     ...    that the JSON output is valid and contains the hostname.
     [Tags]    cluster
     ${hn}=    Get VM Hostname
-    Run In VM And Check    sudo microceph cluster list | grep -q ${hn}    30
-    Run In VM And Check    sudo microceph cluster list -f json | jq '.[]["name"]' | grep -q ${hn}    30
+    ${res}=    Run In VM And Check    sudo microceph cluster list    30
+    Should Contain    ${res.stdout}    ${hn}
+    ${res}=    Run In VM And Check    sudo microceph cluster list -f json    30
+    ${names}=    Cluster List Names    ${res.stdout}
+    Should Contain    ${names}    ${hn}
 
 Test Bombard RGW Configs
     [Documentation]    Issues many concurrent cluster config set calls for RGW Keystone settings

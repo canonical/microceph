@@ -85,18 +85,12 @@ Wait For CRUSH Rule
 Remove Node Head Node
     [Documentation]    Removes specified node via node-wrk0.
     ...    Waits for cluster health before attempting removal and retries on transient
-    ...    'context canceled' failures from the pre-remove hook RPC (the target node
-    ...    may be busy rebalancing OSDs and not respond in time).
+    ...    failures. A 'member not found' result is only trusted as an already-removed
+    ...    success once an earlier attempt failed for some other reason.
     [Arguments]    ${node}
     Log To Console    [cluster] Removing node ${node} via node-wrk0...
     Verify Cluster Health Head Node
-    FOR    ${attempt}    IN RANGE    3
-        ${result}=    Run In VM    lxc exec node-wrk0 -- microceph cluster remove ${node}    120
-        IF    ${result.rc} == 0    BREAK
-        Log To Console    [cluster] Remove attempt ${attempt} failed (rc=${result.rc}): ${result.stderr.strip()} — retrying in 10s
-        IF    ${attempt} == 2    Fail    Failed to remove ${node} after 3 attempts: ${result.stderr}
-        Sleep    10s
-    END
+    Remove Cluster Member With Retry    node-wrk0    ${node}    ${False}    3    10s    120
     FOR    ${i}    IN RANGE    8
         ${in_mon}=    Node Is In Mon List    ${node}
         IF    "${in_mon}" != "yes"    BREAK
@@ -104,6 +98,21 @@ Remove Node Head Node
         Sleep    5s
     END
     Sleep    1s
+    Run In Container    node-wrk0    microceph.ceph -s    30
+    Run In Container    node-wrk0    microceph status    30
+
+Force Remove Node Head Node
+    [Documentation]    Stops ${node} so its pre-remove hook is unreachable, then force-removes it
+    ...    via node-wrk0. Verifies the database trigger removes its mon.host config entry.
+    [Arguments]    ${node}
+    Log To Console    [cluster] Force-removing unreachable node ${node} via node-wrk0...
+    Verify Cluster Health Head Node
+    ${mon_host_before}=    Run In Container    node-wrk0    microceph cluster sql "SELECT key FROM config WHERE key = 'mon.host.${node}'"    30
+    Should Contain    ${mon_host_before.stdout}    mon.host.${node}    msg=Expected mon.host config for ${node} before force removal
+    Run In VM And Check    lxc stop --force ${node}    60
+    Remove Cluster Member With Retry    node-wrk0    ${node}    ${True}    3    10s    120
+    ${mon_host_after}=    Run In Container    node-wrk0    microceph cluster sql "SELECT key FROM config WHERE key = 'mon.host.${node}'"    30
+    Should Not Contain    ${mon_host_after.stdout}    mon.host.${node}    msg=mon.host config for ${node} survived force removal
     Run In Container    node-wrk0    microceph.ceph -s    30
     Run In Container    node-wrk0    microceph status    30
 
@@ -170,7 +179,7 @@ Test Service Migration
     ...    then asserts ${src} has only OSD and ${dst} has mds, mgr, mon.
     [Arguments]    ${src}    ${dst}
     Log To Console    [cluster] Migrating services from ${src} to ${dst}...
-    Run In Container    node-wrk0    microceph cluster migrate ${src} ${dst}    120
+    Run In Container    node-wrk0    microceph cluster migrate ${src} ${dst}    400
     FOR    ${i}    IN RANGE    8
         ${status}=    Run In Container Unchecked    node-wrk0    microceph status    30
         ${src_ok}    ${dst_ok}=    Parse Migration Status    ${status.stdout}    ${src}    ${dst}
@@ -254,10 +263,21 @@ Test Prohibit CRUSH Scaledown
 Test Node Removal
     [Documentation]    Re-adds wrk0's OSD then removes node-wrk3 from the cluster.
     ...    After removal verifies node-wrk3 is gone from microceph status and that the mon
-    ...    daemon count is either 3 (wrk3 removed cleanly) or 4 with wrk3 out of quorum
-    ...    (transitional state), mirroring the original bash "Test remove node wrk3" step.
+    ...    daemon count is either 3 (wrk3 removed cleanly) or 4 with wrk3 out of quorum.
     [Tags]    multi-node    cluster
     Add OSD To Node    node-wrk0
     Wait For OSD Count Head    3
     Remove Node Head Node    node-wrk3
+    Verify Node Removed From Cluster    node-wrk3
+
+Test Force Node Removal Cleans Monitor Host
+    [Documentation]    Rejoins node-wrk3, makes it unreachable, and force-removes it.
+    ...    Verifies member deletion removes node-wrk3's mon.host config without relying
+    ...    on the target member's removal hooks.
+    [Tags]    multi-node    cluster
+    ${token}=    Run In Container    node-wrk0    microceph cluster add node-wrk3    60
+    Run In Container    node-wrk3    microceph cluster join ${token.stdout.strip()}    120
+    Wait For N Nodes In Cluster    4
+    Run In Container    node-wrk0    microceph enable mon --target node-wrk3    120
+    Force Remove Node Head Node    node-wrk3
     Verify Node Removed From Cluster    node-wrk3

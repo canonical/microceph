@@ -1008,20 +1008,30 @@ function upgrade_multinode() {
         # Give the snap services time to (re)start before polling.
         sleep 15
         expect=3
-        for i in $(seq 1 30); do
+        consecutive=0
+        # One poll more than the original budget: the second, confirming
+        # poll must not eat into it.
+        for i in $(seq 1 31); do
             # osd status may fail while daemons are restarting; default res=0.
+            # Require the count on two consecutive polls: the first "3 up"
+            # reading can land just before a transient dip in the rolling
+            # restart, and a single re-check then failed the upgrade.
             res=$(lxc exec $container -- sh -c "microceph.ceph osd status 2>/dev/null | fgrep -c 'exists,up'" 2>/dev/null || echo 0)
             if [[ "${res}" -eq $expect ]] ; then
-                echo "Found ${expect} osd up"
-                break
-            else
-                echo -n '.'
+                consecutive=$((consecutive + 1))
+                if [[ "${consecutive}" -ge 2 ]] ; then
+                    echo "Found ${expect} osd up on two consecutive polls"
+                    break
+                fi
                 sleep 10
+                continue
             fi
+            consecutive=0
+            echo -n '.'
+            sleep 10
         done
-        res=$(lxc exec $container -- sh -c "microceph.ceph osd status 2>/dev/null | fgrep -c 'exists,up'" 2>/dev/null || echo 0)
-        if [[ "${res}" -ne $expect ]] ; then
-            echo "Expected $expect OSD up, got $res"
+        if [[ "${consecutive}" -lt 2 ]] ; then
+            echo "Expected $expect OSD up on two consecutive polls, got ${res:-0}"
             lxc exec $container -- sh -c "microceph.ceph -s"
             exit 1
         fi

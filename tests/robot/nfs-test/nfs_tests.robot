@@ -7,9 +7,13 @@ Suite Setup     NFS Tests Suite Setup
 Suite Teardown  Teardown MicroCeph Environment
 Test Tags       single-node    nfs    cephfs    lxd    integration
 
+*** Variables ***
+${OUTER_VM_IMAGE}    ubuntu:26.04
+
 *** Keywords ***
 NFS Tests Suite Setup
     Launch Outer Test VM    vm_name=microceph-nfs-vm
+    Verify Resolute Outer VM
     Copy Scripts To VM
     Copy Snap To VM
     Install And Bootstrap MicroCeph
@@ -19,7 +23,7 @@ NFS Tests Suite Setup
 Skip If Log Rotate App Not Available
     [Documentation]    Skips the test if the microceph.log-rotate snap app is absent.
     ${has_app}=    Run In VM    test -e /snap/microceph/current/commands/log-rotate.start && echo yes || echo no    30
-    IF    "${has_app.stdout.strip()}" != "yes"
+    IF    $has_app.stdout.strip() != "yes"
         Skip    microceph.log-rotate app not available in this snap version — skipping
     END
 
@@ -27,7 +31,7 @@ Wait For Ganesha Log
     [Documentation]    Polls until /var/snap/microceph/common/logs/ganesha/ganesha.log exists (30 s max).
     FOR    ${i}    IN RANGE    30
         ${found}=    Run In VM    test -f /var/snap/microceph/common/logs/ganesha/ganesha.log && echo yes || echo no    10
-        IF    "${found.stdout.strip()}" == "yes"    RETURN
+        IF    $found.stdout.strip() == "yes"    RETURN
         IF    ${i} == 29    Fail    Ganesha log not found after 30s
         Sleep    1s
     END
@@ -81,8 +85,9 @@ Test NFS Stale Run Dir Migration Inline
     Run In VM And Check    sudo snap start microceph    30
     # Wait for migration log message
     FOR    ${i}    IN RANGE    30
-        ${found}=    Run In VM    sudo snap logs microceph.daemon -n 100 | grep -q "fixed stale run dir.*ganesha.conf" && echo yes || echo no    15
-        IF    "${found.stdout.strip()}" == "yes"
+        ${logs}=    Run In VM    sudo snap logs microceph.daemon -n 100    15    quiet=${True}
+        ${found}=    Get Regexp Matches    ${logs.stdout}    fixed stale run dir.*ganesha.conf
+        IF    $logs.rc == 0 and $found
             Log To Console    [nfs] Daemon logged ganesha migration complete
             BREAK
         END
@@ -115,7 +120,7 @@ Test Mount And Write NFS
     [Documentation]    Installs ceph-common, mounts the CephFS NFS share, writes a file,
     ...    reads it back, and unmounts.
     [Tags]    nfs    cephfs
-    Run In VM And Check    sudo apt install ceph-common -y    300
+    Install Ceph Client From PPA
     Run In VM And Check    sudo mkdir -p /mnt/nfs    10
     Run In VM And Check    sudo cp /var/snap/microceph/current/conf/ceph.conf /etc/ceph/    10
     Run In VM And Check    sudo cp /var/snap/microceph/current/conf/ceph.client.admin.keyring /etc/ceph/    10

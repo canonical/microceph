@@ -1,0 +1,43 @@
+{
+    "id": "7b7a8b32-3e1e-4bab-9965-e756fbe29aa7",
+    "name": "sitea",
+    "domain_root": "sitea.rgw.meta:root",
+    "control_pool": "sitea.rgw.control",
+    "gc_pool": "sitea.rgw.log:gc",
+    "lc_pool": "sitea.rgw.log:lc",
+    "log_pool": "sitea.rgw.log",
+    "intent_log_pool": "sitea.rgw.log:intent",
+    "usage_log_pool": "sitea.rgw.log:usage",
+    "roles_pool": "sitea.rgw.meta:roles",
+    "reshard_pool": "sitea.rgw.log:reshard",
+    "user_keys_pool": "sitea.rgw.meta:users.keys",
+    "user_email_pool": "sitea.rgw.meta:users.email",
+    "user_swift_pool": "sitea.rgw.meta:users.swift",
+    "user_uid_pool": "sitea.rgw.meta:users.uid",
+    "otp_pool": "sitea.rgw.otp",
+    "notif_pool": "sitea.rgw.log:notif",
+    "topics_pool": "sitea.rgw.meta:topics",
+    "account_pool": "sitea.rgw.meta:accounts",
+    "group_pool": "sitea.rgw.meta:groups",
+    "system_key": {
+        "access_key": "VDS6K1QMOGKYIJA5WTQD",
+        "secret_key": "cE3yAkkOisWAwBj7fYBErJ5RedXeeAJX7JXZOERe"
+    },
+    "placement_pools": [
+        {
+            "key": "default-placement",
+            "val": {
+                "index_pool": "sitea.rgw.buckets.index",
+                "storage_classes": {
+                    "STANDARD": {
+                        "data_pool": "sitea.rgw.buckets.data"
+                    }
+                },
+                "data_extra_pool": "sitea.rgw.buckets.non-ec",
+                "index_type": 0,
+                "inline_data": true
+            }
+        }
+    ],
+    "realm_id": "cf90947b-b444-488d-abd3-779c3c6062d7"
+}

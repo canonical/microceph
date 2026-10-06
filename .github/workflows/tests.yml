@@ -9,7 +9,7 @@ on:
 jobs:
   build-microceph:
     name: Build microceph snap
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       SNAPCRAFT_BUILD_ENVIRONMENT: "lxd"
     steps:
@@ -50,10 +50,38 @@ jobs:
           path: "*.snap"
           retention-days: 5
 
+  # Infra gate for the whole matrix: on a gross Snap Store or
+  # Ubuntu archive outage, fail this one job and skip every suite instead
+  # of recording one failure per suite. It cannot see inside the LXD
+  # instances the suites create later; in-instance checks are tracked in
+  # https://github.com/canonical/microceph/issues/836
+  preflight:
+    name: Preflight infra gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # The probes live in a script so other branches and workflows can reuse them.
+      - name: Checkout preflight script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: tests/scripts/preflight.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Probe Snap Store and Ubuntu archive reachability
+        run: |
+          tests/scripts/preflight.sh probe_endpoints \
+              "ceph-ppa=https://ppa.launchpadcontent.net/lmlogiudice/ceph-lp2166817-updates/ubuntu/dists/"
+
+      - name: Download Snap Store canary
+        run: tests/scripts/preflight.sh snap_canary
+
+      - name: Download APT test tools
+        run: tests/scripts/preflight.sh apt_canary jq s3cmd
+
   robot-tests:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner || 'ubuntu-22.04' }}
-    needs: build-microceph
+    needs: [preflight, build-microceph]
     strategy:
       fail-fast: false
       matrix:
@@ -125,9 +153,9 @@ jobs:
             name: Test WAL/DB device usage
             suite: wal-db-tests
 
-          - id: upgrade-reef-tests
-            name: Test reef upgrades
-            suite: upgrade-reef-tests
+          - id: upgrade-squid-tests
+            name: Test squid upgrades
+            suite: upgrade-squid-tests
 
           - id: cluster-tests
             name: Test MicroCeph Cluster features.
@@ -176,6 +204,7 @@ jobs:
           - id: deferred-ceph-multinode-tests
             name: Deferred-Ceph lifecycle and placement multi node
             suite: deferred-ceph-multinode-tests
+            runner: self-hosted-linux-amd64-jammy-xlarge
 
           - id: legacy-placement-tests
             name: Legacy bootstrap placement regression
@@ -185,7 +214,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: snaps
-          path: /home/runner
+          path: ${{ runner.temp }}
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -212,10 +241,16 @@ jobs:
           sudo lxd init --auto
 
       - name: Install tox
-        run: pipx install tox
+        run: |
+          if ! command -v pipx >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y pipx
+          fi
+          pipx install tox
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run Robot suite
-        run: tox -e robot -- --test-suite ${{ matrix.suite }} --snap-path '/home/runner/*.snap' ${{ matrix.args }}
+        run: tox -e robot -- --test-suite ${{ matrix.suite }} --snap-path '${{ runner.temp }}/*.snap' ${{ matrix.args }}
 
       - name: Upload Robot logs
         if: always()

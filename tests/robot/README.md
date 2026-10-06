@@ -78,7 +78,7 @@ cluster-tests                      static-checks
 dsl-functional-tests               test-maintenance-modes
 loop-file-tests                    test-sequential-mon-host-refresh
 messenger-v2-tests                 unit-tests
-multi-node-tests                   upgrade-reef-tests
+multi-node-tests                   upgrade-squid-tests
 multi-node-tests-with-custom-microceph-ip
                                    wal-db-tests
                                    wiping-test
@@ -90,4 +90,5 @@ multi-node-tests-with-custom-microceph-ip
 - Test case bodies and suite-level `*** Keywords ***` sections call named keywords —
   no raw bash in test bodies.
 - Keyword bodies in the harness may contain bash; that is implementation detail.
+- `Run In VM`, `Run In VM And Check`, `Run In VM Must Fail` and `Run In Container` run the command under `bash -eo pipefail`. Do not pipe a command whose result is checked into a consumer that exits early (`grep -q`, `head -1`): if the producer is still writing it is killed by SIGPIPE and the pipeline fails with rc=141 although the consumer already had what it needed, and a `&& echo yes || echo no` probe answers "no". Run the command on its own and decide in Robot (`Should Contain`) or in a pure Python helper (see "Purify" in `AGENTS.md`).
 - New harness keywords go under the relevant section comment in the resource file.

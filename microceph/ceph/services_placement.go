@@ -74,6 +74,10 @@ func ServicePlacementHandler(ctx context.Context, s interfaces.StateInterface, p
 // tests of the placement pipeline can bypass database-dependent config
 // rendering.
 func EnableService(ctx context.Context, s interfaces.StateInterface, payload types.EnableService, item PlacementIntf) error {
+	// Serialize direct service placement with bootstrap, join, deletion, and
+	// startup re-enablement so their snapctl and database phases cannot overlap.
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
 
 	// Ensure ceph.conf and the admin keyring are rendered from the shared
 	// cluster database before enabling any service. This is intentional for

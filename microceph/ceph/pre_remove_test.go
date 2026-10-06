@@ -1,15 +1,16 @@
 package ceph
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
 	"github.com/canonical/microceph/microceph/mocks"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
-
-	"github.com/stretchr/testify/suite"
 )
 
 type clusterRemoveSuite struct {
@@ -112,4 +113,70 @@ func (s *clusterRemoveSuite) TestRemoveNodeForce() {
 	err := removeNode(nil, "foonode", true)
 
 	assert.NoError(s.T(), err)
+}
+
+func (s *clusterRemoveSuite) TestRemoveNodeReturnsServiceDeletionFailure() {
+	m := mocks.NewClientInterface(s.T())
+	client.MClient = m
+
+	m.On("GetClusterMembers", mock.Anything).Return([]string{"foonode", "barnode", "quuxnode"}, nil).Once()
+	m.On("GetDisks", mock.Anything).Return(types.Disks{}, nil).Once()
+	services := types.Services{
+		{Service: "mon", Location: "foonode"},
+		{Service: "mon", Location: "barnode"},
+		{Service: "mon", Location: "quuxnode"},
+		{Service: "mon", Location: "othernode"},
+		{Service: "mgr", Location: "barnode"},
+		{Service: "mds", Location: "barnode"},
+	}
+	m.On("GetServices", mock.Anything).Return(services, nil).Twice()
+	monSafetyErr := errors.New("monitor removal would lose quorum")
+	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(monSafetyErr).Once()
+
+	err := removeNode(nil, "foonode", false)
+
+	assert.ErrorIs(s.T(), err, monSafetyErr)
+	assert.ErrorContains(s.T(), err, `failed to delete service "mon" on node "foonode"`)
+}
+
+func (s *clusterRemoveSuite) TestRemoveNodeForceSuppressesServiceDeletionFailure() {
+	m := mocks.NewClientInterface(s.T())
+	client.MClient = m
+
+	services := types.Services{
+		{Service: "mon", Location: "foonode"},
+		{Service: "mgr", Location: "foonode"},
+	}
+	m.On("GetServices", mock.Anything).Return(services, nil).Once()
+	monSafetyErr := errors.New("monitor removal would lose quorum")
+	mgrDeleteErr := errors.New("manager deletion failed")
+	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(monSafetyErr).Once()
+	m.On("DeleteService", mock.Anything, "foonode", "mgr").Return(mgrDeleteErr).Once()
+
+	err := removeNode(nil, "foonode", true)
+
+	assert.NoError(s.T(), err)
+}
+
+func (s *clusterRemoveSuite) TestDeleteNodeServicesAggregatesFailures() {
+	m := mocks.NewClientInterface(s.T())
+	client.MClient = m
+
+	services := types.Services{
+		{Service: "mon", Location: "foonode"},
+		{Service: "mgr", Location: "foonode"},
+		{Service: "mds", Location: "barnode"},
+	}
+	m.On("GetServices", mock.Anything).Return(services, nil).Once()
+	monDeleteErr := errors.New("monitor deletion failed")
+	mgrDeleteErr := errors.New("manager deletion failed")
+	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(monDeleteErr).Once()
+	m.On("DeleteService", mock.Anything, "foonode", "mgr").Return(mgrDeleteErr).Once()
+
+	err := deleteNodeServices(nil, "foonode")
+
+	assert.ErrorIs(s.T(), err, monDeleteErr)
+	assert.ErrorIs(s.T(), err, mgrDeleteErr)
+	assert.ErrorContains(s.T(), err, `failed to delete service "mon" on node "foonode"`)
+	assert.ErrorContains(s.T(), err, `failed to delete service "mgr" on node "foonode"`)
 }

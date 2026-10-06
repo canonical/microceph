@@ -42,9 +42,12 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
+      # Use the PR-head action for both source trees so the scanner, allowlist,
+      # Go toolchain, and native dependencies are identical. Only findings in
+      # the checked-out source should differ.
       - name: Scan base ref
         id: base-scan
-        uses: ./base/.github/actions/govulncheck
+        uses: ./.github/actions/govulncheck
         with:
           working-directory: base/microceph
           output-file: govulncheck-base.json
