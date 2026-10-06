@@ -171,7 +171,7 @@ def _manager(monkeypatch, records=(), members=("node-a", "node-b"), offline=()):
              for i, name in enumerate(members, 1)]
     manager.microceph = types.SimpleNamespace(
         cluster=types.SimpleNamespace(get_cluster_members=lambda: hosts), services=_SMBServices(list(records)))
-    manager.remote = lambda _module, _method, _resources: {"resources": []}
+    manager.remote = lambda _module, _method: []
     return manager
 
 
@@ -425,7 +425,7 @@ def test_remove_absent_smb_service_is_idempotent_and_accepts_force(monkeypatch):
 def test_remove_smb_service_attempts_every_member(monkeypatch, failure, resource_survives):
     manager = _manager(monkeypatch, [_smb_record(n) for n in ("node-a", "node-b")])
     if resource_survives:
-        manager.remote = lambda *_args: {"resource_type": "ceph.smb.cluster", "cluster_id": "files"}
+        manager.remote = lambda *_args: ["files"]
     if failure:
         manager.microceph.services.remove_failures["node-a"] = RuntimeError("node-a unavailable")
         with pytest.raises(RuntimeError, match="node-a unavailable"):

@@ -679,10 +679,14 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             details = "; ".join(f"remove {member}: {err}" for member, err in failures)
             raise RuntimeError(f"SMB removal incomplete: {details}")
         try:
-            resource = self.remote('smb', 'show', [f'ceph.smb.cluster.{cluster_id}'])
+            # The upstream callback holds a SQLite transaction. show would
+            # reacquire its non-reentrant lock; cluster_ls reuses its cursor.
+            cluster_ids = self.remote('smb', 'cluster_ls')
         except Exception as err:
             raise RuntimeError(f"SMB removal could not confirm cluster deletion: {err}") from err
-        if self._smb_resource_survives(resource, cluster_id):
+        if not isinstance(cluster_ids, list) or not all(isinstance(item, str) for item in cluster_ids):
+            raise RuntimeError("SMB removal received invalid cluster list")
+        if cluster_id in cluster_ids:
             return f"Removed SMB service '{cluster_id}'"
         try:
             self.microceph.services.finalize_smb(cluster_id, group_config)
@@ -690,23 +694,6 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             raise RuntimeError(f"SMB removal finalization incomplete: {err}") from err
 
         return f"Removed SMB service '{cluster_id}'"
-
-    @staticmethod
-    def _smb_resource_survives(resource: Any, cluster_id: str) -> bool:
-        """Return whether the in-process smb module still owns cluster_id."""
-        if not isinstance(resource, dict):
-            raise ValueError("invalid SMB resource response")
-        resources = resource.get("resources")
-        if resources is None:
-            resources = [resource]
-        if not isinstance(resources, list):
-            raise ValueError("invalid SMB resource response")
-        for item in resources:
-            if not isinstance(item, dict):
-                raise ValueError("invalid SMB resource response")
-            if item.get("resource_type") == "ceph.smb.cluster" and item.get("cluster_id") == cluster_id:
-                return True
-        return False
 
     def apply_rbd_mirror(self, spec: ServiceSpec) -> OrchResult[str]:
         logger.info(f"Received Apply Request for RBD Mirror: Spec: {vars(spec).items()}")
