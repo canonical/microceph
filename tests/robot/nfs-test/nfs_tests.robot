@@ -85,8 +85,9 @@ Test NFS Stale Run Dir Migration Inline
     Run In VM And Check    sudo snap start microceph    30
     # Wait for migration log message
     FOR    ${i}    IN RANGE    30
-        ${found}=    Run In VM    sudo snap logs microceph.daemon -n 100 | grep -q "fixed stale run dir.*ganesha.conf" && echo yes || echo no    15
-        IF    $found.stdout.strip() == "yes"
+        ${logs}=    Run In VM    sudo snap logs microceph.daemon -n 100    15    quiet=${True}
+        ${found}=    Get Regexp Matches    ${logs.stdout}    fixed stale run dir.*ganesha.conf
+        IF    $logs.rc == 0 and $found
             Log To Console    [nfs] Daemon logged ganesha migration complete
             BREAK
         END
