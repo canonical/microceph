@@ -13,6 +13,7 @@ import (
 	"github.com/pborman/uuid"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
 
@@ -22,6 +23,10 @@ var loadManagedSMBClusterFunc = loadManagedSMBCluster
 var applyManagedSMBClusterFunc = applyManagedSMBCluster
 var removeManagedSMBClusterFunc = removeManagedSMBCluster
 var disableSMBLocalFunc = DisableSMB
+var getSMBServiceGroupConfigFunc = database.GetSMBServiceGroupConfig
+var finalizeSMBServiceGroupIfUnchangedFunc = func(ctx context.Context, s interfaces.StateInterface, clusterID, config string) error {
+	return database.FinalizeSMBServiceGroup(ctx, s, clusterID, config)
+}
 
 // ErrManagedSMBOutcomeUnknown means remote work may still be running or partially
 // applied. Inspect upstream state rather than blindly retrying the mutation.
@@ -74,7 +79,19 @@ func EnableManagedSMB(ctx context.Context, s interfaces.StateInterface, request 
 func DisableManagedSMB(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
 	resource, err := loadManagedSMBClusterFunc(ctx, clusterID)
 	if errors.Is(err, os.ErrNotExist) {
-		return disableSMBLocalFunc(ctx, s, clusterID)
+		config, _, groupErr := getSMBServiceGroupConfigFunc(ctx, s, clusterID)
+		if groupErr != nil {
+			return groupErr
+		}
+		err = removeManagedSMBClusterFunc(ctx, clusterID)
+		if err != nil {
+			return err
+		}
+		err = disableSMBLocalFunc(ctx, s, clusterID)
+		if err != nil {
+			return err
+		}
+		return finalizeSMBServiceGroupIfUnchangedFunc(ctx, s, clusterID, config)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to load managed SMB cluster: %w", err)
@@ -84,7 +101,13 @@ func DisableManagedSMB(ctx context.Context, s interfaces.StateInterface, cluster
 		return err
 	}
 	remaining, _ := removeManagedSMBMember(members, s.ClusterState().Name())
-	if len(remaining) == 0 {
+	finalize := len(remaining) == 0
+	config := ""
+	if finalize {
+		config, _, err = getSMBServiceGroupConfigFunc(ctx, s, clusterID)
+		if err != nil {
+			return err
+		}
 		err = removeManagedSMBClusterFunc(ctx, clusterID)
 	} else {
 		updateManagedSMBResource(resource, remaining, types.ManagedSMBService{})
@@ -96,7 +119,14 @@ func DisableManagedSMB(ctx context.Context, s interfaces.StateInterface, cluster
 	// The backend removes observed members only. Also clean this target after
 	// successful upstream removal in case its earlier placement was interrupted
 	// before a grouped_services record was written. This path is idempotent.
-	return disableSMBLocalFunc(ctx, s, clusterID)
+	err = disableSMBLocalFunc(ctx, s, clusterID)
+	if err != nil {
+		return err
+	}
+	if finalize {
+		return finalizeSMBServiceGroupIfUnchangedFunc(ctx, s, clusterID, config)
+	}
+	return nil
 }
 
 func ensureManagedSMBBackend(ctx context.Context) error {

@@ -635,14 +635,42 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
         if service_type != 'smb' or not separator or not cluster_id:
             raise NotImplementedError(f"service removal is not supported for {service_name!r}")
 
+        try:
+            group = self.microceph.services.get_smb_group(cluster_id)
+        except Exception as err:
+            raise RuntimeError(f"SMB removal could not read reservation state: {err}") from err
+        group_config = group.get("group_config", "")
+        if not isinstance(group_config, str):
+            raise RuntimeError("SMB removal received invalid reservation state")
+        members = set()
         records = self.microceph.services.list_services() or []
-        members = sorted(
-            record['location']
-            for record in records
-            if record['service'] == 'smb' and record['group_id'] == cluster_id
-        )
+        other_smb_members = set()
+        for record in records:
+            if record['service'] != 'smb':
+                continue
+            if record['group_id'] == cluster_id:
+                # Observed receipts for this cluster always require cleanup.
+                members.add(record['location'])
+            else:
+                other_smb_members.add(record['location'])
+        cluster_members = {
+            member['name'] for member in self.microceph.cluster.get_cluster_members()
+        }
+        if group_config:
+            try:
+                ranks = json.loads(group_config).get("ctdb_ranks", {})
+            except (TypeError, ValueError) as err:
+                raise RuntimeError(f"SMB removal received invalid reservation state: {err}") from err
+            prefix = f"smb.{cluster_id}."
+            if not isinstance(ranks, dict):
+                raise RuntimeError("SMB removal received invalid CTDB reservations")
+            for identity in ranks:
+                if isinstance(identity, str) and identity.startswith(prefix) and identity[len(prefix):]:
+                    member = identity[len(prefix):]
+                    if member in cluster_members and member not in other_smb_members:
+                        members.add(member)
         failures = []
-        for member in members:
+        for member in sorted(members):
             try:
                 self.microceph.services.remove_smb(member, cluster_id)
             except Exception as err:
@@ -650,8 +678,35 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
         if failures:
             details = "; ".join(f"remove {member}: {err}" for member, err in failures)
             raise RuntimeError(f"SMB removal incomplete: {details}")
+        try:
+            resource = self.remote('smb', 'show', [f'ceph.smb.cluster.{cluster_id}'])
+        except Exception as err:
+            raise RuntimeError(f"SMB removal could not confirm cluster deletion: {err}") from err
+        if self._smb_resource_survives(resource, cluster_id):
+            return f"Removed SMB service '{cluster_id}'"
+        try:
+            self.microceph.services.finalize_smb(cluster_id, group_config)
+        except Exception as err:
+            raise RuntimeError(f"SMB removal finalization incomplete: {err}") from err
 
         return f"Removed SMB service '{cluster_id}'"
+
+    @staticmethod
+    def _smb_resource_survives(resource: Any, cluster_id: str) -> bool:
+        """Return whether the in-process smb module still owns cluster_id."""
+        if not isinstance(resource, dict):
+            raise ValueError("invalid SMB resource response")
+        resources = resource.get("resources")
+        if resources is None:
+            resources = [resource]
+        if not isinstance(resources, list):
+            raise ValueError("invalid SMB resource response")
+        for item in resources:
+            if not isinstance(item, dict):
+                raise ValueError("invalid SMB resource response")
+            if item.get("resource_type") == "ceph.smb.cluster" and item.get("cluster_id") == cluster_id:
+                return True
+        return False
 
     def apply_rbd_mirror(self, spec: ServiceSpec) -> OrchResult[str]:
         logger.info(f"Received Apply Request for RBD Mirror: Spec: {vars(spec).items()}")

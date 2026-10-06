@@ -6,6 +6,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 SOURCE_ROOT = Path(__file__).parents[1] / "src" / "microceph" / "client"
 
@@ -92,23 +94,26 @@ def test_client_sets_bounded_extended_api_timeout(monkeypatch):
 class _RequestRecorder:
     def __init__(self):
         self.request = None
+        self.metadata = {"result": "ok"}
 
     def _put(self, path, **kwargs):
         self.request = (path, kwargs)
-        return {"metadata": {"result": "ok"}}
+        return {"metadata": self.metadata}
 
-    def _delete(self, path, **kwargs):
-        self.request = (path, kwargs)
-        return {"metadata": {"result": "ok"}}
+    _get = _delete = _put
 
 
-def test_apply_smb_waits_for_targeted_services_api_result(monkeypatch):
+@pytest.fixture
+def service(monkeypatch):
     cluster = _load_cluster_module(monkeypatch)
 
     class Service(_RequestRecorder, cluster.ExtendedAPIService):
         pass
 
-    service = Service()
+    return Service()
+
+
+def test_apply_smb_waits_for_targeted_services_api_result(service):
     payload = {
         "service_type": "smb",
         "service_id": "files",
@@ -129,16 +134,22 @@ def test_apply_smb_waits_for_targeted_services_api_result(monkeypatch):
     }
 
 
-def test_remove_smb_waits_for_targeted_services_api_result(monkeypatch):
-    cluster = _load_cluster_module(monkeypatch)
-
-    class Service(_RequestRecorder, cluster.ExtendedAPIService):
-        pass
-
-    service = Service()
-
+def test_remove_smb_waits_for_targeted_services_api_result(service):
     result = service.remove_smb("node-a", "files")
 
     assert result == {"result": "ok"}
     assert service.request[0] == "/1.0/services/smb?target=node-a"
     assert service.request[1]["json"] == {"cluster_id": "files"}
+
+
+def test_get_smb_group_uses_internal_reservation_endpoint(service):
+    service.metadata = {"group_config": "{}"}
+    assert service.get_smb_group("files") == {"group_config": "{}"}
+    assert service.request[0] == "/1.0/services/smb?cluster_id=files"
+
+
+def test_finalize_smb_uses_internal_finalization_signal(service):
+    config = '{"ctdb_ranks":{}}'
+    assert service.finalize_smb("files", config) == {"result": "ok"}
+    assert service.request == ("/1.0/services/smb", {
+        "json": {"cluster_id": "files", "finalize": True, "group_config": config}})

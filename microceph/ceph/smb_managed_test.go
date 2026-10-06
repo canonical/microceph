@@ -2,16 +2,19 @@ package ceph
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
 	"testing"
 
+	"github.com/canonical/lxd/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 )
@@ -28,11 +31,15 @@ func preserveManagedSMBFuncs(t *testing.T) {
 	ensure, load, create := ensureManagedSMBBackendFunc, loadManagedSMBClusterFunc, createManagedSMBClusterFunc
 	apply, remove := applyManagedSMBClusterFunc, removeManagedSMBClusterFunc
 	cleanup := disableSMBLocalFunc
+	getConfig, finalizeUnchanged := getSMBServiceGroupConfigFunc, finalizeSMBServiceGroupIfUnchangedFunc
 	disableSMBLocalFunc = func(context.Context, interfaces.StateInterface, string) error { return nil }
+	getSMBServiceGroupConfigFunc = func(context.Context, interfaces.StateInterface, string) (string, bool, error) { return "", false, nil }
+	finalizeSMBServiceGroupIfUnchangedFunc = func(context.Context, interfaces.StateInterface, string, string) error { return nil }
 	t.Cleanup(func() {
 		ensureManagedSMBBackendFunc, loadManagedSMBClusterFunc, createManagedSMBClusterFunc = ensure, load, create
 		applyManagedSMBClusterFunc, removeManagedSMBClusterFunc = apply, remove
 		disableSMBLocalFunc = cleanup
+		getSMBServiceGroupConfigFunc, finalizeSMBServiceGroupIfUnchangedFunc = getConfig, finalizeUnchanged
 	})
 }
 
@@ -135,6 +142,10 @@ func TestDisableManagedSMBRemovesDesiredButUnobservedMember(t *testing.T) {
 	loadManagedSMBClusterFunc = func(context.Context, string) (map[string]any, error) { return managedResource("node-a", "node-b"), nil }
 	var applied map[string]any
 	applyManagedSMBClusterFunc = func(_ context.Context, resource map[string]any) error { applied = resource; return nil }
+	finalizeSMBServiceGroupIfUnchangedFunc = func(context.Context, interfaces.StateInterface, string, string) error {
+		t.Fatal("must retain ranks while the SMB resource survives")
+		return nil
+	}
 	require.NoError(t, DisableManagedSMB(context.Background(), managedSMBTestState(t, "node-b"), "files"))
 	require.Equal(t, map[string]any{"hosts": []string{"node-a"}, "count": 1}, applied["placement"])
 }
@@ -152,13 +163,84 @@ func TestDisableManagedSMBCleansUnobservedLocalTargetAfterApply(t *testing.T) {
 	require.Equal(t, []string{"apply", "cleanup"}, events)
 }
 
-func TestDisableManagedSMBRemovesFinalMember(t *testing.T) {
-	preserveManagedSMBFuncs(t)
-	loadManagedSMBClusterFunc = func(context.Context, string) (map[string]any, error) { return managedResource("node-a"), nil }
-	removed := false
-	removeManagedSMBClusterFunc = func(_ context.Context, id string) error { require.Equal(t, "files", id); removed = true; return nil }
-	require.NoError(t, DisableManagedSMB(context.Background(), managedSMBTestState(t, "node-a"), "files"))
-	require.True(t, removed)
+func TestDisableManagedSMBTeardownOrdering(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		absent     bool
+		cleanupErr error
+	}{
+		{"final member", false, nil},
+		{"absent resource retry", true, nil},
+		{"cleanup failure", false, assert.AnError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			preserveManagedSMBFuncs(t)
+			loadManagedSMBClusterFunc = func(context.Context, string) (map[string]any, error) {
+				if tc.absent {
+					return nil, os.ErrNotExist
+				}
+				return managedResource("node-a"), nil
+			}
+			events := []string{}
+			removeManagedSMBClusterFunc = func(_ context.Context, clusterID string) error {
+				require.Equal(t, "files", clusterID)
+				events = append(events, "remove")
+				return nil
+			}
+			disableSMBLocalFunc = func(context.Context, interfaces.StateInterface, string) error {
+				events = append(events, "cleanup")
+				return tc.cleanupErr
+			}
+			getSMBServiceGroupConfigFunc = func(context.Context, interfaces.StateInterface, string) (string, bool, error) { return "{}", true, nil }
+			finalizeSMBServiceGroupIfUnchangedFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, config string) error {
+				require.Equal(t, "{}", config)
+				events = append(events, "finalize")
+				return nil
+			}
+			err := DisableManagedSMB(context.Background(), managedSMBTestState(t, "node-a"), "files")
+			if tc.cleanupErr != nil {
+				require.ErrorIs(t, err, tc.cleanupErr)
+				require.Equal(t, []string{"remove", "cleanup"}, events)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, []string{"remove", "cleanup", "finalize"}, events)
+			}
+		})
+	}
+}
+
+func TestDisableManagedSMBPreservesReservationCommittedDuringFinalization(t *testing.T) {
+	for _, absent := range []bool{true, false} {
+		t.Run(map[bool]string{true: "absent resource retry", false: "normal last target removal"}[absent], func(t *testing.T) {
+			preserveManagedSMBFuncs(t)
+			// Restore real SQL paths after the isolation helper's no-op defaults.
+			getSMBServiceGroupConfigFunc = database.GetSMBServiceGroupConfig
+			finalizeSMBServiceGroupIfUnchangedFunc = func(ctx context.Context, s interfaces.StateInterface, id, config string) error {
+				return database.FinalizeSMBServiceGroup(ctx, s, id, config)
+			}
+			state := interfaces.CephState{State: &mocks.MockState{
+				ClusterName: "node-a", Cert: &shared.CertInfo{}, DBObj: newSMBPlacementTestDB(t),
+			}}
+			loadManagedSMBClusterFunc = func(context.Context, string) (map[string]any, error) {
+				if absent {
+					return nil, os.ErrNotExist
+				}
+				return managedResource("node-a"), nil
+			}
+			removeManagedSMBClusterFunc = func(ctx context.Context, _ string) error {
+				return state.State.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+					_, _, err := database.ReserveSMBCTDBRank(ctx, tx, "files", []byte(`{"features":["clustered"]}`), "smb.files.node-b")
+					return err
+				})
+			}
+			err := DisableManagedSMB(context.Background(), state, "files")
+			require.ErrorContains(t, err, "state changed during teardown")
+			config, exists, err := database.GetSMBServiceGroupConfig(context.Background(), state, "files")
+			require.NoError(t, err)
+			require.True(t, exists, "must preserve the newly committed reservation")
+			require.JSONEq(t, `{"desired_spec":{"features":["clustered"]},"ctdb_ranks":{"smb.files.node-b":0},"next_ctdb_rank":1}`, config)
+		})
+	}
 }
 
 func TestEnsureManagedSMBBackendUsesContext(t *testing.T) {

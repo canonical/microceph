@@ -22,6 +22,12 @@ CREATE TABLE core_cluster_members (
   id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
   name TEXT NOT NULL UNIQUE
 );
+CREATE TABLE config (
+  id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  UNIQUE(key)
+);
 INSERT INTO core_cluster_members (name) VALUES ('node-a');
 `)
 	require.NoError(t, err)
@@ -102,6 +108,8 @@ func TestAddOrUpdateSMBPreservesRanksAcrossStaleMemberUpdates(t *testing.T) {
 	}
 	first := `{"desired_spec":{"revision":1},"ctdb_ranks":{"smb.files.node-a":0},"next_ctdb_rank":1}`
 	require.NoError(t, update("node-a", first, `{"config_uri":"a","ctdb_rank":0}`))
+	// A stale snapshot cannot create a receipt for an unreserved identity.
+	require.ErrorContains(t, update("node-b", first, `{"ctdb_rank":1,"ctdb_identity":"smb.files.node-b"}`), "not reserved")
 	second := `{"desired_spec":{"revision":2},"ctdb_ranks":{"smb.files.node-a":0,"smb.files.node-b":1},"next_ctdb_rank":2}`
 	require.NoError(t, update("node-b", second, `{"config_uri":"b","ctdb_rank":1}`))
 	// A stale local agent must not erase the newly allocated rank or counter.
@@ -111,9 +119,19 @@ func TestAddOrUpdateSMBPreservesRanksAcrossStaleMemberUpdates(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"desired_spec":{"revision":1},"ctdb_ranks":{"smb.files.node-a":0,"smb.files.node-b":1},"next_ctdb_rank":2}`, stored)
 
-	// Removal of a member record does not discard its rank from shared state.
-	_, err = db.Exec(`DELETE FROM grouped_services WHERE member_id = (SELECT id FROM core_cluster_members WHERE name = 'node-a')`)
-	require.NoError(t, err)
+	// Even the last receipt's removal must retain a pending placement's rank.
+	tx := smbRankTx(t, db)
+	reserveSMBTestRank(t, tx, "node-c", `{"revision":3}`)
+	require.NoError(t, tx.Commit())
+	tx = smbRankTx(t, db)
+	for _, member := range []string{"node-a", "node-b"} {
+		require.NoError(t, removeGroupedServiceForHost(ctx, tx, member, "smb", "files"))
+	}
+	require.NoError(t, tx.Commit())
+	tx = smbRankTx(t, db)
+	_, rank := reserveSMBTestRank(t, tx, "node-c", `{"revision":3}`)
+	require.Equal(t, 2, rank)
+	require.NoError(t, tx.Rollback())
 	third := `{"desired_spec":{"revision":3},"ctdb_ranks":{"smb.files.node-b":1,"smb.files.node-c":2},"next_ctdb_rank":3}`
 	require.NoError(t, update("node-c", third, `{"config_uri":"c","ctdb_rank":2}`))
 	err = db.QueryRow(`SELECT config FROM service_groups WHERE group_id = 'files'`).Scan(&stored)
@@ -138,6 +156,11 @@ func TestAddOrUpdateSMBRejectsRetiredRankAfterPartialCounter(t *testing.T) {
 	require.NoError(t, err)
 	err = addOrUpdateGroupedService(context.Background(), tx, "node-a", "smb", "files", `{"desired_spec":{},"ctdb_ranks":{"smb.files.node-a":2}}`, `{}`)
 	require.ErrorContains(t, err, "retired")
+	// Legacy state without a rank map must initialize it at the saved counter.
+	config, rank := reserveSMBTestRank(t, tx, "node-b", `{"features":["clustered"]}`)
+	require.Equal(t, 4, rank)
+	require.Equal(t, map[string]int{"smb.files.node-b": 4}, config.CTDBRanks)
+	require.Equal(t, 5, config.NextCTDBRank)
 	require.NoError(t, tx.Rollback())
 }
 
