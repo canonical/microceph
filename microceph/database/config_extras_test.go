@@ -48,12 +48,12 @@ func applyMonHostConfigSchemaUpdate(t *testing.T, db *sql.DB) {
 
 	tx, err := db.BeginTx(context.Background(), nil)
 	require.NoError(t, err)
-	err = schemaUpdate10(context.Background(), tx)
+	err = schemaUpdate11(context.Background(), tx)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 }
 
-func TestSchemaUpdate10DeletesRemovedMemberMonHost(t *testing.T) {
+func TestSchemaUpdate11DeletesRemovedMemberMonHost(t *testing.T) {
 	db := setupMonHostConfigDB(t)
 
 	_, err := db.Exec(`
@@ -83,7 +83,7 @@ DELETE FROM core_cluster_members WHERE name = '1';
 	assert.Equal(t, []string{"mon.host.1", "mon.host.node-a"}, keys)
 }
 
-func TestSchemaUpdate10DeletesPreexistingOrphanedMemberMonHost(t *testing.T) {
+func TestSchemaUpdate11DeletesPreexistingOrphanedMemberMonHost(t *testing.T) {
 	db := newMonHostConfigDB(t)
 
 	_, err := db.Exec(`
@@ -120,7 +120,7 @@ INSERT INTO config (key, value) VALUES
 	}, keys)
 }
 
-func TestSchemaUpdate10RollsBackMemberMonHostDeletion(t *testing.T) {
+func TestSchemaUpdate11RollsBackMemberMonHostDeletion(t *testing.T) {
 	db := setupMonHostConfigDB(t)
 
 	_, err := db.Exec(`
