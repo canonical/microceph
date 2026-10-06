@@ -20,7 +20,7 @@ Test GolangCI Lint
     ...    shell=True    timeout=600    env:PATH=${gopath_bin}:%{PATH}
     Log    ${result.stdout}
     Log    STDERR: ${result.stderr}
-    Should Be Equal As Integers    ${result.rc}    0    msg=make check-static failed:\n${result.stderr}
+    Should Be Equal As Integers    ${result.rc}    0    msg=make check-static failed:\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}
 
 Test Go Vet
     [Documentation]    Runs go vet on the microceph package directly.
@@ -29,4 +29,4 @@ Test Go Vet
     ...    shell=True    timeout=120
     Log    ${result.stdout}
     Log    STDERR: ${result.stderr}
-    Should Be Equal As Integers    ${result.rc}    0    msg=go vet failed:\n${result.stderr}
+    Should Be Equal As Integers    ${result.rc}    0    msg=go vet failed:\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}

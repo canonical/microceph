@@ -322,3 +322,36 @@ INSERT INTO auth_rotation (id) VALUES (1);
 
 	return err
 }
+
+// schemaUpdate11 removes stale member-named monitor-host config during
+// upgrade and ensures a member's monitor-host config is removed atomically
+// when MicroCluster removes that member. Numeric config suffixes are retained
+// because they are used for monitor entries adopted from an external Ceph
+// cluster rather than names of MicroCeph members.
+func schemaUpdate11(ctx context.Context, tx *sql.Tx) error {
+	tableName, err := getClusterTableName(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	stmt := fmt.Sprintf(`
+DELETE FROM config
+WHERE key GLOB 'mon.host.*'
+  AND substr(key, 10) GLOB '*[^0-9]*'
+  AND NOT EXISTS (
+    SELECT 1
+      FROM "%s"
+     WHERE name = substr(config.key, 10)
+  );
+
+CREATE TRIGGER delete_member_mon_host_config
+AFTER DELETE ON "%s"
+WHEN OLD.name GLOB '*[^0-9]*'
+BEGIN
+  DELETE FROM config WHERE key = 'mon.host.' || OLD.name;
+END;
+`, tableName, tableName)
+	_, err = tx.ExecContext(ctx, stmt)
+
+	return err
+}

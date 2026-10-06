@@ -717,6 +717,46 @@ class microceph_harness:
             raise AssertionError(f"Command failed (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}")
         return res
 
+    def remove_cluster_member_with_retry(
+        self, container, node, force=False, attempts=3, interval="10s", timeout=120
+    ):
+        """Removes a cluster member, tolerating an ambiguous completed retry.
+
+        A timed-out remove may complete on the server, causing the next attempt
+        to report that the member was not found. Treat that sequence as success,
+        but reject an initial not-found response so a bad member name is not
+        silently accepted.
+        """
+        command = f"microceph cluster remove {node}"
+        if force:
+            command += " --force"
+
+        last_result = [None]
+        saw_other_failure = [False]
+
+        def predicate():
+            last_result[0] = self.run_in_container_unchecked(container, command, timeout, quiet=False)
+            if last_result[0].rc == 0:
+                return True
+
+            not_found = self._is_member_not_found_error(last_result[0].stderr)
+            if not_found and saw_other_failure[0]:
+                return True
+            if not not_found:
+                saw_other_failure[0] = True
+            return False
+
+        self._poll_until(
+            predicate,
+            attempts=attempts,
+            interval=interval,
+            fail_msg=lambda: (
+                f"Command failed after {attempts} attempts (rc={last_result[0].rc}):\n"
+                f"STDERR: {last_result[0].stderr}\nSTDOUT: {last_result[0].stdout}"
+            ),
+        )
+        return last_result[0]
+
     def run_in_head_node(self, cmd, timeout=300, quiet=False):
         """Runs cmd inside node-wrk0 container."""
         return self.run_in_container(HEAD_NODE, cmd, timeout, quiet)
@@ -938,6 +978,30 @@ class microceph_harness:
             if any(sub in path for sub in substrings):
                 count += 1
         return count
+
+    @staticmethod
+    def cluster_list_names(stdout):
+        """Returns the member names in ``microceph cluster list -f json`` output.
+
+        Replaces the remote ``... -f json | jq '.[]["name"]' | grep -q <host>`` pipeline: the
+        remote command now only fetches the JSON, and callers assert on the returned list, so a
+        failed assertion shows the names the cluster reported.
+        Raises AssertionError, quoting the start of *stdout*, when it is not valid JSON or not an
+        array, and quoting the member when a member has no string ``name``.
+        """
+        shown = repr(stdout)[:200]
+        try:
+            members = json.loads(stdout)
+        except (ValueError, TypeError) as exc:
+            raise AssertionError(f"cluster list output is not valid JSON ({exc}): {shown}")
+        if not isinstance(members, list):
+            raise AssertionError(f"cluster list JSON is not an array of members: {shown}")
+        names = []
+        for member in members:
+            if not isinstance(member, dict) or not isinstance(member.get("name"), str):
+                raise AssertionError(f"cluster list member has no string name: {member!r}")
+            names.append(member["name"])
+        return names
 
     @staticmethod
     def _remote_list_has(remote_list_json, field, value):
@@ -2098,17 +2162,16 @@ class microceph_harness:
 
         DEAD KEYWORD (pre-existing): no suite calls "Enable Services On Node"; the multi-node
         suite uses its own "Enable Services On Head Node For" (a different, node-wrk0-driven
-        implementation). Ported from the pre-refactor harness as-is; flagged for a maintainer to
+        implementation). Ported from the pre-refactor harness as-is, except that the ceph -s
+        probe decides in Python instead of piping into grep -q; flagged for a maintainer to
         confirm before removing rather than silently dropped.
         """
         logger.console(f"[cluster] Enabling mon/mds/mgr on {node}...")
         for svc in ("mon", "mds", "mgr"):
             self.run_in_vm_and_check(f"sudo microceph enable {svc} --target {node}", 120)
         for _ in range(8):
-            result = self.run_in_vm(
-                f'sudo microceph.ceph -s | grep -q "mon: .*daemons.*{node}" && echo yes || echo no', 30
-            )
-            if result.stdout.strip() == "yes":
+            result = self.run_in_vm("sudo microceph.ceph -s", 30, quiet=True)
+            if result.rc == 0 and re.search(rf"mon: .*daemons.*{re.escape(node)}", result.stdout):
                 break
             time.sleep(2)
         self.run_in_vm_and_check("sudo microceph.ceph -s", 30)
@@ -2118,15 +2181,14 @@ class microceph_harness:
 
         DEAD KEYWORD (pre-existing): no suite calls "Remove Node"; the multi-node suite uses its
         own "Remove Node Head Node" (node-wrk0-driven, with health-wait and retry). Ported from
-        the pre-refactor harness as-is; flagged for a maintainer to confirm before removing.
+        the pre-refactor harness as-is, except that the ceph -s probe decides in Python instead
+        of piping into grep -q; flagged for a maintainer to confirm before removing.
         """
         logger.console(f"[cluster] Removing node {node}...")
         self.run_in_vm_and_check(f"sudo microceph cluster remove {node}", 120)
         for _ in range(8):
-            result = self.run_in_vm(
-                f'sudo microceph.ceph -s | grep -q "mon: .*daemons.*{node}" && echo yes || echo no', 30
-            )
-            if result.stdout.strip() != "yes":
+            result = self.run_in_vm("sudo microceph.ceph -s", 30, quiet=True)
+            if result.rc != 0 or not re.search(rf"mon: .*daemons.*{re.escape(node)}", result.stdout):
                 break
             time.sleep(5)
         time.sleep(1)
@@ -2144,16 +2206,6 @@ class microceph_harness:
         if not stderr:
             return False
         return re.search(r'cluster member .* not found', stderr) is not None
-
-    def is_member_not_found_error(self, stderr):
-        """Returns True when *stderr* is a 'cluster member ... not found' error.
-
-        Robot keyword wrapper around the pure _is_member_not_found_error
-        staticmethod, so Remove Node Head Node can decide this in Python
-        (see AGENTS.md, "Purify: fetch raw, decide in Python") instead of an
-        inline Evaluate with no unit test.
-        """
-        return self._is_member_not_found_error(stderr)
 
     def get_node_ip(self, container):
         """Returns the primary IP of *container* (first address from hostname -I), or "" if none.

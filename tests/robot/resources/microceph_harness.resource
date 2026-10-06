@@ -121,8 +121,8 @@ Exercise RGW
     Log To Console    [rgw] Exercising RGW (HTTP)...
     Run In VM And Check    sudo microceph.ceph status    30
     Run In VM And Check    sudo systemctl status snap.microceph.rgw --no-pager    30
-    ${user_exists}=    Run In VM    sudo microceph.radosgw-admin user list | grep -q test && echo yes || echo no    30
-    IF    $user_exists.stdout.strip() != "yes"
+    ${users}=    Run In VM    sudo microceph.radosgw-admin user list    30
+    IF    $users.rc != 0 or "test" not in $users.stdout
         Run In VM And Check    sudo microceph.radosgw-admin user create --uid=test --display-name=test    60
         Run In VM And Check    sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey    30
     END
@@ -137,8 +137,8 @@ Exercise RGW SSL
     Log To Console    [rgw] Exercising RGW (HTTPS)...
     Run In VM And Check    sudo microceph.ceph status    30
     Run In VM And Check    sudo systemctl status snap.microceph.rgw --no-pager    30
-    ${user_exists}=    Run In VM    sudo microceph.radosgw-admin user list | grep -q test && echo yes || echo no    30
-    IF    $user_exists.stdout.strip() != "yes"
+    ${users}=    Run In VM    sudo microceph.radosgw-admin user list    30
+    IF    $users.rc != 0 or "test" not in $users.stdout
         Run In VM And Check    sudo microceph.radosgw-admin user create --uid=test --display-name=test    60
         Run In VM And Check    sudo microceph.radosgw-admin key create --uid=test --key-type=s3 --access-key fooAccessKey --secret-key fooSecretKey    30
     END

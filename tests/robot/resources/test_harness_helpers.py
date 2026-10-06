@@ -545,6 +545,73 @@ def test_count_configured_disks_entry_without_path_is_skipped():
 
 
 # ---------------------------------------------------------------------------
+# cluster_list_names
+#
+# Pure replacement for `microceph cluster list -f json | jq '.[]["name"]' |
+# grep -q <host>`: the remote command only fetches the JSON.
+# ---------------------------------------------------------------------------
+
+def test_cluster_list_names_returns_each_member_name():
+    payload = json.dumps(
+        [
+            {"name": "node-a", "address": "10.0.0.1:7443", "role": "voter", "status": "ONLINE"},
+            {"name": "node-b", "address": "10.0.0.2:7443", "role": "voter", "status": "ONLINE"},
+        ]
+    )
+    assert H.cluster_list_names(payload) == ["node-a", "node-b"]
+
+
+def test_cluster_list_names_accepts_the_cli_trailing_newline():
+    # The CLI encodes the list with a json.Encoder, which ends the document with a newline.
+    assert H.cluster_list_names('[{"name": "node-a"}]\n') == ["node-a"]
+
+
+def test_cluster_list_names_empty_list_is_empty():
+    assert H.cluster_list_names("[]") == []
+
+
+def test_cluster_list_names_malformed_json_raises_clear_error():
+    with pytest.raises(AssertionError) as exc:
+        H.cluster_list_names("Error: not a cluster")
+    assert "not valid JSON" in str(exc.value)
+    assert "Error: not a cluster" in str(exc.value)
+
+
+def test_cluster_list_names_empty_output_raises_clear_error():
+    with pytest.raises(AssertionError) as exc:
+        H.cluster_list_names("")
+    assert "not valid JSON" in str(exc.value)
+
+
+def test_cluster_list_names_non_array_raises():
+    with pytest.raises(AssertionError) as exc:
+        H.cluster_list_names('{"name": "node-a"}')
+    assert "not an array" in str(exc.value)
+
+
+def test_cluster_list_names_member_without_name_raises():
+    with pytest.raises(AssertionError) as exc:
+        H.cluster_list_names('[{"address": "10.0.0.1:7443"}]')
+    assert "no string name" in str(exc.value)
+
+
+def test_cluster_list_names_malformed_member_raises():
+    # Neither a member that is not an object nor a name that is not a string is skipped or returned.
+    for payload in ('["node-a"]', "[null]", '[{"name": 5}]', '[{"name": null}]'):
+        with pytest.raises(AssertionError) as exc:
+            H.cluster_list_names(payload)
+        assert "no string name" in str(exc.value), payload
+        assert repr(json.loads(payload)[0]) in str(exc.value), payload
+
+
+def test_cluster_list_names_quotes_only_the_start_of_long_output():
+    with pytest.raises(AssertionError) as exc:
+        H.cluster_list_names("x" * 500)
+    assert "x" * 150 in str(exc.value)
+    assert "x" * 250 not in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
 # _poll_until
 # ---------------------------------------------------------------------------
 
@@ -1357,6 +1424,54 @@ def _with_logger(monkeypatch):
     cap = _CapLogger()
     monkeypatch.setattr(_mh, "logger", cap)
     return cap
+
+
+def test_remove_cluster_member_with_retry_accepts_not_found_after_transient_failure(monkeypatch):
+    harness = H()
+    results = iter([
+        _Res(1, "", "context deadline exceeded"),
+        _Res(1, "", 'Error: cluster member "node-wrk3" not found'),
+    ])
+    calls = []
+
+    def run_in_container_unchecked(container, cmd, timeout, quiet):
+        calls.append((container, cmd, timeout, quiet))
+        return next(results)
+
+    monkeypatch.setattr(harness, "run_in_container_unchecked", run_in_container_unchecked)
+
+    result = harness.remove_cluster_member_with_retry(
+        "node-wrk0", "node-wrk3", force=True, attempts=3, interval=0, timeout=120
+    )
+
+    assert result == _Res(1, "", 'Error: cluster member "node-wrk3" not found')
+    assert calls == [
+        ("node-wrk0", "microceph cluster remove node-wrk3 --force", 120, False),
+        ("node-wrk0", "microceph cluster remove node-wrk3 --force", 120, False),
+    ]
+
+
+def test_remove_cluster_member_with_retry_rejects_initial_not_found(monkeypatch):
+    harness = H()
+    result = _Res(1, "", 'Error: cluster member "node-wrk3" not found')
+    calls = []
+
+    def run_in_container_unchecked(container, cmd, timeout, quiet):
+        calls.append((container, cmd, timeout, quiet))
+        return result
+
+    monkeypatch.setattr(harness, "run_in_container_unchecked", run_in_container_unchecked)
+
+    with pytest.raises(AssertionError, match="Command failed after 3 attempts"):
+        harness.remove_cluster_member_with_retry(
+            "node-wrk0", "node-wrk3", force=False, attempts=3, interval=0, timeout=120
+        )
+
+    assert calls == [
+        ("node-wrk0", "microceph cluster remove node-wrk3", 120, False),
+        ("node-wrk0", "microceph cluster remove node-wrk3", 120, False),
+        ("node-wrk0", "microceph cluster remove node-wrk3", 120, False),
+    ]
 
 
 def test_echo_cmd_prints_the_command(monkeypatch):
