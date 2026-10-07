@@ -98,17 +98,17 @@ Disable CephFS Mirroring
 Test Bootstrap Two Sites
     [Documentation]    Bootstraps two independent 2-node MicroCeph clusters (sitea=wrk0/1, siteb=wrk2/3)
     ...    each with 2 loopback-file OSDs.
-    [Tags]    cephfs    replication    remote
+    [Tags]    cephfs    replication    remote    robot:exit-on-failure
     Bootstrap Two Sites
 
 Test Exchange Remote Tokens
     [Documentation]    Exchanges cluster export tokens between sitea and siteb.
-    [Tags]    cephfs    replication    remote
+    [Tags]    cephfs    replication    remote    robot:exit-on-failure
     Exchange Remote Site Tokens
 
 Test Verify Remote Authentication
     [Documentation]    Verifies cross-cluster ceph commands work on both sites and all nodes.
-    [Tags]    cephfs    replication    remote
+    [Tags]    cephfs    replication    remote    robot:exit-on-failure
     Verify Remote Authentication On All Nodes
 
 Test Enable CephFS Mirror Daemon

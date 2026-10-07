@@ -1151,6 +1151,29 @@ def test_exchange_remote_site_tokens_exports_with_retry_and_checks_each_import()
     assert asserted == [("node-wrk0", "name", "siteb"), ("node-wrk2", "name", "sitea")]
 
 
+def test_replication_setup_tests_end_the_run_on_failure():
+    """A failed setup test stops the run; the later tests would otherwise poll for over an hour."""
+    from robot.api import TestSuite
+
+    robot_root = Path(__file__).parents[1]
+    for suite_file in (
+        "rbd-replication-test/rbd_replication_tests.robot",
+        "cephfs-replication-test/cephfs_replication_tests.robot",
+    ):
+        suite = TestSuite.from_file_system(robot_root / suite_file)
+        tags = {test.name: [str(tag) for tag in test.tags] for test in suite.tests}
+        for name in ("Test Bootstrap Two Sites", "Test Exchange Remote Tokens", "Test Verify Remote Authentication"):
+            assert "robot:exit-on-failure" in tags[name], f"{suite_file}: {name} must carry robot:exit-on-failure"
+
+
+def test_installed_robot_framework_honours_the_exit_on_failure_tag():
+    """Robot Framework 7.0 and 7.1 ignore the tag, so tests/robot/requirements.txt must exclude them."""
+    import re
+    from robot.version import VERSION
+
+    major, minor = (int(part) for part in re.match(r"(\d+)\.(\d+)", VERSION).groups())
+    assert (major, minor) >= (7, 2), f"Robot Framework {VERSION} ignores robot:exit-on-failure; use 7.2 or newer"
+
 
 # ---------------------------------------------------------------------------
 # run_streaming_process (streaming_process.py)
