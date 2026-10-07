@@ -562,35 +562,126 @@ func (m *OSDManager) closeEncryptedAuxDevice(kind string, osdID int64) error {
 	return nil
 }
 
-func (m *OSDManager) deletePartition(parentPath string, partition uint64) error {
+const (
+	// kernelPartitionDeleteAttempts bounds how often partx -d is tried while the
+	// kernel still lists a partition that something briefly holds open, for
+	// example a udev worker probing it after the zap and the partition table
+	// write. With the pause below the attempts span about a second.
+	kernelPartitionDeleteAttempts = 6
+	// kernelPartitionDeleteBackoff is the pause between those attempts.
+	kernelPartitionDeleteBackoff = 200 * time.Millisecond
+)
+
+// partxDeleteSleepFunc pauses between partx -d attempts. Tests replace it so
+// that retries do not sleep.
+var partxDeleteSleepFunc = time.Sleep
+
+// partitionNumberListed reports whether the output of
+// "partx --show --noheadings --output NR" lists the given partition number.
+func partitionNumberListed(output string, partition uint64) bool {
+	for _, field := range strings.Fields(output) {
+		number, err := strconv.ParseUint(field, 10, 64)
+		if err != nil {
+			continue
+		}
+		if number == partition {
+			return true
+		}
+	}
+	return false
+}
+
+// partitionResolves reports whether the kernel still exposes the partition.
+func (m *OSDManager) partitionResolves(parentPath string, partition uint64) bool {
 	_, err := m.resolvePartitionStablePath(parentPath, partition)
+	return err == nil
+}
+
+// partitionInTable reports whether the partition table on parentPath, as read
+// from the disk, still has an entry for the partition.
+func (m *OSDManager) partitionInTable(parentPath string, partition uint64) (bool, error) {
+	output, err := m.runner.RunCommand("partx", "--show", "--noheadings", "--output", "NR", parentPath)
 	if err != nil {
-		logger.Infof("Partition %d on %s is already absent, skipping delete", partition, parentPath)
+		return false, err
+	}
+	return partitionNumberListed(output, partition), nil
+}
+
+// deletePartitionTableEntry removes the partition from the partition table on
+// parentPath and leaves the kernel's entry to deleteKernelPartitionEntry. It does
+// nothing if a previous attempt already removed the table entry.
+func (m *OSDManager) deletePartitionTableEntry(parentPath string, partition uint64) error {
+	inTable, err := m.partitionInTable(parentPath, partition)
+	if err != nil {
+		logger.Warnf("Unable to read the partition table on %s, leaving the check to sfdisk: %v", parentPath, err)
+	} else if !inTable {
+		logger.Infof("Partition %d is already gone from the partition table on %s, skipping sfdisk", partition, parentPath)
 		return nil
 	}
 
-	_, err = m.runner.RunCommand("sfdisk", "--delete", parentPath, strconv.FormatUint(partition, 10))
+	// Linux has a partition list stored on disk and another in memory. If we
+	// remove partition 1 while another OSD uses partition 2, reloading the
+	// entire in-memory list may fail or disrupt partition 2. Write the disk
+	// change without that reload (--no-tell-kernel); partx -d below removes
+	// only partition 1 from memory. --no-reread is paired with this option
+	// for disks in use, although sfdisk --delete itself ignores it.
+	_, err = m.runner.RunCommand("sfdisk", "--delete", "--no-reread", "--no-tell-kernel", parentPath, strconv.FormatUint(partition, 10))
 	if err != nil {
-		_, resolveErr := m.resolvePartitionStablePath(parentPath, partition)
-		if resolveErr != nil {
+		if !m.partitionResolves(parentPath, partition) {
 			logger.Infof("Partition %d on %s disappeared despite delete error, treating as cleaned", partition, parentPath)
 			return nil
 		}
 		return fmt.Errorf("failed to delete partition %d on %s: %w", partition, parentPath, err)
 	}
 
+	return nil
+}
+
+// deleteKernelPartitionEntry removes the kernel's entry for a partition that is
+// no longer in the partition table. partx -d fails with EBUSY while anything has
+// the partition open, so it is retried for as long as the partition still resolves.
+func (m *OSDManager) deleteKernelPartitionEntry(parentPath string, partition uint64) error {
+	if !m.partitionResolves(parentPath, partition) {
+		logger.Infof("Kernel partition entry %d on %s is already removed", partition, parentPath)
+		return nil
+	}
+
 	partitionRange := fmt.Sprintf("%d:%d", partition, partition)
-	_, err = m.runner.RunCommand("partx", "-d", "--nr", partitionRange, parentPath)
-	if err != nil {
-		_, resolveErr := m.resolvePartitionStablePath(parentPath, partition)
-		if resolveErr != nil {
+	var err error
+	for attempt := 1; attempt <= kernelPartitionDeleteAttempts; attempt++ {
+		// -v makes partx print the errno, which it hides by default.
+		_, err = m.runner.RunCommand("partx", "-v", "-d", "--nr", partitionRange, parentPath)
+		if err == nil {
+			return nil
+		}
+		if !m.partitionResolves(parentPath, partition) {
 			logger.Infof("Kernel partition entry %d on %s already removed, treating as cleaned", partition, parentPath)
 			return nil
 		}
-		return fmt.Errorf("failed to remove kernel partition entry %d on %s: %w", partition, parentPath, err)
+		logger.Warnf("Removing kernel partition entry %d on %s failed (attempt %d of %d): %v", partition, parentPath, attempt, kernelPartitionDeleteAttempts, err)
+		if attempt < kernelPartitionDeleteAttempts {
+			partxDeleteSleepFunc(kernelPartitionDeleteBackoff)
+		}
 	}
 
-	return nil
+	return fmt.Errorf("failed to remove kernel partition entry %d on %s after %d attempts: %w", partition, parentPath, kernelPartitionDeleteAttempts, err)
+}
+
+// deletePartition removes a generated WAL/DB partition, first from the partition
+// table and then from the kernel. Both steps skip work that is already done, so
+// the call can be repeated after a failure.
+func (m *OSDManager) deletePartition(parentPath string, partition uint64) error {
+	if !m.partitionResolves(parentPath, partition) {
+		logger.Infof("Partition %d on %s is already absent, skipping delete", partition, parentPath)
+		return nil
+	}
+
+	err := m.deletePartitionTableEntry(parentPath, partition)
+	if err != nil {
+		return err
+	}
+
+	return m.deleteKernelPartitionEntry(parentPath, partition)
 }
 
 func (m *OSDManager) cleanupGeneratedAuxDevice(ctx context.Context, kind string, entry *generatedAuxDevice, osdID int64) error {
