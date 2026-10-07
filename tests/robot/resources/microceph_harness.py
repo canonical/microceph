@@ -1753,6 +1753,7 @@ class microceph_harness:
         self.apt_update()
         self.apt_install(VM_APT_TOOLS)
 
+
     def install_microceph_from_local_snap(self, snap_path=None):
         """Installs the locally-built snap and connects all interfaces (except dm-crypt)."""
         snap_path = snap_path or self._snap_path()
@@ -2279,6 +2280,45 @@ class microceph_harness:
                 node, "sudo", "microceph.rbd", "mirror", "pool", "status", pool, "--verbose", timeout=30
             ).stdout
         )
+
+    def export_cluster_token(self, node, remote_name, attempts=10, interval=3):
+        """Returns a cluster export token after transient control-socket failures clear."""
+        token = [""]
+        last_error = [""]
+
+        def predicate():
+            result = self.exec_in_container(
+                node,
+                "microceph",
+                "cluster",
+                "export",
+                remote_name,
+                timeout=60,
+                quiet=True,
+            )
+            token[0] = result.stdout.strip()
+            last_error[0] = result.stderr.strip()
+            transient_control_timeout = (
+                "http://control.socket" in result.stderr
+                and "context deadline exceeded" in result.stderr
+            )
+            if result.rc != 0 and not transient_control_timeout:
+                raise AssertionError(
+                    f"failed to export cluster token for {remote_name} on {node}; "
+                    f"last error: {last_error[0] or 'empty token'}"
+                )
+            return result.rc == 0 and token[0] != ""
+
+        self._poll_until(
+            predicate,
+            attempts=int(attempts),
+            interval=interval,
+            fail_msg=lambda: (
+                f"failed to export cluster token for {remote_name} on {node}; "
+                f"last error: {last_error[0] or 'empty token'}"
+            ),
+        )
+        return token[0]
 
     def assert_remote_list_has(self, node, field, value):
         """Asserts microceph remote list on *node* has an entry whose *field* == *value*.
