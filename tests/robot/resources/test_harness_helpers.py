@@ -941,14 +941,37 @@ def test_remote_list_has_null_is_false():
     assert H._remote_list_has("null", "name", "siteb") is False
 
 
+_EXPORT_DEADLINE = (
+    'Error: failed to fetch cluster state: Get "http://control.socket/1.0/cluster": context deadline exceeded'
+)
+
+
+def test_cluster_export_deadline_matches_the_ci_error():
+    assert H._is_cluster_export_deadline(_EXPORT_DEADLINE)
+    assert H._is_cluster_export_deadline(_EXPORT_DEADLINE + "\n")
+
+
+def test_cluster_export_deadline_ignores_other_failures():
+    for stderr in (
+        "Error: access denied",
+        'Error: failed to fetch cluster state: Get "http://control.socket/1.0/cluster": EOF',
+        'Get "https://api.snapcraft.io/v2/snaps/info/microceph": context deadline exceeded',
+        "Command timed out after 60s",
+        "",
+        None,
+    ):
+        assert not H._is_cluster_export_deadline(stderr), stderr
+
+
 def test_export_cluster_token_retries_a_transient_control_socket_timeout(monkeypatch):
+    cap = _with_logger(monkeypatch)
     harness = H()
     export_token = getattr(harness, "export_cluster_token", None)
     assert export_token is not None, "cluster token export must retry transient control-socket failures"
 
     results = iter(
         [
-            _Res(1, "", 'Error: failed to fetch cluster state: Get "http://control.socket/1.0/cluster": context deadline exceeded\n'),
+            _Res(1, "", _EXPORT_DEADLINE + "\n"),
             _Res(0, "token-for-sitea\n", ""),
         ]
     )
@@ -968,9 +991,62 @@ def test_export_cluster_token_retries_a_transient_control_socket_timeout(monkeyp
         ("node-wrk2", ("microceph", "cluster", "export", "sitea"), 60, True),
         ("node-wrk2", ("microceph", "cluster", "export", "sitea"), 60, True),
     ]
+    # The command is echoed once and the retry is announced, because the probes themselves are
+    # quiet. Nothing else reaches the console.
+    assert cap.console_lines == [
+        "+ [node-wrk2] microceph cluster export sitea",
+        "[replication] transient cluster export error (sitea on node-wrk2), "
+        f"attempt 1/2: {_EXPORT_DEADLINE}; retrying...",
+    ]
+
+
+def test_export_cluster_token_gives_up_after_the_last_attempt(monkeypatch):
+    cap = _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append(argv)
+        return _Res(1, "", _EXPORT_DEADLINE + "\n")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    with pytest.raises(AssertionError) as exc:
+        harness.export_cluster_token("node-wrk0", "siteb", attempts=3, interval=0)
+
+    assert str(exc.value) == f"failed to export cluster token for siteb on node-wrk0; last error: {_EXPORT_DEADLINE}"
+    assert len(calls) == 3
+    # The command is echoed once; only the two attempts that are followed by another one are announced.
+    assert len(cap.console_lines) == 3
+    assert cap.console_lines[0] == "+ [node-wrk0] microceph cluster export siteb"
+    assert "attempt 1/3" in cap.console_lines[1]
+    assert "attempt 2/3" in cap.console_lines[2]
+
+
+def test_export_cluster_token_defaults_to_ten_attempts_three_seconds_apart(monkeypatch):
+    """replication.resource calls the keyword without arguments, so the defaults are the retry budget."""
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+    sleeps = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append(argv)
+        return _Res(1, "", _EXPORT_DEADLINE + "\n")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", sleeps.append)
+
+    with pytest.raises(AssertionError):
+        harness.export_cluster_token("node-wrk0", "siteb")
+
+    assert len(calls) == 10
+    assert set(sleeps) == {3}
 
 
 def test_export_cluster_token_does_not_retry_a_permanent_failure(monkeypatch):
+    cap = _with_logger(monkeypatch)
     harness = H()
     calls = []
 
@@ -988,6 +1064,91 @@ def test_export_cluster_token_does_not_retry_a_permanent_failure(monkeypatch):
     assert calls == [
         ("node-wrk2", ("microceph", "cluster", "export", "sitea"), 60, True),
     ]
+    # Echoed, but not announced as a retry.
+    assert cap.console_lines == ["+ [node-wrk2] microceph cluster export sitea"]
+
+
+def test_export_cluster_token_does_not_retry_an_exit_0_without_a_token(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append(argv)
+        return _Res(0, "\n", "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    with pytest.raises(AssertionError) as exc:
+        harness.export_cluster_token("node-wrk0", "siteb", attempts=3, interval=0)
+
+    assert str(exc.value) == "failed to export cluster token for siteb on node-wrk0; last error: empty token"
+    assert len(calls) == 1
+
+
+def test_export_cluster_token_names_the_exit_code_when_stderr_is_empty(monkeypatch):
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append(argv)
+        return _Res(255, "", "")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    with pytest.raises(AssertionError) as exc:
+        harness.export_cluster_token("node-wrk0", "siteb", attempts=3, interval=0)
+
+    assert str(exc.value) == "failed to export cluster token for siteb on node-wrk0; last error: exit code 255"
+    assert len(calls) == 1
+
+
+def test_export_cluster_token_does_not_retry_a_harness_timeout(monkeypatch):
+    """A snap with a longer client deadline stalls past the 60 s exec timeout; that fails at once."""
+    _with_logger(monkeypatch)
+    harness = H()
+    calls = []
+
+    def fake_exec(container, *argv, timeout, quiet):
+        calls.append(argv)
+        return _Res(124, "", "\nCommand timed out after 60s")
+
+    monkeypatch.setattr(harness, "exec_in_container", fake_exec)
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+
+    with pytest.raises(AssertionError) as exc:
+        harness.export_cluster_token("node-wrk0", "siteb", attempts=3, interval=0)
+
+    assert str(exc.value) == (
+        "failed to export cluster token for siteb on node-wrk0; last error: Command timed out after 60s"
+    )
+    assert len(calls) == 1
+
+
+def test_exchange_remote_site_tokens_exports_with_retry_and_checks_each_import():
+    """A failed export must stop the exchange, and every import must be checked on its own node."""
+    from robot.running import ResourceFile
+
+    resource = ResourceFile.from_file_system(Path(__file__).with_name("replication.resource"))
+    keyword = next(kw for kw in resource.keywords if kw.name == "Exchange Remote Site Tokens")
+    steps = [
+        (item.name, item.args[0])
+        for item in keyword.body
+        if item.name in ("Export Cluster Token", "Run In Container", "Assert Remote List Has")
+    ]
+    assert steps == [
+        ("Export Cluster Token", "node-wrk0"),
+        ("Export Cluster Token", "node-wrk2"),
+        ("Run In Container", "node-wrk0"),
+        ("Assert Remote List Has", "node-wrk0"),
+        ("Run In Container", "node-wrk2"),
+        ("Assert Remote List Has", "node-wrk2"),
+    ]
+    asserted = [item.args for item in keyword.body if item.name == "Assert Remote List Has"]
+    assert asserted == [("node-wrk0", "name", "siteb"), ("node-wrk2", "name", "sitea")]
 
 
 

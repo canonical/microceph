@@ -29,7 +29,9 @@ Exchange Remote Site Tokens
     ${sitea_token}=    Export Cluster Token    node-wrk0    siteb
     ${siteb_token}=    Export Cluster Token    node-wrk2    sitea
     Run In Container    node-wrk0    microceph remote import siteb ${siteb_token} --local-name=sitea    60
+    Assert Remote List Has    node-wrk0    name    siteb
     Run In Container    node-wrk2    microceph remote import sitea ${sitea_token} --local-name=siteb    60
+    Assert Remote List Has    node-wrk2    name    sitea
     Sleep    15s    reason=Allow remote credentials to propagate across the cluster
 
 Verify Remote Authentication On All Nodes
