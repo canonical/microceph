@@ -56,9 +56,10 @@ func newRootCommand() *cobra.Command {
 
 	// Initialize CLI logger based on flags
 	app.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		// Cobra parses the flags and validates the arguments before it runs this hook. A usage error
-		// raised before it prints the usage, and any later error is reported without the usage,
-		// which would only bury the message.
+		// Cobra checks flags and Args before PersistentPreRun. Leaving SilenceUsage unset until
+		// here lets wrong argument counts and unknown flags print usage; previously wrong
+		// counts printed help via cmd.Help() (and exited 0), while unknown flags printed
+		// only an error. Suppress usage for errors returned after validation by RunE.
 		cmd.SilenceUsage = true
 
 		clilogger.InitLogger(commonCmd.FlagLogDebug, commonCmd.FlagLogVerbose)
