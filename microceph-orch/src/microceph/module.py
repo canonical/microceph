@@ -379,6 +379,8 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
                     )
 
             candidates = [host.hostname for host in explicit_hosts]
+            if len(candidates) != len(set(candidates)):
+                raise ValueError("native SMB placement requires unique hosts")
             unknown_hosts = sorted(set(candidates).difference(member_names))
             if unknown_hosts:
                 names = ", ".join(unknown_hosts)
