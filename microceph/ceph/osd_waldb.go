@@ -19,6 +19,7 @@ import (
 	"github.com/canonical/microceph/microceph/dsl"
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/spf13/afero"
+	"golang.org/x/sys/unix"
 )
 
 type plannedAuxPartition struct {
@@ -26,6 +27,8 @@ type plannedAuxPartition struct {
 	ParentPath     string
 	Partition      uint64
 	SizeBytes      uint64
+	PartUUID       string
+	InitializeGPT  bool
 	ResetBeforeUse bool
 }
 
@@ -44,6 +47,7 @@ type generatedAuxDevice struct {
 	ParentPath    string `json:"parent_path"`
 	Partition     uint64 `json:"partition"`
 	PartitionPath string `json:"partition_path"`
+	PartUUID      string `json:"part_uuid,omitempty"`
 	Encrypted     bool   `json:"encrypted"`
 }
 
@@ -105,7 +109,7 @@ func plannedAuxPartitionSummary(plan *plannedAuxPartition) string {
 	action := "new"
 	if plan.ResetBeforeUse {
 		action = "reset"
-	} else if plan.Partition > 1 {
+	} else if !plan.InitializeGPT {
 		action = "append"
 	}
 
@@ -140,6 +144,7 @@ func planAuxiliaryPartitionsDetailed(osdPaths []string, carriers []api.Resources
 			remaining = disk.Size
 			partitionNo = 1
 			partitionCnt = 0
+			disk.Partitions = nil // reset discards the old GPT and all its occupied slots
 		} else if disk.Size > used {
 			remaining = disk.Size - used
 		}
@@ -174,11 +179,25 @@ func planAuxiliaryPartitionsDetailed(osdPaths []string, carriers []api.Resources
 			Partition:      states[choice].PartitionNo,
 			SizeBytes:      sizeBytes,
 			ResetBeforeUse: states[choice].ResetBeforeUse,
+			InitializeGPT:  states[choice].PartitionCnt == 0,
 		}
 		logger.Debugf("Planned %s partition for OSD %s: %s", strings.ToUpper(kind), osdPaths[i], plannedAuxPartitionSummary(out[i]))
 		states[choice].RemainingSize -= sizeBytes
 		states[choice].PartitionCnt++
 		states[choice].PartitionNo++
+		for {
+			occupied := false
+			for _, part := range states[choice].Disk.Partitions {
+				if part.Partition == states[choice].PartitionNo {
+					occupied = true
+					break
+				}
+			}
+			if !occupied {
+				break
+			}
+			states[choice].PartitionNo++
+		}
 		states[choice].ResetBeforeUse = false
 	}
 
@@ -607,36 +626,57 @@ func (m *OSDManager) partitionInTable(parentPath string, partition uint64) (bool
 	return partitionNumberListed(output, partition), nil
 }
 
-// deletePartitionTableEntry removes the partition from the partition table on
-// parentPath and leaves the kernel's entry to deleteKernelPartitionEntry. It does
-// nothing if a previous attempt already removed the table entry.
+// partitionTableAbsent distinguishes a wiped carrier from an unreadable disk.
+// A failed partx alone is ambiguous; sfdisk reports a missing table explicitly.
+func (m *OSDManager) partitionTableAbsent(parentPath string) bool {
+	_, err := m.fs.Stat(parentPath)
+	if os.IsNotExist(err) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	_, err = m.runner.RunCommand("sfdisk", "--dump", parentPath)
+	return err != nil && strings.Contains(err.Error(), "does not contain a recognized partition table")
+}
+
+func (m *OSDManager) partitionUUID(parentPath string, partition uint64) (string, error) {
+	uuid, err := m.runner.RunCommand("sfdisk", "--part-uuid", parentPath, strconv.FormatUint(partition, 10))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(uuid), nil
+}
+
+// deletePartitionTableEntry removes the partition from the on-disk table
+// without reloading the kernel's list of partitions.
 func (m *OSDManager) deletePartitionTableEntry(parentPath string, partition uint64) error {
 	inTable, err := m.partitionInTable(parentPath, partition)
 	if err != nil {
+		if m.partitionTableAbsent(parentPath) {
+			logger.Warnf("Carrier %s is absent or has no partition table; partition %d is already cleaned", parentPath, partition)
+			return nil
+		}
 		logger.Warnf("Unable to read the partition table on %s, leaving the check to sfdisk: %v", parentPath, err)
 	} else if !inTable {
 		logger.Infof("Partition %d is already gone from the partition table on %s, skipping sfdisk", partition, parentPath)
 		return nil
 	}
 
-	// Linux has a partition list stored on disk and another in memory. If we
-	// remove partition 1 while another OSD uses partition 2, reloading the
-	// entire in-memory list may fail or disrupt partition 2. Write the disk
-	// change without that reload (--no-tell-kernel); partx -d below removes
-	// only partition 1 from memory. --no-reread is paired with this option
-	// for disks in use, although sfdisk --delete itself ignores it.
+	// Do not reload the whole disk while another OSD uses a sibling partition.
 	_, err = m.runner.RunCommand("sfdisk", "--delete", "--no-reread", "--no-tell-kernel", parentPath, strconv.FormatUint(partition, 10))
 	if err != nil {
-		// The disk write may have completed despite the error. A missing /dev
-		// node alone does not prove the on-disk entry was removed.
 		stillInTable, checkErr := m.partitionInTable(parentPath, partition)
 		if checkErr == nil && !stillInTable {
 			logger.Infof("Partition %d on %s disappeared from the table despite delete error", partition, parentPath)
 			return nil
 		}
+		if checkErr != nil && m.partitionTableAbsent(parentPath) {
+			logger.Warnf("Carrier %s disappeared or lost its partition table during cleanup", parentPath)
+			return nil
+		}
 		return fmt.Errorf("failed to delete partition %d on %s: %w", partition, parentPath, err)
 	}
-
 	return nil
 }
 
@@ -682,6 +722,33 @@ func (m *OSDManager) deletePartition(parentPath string, partition uint64) error 
 	return m.deleteKernelPartitionEntry(parentPath, partition)
 }
 
+// withExclusiveCarrierLock serializes the partition zap and both deletion
+// steps with udev's shared block-device lock. Keep the partx retry for other
+// openers, which need not participate in this locking protocol.
+func withExclusiveCarrierLock(parentPath string, cleanup func() error) error {
+	disk, err := os.Open(parentPath)
+	if err != nil {
+		return fmt.Errorf("failed to open carrier %s for cleanup lock: %w", parentPath, err)
+	}
+	defer disk.Close()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err = unix.Flock(int(disk.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if err != unix.EWOULDBLOCK && err != unix.EAGAIN {
+			return fmt.Errorf("failed to lock carrier %s: %w", parentPath, err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for cleanup lock on carrier %s: %w", parentPath, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return cleanup()
+}
+
 func (m *OSDManager) cleanupGeneratedAuxDevice(ctx context.Context, kind string, entry *generatedAuxDevice, osdID int64) error {
 	if entry == nil {
 		return nil
@@ -693,12 +760,54 @@ func (m *OSDManager) cleanupGeneratedAuxDevice(ctx context.Context, kind string,
 	}
 	logger.Infof("Cleaning generated %s device for osd.%d: parent=%s partition=%d path=%s encrypted=%t", strings.ToUpper(kind), osdID, entry.ParentPath, entry.Partition, partitionPath, entry.Encrypted)
 
+	// A cached partition path cannot establish which disk it refers to when
+	// the carrier's stable path is gone.
+	if _, err := m.fs.Stat(entry.ParentPath); os.IsNotExist(err) {
+		logger.Warnf("Generated %s carrier %s is missing; discarding its cleanup entry", kind, entry.ParentPath)
+		return nil
+	}
+
 	if entry.Encrypted {
 		logger.Infof("Closing encrypted %s mapper for osd.%d before partition cleanup", strings.ToUpper(kind), osdID)
 		err := m.closeEncryptedAuxDevice(kind, osdID)
 		if err != nil {
 			return err
 		}
+	}
+
+	return m.withCarrierLock(entry.ParentPath, func() error {
+		return m.cleanupGeneratedAuxPartition(ctx, kind, entry, partitionPath, osdID)
+	})
+}
+
+func (m *OSDManager) cleanupGeneratedAuxPartition(ctx context.Context, kind string, entry *generatedAuxDevice, partitionPath string, osdID int64) error {
+	// A failed cleanup can outlive a reboot and a reused GPT slot. Never zap
+	// or delete another OSD's partition merely because its number matches.
+	if entry.PartUUID != "" {
+		inTable, err := m.partitionInTable(entry.ParentPath, entry.Partition)
+		if err != nil && !m.partitionTableAbsent(entry.ParentPath) {
+			return fmt.Errorf("failed to inspect partition %d on %s before cleanup: %w", entry.Partition, entry.ParentPath, err)
+		}
+		if inTable {
+			uuid, err := m.partitionUUID(entry.ParentPath, entry.Partition)
+			if err != nil {
+				return fmt.Errorf("failed to identify partition %d on %s before cleanup: %w", entry.Partition, entry.ParentPath, err)
+			}
+			if uuid == "" {
+				return fmt.Errorf("partition %d on %s has no PARTUUID; refusing cleanup", entry.Partition, entry.ParentPath)
+			}
+			if !strings.EqualFold(uuid, entry.PartUUID) {
+				logger.Warnf("Partition %d on %s has UUID %s, not generated UUID %s; leaving replacement partition untouched", entry.Partition, entry.ParentPath, uuid, entry.PartUUID)
+				return nil
+			}
+		}
+		// When the GPT entry is already gone, a stale kernel node must not be
+		// zapped: it may have been reused since the previous cleanup attempt.
+		if !inTable {
+			partitionPath = ""
+		}
+	} else {
+		logger.Warnf("Generated %s partition %d on %s has no recorded PARTUUID; cleanup cannot verify its identity", kind, entry.Partition, entry.ParentPath)
 	}
 
 	if partitionPath != "" {
@@ -812,7 +921,7 @@ func (m *OSDManager) createPlannedAuxPartition(plan *plannedAuxPartition) (strin
 		}
 		m.refreshPartitionTable(plan.ParentPath)
 	}
-	if plan.ResetBeforeUse || plan.Partition == 1 {
+	if plan.InitializeGPT || plan.ResetBeforeUse {
 		logger.Infof("Initializing GPT on %s for %s provisioning", plan.ParentPath, strings.ToUpper(plan.Kind))
 		err := m.initializeGPT(plan.ParentPath)
 		if err != nil {
@@ -830,6 +939,14 @@ func (m *OSDManager) createPlannedAuxPartition(plan *plannedAuxPartition) (strin
 	for time.Now().Before(deadline) {
 		path, err := m.resolvePartitionStablePath(plan.ParentPath, plan.Partition)
 		if err == nil {
+			uuid, err := m.partitionUUID(plan.ParentPath, plan.Partition)
+			if err != nil {
+				return "", fmt.Errorf("failed to identify created %s partition %d on %s: %w", plan.Kind, plan.Partition, plan.ParentPath, err)
+			}
+			if uuid == "" {
+				return "", fmt.Errorf("created %s partition %d on %s has no PARTUUID", plan.Kind, plan.Partition, plan.ParentPath)
+			}
+			plan.PartUUID = uuid
 			logger.Infof("Created %s partition %s for parent %s", strings.ToUpper(plan.Kind), path, plan.ParentPath)
 			return path, nil
 		}
@@ -847,6 +964,7 @@ func buildGeneratedAuxDiskParameter(plan *plannedAuxPartition, path string, encr
 		ParentPath:    plan.ParentPath,
 		Partition:     plan.Partition,
 		PartitionPath: path,
+		PartUUID:      plan.PartUUID,
 		Encrypted:     encrypt,
 	}
 }

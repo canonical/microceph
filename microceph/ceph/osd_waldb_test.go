@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 type staticStorage struct {
@@ -30,6 +31,10 @@ func (s staticStorage) GetStorage() (*api.ResourcesStorage, error) {
 		return nil, s.err
 	}
 	return s.storage, nil
+}
+
+func skipCarrierLock(_ string, work func() error) error {
+	return work()
 }
 
 type staticMountChecker struct{}
@@ -523,7 +528,7 @@ func TestAddDisksWithDSLRequestNonDryRunUsesIndependentAuxFlags(t *testing.T) {
 }
 
 func TestBuildGeneratedAuxDiskParameter(t *testing.T) {
-	plan := &plannedAuxPartition{Kind: "wal", ParentPath: "/dev/disk/by-id/wal", Partition: 3}
+	plan := &plannedAuxPartition{Kind: "wal", ParentPath: "/dev/disk/by-id/wal", Partition: 3, PartUUID: "UUID-3"}
 
 	param, generated := buildGeneratedAuxDiskParameter(plan, "/dev/sde3", true, true)
 	require.NotNil(t, param)
@@ -534,6 +539,7 @@ func TestBuildGeneratedAuxDiskParameter(t *testing.T) {
 	assert.Equal(t, "/dev/disk/by-id/wal", generated.ParentPath)
 	assert.Equal(t, uint64(3), generated.Partition)
 	assert.Equal(t, "/dev/sde3", generated.PartitionPath)
+	assert.Equal(t, "UUID-3", generated.PartUUID)
 	assert.True(t, generated.Encrypted)
 
 	param, generated = buildGeneratedAuxDiskParameter(plan, "/dev/sde3", false, false)
@@ -606,10 +612,43 @@ func TestCreatePlannedAuxPartitionResetBeforeUseWipesCarrierFirst(t *testing.T) 
 	runner.On("RunCommand", "partx", "-u", "/dev/sde").Return("", nil).Twice()
 	runner.On("RunCommand", "sh", "-c", "printf 'label: gpt\n' | sfdisk \"/dev/sde\"").Return("", nil).Once()
 	runner.On("RunCommand", "sh", "-c", "printf ',+1024MiB\n' | sfdisk --append --force --no-reread \"/dev/sde\"").Return("", nil).Once()
+	runner.On("RunCommand", "sfdisk", "--part-uuid", "/dev/sde", "1").Return("UUID-1\n", nil).Once()
 
 	path, err := mgr.createPlannedAuxPartition(plan)
 	require.NoError(t, err)
 	assert.Equal(t, "/dev/sde1", path)
+	assert.Equal(t, "UUID-1", plan.PartUUID)
+}
+
+func TestExclusiveCarrierLockWaitsForSharedHolder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "carrier")
+	require.NoError(t, os.WriteFile(path, nil, 0600))
+	holder, err := os.Open(path)
+	require.NoError(t, err)
+	defer holder.Close()
+	require.NoError(t, unix.Flock(int(holder.Fd()), unix.LOCK_SH))
+	defer unix.Flock(int(holder.Fd()), unix.LOCK_UN)
+
+	entered := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- withExclusiveCarrierLock(path, func() error {
+			close(entered)
+			return nil
+		})
+	}()
+	select {
+	case <-entered:
+		t.Fatal("cleanup entered while a shared holder still owned the disk")
+	case <-time.After(150 * time.Millisecond):
+	}
+	require.NoError(t, unix.Flock(int(holder.Fd()), unix.LOCK_UN))
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup did not acquire the disk after its holder released it")
+	}
 }
 
 func TestCleanupGeneratedAuxDevicesDeletesGeneratedPartitions(t *testing.T) {
@@ -618,12 +657,15 @@ func TestCleanupGeneratedAuxDevicesDeletesGeneratedPartitions(t *testing.T) {
 	mgr.fs = afero.NewMemMapFs()
 	runner := mocks.NewRunner(t)
 	mgr.runner = runner
+	mgr.withCarrierLock = skipCarrierLock
 
 	osdDataPath := "/var/snap/microceph/common/data/osd/ceph-3"
 	require.NoError(t, mgr.fs.MkdirAll(osdDataPath, 0755))
 	require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
 	require.NoError(t, mgr.fs.MkdirAll("/dev/disk/by-id", 0755))
 	require.NoError(t, mgr.fs.MkdirAll("/dev/mapper", 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/wal", []byte("carrier"), 0644))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/db", []byte("carrier"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sde1", []byte("wal"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sdf2", []byte("db"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/wal-part1", []byte("wal-part"), 0644))
@@ -662,6 +704,7 @@ func TestCleanupGeneratedAuxDevicesAfterRestartUsesPersistedManifest(t *testing.
 	osdDataPath := "/var/snap/microceph/common/data/osd/ceph-33"
 	require.NoError(t, fs.MkdirAll(osdDataPath, 0755))
 	require.NoError(t, fs.MkdirAll("/dev/disk/by-id", 0755))
+	require.NoError(t, afero.WriteFile(fs, "/dev/disk/by-id/wal", []byte("carrier"), 0644))
 	require.NoError(t, afero.WriteFile(fs, "/dev/disk/by-id/wal-part1", []byte("wal-part"), 0644))
 	require.NoError(t, mgr.writeGeneratedAuxManifest(osdDataPath, &generatedAuxDevicesManifest{
 		WAL: &generatedAuxDevice{ParentPath: "/dev/disk/by-id/wal", Partition: 1, Encrypted: false},
@@ -671,6 +714,7 @@ func TestCleanupGeneratedAuxDevicesAfterRestartUsesPersistedManifest(t *testing.
 	restartedMgr.fs = fs
 	runner := mocks.NewRunner(t)
 	restartedMgr.runner = runner
+	restartedMgr.withCarrierLock = skipCarrierLock
 
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/disk/by-id/wal-part1", "--yes-i-really-really-mean-it").Return("", nil).Once()
 	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", "/dev/disk/by-id/wal").Return(" 1\n", nil).Once()
@@ -690,11 +734,13 @@ func TestCleanupGeneratedAuxDevicesFailurePreservesManifest(t *testing.T) {
 	mgr.fs = afero.NewMemMapFs()
 	runner := mocks.NewRunner(t)
 	mgr.runner = runner
+	mgr.withCarrierLock = skipCarrierLock
 
 	osdDataPath := "/var/snap/microceph/common/data/osd/ceph-4"
 	require.NoError(t, mgr.fs.MkdirAll(osdDataPath, 0755))
 	require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
 	require.NoError(t, mgr.fs.MkdirAll("/dev/disk/by-id", 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/wal", []byte("carrier"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sde1", []byte("wal"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/wal-part1", []byte("wal-part"), 0644))
 
@@ -724,11 +770,14 @@ func TestCleanupGeneratedAuxDevicesRetryResumesFromRemainingEntry(t *testing.T) 
 	mgr.fs = afero.NewMemMapFs()
 	runner := mocks.NewRunner(t)
 	mgr.runner = runner
+	mgr.withCarrierLock = skipCarrierLock
 
 	osdDataPath := "/var/snap/microceph/common/data/osd/ceph-5"
 	require.NoError(t, mgr.fs.MkdirAll(osdDataPath, 0755))
 	require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
 	require.NoError(t, mgr.fs.MkdirAll("/dev/disk/by-id", 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/wal", []byte("carrier"), 0644))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/db", []byte("carrier"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sde1", []byte("wal"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sdf2", []byte("db"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-id/wal-part1", []byte("wal-part"), 0644))
@@ -778,6 +827,7 @@ func TestExecuteDSLProvisionPlanCleansCreatedAuxOnPartitionCreationFailure(t *te
 	mgr.fs = afero.NewMemMapFs()
 	runner := mocks.NewRunner(t)
 	mgr.runner = runner
+	mgr.withCarrierLock = skipCarrierLock
 
 	originalCreatePlannedAuxPartitionFn := createPlannedAuxPartitionFn
 	t.Cleanup(func() {
@@ -786,6 +836,7 @@ func TestExecuteDSLProvisionPlanCleansCreatedAuxOnPartitionCreationFailure(t *te
 
 	require.NoError(t, mgr.fs.MkdirAll("/dev/disk/by-path", 0755))
 	walPartitionPath := "/dev/disk/by-path/virtio-pci-0000:03:00.0-part1"
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/disk/by-path/virtio-pci-0000:03:00.0", []byte("carrier"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, walPartitionPath, []byte("wal"), 0644))
 
 	createCalls := 0
@@ -870,6 +921,7 @@ func newDeletePartitionTestManager(t *testing.T, partitionPath string) (*OSDMana
 	mgr.runner = runner
 
 	require.NoError(t, mgr.fs.MkdirAll(filepath.Dir(partitionPath), 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, strings.TrimSuffix(partitionPath, "-part1"), []byte("disk"), 0644))
 	require.NoError(t, afero.WriteFile(mgr.fs, partitionPath, []byte("part"), 0644))
 
 	sleeps := &[]time.Duration{}
@@ -963,6 +1015,7 @@ func TestDeletePartitionRunsSfdiskWhenTableCannotBeRead(t *testing.T) {
 
 	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", parentPath).
 		Return("", assert.AnError).Once()
+	runner.On("RunCommand", "sfdisk", "--dump", parentPath).Return("", assert.AnError).Once()
 	runner.On("RunCommand", "sfdisk", "--delete", "--no-reread", "--no-tell-kernel", parentPath, "1").
 		Return("", nil).Once()
 	runner.On("RunCommand", "partx", "-v", "-d", "--nr", "1:1", parentPath).
@@ -1053,6 +1106,107 @@ func TestDeletePartitionSkipsAbsentTableAndKernelEntries(t *testing.T) {
 		Return(" 2\n", nil).Once()
 
 	require.NoError(t, mgr.deletePartition(parentPath, 1))
+}
+
+func TestPlanAuxPartitionsUsesVacantSlotsWithoutResettingSurvivor(t *testing.T) {
+	disk := makeTestDisk("wal", "virtio-pci-0000:03:00.0", 20)
+	disk.Partitions = []api.ResourcesStorageDiskPartition{
+		{Partition: 2, Size: 1024 * 1024 * 1024},
+		{Partition: 4, Size: 1024 * 1024 * 1024},
+	}
+	plans, err := planAuxiliaryPartitionsDetailed([]string{"/dev/osd1", "/dev/osd2"}, []api.ResourcesStorageDisk{disk}, nil, 1024*1024*1024, "wal")
+	require.NoError(t, err)
+	require.Len(t, plans, 2)
+	assert.Equal(t, uint64(1), plans[0].Partition)
+	assert.Equal(t, uint64(3), plans[1].Partition)
+	assert.False(t, plans[0].InitializeGPT, "filling slot 1 must not overwrite the surviving GPT")
+	assert.False(t, plans[1].InitializeGPT)
+}
+
+func TestCleanupMissingCarrierDropsManifestWithoutTouchingPartition(t *testing.T) {
+	var st mcTypes.State
+	mgr := NewOSDManager(st)
+	mgr.fs = afero.NewMemMapFs()
+	mgr.runner = mocks.NewRunner(t)
+	osdDataPath := "/osd/ceph-9"
+	require.NoError(t, mgr.fs.MkdirAll(osdDataPath, 0755))
+	require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/dead1", []byte("stale node"), 0644))
+	require.NoError(t, mgr.fs.MkdirAll("/dev/mapper", 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/mapper/luksosd.wal-9", []byte("stale mapper"), 0644))
+	require.NoError(t, mgr.writeGeneratedAuxManifest(osdDataPath, &generatedAuxDevicesManifest{
+		WAL: &generatedAuxDevice{ParentPath: "/dev/disk/by-id/dead", Partition: 1, PartitionPath: "/dev/dead1", PartUUID: "old-uuid", Encrypted: true},
+	}))
+
+	require.NoError(t, mgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 9))
+	manifest, err := mgr.readGeneratedAuxManifest(osdDataPath)
+	require.NoError(t, err)
+	assert.Nil(t, manifest)
+	content, err := afero.ReadFile(mgr.fs, "/dev/dead1")
+	require.NoError(t, err)
+	assert.Equal(t, "stale node", string(content))
+}
+
+func TestDeletePartitionSkipsWipedCarrierButNotIOError(t *testing.T) {
+	parentPath := "/dev/disk/by-id/db"
+	partitionPath := "/dev/disk/by-id/db-part1"
+	for _, tt := range []struct {
+		name    string
+		dumpErr error
+		wantErr bool
+	}{
+		{"no table", fmt.Errorf("sfdisk: %s: does not contain a recognized partition table", parentPath), false},
+		{"I/O failure", fmt.Errorf("sfdisk: %s: Input/output error", parentPath), true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr, runner, _ := newDeletePartitionTestManager(t, partitionPath)
+			require.NoError(t, mgr.fs.Remove(partitionPath))
+			runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", parentPath).
+				Return("", assert.AnError).Once()
+			runner.On("RunCommand", "sfdisk", "--dump", parentPath).Return("", tt.dumpErr).Once()
+			if tt.wantErr {
+				runner.On("RunCommand", "sfdisk", "--delete", "--no-reread", "--no-tell-kernel", parentPath, "1").Return("", assert.AnError).Once()
+				runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", parentPath).Return("", assert.AnError).Once()
+				runner.On("RunCommand", "sfdisk", "--dump", parentPath).Return("", tt.dumpErr).Once()
+			}
+			err := mgr.deletePartition(parentPath, 1)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestCleanupReusedPartitionNeverZapsOrDeletesReplacement(t *testing.T) {
+	var st mcTypes.State
+	mgr := NewOSDManager(st)
+	mgr.fs = afero.NewMemMapFs()
+	mgr.storage = staticStorage{storage: &api.ResourcesStorage{}}
+	runner := mocks.NewRunner(t)
+	mgr.runner = runner
+	mgr.withCarrierLock = skipCarrierLock
+	parentPath := "/dev/disk/by-id/db"
+	partPath := "/dev/disk/by-id/db-part2"
+	osdDataPath := "/osd/ceph-1"
+	require.NoError(t, mgr.fs.MkdirAll(osdDataPath, 0755))
+	require.NoError(t, mgr.fs.MkdirAll(filepath.Dir(parentPath), 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, parentPath, []byte("disk"), 0644))
+	require.NoError(t, afero.WriteFile(mgr.fs, partPath, []byte("another osd"), 0644))
+	require.NoError(t, mgr.writeGeneratedAuxManifest(osdDataPath, &generatedAuxDevicesManifest{
+		WAL: &generatedAuxDevice{ParentPath: parentPath, Partition: 2, PartitionPath: partPath, PartUUID: "old-uuid"},
+	}))
+	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", parentPath).Return(" 2\n", nil).Once()
+	runner.On("RunCommand", "sfdisk", "--part-uuid", parentPath, "2").Return("new-uuid\n", nil).Once()
+
+	require.NoError(t, mgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 1))
+	content, err := afero.ReadFile(mgr.fs, partPath)
+	require.NoError(t, err)
+	assert.Equal(t, "another osd", string(content))
+	manifest, err := mgr.readGeneratedAuxManifest(osdDataPath)
+	require.NoError(t, err)
+	assert.Nil(t, manifest)
 }
 
 func TestPartitionNumberListed(t *testing.T) {

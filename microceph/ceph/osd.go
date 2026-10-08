@@ -110,6 +110,7 @@ type OSDManager struct {
 	state             mcTypes.State
 	runner            common.Runner
 	fs                afero.Fs
+	withCarrierLock   func(string, func() error) error
 	storage           interfaces.StorageInterface
 	validator         PathValidator
 	mountChecker      MountChecker
@@ -124,6 +125,7 @@ func NewOSDManager(s mcTypes.State) *OSDManager {
 		state:             s,
 		runner:            common.ProcessExec,
 		fs:                afero.NewOsFs(),
+		withCarrierLock:   withExclusiveCarrierLock,
 		storage:           StorageImpl{},
 		validator:         SharedPathValidator{},
 		mountChecker:      SharedMountChecker{},
@@ -1637,13 +1639,20 @@ func diskUsedBytes(disk api.ResourcesStorageDisk) uint64 {
 }
 
 func nextPartitionNumber(disk api.ResourcesStorageDisk) uint64 {
-	var maxPart uint64
-	for _, part := range disk.Partitions {
-		if part.Partition > maxPart {
-			maxPart = part.Partition
+	// sfdisk --append fills the first vacant GPT slot, even when a higher
+	// numbered partition already exists. Match that behavior in the plan.
+	for number := uint64(1); ; number++ {
+		occupied := false
+		for _, part := range disk.Partitions {
+			if part.Partition == number {
+				occupied = true
+				break
+			}
+		}
+		if !occupied {
+			return number
 		}
 	}
-	return maxPart + 1
 }
 
 func (m *OSDManager) buildDSLDryRunPlan(ctx context.Context, req types.DisksPost) types.DiskAddResponse {
