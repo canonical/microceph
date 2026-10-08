@@ -158,21 +158,23 @@ Restore the failed member. Verify that its services are ``enabled`` and
 Remove the SMB cluster
 ----------------------
 
-Remove the share before removing the final SMB instance:
+Remove the share before deleting the logical SMB cluster:
 
 .. code-block:: none
 
    sudo microceph.ceph smb share rm files shared
 
-Remove the instances one target at a time:
+Remove non-final instances one target at a time, then explicitly request
+logical-cluster deletion and deployment cleanup:
 
 .. code-block:: none
 
    sudo microceph disable smb --cluster-id files --target node3
    sudo microceph disable smb --cluster-id files --target node2
-   sudo microceph disable smb --cluster-id files --target node1
+   sudo microceph disable smb --cluster-id files --force
 
-Removing the final member removes the managed SMB cluster.
+Removing the final desired member with ``--target`` is rejected. ``--force``
+does not remove the shared ``.smb`` pool or CephFS data.
 
 See :ref:`smb-reference` for configuration and :ref:`smb-concepts` for the
 architecture and network model.

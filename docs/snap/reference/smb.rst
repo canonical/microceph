@@ -31,16 +31,52 @@ alphanumeric or hyphen characters, with alphanumeric first and last
 characters. The bind and port options apply to the entire cluster; a new bind
 list replaces the existing list.
 
-Disable an SMB instance
------------------------
+Disable a managed SMB deployment
+----------------------------------
 
 .. code-block:: none
 
-   microceph disable smb --cluster-id <cluster-id> [--target <member>]
+   microceph disable smb --cluster-id <cluster-id> [--target <member>] [--force]
 
-Removing a non-final member updates the placement. Remove all shares before
-removing the final member, which removes the SMB cluster. See
-:doc:`commands/disable` for flags.
+.. _smb-disable-scopes:
+
+Disable scopes
+~~~~~~~~~~~~~~
+
+Remove one desired member:
+
+.. code-block:: none
+
+   microceph disable smb --cluster-id files --target node-a
+
+This updates placement and cleans only ``node-a``. It retains the logical SMB
+cluster, shares, public/private configuration, rank reservations, and CephFS
+data. Removing the last desired member is rejected: empty placement is
+unsupported and member removal never implicitly deletes the logical cluster.
+
+Remove the whole gateway deployment while retaining its configuration:
+
+.. code-block:: none
+
+   microceph disable smb --cluster-id files
+
+Without ``--target``, cleanup covers the deployment across its hosts, not only
+the local member. The logical cluster, shares, public/private configuration,
+and rank reservations remain. A subsequent SMB resource update can resubmit
+the deployment under Ceph's normal semantics.
+
+Delete the logical cluster and clean its deployment:
+
+.. code-block:: none
+
+   microceph disable smb --cluster-id files --force
+
+Ceph validates logical-cluster deletion before deployment cleanup, so deletion
+is rejected while shares remain. ``--force`` does not delete shares, the shared
+``.smb`` pool, or CephFS data. All forms require ``--cluster-id``; ``--target``
+and ``--force`` cannot be combined. The command displays its selected scope and
+retained assets before mutation. These flags do not change ``microceph.ceph``
+command meanings. See :doc:`commands/disable` for all flags.
 
 Runtime services
 ----------------
