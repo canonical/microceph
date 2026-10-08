@@ -671,15 +671,29 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
                     member = identity[len(prefix):]
                     if member in cluster_members and member not in other_smb_members:
                         members.add(member)
+        ownership_failures = []
+        for member in sorted(cluster_members):
+            try:
+                local_state = self.microceph.services.get_smb_local_state(member, cluster_id)
+                local_cluster_id = local_state.get("local_cluster_id")
+                if not isinstance(local_cluster_id, str):
+                    raise RuntimeError("invalid local SMB ownership state")
+                if local_cluster_id == cluster_id:
+                    members.add(member)
+            except Exception as err:
+                ownership_failures.append((member, err))
         failures = []
         for member in sorted(members):
             try:
                 self.microceph.services.remove_smb(member, cluster_id)
             except Exception as err:
                 failures.append((member, err))
-        if failures:
-            details = "; ".join(f"remove {member}: {err}" for member, err in failures)
-            raise RuntimeError(f"SMB removal incomplete: {details}")
+        if ownership_failures or failures:
+            details = [
+                *(f"ownership {member}: {err}" for member, err in ownership_failures),
+                *(f"remove {member}: {err}" for member, err in failures),
+            ]
+            raise RuntimeError(f"SMB removal incomplete: {'; '.join(details)}")
         try:
             # The upstream callback holds a SQLite transaction. show would
             # reacquire its non-reentrant lock; cluster_ls reuses its cursor.

@@ -21,6 +21,22 @@ func FinalizeSMBServiceGroup(ctx context.Context, s interfaces.StateInterface, c
 	return database.FinalizeSMBServiceGroup(ctx, s, clusterID, expectedConfig...)
 }
 
+// GetLocalSMBClusterID returns the local SMB ownership marker without relying
+// on a grouped-service receipt.
+func GetLocalSMBClusterID(context.Context) (string, error) {
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+
+	clusterID, err := currentSMBClusterID()
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to read local SMB cluster ID: %w", err)
+	}
+	return clusterID, nil
+}
+
 // DisableSMB stops a node-local SMB service and removes its local configuration.
 func DisableSMB(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
 	serviceStartMu.Lock()

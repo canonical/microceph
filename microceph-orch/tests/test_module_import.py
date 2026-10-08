@@ -139,6 +139,7 @@ class _SMBServices:
         self.group_configs = {}
         self.applied, self.removed, self.events = [], [], []
         self.apply_failures, self.remove_failures = {}, {}
+        self.local_states, self.local_state_failures = {}, {}
 
     def list_services(self):
         return self.records
@@ -159,6 +160,11 @@ class _SMBServices:
         config = next((r.get("group_config", "") for r in self.records
                        if r["service"] == "smb" and r["group_id"] == cluster_id), "")
         return {"cluster_id": cluster_id, "group_config": self.group_configs.get(cluster_id, config)}
+
+    def get_smb_local_state(self, target, cluster_id):
+        if target in self.local_state_failures:
+            raise self.local_state_failures[target]
+        return {"cluster_id": cluster_id, "local_cluster_id": self.local_states.get(target, "")}
 
     def finalize_smb(self, cluster_id, group_config):
         self.events.append(("finalize", cluster_id))
@@ -437,6 +443,25 @@ def test_remove_smb_service_attempts_every_member(monkeypatch, failure, resource
     if not failure and not resource_survives:
         expected.append(("finalize", "files"))
     assert manager.microceph.services.events == expected
+
+
+def test_remove_smb_service_discovers_marker_only_nonclustered_rollback(monkeypatch):
+    manager = _manager(monkeypatch, members=("node-a", "node-rollback"))
+    manager.microceph.services.local_states["node-rollback"] = "files"
+
+    assert manager.remove_service("smb.files") == "Removed SMB service 'files'"
+    assert manager.microceph.services.removed == [("node-rollback", "files")]
+    assert manager.microceph.services.events == [("remove", "node-rollback"), ("finalize", "files")]
+
+
+def test_remove_smb_service_does_not_finalize_after_unknown_ownership(monkeypatch):
+    manager = _manager(monkeypatch, [_smb_record("node-a")], members=("node-a", "node-unknown"))
+    manager.microceph.services.local_state_failures["node-unknown"] = RuntimeError("node unavailable")
+
+    with pytest.raises(RuntimeError, match="ownership node-unknown: node unavailable"):
+        manager.remove_service("smb.files")
+    assert manager.microceph.services.removed == [("node-a", "files")]
+    assert manager.microceph.services.events == [("remove", "node-a")]
 
 
 @pytest.mark.parametrize("offline", [(), ("node-pending",)])

@@ -153,3 +153,11 @@ def test_finalize_smb_uses_internal_finalization_signal(service):
     assert service.finalize_smb("files", config) == {"result": "ok"}
     assert service.request == ("/1.0/services/smb", {
         "json": {"cluster_id": "files", "finalize": True, "group_config": config}})
+
+
+def test_get_smb_local_state_uses_targeted_internal_observation_endpoint(service):
+    service.metadata = {"cluster_id": "files", "local_cluster_id": "files"}
+
+    assert service.get_smb_local_state("node a", "files") == service.metadata
+    assert service.request == (
+        "/1.0/services/smb?cluster_id=files&local=true&target=node+a", {})
