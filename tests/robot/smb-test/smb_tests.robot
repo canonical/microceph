@@ -123,7 +123,7 @@ Verify Nonclustered Managed Lifecycle
     Run In VM Must Fail    sudo microceph enable smb --cluster-id smbstandalone --clustering always    30
     Run In VM And Check    smbclient -p 1445 //${ip}/${SMB_SHARE} -U '${SMB_USERNAME}%${SMB_PASSWORD}' -c 'ls'    60
     Run In VM And Check    sudo microceph.ceph smb share rm smbstandalone ${SMB_SHARE}    120
-    Run In VM And Check    sudo microceph disable smb --cluster-id smbstandalone    180
+    Run In VM And Check    sudo microceph disable smb --cluster-id smbstandalone --force    180
     Wait For SMB Service    disabled    inactive
 
 *** Test Cases ***
