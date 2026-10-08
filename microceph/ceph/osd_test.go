@@ -1317,6 +1317,36 @@ func (s *osdSuite) TestDoRemoveOSDPurgesIdThatIsOnlyInOSDMap() {
 	assert.NoDirExists(s.T(), getOSDDataPath(osd))
 }
 
+// TestDoRemoveOSDChecksSafetyForIdOnlyInOSDMap ensures a stray OSD cannot be purged
+// without passing safe-to-destroy when safety checks are enabled.
+func (s *osdSuite) TestDoRemoveOSDChecksSafetyForIdOnlyInOSDMap() {
+	const osd = int64(7)
+	s.noWaitForPresence()
+	m := s.setupRemoveOSD(osd)
+	m.osdQuery.On("List", mock.Anything, mock.Anything).Return(types.Disks{{}, {}, {}, {}}, nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[],"stray":[{"id":7,"type":"osd"}]}`, nil).Twice()
+	expectNoOSDProcess(s.T(), m.runner, osd)
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,1,2,7]", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "down", "osd.7").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "safe-to-destroy", "osd.7").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "purge", "osd.7", "--yes-i-really-mean-it").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,1,2]", nil).Once()
+	s.expectRecordRemoved(m, osd)
+
+	err := doRemoveOSD(context.Background(), m.state, osd, false)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{
+		"ceph osd tree -f json",
+		"pkill -f ceph-osd .* --id 7$",
+		"ceph osd tree -f json",
+		"ceph osd ls -f json",
+		"ceph osd down osd.7",
+		"ceph osd safe-to-destroy osd.7",
+		"ceph osd purge osd.7 --yes-i-really-mean-it",
+		"ceph osd ls -f json",
+	}, ranCommandsFrom(m.runner, "ceph osd tree -f json"))
+}
+
 // TestDoRemoveOSDSkipsPurgeWhenIdIsNotInOSDMap tests that an OSD that is neither in the CRUSH tree
 // nor in the OSD map, as when it never got that far, is removed locally without a down or a purge.
 func (s *osdSuite) TestDoRemoveOSDSkipsPurgeWhenIdIsNotInOSDMap() {

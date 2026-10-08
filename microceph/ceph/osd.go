@@ -2191,8 +2191,8 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	// later failure so the shared OSD service cannot race the cleanup by respawning this OSD.
 	restoreAutostartOnError = false
 
-	// perform safety check for destroying
-	if isPresent && !bypassSafety {
+	// Check safety for every OSD we are about to purge, including ids absent from the CRUSH tree.
+	if (isPresent || inOSDMapOnly) && !bypassSafety {
 		err = m.safetyCheckDestroy(osd)
 		if err != nil {
 			return err
