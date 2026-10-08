@@ -13,6 +13,9 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
+// Allow the server's 15-minute operation budget plus transport overhead.
+const managedSMBClientTimeout = 16 * time.Minute
+
 // GetServices returns the list of configured ceph services.
 func GetServices(ctx context.Context, c mcTypes.Client) (types.Services, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
@@ -78,7 +81,7 @@ func SendServicePlacementReq(ctx context.Context, c mcTypes.Client, data *types.
 
 // EnableManagedSMB requests cluster-level SMB reconciliation for a target member.
 func EnableManagedSMB(ctx context.Context, c mcTypes.Client, target string, service *types.ManagedSMBService) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*300)
+	queryCtx, cancel := context.WithTimeout(ctx, managedSMBClientTimeout)
 	defer cancel()
 
 	c = c.UseTarget(target)
@@ -91,7 +94,7 @@ func EnableManagedSMB(ctx context.Context, c mcTypes.Client, target string, serv
 
 // DisableManagedSMB requests removal of a target member from a managed SMB cluster.
 func DisableManagedSMB(ctx context.Context, c mcTypes.Client, target string, service *types.SMBService) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*300)
+	queryCtx, cancel := context.WithTimeout(ctx, managedSMBClientTimeout)
 	defer cancel()
 
 	c = c.UseTarget(target)
