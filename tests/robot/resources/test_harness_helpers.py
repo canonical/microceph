@@ -88,6 +88,7 @@ def test_sequential_monitor_derives_provisioned_node_ips_from_canonical_cidr(mon
 
     suite = RobotSuiteBuilder().build(suite_path)
     suite.setup = None
+    suite.teardown = None
     suite.tests = [suite.tests[0]]
     assert suite.run(output=None, log=None, report=None).return_code == 0
     assert calls == [("node-wrk0", "10.33.104.0/24"), ("node-wrk1", "10.33.104.0/24")]
