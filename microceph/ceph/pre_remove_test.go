@@ -179,8 +179,11 @@ func (s *clusterRemoveSuite) TestDeleteNodeServicesUsesClusterAwareDeletionForGr
 		deleteNFSForNodeFunc = originalDeleteNFS
 	})
 	var deleted []string
-	disableManagedSMBForNodeFunc = func(_ context.Context, _ mcTypes.Client, target string, service *types.SMBService) error {
-		deleted = append(deleted, "smb:"+target+":"+service.ClusterID)
+	disableManagedSMBForNodeFunc = func(_ context.Context, _ mcTypes.Client, request *types.ManagedSMBRemoval) error {
+		assert.Equal(s.T(), "files", request.ClusterID)
+		assert.Equal(s.T(), "foonode", request.Target)
+		assert.False(s.T(), request.Force, "cluster-member removal must not request logical deletion")
+		deleted = append(deleted, "smb:"+request.Target+":"+request.ClusterID)
 		return nil
 	}
 	deleteNFSForNodeFunc = func(_ context.Context, _ mcTypes.Client, target string, service *types.NFSService) error {

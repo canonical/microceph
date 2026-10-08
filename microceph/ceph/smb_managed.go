@@ -22,6 +22,7 @@ var createManagedSMBClusterFunc = createManagedSMBCluster
 var loadManagedSMBClusterFunc = loadManagedSMBCluster
 var applyManagedSMBClusterFunc = applyManagedSMBCluster
 var removeManagedSMBClusterFunc = removeManagedSMBCluster
+var removeManagedSMBServiceFunc = RemoveManagedSMBService
 var disableSMBLocalFunc = DisableSMB
 var getSMBServiceGroupConfigFunc = database.GetSMBServiceGroupConfig
 var finalizeSMBServiceGroupIfUnchangedFunc = func(ctx context.Context, s interfaces.StateInterface, clusterID, config string) error {
@@ -75,23 +76,15 @@ func EnableManagedSMB(ctx context.Context, s interfaces.StateInterface, request 
 }
 
 // DisableManagedSMB removes a target from upstream desired placement, including
-// a target which never reached the observed member database.
+// a target which never reached the observed member database. It never deletes
+// the logical SMB cluster; use the service or logical-cluster operations instead.
 func DisableManagedSMB(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
 	resource, err := loadManagedSMBClusterFunc(ctx, clusterID)
 	if errors.Is(err, os.ErrNotExist) {
-		config, _, groupErr := getSMBServiceGroupConfigFunc(ctx, s, clusterID)
-		if groupErr != nil {
-			return groupErr
-		}
-		err = removeManagedSMBClusterFunc(ctx, clusterID)
-		if err != nil {
-			return err
-		}
-		err = disableSMBLocalFunc(ctx, s, clusterID)
-		if err != nil {
-			return err
-		}
-		return finalizeSMBServiceGroupIfUnchangedFunc(ctx, s, clusterID, config)
+		// The resource can already be gone while a failed local placement still
+		// owns files or a runtime marker. Teardown remains necessary, but absence
+		// is not evidence that shared state may be finalized.
+		return disableSMBLocalFunc(ctx, s, clusterID)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to load managed SMB cluster: %w", err)
@@ -101,32 +94,33 @@ func DisableManagedSMB(ctx context.Context, s interfaces.StateInterface, cluster
 		return err
 	}
 	remaining, _ := removeManagedSMBMember(members, s.ClusterState().Name())
-	finalize := len(remaining) == 0
-	config := ""
-	if finalize {
-		config, _, err = getSMBServiceGroupConfigFunc(ctx, s, clusterID)
-		if err != nil {
-			return err
-		}
-		err = removeManagedSMBClusterFunc(ctx, clusterID)
-	} else {
-		updateManagedSMBResource(resource, remaining, types.ManagedSMBService{})
-		err = applyManagedSMBClusterFunc(ctx, resource)
+	if len(remaining) == 0 {
+		return fmt.Errorf("cannot remove the last SMB member with --target; use the whole-service alternatives")
 	}
+	updateManagedSMBResource(resource, remaining, types.ManagedSMBService{})
+	err = applyManagedSMBClusterFunc(ctx, resource)
 	if err != nil {
 		return err
 	}
-	// The backend removes observed members only. Also clean this target after
-	// successful upstream removal in case its earlier placement was interrupted
-	// before a grouped_services record was written. This path is idempotent.
-	err = disableSMBLocalFunc(ctx, s, clusterID)
+	// Also clean this target after successful desired-placement removal in case
+	// its earlier placement was interrupted before a grouped_services receipt.
+	return disableSMBLocalFunc(ctx, s, clusterID)
+}
+
+// RemoveManagedSMBService removes the gateway deployment while retaining the
+// logical SMB cluster and its associated upstream resources.
+func RemoveManagedSMBService(ctx context.Context, _ interfaces.StateInterface, clusterID string) error {
+	return removeManagedSMBService(ctx, clusterID)
+}
+
+// DeleteManagedSMBCluster deletes the logical SMB cluster after upstream share
+// validation, then requests native service teardown.
+func DeleteManagedSMBCluster(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
+	err := removeManagedSMBClusterFunc(ctx, clusterID)
 	if err != nil {
 		return err
 	}
-	if finalize {
-		return finalizeSMBServiceGroupIfUnchangedFunc(ctx, s, clusterID, config)
-	}
-	return nil
+	return removeManagedSMBServiceFunc(ctx, s, clusterID)
 }
 
 func ensureManagedSMBBackend(ctx context.Context) error {
@@ -240,6 +234,18 @@ func applyManagedSMBResources(ctx context.Context, resource any) error {
 
 func removeManagedSMBCluster(ctx context.Context, clusterID string) error {
 	return runManagedSMBMutation(ctx, "smb", "cluster", "rm", clusterID, "--format", "json")
+}
+
+func removeManagedSMBService(ctx context.Context, clusterID string) error {
+	// `ceph orch rm` returns the orchestrator's plain result string (for
+	// example, "Removed SMB service 'files'") even with --format json. It is
+	// not an SMB resource mutation envelope, so process success is the only
+	// success signal available here.
+	_, err := cephRunContext(ctx, "orch", "rm", "smb."+clusterID, "--format", "json")
+	if err != nil {
+		return ErrManagedSMBOutcomeUnknown
+	}
+	return nil
 }
 
 func runManagedSMBMutation(ctx context.Context, args ...string) error {

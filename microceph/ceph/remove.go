@@ -143,7 +143,7 @@ func deleteNodeServices(cli mcTypes.Client, name string) error {
 			logger.Debugf("Deleting service %s", service)
 			switch service.Service {
 			case "smb":
-				err = disableManagedSMBForNodeFunc(context.Background(), cli, service.Location, &types.SMBService{ClusterID: service.GroupID})
+				err = disableManagedSMBForNodeFunc(context.Background(), cli, &types.ManagedSMBRemoval{ClusterID: service.GroupID, Target: service.Location})
 			case "nfs":
 				err = deleteNFSForNodeFunc(context.Background(), cli, service.Location, &types.NFSService{ClusterID: service.GroupID})
 			default:

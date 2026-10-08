@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -198,28 +197,146 @@ func TestValidateManagedSMBRequestRejectsInvalidInput(t *testing.T) {
 	require.NoError(t, validateManagedSMBRequest(types.ManagedSMBService{ClusterID: "files", Port: 0}))
 }
 
-func TestManagedSMBDeleteDisablesTargetThroughOrchestrator(t *testing.T) {
+func TestManagedSMBDeleteDispatchesRequestedScope(t *testing.T) {
+	originalDisable := disableManagedSMBFunc
+	originalRemoveService := removeManagedSMBServiceFunc
+	originalDeleteCluster := deleteManagedSMBClusterFunc
+	t.Cleanup(func() {
+		disableManagedSMBFunc = originalDisable
+		removeManagedSMBServiceFunc = originalRemoveService
+		deleteManagedSMBClusterFunc = originalDeleteCluster
+	})
+	called := ""
+	disableManagedSMBFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) error {
+		called = "member"
+		return nil
+	}
+	removeManagedSMBServiceFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) error {
+		called = "service"
+		return nil
+	}
+	deleteManagedSMBClusterFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) error {
+		called = "cluster"
+		return nil
+	}
+	tests := []struct {
+		name     string
+		path     string
+		body     string
+		state    *mocks.MockState
+		expected string
+	}{
+		{
+			name:     "member",
+			path:     "/1.0/managed-services/smb?target=node-b",
+			body:     `{"cluster_id":"files","target":"node-b"}`,
+			state:    &mocks.MockState{ClusterName: "node-b"},
+			expected: "member",
+		},
+		{
+			name:     "member case variant",
+			path:     "/1.0/managed-services/smb?target=node-b",
+			body:     `{"cluster_id":"files","TaRgEt":"node-b"}`,
+			state:    &mocks.MockState{ClusterName: "node-b"},
+			expected: "member",
+		},
+		{
+			name:     "service",
+			path:     "/1.0/managed-services/smb",
+			body:     `{"cluster_id":"files"}`,
+			state:    &mocks.MockState{},
+			expected: "service",
+		},
+		{
+			name:     "logical cluster",
+			path:     "/1.0/managed-services/smb",
+			body:     `{"cluster_id":"files","force":true}`,
+			state:    &mocks.MockState{},
+			expected: "cluster",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			called = ""
+			request := httptest.NewRequest(http.MethodDelete, test.path, strings.NewReader(test.body))
+			recorder := httptest.NewRecorder()
+			response := cmdManagedSMBDelete(test.state, request)
+			require.NoError(t, response.Render(recorder, request))
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			assert.Equal(t, test.expected, called)
+		})
+	}
+}
+
+func TestManagedSMBDeleteRejectsBodyTargetThatDiffersFromReceivingMember(t *testing.T) {
 	originalDisable := disableManagedSMBFunc
 	t.Cleanup(func() {
 		disableManagedSMBFunc = originalDisable
 	})
-	var clusterID string
-	var target string
-	disableManagedSMBFunc = func(_ context.Context, state interfaces.StateInterface, value string) error {
-		clusterID = value
-		target = state.ClusterState().Name()
+	called := false
+	disableManagedSMBFunc = func(_ context.Context, _ interfaces.StateInterface, _ string) error {
+		called = true
 		return nil
 	}
-	body, err := json.Marshal(types.SMBService{ClusterID: "files"})
-	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodDelete, "/1.0/managed-services/smb", strings.NewReader(string(body)))
-	state := &mocks.MockState{ClusterName: "node-b"}
+
+	request := httptest.NewRequest(http.MethodDelete, "/1.0/managed-services/smb?target=node-a", strings.NewReader(`{"cluster_id":"files","target":"node-a"}`))
 	recorder := httptest.NewRecorder()
+	response := cmdManagedSMBDelete(&mocks.MockState{ClusterName: "node-b"}, request)
+	require.NoError(t, response.Render(recorder, request))
 
-	response := cmdManagedSMBDelete(state, request)
-	_ = response.Render(recorder, request)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.False(t, called)
+}
 
-	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.Equal(t, "files", clusterID)
-	assert.Equal(t, "node-b", target)
+func TestManagedSMBDeleteRejectsMalformedAndConflictingSelectorsBeforeDispatch(t *testing.T) {
+	originalDisable := disableManagedSMBFunc
+	originalRemoveService := removeManagedSMBServiceFunc
+	originalDeleteCluster := deleteManagedSMBClusterFunc
+	t.Cleanup(func() {
+		disableManagedSMBFunc = originalDisable
+		removeManagedSMBServiceFunc = originalRemoveService
+		deleteManagedSMBClusterFunc = originalDeleteCluster
+	})
+	called := false
+	notCalled := func(_ context.Context, _ interfaces.StateInterface, _ string) error {
+		called = true
+		return nil
+	}
+	disableManagedSMBFunc = notCalled
+	removeManagedSMBServiceFunc = notCalled
+	deleteManagedSMBClusterFunc = notCalled
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "unknown body field", path: "/1.0/managed-services/smb", body: `{"cluster_id":"files","secret":"not-logged"}`},
+		{name: "explicit empty body target", path: "/1.0/managed-services/smb", body: `{"cluster_id":"files","target":""}`},
+		{name: "null body target", path: "/1.0/managed-services/smb", body: `{"cluster_id":"files","target":null}`},
+		{name: "case variant empty body target", path: "/1.0/managed-services/smb", body: `{"cluster_id":"files","Target":""}`},
+		{name: "case variant null body target", path: "/1.0/managed-services/smb", body: `{"cluster_id":"files","TARGET":null}`},
+		{name: "case variant empty body target with force", path: "/1.0/managed-services/smb", body: `{"cluster_id":"files","Target":"","force":true}`},
+		{name: "case variant null body target with force", path: "/1.0/managed-services/smb", body: `{"cluster_id":"files","TARGET":null,"force":true}`},
+		{name: "trailing body", path: "/1.0/managed-services/smb", body: `{"cluster_id":"files"} {}`},
+		{name: "target and force", path: "/1.0/managed-services/smb?target=node-a", body: `{"cluster_id":"files","target":"node-a","force":true}`},
+		{name: "global removal routed to member", path: "/1.0/managed-services/smb?target=node-a", body: `{"cluster_id":"files"}`},
+		{name: "explicit empty routing target", path: "/1.0/managed-services/smb?target=", body: `{"cluster_id":"files"}`},
+		{name: "malformed routing target", path: "/1.0/managed-services/smb?target=node-a;bad", body: `{"cluster_id":"files"}`},
+		{name: "malformed routing target with force", path: "/1.0/managed-services/smb?target=node-a;bad", body: `{"cluster_id":"files","force":true}`},
+		{name: "invalid routing target escape", path: "/1.0/managed-services/smb?target=%ZZ", body: `{"cluster_id":"files"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			called = false
+			request := httptest.NewRequest(http.MethodDelete, test.path, strings.NewReader(test.body))
+			recorder := httptest.NewRecorder()
+			response := cmdManagedSMBDelete(&mocks.MockState{ClusterName: "node-a"}, request)
+			require.NoError(t, response.Render(recorder, request))
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			assert.False(t, called)
+			assert.NotContains(t, recorder.Body.String(), "not-logged")
+		})
+	}
 }

@@ -1,12 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
@@ -19,6 +22,8 @@ import (
 
 var enableManagedSMBFunc = ceph.EnableManagedSMB
 var disableManagedSMBFunc = ceph.DisableManagedSMB
+var removeManagedSMBServiceFunc = ceph.RemoveManagedSMBService
+var deleteManagedSMBClusterFunc = ceph.DeleteManagedSMBCluster
 
 // Each remote placement request is separately bounded. Allow a multi-member
 // apply to outlive a single startup wait without running indefinitely.
@@ -53,20 +58,81 @@ func cmdManagedSMBPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 }
 
 func cmdManagedSMBDelete(s mcTypes.State, r *http.Request) mcTypes.Response {
-	var request types.SMBService
-	err := json.NewDecoder(r.Body).Decode(&request)
+	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 2<<20))
 	if err != nil {
-		logger.Errorf("failed decoding managed SMB disable request: %v", err)
-		return mcTypes.InternalError(err)
+		logger.Error("failed decoding managed SMB disable request: invalid JSON")
+		return mcTypes.BadRequest(fmt.Errorf("invalid managed SMB removal request JSON"))
 	}
-	if !types.SMBClusterIDRegex.MatchString(request.ClusterID) {
-		return mcTypes.SmartError(fmt.Errorf("expected cluster_id to be valid (regex: '%s')", types.SMBClusterIDRegex.String()))
+	var request types.ManagedSMBRemoval
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	err = decoder.Decode(&request)
+	var extra any
+	if err != nil || decoder.Decode(&extra) != io.EOF {
+		logger.Error("failed decoding managed SMB disable request: invalid JSON")
+		return mcTypes.BadRequest(fmt.Errorf("invalid managed SMB removal request JSON"))
+	}
+	var fields map[string]json.RawMessage
+	err = json.Unmarshal(body, &fields)
+	if err != nil {
+		return mcTypes.BadRequest(fmt.Errorf("managed SMB removal target must not be empty"))
+	}
+	// Match encoding/json's case-insensitive struct field lookup.
+	for field := range fields {
+		if strings.EqualFold(field, "target") && request.Target == "" {
+			return mcTypes.BadRequest(fmt.Errorf("managed SMB removal target must not be empty"))
+		}
+	}
+	err = validateManagedSMBRemovalRequest(s, r, request)
+	if err != nil {
+		return mcTypes.BadRequest(err)
 	}
 
 	state := interfaces.CephState{State: s}
 	return runManagedSMBRequest(r.Context(), request.ClusterID, true, func(ctx context.Context) error {
-		return disableManagedSMBFunc(ctx, state, request.ClusterID)
+		switch {
+		case request.Target != "":
+			return disableManagedSMBFunc(ctx, state, request.ClusterID)
+		case request.Force:
+			return deleteManagedSMBClusterFunc(ctx, state, request.ClusterID)
+		default:
+			return removeManagedSMBServiceFunc(ctx, state, request.ClusterID)
+		}
 	})
+}
+
+func validateManagedSMBRemovalRequest(s mcTypes.State, r *http.Request, request types.ManagedSMBRemoval) error {
+	err := request.Validate()
+	if err != nil {
+		return err
+	}
+
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return fmt.Errorf("invalid managed SMB removal routing query")
+	}
+	routingTargets, routingTargetWasSet := query["target"]
+	if routingTargetWasSet && (len(routingTargets) != 1 || routingTargets[0] == "") {
+		return fmt.Errorf("managed SMB removal routing target must not be empty")
+	}
+	routingTarget := ""
+	if routingTargetWasSet {
+		routingTarget = routingTargets[0]
+		err = (types.ManagedSMBRemoval{ClusterID: request.ClusterID, Target: routingTarget}).Validate()
+		if err != nil {
+			return err
+		}
+	}
+	if request.Target == "" && routingTarget != "" {
+		return fmt.Errorf("managed SMB service and logical-cluster removal must not be routed to a member")
+	}
+	if request.Target != "" && routingTarget != "" && request.Target != routingTarget {
+		return fmt.Errorf("managed SMB removal target conflicts with request routing")
+	}
+	if request.Target != "" && s.Name() != request.Target {
+		return fmt.Errorf("managed SMB removal target does not match the receiving member")
+	}
+	return nil
 }
 
 func runManagedSMBRequest(ctx context.Context, clusterID string, wait bool, work func(context.Context) error) mcTypes.Response {

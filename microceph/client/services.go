@@ -92,13 +92,23 @@ func EnableManagedSMB(ctx context.Context, c mcTypes.Client, target string, serv
 	return nil
 }
 
-// DisableManagedSMB requests removal of a target member from a managed SMB cluster.
-func DisableManagedSMB(ctx context.Context, c mcTypes.Client, target string, service *types.SMBService) error {
+// DisableManagedSMB requests a scoped managed SMB removal.
+func DisableManagedSMB(ctx context.Context, c mcTypes.Client, request *types.ManagedSMBRemoval) error {
+	if request == nil {
+		return fmt.Errorf("managed SMB removal request is required")
+	}
+	err := request.Validate()
+	if err != nil {
+		return err
+	}
+
 	queryCtx, cancel := context.WithTimeout(ctx, managedSMBClientTimeout)
 	defer cancel()
 
-	c = c.UseTarget(target)
-	err := c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("managed-services", "smb").URL, service, nil)
+	if request.Target != "" {
+		c = c.UseTarget(request.Target)
+	}
+	err = c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("managed-services", "smb").URL, request, nil)
 	if err != nil {
 		return fmt.Errorf("failed disabling managed SMB service: %w", err)
 	}
