@@ -228,7 +228,7 @@ func hasSMBCTDBRetirementInputs(clusterID string) bool {
 	pathsToCheck := []string{
 		filepath.Join(runtimeDir, "ctdb-rank"),
 		filepath.Join(runtimeDir, "ctdb-identity"),
-		filepath.Join(paths.ConfPath, fmt.Sprintf("ceph.client.smb.fs.cluster.%s.keyring", clusterID)),
+		filepath.Join(paths.ConfPath, fmt.Sprintf("ceph.client.smb.config.%s.keyring", clusterID)),
 	}
 	for _, path := range pathsToCheck {
 		_, err := os.Stat(path)
