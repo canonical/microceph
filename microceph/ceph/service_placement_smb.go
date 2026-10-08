@@ -461,14 +461,24 @@ func (smb *SMBServicePlacement) DbUpdate(ctx context.Context, s interfaces.State
 }
 
 func (smb *SMBServicePlacement) effectiveConfigDigest() (string, error) {
+	var spec map[string]json.RawMessage
+	if len(smb.upstreamSpec) > 0 {
+		err := json.Unmarshal(smb.upstreamSpec, &spec)
+		if err != nil {
+			return "", fmt.Errorf("failed to decode SMB configuration for hashing: %w", err)
+		}
+	}
+	// Scheduling-only placement is not part of the node-local configuration.
+	// Keep the complete upstream spec unchanged for group and receipt updates.
+	delete(spec, "placement")
 	data, err := json.Marshal(struct {
-		Spec        json.RawMessage   `json:"spec"`
-		CTDB        *smbCTDBPlacement `json:"ctdb"`
-		BindAddress string            `json:"bind_address"`
-		CTDBAddress string            `json:"ctdb_address"`
-		Container   []byte            `json:"container"`
-		Users       [][]byte          `json:"users"`
-	}{smb.upstreamSpec, smb.ctdb, smb.bindAddress, smb.ctdbAddress, smb.configData.container, smb.configData.users})
+		Spec        map[string]json.RawMessage `json:"spec"`
+		CTDB        *smbCTDBPlacement          `json:"ctdb"`
+		BindAddress string                     `json:"bind_address"`
+		CTDBAddress string                     `json:"ctdb_address"`
+		Container   []byte                     `json:"container"`
+		Users       [][]byte                   `json:"users"`
+	}{spec, smb.ctdb, smb.bindAddress, smb.ctdbAddress, smb.configData.container, smb.configData.users})
 	if err != nil {
 		return "", fmt.Errorf("failed to hash SMB configuration: %w", err)
 	}
