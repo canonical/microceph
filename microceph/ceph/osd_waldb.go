@@ -680,9 +680,9 @@ func (m *OSDManager) deletePartitionTableEntry(parentPath string, partition uint
 	return nil
 }
 
-// deleteKernelPartitionEntry removes the kernel's entry for a partition that is
-// no longer in the partition table. partx -d fails with EBUSY while anything has
-// the partition open, so it is retried for as long as the partition still resolves.
+// deleteKernelPartitionEntry removes only the requested kernel entry. partx -d
+// fails with EBUSY while anything has that partition open, so retry while the
+// partition still resolves.
 func (m *OSDManager) deleteKernelPartitionEntry(parentPath string, partition uint64) error {
 	if !m.partitionResolves(parentPath, partition) {
 		logger.Infof("Kernel partition entry %d on %s is already removed", partition, parentPath)
@@ -710,21 +710,23 @@ func (m *OSDManager) deleteKernelPartitionEntry(parentPath string, partition uin
 	return fmt.Errorf("failed to remove kernel partition entry %d on %s after %d attempts: %w", partition, parentPath, kernelPartitionDeleteAttempts, err)
 }
 
-// deletePartition removes a generated WAL/DB partition, first from the partition
-// table and then from the kernel. Both steps skip work that is already done, so
-// the call can be repeated after a failure.
+// deletePartition forgets the kernel entry before removing its GPT entry. If
+// another process keeps the partition open, the on-disk entry stays intact for
+// a later attempt. A final kernel check handles entries recreated during the
+// GPT update and resumptions after an earlier partial deletion.
 func (m *OSDManager) deletePartition(parentPath string, partition uint64) error {
-	err := m.deletePartitionTableEntry(parentPath, partition)
-	if err != nil {
+	if err := m.deleteKernelPartitionEntry(parentPath, partition); err != nil {
 		return err
 	}
-
+	if err := m.deletePartitionTableEntry(parentPath, partition); err != nil {
+		return err
+	}
 	return m.deleteKernelPartitionEntry(parentPath, partition)
 }
 
-// withExclusiveCarrierLock serializes the partition zap and both deletion
-// steps with udev's shared block-device lock. Keep the partx retry for other
-// openers, which need not participate in this locking protocol.
+// withExclusiveCarrierLock serializes the partition zap and kernel/GPT
+// deletion steps with udev's shared block-device lock. Keep the partx retry
+// for other openers, which need not participate in this locking protocol.
 func withExclusiveCarrierLock(parentPath string, cleanup func() error) error {
 	disk, err := os.Open(parentPath)
 	if err != nil {
