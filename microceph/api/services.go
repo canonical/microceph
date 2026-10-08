@@ -73,6 +73,7 @@ var nfsServiceCmd = mcTypes.Endpoint{
 var finalizeSMBServiceGroupIfUnchangedFunc = func(ctx context.Context, s interfaces.StateInterface, clusterID, config string) error {
 	return ceph.FinalizeSMBServiceGroup(ctx, s, clusterID, config)
 }
+var getLocalSMBClusterIDFunc = ceph.GetLocalSMBClusterID
 
 var smbServiceCmd = mcTypes.Endpoint{
 	Path:   "services/smb",
@@ -217,6 +218,21 @@ func cmdSMBServiceGroupGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 	clusterID := r.URL.Query().Get("cluster_id")
 	if !types.SMBClusterIDRegex.MatchString(clusterID) {
 		return mcTypes.SmartError(fmt.Errorf("expected cluster_id to be valid (regex: '%s')", types.SMBClusterIDRegex.String()))
+	}
+	if r.URL.Query().Get("local") == "true" {
+		target := r.URL.Query().Get("target")
+		if target == "" {
+			return mcTypes.SmartError(fmt.Errorf("SMB local state requires a target member"))
+		}
+		err := (types.ManagedSMBRemoval{ClusterID: clusterID, Target: target}).Validate()
+		if err != nil {
+			return mcTypes.SmartError(err)
+		}
+		localClusterID, err := getLocalSMBClusterIDFunc(r.Context())
+		if err != nil {
+			return mcTypes.SmartError(err)
+		}
+		return mcTypes.SyncResponse(true, types.SMBLocalState{ClusterID: clusterID, LocalClusterID: localClusterID})
 	}
 	config, found, err := database.GetSMBServiceGroupConfig(r.Context(), interfaces.CephState{State: s}, clusterID)
 	if err != nil {

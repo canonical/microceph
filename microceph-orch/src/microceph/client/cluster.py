@@ -85,6 +85,12 @@ class ExtendedAPIService(service.BaseService):
         response = self._get(f"/1.0/services/smb?{query}")
         return response.get("metadata", {})
 
+    def get_smb_local_state(self, target: str, cluster_id: str) -> dict:
+        """Return local SMB ownership state from the named cluster member."""
+        query = urlencode({"cluster_id": cluster_id, "local": "true", "target": target})
+        response = self._get(f"/1.0/services/smb?{query}")
+        return response.get("metadata", {})
+
     def finalize_smb(self, cluster_id: str, group_config: str) -> dict:
         """Clear unchanged SMB placement state after local teardown."""
         response = self._delete(

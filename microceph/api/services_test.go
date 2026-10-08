@@ -143,3 +143,25 @@ func TestServicesGetExposesGroupedServiceConfiguration(t *testing.T) {
 		},
 	}, result.Metadata)
 }
+
+func TestSMBServiceLocalStateUsesMarkerWithoutGroupReceipt(t *testing.T) {
+	originalGetLocalClusterID := getLocalSMBClusterIDFunc
+	t.Cleanup(func() {
+		getLocalSMBClusterIDFunc = originalGetLocalClusterID
+	})
+	getLocalSMBClusterIDFunc = func(context.Context) (string, error) {
+		return "files", nil
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/1.0/services/smb?cluster_id=files&local=true&target=node-a", nil)
+	recorder := httptest.NewRecorder()
+	response := cmdSMBServiceGroupGet(&mocks.MockState{}, request)
+	require.NoError(t, response.Render(recorder, request))
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var result struct {
+		Metadata types.SMBLocalState `json:"metadata"`
+	}
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&result))
+	require.Equal(t, types.SMBLocalState{ClusterID: "files", LocalClusterID: "files"}, result.Metadata)
+}

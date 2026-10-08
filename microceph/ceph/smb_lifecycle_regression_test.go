@@ -14,6 +14,19 @@ import (
 	"github.com/canonical/microceph/microceph/mocks"
 )
 
+func TestGetLocalSMBClusterIDReadsOwnershipMarkerWithoutReceipt(t *testing.T) {
+	_, _, runtime := smbTestPaths(t, false)
+
+	clusterID, err := GetLocalSMBClusterID(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, clusterID)
+
+	smbTestWrite(t, filepath.Join(runtime, "cluster-id"), "files\n")
+	clusterID, err = GetLocalSMBClusterID(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "files", clusterID)
+}
+
 func TestDisableSMBWaitsForNodeLocalLifecycleLock(t *testing.T) {
 	_, _, runtime := smbTestPaths(t, false)
 	smbTestWrite(t, filepath.Join(runtime, "cluster-id"), "files\n")

@@ -45,6 +45,35 @@ func (c *SMBCredentials) Validate() error {
 // String protects ordinary formatted diagnostics; never log serialized credentials.
 func (c SMBCredentials) String() string { return "[SMB credentials redacted]" }
 
+// ManagedSMBRemoval selects the scope of a managed SMB removal request.
+type ManagedSMBRemoval struct {
+	ClusterID string `json:"cluster_id" yaml:"cluster_id"`
+	Target    string `json:"target,omitempty" yaml:"target,omitempty"`
+	Force     bool   `json:"force,omitempty" yaml:"force,omitempty"`
+}
+
+// Validate rejects malformed or contradictory managed SMB removal selectors.
+func (r ManagedSMBRemoval) Validate() error {
+	if !SMBClusterIDRegex.MatchString(r.ClusterID) {
+		return fmt.Errorf("expected cluster_id to be valid (regex: '%s')", SMBClusterIDRegex.String())
+	}
+	if r.Target != "" && !smbTargetRegex.MatchString(r.Target) {
+		return fmt.Errorf("SMB target must be a valid member name")
+	}
+	if r.Target != "" && r.Force {
+		return fmt.Errorf("--target cannot be used with --force")
+	}
+	return nil
+}
+
+var smbTargetRegex = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$`)
+
+// SMBLocalState describes the requested SMB cluster and the local ownership marker.
+type SMBLocalState struct {
+	ClusterID      string `json:"cluster_id"`
+	LocalClusterID string `json:"local_cluster_id"`
+}
+
 // ManagedSMBService describes cluster-level SMB service configuration.
 type ManagedSMBService struct {
 	ClusterID string `json:"cluster_id" yaml:"cluster_id"`
