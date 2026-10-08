@@ -152,7 +152,7 @@ Verify Two SMB Clusters On Disjoint Members
     Run In VM And Check    smbclient -p ${SMB_PORT} //${ip0}/${SMB_SHARE} -U '${SMB_USER}%${SMB_PASSWORD}' -c 'get smb-failover-file /tmp/smb-first-still-present'    60
     Run In VM And Check    cmp /tmp/smb-failover-source /tmp/smb-first-still-present    30
     Run In Head Node    microceph.ceph smb share rm ${SMB_OTHER_CLUSTER} ${SMB_OTHER_SHARE}    120
-    Run In Head Node    microceph disable smb --cluster-id ${SMB_OTHER_CLUSTER} --target node-wrk2    180
+    Run In Head Node    microceph disable smb --cluster-id ${SMB_OTHER_CLUSTER} --force    180
     Wait For SMB Service    disabled    inactive    node=node-wrk2
     Wait For CTDB Service    disabled    inactive    node=node-wrk2
     Wait For CTDB Nodes Service    disabled    inactive    node=node-wrk2
@@ -179,7 +179,7 @@ Scale Down And Remove Managed SMB Cluster
     Wait For CTDB Service    enabled    active    node=node-wrk0
     Wait For CTDB Nodes Service    enabled    active    node=node-wrk0
     Run In Head Node    microceph.ceph smb share rm ${SMB_CLUSTER} ${SMB_SHARE}    120
-    Run In Head Node    microceph disable smb --cluster-id ${SMB_CLUSTER} --target node-wrk0    180
+    Run In Head Node    microceph disable smb --cluster-id ${SMB_CLUSTER} --force    180
     Wait For SMB Service    disabled    inactive    node=node-wrk0
     Run In Container And Check    node-wrk0    test ! -e /var/snap/microceph/current/samba/container.json    30
     Run In Container And Check    node-wrk1    test ! -e /var/snap/microceph/current/samba/container.json    30
