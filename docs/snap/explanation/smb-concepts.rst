@@ -20,6 +20,46 @@ client-visible name to CephFS storage.
 Shares are managed separately from instances. Initial daemon deployment begins
 after the first CephFS-backed share is applied.
 
+Cluster assets and cleanup
+--------------------------
+
+A logical SMB cluster is not the ``.smb`` pool. That shared RADOS pool holds
+configuration and coordination objects in a separate namespace for each cluster
+ID. Removing ``files`` must not remove the pool or another cluster's namespace.
+
+Associated assets span several stores:
+
+* **Ceph SMB resource database:** cluster settings, desired placement, shares
+  and credential references.
+* **RADOS:** ``.smb/<cluster-id>/`` contains ``config.smb``, ``spec.smb`` and
+  ``cluster-info``; clustered deployments also use ``cluster.meta.json`` and
+  ``cluster.meta.lock``.
+* **Credentials:** generated sources in the monitor config-key store, the
+  CephFS identity ``client.smb.fs.cluster.<cluster-id>``, and the native clustered
+  configuration identity ``client.smb.config.<cluster-id>``.
+* **MicroCeph database:** shared configuration snapshots and CTDB rank
+  reservations in ``service_groups``; successful per-host deployment receipts
+  in ``grouped_services``.
+* **Gateway hosts:** Samba/CTDB services, generated configuration, local
+  keyrings and identity files, persistent state and logs.
+* **CephFS:** referenced directories or subvolumes, user data and SMB ownership
+  earmarks. These are not stored in ``.smb``.
+
+Removing an orchestrator service does not itself delete its logical SMB cluster
+or shares. Logical cluster deletion requires no remaining shares and removes
+its external configuration namespace; linked credentials are pruned, while
+independent reusable credential resources are retained. Neither operation
+removes the shared pool or CephFS data.
+
+Deployment receipts record successful placement, not every failed attempt. An
+empty receipt list alone must not authorize deletion of shared group state.
+After interrupted cleanup, retain enough state to discover and retry unfinished
+work; see :ref:`smb-reference` for uncertain request outcomes.
+
+Current native cleanup clears generated configuration and local keyrings, but
+does not wipe ``$SNAP_COMMON/data/samba`` or delete the CephFS access identity.
+Deployment cleanup therefore does not mean erasing every associated asset.
+
 CephFS data path and user identity
 ----------------------------------
 
