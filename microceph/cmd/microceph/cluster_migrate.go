@@ -18,18 +18,15 @@ type cmdClusterMigrate struct {
 
 func (c *cmdClusterMigrate) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "migrate <SRC> <DST",
+		Use:   "migrate <SRC> <DST>",
 		Short: "Migrate automatic services from one node to another",
+		Args:  cobra.ExactArgs(2),
 		RunE:  c.Run,
 	}
 	return cmd
 }
 
 func (c *cmdClusterMigrate) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 2 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

@@ -766,7 +766,7 @@ function remote_verify_rbd_mirroring() {
     lxc exec node-wrk2 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_one"
     lxc exec node-wrk3 -- sh -c "sudo microceph replication list rbd" | grep "pool_two.*image_two"
 
-    lxc exec node-wrk0 -- sh -c "sudo microceph replication status rbd --json"
+    lxc exec node-wrk0 -- sh -c "sudo microceph replication status rbd pool_one --json"
 }
 
 function remote_disable_cephfs_mirroring() {

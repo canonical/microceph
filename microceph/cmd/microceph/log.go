@@ -39,6 +39,7 @@ func (c *cmdLogSetLevel) Command() *cobra.Command {
     4 - INFO
     5 - DEBUG
     6 - TRACE.`,
+		Args: cobra.ExactArgs(1),
 		RunE: c.Run,
 	}
 
@@ -49,6 +50,7 @@ func (c *cmdLogGetLevel) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get-level",
 		Short: "Get the current log level, as an integer",
+		Args:  cobra.NoArgs,
 		RunE:  c.Run,
 	}
 
@@ -56,10 +58,6 @@ func (c *cmdLogGetLevel) Command() *cobra.Command {
 }
 
 func (c *cmdLogSetLevel) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
@@ -78,10 +76,6 @@ func (c *cmdLogSetLevel) Run(cmd *cobra.Command, args []string) error {
 }
 
 func (c *cmdLogGetLevel) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

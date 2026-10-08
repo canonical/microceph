@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
@@ -23,6 +22,7 @@ func (c *cmdReplicationEnableCephFS) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "cephfs",
 		Short:   "Enable replication for CephFS resource (Directory or Subvolume)",
+		Args:    cobra.NoArgs,
 		RunE:    c.Run,
 		PreRunE: c.PreRun, // Validate flags
 	}
@@ -51,11 +51,6 @@ func (c *cmdReplicationEnableCephFS) PreRun(cmd *cobra.Command, args []string) e
 }
 
 func (c *cmdReplicationEnableCephFS) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		fmt.Println("This command does not expect any positional arguments")
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

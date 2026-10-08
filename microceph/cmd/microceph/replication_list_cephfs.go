@@ -23,6 +23,7 @@ func (c *cmdReplicationListCephfs) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cephfs",
 		Short: "List all rbd resources configured for replication.",
+		Args:  cobra.NoArgs,
 		RunE:  c.Run,
 	}
 
@@ -31,10 +32,6 @@ func (c *cmdReplicationListCephfs) Command() *cobra.Command {
 }
 
 func (c *cmdReplicationListCephfs) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

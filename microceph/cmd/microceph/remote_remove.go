@@ -16,6 +16,7 @@ func (c *cmdRemoteRemove) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove <name>",
 		Short: "Remove configured remote",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
@@ -23,10 +24,6 @@ func (c *cmdRemoteRemove) Command() *cobra.Command {
 }
 
 func (c *cmdRemoteRemove) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

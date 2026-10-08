@@ -67,6 +67,7 @@ WAL/DB DSL selection is also supported:
 
 Available DSL predicates: and(), or(), not(), in(), re(), eq(), ne(), gt(), ge(), lt(), le()
 Available variables: @type, @vendor, @model, @size, @devnode, @host`,
+		Args: c.validateArgs,
 		RunE: c.Run,
 	}
 
@@ -92,16 +93,6 @@ Available variables: @type, @vendor, @model, @size, @devnode, @host`,
 
 func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 	var req = types.DisksPost{}
-
-	// Validate flag combinations
-	if err := c.validateFlags(args); err != nil {
-		return err
-	}
-
-	// No args passed and no match expression.
-	if len(args) == 0 && !c.flagAllDevices && c.flagOSDMatch == "" {
-		return cmd.Help()
-	}
 
 	err := c.validateBatchArgs(args)
 	if err != nil {
@@ -182,6 +173,25 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 	err = printAddDiskFailures(response)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// validateArgs is the positional argument validator of "disk add". Cobra runs it once the flags are
+// parsed, and the devices can come from the arguments, --all-available or --osd-match, so how many
+// arguments are required depends on the flags. Conflicting flags are reported first because their
+// errors are more specific than a missing device. Cobra prints the usage when this validator fails,
+// so a flag conflict silences it to stay a one-line error, as it was when Run reported it.
+func (c *cmdDiskAdd) validateArgs(cmd *cobra.Command, args []string) error {
+	err := c.validateFlags(args)
+	if err != nil {
+		cmd.SilenceUsage = true
+		return err
+	}
+
+	if len(args) == 0 && !c.flagAllDevices && c.flagOSDMatch == "" {
+		return errors.New("no disks given: pass one or more devices or a loop spec, or use --all-available or --osd-match")
 	}
 
 	return nil

@@ -20,5 +20,9 @@ func (c *cmdReplicationStatus) Command() *cobra.Command {
 	statusCephfsCmd := cmdReplicationStatusCephfs{common: c.common}
 	cmd.AddCommand(statusCephfsCmd.Command())
 
+	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
+	cmd.Args = cobra.NoArgs
+	cmd.Run = func(cmd *cobra.Command, args []string) { _ = cmd.Usage() }
+
 	return cmd
 }

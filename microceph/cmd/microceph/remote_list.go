@@ -23,6 +23,7 @@ func (c *cmdRemoteList) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all configured remotes for the site",
+		Args:  cobra.NoArgs,
 		RunE:  c.Run,
 	}
 
@@ -31,10 +32,6 @@ func (c *cmdRemoteList) Command() *cobra.Command {
 }
 
 func (c *cmdRemoteList) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

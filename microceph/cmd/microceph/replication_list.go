@@ -20,5 +20,9 @@ func (c *cmdReplicationList) Command() *cobra.Command {
 	listCephfsCmd := cmdReplicationListCephfs{common: c.common}
 	cmd.AddCommand(listCephfsCmd.Command())
 
+	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
+	cmd.Args = cobra.NoArgs
+	cmd.Run = func(cmd *cobra.Command, args []string) { _ = cmd.Usage() }
+
 	return cmd
 }

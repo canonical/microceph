@@ -25,6 +25,7 @@ func (c *cmdReplicationStatusRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rbd <resource>",
 		Short: "Show RBD resource replication status",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
@@ -33,10 +34,6 @@ func (c *cmdReplicationStatusRbd) Command() *cobra.Command {
 }
 
 func (c *cmdReplicationStatusRbd) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

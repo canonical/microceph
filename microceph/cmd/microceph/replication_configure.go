@@ -22,6 +22,10 @@ func (c *cmdReplicationConfigure) Command() *cobra.Command {
 	configureRbdCmd := cmdReplicationConfigureRbd{common: c.common}
 	cmd.AddCommand(configureRbdCmd.Command())
 
+	// Workaround for subcommand usage errors. See: https://github.com/spf13/cobra/issues/706
+	cmd.Args = cobra.NoArgs
+	cmd.Run = func(cmd *cobra.Command, args []string) { _ = cmd.Usage() }
+
 	return cmd
 }
 
@@ -34,6 +38,7 @@ func (c *cmdReplicationConfigureRbd) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rbd <resource>",
 		Short: "Configure replication parameters for RBD resource",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
@@ -42,10 +47,6 @@ func (c *cmdReplicationConfigureRbd) Command() *cobra.Command {
 }
 
 func (c *cmdReplicationConfigureRbd) Run(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return cmd.Help()
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err

@@ -27,6 +27,7 @@ func (c *cmdClientConfigReset) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset <key>",
 		Short: "Removes specified Ceph Client configs",
+		Args:  cobra.ExactArgs(1),
 		RunE:  c.Run,
 	}
 
@@ -39,9 +40,6 @@ func (c *cmdClientConfigReset) Command() *cobra.Command {
 
 func (c *cmdClientConfigReset) Run(cmd *cobra.Command, args []string) error {
 	allowList := ceph.GetClientConfigSet()
-	if len(args) != 1 {
-		return cmd.Help()
-	}
 
 	_, ok := allowList[args[0]]
 	if !ok {

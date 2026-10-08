@@ -25,6 +25,16 @@ type CmdControl struct {
 }
 
 func main() {
+	app := newRootCommand()
+
+	err := app.Execute()
+	if err != nil {
+		os.Exit(1)
+	}
+}
+
+// newRootCommand builds the microceph command tree.
+func newRootCommand() *cobra.Command {
 	// common flags. Not using a logger at this time.
 	commonCmd := CmdControl{Asker: cli.NewAsker(bufio.NewReader(os.Stdin), nil)}
 
@@ -32,7 +42,6 @@ func main() {
 		Use:               "microceph",
 		Short:             "Command for managing the MicroCeph deployment",
 		Version:           version.Version(),
-		SilenceUsage:      true,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
 
@@ -47,6 +56,12 @@ func main() {
 
 	// Initialize CLI logger based on flags
 	app.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		// Cobra checks flags and Args before PersistentPreRun. Leaving SilenceUsage unset until
+		// here lets wrong argument counts and unknown flags print usage; previously wrong
+		// counts printed help via cmd.Help() (and exited 0), while unknown flags printed
+		// only an error. Suppress usage for errors returned after validation by RunE.
+		cmd.SilenceUsage = true
+
 		clilogger.InitLogger(commonCmd.FlagLogDebug, commonCmd.FlagLogVerbose)
 	}
 
@@ -94,8 +109,5 @@ func main() {
 
 	app.InitDefaultHelpCmd()
 
-	err := app.Execute()
-	if err != nil {
-		os.Exit(1)
-	}
+	return app
 }
