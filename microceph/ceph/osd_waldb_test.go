@@ -704,7 +704,7 @@ func TestCleanupGeneratedAuxDevicesFailurePreservesManifest(t *testing.T) {
 	require.NoError(t, mgr.writeGeneratedAuxManifest(osdDataPath, manifest))
 
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sde1", "--yes-i-really-really-mean-it").Return("", nil).Once()
-	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", "/dev/disk/by-id/wal").Return(" 1\n", nil).Once()
+	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", "/dev/disk/by-id/wal").Return(" 1\n", nil).Twice()
 	runner.On("RunCommand", "sfdisk", "--delete", "--no-reread", "--no-tell-kernel", "/dev/disk/by-id/wal", "1").Return("", assert.AnError).Once()
 
 	err := mgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 4)
@@ -745,7 +745,7 @@ func TestCleanupGeneratedAuxDevicesRetryResumesFromRemainingEntry(t *testing.T) 
 	runner.On("RunCommand", "sfdisk", "--delete", "--no-reread", "--no-tell-kernel", "/dev/disk/by-id/wal", "1").Return("", nil).Once()
 	runner.On("RunCommand", "partx", "-v", "-d", "--nr", "1:1", "/dev/disk/by-id/wal").Return("", nil).Once()
 	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", "/dev/sdf2", "--yes-i-really-really-mean-it").Return("", nil).Once()
-	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", "/dev/disk/by-id/db").Return(" 2\n", nil).Once()
+	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", "/dev/disk/by-id/db").Return(" 2\n", nil).Twice()
 	runner.On("RunCommand", "sfdisk", "--delete", "--no-reread", "--no-tell-kernel", "/dev/disk/by-id/db", "2").Return("", assert.AnError).Once()
 
 	err := mgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 5)
@@ -994,9 +994,8 @@ func TestDeletePartitionSkipsPartxWhenKernelEntryAlreadyGone(t *testing.T) {
 	assert.Empty(t, *sleeps)
 }
 
-// TestDeletePartitionTreatsPartitionGoneAfterSfdiskErrorAsCleaned covers the
-// kernel entry disappearing while sfdisk fails, for example because udev
-// re-read the table: there is nothing left to delete.
+// A failed sfdisk may still have completed the write; confirm the table entry
+// is gone before accepting an absent kernel node as cleaned.
 func TestDeletePartitionTreatsPartitionGoneAfterSfdiskErrorAsCleaned(t *testing.T) {
 	parentPath := "/dev/disk/by-id/db"
 	partitionPath := "/dev/disk/by-id/db-part1"
@@ -1009,20 +1008,51 @@ func TestDeletePartitionTreatsPartitionGoneAfterSfdiskErrorAsCleaned(t *testing.
 		Run(func(args mock.Arguments) {
 			require.NoError(t, mgr.fs.Remove(partitionPath))
 		}).Return("", assert.AnError).Once()
+	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", parentPath).
+		Return(" 2\n", nil).Once()
 
 	err := mgr.deletePartition(parentPath, 1)
 	require.NoError(t, err)
 }
 
-func TestDeletePartitionDoesNothingWhenPartitionIsAbsent(t *testing.T) {
+func TestDeletePartitionReportsSfdiskFailureWhenNodeDisappearsButTableEntryRemains(t *testing.T) {
 	parentPath := "/dev/disk/by-id/db"
 	partitionPath := "/dev/disk/by-id/db-part1"
-	mgr, _, _ := newDeletePartitionTestManager(t, partitionPath)
+	mgr, runner, _ := newDeletePartitionTestManager(t, partitionPath)
+
+	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", parentPath).
+		Return(" 1\n 2\n", nil).Twice()
+	runner.On("RunCommand", "sfdisk", "--delete", "--no-reread", "--no-tell-kernel", parentPath, "1").
+		Run(func(args mock.Arguments) { require.NoError(t, mgr.fs.Remove(partitionPath)) }).
+		Return("", assert.AnError).Once()
+
+	require.ErrorIs(t, mgr.deletePartition(parentPath, 1), assert.AnError)
+}
+
+func TestDeletePartitionRemovesTableEntryWhenKernelNodeIsAlreadyAbsent(t *testing.T) {
+	parentPath := "/dev/disk/by-id/db"
+	partitionPath := "/dev/disk/by-id/db-part1"
+	mgr, runner, _ := newDeletePartitionTestManager(t, partitionPath)
 	require.NoError(t, mgr.fs.Remove(partitionPath))
 
-	// The strict runner mock fails the test if any command is run.
-	err := mgr.deletePartition(parentPath, 1)
-	require.NoError(t, err)
+	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", parentPath).
+		Return(" 1\n 2\n", nil).Once()
+	runner.On("RunCommand", "sfdisk", "--delete", "--no-reread", "--no-tell-kernel", parentPath, "1").
+		Return("", nil).Once()
+
+	require.NoError(t, mgr.deletePartition(parentPath, 1))
+}
+
+func TestDeletePartitionSkipsAbsentTableAndKernelEntries(t *testing.T) {
+	parentPath := "/dev/disk/by-id/db"
+	partitionPath := "/dev/disk/by-id/db-part1"
+	mgr, runner, _ := newDeletePartitionTestManager(t, partitionPath)
+	require.NoError(t, mgr.fs.Remove(partitionPath))
+
+	runner.On("RunCommand", "partx", "--show", "--noheadings", "--output", "NR", parentPath).
+		Return(" 2\n", nil).Once()
+
+	require.NoError(t, mgr.deletePartition(parentPath, 1))
 }
 
 func TestPartitionNumberListed(t *testing.T) {

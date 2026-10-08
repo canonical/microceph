@@ -627,8 +627,11 @@ func (m *OSDManager) deletePartitionTableEntry(parentPath string, partition uint
 	// for disks in use, although sfdisk --delete itself ignores it.
 	_, err = m.runner.RunCommand("sfdisk", "--delete", "--no-reread", "--no-tell-kernel", parentPath, strconv.FormatUint(partition, 10))
 	if err != nil {
-		if !m.partitionResolves(parentPath, partition) {
-			logger.Infof("Partition %d on %s disappeared despite delete error, treating as cleaned", partition, parentPath)
+		// The disk write may have completed despite the error. A missing /dev
+		// node alone does not prove the on-disk entry was removed.
+		stillInTable, checkErr := m.partitionInTable(parentPath, partition)
+		if checkErr == nil && !stillInTable {
+			logger.Infof("Partition %d on %s disappeared from the table despite delete error", partition, parentPath)
 			return nil
 		}
 		return fmt.Errorf("failed to delete partition %d on %s: %w", partition, parentPath, err)
@@ -671,11 +674,6 @@ func (m *OSDManager) deleteKernelPartitionEntry(parentPath string, partition uin
 // table and then from the kernel. Both steps skip work that is already done, so
 // the call can be repeated after a failure.
 func (m *OSDManager) deletePartition(parentPath string, partition uint64) error {
-	if !m.partitionResolves(parentPath, partition) {
-		logger.Infof("Partition %d on %s is already absent, skipping delete", partition, parentPath)
-		return nil
-	}
-
 	err := m.deletePartitionTableEntry(parentPath, partition)
 	if err != nil {
 		return err
