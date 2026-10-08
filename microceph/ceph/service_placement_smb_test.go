@@ -431,7 +431,7 @@ func TestSMBPlacementReceiptSkipsOnlyCurrentEffectiveConfig(t *testing.T) {
 		return user, nil
 	}
 	runner := smbTestRunner(t)
-	smbTestCommand(runner, "snapctl", "services", "microceph.smbd").Return("microceph.smbd enabled active", nil).Once()
+	smbTestCommand(runner, "snapctl", "services", "microceph.smbd").Return("microceph.smbd enabled active", nil).Twice()
 	payload := `{"cluster_id":"files","config_uri":"rados://.smb/files/config.smb","user_sources":["rados:mon-config-key:smb/config/files/users-groups.0.json"]}`
 	placement := &SMBServicePlacement{}
 	require.NoError(t, placement.PopulateParams(nil, payload))
@@ -448,7 +448,7 @@ func TestSMBPlacementReceiptSkipsOnlyCurrentEffectiveConfig(t *testing.T) {
 	state := mocks.NewStateInterface(t)
 	state.On("ClusterState").Return(&mocks.MockState{DBObj: newSMBPlacementTestDB(t)}).Once()
 	db := smbTestGroupedDB(t)
-	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{{Service: "smb", GroupID: "files", Info: string(info)}}, nil).Times(4)
+	db.On("GetGroupedServicesOnHost", context.Background(), state).Return([]database.GroupedService{{Service: "smb", GroupID: "files", Info: string(info)}}, nil).Times(5)
 	fresh := &SMBServicePlacement{}
 	require.NoError(t, fresh.PopulateParams(nil, payload))
 	require.NoError(t, fresh.ServiceInit(context.Background(), state))
@@ -462,8 +462,14 @@ func TestSMBPlacementReceiptSkipsOnlyCurrentEffectiveConfig(t *testing.T) {
 	changed := &SMBServicePlacement{}
 	require.NoError(t, changed.PopulateParams(nil, payload))
 	changed.bindAddress = "192.0.2.12"
-	for _, change := range []string{"credentials", "shares"} {
-		if change == "credentials" {
+	for _, change := range []string{"placement", "credentials", "shares"} {
+		if change == "placement" {
+			var spec map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(changed.upstreamSpec, &spec))
+			spec["placement"] = json.RawMessage(`{"hosts":["node-a","node-b"],"count":1}`)
+			changed.upstreamSpec, err = json.Marshal(spec)
+			require.NoError(t, err)
+		} else if change == "credentials" {
 			user = []byte(`{"users":["bob"]}`)
 		} else {
 			user = []byte(`{"users":["alice"]}`)
@@ -473,10 +479,16 @@ func TestSMBPlacementReceiptSkipsOnlyCurrentEffectiveConfig(t *testing.T) {
 		require.NoError(t, err)
 		changedDigest, err := changed.effectiveConfigDigest()
 		require.NoError(t, err)
-		assert.NotEqual(t, digest, changedDigest, change)
+		changed.configDigest = changedDigest
 		matched, err := changed.matchesAppliedReceipt(context.Background(), state)
 		require.NoError(t, err)
-		assert.False(t, matched, change)
+		if change == "placement" {
+			assert.Equal(t, digest, changedDigest, change)
+			assert.True(t, matched, change)
+		} else {
+			assert.NotEqual(t, digest, changedDigest, change)
+			assert.False(t, matched, change)
+		}
 	}
 	// A receipt does not mask a missing node-local file.
 	require.NoError(t, os.Remove(filepath.Join(conf, "samba", "smb.conf")))

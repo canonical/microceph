@@ -164,11 +164,15 @@ func TestSMBMissingCTDBFileDoesNotChangeRecordedMode(t *testing.T) {
 func TestSMBUnchangedMemberStillPersistsReservedRanks(t *testing.T) {
 	state := mocks.NewStateInterface(t)
 	db := smbTestGroupedDB(t)
-	placement := &SMBServicePlacement{ClusterID: "files", unchanged: true, configDigest: "current", ctdbRanks: map[string]int{"smb.files.node-a": 0, "smb.files.node-new": 2}, nextCTDBRank: 3}
+	spec := `{"service_type":"smb","service_id":"files","placement":{"hosts":["node-a","node-new"],"count":2},"spec":{"cluster_id":"files","config_uri":"rados://.smb/files/config.smb","features":["clustered"],"cluster_meta_uri":"rados://.smb/files/cluster.meta.json","cluster_lock_uri":"rados://.smb/files/cluster.meta.lock"}}`
+	placement := &SMBServicePlacement{ClusterID: "files", unchanged: true, configDigest: "current", upstreamSpec: []byte(spec), ctdbRanks: map[string]int{"smb.files.node-a": 0, "smb.files.node-new": 2}, nextCTDBRank: 3}
 	db.On("AddOrUpdate", context.Background(), state, "smb", "files", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		group := args.Get(4).(database.SMBServiceGroupConfig)
+		info := args.Get(5).(database.SMBServiceInfo)
 		require.Equal(t, placement.ctdbRanks, group.CTDBRanks)
 		require.Equal(t, 3, group.NextCTDBRank)
+		require.JSONEq(t, spec, string(group.DesiredSpec))
+		require.JSONEq(t, spec, string(info.AppliedSpec))
 	}).Return(nil).Once()
 	require.NoError(t, placement.DbUpdate(context.Background(), state))
 }
