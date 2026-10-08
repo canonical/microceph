@@ -242,6 +242,15 @@ func TestRemoteImportWithoutTokenIsAUsageError(t *testing.T) {
 	assert.Contains(t, out, "microceph remote import <name> <token>", "the usage line is missing")
 }
 
+// TestUnknownFlagIsAUsageError checks that flag parsing errors print usage before RunE.
+func TestUnknownFlagIsAUsageError(t *testing.T) {
+	out, err := executeRoot("remote", "import", "--bogus")
+
+	require.ErrorContains(t, err, "unknown flag: --bogus")
+	assert.Contains(t, out, "Error: unknown flag: --bogus")
+	assert.Contains(t, out, "Usage:")
+}
+
 // TestUsageIsNotPrintedWhenARunningCommandFails checks that only usage errors print the usage.
 func TestUsageIsNotPrintedWhenARunningCommandFails(t *testing.T) {
 	// Run fails on the missing --local-name before it contacts the daemon.
@@ -275,6 +284,7 @@ func TestMainExitStatus(t *testing.T) {
 		wantOut  string
 	}{
 		{"remote import without a token", "remote import siteb --local-name=sitea", 1, "accepts 2 arg(s), received 1"},
+		{"unknown flag", "remote import --bogus", 1, "unknown flag: --bogus"},
 		{"remote list with an argument", "remote list siteb", 1, `unknown command "siteb" for "microceph remote list"`},
 		{"disk add without a disk", "disk add", 1, "no disks given"},
 		{"command group with an unknown subcommand", "replication enable rbdd", 1, `unknown command "rbdd" for "microceph replication enable"`},
