@@ -1,0 +1,54 @@
+#!/bin/bash
+set -eu
+
+# shellcheck disable=SC2155
+export SNAP_CURRENT="$(realpath "${SNAP_DATA}/..")/current"
+cd "${SNAP}"
+
+. "${SNAP}/commands/common"
+
+limits
+
+maybe_unlock() {
+    dev="${1:?missing}"
+    osdid="${2:?missing}"
+    key="${3:?missing}"
+    suffix="${4:-}"
+
+    luksname="luksosd${suffix}-${osdid}"
+
+    [ -b "/dev/mapper/$luksname" ] && return
+
+    if cryptsetup isLuks "$dev" ; then
+        echo "${key}" | cryptsetup luksOpen "$dev" "$luksname" --key-file - --keyfile-size 128
+    fi
+}
+
+get_key() {
+    osdid="${1:?missing}"
+    suffix="${2:-}"
+    ceph config-key get "microceph:osd${suffix}.${osdid}/key"
+}
+
+nr="${1:?missing OSD ID}"
+[[ "${nr}" =~ ^(0|[1-9][0-9]*)$ ]] || exit 1
+osd_path="${SNAP_COMMON}/data/osd/ceph-${nr}"
+
+wait_for_config
+
+# The adapter registered this process before checking eligibility. Recheck
+# after configuration waits; removal may have fenced us in the meantime.
+[ -f "${osd_path}/ready" ] && [ ! -e "${osd_path}/ready.removing" ] || exit 0
+
+if [ -b "${osd_path}/unencrypted" ]; then
+    maybe_unlock "${osd_path}/unencrypted" "${nr}" "$(get_key "${nr}")"
+fi
+if [ -b "${osd_path}/unencrypted.wal" ]; then
+    maybe_unlock "${osd_path}/unencrypted.wal" "${nr}" "$(get_key "${nr}" ".wal")" ".wal"
+fi
+if [ -b "${osd_path}/unencrypted.db" ]; then
+    maybe_unlock "${osd_path}/unencrypted.db" "${nr}" "$(get_key "${nr}" ".db")" ".db"
+fi
+
+[ -f "${osd_path}/ready" ] && [ ! -e "${osd_path}/ready.removing" ] || exit 0
+exec ceph-osd --foreground --cluster ceph --id "${nr}"

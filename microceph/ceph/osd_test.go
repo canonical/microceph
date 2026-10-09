@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -69,16 +68,6 @@ type MockPristineChecker struct {
 func (m *MockPristineChecker) IsPristineDisk(devicePath string) (bool, error) {
 	args := m.Called(devicePath)
 	return args.Bool(0), args.Error(1)
-}
-
-func createExitError(t *testing.T, code int) error {
-	t.Helper()
-	cmd := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code))
-	err := cmd.Run()
-	if err == nil {
-		t.Fatalf("expected command to fail with exit code %d", code)
-	}
-	return err
 }
 
 // osdSuite is the test suite for adding OSDs.
@@ -866,44 +855,16 @@ func (s *osdSuite) TestKillOSD() {
 	r := mocks.NewRunner(s.T())
 	osdmgr.runner = r
 
-	originalGrace := osdKillGracePeriod
-	originalForceGrace := osdKillForceGracePeriod
-	originalPoll := osdKillPollInterval
-	osdKillGracePeriod = 20 * time.Millisecond
-	osdKillForceGracePeriod = 20 * time.Millisecond
-	osdKillPollInterval = 5 * time.Millisecond
-	s.T().Cleanup(func() {
-		osdKillGracePeriod = originalGrace
-		osdKillForceGracePeriod = originalForceGrace
-		osdKillPollInterval = originalPoll
-	})
-
-	// Test successful kill with graceful exit.
-	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 0$").Return("", nil).Once()
-	r.On("RunCommand", "pgrep", "-f", "ceph-osd .* --id 0$").Return("", createExitError(s.T(), 1)).Once()
+	// Grace, escalation, and independent group-exit checks belong to the
+	// adapter tests. This caller must propagate its verified result unchanged.
+	binary := filepath.Join(os.Getenv("SNAP"), "bin", "microceph-pebble")
+	r.On("RunCommand", binary, "osd-stop", "0").Return("", nil).Once()
 	err := osdmgr.killOSD(0)
 	assert.NoError(s.T(), err)
 
-	// Test escalation to SIGKILL when SIGTERM does not stop the process.
-	osdKillGracePeriod = 0
-	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 2$").Return("", nil).Once()
-	r.On("RunCommand", "pgrep", "-f", "ceph-osd .* --id 2$").Return("1234", nil).Once()
-	r.On("RunCommand", "pkill", "-9", "-f", "ceph-osd .* --id 2$").Return("", nil).Once()
-	r.On("RunCommand", "pgrep", "-f", "ceph-osd .* --id 2$").Return("", createExitError(s.T(), 1)).Once()
-	err = osdmgr.killOSD(2)
-	assert.NoError(s.T(), err)
-	osdKillGracePeriod = 20 * time.Millisecond
-
-	// Test already-stopped OSD.
-	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 1$").Return("", createExitError(s.T(), 1)).Once()
-	err = osdmgr.killOSD(1)
-	assert.NoError(s.T(), err)
-
-	// Test failed kill.
-	r.On("RunCommand", "pkill", "-f", "ceph-osd .* --id 3$").Return("", fmt.Errorf("pkill failed")).Once()
+	r.On("RunCommand", binary, "osd-stop", "3").Return("", fmt.Errorf("osd.3 process group is still running")).Once()
 	err = osdmgr.killOSD(3)
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "failed to kill osd.3")
+	assert.ErrorContains(s.T(), err, "osd.3 process group is still running")
 }
 
 func (s *osdSuite) TestSuppressAndRestoreOSDAutostart() {

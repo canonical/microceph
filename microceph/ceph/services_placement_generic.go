@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
-
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
 )
 
@@ -106,6 +106,13 @@ func genericServiceInit(s interfaces.StateInterface, name string) error {
 }
 
 func genericPostPlacementCheck(service string) error {
+	// Snapd's simple-service start may finish before the supervisor socket and
+	// child exist. Synchronize startup before the existing sustained checks.
+	err := pebbleCommand(common.ProcessExec, "wait-ready", service)
+	if err != nil {
+		return err
+	}
+
 	// Check in a loop if the service stays up.
 	attempts := 4
 
