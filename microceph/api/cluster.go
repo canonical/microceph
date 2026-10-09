@@ -45,6 +45,7 @@ func cmdClusterGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 
 	// generate client keys
 	clientKey, err := ceph.CreateClientKey(
+		r.Context(),
 		req.RemoteName,
 		[]string{"mon", "allow *"},
 		[]string{"osd", "allow *"},
