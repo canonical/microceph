@@ -419,80 +419,47 @@ func (s *RbdReplicationSuite) TestDisableHandlerImageNeedsNoPeer() {
 	assert.NoError(s.T(), err)
 }
 
-// TestResolvePoolRemote checks which remote record, if any, a pool's peers select.
-func (s *RbdReplicationSuite) TestResolvePoolRemote() {
+// Multiple sites cannot be disabled by the two-site operation, even when a
+// request names one remote or only one of the sites has been imported.
+func (s *RbdReplicationSuite) TestDisableHandlerMultiplePeerSites() {
 	simple := types.RemoteRecord{ID: 1, Name: "simple", LocalName: "magical"}
-	decoy := types.RemoteRecord{ID: 2, Name: "adecoy", LocalName: "decoy"}
-	other := types.RemoteRecord{ID: 3, Name: "other", LocalName: "magical"}
-	otherPeer := RbdReplicationPeer{Id: "c1b3a0de", RemoteName: "other", Direction: types.RbdReplicationDirectionRXTX}
-	ghostPeer := RbdReplicationPeer{Id: "0b0d3f3c", RemoteName: "simple", Direction: "tx-only"}
-
-	cases := []struct {
+	other := types.RemoteRecord{ID: 2, Name: "other", LocalName: "magical"}
+	otherPeer := RbdReplicationPeer{Id: "other-peer", RemoteName: "other"}
+	for _, tc := range []struct {
 		name    string
 		peers   []RbdReplicationPeer
 		remotes types.RemoteRecords
-		remote  types.RemoteRecord
-		peer    RbdReplicationPeer
-		errText string
+		remote  string
+		force   bool
 	}{
-		{
-			name:    "one remote that is the peer",
-			peers:   []RbdReplicationPeer{simplePeer},
-			remotes: types.RemoteRecords{simple},
-			remote:  simple,
-			peer:    simplePeer,
-		},
-		{
-			name:    "the peer picks the remote that is not first",
-			peers:   []RbdReplicationPeer{simplePeer},
-			remotes: types.RemoteRecords{decoy, simple, other},
-			remote:  simple,
-			peer:    simplePeer,
-		},
-		{
-			name:    "a re-registered peer counts once",
-			peers:   []RbdReplicationPeer{simplePeer, ghostPeer},
-			remotes: types.RemoteRecords{decoy, simple},
-			remote:  simple,
-			peer:    simplePeer,
-		},
-		{
-			name:    "a peer that is not a remote is ignored while another is",
-			peers:   []RbdReplicationPeer{otherPeer, simplePeer},
-			remotes: types.RemoteRecords{decoy, simple},
-			remote:  simple,
-			peer:    simplePeer,
-		},
-		{
-			name:    "no peers",
-			remotes: types.RemoteRecords{simple},
-			errText: "pool (pool) has no mirror peer registered, cannot tell which remote to disable it on",
-		},
-		{
-			name:    "no peer is a remote",
-			peers:   []RbdReplicationPeer{simplePeer, otherPeer},
-			remotes: types.RemoteRecords{decoy},
-			errText: `pool (pool) is mirrored with simple, other but no matching remote is configured on this site (configured: adecoy), import it with "microceph remote import"`,
-		},
-		{
-			name:    "peers of several remotes",
-			peers:   []RbdReplicationPeer{simplePeer, otherPeer},
-			remotes: types.RemoteRecords{decoy, other, simple},
-			errText: "pool (pool) is mirrored with several configured remotes (simple, other), cannot tell which one to disable",
-		},
+		{name: "unimported peer first", peers: []RbdReplicationPeer{otherPeer, simplePeer}, remotes: types.RemoteRecords{simple}},
+		{name: "unimported peer last", peers: []RbdReplicationPeer{simplePeer, otherPeer}, remotes: types.RemoteRecords{simple}},
+		{name: "both peers imported", peers: []RbdReplicationPeer{simplePeer, otherPeer}, remotes: types.RemoteRecords{simple, other}},
+		{name: "named remote", peers: []RbdReplicationPeer{simplePeer, otherPeer}, remotes: types.RemoteRecords{simple, other}, remote: "simple"},
+		{name: "forced disable", peers: []RbdReplicationPeer{simplePeer, otherPeer}, remotes: types.RemoteRecords{simple}, force: true},
+	} {
+		s.Run(tc.name, func() {
+			s.stubRemotes(tc.remotes...)
+			s.noCommands()
+			rh := poolHandler(types.RbdResourcePool, tc.peers...)
+			rh.Request.RemoteName = tc.remote
+			rh.Request.IsForceOp = tc.force
+			if tc.force {
+				rh.PoolStatus.Health = RbdReplicationHealthWarn
+			}
+			assert.Error(s.T(), s.disable(rh))
+		})
 	}
+}
 
-	for _, c := range cases {
-		remote, peer, err := resolvePoolRemote("pool", c.peers, c.remotes)
-		if c.errText != "" {
-			assert.EqualError(s.T(), err, c.errText, c.name)
-			assert.Equal(s.T(), types.RemoteRecord{}, remote, c.name)
-			assert.Equal(s.T(), RbdReplicationPeer{}, peer, c.name)
-			continue
-		}
+func (s *RbdReplicationSuite) TestDisableHandlerReregisteredPeer() {
+	s.stubRemotes(types.RemoteRecord{ID: 1, Name: "simple", LocalName: "magical"})
+	r := mocks.NewRunner(s.T())
+	expectNoPoolImages(r)
+	expectPoolDisable(r)
+	common.ProcessExec = r
+	ghostPeer := RbdReplicationPeer{Id: "reregistered-peer", RemoteName: "simple", Direction: "tx-only"}
 
-		assert.NoError(s.T(), err, c.name)
-		assert.Equal(s.T(), c.remote, remote, c.name)
-		assert.Equal(s.T(), c.peer, peer, c.name)
-	}
+	err := s.disable(poolHandler(types.RbdResourcePool, simplePeer, ghostPeer))
+	assert.NoError(s.T(), err)
 }

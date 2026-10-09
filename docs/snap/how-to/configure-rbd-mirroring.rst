@@ -34,6 +34,13 @@ or peer removal to fail. Check ``microceph remote list`` and
 ``microceph replication status rbd pool_one`` on both sites before disabling;
 the peer name on each site must match the remote name imported there.
 
+Pool disable supports one remote peer site. If a pool has peers for multiple
+distinct sites, disable fails before changing image journaling or removing peers,
+even if only one of those sites has been imported. ``--force`` does not bypass
+this check. Multiple peer entries for the same site, such as re-registered peers,
+are still supported. Inspect and reconcile the peer configuration on both
+clusters before retrying; MicroCeph does not orchestrate multi-site disable.
+
 Enable RBD replication
 ----------------------
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -476,49 +475,35 @@ func remoteNames(remotes types.RemoteRecords) []string {
 	return names
 }
 
-// resolvePoolRemote finds the remote a pool is mirrored with. The remote table can hold
-// several remotes and its first row says nothing about the pool, so the pool's own peers
-// decide: a peer's site name is the name its remote was imported under, the same equality
-// RemovePeer relies on. A peer listed more than once, as Ceph does for a re-registered
-// one, counts once. It returns the remote record and its peer, or an error when the pool
-// has no peer, when no peer is a configured remote, or when several are.
+// resolvePoolRemote selects the imported remote for the pool's single peer site.
+// Re-registered peers may have different IDs for the same site. Distinct sites
+// must be rejected even if only one is imported or the request names a remote:
+// DisablePoolMirroring removes only one site's peers before disabling the pool.
 func resolvePoolRemote(pool string, peers []RbdReplicationPeer, remotes types.RemoteRecords) (types.RemoteRecord, RbdReplicationPeer, error) {
 	if len(peers) == 0 {
 		return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf("pool (%s) has no mirror peer registered, cannot tell which remote to disable it on", pool)
 	}
 
-	peerNames := []string{}
-	matchedRemotes := types.RemoteRecords{}
-	matchedPeers := []RbdReplicationPeer{}
-	for _, peer := range peers {
-		if slices.Contains(peerNames, peer.RemoteName) {
-			continue
-		}
-		peerNames = append(peerNames, peer.RemoteName)
-
-		index := slices.IndexFunc(remotes, func(remote types.RemoteRecord) bool {
-			return remote.Name == peer.RemoteName
-		})
-		if index >= 0 {
-			matchedRemotes = append(matchedRemotes, remotes[index])
-			matchedPeers = append(matchedPeers, peer)
+	peer := peers[0]
+	for _, other := range peers[1:] {
+		if other.RemoteName != peer.RemoteName {
+			return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf(
+				"pool (%s) is mirrored with multiple peer sites (%s, %s), only two-site replication disable is supported",
+				pool, peer.RemoteName, other.RemoteName,
+			)
 		}
 	}
 
-	switch len(matchedRemotes) {
-	case 0:
-		return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf(
-			"pool (%s) is mirrored with %s but no matching remote is configured on this site (configured: %s), import it with \"microceph remote import\"",
-			pool, strings.Join(peerNames, ", "), strings.Join(remoteNames(remotes), ", "),
-		)
-	case 1:
-		return matchedRemotes[0], matchedPeers[0], nil
-	default:
-		return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf(
-			"pool (%s) is mirrored with several configured remotes (%s), cannot tell which one to disable",
-			pool, strings.Join(remoteNames(matchedRemotes), ", "),
-		)
+	for _, remote := range remotes {
+		if remote.Name == peer.RemoteName {
+			return remote, peer, nil
+		}
 	}
+
+	return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf(
+		"pool (%s) is mirrored with %s but no matching remote is configured on this site (configured: %s), import it with \"microceph remote import\"",
+		pool, peer.RemoteName, strings.Join(remoteNames(remotes), ", "),
+	)
 }
 
 // getMirrorPoolMetadata fetches pool status and info if mirroring is enabled on pool.
