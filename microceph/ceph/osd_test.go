@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -939,76 +940,448 @@ func (s *osdSuite) TestSuppressOSDAutostartWithoutReadyMarker() {
 	require.NoError(s.T(), restore())
 }
 
-// TestOutDownOSD tests taking OSD out and down
-func (s *osdSuite) TestOutDownOSD() {
-	osdmgr := NewOSDManager(nil)
-	r := mocks.NewRunner(s.T())
-	osdmgr.runner = r
-
-	// Test successful out and down
-	r.On("RunCommand", "ceph", "osd", "out", "osd.0").Return("", nil).Once()
-	r.On("RunCommand", "ceph", "osd", "down", "osd.0").Return("", nil).Once()
-	err := osdmgr.outDownOSD(0)
-	assert.NoError(s.T(), err)
-
-	// Test failed out command
-	r.On("RunCommand", "ceph", "osd", "out", "osd.1").Return("", fmt.Errorf("out failed")).Once()
-	err = osdmgr.outDownOSD(1)
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "failed to take osd.1 out")
-
-	// Test failed down command
-	r.On("RunCommand", "ceph", "osd", "out", "osd.2").Return("", nil).Once()
-	r.On("RunCommand", "ceph", "osd", "down", "osd.2").Return("", fmt.Errorf("down failed")).Once()
-	err = osdmgr.outDownOSD(2)
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "failed to take osd.2 down")
+// notDownErr is the error ceph osd purge fails with while the monitors still have the OSD up.
+func notDownErr(osd int64) error {
+	return fmt.Errorf("Failed to run: ceph osd purge osd.%d --yes-i-really-mean-it: exit status 16 (Error EBUSY: osd.%d is not `down`.)", osd, osd)
 }
 
-// TestDoPurge tests OSD purge command
-func (s *osdSuite) TestDoPurge() {
-	osdmgr := NewOSDManager(nil)
-	r := mocks.NewRunner(s.T())
-	osdmgr.runner = r
+// ranCommands returns the commands the mock runner was asked to run, in order.
+func ranCommands(r *mocks.Runner) []string {
+	cmds := []string{}
+	for _, call := range r.Calls {
+		args := make([]string, 0, len(call.Arguments))
+		for _, arg := range call.Arguments {
+			args = append(args, fmt.Sprint(arg))
+		}
+		cmds = append(cmds, strings.Join(args, " "))
+	}
+	return cmds
+}
 
-	// Test successful purge
-	r.On("RunCommand", "ceph", "osd", "purge", "osd.0", "--yes-i-really-mean-it").Return("", nil).Once()
-	err := osdmgr.doPurge(0)
-	assert.NoError(s.T(), err)
+// ranCommandsFrom returns the commands the mock runner was asked to run, in order, starting at
+// the first one equal to first.
+func ranCommandsFrom(r *mocks.Runner, first string) []string {
+	cmds := ranCommands(r)
+	for i, cmd := range cmds {
+		if cmd == first {
+			return cmds[i:]
+		}
+	}
+	return []string{}
+}
 
-	// Test failed purge
-	r.On("RunCommand", "ceph", "osd", "purge", "osd.1", "--yes-i-really-mean-it").Return("", fmt.Errorf("purge failed")).Once()
-	err = osdmgr.doPurge(1)
-	assert.Error(s.T(), err)
+// recordPurgeSleeps replaces the sleep between purge attempts with one that returns at once and
+// records how long it was asked to sleep.
+func (s *osdSuite) recordPurgeSleeps() *[]time.Duration {
+	sleeps := &[]time.Duration{}
+	origSleep := purgeRetrySleepFunc
+	purgeRetrySleepFunc = func(d time.Duration) { *sleeps = append(*sleeps, d) }
+	s.T().Cleanup(func() { purgeRetrySleepFunc = origSleep })
+	return sleeps
 }
 
 // TestPurgeOSD tests purgeOSD retry logic.
 func (s *osdSuite) TestPurgeOSD() {
-	origSleep := purgeRetrySleepFunc
-	purgeRetrySleepFunc = func(_ time.Duration) {}
-	s.T().Cleanup(func() { purgeRetrySleepFunc = origSleep })
+	s.recordPurgeSleeps()
 
 	osdmgr := NewOSDManager(nil)
 	r := mocks.NewRunner(s.T())
 	osdmgr.runner = r
 
-	// Succeeds on first attempt.
-	r.On("RunCommand", "ceph", "osd", "purge", "osd.0", "--yes-i-really-mean-it").Return("", nil).Once()
-	err := osdmgr.purgeOSD(0)
-	assert.NoError(s.T(), err)
-
 	// Fails transiently then succeeds — retry must fire regardless of error type.
 	r.On("RunCommand", "ceph", "osd", "purge", "osd.1", "--yes-i-really-mean-it").Return("", fmt.Errorf("exit status 1")).Once()
 	r.On("RunCommand", "ceph", "osd", "purge", "osd.1", "--yes-i-really-mean-it").Return("", nil).Once()
-	err = osdmgr.purgeOSD(1)
+	r.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,2]", nil).Once()
+	err := osdmgr.purgeOSD(1)
 	assert.NoError(s.T(), err)
 
-	// Exhausts all retries and returns error.
-	for range 10 {
-		r.On("RunCommand", "ceph", "osd", "purge", "osd.2", "--yes-i-really-mean-it").Return("", fmt.Errorf("exit status 1")).Once()
+	// Only the purge failures that said the OSD is up lead to another down, and none of these did.
+	for _, cmd := range ranCommands(r) {
+		assert.NotContains(s.T(), cmd, "osd down")
 	}
-	err = osdmgr.purgeOSD(2)
-	assert.Error(s.T(), err)
+}
+
+// TestPurgeOSDNotDownAfterEveryAttempt tests that a monitor that never accepts the purge makes
+// purgeOSD fail with that error after ten attempts, marking the OSD down before each retry but
+// not after the last attempt, and that it does not sleep after the last attempt either.
+func (s *osdSuite) TestPurgeOSDNotDownAfterEveryAttempt() {
+	sleeps := s.recordPurgeSleeps()
+
+	osdmgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	osdmgr.runner = r
+
+	r.On("RunCommand", "ceph", "osd", "purge", "osd.4", "--yes-i-really-mean-it").Return("", notDownErr(4)).Times(10)
+	r.On("RunCommand", "ceph", "osd", "down", "osd.4").Return("", nil).Times(9)
+
+	err := osdmgr.purgeOSD(4)
+	assert.ErrorContains(s.T(), err, "failed to purge osd.4")
+	assert.ErrorContains(s.T(), err, "is not `down`")
+
+	cmds := ranCommands(r)
+	require.Len(s.T(), cmds, 19)
+	assert.Equal(s.T(), "ceph osd purge osd.4 --yes-i-really-mean-it", cmds[18], "the last attempt is not followed by another down")
+
+	// Nine sleeps between ten attempts; none after the last attempt.
+	require.Len(s.T(), *sleeps, 9)
+}
+
+// TestPurgeOSDRepeatsWhenIdReappears tests that an id that is back in the OSD map after the purge
+// is marked down and purged once more.
+func (s *osdSuite) TestPurgeOSDRepeatsWhenIdReappears() {
+	s.recordPurgeSleeps()
+
+	osdmgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	osdmgr.runner = r
+
+	r.On("RunCommand", "ceph", "osd", "purge", "osd.5", "--yes-i-really-mean-it").Return("", nil).Twice()
+	r.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,5]", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "down", "osd.5").Return("", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0]", nil).Once()
+
+	err := osdmgr.purgeOSD(5)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{
+		"ceph osd purge osd.5 --yes-i-really-mean-it",
+		"ceph osd ls -f json",
+		"ceph osd down osd.5",
+		"ceph osd purge osd.5 --yes-i-really-mean-it",
+		"ceph osd ls -f json",
+	}, ranCommands(r))
+}
+
+// TestPurgeOSDFailsWhenIdKeepsReappearing checks that persistent reappearance fails removal.
+func (s *osdSuite) TestPurgeOSDFailsWhenIdKeepsReappearing() {
+	s.recordPurgeSleeps()
+
+	osdmgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	osdmgr.runner = r
+
+	r.On("RunCommand", "ceph", "osd", "purge", "osd.5", "--yes-i-really-mean-it").Return("", nil).Twice()
+	r.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,5]", nil).Twice()
+	r.On("RunCommand", "ceph", "osd", "down", "osd.5").Return("", nil).Once()
+
+	err := osdmgr.purgeOSD(5)
+	assert.ErrorContains(s.T(), err, "still in the OSD map")
+}
+
+// TestPurgeOSDFailsWhenPurgeCannotBeVerified tests that a purge whose result cannot be read back
+// is not reported as a success.
+func (s *osdSuite) TestPurgeOSDFailsWhenPurgeCannotBeVerified() {
+	s.recordPurgeSleeps()
+
+	osdmgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	osdmgr.runner = r
+
+	r.On("RunCommand", "ceph", "osd", "purge", "osd.6", "--yes-i-really-mean-it").Return("", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("", fmt.Errorf("monitors unreachable")).Once()
+
+	err := osdmgr.purgeOSD(6)
+	assert.ErrorContains(s.T(), err, "failed to check that osd.6 was purged")
+}
+
+// removeOSDMocks is what doRemoveOSD talks to, see setupRemoveOSD.
+type removeOSDMocks struct {
+	runner   *mocks.Runner
+	osdQuery *mocks.OSDQueryInterface
+	state    *mocks.StateInterface
+}
+
+// setupRemoveOSD sets up what doRemoveOSD needs to remove osd with the safety checks bypassed: the
+// OSD is in the database, its data directory has a ready marker, the default CRUSH rule is not the
+// host rule so there is no failure domain to scale down, and purge retries do not sleep. The tests
+// add the expectations for the Ceph steps they run.
+func (s *osdSuite) setupRemoveOSD(osd int64) removeOSDMocks {
+	t := s.T()
+	s.recordPurgeSleeps()
+
+	m := removeOSDMocks{
+		runner:   mocks.NewRunner(t),
+		osdQuery: mocks.NewOSDQueryInterface(t),
+		state:    mocks.NewStateInterface(t),
+	}
+	origExec := common.ProcessExec
+	origQuery := database.OSDQuery
+	common.ProcessExec = m.runner
+	database.OSDQuery = m.osdQuery
+	t.Cleanup(func() {
+		common.ProcessExec = origExec
+		database.OSDQuery = origQuery
+	})
+
+	var st mcTypes.State
+	m.state.On("ClusterState").Return(st).Maybe()
+	m.osdQuery.On("HaveOSD", mock.Anything, mock.Anything, osd).Return(true, nil).Once()
+	m.runner.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_host").Return(`{"rule_id": 2}`, nil).Once()
+
+	osdDataPath := getOSDDataPath(osd)
+	require.NoError(t, os.MkdirAll(osdDataPath, 0700))
+	require.NoError(t, os.WriteFile(osdReadyMarkerPath(osdDataPath), nil, 0600))
+	return m
+}
+
+// expectInCrushTree expects the OSD to be found in the CRUSH tree, drained and taken out.
+func (m removeOSDMocks) expectInCrushTree(osd int64) {
+	tree := fmt.Sprintf(`{"nodes":[{"id":%d,"type":"osd"}]}`, osd)
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(tree, nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "crush", "reweight", fmt.Sprintf("osd.%d", osd), "0.000000").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "out", fmt.Sprintf("osd.%d", osd)).Return("", nil).Once()
+}
+
+// whenOSDStops returns what runs when the OSD process is stopped: it checks that autostart is
+// suppressed by then. The shared osd service would respawn the OSD otherwise and undo the down that
+// follows.
+func whenOSDStops(t *testing.T, osd int64) func(mock.Arguments) {
+	return func(mock.Arguments) {
+		osdDataPath := getOSDDataPath(osd)
+		assert.NoFileExists(t, osdReadyMarkerPath(osdDataPath), "autostart is not suppressed when the OSD process is stopped")
+		assert.FileExists(t, osdSuppressedReadyMarkerPath(osdDataPath), "autostart is not suppressed when the OSD process is stopped")
+	}
+}
+
+// expectOSDProcessStopped verifies that the OSD is gone after autostart was suppressed.
+func expectOSDProcessStopped(t *testing.T, r *mocks.Runner, osd int64) {
+	cmdline := fmt.Sprintf("ceph-osd .* --id %d$", osd)
+	r.On("RunCommand", "pkill", "-f", cmdline).Run(whenOSDStops(t, osd)).Return("", nil).Once()
+	r.On("RunCommand", "pgrep", "-f", cmdline).Return("", createExitError(t, 1)).Once()
+}
+
+// expectNoOSDProcess expects killOSD to find no OSD process to stop, as when the daemon died.
+func expectNoOSDProcess(t *testing.T, r *mocks.Runner, osd int64) {
+	r.On("RunCommand", "pkill", "-f", fmt.Sprintf("ceph-osd .* --id %d$", osd)).Run(whenOSDStops(t, osd)).Return("", createExitError(t, 1)).Once()
+}
+
+// expectOSDStopFails expects killOSD to fail to stop the OSD process with err.
+func expectOSDStopFails(t *testing.T, r *mocks.Runner, osd int64, err error) {
+	r.On("RunCommand", "pkill", "-f", fmt.Sprintf("ceph-osd .* --id %d$", osd)).Run(whenOSDStops(t, osd)).Return("", err).Once()
+}
+
+// expectRecordRemoved expects the primary storage of the OSD to be cleared and its record deleted.
+func (s *osdSuite) expectRecordRemoved(m removeOSDMocks, osd int64) {
+	backing := filepath.Join(s.Tmp, fmt.Sprintf("osd-%d-backing", osd))
+	require.NoError(s.T(), os.WriteFile(backing, nil, 0600))
+	m.osdQuery.On("Path", mock.Anything, mock.Anything, osd).Return(backing, nil).Once()
+	m.osdQuery.On("Delete", mock.Anything, mock.Anything, osd).Return(nil).Once()
+}
+
+// TestDoRemoveOSDStopsProcessBeforeMarkingDown tests the order of the removal: the OSD is taken
+// out, its process is stopped and seen gone, and only then is it marked down and purged.
+func (s *osdSuite) TestDoRemoveOSDStopsProcessBeforeMarkingDown() {
+	const osd = int64(7)
+	m := s.setupRemoveOSD(osd)
+	m.expectInCrushTree(osd)
+	expectOSDProcessStopped(s.T(), m.runner, osd)
+	m.runner.On("RunCommand", "ceph", "osd", "down", "osd.7").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "purge", "osd.7", "--yes-i-really-mean-it").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,1,2]", nil).Once()
+	s.expectRecordRemoved(m, osd)
+
+	err := doRemoveOSD(context.Background(), m.state, osd, true)
+	require.NoError(s.T(), err)
+
+	assert.Equal(s.T(), []string{
+		"ceph config get mon osd_pool_default_crush_rule",
+		"ceph osd crush rule dump microceph_auto_host",
+		"ceph osd tree -f json",
+		"ceph osd crush reweight osd.7 0.000000",
+		"ceph osd out osd.7",
+		"pkill -f ceph-osd .* --id 7$",
+		"pgrep -f ceph-osd .* --id 7$",
+		"ceph osd down osd.7",
+		"ceph osd purge osd.7 --yes-i-really-mean-it",
+		"ceph osd ls -f json",
+	}, ranCommands(m.runner))
+	assert.NoDirExists(s.T(), getOSDDataPath(osd))
+}
+
+// TestDoRemoveOSDDoesNotMarkDownWhenKillFails ensures a failed stop preserves local state and
+// autostart without marking the OSD down or purging it.
+func (s *osdSuite) TestDoRemoveOSDDoesNotMarkDownWhenKillFails() {
+	const osd = int64(7)
+	m := s.setupRemoveOSD(osd)
+	m.expectInCrushTree(osd)
+	expectOSDStopFails(s.T(), m.runner, osd, fmt.Errorf("stop failed"))
+
+	err := doRemoveOSD(context.Background(), m.state, osd, true)
+	assert.ErrorContains(s.T(), err, "failed to stop")
+	assert.ErrorContains(s.T(), err, "stop failed")
+
+	// Any further command, or a database change, would have failed the strict mocks as well.
+	cmds := ranCommands(m.runner)
+	assert.NotContains(s.T(), cmds, "ceph osd down osd.7")
+	assert.NotContains(s.T(), cmds, "ceph osd purge osd.7 --yes-i-really-mean-it")
+	osdDataPath := getOSDDataPath(osd)
+	assert.FileExists(s.T(), osdReadyMarkerPath(osdDataPath))
+	assert.NoFileExists(s.T(), osdSuppressedReadyMarkerPath(osdDataPath))
+}
+
+// TestDoRemoveOSDMarksDownAgainWhenBootIsCommittedLate tests the failure behind the "osd.N is not
+// down" errors: the monitors commit the boot of the stopped OSD after the first down, so the
+// purge is refused until the OSD is marked down again.
+func (s *osdSuite) TestDoRemoveOSDMarksDownAgainWhenBootIsCommittedLate() {
+	const osd = int64(7)
+	m := s.setupRemoveOSD(osd)
+	m.expectInCrushTree(osd)
+	expectOSDProcessStopped(s.T(), m.runner, osd)
+	m.runner.On("RunCommand", "ceph", "osd", "down", "osd.7").Return("", nil).Twice()
+	m.runner.On("RunCommand", "ceph", "osd", "purge", "osd.7", "--yes-i-really-mean-it").Return("", notDownErr(osd)).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "purge", "osd.7", "--yes-i-really-mean-it").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,1,2]", nil).Once()
+	s.expectRecordRemoved(m, osd)
+
+	err := doRemoveOSD(context.Background(), m.state, osd, true)
+	require.NoError(s.T(), err)
+
+	assert.Equal(s.T(), []string{
+		"ceph osd out osd.7",
+		"pkill -f ceph-osd .* --id 7$",
+		"pgrep -f ceph-osd .* --id 7$",
+		"ceph osd down osd.7",
+		"ceph osd purge osd.7 --yes-i-really-mean-it",
+		"ceph osd down osd.7",
+		"ceph osd purge osd.7 --yes-i-really-mean-it",
+		"ceph osd ls -f json",
+	}, ranCommandsFrom(m.runner, "ceph osd out osd.7"))
+}
+
+// TestDoRemoveOSDNotYetInCephStopsProcessFirst tests that an OSD that is not in the CRUSH tree yet,
+// as right after it was added, has its process stopped before it is taken out and down once it
+// shows up.
+func (s *osdSuite) TestDoRemoveOSDNotYetInCephStopsProcessFirst() {
+	const osd = int64(7)
+	m := s.setupRemoveOSD(osd)
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[]}`, nil).Once()
+	expectOSDProcessStopped(s.T(), m.runner, osd)
+	m.expectInCrushTree(osd)
+	m.runner.On("RunCommand", "ceph", "osd", "down", "osd.7").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "purge", "osd.7", "--yes-i-really-mean-it").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,1,2]", nil).Once()
+	s.expectRecordRemoved(m, osd)
+
+	err := doRemoveOSD(context.Background(), m.state, osd, true)
+	require.NoError(s.T(), err)
+
+	assert.Equal(s.T(), []string{
+		"ceph osd tree -f json",
+		"pkill -f ceph-osd .* --id 7$",
+		"pgrep -f ceph-osd .* --id 7$",
+		"ceph osd tree -f json",
+		"ceph osd crush reweight osd.7 0.000000",
+		"ceph osd out osd.7",
+		"ceph osd down osd.7",
+		"ceph osd purge osd.7 --yes-i-really-mean-it",
+		"ceph osd ls -f json",
+	}, ranCommandsFrom(m.runner, "ceph osd tree -f json"))
+}
+
+// noWaitForPresence makes doRemoveOSD look only once for an OSD that is not in the CRUSH tree,
+// instead of waiting for it to show up.
+func (s *osdSuite) noWaitForPresence() {
+	origWindow := osdPresenceRetryWindow
+	osdPresenceRetryWindow = -time.Second
+	s.T().Cleanup(func() { osdPresenceRetryWindow = origWindow })
+}
+
+// TestDoRemoveOSDPurgesIdThatIsOnlyInOSDMap tests that an id that is in the OSD map but not in the
+// CRUSH tree, as after a removal that failed because a purged id came back, is marked down and
+// purged when the removal is run again, instead of being left in the OSD map after a success.
+func (s *osdSuite) TestDoRemoveOSDPurgesIdThatIsOnlyInOSDMap() {
+	const osd = int64(7)
+	s.noWaitForPresence()
+	m := s.setupRemoveOSD(osd)
+	// ceph osd tree lists such an id as stray, not among the nodes of the CRUSH tree.
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[],"stray":[{"id":7,"type":"osd"}]}`, nil).Twice()
+	expectNoOSDProcess(s.T(), m.runner, osd)
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,1,2,7]", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "down", "osd.7").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "purge", "osd.7", "--yes-i-really-mean-it").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,1,2]", nil).Once()
+	s.expectRecordRemoved(m, osd)
+
+	err := doRemoveOSD(context.Background(), m.state, osd, true)
+	require.NoError(s.T(), err)
+
+	assert.Equal(s.T(), []string{
+		"ceph osd tree -f json",
+		"pkill -f ceph-osd .* --id 7$",
+		"ceph osd tree -f json",
+		"ceph osd ls -f json",
+		"ceph osd down osd.7",
+		"ceph osd purge osd.7 --yes-i-really-mean-it",
+		"ceph osd ls -f json",
+	}, ranCommandsFrom(m.runner, "ceph osd tree -f json"))
+	assert.NoDirExists(s.T(), getOSDDataPath(osd))
+}
+
+// TestDoRemoveOSDChecksSafetyForIdOnlyInOSDMap ensures a stray OSD cannot be purged
+// without passing safe-to-destroy when safety checks are enabled.
+func (s *osdSuite) TestDoRemoveOSDChecksSafetyForIdOnlyInOSDMap() {
+	const osd = int64(7)
+	s.noWaitForPresence()
+	m := s.setupRemoveOSD(osd)
+	m.osdQuery.On("List", mock.Anything, mock.Anything).Return(types.Disks{{}, {}, {}, {}}, nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[],"stray":[{"id":7,"type":"osd"}]}`, nil).Twice()
+	expectNoOSDProcess(s.T(), m.runner, osd)
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,1,2,7]", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "down", "osd.7").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "safe-to-destroy", "osd.7").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "purge", "osd.7", "--yes-i-really-mean-it").Return("", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,1,2]", nil).Once()
+	s.expectRecordRemoved(m, osd)
+
+	err := doRemoveOSD(context.Background(), m.state, osd, false)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{
+		"ceph osd tree -f json",
+		"pkill -f ceph-osd .* --id 7$",
+		"ceph osd tree -f json",
+		"ceph osd ls -f json",
+		"ceph osd down osd.7",
+		"ceph osd safe-to-destroy osd.7",
+		"ceph osd purge osd.7 --yes-i-really-mean-it",
+		"ceph osd ls -f json",
+	}, ranCommandsFrom(m.runner, "ceph osd tree -f json"))
+}
+
+// TestDoRemoveOSDSkipsPurgeWhenIdIsNotInOSDMap tests that an OSD that is neither in the CRUSH tree
+// nor in the OSD map, as when it never got that far, is removed locally without a down or a purge.
+func (s *osdSuite) TestDoRemoveOSDSkipsPurgeWhenIdIsNotInOSDMap() {
+	const osd = int64(7)
+	s.noWaitForPresence()
+	m := s.setupRemoveOSD(osd)
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[]}`, nil).Twice()
+	expectNoOSDProcess(s.T(), m.runner, osd)
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("[0,1,2]", nil).Once()
+	s.expectRecordRemoved(m, osd)
+
+	err := doRemoveOSD(context.Background(), m.state, osd, true)
+	require.NoError(s.T(), err)
+
+	assert.NoDirExists(s.T(), getOSDDataPath(osd))
+}
+
+// TestDoRemoveOSDFailsWhenOSDMapCannotBeRead tests that an OSD that is not in the CRUSH tree is not
+// removed locally while it is unknown whether its id is in the OSD map, and that its autostart
+// marker comes back.
+func (s *osdSuite) TestDoRemoveOSDFailsWhenOSDMapCannotBeRead() {
+	const osd = int64(7)
+	s.noWaitForPresence()
+	m := s.setupRemoveOSD(osd)
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[]}`, nil).Twice()
+	expectNoOSDProcess(s.T(), m.runner, osd)
+	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("", fmt.Errorf("monitors unreachable")).Once()
+
+	err := doRemoveOSD(context.Background(), m.state, osd, true)
+	assert.ErrorContains(s.T(), err, "failed to check if osd.7 is in the OSD map")
+
+	osdDataPath := getOSDDataPath(osd)
+	assert.DirExists(s.T(), osdDataPath)
+	assert.FileExists(s.T(), osdReadyMarkerPath(osdDataPath))
+	assert.NoFileExists(s.T(), osdSuppressedReadyMarkerPath(osdDataPath))
 }
 
 // TestTestSafeStop tests OSD safe stop check

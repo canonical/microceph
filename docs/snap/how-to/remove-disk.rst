@@ -79,6 +79,11 @@ To remove the disk:
 
    sudo microceph disk remove osd.4
 
+Unless ``--bypass-safety-checks`` is specified, removal checks that Ceph
+reports the OSD as safe to destroy before purging it. This also applies when
+the OSD is absent from the CRUSH tree but still present in the OSD map; if the
+check fails, removal does not purge the OSD.
+
 Verify that the OSD has been removed:
 
 .. code-block:: none
