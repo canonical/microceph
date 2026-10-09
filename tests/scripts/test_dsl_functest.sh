@@ -2226,10 +2226,58 @@ function test_dsl_remove_osd_cleanup_survives_daemon_restart() {
     wait_for_path_missing_in_vm "$db_target" 240
 }
 
+# The disk a partition is on, as /dev/<name>, or nothing if that cannot be told.
+# It only feeds failure reports, so it must not fail the test itself.
+function get_partition_parent_disk() {
+    local partition="$1"
+    local parent
+
+    parent=$(vm_shell "lsblk -no PKNAME '$partition' | head -n1") || true
+    if [[ -n "$parent" ]]; then
+        echo "/dev/$parent"
+    fi
+}
+
+# Compare the sibling's on-disk entry and kernel geometry across removal, not
+# just its device node: a whole-disk refresh could recreate a node with changed
+# boundaries or identity while the other OSD is still using it.
+function get_partition_table_record() {
+    local carrier="$1" partition="$2" number
+    number=$(partition_number_from_path "$partition")
+    vm_exec sfdisk --json "$carrier" | jq -ec --arg n "$number" '[.partitiontable.partitions[] | select(.node | endswith($n))] | if length == 1 then .[0] else error("expected exactly one partition") end'
+}
+
+function get_kernel_partition_record() {
+    vm_exec lsblk --nodeps --bytes --noheadings --output MAJ:MIN,START,SIZE,PARTUUID "$1"
+}
+
+function surviving_osd_up() {
+    vm_exec microceph.ceph osd dump -f json | jq -e --argjson id "$1" '.osds[] | select(.osd == $id and .up == 1 and .in == 1)' >/dev/null
+}
+
+# Print what is needed to name the error behind a failed generated WAL/DB
+# partition cleanup: the daemon log, and for each carrier disk the partition
+# table on disk (partx, sfdisk) and the kernel's view of it (lsblk).
+function collect_waldb_cleanup_diagnostics() {
+    local carrier
+
+    log "Collecting WAL/DB cleanup diagnostics from VM '$VM_NAME'"
+    vm_exec snap logs microceph.daemon -n 200 || true
+    for carrier in "$@"; do
+        [[ -n "$carrier" ]] || continue
+        log "Carrier $carrier"
+        vm_exec partx --show "$carrier" || true
+        vm_exec sfdisk --dump "$carrier" || true
+        vm_exec lsblk -o NAME,PATH,PKNAME,TYPE,SIZE,FSTYPE,RO,MOUNTPOINTS "$carrier" || true
+    done
+}
+
 function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     log "Test: removing one of two OSDs only cleans its generated WAL/DB partitions"
     local output osd1_path osd2_path osd1_id osd2_id osd1_dir osd2_dir
     local osd1_wal osd1_db osd2_wal osd2_db
+    local osd1_wal_carrier osd1_db_carrier remove_status remove_output
+    local wal_table_before db_table_before wal_kernel_before db_kernel_before
 
     osd1_path=$(get_available_disk_path_by_size "10GiB")
     osd2_path=$(get_available_disk_path_by_size "11GiB")
@@ -2253,7 +2301,23 @@ function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     assert_path_exists_in_vm "$osd2_wal"
     assert_path_exists_in_vm "$osd2_db"
 
-    vm_exec_expect_success "first OSD remove should succeed" microceph disk remove "$osd1_id" --bypass-safety-checks >/dev/null
+    # Look the carriers up while the partitions still exist, to be able to report
+    # on them if the removal fails.
+    osd1_wal_carrier=$(get_partition_parent_disk "$osd1_wal")
+    osd1_db_carrier=$(get_partition_parent_disk "$osd1_db")
+    [[ -n "$osd1_wal_carrier" && -n "$osd1_db_carrier" ]] || fail "Could not resolve WAL/DB carriers for the shared-partition removal"
+    wal_table_before=$(get_partition_table_record "$osd1_wal_carrier" "$osd2_wal")
+    db_table_before=$(get_partition_table_record "$osd1_db_carrier" "$osd2_db")
+    wal_kernel_before=$(get_kernel_partition_record "$osd2_wal")
+    db_kernel_before=$(get_kernel_partition_record "$osd2_db")
+    [[ -n "$wal_table_before" && -n "$db_table_before" && -n "$wal_kernel_before" && -n "$db_kernel_before" ]] || fail "Could not record sibling WAL/DB partition state"
+
+    run_and_capture remove_status remove_output vm_exec microceph disk remove "$osd1_id" --bypass-safety-checks
+    echo "$remove_output" >&2
+    if [[ "$remove_status" != "0" ]]; then
+        collect_waldb_cleanup_diagnostics "$osd1_wal_carrier" "$osd1_db_carrier"
+        fail "first OSD remove should succeed (expected exit 0, got $remove_status)"
+    fi
     wait_for_configured_disk_count_eq 1 360
     wait_for_path_missing_in_vm "$osd1_wal" 240
     wait_for_path_missing_in_vm "$osd1_db" 240
@@ -2261,6 +2325,16 @@ function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     assert_path_exists_in_vm "$osd2_dir/block.db"
     assert_path_exists_in_vm "$osd2_wal"
     assert_path_exists_in_vm "$osd2_db"
+    # Existing /dev nodes alone do not prove the other OSD was untouched.
+    # Require only its WAL/DB partitions to remain on disk, with the same
+    # table records and kernel identities/geometry; then check its OSD is up.
+    assert_eq "$(vm_exec partx --show --noheadings --output NR "$osd1_wal_carrier" | tr -d '[:space:]')" "$(partition_number_from_path "$osd2_wal")" "WAL GPT must contain only the surviving OSD's partition"
+    assert_eq "$(vm_exec partx --show --noheadings --output NR "$osd1_db_carrier" | tr -d '[:space:]')" "$(partition_number_from_path "$osd2_db")" "DB GPT must contain only the surviving OSD's partition"
+    assert_eq "$(get_partition_table_record "$osd1_wal_carrier" "$osd2_wal")" "$wal_table_before" "sibling WAL GPT entry must not change"
+    assert_eq "$(get_partition_table_record "$osd1_db_carrier" "$osd2_db")" "$db_table_before" "sibling DB GPT entry must not change"
+    assert_eq "$(get_kernel_partition_record "$osd2_wal")" "$wal_kernel_before" "sibling WAL kernel partition must not change"
+    assert_eq "$(get_kernel_partition_record "$osd2_db")" "$db_kernel_before" "sibling DB kernel partition must not change"
+    wait_for_vm_command "surviving osd.$osd2_id to stay up" 180 surviving_osd_up "$osd2_id"
 }
 
 function test_dsl_snap_contains_partition_tools() {
