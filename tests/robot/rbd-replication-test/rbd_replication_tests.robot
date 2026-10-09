@@ -141,18 +141,18 @@ Remove Remote And Verify
 Test Bootstrap Two Sites
     [Documentation]    Bootstraps two independent 2-node MicroCeph clusters (sitea=wrk0/1, siteb=wrk2/3)
     ...    each with 2 loopback-file OSDs.
-    [Tags]    rbd    replication    remote
+    [Tags]    rbd    replication    remote    robot:exit-on-failure
     Bootstrap Two Sites
 
 Test Exchange Remote Tokens
     [Documentation]    Exports cluster tokens from each site and imports them on the other site.
-    [Tags]    rbd    replication    remote
+    [Tags]    rbd    replication    remote    robot:exit-on-failure
     Exchange Remote Site Tokens
 
 Test Verify Remote Authentication
     [Documentation]    Verifies that ceph commands can be issued against the remote cluster
     ...    using the imported credentials on both sites and all nodes.
-    [Tags]    rbd    replication    remote
+    [Tags]    rbd    replication    remote    robot:exit-on-failure
     Verify Remote Authentication On All Nodes
 
 Test Enable RBD Mirror Daemon

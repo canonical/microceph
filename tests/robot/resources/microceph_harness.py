@@ -2302,6 +2302,71 @@ class microceph_harness:
             ).stdout
         )
 
+    @staticmethod
+    def _is_cluster_export_deadline(stderr):
+        """Returns True when *stderr* is the control-socket deadline of `microceph cluster export` (pure helper).
+
+        Observed as 'Error: failed to fetch cluster state: Get "http://control.socket/1.0/cluster":
+        context deadline exceeded'. Both parts must be present, so no other timeout is retried.
+        """
+        text = stderr or ""
+        return "http://control.socket" in text and "context deadline exceeded" in text
+
+    def export_cluster_token(self, node, remote_name, attempts=10, interval=3):
+        """Returns a cluster export token, retrying only the control-socket deadline.
+
+        Snaps with the 5 s client deadline abandon a slow export with 'context deadline exceeded'.
+        The export is idempotent, so it is attempted up to *attempts* times, *interval* seconds
+        apart, and each retry is announced on the console. Any other failure, including the 60 s
+        exec timeout and an exit 0 without a token, raises at once. The command is echoed once;
+        the probes are quiet, so only retries are announced.
+        """
+        attempts = int(attempts)
+        token = [""]
+        last_error = [""]
+        attempt = [0]
+
+        def error_message(reason):
+            return f"failed to export cluster token for {remote_name} on {node}; last error: {reason}"
+
+        def predicate():
+            attempt[0] += 1
+            result = self.exec_in_container(
+                node,
+                "microceph",
+                "cluster",
+                "export",
+                remote_name,
+                timeout=60,
+                quiet=True,
+            )
+            token[0] = result.stdout.strip()
+            last_error[0] = result.stderr.strip()
+            if result.rc != 0:
+                if self._is_cluster_export_deadline(result.stderr):
+                    return False
+                raise AssertionError(error_message(last_error[0] or f"exit code {result.rc}"))
+            if token[0] == "":
+                raise AssertionError(error_message("empty token"))
+            return True
+
+        def announce():
+            if attempt[0] < attempts:
+                logger.console(
+                    f"[replication] transient cluster export error ({remote_name} on {node}), "
+                    f"attempt {attempt[0]}/{attempts}: {self._last_line(last_error[0])}; retrying..."
+                )
+
+        self._echo_cmd(f"[{node}] microceph cluster export {remote_name}", quiet=False)
+        self._poll_until(
+            predicate,
+            attempts=attempts,
+            interval=interval,
+            fail_msg=lambda: error_message(last_error[0]),
+            between=announce,
+        )
+        return token[0]
+
     def assert_remote_list_has(self, node, field, value):
         """Asserts microceph remote list on *node* has an entry whose *field* == *value*.
 

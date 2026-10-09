@@ -1,2 +1,2 @@
-robotframework>=7.0
+robotframework>=7.2
 pytest>=7.0
