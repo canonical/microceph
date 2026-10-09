@@ -329,7 +329,7 @@ func (s *RbdReplicationSuite) TestDisableHandlerNamedRemote() {
 }
 
 // TestDisableHandlerNamedRemoteNotAPeer checks that a named remote the pool is not
-// mirrored with is refused before any image is touched.
+// mirrored with is refused before any image is touched, without suggesting an import.
 func (s *RbdReplicationSuite) TestDisableHandlerNamedRemoteNotAPeer() {
 	s.stubRemotes(
 		types.RemoteRecord{ID: 3, Name: "adecoy", LocalName: "decoy"},
@@ -340,7 +340,8 @@ func (s *RbdReplicationSuite) TestDisableHandlerNamedRemoteNotAPeer() {
 	rh := poolHandler(types.RbdResourcePool, simplePeer)
 	rh.Request.RemoteName = "adecoy"
 	err := s.disable(rh)
-	assert.ErrorContains(s.T(), err, "no matching remote is configured")
+	assert.ErrorContains(s.T(), err, `requested remote (adecoy) does not match pool (pool) mirror peer site (simple)`)
+	assert.NotContains(s.T(), err.Error(), "import")
 }
 
 // TestDisableHandlerNoPeers checks that a pool that has mirroring enabled but no peer is

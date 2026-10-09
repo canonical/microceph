@@ -393,7 +393,7 @@ func handlePoolDisablement(rh *RbdReplicationHandler, remotes types.RemoteRecord
 
 	// Find the remote before anything is changed, so that a pool whose remote cannot be found
 	// is left as it is.
-	remote, peer, err := resolvePoolRemote(rh.Request.SourcePool, rh.PoolInfo.Peers, remotes)
+	remote, peer, err := resolvePoolRemote(rh.Request.SourcePool, rh.Request.RemoteName, rh.PoolInfo.Peers, remotes)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return err
@@ -479,7 +479,9 @@ func remoteNames(remotes types.RemoteRecords) []string {
 // Re-registered peers may have different IDs for the same site. Distinct sites
 // must be rejected even if only one is imported or the request names a remote:
 // DisablePoolMirroring removes only one site's peers before disabling the pool.
-func resolvePoolRemote(pool string, peers []RbdReplicationPeer, remotes types.RemoteRecords) (types.RemoteRecord, RbdReplicationPeer, error) {
+// A named request filters remotes, so its mismatch cannot establish whether
+// the peer site's remote is imported.
+func resolvePoolRemote(pool string, requestedName string, peers []RbdReplicationPeer, remotes types.RemoteRecords) (types.RemoteRecord, RbdReplicationPeer, error) {
 	if len(peers) == 0 {
 		return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf("pool (%s) has no mirror peer registered, cannot tell which remote to disable it on", pool)
 	}
@@ -498,6 +500,13 @@ func resolvePoolRemote(pool string, peers []RbdReplicationPeer, remotes types.Re
 		if remote.Name == peer.RemoteName {
 			return remote, peer, nil
 		}
+	}
+
+	if requestedName != "" {
+		return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf(
+			"requested remote (%s) does not match pool (%s) mirror peer site (%s)",
+			requestedName, pool, peer.RemoteName,
+		)
 	}
 
 	return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf(

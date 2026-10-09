@@ -28,9 +28,12 @@ identity used to access the remote cluster.
 MicroCeph does not check this naming relationship when importing a remote or
 enabling mirroring. When disabling a mirrored pool, MicroCeph identifies its
 remote by matching the pool peer's site name to a locally imported remote name.
-If no remote has that name, disable returns an error before changing image
-journaling. A mismatched ``--local-name`` can also cause remote authentication
-or peer removal to fail. Check ``microceph remote list`` and
+If no remote has that name, an unnamed disable request returns an import
+error before changing image journaling. If an API request explicitly names a
+different remote, disable instead reports the name mismatch; it cannot infer
+from the selected remote whether the peer's remote has been imported. A
+mismatched ``--local-name`` can also cause remote authentication or peer
+removal to fail. Check ``microceph remote list`` and
 ``microceph replication status rbd pool_one`` on both sites before disabling;
 the peer name on each site must match the remote name imported there.
 
