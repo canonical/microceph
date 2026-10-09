@@ -19,6 +19,7 @@ Available commands:
    mgr         Enable the MGR service on the --target server (default: this server)
    mon         Enable the MON service on the --target server (default: this server)
    nfs         Enable the NFS Ganesha service on the --target server (default: this server)
+   smb         Enable a managed SMB service instance on the --target server (default: this server)
    rgw         Enable the RGW service on the --target server (default: this server)
 
 Global flags:
@@ -114,6 +115,33 @@ Flags:
    --v4-min-version uint   Minimum supported version (default 1)
    --wait                  Wait for nfs service to be up (default true)
 
+
+``smb``
+-------
+
+Enables a managed SMB service instance on the --target server (default: this server).
+
+Usage:
+
+.. code-block:: none
+
+   microceph enable smb --cluster-id <cluster-id> [--target <server>] [flags]
+
+Flags:
+
+.. code-block:: none
+
+   --bind-address stringArray  Client-facing IP address for smbd (repeatable)
+   --bind-network stringArray  Client-facing network from which smbd selects an address (repeatable)
+   --cluster-id string         SMB Cluster ID (must match regex: '^[A-Za-z0-9]([A-Za-z0-9-]{0,16}[A-Za-z0-9])?$')
+   --clustering string         always or never (creation default: always; updates inherit)
+   --credentials-file string   Read creation credentials from a JSON file, or - for stdin
+   --port int                  SMB listening port (default 445)
+   --target string             Server hostname (default: this server)
+   --user-group-ref stringArray     Reference an SMB users-and-groups resource (creation only, repeatable)
+   --wait                      Wait for the managed request; initial deployment requires the first share (default true)
+
+See :ref:`smb-reference` for lifecycle and configuration details.
 
 ``rgw``
 -------

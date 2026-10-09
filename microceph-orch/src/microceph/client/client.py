@@ -36,7 +36,9 @@ class Client:
 
         self.cluster = MicroClusterService(self._session, self._endpoint, self._certs)
         self.status = StatusService(self._session, self._endpoint, self._certs)
-        self.services = ExtendedAPIService(self._session, self._endpoint, self._certs)
+        self.services = ExtendedAPIService(
+            self._session, self._endpoint, self._certs, timeout=300
+        )
 
     @classmethod
     def from_socket(cls) -> "Client":

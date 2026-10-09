@@ -335,6 +335,12 @@ Flags:
 
    -f, --force   Forcibly remove the cluster member
 
+Address desired SMB placement before removing a member, including clusters
+that have not deployed their first share; see :ref:`smb-reference`. This
+member-removal ``--force`` flag is distinct from ``microceph disable smb
+--force``, which requests logical SMB cluster deletion. MicroCeph member
+removal uses targeted SMB member semantics and never selects logical deletion.
+
 
 ``sql``
 -------

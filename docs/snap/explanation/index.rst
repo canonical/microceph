@@ -22,6 +22,7 @@ Understand the steps to take to successfully deploy and manage your Ceph cluster
    cluster-scaling
    taking-snapshots
    replication
+   smb-concepts
 
 The Snap content interface
 --------------------------

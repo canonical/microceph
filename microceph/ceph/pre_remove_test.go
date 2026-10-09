@@ -1,9 +1,11 @@
 package ceph
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -156,6 +158,43 @@ func (s *clusterRemoveSuite) TestRemoveNodeForceSuppressesServiceDeletionFailure
 	err := removeNode(nil, "foonode", true)
 
 	assert.NoError(s.T(), err)
+}
+
+func (s *clusterRemoveSuite) TestDeleteNodeServicesUsesClusterAwareDeletionForGroupedServices() {
+	m := mocks.NewClientInterface(s.T())
+	client.MClient = m
+
+	services := types.Services{
+		{Service: "smb", Location: "foonode", GroupID: "files"},
+		{Service: "nfs", Location: "foonode", GroupID: "exports"},
+		{Service: "mon", Location: "foonode"},
+	}
+	m.On("GetServices", mock.Anything).Return(services, nil).Once()
+	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(nil).Once()
+
+	originalDisableSMB := disableManagedSMBForNodeFunc
+	originalDeleteNFS := deleteNFSForNodeFunc
+	s.T().Cleanup(func() {
+		disableManagedSMBForNodeFunc = originalDisableSMB
+		deleteNFSForNodeFunc = originalDeleteNFS
+	})
+	var deleted []string
+	disableManagedSMBForNodeFunc = func(_ context.Context, _ mcTypes.Client, request *types.ManagedSMBRemoval) error {
+		assert.Equal(s.T(), "files", request.ClusterID)
+		assert.Equal(s.T(), "foonode", request.Target)
+		assert.False(s.T(), request.Force, "cluster-member removal must not request logical deletion")
+		deleted = append(deleted, "smb:"+request.Target+":"+request.ClusterID)
+		return nil
+	}
+	deleteNFSForNodeFunc = func(_ context.Context, _ mcTypes.Client, target string, service *types.NFSService) error {
+		deleted = append(deleted, "nfs:"+target+":"+service.ClusterID)
+		return nil
+	}
+
+	err := deleteNodeServices(nil, "foonode")
+
+	assert.NoError(s.T(), err)
+	assert.ElementsMatch(s.T(), []string{"smb:foonode:files", "nfs:foonode:exports"}, deleted)
 }
 
 func (s *clusterRemoveSuite) TestDeleteNodeServicesAggregatesFailures() {

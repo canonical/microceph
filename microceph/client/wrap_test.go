@@ -12,6 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/canonical/microceph/microceph/api/types"
 )
 
 // queryCall records what one fakeClient.Query invocation was given.
@@ -22,19 +24,21 @@ type queryCall struct {
 	method      string
 	prefix      mcTypes.EndpointPrefix
 	url         string
+	input       any
 }
 
 // fakeClient is a minimal mcTypes.Client. Only Query is functional: it records
 // the context and request it receives, then returns the canned members or error.
 type fakeClient struct {
-	members []mcTypes.ClusterMember
-	err     error
-	calls   []queryCall
+	members    []mcTypes.ClusterMember
+	err        error
+	calls      []queryCall
+	useTargets []string
 }
 
 func (f *fakeClient) Query(ctx context.Context, method string, prefix mcTypes.EndpointPrefix, path *url.URL, in any, out any) error {
 	deadline, ok := ctx.Deadline()
-	call := queryCall{hasDeadline: ok, ctxErr: ctx.Err(), method: method, prefix: prefix, url: path.String()}
+	call := queryCall{hasDeadline: ok, ctxErr: ctx.Err(), method: method, prefix: prefix, url: path.String(), input: in}
 	if ok {
 		call.remaining = time.Until(deadline)
 	}
@@ -66,7 +70,10 @@ func (f *fakeClient) Websocket(context.Context, mcTypes.EndpointPrefix, *url.URL
 
 func (f *fakeClient) SetClusterNotification() { panic("not implemented") }
 
-func (f *fakeClient) UseTarget(string) mcTypes.Client { panic("not implemented") }
+func (f *fakeClient) UseTarget(target string) mcTypes.Client {
+	f.useTargets = append(f.useTargets, target)
+	return f
+}
 
 // assertBoundedCall checks that Query was called exactly once with a live
 // context that already carries the clusterQueryTimeout deadline.
@@ -141,4 +148,48 @@ func TestDeleteClusterMemberForceAndError(t *testing.T) {
 	assert.Equal(t, want, err)
 	call := assertBoundedCall(t, f)
 	assert.Equal(t, "/cluster/node-b?force=1", call.url)
+}
+
+func TestDisableManagedSMBSerializesAndRoutesOnlyMemberRemoval(t *testing.T) {
+	tests := []struct {
+		name        string
+		request     *types.ManagedSMBRemoval
+		wantTargets []string
+	}{
+		{name: "member", request: &types.ManagedSMBRemoval{ClusterID: "files", Target: "node-a"}, wantTargets: []string{"node-a"}},
+		{name: "deployment", request: &types.ManagedSMBRemoval{ClusterID: "files"}},
+		{name: "logical cluster", request: &types.ManagedSMBRemoval{ClusterID: "files", Force: true}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &fakeClient{}
+
+			err := DisableManagedSMB(context.Background(), fake, test.request)
+
+			require.NoError(t, err)
+			require.Len(t, fake.calls, 1)
+			assert.Equal(t, http.MethodDelete, fake.calls[0].method)
+			assert.Equal(t, "/managed-services/smb", fake.calls[0].url)
+			assert.Equal(t, test.request, fake.calls[0].input)
+			assert.Equal(t, test.wantTargets, fake.useTargets)
+			assert.True(t, fake.calls[0].hasDeadline)
+			assert.Greater(t, fake.calls[0].remaining, managedSMBClientTimeout-5*time.Second)
+		})
+	}
+}
+
+func TestDisableManagedSMBRejectsInvalidRequestWithoutTransport(t *testing.T) {
+	for _, request := range []*types.ManagedSMBRemoval{
+		nil,
+		{ClusterID: "files", Target: "node-a", Force: true},
+		{ClusterID: "files", Target: "node/a"},
+	} {
+		fake := &fakeClient{}
+
+		err := DisableManagedSMB(context.Background(), fake, request)
+
+		require.Error(t, err)
+		assert.Empty(t, fake.calls)
+		assert.Empty(t, fake.useTargets)
+	}
 }

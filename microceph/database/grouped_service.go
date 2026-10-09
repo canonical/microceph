@@ -1,5 +1,7 @@
 package database
 
+import "encoding/json"
+
 //go:generate -command mapper lxd-generate db mapper -t grouped_service.mapper.go
 //go:generate mapper reset
 //
@@ -41,4 +43,21 @@ type GroupedServiceFilter struct {
 type NFSServiceInfo struct {
 	BindAddress string `json:"bind_address"`
 	BindPort    uint   `json:"bind_port"`
+}
+
+// SMBServiceGroupConfig holds SMB configuration shared by all placed members.
+type SMBServiceGroupConfig struct {
+	// DesiredSpec is the complete upstream SMBSpec envelope requested by mgr/smb.
+	DesiredSpec  json.RawMessage `json:"desired_spec"`
+	CTDBRanks    map[string]int  `json:"ctdb_ranks,omitempty"`
+	NextCTDBRank int             `json:"next_ctdb_rank,omitempty"`
+}
+
+// SMBServiceInfo holds node-local SMB service metadata.
+type SMBServiceInfo struct {
+	ConfigURI    string          `json:"config_uri"`
+	CTDBRank     *int            `json:"ctdb_rank,omitempty"`
+	CTDBIdentity string          `json:"ctdb_identity,omitempty"`
+	AppliedSpec  json.RawMessage `json:"applied_spec,omitempty"`
+	ConfigDigest string          `json:"config_digest,omitempty"`
 }
