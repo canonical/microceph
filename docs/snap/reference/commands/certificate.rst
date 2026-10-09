@@ -51,6 +51,10 @@ key are written to disk. Use ``--restart`` to restart the RGW service and pick
 up the new certificate immediately. Without ``--restart``, the certificate is
 stored but the service must be restarted manually for the change to take effect.
 
+With ``--restart``, readiness is checked against the first ``CERTIFICATE`` block
+in the decoded PEM bundle, skipping blocks of other types. Place the server's
+leaf certificate before any chain certificates.
+
 Usage:
 
 .. code-block:: none
