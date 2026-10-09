@@ -17,6 +17,23 @@ Prerequisites
 3. Both clusters have 2 rbd pools: pool_one and pool_two.
 4. Both pools at cluster "primary_cluster" have 2 images each (image_one and image_two) while the pools at cluster "secondary_cluster" are empty.
 
+Use reciprocal names when importing the two clusters. If ``primary_cluster``
+imports ``secondary_cluster`` with ``--local-name primary_cluster``, then
+``secondary_cluster`` must import ``primary_cluster`` with
+``--local-name secondary_cluster``. On each site, the imported remote's name
+must match the other site's ``--local-name``. These names are used when Ceph
+registers the RBD pool's mirror peers; ``--local-name`` also selects the client
+identity used to access the remote cluster.
+
+MicroCeph does not check this naming relationship when importing a remote or
+enabling mirroring. When disabling a mirrored pool, MicroCeph identifies its
+remote by matching the pool peer's site name to a locally imported remote name.
+If no remote has that name, disable returns an error before changing image
+journaling. A mismatched ``--local-name`` can also cause remote authentication
+or peer removal to fail. Check ``microceph remote list`` and
+``microceph replication status rbd pool_one`` on both sites before disabling;
+the peer name on each site must match the remote name imported there.
+
 Enable RBD replication
 ----------------------
 
