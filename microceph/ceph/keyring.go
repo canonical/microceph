@@ -113,7 +113,7 @@ func ParseKeyring(path string) (string, error) {
 
 // CreateClientKey creates a client key and returns the said key hash without saving it as a file.
 // The key is read from the JSON that "ceph auth get-or-create" prints, and the call runs bound to ctx
-// so that the ceph process is stopped when the caller gives up.
+// so that the ceph process is stopped when the caller gives up. A second empty reply is an error.
 func CreateClientKey(ctx context.Context, clientName string, caps ...[]string) (string, error) {
 	entity := fmt.Sprintf("client.%s", clientName)
 	args := []string{
@@ -145,6 +145,10 @@ func CreateClientKey(ctx context.Context, clientName string, caps ...[]string) (
 		if err != nil {
 			return "", err
 		}
+	}
+
+	if strings.TrimSpace(output) == "" {
+		return "", fmt.Errorf("ceph auth returned empty output for %s after retry", entity)
 	}
 
 	return parseClientKey(output, entity)

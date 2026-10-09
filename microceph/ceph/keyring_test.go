@@ -108,7 +108,7 @@ func (ks *KeyringSuite) TestClientKeyringCreationStopsAfterTwoEmptyReplies() {
 
 	clientKey, err := CreateClientKey(context.Background(), "RemoteName")
 
-	assert.ErrorContains(ks.T(), err, "failed to parse the ceph auth output")
+	assert.ErrorContains(ks.T(), err, "ceph auth returned empty output for client.RemoteName after retry")
 	assert.Empty(ks.T(), clientKey)
 }
 
