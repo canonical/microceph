@@ -87,12 +87,29 @@ Verify CephFS Data Integrity
     Should Be Equal As Strings    ${node0_f1.stdout.strip()}    ${node2_f1.stdout.strip()}    msg=dir1/test_file mismatch between primary and secondary
     Should Be Equal As Strings    ${node0_f2.stdout.strip()}    ${node2_f2.stdout.strip()}    msg=dir2/test_file mismatch between primary and secondary
 
+Collect CephFS Disable Timeout Diagnostics
+    [Documentation]    Only on timeout: capture both primary-site mgr logs and process states, then make one bounded mirroring query.
+    FOR    ${node}    IN    node-wrk0    node-wrk1
+        ${diag}=    Exec In Container    ${node}    sh    -c    ps -eo pid,stat,wchan:25,args | grep -E '[c]eph-mgr|[c]eph fs snapshot mirror remove'; tail -n 80 /var/snap/microceph/common/logs/ceph-mgr.*.log 2>&1 || true    timeout=12    quiet=${True}
+        Log To Console    [cephfs] ${node} process/mgr log (rc=${diag.rc}): ${diag.stdout} ${diag.stderr}
+    END
+    ${probe}=    Exec In Container    node-wrk0    timeout    10    sudo    microceph.ceph    fs    snapshot    mirror    ls    vol    timeout=12    quiet=${True}
+    Log To Console    [cephfs] mirror ls (rc=${probe.rc}): ${probe.stdout} ${probe.stderr}
+
 Disable CephFS Mirroring
-    [Documentation]    Verifies non-forced disable fails, then force-disables mirroring.
+    [Documentation]    Verifies non-forced disable fails, then requires forced disable to finish within 60 s. A timeout captures bounded mgr diagnostics without changing the verdict.
     Log To Console    [cephfs] Disabling CephFS mirroring...
     ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "sudo microceph replication disable cephfs --volume vol 2>&1"    60
     Should Not Be Equal As Integers    ${result.rc}    0    msg=Non-forced disable should fail
-    Run In Container    node-wrk0    sudo microceph replication disable cephfs --volume vol --force    60
+    ${result}=    Exec In Container    node-wrk0    sudo    microceph    replication    disable    cephfs    --volume    vol    --force    timeout=60
+    IF    ${result.rc} == 124
+        TRY
+            Collect CephFS Disable Timeout Diagnostics
+        EXCEPT    AS    ${error}
+            Log To Console    [cephfs] timeout diagnostics failed: ${error}
+        END
+    END
+    Should Be Equal As Integers    ${result.rc}    0    msg=Forced CephFS disable failed: ${result.stderr}
 
 *** Test Cases ***
 Test Bootstrap Two Sites
