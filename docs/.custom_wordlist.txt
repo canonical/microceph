@@ -111,6 +111,7 @@ ise
 ize
 Jira
 journald
+journaling
 JSON
 Juju
 JWTs

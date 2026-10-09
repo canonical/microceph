@@ -39,6 +39,52 @@ Configure RBD Mirroring
     Run In Container    node-wrk0    microceph replication enable rbd pool_two/image_one --type journal --remote siteb    60
     Run In Container    node-wrk0    microceph replication enable rbd pool_two/image_two --type snapshot --remote siteb    60
 
+Verify Rejected Pool Disable Preserves State
+    [Arguments]    ${pool}    ${image}    ${error}
+    ${pool_before}=    Run In Container    node-wrk0    microceph.rbd mirror pool info ${pool} --format json    30
+    ${image_before}=    Run In Container    node-wrk0    microceph.rbd info ${pool}/${image} --format json    30
+    ${features_before}=    Evaluate    json.loads($image_before.stdout)["features"]    json
+    Should Contain    ${features_before}    journaling
+    ${result}=    Run In VM    lxc exec node-wrk0 -- sh -c "microceph replication disable rbd ${pool} --force 2>&1"    60
+    Should Not Be Equal As Integers    ${result.rc}    0
+    Should Contain    ${result.stdout}    ${error}
+    ${pool_after}=    Run In Container    node-wrk0    microceph.rbd mirror pool info ${pool} --format json    30
+    ${image_after}=    Run In Container    node-wrk0    microceph.rbd info ${pool}/${image} --format json    30
+    ${pool_unchanged}=    Evaluate    json.loads($pool_before.stdout) == json.loads($pool_after.stdout)    json
+    Should Be True    ${pool_unchanged}    msg=Rejected disable changed pool mode or peers
+    ${features_after}=    Evaluate    json.loads($image_after.stdout)["features"]    json
+    Should Be Equal    ${features_after}    ${features_before}
+
+Verify Disable Without Imported Remote
+    Run In Container    node-wrk0    microceph.ceph osd pool create pool_validation    60
+    Run In Container    node-wrk0    microceph.rbd pool init pool_validation    30
+    Run In Container    node-wrk0    microceph.rbd create --size 16 pool_validation/image    30
+    Run In Container    node-wrk0    microceph.rbd feature enable pool_validation/image journaling    30
+    Run In Container    node-wrk0    microceph.rbd mirror pool enable pool_validation pool    30
+    Verify Rejected Pool Disable Preserves State    pool_validation    image    no remote configured on this site
+
+Verify Disable Without Mirror Peer
+    Verify Rejected Pool Disable Preserves State    pool_validation    image    no mirror peer registered
+
+Verify Disable With Unimported Peer Site
+    # Ceph permits only one receive peer. Use a transmit peer for the imported
+    # site and a receive peer for the unimported site, without starting mirroring.
+    ${matched}=    Run In Container    node-wrk0    microceph.rbd mirror pool peer add pool_validation client.admin@siteb --direction rx-only    30
+    TRY
+        Run In Container    node-wrk0    microceph.rbd mirror pool peer set pool_validation ${matched.stdout.strip()} direction tx-only    30
+        ${unmatched}=    Run In Container    node-wrk0    microceph.rbd mirror pool peer add pool_validation client.admin@unimported --direction rx-only    30
+        TRY
+            Verify Rejected Pool Disable Preserves State    pool_validation    image    multiple peer sites
+        FINALLY
+            Run In Container    node-wrk0    microceph.rbd mirror pool peer remove pool_validation ${unmatched.stdout.strip()}    30
+        END
+    FINALLY
+        Run In Container    node-wrk0    microceph.rbd mirror pool peer remove pool_validation ${matched.stdout.strip()}    30
+        Run In Container    node-wrk0    microceph.rbd feature disable pool_validation/image journaling    30
+        Run In Container    node-wrk0    microceph.rbd mirror pool disable pool_validation    60
+        Run In Container    node-wrk0    microceph.rbd rm pool_validation/image    30
+    END
+
 Wait For Secondary Sync
     [Documentation]    Polls until at least ${threshold} images are synchronised to siteb.
     [Arguments]    ${threshold}
@@ -144,10 +190,22 @@ Test Bootstrap Two Sites
     [Tags]    rbd    replication    remote
     Bootstrap Two Sites
 
+Test Disable Without Imported Remote
+    [Documentation]    Rejects missing remote imports without changing image journaling or pool mirroring.
+    Verify Disable Without Imported Remote
+
 Test Exchange Remote Tokens
     [Documentation]    Exports cluster tokens from each site and imports them on the other site.
     [Tags]    rbd    replication    remote
     Exchange Remote Site Tokens
+
+Test Disable Without Mirror Peer
+    [Documentation]    Rejects an unpeered mirrored pool before changing its images.
+    Verify Disable Without Mirror Peer
+
+Test Disable With Unimported Peer Site
+    [Documentation]    Rejects a second peer site even when only the first site is imported and force is set.
+    Verify Disable With Unimported Peer Site
 
 Test Verify Remote Authentication
     [Documentation]    Verifies that ceph commands can be issued against the remote cluster
