@@ -132,6 +132,26 @@ func rgwConfPorts(conf []byte) (int, int, error) {
 	return port, sslPort, nil
 }
 
+func resolveRGWTLSReuse(conf []byte) ([]byte, []byte, error) {
+	certPath, keyPath := rgwConfTLSPaths(conf)
+	if certPath == "" || keyPath == "" {
+		return nil, nil, fmt.Errorf("%w: TLS material must be supplied for this member", ErrPlacementOperationFailed)
+	}
+	cert, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: cannot read the local RGW certificate: %w", ErrPlacementOperationFailed, err)
+	}
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: cannot read the local RGW private key: %w", ErrPlacementOperationFailed, err)
+	}
+	_, err = tls.X509KeyPair(cert, key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: the local RGW TLS pair is unusable", ErrPlacementOperationFailed)
+	}
+	return cert, key, nil
+}
+
 func pairOnDisk(certPath, keyPath string, certPEM, keyPEM []byte) bool {
 	cert, certErr := os.ReadFile(certPath)
 	key, keyErr := os.ReadFile(keyPath)
