@@ -11,15 +11,22 @@ Run with pytest:
 """
 
 import base64
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import os
 import socket
 import sys
 from pathlib import Path
+import socketserver
+import subprocess
+import sys
+import threading
 
 import pytest
 
 import placement_status
 import rgw_probe
+import rgw_scenario
 import rgw_placement
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
@@ -331,6 +338,46 @@ def test_legacy_cephx_health_rejects_non_health_or_empty_checks():
     assert H._legacy_cephx_health_is_compatible(
         json.dumps({"status": "HEALTH_UNKNOWN", "checks": {"AUTH_INSECURE_CLIENT_KEY_TYPE": {"severity": "HEALTH_ERR"}}})
     ) is False
+
+
+# ---------------------------------------------------------------------------
+# _health_is_ok_ignoring
+# ---------------------------------------------------------------------------
+
+def test_health_is_ok_ignoring_accepts_health_ok():
+    assert H._health_is_ok_ignoring(json.dumps({"status": "HEALTH_OK", "checks": {}})) is True
+    assert H._health_is_ok_ignoring(json.dumps({"status": "HEALTH_OK", "checks": {}}), {"MON_CLOCK_SKEW"}) is True
+
+
+def test_health_is_ok_ignoring_accepts_warn_made_only_of_ignored_checks():
+    payload = json.dumps(
+        {"status": "HEALTH_WARN", "checks": {"MON_CLOCK_SKEW": {"severity": "HEALTH_WARN"}}}
+    )
+
+    assert H._health_is_ok_ignoring(payload, {"MON_CLOCK_SKEW"}) is True
+    assert H._health_is_ok_ignoring(payload, ()) is False
+    assert H._health_is_ok_ignoring(payload) is False
+
+
+def test_health_is_ok_ignoring_rejects_other_checks_err_and_malformed():
+    mixed = json.dumps(
+        {
+            "status": "HEALTH_WARN",
+            "checks": {
+                "MON_CLOCK_SKEW": {"severity": "HEALTH_WARN"},
+                "OSD_DOWN": {"severity": "HEALTH_WARN"},
+            },
+        }
+    )
+    err = json.dumps(
+        {"status": "HEALTH_ERR", "checks": {"MON_CLOCK_SKEW": {"severity": "HEALTH_WARN"}}}
+    )
+
+    assert H._health_is_ok_ignoring(mixed, {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring(err, {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring(json.dumps({"status": "HEALTH_WARN", "checks": {}}), {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring("not json", {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring(json.dumps([]), {"MON_CLOCK_SKEW"}) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1536,6 +1583,47 @@ def test_rgw_frontend_tls_paths_quoted_values_via_shlex():
 
 
 # ---------------------------------------------------------------------------
+# cluster_member_names
+# ---------------------------------------------------------------------------
+
+_DEPLOYMENT_SUMMARY = (
+    "MicroCeph deployment summary:\n"
+    "- rgw-mvm-first (10.0.0.11)\n"
+    "  Services: mds, mgr, mon, osd\n"
+    "  Disks: 1\n"
+    "- rgw-mvm-first-2 (10.0.0.12)\n"
+    "  Services: osd\n"
+    "  Disks: 1\n"
+)
+
+
+def test_cluster_member_names_parses_deployment_summary():
+    assert placement_status.cluster_member_names(_DEPLOYMENT_SUMMARY) == {
+        "rgw-mvm-first", "rgw-mvm-first-2",
+    }
+
+
+def test_cluster_member_names_does_not_treat_prefix_as_present():
+    # "rgw-mvm-first" is a substring of "rgw-mvm-first-2"; only the member
+    # whose own line actually names it may count as present.
+    text = "MicroCeph deployment summary:\n- rgw-mvm-first-2 (10.0.0.12)\n"
+    names = placement_status.cluster_member_names(text)
+    assert "rgw-mvm-first-2" in names
+    assert "rgw-mvm-first" not in names
+
+
+def test_cluster_member_names_ignores_service_and_disk_lines():
+    text = "MicroCeph deployment summary:\n- node-a (10.0.0.1)\n  Services: osd\n  Disks: 1\n"
+    assert placement_status.cluster_member_names(text) == {"node-a"}
+
+
+def test_cluster_member_names_empty_or_no_members_is_empty_set():
+    assert placement_status.cluster_member_names("") == set()
+    assert placement_status.cluster_member_names(None) == set()
+    assert placement_status.cluster_member_names("MicroCeph deployment summary:\n") == set()
+
+
+# ---------------------------------------------------------------------------
 # rgw_probe.material_needles
 # ---------------------------------------------------------------------------
 
@@ -2211,7 +2299,7 @@ def _probe_harness(monkeypatch, rc_for):
     calls = []
     seen = {}
 
-    def fake_exec(container, argv, timeout):
+    def fake_exec(container, argv, timeout, vm_name=None):
         calls.append((container, argv, timeout))
         url = argv[-1]
         seen[url] = seen.get(url, 0) + 1
@@ -2311,7 +2399,9 @@ def test_preflight_exec_targets_the_vm_or_the_container(monkeypatch):
     _with_logger(monkeypatch)
     h = H()
     vm_calls, ct_calls = [], []
-    monkeypatch.setattr(h, "run_in_vm", lambda cmd, timeout, quiet=False: vm_calls.append((cmd, timeout, quiet)))
+    monkeypatch.setattr(
+        h, "run_in_vm", lambda cmd, timeout, quiet=False, vm_name=None: vm_calls.append((cmd, timeout, quiet, vm_name))
+    )
     monkeypatch.setattr(
         h, "exec_in_container",
         lambda container, *argv, timeout, quiet: ct_calls.append((container, argv, timeout, quiet)),
@@ -2319,8 +2409,12 @@ def test_preflight_exec_targets_the_vm_or_the_container(monkeypatch):
 
     h._preflight_exec("", ["curl", "-H", "Snap-Device-Series: 16", "http://x/"], 20)
     h._preflight_exec("node-wrk0", ["curl", "http://x/"], 20)
+    h._preflight_exec("", ["curl", "http://x/"], 20, vm_name="guest-vm")
 
-    assert vm_calls == [("curl -H 'Snap-Device-Series: 16' http://x/", 20, True)]
+    assert vm_calls == [
+        ("curl -H 'Snap-Device-Series: 16' http://x/", 20, True, None),
+        ("curl http://x/", 20, True, "guest-vm"),
+    ]
     assert ct_calls == [("node-wrk0", ("curl", "http://x/"), 20, True)]
 
 
@@ -2336,7 +2430,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
     events = []
 
-    def fake_run_in_vm(cmd, timeout=300, quiet=False):
+    def fake_run_in_vm(cmd, timeout=300, quiet=False, vm_name=None):
         events.append(("vm", cmd, timeout))
         return _Res(0, snap_list_count + "\n" if "snap list" in cmd else "", "")
 
@@ -2348,7 +2442,9 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
         events.append(("exec", container, argv))
         return _Res(0, "", "")
 
-    monkeypatch.setattr(h, "probe_instance_network", lambda container="", *extra: events.append(("probe", container)))
+    monkeypatch.setattr(
+        h, "probe_instance_network", lambda container="", *extra, vm_name=None: events.append(("probe", container))
+    )
     monkeypatch.setattr(h, "run_in_vm", fake_run_in_vm)
     monkeypatch.setattr(h, "run_in_vm_and_check", fake_run_in_vm)
     monkeypatch.setattr(h, "run_in_container_unchecked", fake_run_in_container)
@@ -2356,7 +2452,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     monkeypatch.setattr(h, "exec_in_container", fake_exec_in_container)
     monkeypatch.setattr(
         h, "run_in_vm_with_snap_retry",
-        lambda cmd, timeout=300: events.append(("vm-snap-retry", cmd, timeout)),
+        lambda cmd, timeout=300, vm_name=None: events.append(("vm-snap-retry", cmd, timeout)),
     )
     monkeypatch.setattr(
         h, "run_in_container_with_snap_retry",
@@ -2366,7 +2462,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     # string those methods build (flags included) and the target they aim it at.
     monkeypatch.setattr(
         h, "_run_apt",
-        lambda container, cmd, timeout, label: events.append(("apt", container, cmd, timeout)),
+        lambda container, cmd, timeout, label, vm_name=None: events.append(("apt", container, cmd, timeout)),
     )
     return h, events
 
@@ -2666,7 +2762,8 @@ def _apt_target_harness(monkeypatch):
     h = H()
     calls = []
     monkeypatch.setattr(
-        h, "_run_apt", lambda container, cmd, timeout, label: calls.append((container, cmd, timeout, label))
+        h, "_run_apt",
+        lambda container, cmd, timeout, label, vm_name=None: calls.append((container, cmd, timeout, label)),
     )
     return h, calls
 
@@ -2943,6 +3040,41 @@ def test_wait_for_control_services_absent_timeout_on_persistent_bad_output(monke
 
 
 # ---------------------------------------------------------------------------
+# wait_for_cluster_members_in_vm (must decide via cluster_member_names, not a
+# substring search over the raw `microceph status` text)
+# ---------------------------------------------------------------------------
+
+def test_wait_for_cluster_members_in_vm_rejects_prefix_match(monkeypatch):
+    # Only "rgw-mvm-first-2" is actually a member; a substring search would
+    # wrongly report "rgw-mvm-first" present too.
+    h = H()
+    status_text = (
+        "MicroCeph deployment summary:\n"
+        "- rgw-mvm-first-2 (10.0.0.12)\n"
+        "  Services: osd\n"
+        "  Disks: 1\n"
+    )
+    monkeypatch.setattr(h, "run_in_vm", lambda *a, **k: _Res(0, status_text, ""))
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    with pytest.raises(AssertionError) as exc:
+        h.wait_for_cluster_members_in_vm("rgw-mvm-first", tries=1)
+    assert "rgw-mvm-first" in str(exc.value)
+
+
+def test_wait_for_cluster_members_in_vm_succeeds_on_exact_names(monkeypatch):
+    h = H()
+    status_text = (
+        "MicroCeph deployment summary:\n"
+        "- rgw-mvm-first (10.0.0.11)\n"
+        "- rgw-mvm-later (10.0.0.13)\n"
+    )
+    monkeypatch.setattr(h, "run_in_vm", lambda *a, **k: _Res(0, status_text, ""))
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    # Must not raise: both requested members are exact matches.
+    h.wait_for_cluster_members_in_vm("rgw-mvm-first", "rgw-mvm-later", tries=1)
+
+
+# ---------------------------------------------------------------------------
 # Single-system suite state sequencing
 # ---------------------------------------------------------------------------
 
@@ -2997,7 +3129,8 @@ def test_local_snap_install_caches_core26(monkeypatch):
     retried = []
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
     monkeypatch.setattr(
-        harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: retried.append((command, timeout))
+        harness, "run_in_vm_with_snap_retry",
+        lambda command, timeout=300, vm_name=None: retried.append((command, timeout)),
     )
 
     harness.install_microceph_from_local_snap("/tmp/microceph.snap")
@@ -3021,3 +3154,157 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "cat >" not in script
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
 
+
+class _ScenarioControlServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    pass
+
+
+@pytest.fixture
+def rgw_scenario_servers():
+    servers = []
+
+    def start(server):
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        servers.append((server, thread))
+        return server
+
+    yield start
+    for server, thread in servers:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def _run_rgw_scenario(*arguments):
+    return subprocess.run(
+        [sys.executable, rgw_scenario.__file__, *arguments],
+        env={**os.environ, "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"},
+        capture_output=True, text=True, timeout=10,
+    )
+
+
+@pytest.mark.parametrize("scenario", ["handover", "outage", "wrong object"])
+def test_rgw_scenario_migration(scenario, tmp_path, rgw_scenario_servers):
+    # Complete a handover between the old and new object reads. The PUT stays
+    # in flight until the sampler has observed that pair of HTTP responses.
+    sampled = threading.Event()
+    ready = {"old": scenario != "outage", "new": scenario == "wrong object"}
+    requests = 0
+
+    class ObjectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            nonlocal requests
+            gateway = "new" if self.headers["Host"].startswith("localhost:") else "old"
+            serves = ready[gateway]
+            requests += 1
+            if scenario == "handover" and requests == 1:
+                ready["new"] = True
+                ready["old"] = False
+            self.send_response(200 if serves else 503)
+            self.end_headers()
+            self.wfile.write(b"wrong object" if scenario == "wrong object" else b"expected object")
+            if requests >= 2:
+                sampled.set()
+
+        def log_message(self, *args):
+            pass
+
+    class ControlHandler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            observed = sampled.wait(5)
+            self.send_response(200 if observed else 500)
+            self.end_headers()
+            self.wfile.write(json.dumps({"status_code": 200 if observed else 500}).encode())
+
+        def log_message(self, *args):
+            pass
+
+    objects = rgw_scenario_servers(HTTPServer(("127.0.0.1", 0), ObjectHandler))
+    socket_path = str(tmp_path / "control.socket")
+    rgw_scenario_servers(_ScenarioControlServer(socket_path, ControlHandler))
+    result = _run_rgw_scenario(
+        "--socket", socket_path, "--timeout", "5", "migration", "{}",
+        "127.0.0.1", "localhost", str(objects.server_port), "/object", "expected object",
+    )
+    assert result.returncode == 0, result.stderr
+    result = json.loads(result.stdout)
+    assert placement_status.response_code(result["response"]) == 200
+    assert result["observation"]["samples"] > 0
+    assert result["observation"]["available"] is (scenario == "handover")
+    assert result["observation"]["replacement_ready"] is (scenario == "handover")
+
+
+@pytest.mark.parametrize("winner", ["a", "b"])
+def test_rgw_scenario_concurrent_requests_accept_either_winner(winner, tmp_path, rgw_scenario_servers):
+    locked = threading.Event()
+    rejected = threading.Event()
+    lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            name = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if name != winner:
+                locked.wait(5)
+            if lock.acquire(blocking=False):
+                locked.set()
+                overlapped = rejected.wait(5)
+                lock.release()
+                code = 200 if overlapped else 500
+            else:
+                rejected.set()
+                code = 409
+            self.send_response(code)
+            self.end_headers()
+            self.wfile.write(json.dumps({"status_code" if code == 200 else "error_code": code}).encode())
+
+        def log_message(self, *args):
+            pass
+
+    socket_path = str(tmp_path / "control.socket")
+    rgw_scenario_servers(_ScenarioControlServer(socket_path, Handler))
+    result = _run_rgw_scenario(
+        "--socket", socket_path, "--timeout", "5", "concurrent", '"a"', '"b"', "member-b",
+    )
+    assert result.returncode == 0, result.stderr
+    codes = [placement_status.response_code(response) for response in json.loads(result.stdout)["responses"]]
+    assert codes == ([200, 409] if winner == "a" else [409, 200])
+
+
+@pytest.mark.parametrize("failure", ["connection refused", "timeout"])
+def test_rgw_scenario_stops_sampler_when_request_fails(failure, tmp_path, rgw_scenario_servers):
+    release = threading.Event()
+
+    class ObjectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"expected object")
+
+        def log_message(self, *args):
+            pass
+
+    class StalledControlHandler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            release.wait(5)
+
+        def log_message(self, *args):
+            pass
+
+    objects = rgw_scenario_servers(HTTPServer(("127.0.0.1", 0), ObjectHandler))
+    socket_path = str(tmp_path / "control.socket")
+    if failure == "timeout":
+        rgw_scenario_servers(_ScenarioControlServer(socket_path, StalledControlHandler))
+    try:
+        # A lost stop signal would leave the non-daemon sampler running and
+        # make the foreground process exceed the outer test deadline.
+        result = _run_rgw_scenario(
+            "--socket", socket_path, "--timeout", "0.25", "migration", "{}",
+            "127.0.0.1", "localhost", str(objects.server_port), "/object", "expected object",
+        )
+        assert result.returncode != 0
+        assert result.stdout == ""
+    finally:
+        release.set()

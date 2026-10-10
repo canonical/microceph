@@ -213,6 +213,11 @@ jobs:
           - id: rgw-placement-tests
             name: Role-managed RGW placement single node
             suite: rgw-placement-tests
+
+          - id: rgw-placement-multivm-tests
+            name: Role-managed RGW placement multi VM
+            suite: rgw-placement-multivm-tests
+            runner: self-hosted-linux-amd64-jammy-xlarge
     steps:
       - name: Download snap
         uses: actions/download-artifact@v4
