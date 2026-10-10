@@ -344,10 +344,14 @@ Test Empty Waiting Policy Leaves Services Running
     [Documentation]    The empty members map is the waiting policy: it is stored (active)
     ...    but performs no service operations, so the gateway keeps serving.
     [Tags]    placement
+    ${inv_before}=    RGW Service Invocation ID In VM
+    Should Not Be Empty    ${inv_before}    msg=rgw unit must be running before the empty policy
     ${policy}=    Set Variable    {"mode":"reconcile","members":{}}
     ${resp}=    MicroCeph API Put    placement    ${policy}    timeout=300
     ${code}=    Response Status Code    ${resp}
     Should Be Equal As Integers    ${code}    200    msg=empty policy failed: ${resp}
+    ${inv_after}=    RGW Service Invocation ID In VM
+    Should Be Equal    ${inv_after}    ${inv_before}    msg=empty policy must leave the running service untouched
     ${active}=    Placement Policy Active
     Should Be Equal    ${active}    ${True}    msg=empty policy must be stored and active
     ${status}=    Get Placement Status JSON
@@ -359,9 +363,13 @@ Test Deleting The Policy Stands Down Without Touching Services
     [Documentation]    DELETE clears the desired state entirely: the policy is gone
     ...    (inactive, no stored intent) but the running service is untouched.
     [Tags]    placement
+    ${inv_before}=    RGW Service Invocation ID In VM
+    Should Not Be Empty    ${inv_before}    msg=rgw unit must be running before policy deletion
     ${resp}=    MicroCeph API Delete    placement
     ${code}=    Response Status Code    ${resp}
     Should Be Equal As Integers    ${code}    200    msg=policy deletion failed: ${resp}
+    ${inv_after}=    RGW Service Invocation ID In VM
+    Should Be Equal    ${inv_after}    ${inv_before}    msg=policy deletion must leave the running service untouched
     ${active}=    Placement Policy Active
     Should Be Equal    ${active}    ${False}    msg=deleted policy must leave no active state
     ${status}=    Get Placement Status JSON
@@ -418,3 +426,26 @@ Test Failed TLS Reuse Never Falls Back To Plaintext
     Should Be Equal    ${intent}[ssl]    ${True}
     ${leaks}=    RGW Policy Leaks Secrets    ${status}
     Should Be Equal    ${leaks}    ${False}    msg=failed apply must not store key material either
+
+Test Disabling A Live TLS Gateway Closes It And Removes Material
+    [Documentation]    Disable a running TLS-only gateway with its generated files
+    ...    still present, then check the listener, unit, observed frontend and
+    ...    material are all removed by the placement operation itself.
+    [Tags]    rgw    placement    tls
+    ${body_file}=    Write RGW TLS Policy In VM    ${MEMBER}    0    443    rgwb
+    ${resp}=    MicroCeph API Put From File In VM    placement    ${body_file}    timeout=300
+    ${code}=    Response Status Code    ${resp}
+    Should Be Equal As Integers    ${code}    200    msg=TLS setup before live disable failed: ${resp}
+    Wait For Member RGW Frontend    ${MEMBER}    ssl=${True}
+    Wait For RGW Unit State In VM
+    Wait For RGW SSL Port    localhost    443
+    ${paths}=    RGW TLS Material Paths In VM
+    Should Not Be Empty    ${paths}    msg=live TLS gateway must have generated material before disable
+    ${policy}=    Set Variable    {"mode":"reconcile","members":{"${MEMBER}":{"rgw":{"enabled":false}}}}
+    ${resp}=    MicroCeph API Put    placement    ${policy}    timeout=300
+    ${code}=    Response Status Code    ${resp}
+    Should Be Equal As Integers    ${code}    200    msg=live TLS disable failed: ${resp}
+    RGW Endpoint Closed In VM    localhost    443
+    Wait For RGW Unit State In VM    inactive=${True}
+    Wait For Member RGW Frontend    ${MEMBER}    present=${False}
+    Assert No RGW TLS Material Remains In VM
