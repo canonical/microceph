@@ -221,14 +221,16 @@ class rgw_placement:
     def rgw_endpoint_reachable_in_vm(self, host, port, vm_name=None):
         """Check TCP reachability, including TLS listeners that reject plaintext HTTP.
 
-        Only a completed connect or an explicit connection refusal is a valid
-        observation; guest and transport failures must not look like closure.
+        Only a completed connect or explicit refusals from every resolved address
+        are valid observations; guest and transport failures must not look like closure.
         """
         script = (
             "import socket, sys\n"
             "try:\n"
-            "    connection = socket.create_connection((sys.argv[1], int(sys.argv[2])), 2)\n"
-            "except ConnectionRefusedError:\n"
+            "    connection = socket.create_connection((sys.argv[1], int(sys.argv[2])), 2, all_errors=True)\n"
+            "except ExceptionGroup as errors:\n"
+            "    if not all(isinstance(error, ConnectionRefusedError) for error in errors.exceptions):\n"
+            "        raise\n"
             "    print('refused')\n"
             "else:\n"
             "    connection.close()\n"
