@@ -10,10 +10,17 @@ Run with pytest:
     pytest tests/robot/resources/test_harness_helpers.py
 """
 
+import base64
 import json
+import socket
+import sys
 from pathlib import Path
 
+import pytest
+
 import placement_status
+import rgw_probe
+import rgw_placement
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
 from snap_services import enabled_active_services
@@ -274,7 +281,6 @@ def test_coerce_xtrace_bool_true():
 def test_ceph_osd_counts_valid():
     payload = json.dumps({"osdmap": {"num_up_osds": 3, "num_in_osds": 2}})
     assert H._ceph_osd_counts(payload) == (3, 2)
-
 
 def test_ceph_osd_counts_missing_osdmap():
     assert H._ceph_osd_counts(json.dumps({})) == (0, 0)
@@ -1175,6 +1181,15 @@ def test_response_code_error_body():
     assert placement_status.response_code(_ERROR_RESPONSE) == 400
 
 
+def test_response_code_real_error_body_uses_error_code():
+    # microcluster error bodies carry status_code 0 next to the real error_code.
+    body = json.dumps({"type": "error", "status": "", "status_code": 0, "operation": "",
+                       "error_code": 400, "error": "bad request", "metadata": None})
+    assert placement_status.response_code(body) == 400
+    conflict = json.dumps({"type": "error", "status_code": 0, "error_code": 409, "error": "in progress"})
+    assert placement_status.response_code(conflict) == 409
+
+
 def test_response_code_garbage_is_zero():
     # Fail closed: comparisons against 200 must fail on unparseable bodies.
     assert placement_status.response_code("curl: (7) connection refused") == 0
@@ -1217,6 +1232,377 @@ def test_supported_capabilities_malformed_is_empty():
     assert placement_status.supported_capabilities("garbage") == []
     non_list = json.dumps({"status_code": 200, "metadata": {"supported": "nope"}})
     assert placement_status.supported_capabilities(non_list) == []
+
+
+# GET /1.0/placement body carrying an observed RGW member with a frontend, plus
+# a stored policy whose rgw entry has been stripped/redacted (no key material).
+_RGW_PLACEMENT_RESPONSE = json.dumps({
+    "status_code": 200,
+    "metadata": {
+        "active": True,
+        "policy": {
+            "mode": "reconcile",
+            "members": {
+                "node-a": {"rgw": {"enabled": True, "port": 8080, "ssl_port": 443}},
+            },
+        },
+        "observed": [
+            {"member": "node-a", "rgw": True,
+             "rgw_frontend": {"port": 8080, "ssl_port": 443, "ssl": True}},
+            {"member": "node-b", "control": True},
+        ],
+    },
+})
+
+
+def test_member_rgw_frontend_reports_ports_and_tls():
+    fe = placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-a")
+    assert fe == {"port": 8080, "ssl_port": 443, "ssl": True}
+
+
+def test_member_rgw_frontend_absent_member_is_empty():
+    # An existing member with no rgw_frontend key, and a member not present
+    # at all, both read as "no frontend reported" -- not an error.
+    assert placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-b") == {}
+    assert placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-z") == {}
+
+
+def test_member_rgw_frontend_malformed_body_raises():
+    # A malformed body must never read as "no frontend reported": absence and
+    # "cannot tell" are different outcomes, so garbage must fail closed.
+    for bad in ("garbage", "", _ERROR_RESPONSE, json.dumps({"status_code": 200})):
+        with pytest.raises(ValueError):
+            placement_status.member_rgw_frontend(bad, "node-a")
+
+
+def test_member_rgw_frontend_missing_observed_key_raises():
+    raw = json.dumps({"status_code": 200, "metadata": {"active": True}})
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(raw, "node-a")
+
+
+def test_member_rgw_frontend_malformed_observed_shape_raises():
+    not_a_list = json.dumps({"status_code": 200, "metadata": {"observed": "nope"}})
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(not_a_list, "node-a")
+
+    bad_frontend = json.dumps({
+        "status_code": 200,
+        "metadata": {"observed": [
+            {"member": "node-a", "rgw_frontend": {"port": 8080, "ssl": "not-a-bool"}},
+        ]},
+    })
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(bad_frontend, "node-a")
+
+    bad_port = json.dumps({
+        "status_code": 200,
+        "metadata": {"observed": [
+            {"member": "node-a", "rgw_frontend": {"port": 70000, "ssl": True}},
+        ]},
+    })
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(bad_port, "node-a")
+
+
+def test_placement_leaks_rgw_secrets_false_when_stripped():
+    # The stored policy carries port/ssl_port but no cert/key: no leak.
+    assert placement_status.placement_leaks_rgw_secrets(_RGW_PLACEMENT_RESPONSE) is False
+
+
+def test_placement_leaks_rgw_secrets_reject_malformed_status():
+    # Secret checks must fail closed: garbage or error bodies must not read as
+    # "nothing to leak".
+    for bad in ("garbage", "", _ERROR_RESPONSE, json.dumps({"status_code": 200})):
+        with pytest.raises(ValueError):
+            placement_status.placement_leaks_rgw_secrets(bad)
+    misshapen = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": "not-a-map"}},
+    })
+    with pytest.raises(ValueError):
+        placement_status.placement_leaks_rgw_secrets(misshapen)
+
+
+def test_placement_leaks_rgw_secrets_true_when_present():
+    leaky = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {
+            "node-a": {"rgw": {"enabled": True, "ssl_certificate": "Y2VydA=="}},
+        }}},
+    })
+    assert placement_status.placement_leaks_rgw_secrets(leaky) is True
+    leaky_key = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {
+            "node-a": {"rgw": {"enabled": True, "ssl_private_key": "a2V5"}},
+        }}},
+    })
+    assert placement_status.placement_leaks_rgw_secrets(leaky_key) is True
+
+
+_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL = json.dumps({
+    "status_code": 200,
+    "metadata": {
+        "active": True,
+        "policy": {
+            "mode": "reconcile",
+            "members": {
+                "node-a": {"rgw": {"enabled": True, "ssl": True, "ssl_port": 8443}},
+                "node-b": {"rgw": {"enabled": False}},
+            },
+        },
+        "observed": [
+            {"member": "node-a", "rgw": True, "rgw_frontend": {"ssl_port": 8443, "ssl": True}},
+            {"member": "node-b", "rgw": False},
+        ],
+        "placement_refusal": "keep-one invariant: refused to remove last mon on node-c",
+    },
+})
+
+
+def test_placement_metadata_strict_parse():
+    meta = placement_status.placement_metadata(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL)
+    assert meta["active"] is True
+    assert placement_status.placement_metadata(_RGW_PLACEMENT_RESPONSE) == {
+        "active": True,
+        "policy": {"mode": "reconcile", "members": {
+            "node-a": {"rgw": {"enabled": True, "port": 8080, "ssl_port": 443}},
+        }},
+        "observed": [
+            {"member": "node-a", "rgw": True,
+             "rgw_frontend": {"port": 8080, "ssl_port": 443, "ssl": True}},
+            {"member": "node-b", "control": True},
+        ],
+    }
+
+
+def test_placement_metadata_rejects_malformed_bodies():
+    for bad in ("garbage", "", "[1, 2, 3]", _ERROR_RESPONSE,
+                json.dumps({"status_code": 200}),
+                json.dumps({"status_code": 200, "metadata": "not-an-object"})):
+        with pytest.raises(ValueError):
+            placement_status.placement_metadata(bad)
+
+
+def test_placement_refusal_present_absent_and_malformed():
+    assert placement_status.placement_refusal(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL) == \
+        "keep-one invariant: refused to remove last mon on node-c"
+    # No recorded refusal reads as empty on a valid body.
+    assert placement_status.placement_refusal(_RGW_PLACEMENT_RESPONSE) == ""
+    with pytest.raises(ValueError):
+        placement_status.placement_refusal("garbage")
+    with pytest.raises(ValueError):
+        placement_status.placement_refusal(_ERROR_RESPONSE)
+
+
+def test_stored_policy_rgw_returns_member_intent():
+    intent = placement_status.stored_policy_rgw(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL, "node-a")
+    assert intent == {"enabled": True, "ssl": True, "ssl_port": 8443}
+    assert placement_status.stored_policy_rgw(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL, "node-b") == \
+        {"enabled": False}
+
+
+def test_stored_policy_rgw_absent_member_and_policy_are_empty():
+    assert placement_status.stored_policy_rgw(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL, "node-z") == {}
+    no_policy = json.dumps({"status_code": 200, "metadata": {"active": False}})
+    assert placement_status.stored_policy_rgw(no_policy, "node-a") == {}
+    # A member entry without an rgw field (omission policy) is also empty.
+    omitted = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"mode": "reconcile", "members": {"node-a": {"control": True}}}},
+    })
+    assert placement_status.stored_policy_rgw(omitted, "node-a") == {}
+
+
+def test_stored_policy_rgw_rejects_malformed_bodies():
+    # Before/after comparisons of accepted state must fail on garbage rather
+    # than compare {} == {}.
+    for bad in ("garbage", "", _ERROR_RESPONSE):
+        with pytest.raises(ValueError):
+            placement_status.stored_policy_rgw(bad, "node-a")
+    # Not a stored-boolean-policy compatibility check (out of scope; new
+    # placement requests are object-only) -- just another malformed rgw
+    # intent shape, a list where an object is required.
+    misshapen = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {"node-a": {"rgw": ["not", "an", "object"]}}}},
+    })
+    with pytest.raises(ValueError):
+        placement_status.stored_policy_rgw(misshapen, "node-a")
+
+
+def test_observed_rgw_members_flags():
+    flags = placement_status.observed_rgw_members(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL)
+    assert flags == {"node-a": True, "node-b": False}
+
+
+def test_observed_rgw_members_rejects_malformed_bodies():
+    for bad in ("garbage", "", _ERROR_RESPONSE,
+                json.dumps({"status_code": 200, "metadata": {"observed": "nope"}})):
+        with pytest.raises(ValueError):
+            placement_status.observed_rgw_members(bad)
+    bad_entry = json.dumps({
+        "status_code": 200,
+        "metadata": {"observed": [{"member": "node-a", "rgw": True}, "not-an-entry"]},
+    })
+    with pytest.raises(ValueError):
+        placement_status.observed_rgw_members(bad_entry)
+
+
+def test_rgw_frontend_conf_ports_plaintext():
+    conf = "rgw frontends = beast port=8080\n"
+    assert placement_status.rgw_frontend_conf_ports(conf) == {
+        "port": 8080, "ssl_port": 0, "ssl": False,
+    }
+
+
+def test_rgw_frontend_conf_ports_tls_only():
+    conf = "rgw frontends = beast ssl_port=443 ssl_certificate=/x/server.crt ssl_private_key=/x/server.key\n"
+    assert placement_status.rgw_frontend_conf_ports(conf) == {
+        "port": 0, "ssl_port": 443, "ssl": True,
+    }
+
+
+def test_rgw_frontend_conf_ports_dual_listener():
+    conf = "rgw frontends = beast port=8080 ssl_port=8443 ssl_certificate=/x/server.crt ssl_private_key=/x/server.key\n"
+    assert placement_status.rgw_frontend_conf_ports(conf) == {
+        "port": 8080, "ssl_port": 8443, "ssl": True,
+    }
+
+
+def test_rgw_frontend_conf_ports_rejects_missing_line_and_bad_values():
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_conf_ports("[global]\nrun dir = /x\n")
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_conf_ports("")
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_conf_ports("rgw frontends = beast port=notaport\n")
+
+
+# ---------------------------------------------------------------------------
+# rgw_frontend_tls_paths
+# ---------------------------------------------------------------------------
+
+def test_rgw_frontend_tls_paths_plaintext_is_empty():
+    conf = "rgw frontends = beast port=8080\n"
+    assert placement_status.rgw_frontend_tls_paths(conf) == []
+
+
+def test_rgw_frontend_tls_paths_full_pair_returns_exact_paths():
+    conf = (
+        "rgw frontends = beast port=8080 ssl_port=8443 "
+        "ssl_certificate=/var/snap/microceph/common/rgw-tls/abc/server.crt "
+        "ssl_private_key=/var/snap/microceph/common/rgw-tls/abc/server.key\n"
+    )
+    assert placement_status.rgw_frontend_tls_paths(conf) == [
+        "/var/snap/microceph/common/rgw-tls/abc/server.crt",
+        "/var/snap/microceph/common/rgw-tls/abc/server.key",
+    ]
+
+
+def test_rgw_frontend_tls_paths_half_pair_raises():
+    # A certificate with no matching key (or vice versa) must never read as
+    # "nothing to reference"; it is a broken reference and must fail.
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths(
+            "rgw frontends = beast ssl_port=8443 ssl_certificate=/x/server.crt\n"
+        )
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths(
+            "rgw frontends = beast ssl_port=8443 ssl_private_key=/x/server.key\n"
+        )
+
+
+def test_rgw_frontend_tls_paths_missing_line_raises():
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths("[global]\nrun dir = /x\n")
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths("")
+
+
+def test_rgw_frontend_tls_paths_quoted_values_via_shlex():
+    # Paths containing spaces are only recovered correctly if the tokenizer
+    # honours shell quoting rather than splitting on every space.
+    conf = (
+        'rgw frontends = beast ssl_port=8443 '
+        'ssl_certificate="/var/snap/microceph/common/rgw tls/abc/server.crt" '
+        'ssl_private_key="/var/snap/microceph/common/rgw tls/abc/server.key"\n'
+    )
+    assert placement_status.rgw_frontend_tls_paths(conf) == [
+        "/var/snap/microceph/common/rgw tls/abc/server.crt",
+        "/var/snap/microceph/common/rgw tls/abc/server.key",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# rgw_probe.material_needles
+# ---------------------------------------------------------------------------
+
+# A banner line, one long (>=32 byte) base64-looking body line, and a second
+# banner -- shaped like a real PEM without needing a real key.
+_PEM_BODY_LINE = b"A" * 44
+_PEM = b"-----BEGIN CERTIFICATE-----\n" + _PEM_BODY_LINE + b"\n-----END CERTIFICATE-----\n"
+
+
+def test_material_needles_includes_raw_base64_and_json_escaped_forms():
+    needles = rgw_probe.material_needles(_PEM)
+    assert _PEM in needles
+    assert base64.b64encode(_PEM) in needles
+    # JSON-embedding a PEM escapes its newlines to a literal backslash-n.
+    assert json.dumps(_PEM.decode("ascii"))[1:-1].encode() in needles
+
+
+def test_material_needles_includes_long_body_lines_excludes_banners():
+    needles = rgw_probe.material_needles(_PEM)
+    assert _PEM_BODY_LINE in needles
+    assert b"-----BEGIN CERTIFICATE-----" not in needles
+    assert b"-----END CERTIFICATE-----" not in needles
+
+
+def test_material_needles_excludes_short_body_lines():
+    short_pem = b"-----BEGIN CERTIFICATE-----\nshort\n-----END CERTIFICATE-----\n"
+    needles = rgw_probe.material_needles(short_pem)
+    assert b"short" not in needles
+
+
+def test_material_needles_dedups_across_repeated_material():
+    assert rgw_probe.material_needles(_PEM, _PEM) == rgw_probe.material_needles(_PEM)
+
+
+# ---------------------------------------------------------------------------
+# rgw_probe.file_contains_material
+# ---------------------------------------------------------------------------
+
+def test_file_contains_material_matches_in_first_chunk(tmp_path):
+    needle = b"super-secret-material"
+    path = tmp_path / "leak.txt"
+    path.write_bytes(b"prefix " + needle + b" suffix")
+    assert rgw_probe.file_contains_material(path, (needle,)) is True
+
+
+def test_file_contains_material_no_match(tmp_path):
+    path = tmp_path / "clean.txt"
+    path.write_bytes(b"nothing interesting in here")
+    assert rgw_probe.file_contains_material(path, (b"super-secret-material",)) is False
+
+
+def test_file_contains_material_empty_file_is_false(tmp_path):
+    path = tmp_path / "empty.txt"
+    path.write_bytes(b"")
+    assert rgw_probe.file_contains_material(path, (b"needle",)) is False
+
+
+def test_file_contains_material_matches_across_chunk_boundary(tmp_path):
+    # The reader works in 64KiB (65536-byte) chunks; place the needle so it
+    # starts just before that boundary and ends just after it, proving the
+    # overlap-retention logic (not a single unbroken chunk) finds the match.
+    needle = b"boundary-spanning-secret-material-marker"
+    before = b"a" * (65536 - 10)
+    after = b"b" * 4096
+    path = tmp_path / "boundary.txt"
+    path.write_bytes(before + needle + after)
+    assert rgw_probe.file_contains_material(path, (needle,)) is True
 
 
 def test_mon_count_prefers_monmap_num_mons():
@@ -1324,8 +1710,6 @@ def test_control_service_presence_requires_each_explicit_service():
 def test_control_service_presence_malformed_raises():
     # Unparseable output must not be reported as "service absent": an absence
     # assertion would otherwise pass on garbage rather than a genuine removal.
-    import pytest as _pytest
-
     mon = json.dumps({"quorum_names": ["node-a"]})
     mgr = json.dumps([{"name": "node-a"}])
     mds = json.dumps({"fsmap": {"standbys": [], "filesystems": []}})
@@ -1336,7 +1720,7 @@ def test_control_service_presence_malformed_raises():
         (mon, mgr, "bad"),
         ("", "", ""),
     ):
-        with _pytest.raises(ValueError):
+        with pytest.raises(ValueError):
             placement_status.control_service_presence(
                 bad_mon, bad_mgr, bad_mds, "node-a"
             )
@@ -1348,9 +1732,6 @@ def test_member_in_ceph_status_substring():
     assert placement_status.member_in_ceph_status(status, "node-wrk3") is False
     assert placement_status.member_in_ceph_status("", "node-wrk0") is False
     assert placement_status.member_in_ceph_status(None, "node-wrk0") is False
-
-
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -1402,6 +1783,158 @@ import microceph_harness as _mh
 from collections import namedtuple as _nt
 
 _Res = _nt("Res", ["rc", "stdout", "stderr"])
+
+
+# ---------------------------------------------------------------------------
+# RGW endpoint probe -- only an observed refusal counts as closed
+# ---------------------------------------------------------------------------
+
+def _rgw_probe_with_results(monkeypatch, results):
+    probe = rgw_placement.rgw_placement()
+    calls = []
+    replies = iter(results)
+
+    def fake_exec(args, vm_name=None, timeout=30, check=True):
+        calls.append((args, vm_name, check))
+        return next(replies)
+
+    monkeypatch.setattr(probe, "_exec", fake_exec)
+    return probe, calls
+
+
+@pytest.mark.parametrize("response, reachable", [
+    (_Res(0, "reachable\n", ""), True),
+    (_Res(0, "refused\n", ""), False),
+])
+def test_rgw_endpoint_probe_recognizes_guest_socket_observation(monkeypatch, response, reachable):
+    probe, _ = _rgw_probe_with_results(monkeypatch, [response])
+
+    assert probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480, vm_name="node-wrk1") is reachable
+
+
+@pytest.mark.parametrize("error", [
+    _Res(124, "refused\n", "Command timed out after 30s"),
+    _Res(1, "", "Error: Instance not found"),
+    _Res(1, "", "TimeoutError: timed out"),
+    _Res(0, "refused\n", "LXD warning: probe output incomplete"),
+])
+def test_rgw_endpoint_probe_rejects_execution_failures(monkeypatch, error):
+    probe, _ = _rgw_probe_with_results(monkeypatch, [error])
+
+    with pytest.raises(AssertionError):
+        probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480)
+
+
+@pytest.mark.parametrize("response", [
+    "",
+    "False\n",
+    "refused",
+    "refused\nreachable\n",
+    "timeout\n",
+])
+def test_rgw_endpoint_probe_rejects_malformed_guest_response(monkeypatch, response):
+    probe, _ = _rgw_probe_with_results(monkeypatch, [_Res(0, response, "")])
+
+    with pytest.raises(AssertionError, match="Unexpected RGW endpoint probe response"):
+        probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480)
+
+
+@pytest.mark.parametrize("outcomes, response", [
+    ([None], "reachable\n"),
+    ([ConnectionRefusedError()], "refused\n"),
+    ([ConnectionRefusedError(), ConnectionRefusedError()], "refused\n"),
+    ([ConnectionRefusedError(), None], "reachable\n"),
+    ([socket.timeout("timed out"), None], "reachable\n"),
+    ([socket.timeout("timed out")], None),
+    ([socket.timeout("timed out"), ConnectionRefusedError()], None),
+    ([ConnectionRefusedError(), socket.timeout("timed out")], None),
+    ([OSError("network unreachable"), ConnectionRefusedError()], None),
+])
+def test_rgw_endpoint_guest_script_preserves_all_address_outcomes(monkeypatch, capsys, outcomes, response):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", "")])
+    probe.rgw_endpoint_reachable_in_vm("gateway.example", 7480)
+    script = calls[0][0][2]
+    addresses = [(f"192.0.2.{index + 1}", 7480) for index in range(len(outcomes))]
+    errors = dict(zip(addresses, outcomes))
+    connections = []
+
+    class Connection:
+        def __init__(self, *args):
+            self.closed = False
+            connections.append(self)
+
+        def settimeout(self, timeout):
+            pass
+
+        def connect(self, address):
+            error = errors[address]
+            if error is not None:
+                raise error
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", address) for address in addresses
+    ])
+    monkeypatch.setattr(socket, "socket", Connection)
+    monkeypatch.setattr(sys, "argv", ["python3", "gateway.example", "7480"])
+    if response is None:
+        with pytest.raises(ExceptionGroup):
+            exec(script, {"__name__": "__main__"})
+        assert capsys.readouterr().out == ""
+    else:
+        exec(script, {"__name__": "__main__"})
+        assert capsys.readouterr().out == response
+    assert all(connection.closed for connection in connections)
+
+
+def test_rgw_endpoint_guest_script_rejects_dns_failure(monkeypatch, capsys):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", "")])
+    probe.rgw_endpoint_reachable_in_vm("gateway.example", 7480)
+
+    def fail_dns(*args):
+        raise socket.gaierror("name resolution failed")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail_dns)
+    monkeypatch.setattr(sys, "argv", ["python3", "gateway.example", "7480"])
+    with pytest.raises(socket.gaierror):
+        exec(calls[0][0][2], {"__name__": "__main__"})
+    assert capsys.readouterr().out == ""
+
+
+def test_wait_for_rgw_endpoint_closed_requires_observed_refusal(monkeypatch):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [
+        _Res(0, "reachable\n", ""),
+        _Res(0, "refused\n", ""),
+    ])
+
+    assert probe.wait_for_rgw_endpoint_closed_in_vm(
+        "10.0.0.3", 7480, vm_name="node-wrk1", attempts=3, interval=0
+    ) is False
+    assert len(calls) == 2
+    assert all(vm_name == "node-wrk1" for _, vm_name, _ in calls)
+
+
+def test_wait_for_rgw_endpoint_closed_remains_open_without_refusal(monkeypatch):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", "")] * 2)
+
+    assert probe.wait_for_rgw_endpoint_closed_in_vm("10.0.0.3", 7480, attempts=2, interval=0) is True
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("failure", [
+    _Res(124, "refused\n", "Command timed out after 30s"),
+    _Res(1, "", "Error: Instance not found"),
+    _Res(0, "", ""),
+    _Res(0, "refused\n", "LXD warning: probe output incomplete"),
+])
+def test_wait_for_rgw_endpoint_closed_never_accepts_probe_failure(monkeypatch, failure):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", ""), failure])
+
+    with pytest.raises(AssertionError):
+        probe.wait_for_rgw_endpoint_closed_in_vm("10.0.0.3", 7480, attempts=3, interval=0)
+    assert len(calls) == 2
 
 
 class _CapLogger:
@@ -2457,8 +2990,9 @@ def test_local_snap_install_caches_core26(monkeypatch):
     harness = H()
     commands = []
 
-    def fake_run_in_vm_and_check(command, timeout):
+    def fake_run_in_vm_and_check(command, timeout, quiet=False, vm_name=None):
         commands.append((command, timeout))
+        return None
 
     retried = []
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
@@ -2486,3 +3020,4 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "dpkg-deb -x" not in script
     assert "cat >" not in script
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
+
