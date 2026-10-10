@@ -167,9 +167,9 @@ class microceph_harness:
 
         Read lazily on every call rather than cached in __init__: calling BuiltIn()
         during library import raises RobotNotRunningError (the class is instantiated
-        for keyword discovery before a run context exists), and the still-in-Robot
-        Launch Outer Test VM keyword updates ${OUTER_VM} at runtime via
-        Set Suite Variable, so the primitives must observe the current value.
+        for keyword discovery before a run context exists). The launcher updates
+        ${OUTER_VM} before starting the VM so teardown observes the chosen name
+        even when setup fails.
         """
         return BuiltIn().get_variable_value("${OUTER_VM}", "microceph-test-vm")
 
@@ -1570,10 +1570,10 @@ class microceph_harness:
         cpu = BuiltIn().get_variable_value("${OUTER_VM_CPU}", "4")
         memory = BuiltIn().get_variable_value("${OUTER_VM_MEMORY}", "6GiB")
         image = BuiltIn().get_variable_value("${OUTER_VM_IMAGE}", "ubuntu:24.04")
-        self._launch_vm_instance(vm_name, disk_size, cpu, memory, image)
-        # Bridge: keep the still-in-Robot keywords and _outer_vm() in sync (replaces
-        # the original Set Suite Variable).
+        # Teardown must use the requested name if deletion, launch, or readiness
+        # fails; leaving the old name here could destroy an unrelated VM.
         BuiltIn().set_suite_variable("${OUTER_VM}", vm_name)
+        self._launch_vm_instance(vm_name, disk_size, cpu, memory, image)
 
     def _launch_vm_instance(self, vm_name, disk_size, cpu, memory, image):
         """Launches one LXD VM (delete-first, 3 attempts) and waits for agent + cloud-init.
