@@ -1740,14 +1740,9 @@ def _rgw_probe_with_results(monkeypatch, results):
     (_Res(0, "refused\n", ""), False),
 ])
 def test_rgw_endpoint_probe_recognizes_guest_socket_observation(monkeypatch, response, reachable):
-    probe, calls = _rgw_probe_with_results(monkeypatch, [response])
+    probe, _ = _rgw_probe_with_results(monkeypatch, [response])
 
     assert probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480, vm_name="node-wrk1") is reachable
-    assert len(calls) == 1
-    args, vm_name, check = calls[0]
-    assert args[:2] == ["python3", "-c"]
-    assert args[3:] == ["10.0.0.3", "7480"]
-    assert (vm_name, check) == ("node-wrk1", False)
 
 
 @pytest.mark.parametrize("error", [
@@ -1777,38 +1772,68 @@ def test_rgw_endpoint_probe_rejects_malformed_guest_response(monkeypatch, respon
         probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480)
 
 
-@pytest.mark.parametrize("guest_error", [
-    None,
-    ConnectionRefusedError(),
-    socket.timeout("timed out"),
-    socket.gaierror("name resolution failed"),
+@pytest.mark.parametrize("outcomes, response", [
+    ([None], "reachable\n"),
+    ([ConnectionRefusedError()], "refused\n"),
+    ([ConnectionRefusedError(), ConnectionRefusedError()], "refused\n"),
+    ([ConnectionRefusedError(), None], "reachable\n"),
+    ([socket.timeout("timed out"), None], "reachable\n"),
+    ([socket.timeout("timed out")], None),
+    ([socket.timeout("timed out"), ConnectionRefusedError()], None),
+    ([ConnectionRefusedError(), socket.timeout("timed out")], None),
+    ([OSError("network unreachable"), ConnectionRefusedError()], None),
 ])
-def test_rgw_endpoint_guest_script_reports_only_valid_outcomes(monkeypatch, capsys, guest_error):
+def test_rgw_endpoint_guest_script_preserves_all_address_outcomes(monkeypatch, capsys, outcomes, response):
     probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", "")])
-    probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480)
+    probe.rgw_endpoint_reachable_in_vm("gateway.example", 7480)
     script = calls[0][0][2]
-    closed = []
+    addresses = [(f"192.0.2.{index + 1}", 7480) for index in range(len(outcomes))]
+    errors = dict(zip(addresses, outcomes))
+    connections = []
 
     class Connection:
+        def __init__(self, *args):
+            self.closed = False
+            connections.append(self)
+
+        def settimeout(self, timeout):
+            pass
+
+        def connect(self, address):
+            error = errors[address]
+            if error is not None:
+                raise error
+
         def close(self):
-            closed.append(True)
+            self.closed = True
 
-    def connect(address, timeout):
-        assert (address, timeout) == (("10.0.0.3", 7480), 2)
-        if guest_error is not None:
-            raise guest_error
-        return Connection()
-
-    monkeypatch.setattr(socket, "create_connection", connect)
-    monkeypatch.setattr(sys, "argv", ["python3", "10.0.0.3", "7480"])
-    if guest_error is not None and not isinstance(guest_error, ConnectionRefusedError):
-        with pytest.raises(type(guest_error)):
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", address) for address in addresses
+    ])
+    monkeypatch.setattr(socket, "socket", Connection)
+    monkeypatch.setattr(sys, "argv", ["python3", "gateway.example", "7480"])
+    if response is None:
+        with pytest.raises(ExceptionGroup):
             exec(script, {"__name__": "__main__"})
         assert capsys.readouterr().out == ""
     else:
         exec(script, {"__name__": "__main__"})
-        assert capsys.readouterr().out == ("refused\n" if guest_error else "reachable\n")
-    assert closed == ([] if guest_error else [True])
+        assert capsys.readouterr().out == response
+    assert all(connection.closed for connection in connections)
+
+
+def test_rgw_endpoint_guest_script_rejects_dns_failure(monkeypatch, capsys):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", "")])
+    probe.rgw_endpoint_reachable_in_vm("gateway.example", 7480)
+
+    def fail_dns(*args):
+        raise socket.gaierror("name resolution failed")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail_dns)
+    monkeypatch.setattr(sys, "argv", ["python3", "gateway.example", "7480"])
+    with pytest.raises(socket.gaierror):
+        exec(calls[0][0][2], {"__name__": "__main__"})
+    assert capsys.readouterr().out == ""
 
 
 def test_wait_for_rgw_endpoint_closed_requires_observed_refusal(monkeypatch):

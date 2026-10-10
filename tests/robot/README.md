@@ -90,3 +90,4 @@ nfs-multinode-test                           wiping-test
   no raw bash in test bodies.
 - Keyword bodies in the harness may contain bash; that is implementation detail.
 - New harness keywords go under the relevant section comment in the resource file.
+- RGW endpoint-closure probes require connection refusals from every resolved address. Timeouts, DNS or routing failures, guest execution failures, and malformed output fail the check instead of proving closure. The probe requires Python 3.11+ in the guest, provided by the default Ubuntu 24.04 image.
