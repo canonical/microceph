@@ -12,12 +12,15 @@ Run with pytest:
 
 import base64
 import json
+import socket
+import sys
 from pathlib import Path
 
 import pytest
 
 import placement_status
 import rgw_probe
+import rgw_placement
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
 from snap_services import enabled_active_services
@@ -1713,6 +1716,133 @@ import microceph_harness as _mh
 from collections import namedtuple as _nt
 
 _Res = _nt("Res", ["rc", "stdout", "stderr"])
+
+
+# ---------------------------------------------------------------------------
+# RGW endpoint probe -- only an observed refusal counts as closed
+# ---------------------------------------------------------------------------
+
+def _rgw_probe_with_results(monkeypatch, results):
+    probe = rgw_placement.rgw_placement()
+    calls = []
+    replies = iter(results)
+
+    def fake_exec(args, vm_name=None, timeout=30, check=True):
+        calls.append((args, vm_name, check))
+        return next(replies)
+
+    monkeypatch.setattr(probe, "_exec", fake_exec)
+    return probe, calls
+
+
+@pytest.mark.parametrize("response, reachable", [
+    (_Res(0, "reachable\n", ""), True),
+    (_Res(0, "refused\n", ""), False),
+])
+def test_rgw_endpoint_probe_recognizes_guest_socket_observation(monkeypatch, response, reachable):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [response])
+
+    assert probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480, vm_name="node-wrk1") is reachable
+    assert len(calls) == 1
+    args, vm_name, check = calls[0]
+    assert args[:2] == ["python3", "-c"]
+    assert args[3:] == ["10.0.0.3", "7480"]
+    assert (vm_name, check) == ("node-wrk1", False)
+
+
+@pytest.mark.parametrize("error", [
+    _Res(124, "refused\n", "Command timed out after 30s"),
+    _Res(1, "", "Error: Instance not found"),
+    _Res(1, "", "TimeoutError: timed out"),
+    _Res(0, "refused\n", "LXD warning: probe output incomplete"),
+])
+def test_rgw_endpoint_probe_rejects_execution_failures(monkeypatch, error):
+    probe, _ = _rgw_probe_with_results(monkeypatch, [error])
+
+    with pytest.raises(AssertionError):
+        probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480)
+
+
+@pytest.mark.parametrize("response", [
+    "",
+    "False\n",
+    "refused",
+    "refused\nreachable\n",
+    "timeout\n",
+])
+def test_rgw_endpoint_probe_rejects_malformed_guest_response(monkeypatch, response):
+    probe, _ = _rgw_probe_with_results(monkeypatch, [_Res(0, response, "")])
+
+    with pytest.raises(AssertionError, match="Unexpected RGW endpoint probe response"):
+        probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480)
+
+
+@pytest.mark.parametrize("guest_error", [
+    None,
+    ConnectionRefusedError(),
+    socket.timeout("timed out"),
+    socket.gaierror("name resolution failed"),
+])
+def test_rgw_endpoint_guest_script_reports_only_valid_outcomes(monkeypatch, capsys, guest_error):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", "")])
+    probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480)
+    script = calls[0][0][2]
+    closed = []
+
+    class Connection:
+        def close(self):
+            closed.append(True)
+
+    def connect(address, timeout):
+        assert (address, timeout) == (("10.0.0.3", 7480), 2)
+        if guest_error is not None:
+            raise guest_error
+        return Connection()
+
+    monkeypatch.setattr(socket, "create_connection", connect)
+    monkeypatch.setattr(sys, "argv", ["python3", "10.0.0.3", "7480"])
+    if guest_error is not None and not isinstance(guest_error, ConnectionRefusedError):
+        with pytest.raises(type(guest_error)):
+            exec(script, {"__name__": "__main__"})
+        assert capsys.readouterr().out == ""
+    else:
+        exec(script, {"__name__": "__main__"})
+        assert capsys.readouterr().out == ("refused\n" if guest_error else "reachable\n")
+    assert closed == ([] if guest_error else [True])
+
+
+def test_wait_for_rgw_endpoint_closed_requires_observed_refusal(monkeypatch):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [
+        _Res(0, "reachable\n", ""),
+        _Res(0, "refused\n", ""),
+    ])
+
+    assert probe.wait_for_rgw_endpoint_closed_in_vm(
+        "10.0.0.3", 7480, vm_name="node-wrk1", attempts=3, interval=0
+    ) is False
+    assert len(calls) == 2
+    assert all(vm_name == "node-wrk1" for _, vm_name, _ in calls)
+
+
+def test_wait_for_rgw_endpoint_closed_remains_open_without_refusal(monkeypatch):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", "")] * 2)
+
+    assert probe.wait_for_rgw_endpoint_closed_in_vm("10.0.0.3", 7480, attempts=2, interval=0) is True
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("failure", [
+    _Res(124, "refused\n", "Command timed out after 30s"),
+    _Res(1, "", "Error: Instance not found"),
+    _Res(0, "", ""),
+    _Res(0, "refused\n", "LXD warning: probe output incomplete"),
+])
+def test_wait_for_rgw_endpoint_closed_never_accepts_probe_failure(monkeypatch, failure):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", ""), failure])
+
+    with pytest.raises(AssertionError):
+        probe.wait_for_rgw_endpoint_closed_in_vm("10.0.0.3", 7480, attempts=3, interval=0)
+    assert len(calls) == 2
 
 
 class _CapLogger:

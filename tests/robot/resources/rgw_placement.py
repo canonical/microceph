@@ -219,9 +219,29 @@ class rgw_placement:
         return last[0]
 
     def rgw_endpoint_reachable_in_vm(self, host, port, vm_name=None):
-        """Check TCP reachability, including TLS listeners that reject plaintext HTTP."""
-        script = "import socket,sys; s=socket.create_connection((sys.argv[1],int(sys.argv[2])),2); s.close()"
-        return self._exec(["python3", "-c", script, host, str(port)], vm_name, check=False).rc == 0
+        """Check TCP reachability, including TLS listeners that reject plaintext HTTP.
+
+        Only a completed connect or an explicit connection refusal is a valid
+        observation; guest and transport failures must not look like closure.
+        """
+        script = (
+            "import socket, sys\n"
+            "try:\n"
+            "    connection = socket.create_connection((sys.argv[1], int(sys.argv[2])), 2)\n"
+            "except ConnectionRefusedError:\n"
+            "    print('refused')\n"
+            "else:\n"
+            "    connection.close()\n"
+            "    print('reachable')\n"
+        )
+        result = self._exec(["python3", "-c", script, host, str(port)], vm_name, check=False)
+        if result.rc != 0 or result.stderr:
+            raise AssertionError(f"RGW endpoint probe failed ({result.rc}): {result.stderr}")
+        if result.stdout == "reachable\n":
+            return True
+        if result.stdout == "refused\n":
+            return False
+        raise AssertionError(f"Unexpected RGW endpoint probe response: {result.stdout!r}")
 
     def wait_for_rgw_endpoint_closed_in_vm(self, host, port, vm_name=None, attempts=15, interval=1):
         """Polls until host:port stops accepting TCP connections; returns the final reachability.
