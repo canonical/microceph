@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -123,11 +124,9 @@ func (rh *RbdReplicationHandler) GetResourceState() (ReplicationState, error) {
 func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPRBD: Enable handler, Req %v", rh.Request)
 
-	st := args[repArgState].(interfaces.CephState).ClusterState()
-	dbRec, err := database.GetRemoteDb(ctx, st, rh.Request.RemoteName)
+	dbRec, err := getRemoteRecords(ctx, args[repArgState].(interfaces.CephState), rh.Request.RemoteName)
 	if err != nil {
-		errNew := fmt.Errorf("remote (%s) does not exist: %w", rh.Request.RemoteName, err)
-		return errNew
+		return err
 	}
 
 	logger.Infof("REPRBD: Local(%s) Remote(%s)", dbRec[0].LocalName, dbRec[0].Name)
@@ -148,16 +147,14 @@ func (rh *RbdReplicationHandler) EnableHandler(ctx context.Context, args ...any)
 func (rh *RbdReplicationHandler) DisableHandler(ctx context.Context, args ...any) error {
 	logger.Debugf("REPRBD: Disable handler, Req %v", rh.Request)
 
-	st := args[repArgState].(interfaces.CephState).ClusterState()
-	dbRec, err := database.GetRemoteDb(ctx, st, rh.Request.RemoteName)
+	dbRec, err := getRemoteRecords(ctx, args[repArgState].(interfaces.CephState), rh.Request.RemoteName)
 	if err != nil {
-		errNew := fmt.Errorf("remote (%s) does not exist: %w", rh.Request.RemoteName, err)
-		return errNew
+		return err
 	}
 
-	logger.Infof("REPRBD: Entered RBD Disable Handler Local(%s) Remote(%s)", dbRec[0].LocalName, dbRec[0].Name)
+	logger.Infof("REPRBD: Entered RBD Disable Handler, Remotes(%s)", strings.Join(remoteNames(dbRec), ","))
 	if rh.Request.ResourceType == types.RbdResourcePool {
-		return handlePoolDisablement(rh, dbRec[0].LocalName, dbRec[0].Name)
+		return handlePoolDisablement(rh, dbRec)
 	} else if rh.Request.ResourceType == types.RbdResourceImage {
 		return handleImageDisablement(rh)
 	}
@@ -375,7 +372,7 @@ func handleImageEnablement(rh *RbdReplicationHandler, localSite string, remoteSi
 }
 
 // Disable handler for pool resource.
-func handlePoolDisablement(rh *RbdReplicationHandler, localSite string, remoteSite string) error {
+func handlePoolDisablement(rh *RbdReplicationHandler, remotes types.RemoteRecords) error {
 	// Handle Pool already disabled
 	if rh.PoolInfo.Mode == types.RbdResourceDisabled {
 		return nil
@@ -392,17 +389,27 @@ func handlePoolDisablement(rh *RbdReplicationHandler, localSite string, remoteSi
 		if enabledImageCount != 0 {
 			return fmt.Errorf("pool (%s) in Image mirroring mode, has %d images mirroring", rh.Request.SourcePool, enabledImageCount)
 		}
-	} else
+	}
+
+	// Find the remote before anything is changed, so that a pool whose remote cannot be found
+	// is left as it is.
+	remote, peer, err := resolvePoolRemote(rh.Request.SourcePool, rh.Request.RemoteName, rh.PoolInfo.Peers, remotes)
+	if err != nil {
+		logger.Errorf("REPRBD: %s", err.Error())
+		return err
+	}
+
+	logger.Infof("REPRBD: Disabling pool(%s) Local(%s) Remote(%s)", rh.Request.SourcePool, remote.LocalName, remote.Name)
 
 	// If pool in pool mirroring mode, disable all images.
 	if rh.PoolInfo.Mode == types.RbdResourcePool {
-		err := DisableAllMirroringImagesInPool(rh.Request.SourcePool)
+		err = DisableAllMirroringImagesInPool(rh.Request.SourcePool)
 		if err != nil {
 			return err
 		}
 	}
 
-	return DisablePoolMirroring(rh.Request.SourcePool, rh.PoolInfo.Peers[0], localSite, remoteSite)
+	return DisablePoolMirroring(rh.Request.SourcePool, peer, remote.LocalName, remote.Name)
 }
 
 // Disable handler for image resource.
@@ -433,6 +440,79 @@ func isPeerRegisteredForMirroring(peers []RbdReplicationPeer, peerName string) b
 		}
 	}
 	return false
+}
+
+// errNoRemoteConfigured is returned when a replication request needs a remote and this
+// site has none, for example because the remote import never happened.
+var errNoRemoteConfigured = errors.New(`no remote configured on this site, import one with "microceph remote import"`)
+
+// getRemoteRecords fetches the remote records a replication request applies to: the remote
+// it names, or all of them when it names none. GetRemoteDb returns no records and no error
+// when the site has no remotes, so the callers, which index the result, get
+// errNoRemoteConfigured instead.
+func getRemoteRecords(ctx context.Context, state interfaces.StateInterface, name string) (types.RemoteRecords, error) {
+	remotes, err := database.GetRemoteDb(ctx, state.ClusterState(), name)
+	if err != nil {
+		errNew := fmt.Errorf("remote (%s) does not exist: %w", name, err)
+		return nil, errNew
+	}
+
+	if len(remotes) == 0 {
+		logger.Errorf("REPRBD: %s", errNoRemoteConfigured.Error())
+		return nil, errNoRemoteConfigured
+	}
+
+	return remotes, nil
+}
+
+// remoteNames lists the names of the remote records.
+func remoteNames(remotes types.RemoteRecords) []string {
+	names := make([]string, len(remotes))
+	for i, remote := range remotes {
+		names[i] = remote.Name
+	}
+
+	return names
+}
+
+// resolvePoolRemote selects the imported remote for the pool's single peer site.
+// Re-registered peers may have different IDs for the same site. Distinct sites
+// must be rejected even if only one is imported or the request names a remote:
+// DisablePoolMirroring removes only one site's peers before disabling the pool.
+// A named request filters remotes, so its mismatch cannot establish whether
+// the peer site's remote is imported.
+func resolvePoolRemote(pool string, requestedName string, peers []RbdReplicationPeer, remotes types.RemoteRecords) (types.RemoteRecord, RbdReplicationPeer, error) {
+	if len(peers) == 0 {
+		return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf("pool (%s) has no mirror peer registered, cannot tell which remote to disable it on", pool)
+	}
+
+	peer := peers[0]
+	for _, other := range peers[1:] {
+		if other.RemoteName != peer.RemoteName {
+			return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf(
+				"pool (%s) is mirrored with multiple peer sites (%s, %s), only two-site replication disable is supported",
+				pool, peer.RemoteName, other.RemoteName,
+			)
+		}
+	}
+
+	for _, remote := range remotes {
+		if remote.Name == peer.RemoteName {
+			return remote, peer, nil
+		}
+	}
+
+	if requestedName != "" {
+		return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf(
+			"requested remote (%s) does not match pool (%s) mirror peer site (%s)",
+			requestedName, pool, peer.RemoteName,
+		)
+	}
+
+	return types.RemoteRecord{}, RbdReplicationPeer{}, fmt.Errorf(
+		"pool (%s) is mirrored with %s but no matching remote is configured on this site (configured: %s), import it with \"microceph remote import\"",
+		pool, peer.RemoteName, strings.Join(remoteNames(remotes), ", "),
+	)
 }
 
 // getMirrorPoolMetadata fetches pool status and info if mirroring is enabled on pool.
