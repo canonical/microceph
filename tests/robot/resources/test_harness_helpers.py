@@ -3126,11 +3126,11 @@ def test_smb_packaging_contract():
     assert "snapd2.78" in manifest["assumes"]
     assert plugs["smb-identity"] == {"interface": "microceph-support", "user-identity-switching": True}
     assert plugs["ctdb-run"] == {"interface": "system-files", "write": ["/run/ctdb"]}
-    assert "smb-identity" not in apps["daemon"]["plugs"]
+    assert {name for name, app in apps.items() if "smb-identity" in app.get("plugs", [])} == {"smbd"}
     assert "process-control" not in apps["smbd"]["plugs"]
     for app, dependencies, required_plugs in (
         ("smbd", ["daemon", "ctdbd"], {"smb-identity", "ctdb-run"}),
-        ("ctdbd", ["daemon"], {"smb-identity", "ctdb-run"}),
+        ("ctdbd", ["daemon"], {"microceph-support", "ctdb-run"}),
         ("ctdb-nodes", ["daemon", "ctdbd"], {"ctdb-run"}),
     ):
         assert apps[app]["command"] == f"commands/{app}.start"

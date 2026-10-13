@@ -155,7 +155,7 @@ apps:
     after:
       - daemon
     plugs:
-      - smb-identity
+      - microceph-support
       - ctdb-run
       - network
       - network-bind
