@@ -27,11 +27,12 @@ Exchange Remote Site Tokens
     ...    After this call, sitea knows siteb and siteb knows sitea.
     ...    A failed or timed-out export stops the exchange before either token is imported.
     Log To Console    [replication] Exchanging site tokens...
-    # Let the 120 s client deadline fire before the runner's process timeout.
-    ${sitea_token}=    Exec In Container    node-wrk0    microceph    cluster    export    siteb    timeout=150    check=True
-    ${siteb_token}=    Exec In Container    node-wrk2    microceph    cluster    export    sitea    timeout=150    check=True
-    Run In Container    node-wrk0    microceph remote import siteb ${siteb_token.stdout.strip()} --local-name=sitea    60
-    Run In Container    node-wrk2    microceph remote import sitea ${sitea_token.stdout.strip()} --local-name=siteb    60
+    ${sitea_token}=    Export Cluster Token    node-wrk0    siteb
+    ${siteb_token}=    Export Cluster Token    node-wrk2    sitea
+    Run In Container    node-wrk0    microceph remote import siteb ${siteb_token} --local-name=sitea    60
+    Assert Remote List Has    node-wrk0    name    siteb
+    Run In Container    node-wrk2    microceph remote import sitea ${sitea_token} --local-name=siteb    60
+    Assert Remote List Has    node-wrk2    name    sitea
     Sleep    15s    reason=Allow remote credentials to propagate across the cluster
 
 Verify Remote Authentication On All Nodes
