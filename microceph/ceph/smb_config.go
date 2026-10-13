@@ -75,6 +75,10 @@ func fetchSMBConfigSources(ctx context.Context, placement *SMBServicePlacement) 
 		}
 		data.users = append(data.users, user)
 	}
+	data.users, err = combineSMBUserSources(data.users)
+	if err != nil {
+		return nil, err
+	}
 	return data, nil
 }
 

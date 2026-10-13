@@ -130,6 +130,15 @@ groups receive IDs based on their list position. Reordering, inserting, or
 deleting users can change the numeric ownership interpretation of existing
 CephFS files. Append users to preserve existing positions.
 
+When multiple users-and-groups references are supplied, MicroCeph combines their
+entries in reference order. Duplicate user names or duplicate group names are
+rejected before publishing the combined local configuration. Explicit IDs are
+preserved; no existing file ownership is changed automatically.
+
+Older deployments with multiple references may have imported only the final
+source. Check numeric IDs and existing ownership before reapplying such a
+configuration with this correction.
+
 Requests and shares
 -------------------
 
