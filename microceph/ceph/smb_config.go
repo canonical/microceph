@@ -1,18 +1,42 @@
 package ceph
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	"github.com/canonical/microceph/microceph/constants"
 )
 
 // Include the registry instead of switching backends, which discards local overrides.
 const smbBaseConfig = "[global]\nregistry shares = yes\ninclude = registry\nlock directory = /var/lib/samba/lock\npid directory = /var/lib/samba/run\nncalrpc dir = /var/lib/samba/ncalrpc\nwinbindd socket directory = /var/lib/samba/winbindd\nstate directory = /var/lib/samba/state\ncache directory = /var/cache/samba\nprivate dir = /var/lib/samba/private\n"
+
+var smbBootstrapTemplate = template.Must(template.New("smb-bootstrap").Parse(smbBaseConfig + `{{if .BindAddress}}bind interfaces only = yes
+interfaces = {{.BindAddress}}
+{{end}}{{if .SMBPort}}smb ports = {{.SMBPort}}
+{{end}}`))
+
+var smbCTDBIncludeTemplate = template.Must(template.New("smb-ctdb-include").Parse(`[global]
+ctdbd socket = /run/ctdb/ctdbd.socket
+bind interfaces only = yes
+interfaces = {{.BindAddress}}
+{{if .SMBPort}}smb ports = {{.SMBPort}}
+{{end}}`))
+
+func renderSMBText(config *template.Template, bindAddress string, smbPort int) ([]byte, error) {
+	data := struct {
+		BindAddress string
+		SMBPort     int
+	}{bindAddress, smbPort}
+	var rendered bytes.Buffer
+	err := config.Execute(&rendered, data)
+	return rendered.Bytes(), err
+}
 
 var fetchSMBSourceFunc = fetchSMBSource
 var writeSMBFileFunc = os.WriteFile
@@ -95,18 +119,11 @@ func materializeSMBConfig(ctx context.Context, placement *SMBServicePlacement) e
 		}
 	}
 
-	baseConfig := smbBaseConfig
-	if placement.bindAddress != "" {
-		baseConfig += fmt.Sprintf(
-			"bind interfaces only = yes\ninterfaces = %s\n",
-			placement.bindAddress,
-		)
+	baseConfig, err := renderSMBText(smbBootstrapTemplate, placement.bindAddress, placement.CustomPorts["smb"])
+	if err != nil {
+		return fmt.Errorf("failed to render SMB base configuration: %w", err)
 	}
-	smbPort := placement.CustomPorts["smb"]
-	if smbPort != 0 {
-		baseConfig += fmt.Sprintf("smb ports = %d\n", smbPort)
-	}
-	err = writeSMBFileAtomic(filepath.Join(configDir, "smb.conf"), []byte(baseConfig), constants.PermissionUserRwWorldRAccess)
+	err = writeSMBFileAtomic(filepath.Join(configDir, "smb.conf"), baseConfig, constants.PermissionUserRwWorldRAccess)
 	if err != nil {
 		return fmt.Errorf("failed to write SMB base configuration: %w", err)
 	}
@@ -253,19 +270,7 @@ func fetchSMBRADOSSource(ctx context.Context, uri string) ([]byte, error) {
 }
 
 func writeSMBFileAtomic(destPath string, data []byte, mode os.FileMode) error {
-	tmpPath := destPath + ".tmp"
-	err := writeSMBFileFunc(tmpPath, data, mode)
-	if err != nil {
-		return err
-	}
-
-	err = renameSMBFileFunc(tmpPath, destPath)
-	if err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-
-	return nil
+	return publishConfigBytes(destPath, data, mode, writeSMBFileFunc, renameSMBFileFunc)
 }
 
 func removeStaleSMBUserConfigs(runtimeDir string, expectedCount int) error {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,16 +37,20 @@ func TestMaterializeSMBConfigWritesCurrentSourcesAndRemovesStaleUsers(t *testing
 	assert.NoFileExists(t, stale)
 	assert.Equal(t, "files\n", readSMBConfigFile(t, filepath.Join(runtime, "cluster-id")))
 	assert.Equal(t, smbBaseConfig, readSMBConfigFile(t, filepath.Join(conf, "samba", "smb.conf")))
-	// Reapplying after setting and then clearing a custom port must not retain it.
-	for _, port := range []int{1445, 0} {
-		placement.CustomPorts = nil
-		expected := smbBaseConfig
-		if port != 0 {
-			placement.CustomPorts = map[string]int{"smb": port}
-			expected += fmt.Sprintf("smb ports = %d\n", port)
-		}
+	// Reapply different options, including clearing them, without retaining old values.
+	for _, tc := range []struct {
+		bind, suffix string
+		port         int
+	}{
+		{"10.0.0.12", "bind interfaces only = yes\ninterfaces = 10.0.0.12\nsmb ports = 1445\n", 1445},
+		{"fd42::12", "bind interfaces only = yes\ninterfaces = fd42::12\n", 0},
+		{"", "smb ports = 445\n", 445},
+		{"", "", 0},
+	} {
+		placement.bindAddress = tc.bind
+		placement.CustomPorts = map[string]int{"smb": tc.port}
 		require.NoError(t, materializeSMBConfig(context.Background(), placement))
-		assert.Equal(t, expected, readSMBConfigFile(t, filepath.Join(conf, "samba", "smb.conf")))
+		assert.Equal(t, smbBaseConfig+tc.suffix, readSMBConfigFile(t, filepath.Join(conf, "samba", "smb.conf")))
 	}
 }
 
@@ -123,7 +128,7 @@ func TestMaterializeSMBCTDBConfigReportsTheFailedArtifact(t *testing.T) {
 	runtime := t.TempDir()
 	preserveSMBTestGlobal(t, &writeSMBFileFunc)
 	writeSMBFileFunc = func(path string, data []byte, mode os.FileMode) error {
-		if filepath.Base(path) == "ctdb-rank.tmp" {
+		if strings.HasPrefix(filepath.Base(path), "ctdb-rank.") {
 			return errors.New("disk full")
 		}
 		return os.WriteFile(path, data, mode)
@@ -160,15 +165,35 @@ func TestWriteSMBFileAtomicPreservesDestinationOnFailure(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config")
 			smbTestWrite(t, path, "original")
 			if stage == "temporary write" {
-				writeSMBFileFunc = func(string, []byte, os.FileMode) error { return errors.New("write failed") }
+				writeSMBFileFunc = func(temporary string, _ []byte, mode os.FileMode) error {
+					require.NoError(t, os.WriteFile(temporary, []byte("partial"), mode))
+					return errors.New("write failed")
+				}
 			} else {
 				renameSMBFileFunc = func(string, string) error { return errors.New("rename failed") }
 			}
 			require.Error(t, writeSMBFileAtomic(path, []byte("replacement"), 0600))
 			assert.Equal(t, "original", readSMBConfigFile(t, path))
-			assert.NoFileExists(t, path+".tmp")
+			entries, err := os.ReadDir(filepath.Dir(path))
+			require.NoError(t, err)
+			assert.Len(t, entries, 1, "failed writes must not leave staging files")
 		})
 	}
+}
+
+func TestWriteSMBFileAtomicUsesPrivateTemporaryFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	smbTestWrite(t, path, "original")
+	smbTestWrite(t, path+".tmp", "another writer")
+	require.NoError(t, writeSMBFileAtomic(path, []byte("replacement"), 0600))
+	assert.Equal(t, "replacement", readSMBConfigFile(t, path))
+	assert.Equal(t, "another writer", readSMBConfigFile(t, path+".tmp"))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	entries, err := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	assert.Len(t, entries, 2)
 }
 
 func readSMBConfigFile(t *testing.T, path string) string {

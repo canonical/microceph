@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/canonical/lxd/shared/api"
@@ -511,7 +512,7 @@ func TestSMBPartialUpdateRestoresPreviousFiles(t *testing.T) {
 	preserveSMBTestGlobal(t, &writeSMBFileFunc)
 	failed := false
 	writeSMBFileFunc = func(path string, data []byte, mode os.FileMode) error {
-		if path == filepath.Join(runtime, "container.json.tmp") && !failed {
+		if strings.HasPrefix(path, filepath.Join(runtime, "container.json.")) && !failed {
 			failed = true
 			return assert.AnError
 		}

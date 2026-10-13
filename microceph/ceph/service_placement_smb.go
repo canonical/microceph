@@ -643,13 +643,13 @@ func writeSMBCTDBAddress(address string, bindAddress string, smbPort int) error 
 	if err != nil {
 		return fmt.Errorf("failed to create SMB data directory: %w", err)
 	}
-	config := fmt.Sprintf("[global]\nctdbd socket = /run/ctdb/ctdbd.socket\nbind interfaces only = yes\ninterfaces = %s\n", bindAddress)
-	if smbPort != 0 {
-		config += fmt.Sprintf("smb ports = %d\n", smbPort)
+	config, err := renderSMBText(smbCTDBIncludeTemplate, bindAddress, smbPort)
+	if err != nil {
+		return fmt.Errorf("failed to render CTDB Samba configuration: %w", err)
 	}
 	err = writeSMBFileAtomic(
 		ctdbSMBConfigPath,
-		[]byte(config),
+		config,
 		constants.PermissionUserRwWorldRAccess,
 	)
 	if err != nil {
