@@ -110,6 +110,7 @@ type OSDManager struct {
 	state             mcTypes.State
 	runner            common.Runner
 	fs                afero.Fs
+	lockCarrierFunc   func(string, func(string) error) error
 	storage           interfaces.StorageInterface
 	validator         PathValidator
 	mountChecker      MountChecker
@@ -124,6 +125,7 @@ func NewOSDManager(s mcTypes.State) *OSDManager {
 		state:             s,
 		runner:            common.ProcessExec,
 		fs:                afero.NewOsFs(),
+		lockCarrierFunc:   withExclusiveCarrierLock,
 		storage:           StorageImpl{},
 		validator:         SharedPathValidator{},
 		mountChecker:      SharedMountChecker{},
@@ -1202,12 +1204,9 @@ func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskPar
 			return
 		}
 
-		cleanupOSDID := nr
-		if cleanupOSDID < 0 {
-			cleanupOSDID = 0
-		}
-
-		cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, cleanupOSDID)
+		// nr == -1 means no OSD record exists yet. Keep it negative so cleanup
+		// removes our generated partitions without closing OSD 0's WAL/DB mappers.
+		cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, nr)
 		if cleanupErr != nil {
 			logger.Errorf("failed to clean generated WAL/DB partitions after add failure: %v", cleanupErr)
 			retErr = fmt.Errorf("%w (automatic cleanup of generated WAL/DB partitions also failed: %v)", retErr, cleanupErr)
@@ -1637,13 +1636,19 @@ func diskUsedBytes(disk api.ResourcesStorageDisk) uint64 {
 }
 
 func nextPartitionNumber(disk api.ResourcesStorageDisk) uint64 {
-	var maxPart uint64
-	for _, part := range disk.Partitions {
-		if part.Partition > maxPart {
-			maxPart = part.Partition
+	// sfdisk --append reuses the first vacant GPT slot, not max(slot)+1.
+	for next := uint64(1); ; next++ {
+		occupied := false
+		for _, part := range disk.Partitions {
+			if part.Partition == next {
+				occupied = true
+				break
+			}
+		}
+		if !occupied {
+			return next
 		}
 	}
-	return maxPart + 1
 }
 
 func (m *OSDManager) buildDSLDryRunPlan(ctx context.Context, req types.DisksPost) types.DiskAddResponse {

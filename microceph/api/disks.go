@@ -45,6 +45,8 @@ var disksEncryptionSupportCmd = mcTypes.Endpoint{
 	Get: mcTypes.EndpointAction{Handler: cmdDisksEncryptionSupport, ProxyTarget: true},
 }
 
+// Serialize local disk mutations through planning, execution, and rollback.
+// WAL/DB allocation relies on this boundary; carrier flock separately excludes udev.
 var mu sync.Mutex
 
 func cmdDisksGet(s mcTypes.State, r *http.Request) mcTypes.Response {
