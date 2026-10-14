@@ -138,7 +138,11 @@ func deleteNodeServices(cli mcTypes.Client, name string) error {
 		logger.Debugf("Check for deletion: %s", service)
 		if service.Location == name {
 			logger.Debugf("Deleting service %s", service)
-			err = client.MClient.DeleteService(cli, service.Location, service.Service)
+			if service.Service == "smb" {
+				err = deleteGroupedSMBService(context.Background(), cli, service)
+			} else {
+				err = client.MClient.DeleteService(cli, service.Location, service.Service)
+			}
 			if err != nil {
 				logger.Warnf("Fault deleting service %v on node %v: %v", service.Service, service.Location, err)
 				deleteErrors = append(deleteErrors, fmt.Errorf("failed to delete service %q on node %q: %w", service.Service, service.Location, err))
@@ -147,4 +151,13 @@ func deleteNodeServices(cli mcTypes.Client, name string) error {
 	}
 
 	return errors.Join(deleteErrors...)
+}
+
+var deleteSMBServiceFunc = client.DeleteSMBService
+
+func deleteGroupedSMBService(ctx context.Context, cli mcTypes.Client, service types.Service) error {
+	if service.GroupID == "" {
+		return fmt.Errorf("SMB removal requires the exact cluster ID; retain ownership uncertainty")
+	}
+	return deleteSMBServiceFunc(ctx, cli, service.Location, &types.SMBService{ClusterID: service.GroupID})
 }

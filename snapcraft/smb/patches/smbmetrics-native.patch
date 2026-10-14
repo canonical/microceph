@@ -1,0 +1,72 @@
+--- a/internal/metrics/exporter.go
++++ b/internal/metrics/exporter.go
+@@ -6,6 +6,7 @@
+ 	"fmt"
+ 	"net"
+ 	"net/http"
++	"strconv"
+ 
+ 	"github.com/go-logr/logr"
+ 	"github.com/prometheus/client_golang/prometheus"
+@@ -46,14 +47,9 @@
+ }
+ 
+ func (sme *smbMetricsExporter) serve() error {
+-	var addr string
+-	switch len(sme.bindAddresses) {
+-	case 0:
+-		addr = fmt.Sprintf(":%d", sme.port)
+-	case 1:
+-		addr = fmt.Sprintf("%s:%d", sme.bindAddresses[0], sme.port)
+-	default:
+-		return fmt.Errorf("too many listen addresses")
++	addr, err := nativeListenAddress(sme.bindAddresses, sme.port)
++	if err != nil {
++		return err
+ 	}
+ 	sme.log.Info("serve metrics", "addr", addr)
+ 
+@@ -74,6 +70,17 @@
+ 	return nil
+ }
+ 
++func nativeListenAddress(addresses []net.IP, port int) (string, error) {
++	switch len(addresses) {
++	case 0:
++		return net.JoinHostPort("", strconv.Itoa(port)), nil
++	case 1:
++		return net.JoinHostPort(addresses[0].String(), strconv.Itoa(port)), nil
++	default:
++		return "", fmt.Errorf("too many listen addresses")
++	}
++}
++
+ // RunSmbMetricsExporter executes an HTTP server and exports SMB metrics to
+ // Prometheus.
+ func RunSmbMetricsExporter(
+--- a/internal/metrics/smbstatus.go
++++ b/internal/metrics/smbstatus.go
+@@ -276,8 +276,10 @@
+ 
+ // LocateSMBStatus finds the local executable of 'smbstatus' on host.
+ func LocateSMBStatus() (string, error) {
+-	knowns := []string{
+-		"/usr/bin/smbstatus",
++	knowns := []string{"/usr/bin/smbstatus"}
++	explicit := os.Getenv("SMBMETRICS_SMBSTATUS")
++	if explicit != "" {
++		knowns = []string{explicit}
+ 	}
+ 	for _, loc := range knowns {
+ 		fi, err := os.Stat(loc)
+@@ -375,6 +377,10 @@
+ 	if err != nil {
+ 		return "", err
+ 	}
++	config := os.Getenv("SMBMETRICS_SMBCONF")
++	if config != "" {
++		args = append([]string{"--configfile", config}, args...)
++	}
+ 	return executeCommand(loc, args...)
+ }
+ 
