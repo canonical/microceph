@@ -74,3 +74,15 @@ func TestSMBMemberRemovalKeepsGroupIdentity(t *testing.T) {
 	require.Equal(t, "member/alpha", got)
 	require.Error(t, deleteGroupedSMBService(context.Background(), nil, types.Service{Service: "smb", Location: "member"}))
 }
+
+func TestSMBAtomicWriteRejectsEscapingTemporaryFile(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	require.NoError(t, os.WriteFile(outside, []byte("preserve"), 0600))
+	path := filepath.Join(root, "config.json")
+	require.NoError(t, os.Symlink(outside, path+".tmp"))
+	require.Error(t, smbAtomicWrite(path, []byte("secret")))
+	content, err := os.ReadFile(outside)
+	require.NoError(t, err)
+	require.Equal(t, "preserve", string(content))
+}

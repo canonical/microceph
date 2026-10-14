@@ -1,5 +1,9 @@
 """Recipe-level closure checks; these are not installed-package qualification."""
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 import unittest
 import yaml
 
@@ -31,6 +35,53 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("--require-hashes", recipe["parts"]["sambacc"]["override-build"])
         self.assertEqual(recipe["parts"]["smbmetrics"]["source-commit"], "172d34cabea2f72815de022e17e1c31135942c85")
         self.assertIn("smbmetrics-native.patch", recipe["parts"]["smbmetrics"]["override-build"])
+        self.assertIn("native-smb", recipe["parts"]["strip"]["after"])
+
+    @unittest.skipUnless(all(shutil.which(cmd) for cmd in ("cc", "readelf", "strip")),
+                         "requires a native compiler and binutils")
+    def test_strip_preserves_data_and_strips_elf(self):
+        recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
+        with tempfile.TemporaryDirectory(prefix="smb prime ") as directory:
+            prime = Path(directory)
+            library = prime / "lib/native library.so"
+            library.parent.mkdir()
+            source = prime / "fixture.c"
+            source.write_text("int native_fixture(void) { return 42; }\n")
+            subprocess.run(["cc", "-g", "-shared", "-fPIC", str(source), "-o", str(library)], check=True)
+            before = subprocess.check_output(["readelf", "-S", str(library)], text=True)
+            self.assertIn(".debug_info", before)
+            payloads = {
+                "lib/systemd/system/smbd.service": b"[Service]\nExecStart=/usr/sbin/smbd\n",
+                "lib/x86_64-linux-gnu/perl-base/Exporter.pm": b"package Exporter;\n1;\n",
+                "lib/binfmt.d/python3.14.conf": b"python metadata\n",
+                "lib/valgrind/python3.supp": b"suppression data\n",
+                "lib/python3.14/site-packages/untouched.so": b"\x7fELFintentionally excluded Python fixture",
+            }
+            for name, content in payloads.items():
+                path = prime / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            result = subprocess.run(["bash", "-ec", recipe["parts"]["strip"]["override-prime"]],
+                                    env={**os.environ, "CRAFT_PRIME": str(prime)}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for name, content in payloads.items():
+                self.assertEqual((prime / name).read_bytes(), content, name)
+            after = subprocess.check_output(["readelf", "-S", str(library)], text=True)
+            self.assertNotIn(".debug_info", after)
+            symbols = subprocess.check_output(["readelf", "--dyn-syms", str(library)], text=True)
+            self.assertIn("native_fixture", symbols)
+
+    @unittest.skipUnless(shutil.which("strip"), "requires binutils")
+    def test_strip_failure_for_elf_remains_fatal(self):
+        recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            prime = Path(directory)
+            (prime / "lib").mkdir()
+            (prime / "lib/broken.so").write_bytes(b"\x7fELFnot a valid ELF object")
+            (prime / "lib/metadata.txt").write_text("later non-ELF data must not mask failure\n")
+            result = subprocess.run(["bash", "-ec", recipe["parts"]["strip"]["override-prime"]],
+                                    env={**os.environ, "CRAFT_PRIME": str(prime)}, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":

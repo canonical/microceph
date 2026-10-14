@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -72,4 +73,19 @@ func ensureSMBDataKey(ctx context.Context, clusterID, path string) error {
 		return err
 	}
 	return nil
+}
+
+// ensureSMBRecoveryKey prepares the exact shared identity named by project_ctdb.
+// It has only monitor-read and the selected cluster's private CTDB RADOS access.
+func ensureSMBRecoveryKey(ctx context.Context, clusterID, root string) error {
+	err := validateSMBClusterID(clusterID)
+	if err != nil {
+		return err
+	}
+	name := "smb.cluster." + clusterID
+	key, err := CreateClientKey(ctx, name, []string{"mon", "allow r"}, []string{"osd", "allow rw pool=.smb namespace=" + clusterID})
+	if err != nil {
+		return fmt.Errorf("retrieve SMB recovery identity failed")
+	}
+	return smbAtomicWrite(filepath.Join(root, "identity", "recovery.keyring"), []byte("[client."+name+"]\n\tkey = "+key+"\n"))
 }

@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -10,6 +11,8 @@ import (
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
 )
 
@@ -23,7 +26,10 @@ func PreRemove(m *microcluster.MicroCluster) func(ctx context.Context, s mcTypes
 			return err
 		}
 
-		err = removeNode(cli, s.Name(), force)
+		err = removeNode(cli, s.Name(), force, func() error {
+			// Keep identity/state until the exact local owner has stopped.
+			return retireSMBForRemoval(ctx, interfaces.CephState{State: s}, force)
+		})
 		if err != nil {
 			return err
 		}
@@ -56,12 +62,21 @@ func EnsureNonOsdSvcEnough(services types.Services, nodeName string, minMon int,
 	return nil
 }
 
-func removeNode(cli mcTypes.Client, node string, force bool) error {
+func removeNode(cli mcTypes.Client, node string, force bool, beforeDeletion ...func() error) error {
 	logger.Debugf("Removing cluster member %v, force: %v", node, force)
 
 	// check prerquisites unless we're forcing
 	if !force {
 		err := checkPrerequisites(cli, node)
+		if err != nil {
+			return err
+		}
+	}
+
+	// PreRemove attaches native retirement after prerequisites, but before
+	// deleting success rows or letting MicroCluster discard core identity.
+	for _, retire := range beforeDeletion {
+		err := retire()
 		if err != nil {
 			return err
 		}
@@ -160,4 +175,30 @@ func deleteGroupedSMBService(ctx context.Context, cli mcTypes.Client, service ty
 		return fmt.Errorf("SMB removal requires the exact cluster ID; retain ownership uncertainty")
 	}
 	return deleteSMBServiceFunc(ctx, cli, service.Location, &types.SMBService{ClusterID: service.GroupID})
+}
+
+// retireSMBForRemoval uses the same explicit local disable lifecycle. Offline
+// forced removal bypasses PreRemove in MicroCluster; JSON ownership survives
+// core-member deletion. Force here suppresses errors, never certifies a stop.
+func retireSMBForRemoval(ctx context.Context, s interfaces.StateInterface, force bool) error {
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+	var groups []string
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		groups, err = database.GetSMBOwnerGroups(ctx, tx, s.ClusterState().Name())
+		return err
+	})
+	if err == nil {
+		if len(groups) > 1 {
+			err = fmt.Errorf("conflicting SMB owner groups; retain uncertainty")
+		} else if len(groups) == 1 {
+			err = disableSMBLocked(ctx, s, groups[0], false)
+		}
+	}
+	if err != nil && force {
+		logger.Warn("Forced removal cannot confirm SMB retirement; retained owner must not be reused")
+		return nil
+	}
+	return err
 }

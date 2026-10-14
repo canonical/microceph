@@ -100,6 +100,161 @@ def render(document, cluster_id, root, context, sources):
     return output.getvalue()
 
 
+def project_ctdb(document, cluster_id, root, *, cluster_meta_uri,
+                 recovery_lock_uri, member, peers, context=None, sources=()):
+    """Return (files, details) for private CTDB configuration, without I/O.
+
+    document/sources/context use render's pinned Sambacc input shapes. root is
+    a normalized absolute writable cluster root whose last component is
+    cluster_id. Sources are canonical rados://POOL/CLUSTER_ID/OBJECT URIs in
+    the same pool, with distinct objects (simple nonempty ._- name components,
+    never leading '-'). Only the pinned writer's logging/legacy options and
+    the explicitly overlaid CTDB keys are supported; other keys fail closed.
+    No RADOS access is performed; the caller supplies the authoritative view.
+
+    member and each peer are Sambacc metadata records: {identity: str, pnn:
+    int, node: IP literal, state: new|ready|replaced|changed|gone}. peers excludes
+    member. Assigned PNNs are retained, not allocated; 0..65535 is this
+    projection's resource bound. Missing/changed/gone slots become '#'. The
+    local member must be active. Identities and all addresses must be unique.
+
+    files maps root-relative paths to text: config/smb.conf, config/ctdb.json,
+    config/ctdb-{rank,identity,address}, ctdb/{ctdb.conf,nodes}. details contains
+    the unchanged member, cluster_meta_uri, recovery_lock_argv and absolute
+    directories for later preparation. Paths are checked lexically only:
+    wiring must ensure the root and its descendants are not escaping symlinks.
+
+    The recovery command uses a stable current-snap helper path and the shared
+    client.smb.cluster.CLUSTER_ID identity, never a host, rank or snap revision.
+    This does NOT prepare credentials, event scripts, sockets, namespaces or
+    services, nor admit launch. The helper's package presence and its Ceph
+    config/keyring view must be established by the subsequent wiring slice.
+    """
+    import ipaddress
+    import json
+    import re
+    import shlex
+
+    from sambacc import ctdb
+    from sambacc.ceph.rados import parse_rados_uri
+
+    if not isinstance(cluster_id, str) or not re.fullmatch(r"[a-zA-Z0-9]([a-zA-Z0-9-]{0,16}[a-zA-Z0-9])?", cluster_id):
+        raise ValueError("invalid native cluster namespace")
+    if (not isinstance(root, str) or not re.fullmatch(r"(/[a-zA-Z0-9_.-]+)+", root)
+            or root.split("/")[-1] != cluster_id
+            or any(part in (".", "..") for part in root.split("/"))):
+        raise ValueError("invalid native cluster root")
+    parsed = []
+    for uri in (cluster_meta_uri, recovery_lock_uri):
+        if not isinstance(uri, str) or not re.fullmatch(r"rados://[a-zA-Z0-9_.][a-zA-Z0-9_.-]*/[a-zA-Z0-9-]+/[a-zA-Z0-9_.][a-zA-Z0-9_.-]*", uri):
+            raise ValueError("invalid CTDB RADOS object URI")
+        info = parse_rados_uri(uri)
+        if info["ns"] != cluster_id or info["pool"] in (".", "..") or info["key"] in (".", ".."):
+            raise ValueError("CTDB source outside cluster namespace")
+        parsed.append(info)
+    meta, lock = parsed
+    if meta["pool"] != lock["pool"] or meta["key"] == lock["key"]:
+        raise ValueError("CTDB metadata and lock require distinct objects in one pool")
+
+    entries, identities, addresses = {}, set(), set()
+    for entry in [member, *peers]:
+        rank = entry.get("pnn")
+        identity = entry.get("identity")
+        address = entry.get("node")
+        if type(rank) is not int or not 0 <= rank <= 65535 or rank in entries:
+            raise ValueError("invalid or duplicate CTDB PNN")
+        if not isinstance(identity, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", identity) or identity in identities:
+            raise ValueError("invalid or duplicate CTDB identity")
+        if not isinstance(address, str) or "%" in address:
+            raise ValueError("invalid CTDB node address")
+        ip = ipaddress.ip_address(address)
+        if ip in addresses or ip.is_unspecified or ip.is_multicast:
+            raise ValueError("invalid or duplicate CTDB node address")
+        ctdb.NodeState(entry.get("state"))
+        entries[rank] = entry
+        identities.add(identity)
+        addresses.add(ip)
+    if member["state"] in ("changed", "gone"):
+        raise ValueError("local CTDB member is not active")
+
+    reject_public_addresses(document)
+    doc = combine_sources(document, sources)
+    instance = GlobalConfig(initial_data=doc).get(cluster_id)
+    if not instance.with_ctdb or instance.with_addc:
+        raise ValueError("private CTDB projection requires the CTDB-only mode")
+    required = {key: value for key, value in instance.ctdb_smb_config().global_options() if key != "include"}
+    required.update({
+        "config backend": "file", "registry shares": "no",
+        "ctdbd socket": root + "/ctdb/run/ctdbd.socket",
+        "bind interfaces only": "yes", "interfaces": member["node"],
+        "winbindd socket directory": root + "/samba/winbindd",
+    })
+    for name in doc["configs"][cluster_id].get("globals", []):
+        options = doc["globals"][name].setdefault("options", {})
+        for key, value in options.items():
+            normalized = " ".join(key.lower().split())
+            if normalized == "include" or (normalized == "security" and str(value).strip().lower() in ("ads", "domain")):
+                raise ValueError("native option conflict: " + normalized)
+        _overlay(options, required)
+    doc["globals"]["_native_ctdb"] = {"options": required}
+    doc["configs"][cluster_id].setdefault("globals", []).append("_native_ctdb")
+
+    # Same positional arguments as Sambacc's ctdb-rados-mutex command; -R
+    # disables helper service registration (there is no external supervisor).
+    recovery_argv = ["/snap/microceph/current/libexec/ctdb/ctdb_mutex_ceph_rados_helper",
+                     "ceph", "client.smb.cluster." + cluster_id,
+                     lock["pool"], lock["key"], "-n", lock["ns"], "-R"]
+    # Reject legacy aliases such as nodes_json: the pinned node consumer gives
+    # those precedence over cluster_meta_uri, escaping the authoritative source.
+    supported = {"cluster_meta_uri", "nodes_path", "recovery_lock", "nodes_cmd",
+                 "conf_file_includes", "ctdb_port", "public_addresses",
+                 "log_level", "script_log_level", "realtime_scheduling"}
+    if set(doc.get("ctdb", {})) - supported:
+        raise ValueError("unsupported native CTDB option")
+    # Check explicit overrides before applying upstream's container defaults.
+    _overlay(doc.setdefault("ctdb", {}), {
+        "cluster_meta_uri": cluster_meta_uri, "nodes_path": root + "/ctdb/nodes",
+        "recovery_lock": "!" + shlex.join(recovery_argv), "nodes_cmd": "",
+        "conf_file_includes": [], "ctdb_port": 0,
+    })
+    params = instance.ctdb_config()
+    for key in ("log_level", "script_log_level", "realtime_scheduling"):
+        if not isinstance(params[key], str) or not re.fullmatch(r"[a-zA-Z0-9]+", params[key]):
+            raise ValueError("invalid CTDB option: " + key)
+    conf = io.StringIO()
+    ctdb.write_ctdb_conf(conf, params)
+    # The pinned writer covers shared lock/logging/legacy settings, but not
+    # native paths. Add those parameters to its existing sections.
+    text = conf.getvalue().replace("[logging]\n", "[logging]\nlocation = file:" + root + "/diagnostics/ctdb.log\n")
+    text = text.replace("[cluster]\n", "[cluster]\nnode address = " + member["node"] + "\nnodes list = " + params["nodes_path"] + "\n")
+    text += "[database]\n"
+    for kind in ("volatile", "persistent", "state"):
+        text += kind + " database directory = " + root + "/ctdb/" + kind + "\n"
+    text += "\n[event]\nscript directory = " + root + "/ctdb/events\n"
+    slots = ["#"] * (max(entries) + 1)
+    for rank, entry in entries.items():
+        if entry["state"] not in ("changed", "gone"):
+            slots[rank] = entry["node"]
+    nodes = io.StringIO()
+    ctdb.write_nodes_file(nodes, slots)
+    files = {
+        "config/smb.conf": render(doc, cluster_id, root, context or {}, []),
+        "config/ctdb.json": json.dumps({"samba-container-config": "v0", "ctdb": params}, sort_keys=True) + "\n",
+        "config/ctdb-rank": str(member["pnn"]) + "\n",
+        "config/ctdb-identity": member["identity"] + "\n",
+        "config/ctdb-address": member["node"] + "\n",
+        "ctdb/ctdb.conf": text, "ctdb/nodes": nodes.getvalue(),
+    }
+    directories = [root + "/" + name for name in (
+        "config", "diagnostics", "ctdb/run", "ctdb/events/legacy",
+        "ctdb/volatile", "ctdb/persistent", "ctdb/state",
+        "samba/private", "samba/state", "samba/cache", "samba/lock",
+        "samba/run", "samba/ncalrpc", "samba/winbindd",
+    )]
+    return files, {"member": copy.deepcopy(member), "cluster_meta_uri": cluster_meta_uri,
+                   "recovery_lock_argv": recovery_argv, "directories": directories}
+
+
 def compile_core(candidate, root):
     """Construct a complete private launch projection before any live writes."""
     spec = candidate["spec"]
@@ -108,8 +263,13 @@ def compile_core(candidate, root):
     document = combine_sources(candidate["config"], candidate.get("users") or [])
     instance = GlobalConfig(initial_data=document).get(cluster_id)
     globals_effective = {" ".join(k.lower().split()): str(v).lower() for k, v in instance.global_options()}
-    if instance.with_ctdb or instance.with_addc or globals_effective.get("security") in ("ads", "domain"):
+    if instance.with_addc or globals_effective.get("security", "").strip() in ("ads", "domain"):
         raise ValueError("effective mode requires native cluster/domain preparation from the next feature stage")
+    clustered = "clustered" in (spec.get("features") or [])
+    if instance.with_ctdb != clustered or (clustered and not candidate.get("ctdb")):
+        raise ValueError("effective CTDB mode requires the authoritative native reservation view")
+    if not clustered and candidate.get("ctdb"):
+        raise ValueError("CTDB view requires clustered mode")
     ports = spec.get("custom_ports") or {}
     context = {"proxy": False, "data_checks": [], "smb_port": ports.get("smb", 445), "metrics_port": ports.get("smbmetrics", 9922), "custom_dns": bool(spec.get("custom_dns"))}
     for share in instance.shares():
@@ -123,7 +283,23 @@ def compile_core(candidate, root):
             if user != "smb.fs.cluster." + cluster_id:
                 raise ValueError("native option conflict: Ceph data identity")
             context["data_checks"].append({"filesystem": options[module + ":filesystem"], "path": options["path"], "user": user})
-    files = {"smb.conf": render(document, cluster_id, root, context, [])}
+    context["clustered"] = clustered
+    if clustered:
+        view = candidate["ctdb"]
+        files, details = project_ctdb(document, cluster_id, root,
+                                     cluster_meta_uri=spec["cluster_meta_uri"],
+                                     recovery_lock_uri=spec["cluster_lock_uri"],
+                                     member=view["member"], peers=view["peers"], context=context)
+        # Ranks of retired/deleted owners need no invented IP/identity. Retain
+        # trailing slots as well as internal holes using SQL's monotonic bound.
+        nodes = files["ctdb/nodes"].splitlines()
+        slots = view.get("slot_count", len(nodes))
+        if type(slots) is not int or not len(nodes) <= slots <= 65536:
+            raise ValueError("invalid authoritative CTDB slot count")
+        files["ctdb/nodes"] += "#\n" * (slots - len(nodes))
+        context["ctdb_pnn"] = details["member"]["pnn"]
+    else:
+        files = {"smb.conf": render(document, cluster_id, root, context, [])}
     # Keep only the base service identities plus the complete managed projection.
     users = list(instance.users())
     groups = list(instance.groups())
@@ -153,12 +329,22 @@ def compile_core(candidate, root):
     if context["custom_dns"]:
         import ipaddress
         files["resolv.conf"] = "".join("nameserver " + str(ipaddress.ip_address(a)) + "\n" for a in spec["custom_dns"])
+    if clustered:
+        files = {name if "/" in name else "config/" + name: data for name, data in files.items()}
     return files, context
 
 
 def role_command(role, root, context, snap):
     """Select a fixed foreground binary, never an executable from input data."""
     conf = root + "/config/smb.conf"
+    if role in ("ctdbd", "ctdb-nodes"):
+        if not context.get("clustered"):
+            raise ValueError("CTDB role requires prepared clustered context")
+        if role == "ctdbd":
+            # The pinned binary has no config/socket CLI options. Private binds
+            # supply its supported production paths (not test-mode overrides).
+            return [snap + "/bin/ctdbd", "--interactive"]
+        return [snap + "/bin/python3", "-B", snap + "/smb/native.py", "nodes", root]
     if role == "smbd":
         return [snap + "/bin/smbd", "--foreground", "--no-process-group", "--configfile", conf]
     if role == "cephfs-proxy":
@@ -174,12 +360,19 @@ def launch_mounts(role, root, context):
     if role == "smbd":
         for name in ("passwd", "group", "nsswitch.conf"):
             operations.append((root + "/config/" + name, "/etc/" + name, 4096))
+    if role in ("ctdbd", "ctdb-nodes", "ctdb-control") or (role == "smbd" and context.get("clustered")):
+        if not context.get("clustered"):
+            raise ValueError("CTDB mounts require prepared clustered context")
+        for source, target in (("ctdb", "/etc/ctdb"), ("ctdb/run", "/run/ctdb"), ("ctdb", "/var/lib/ctdb")):
+            operations.append((root + "/" + source, target, 4096))
+        if role == "ctdbd":
+            operations.append((root + "/config/ctdb-recovery.conf", "/etc/ceph/ceph.conf", 4096))
     if context.get("custom_dns"):
         operations.append((root + "/config/resolv.conf", "/etc/resolv.conf", 4096))
     return operations
 
 
-def data_config(text, cluster_id, root):
+def data_config(text, cluster_id, root, *, recovery=False):
     """Adapt monitor/config context without exposing the admin keyring to VFS."""
     import configparser
     parser = configparser.ConfigParser(interpolation=None, strict=False)
@@ -189,8 +382,10 @@ def data_config(text, cluster_id, root):
             parser.remove_section(section)
     if "global" not in parser:
         parser["global"] = {}
-    parser["global"]["keyring"] = root + "/identity/data.keyring"
-    parser["client.smb.fs.cluster." + cluster_id] = {"keyring": root + "/identity/data.keyring"}
+    keyring = root + "/identity/" + ("recovery" if recovery else "data") + ".keyring"
+    identity = "client.smb." + ("cluster." if recovery else "fs.cluster.") + cluster_id
+    parser["global"]["keyring"] = keyring
+    parser[identity] = {"keyring": keyring}
     output = io.StringIO()
     parser.write(output)
     return output.getvalue()
@@ -200,7 +395,10 @@ def atomic_write(path, data):
     import os
     from pathlib import Path
     path = Path(path)
+    private_directory(path.parent)
     tmp = path.with_name(path.name + ".tmp")
+    if path.is_symlink() or tmp.is_symlink():
+        raise ValueError("native file is an escaping symlink")
     try:
         with tmp.open("wb") as out:
             os.chmod(tmp, 0o600)
@@ -210,12 +408,61 @@ def atomic_write(path, data):
         tmp.unlink(missing_ok=True)
 
 
-def publish(root):
-    """Publish a validated projection only while Go has stopped all consumers."""
+def private_directory(path):
+    """Create real private directories, refusing traversal through symlinks."""
+    from pathlib import Path
+    path = Path(path).absolute()
+    if path.parent != path:
+        private_directory(path.parent)
+    if path.is_symlink():
+        raise ValueError("native directory is an escaping symlink")
+    path.mkdir(mode=0o700, exist_ok=True)
+
+
+def publish(root, *, config_only=False):
+    """Publish prepared files; config-only updates never write CTDB runtime files."""
     from pathlib import Path
     root = Path(root)
-    for file in sorted((root / "config/next").iterdir()):
-        atomic_write(root / "config" / file.name, file.read_bytes())
+    if config_only and (root / "stop-requested").exists():
+        raise ValueError("SMB stop requested")
+    private_directory(root)
+    next_dir = root / "config/next"
+    private_directory(next_dir)
+    publication = []
+    # Validate the whole prepared set before any live write. Initial placement
+    # still publishes CTDB startup files while all consumers are stopped.
+    for file in sorted(next_dir.rglob("*")):
+        if file.is_symlink():
+            raise ValueError("native candidate is an escaping symlink")
+        if not file.is_file():
+            continue
+        relative = file.relative_to(next_dir)
+        if len(relative.parts) == 1:
+            relative = Path("config") / relative
+        if config_only:
+            protected = (relative == Path("ctdb/ctdb.conf") or
+                         (relative.parts[0] == "config" and relative.name.startswith("ctdb")))
+            if protected:
+                target = root / relative
+                if target.is_symlink() or target.read_bytes() != file.read_bytes():
+                    raise ValueError("CTDB configuration changed; explicit maintenance required")
+                continue
+            if relative.parts[0] == "ctdb":
+                # The node monitor publishes/reloads nodes itself after seeing
+                # candidate.json. Pre-writing nodes here would mask its reload.
+                continue
+            if relative.parts[0] != "config":
+                raise ValueError("configuration refresh cannot publish runtime state")
+        publication.append((root / relative, file.read_bytes()))
+    for target, data in publication:
+        if config_only and (root / "stop-requested").exists():
+            raise ValueError("SMB stop requested")
+        atomic_write(target, data)
+
+
+def publish_config(root):
+    """Apply only prepared Samba configuration; retain CTDB-owned state."""
+    publish(root, config_only=True)
 
 
 def load_launch(root):
@@ -238,22 +485,31 @@ def compile_files(root):
     files, context = compile_core(candidate, str(root))
     ceph_text = candidate["ceph_config"]
     ceph_conf = data_config(ceph_text, candidate["spec"]["cluster_id"], str(root))
-    files["ceph-direct.conf"] = files["ceph-proxy.conf"] = ceph_conf
-    files["context.json"] = json.dumps(context, sort_keys=True)
-    files["candidate.json"] = json.dumps(candidate, sort_keys=True)
+    files = {name if "/" in name else "config/" + name: data for name, data in files.items()}
+    files["config/ceph-direct.conf"] = files["config/ceph-proxy.conf"] = ceph_conf
+    if context["clustered"]:
+        files["config/ctdb-recovery.conf"] = data_config(ceph_text, candidate["spec"]["cluster_id"], str(root), recovery=True)
+        for directory in ("ctdb/run", "ctdb/events/legacy", "ctdb/volatile", "ctdb/persistent", "ctdb/state", "ctdb/scripts", "samba/winbindd"):
+            private_directory(root / directory)
+    files["config/context.json"] = json.dumps(context, sort_keys=True)
+    files["config/candidate.json"] = json.dumps(candidate, sort_keys=True)
     next_dir = root / "config/next"
-    next_dir.mkdir(mode=0o700, exist_ok=True)
+    private_directory(next_dir)
     # Remove obsolete candidate-only files, never live state or shared data.
-    for file in next_dir.iterdir():
-        if file.name not in files:
+    for file in sorted(next_dir.rglob("*"), reverse=True):
+        if file.is_symlink():
+            raise ValueError("native candidate is an escaping symlink")
+        if file.is_file() and str(file.relative_to(next_dir)) not in files:
             file.unlink()
+        elif file.is_dir() and not any(file.iterdir()):
+            file.rmdir()
     for name, data in files.items():
         atomic_write(next_dir / name, data)
-    subprocess.run([os.environ["SNAP"] + "/bin/testparm", "--suppress-prompt", str(next_dir / "smb.conf")], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run([os.environ["SNAP"] + "/bin/testparm", "--suppress-prompt", str(next_dir / "config/smb.conf")], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if context["data_checks"]:
         import cephfs
         for check in context["data_checks"]:
-            fs = cephfs.LibCephFS(conffile=str(next_dir / "ceph-direct.conf"), auth_id=check["user"])
+            fs = cephfs.LibCephFS(conffile=str(next_dir / "config/ceph-direct.conf"), auth_id=check["user"])
             try:
                 fs.conf_set("client_fs", check["filesystem"])
                 fs.mount()
@@ -273,6 +529,9 @@ def enter_launch_context(role, root, context):
     for source, target, flags in launch_mounts(role, str(root), context):
         if libc.mount(source.encode() if source else None, target.encode(), None, flags, None) != 0:
             raise OSError(ctypes.get_errno(), "native private bind")
+    if context.get("clustered"):
+        os.environ["CTDB_BASE"] = str(root / "ctdb")
+        os.environ["CTDB"] = os.environ["SNAP"] + "/bin/ctdb"
     os.environ["LIBCEPHFSD_SOCKET"] = str(root) + "/proxy-work/libcephfsd.sock"
     os.environ["SMBMETRICS_SMBSTATUS"] = os.environ["SNAP"] + "/bin/smbstatus"
     os.environ["SMBMETRICS_SMBCONF"] = str(root) + "/config/smb.conf"
@@ -297,6 +556,137 @@ def prepare_local_accounts(root):
         loader.add_user(user)
 
 
+def prepare_ctdb(root, snap):
+    """Use the pinned minimal event-resource setup, never stock service scripts."""
+    import os
+    from pathlib import Path
+    from sambacc import ctdb
+    root = Path(root)
+    for helper in ("ctdb-eventd", "ctdb_mutex_ceph_rados_helper", "ctdb_recovery_helper", "ctdb_takeover_helper", "ctdb_lock_helper"):
+        if not os.access(Path(snap) / "libexec/ctdb" / helper, os.X_OK):
+            raise ValueError("required CTDB helper is not executable")
+    for name in ("functions", "notify.sh", "events/legacy/00.ctdb.script"):
+        if not (Path(snap) / "share/ctdb" / name).is_file():
+            raise ValueError("required CTDB event resource is absent")
+    for name in ("ctdb", "ctdb/run", "ctdb/events/legacy", "ctdb/scripts"):
+        private_directory(root / name)
+    # An unexpected enabled script could invoke a service manager or public-IP
+    # operations. Do not silently delete it or claim the cluster is prepared.
+    if any(file.name != "00.ctdb.script" for file in (root / "ctdb/events/legacy").iterdir()):
+        raise ValueError("unexpected enabled CTDB event script")
+    (root / "ctdb/run/ctdb-nodes.pid").unlink(missing_ok=True)
+    ctdb.ensure_ctdbd_etc_files(etc_path=str(root / "ctdb"), src_path=snap + "/share/ctdb")
+
+
+def ctdb_control(root, operation, *args):
+    """Fixed diagnostic primitives, run only in the CTDB app's private context."""
+    import os
+    import subprocess
+    if operation not in ("pnn", "nodestatus", "status", "reloadnodes"):
+        raise ValueError("unsupported native CTDB control command")
+    if args and (operation != "nodestatus" or len(args) != 1 or not str(args[0]).isdigit()):
+        raise ValueError("invalid native CTDB control argument")
+    return subprocess.check_output([os.environ["SNAP"] + "/bin/ctdb", operation, *args], stderr=subprocess.DEVNULL, timeout=5)
+
+
+def ctdb_membership(status):
+    """Parse pinned text status, including the total bound of deleted PNN slots."""
+    import ipaddress
+    import re
+    lines = status.decode().splitlines()
+    counts = [re.fullmatch(r"Number of nodes:(\d+)(?: \(including \d+ deleted nodes\))?", line)
+              for line in lines if line.startswith("Number of nodes:")]
+    if len(counts) != 1 or counts[0] is None:
+        raise ValueError("invalid CTDB membership status")
+    slots = int(counts[0][1])
+    if not 0 < slots <= 65536:
+        raise ValueError("invalid CTDB membership slot count")
+    nodes = {}
+    for line in lines:
+        if not line.startswith("pnn:"):
+            continue
+        entry = re.fullmatch(r"pnn:(\d+)\s+(\S+)\s+(.+)", line)
+        if entry is None:
+            raise ValueError("invalid CTDB membership node")
+        pnn = int(entry[1])
+        if pnn >= slots or pnn in nodes:
+            raise ValueError("invalid CTDB membership rank")
+        nodes[pnn] = (str(ipaddress.ip_address(entry[2])), entry[3].removesuffix(" (THIS NODE)"))
+    if "Recovery mode:NORMAL (0)" not in lines:
+        raise ValueError("CTDB recovery is not normal")
+    return slots, nodes
+
+
+def prepared_ctdb_nodes(root):
+    """Consume the published SQL view through the real pinned projection."""
+    import json
+    candidate = json.loads((root / "config/candidate.json").read_text())
+    files, context = compile_core(candidate, str(root))
+    if not context["clustered"]:
+        raise ValueError("node monitor requires CTDB preparation")
+    expected = files["ctdb/nodes"]
+    desired = {pnn: line for pnn, line in enumerate(expected.splitlines()) if not line.startswith("#")}
+    return expected, desired
+
+
+def observe_ctdb_nodes(root, expected, desired):
+    slots, nodes = ctdb_membership(ctdb_control(root, "status"))
+    matches = slots == len(expected.splitlines()) and {pnn: node[0] for pnn, node in nodes.items()} == desired
+    return matches, nodes
+
+
+def update_ctdb_nodes(root):
+    """Publish all peer files before reload; never allocate or renumber peers."""
+    if (root / "stop-requested").exists():
+        raise ValueError("SMB stop requested")
+    expected, desired = prepared_ctdb_nodes(root)
+    path = root / "ctdb/nodes"
+    if path.read_text() != expected:
+        atomic_write(path, expected)
+    matches, nodes = observe_ctdb_nodes(root, expected, desired)
+    if matches:
+        return
+    for pnn, (address, flags) in nodes.items():
+        if pnn in desired:
+            if address != desired[pnn] or flags != "OK":
+                raise ValueError("CTDB surviving membership is unhealthy or changed address")
+        elif "DISCONNECTED" not in flags.split("|"):
+            raise ValueError("CTDB retired membership is still connected")
+    # Pinned reloadnodes compares nodes files on ALL connected hosts before
+    # applying them. Keep the target on disk even on failure, so asynchronous
+    # monitors can converge on identical files. Exit zero can mask partial
+    # daemon reload failures: always observe the map, also after a restart.
+    ctdb_control(root, "reloadnodes")
+    matches, _ = observe_ctdb_nodes(root, expected, desired)
+    if not matches:
+        raise ValueError("CTDB daemon membership does not match published slots")
+
+
+def monitor_ctdb_nodes(root):
+    """Fixed node monitor retries transient reads/reloads; not a supervisor."""
+    import os
+    import time
+    pidfile = root / "ctdb/run/ctdb-nodes.pid"
+    diagnostic = root / "diagnostics/nodes-error"
+    try:
+        while True:
+            try:
+                update_ctdb_nodes(root)
+                ready(root, "ctdbd")
+                atomic_write(pidfile, str(os.getpid()) + "\n")
+                diagnostic.unlink(missing_ok=True)
+            except Exception:
+                pidfile.unlink(missing_ok=True)
+                # Never expose candidate secrets or claim reload completion.
+                try:
+                    atomic_write(diagnostic, "CTDB membership update is not confirmed.\n")
+                except OSError:
+                    pass
+            time.sleep(2)
+    finally:
+        pidfile.unlink(missing_ok=True)
+
+
 def ready(root, role):
     """Check actual daemon/control endpoints; snapctl acceptance is not ready."""
     import json
@@ -305,7 +695,24 @@ def ready(root, role):
     import subprocess
     import urllib.request
     context = json.loads((root / "config/context.json").read_text())
-    if role == "cephfs-proxy":
+    if role in ("ctdbd", "ctdb-nodes"):
+        if not context.get("clustered"):
+            raise ValueError("CTDB readiness requires prepared clustered context")
+        assigned = context["ctdb_pnn"]
+        if int(ctdb_control(root, "pnn").strip()) != assigned:
+            raise ValueError("CTDB assigned PNN mismatch")
+        ctdb_control(root, "nodestatus", str(assigned))
+        status = ctdb_control(root, "status").decode()
+        if "Recovery mode:NORMAL (0)" not in status.splitlines():
+            raise ValueError("CTDB recovery is not normal")
+        if role == "ctdb-nodes":
+            expected, desired = prepared_ctdb_nodes(root)
+            matches, _ = observe_ctdb_nodes(root, expected, desired)
+            if (root / "ctdb/nodes").read_text() != expected or not matches:
+                raise ValueError("CTDB daemon membership is not confirmed")
+            pid = int((root / "ctdb/run/ctdb-nodes.pid").read_text().strip())
+            os.kill(pid, 0)
+    elif role == "cephfs-proxy":
         with socket.socket(socket.AF_UNIX) as client:
             client.settimeout(2)
             client.connect(str(root / "proxy-work/libcephfsd.sock"))
@@ -340,8 +747,22 @@ def main():
         compile_files(root)
     elif command == "publish":
         publish(root)
+    elif command == "publish-config":
+        publish_config(root)
     elif command == "ready":
         ready(root, sys.argv[3])
+    elif command == "prepare-ctdb":
+        prepare_ctdb(root, os.environ["SNAP"])
+    elif command == "nodes":
+        monitor_ctdb_nodes(root)
+    elif command == "control":
+        root = active_root(root)
+        context = load_launch(root)
+        enter_launch_context("ctdb-control", root, context)
+        if sys.argv[3] == "ready" and len(sys.argv) == 5 and sys.argv[4] in ("ctdbd", "ctdb-nodes"):
+            ready(root, sys.argv[4])
+        else:
+            sys.stdout.buffer.write(ctdb_control(root, sys.argv[3], *sys.argv[4:]))
     elif command == "launch":
         root = active_root(root)
         role = sys.argv[3]
@@ -349,7 +770,18 @@ def main():
         argv = role_command(role, str(root), context, os.environ["SNAP"])
         enter_launch_context(role, root, context)
         if role == "smbd":
+            if context.get("clustered"):
+                # Also gate snapd boot/restart launches, not just Go's initial
+                # service ordering: clustered SAM access requires CTDB first.
+                ready(root, "ctdbd")
             prepare_local_accounts(root)
+        if role == "ctdbd":
+            # --interactive deliberately forces stderr logging in the pinned
+            # binary. Keep CTDB diagnostics in the root-private directory.
+            fd = os.open(root / "diagnostics/ctdbd.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            os.dup2(fd, 1)
+            os.dup2(fd, 2)
+            os.close(fd)
         if role == "cephfs-proxy":
             os.chdir(root / "proxy-work")
         os.execv(argv[0], argv)
@@ -369,7 +801,7 @@ if __name__ == "__main__":
         from pathlib import Path
         try:
             root = Path(sys.argv[2])
-            if sys.argv[1] == "launch":
+            if sys.argv[1] in ("launch", "control"):
                 root = active_root(root)
             atomic_write(root / "diagnostics/native-error", traceback.format_exc())
         except Exception:

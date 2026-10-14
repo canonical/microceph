@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/canonical/microceph/microceph/common"
-	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
@@ -50,6 +49,13 @@ func smbBase() string                 { return filepath.Join(os.Getenv("SNAP_COM
 func smbRoot(clusterID string) string { return filepath.Join(smbBase(), clusterID) }
 
 func smbNativeCommand(ctx context.Context, command, root string, args ...string) error {
+	if command == "ready" && len(args) == 1 && (args[0] == "ctdbd" || args[0] == "ctdb-nodes") {
+		_, err := common.ProcessExec.RunCommandContext(ctx, "snap", "run", "microceph.ctdb", "ready", args[0])
+		if err != nil {
+			return fmt.Errorf("native SMB CTDB readiness failed; inspect private cluster diagnostics")
+		}
+		return nil
+	}
 	argv := []string{"-B", filepath.Join(os.Getenv("SNAP"), "smb", "native.py"), command, root}
 	argv = append(argv, args...)
 	_, err := common.ProcessExec.RunCommandContext(ctx, filepath.Join(os.Getenv("SNAP"), "bin", "python3"), argv...)
@@ -159,7 +165,7 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	}
 	root := smbRoot(clusterID)
 	for _, dir := range []string{"config", "identity", "samba/private", "samba/state", "samba/cache", "samba/lock", "samba/run", "samba/ncalrpc", "ctdb", "proxy-work", "diagnostics"} {
-		err = os.MkdirAll(filepath.Join(root, dir), 0700)
+		err = smbPrivateDir(filepath.Join(root, dir))
 		if err != nil {
 			return err
 		}
@@ -207,24 +213,9 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
-	read := func(uri string) ([]byte, error) { return smbReadSource(ctx, clusterID, root, uri) }
-	candidate, err := readSMBCandidate(clusterID, read)
+	candidate, err := readSMBPreparedCandidate(ctx, s, clusterID, root, []byte(logical), false)
 	if err != nil {
 		return err
-	}
-	cephConfig, err := os.ReadFile(filepath.Join(constants.GetPathConst().ConfPath, "ceph.conf"))
-	if err != nil {
-		return err
-	}
-	candidate.CephConfig = string(cephConfig)
-	candidate.Logical = json.RawMessage(logical)
-	// Cluster/domain/remote roles are attached by their subsequent feature stages.
-	_, err = smbCoreRoles(candidate.Spec, false)
-	if err != nil {
-		return err
-	}
-	if len(candidate.Spec.BindAddresses) > 0 {
-		return fmt.Errorf("native bind-address planning requires the network feature stage")
 	}
 	ownerFile := filepath.Join(smbBase(), "owner.json")
 	previous, err := os.ReadFile(ownerFile)
@@ -236,6 +227,12 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	}
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := database.ReserveSMBOwner(ctx, tx, clusterID, s.ClusterState().Name(), candidate.Spec.hasFeature("clustered"))
+		if err != nil {
+			return err
+		}
+		if candidate.Spec.hasFeature("clustered") {
+			candidate.CTDB, err = database.GetSMBCTDBView(ctx, tx, clusterID, s.ClusterState().Name())
+		}
 		return err
 	})
 	if err != nil {
@@ -264,49 +261,25 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
-	raw, err := json.Marshal(candidate)
+	if candidate.CTDB != nil {
+		err = ensureSMBRecoveryKey(ctx, clusterID, root)
+		if err != nil {
+			return err
+		}
+	}
+	launch, roles, err := prepareSMBProjection(ctx, s, candidate, root)
 	if err != nil {
 		return err
-	}
-	err = smbAtomicWrite(filepath.Join(root, "config", "candidate.next.json"), raw)
-	if err != nil {
-		return err
-	}
-	err = smbNativeCommand(ctx, "compile", root)
-	if err != nil {
-		return err
-	}
-	// Re-read all bytes after render/preflight; reject an obvious torn update.
-	recheck, err := readSMBCandidate(clusterID, read)
-	if err != nil {
-		return err
-	}
-	recheck.CephConfig = candidate.CephConfig
-	recheck.Logical = candidate.Logical
-	if recheck.fingerprint() != candidate.fingerprint() {
-		return fmt.Errorf("SMB sources changed during preparation; retry")
 	}
 	applied, err := os.ReadFile(filepath.Join(root, "applied.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	var launch struct {
-		Proxy   bool `json:"proxy"`
-		SMBPort int  `json:"smb_port"`
+	_, pendingErr := os.Stat(filepath.Join(root, "config-update-pending"))
+	if pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist) {
+		return pendingErr
 	}
-	contextBytes, err := os.ReadFile(filepath.Join(root, "config", "next", "context.json"))
-	if err != nil {
-		return err
-	}
-	err = json.Unmarshal(contextBytes, &launch)
-	if err != nil {
-		return err
-	}
-	roles, err := smbCoreRoles(candidate.Spec, launch.Proxy)
-	if err != nil {
-		return err
-	}
-	unchanged := string(applied) == candidate.fingerprint()
+	unchanged := string(applied) == candidate.fingerprint() && errors.Is(pendingErr, os.ErrNotExist)
 	ready := true
 	for _, role := range roles {
 		if smbNativeCommand(ctx, "ready", root, role) != nil {
@@ -334,6 +307,12 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
+	if launch.Clustered {
+		err = smbNativeCommand(ctx, "prepare-ctdb", root)
+		if err != nil {
+			return err
+		}
+	}
 	err = os.Remove(filepath.Join(root, "stop-requested"))
 	if err != nil {
 		return err
@@ -342,7 +321,7 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
-	info, _ := json.Marshal(map[string]any{"clustered": false, "smb_port": launch.SMBPort})
+	info, _ := json.Marshal(map[string]any{"clustered": launch.Clustered, "smb_port": launch.SMBPort})
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return database.RecordSMBService(ctx, tx, clusterID, s.ClusterState().Name(), string(info))
 	})
@@ -351,7 +330,18 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	}
 	err = smbAtomicWrite(filepath.Join(root, "applied.json"), []byte(candidate.fingerprint()))
 	if err != nil {
-		return errors.Join(err, stopSMBApps(root, ops))
+		stopErr := stopSMBApps(root, ops)
+		var withdrawErr error
+		if stopErr == nil {
+			withdrawErr = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				return database.WithdrawSMBService(ctx, tx, clusterID, s.ClusterState().Name())
+			})
+		}
+		return errors.Join(err, stopErr, withdrawErr)
+	}
+	err = os.Remove(filepath.Join(root, "config-update-pending"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	os.Remove(filepath.Join(root, "diagnostics", "last-error"))
 	return nil
@@ -362,16 +352,36 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 func DisableSMB(ctx context.Context, s interfaces.StateInterface, clusterID string, purge bool) error {
 	serviceStartMu.Lock()
 	defer serviceStartMu.Unlock()
+	return disableSMBLocked(ctx, s, clusterID, purge)
+}
+
+// disableSMBLocked also handles reservations made before local publication.
+func disableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID string, purge bool) error {
 	err := validateSMBClusterID(clusterID)
 	if err != nil {
 		return err
 	}
-	owner, err := os.ReadFile(filepath.Join(smbBase(), "owner.json"))
+	ownerPath := filepath.Join(smbBase(), "owner.json")
+	owner, ownerErr := os.ReadFile(ownerPath)
+	if ownerErr != nil && !errors.Is(ownerErr, os.ErrNotExist) {
+		return ownerErr
+	}
+	if ownerErr == nil && string(owner) != clusterID {
+		return fmt.Errorf("SMB local owner does not match requested cluster")
+	}
+	var groups []string
+	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		groups, err = database.GetSMBOwnerGroups(ctx, tx, s.ClusterState().Name())
+		return err
+	})
 	if err != nil {
 		return err
 	}
-	if string(owner) != clusterID {
-		return fmt.Errorf("SMB local owner does not match requested cluster")
+	if len(groups) > 1 || (len(groups) == 1 && groups[0] != clusterID) {
+		return fmt.Errorf("SMB retained ownership conflicts with requested cluster")
+	}
+	if len(groups) == 0 && errors.Is(ownerErr, os.ErrNotExist) {
+		return ownerErr // absence is not proof of an uncertain owner's stop
 	}
 	root := smbRoot(clusterID)
 	err = stopSMBApps(root, smbSnapOps(root))
@@ -384,8 +394,8 @@ func DisableSMB(ctx context.Context, s interfaces.StateInterface, clusterID stri
 	if err != nil {
 		return err
 	}
-	err = os.Remove(filepath.Join(smbBase(), "owner.json"))
-	if err != nil {
+	err = os.Remove(ownerPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	if purge {

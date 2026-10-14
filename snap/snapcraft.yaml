@@ -37,6 +37,18 @@ plugs:
       - what: /var/snap/microceph/common/smb/*/config/nsswitch.conf
         where: /etc/nsswitch.conf
         options: [bind]
+      - what: /var/snap/microceph/common/smb/*/ctdb
+        where: /etc/ctdb
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/ctdb/run
+        where: /run/ctdb
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/ctdb
+        where: /var/lib/ctdb
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/config/ctdb-recovery.conf
+        where: /etc/ceph/ceph.conf
+        options: [bind]
   load-rbd:
     interface: kernel-module-load
     modules:
@@ -66,6 +78,16 @@ environment:
 layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba
+  /etc/ctdb:
+    type: tmpfs
+  /run/ctdb:
+    type: tmpfs
+  /var/lib/ctdb:
+    type: tmpfs
+  /usr/libexec/ctdb:
+    symlink: $SNAP/libexec/ctdb
+  /usr/share/ctdb:
+    symlink: $SNAP/share/ctdb
   /usr/libexec/samba:
     symlink: $SNAP/libexec/samba
   /usr/share/samba:
@@ -102,6 +124,9 @@ apps:
     install-mode: disable
     stop-mode: sigterm-all
     plugs: [network, network-bind, network-control, smb-mounts, process-control]
+  ctdb:
+    command: commands/ctdb.start
+    plugs: [network, network-bind, smb-mounts, process-control]
   ctdb-nodes:
     command: commands/ctdb-nodes.start
     daemon: simple
@@ -304,6 +329,8 @@ parts:
       usr/lib/: lib/
       usr/libexec/: libexec/
       usr/share/: share/
+      etc/ctdb/functions: share/ctdb/functions
+      etc/ctdb/notify.sh: share/ctdb/notify.sh
     prime:
       - bin/smbd
       - bin/winbindd
@@ -316,6 +343,8 @@ parts:
       - bin/pdbedit
       - bin/libcephfsd
       - lib/**
+      - libexec/ctdb/**
+      - share/ctdb/**
       - libexec/samba/**
       - share/samba/**
       - share/licenses/**
@@ -643,15 +672,24 @@ parts:
       - ceph
       - dqlite
       - microceph
+      - native-smb
       - logrotate
     plugin: nil
     override-prime: |
-      set -x
+      set -ex
 
-      # Strip libraries (excluding python3 scripts)
+      # Staged dependencies also contain non-ELF metadata and scripts.
+      # Keep the existing Python-tree exclusion and propagate strip failures.
       find "${CRAFT_PRIME}"/lib -type f \
         -not -path "${CRAFT_PRIME}/lib/python3*/*" \
-        -exec strip -s {} +
+        -exec sh -ec '
+          for path do
+            magic=$(head -c 4 "$path")
+            if [ "$magic" = "$(printf "\177ELF")" ]; then
+              strip -s "$path"
+            fi
+          done
+        ' sh {} +
 
   wrappers:
     plugin: dump

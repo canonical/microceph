@@ -367,7 +367,9 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 	seen := map[string]bool{}
 	for _, gs := range groupedServices {
 		if gs.Service == "smb" {
-			err := enableSMBLocked(ctx, s, gs.GroupID, false)
+			// Native fixed apps retain snapd intent. Daemon restart observes or
+			// refreshes configured ownership; rejoin/enable remains explicit.
+			err := refreshSMBLocked(ctx, s)
 			if err != nil {
 				logger.Warn("start: native SMB application not confirmed; inspect service status")
 			}

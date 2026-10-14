@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/canonical/microceph/microceph/common"
 )
 
 var smbStopOrder = []string{"smbmetrics", "smbd", "smb-remote", "winbindd", "cephfs-proxy", "ctdb-nodes", "ctdbd"}
@@ -18,8 +21,19 @@ type smbAppOps struct {
 }
 
 func smbAtomicWrite(path string, content []byte) error {
+	err := smbPrivateDir(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
 	tmp := path + ".tmp"
-	err := os.WriteFile(tmp, content, 0600)
+	info, err := os.Lstat(tmp)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("SMB temporary file is a symlink")
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	err = os.WriteFile(tmp, content, 0600)
 	if err != nil {
 		return err
 	}
@@ -83,11 +97,14 @@ func smbCoreRoles(spec smbSpec, proxy bool) ([]string, error) {
 	// Optional feature stages attach their preparation/readiness here. Do not
 	// start a partially configured domain/cluster/remote service as successful.
 	for _, feature := range spec.Features {
-		if feature != "cephfs-proxy" {
+		if feature != "cephfs-proxy" && feature != "clustered" {
 			return nil, fmt.Errorf("SMB native %s preparation is not available in this core milestone", feature)
 		}
 	}
 	roles := []string{}
+	if spec.hasFeature("clustered") {
+		roles = append(roles, "ctdbd", "ctdb-nodes")
+	}
 	if proxy {
 		roles = append(roles, "cephfs-proxy")
 	}
@@ -125,4 +142,65 @@ func smbSnapOps(root string) smbAppOps {
 			}
 		},
 	}
+}
+
+// smbPrivateDir refuses symlink traversal before writing native private state.
+func smbPrivateDir(path string) error {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(path)
+	if parent != path {
+		err = smbPrivateDir(parent)
+		if err != nil {
+			return err
+		}
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return os.Mkdir(path, 0700)
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("SMB private path is not a real directory")
+	}
+	return nil
+}
+
+// refreshSMBApps preserves snapd enable/disable intent and never controls CTDB.
+// Restart rather than reload smbd to renew its NSS binds and import changed SAM.
+// Readiness is observed separately after recording completed configuration work.
+func refreshSMBApps(root string, roles []string) error {
+	for _, role := range roles {
+		if role == "ctdbd" || role == "ctdb-nodes" {
+			continue
+		}
+		err := checkSMBStartIntent(root)
+		if err != nil {
+			return err
+		}
+		// Do not resurrect a separately disabled app on an update.
+		out, err := common.ProcessExec.RunCommand("snapctl", "services", "microceph."+role)
+		if err != nil {
+			return fmt.Errorf("SMB service intent check failed")
+		}
+		enabled := false
+		for _, line := range strings.Split(out, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 && fields[0] == "microceph."+role {
+				enabled = fields[1] == "enabled"
+			}
+		}
+		if !enabled {
+			return fmt.Errorf("SMB %s is disabled or its intent is unknown", role)
+		}
+		err = snapRestart(role, false)
+		if err != nil {
+			return fmt.Errorf("SMB %s configuration restart failed", role)
+		}
+	}
+	return nil
 }

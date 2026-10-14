@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -16,8 +17,8 @@ func setupSMBDB(t *testing.T) *sql.DB {
 	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "smb.db")+"?_foreign_keys=on&_txlock=immediate&_busy_timeout=10000")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err = db.Exec(`CREATE TABLE core_cluster_members (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE);
- INSERT INTO core_cluster_members(name) VALUES ('a'), ('b'), ('c');`)
+	_, err = db.Exec(`CREATE TABLE core_cluster_members (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, address TEXT);
+ INSERT INTO core_cluster_members(name,address) VALUES ('a','192.0.2.1:7443'), ('b','192.0.2.2:7443'), ('c','192.0.2.3:7443');`)
 	require.NoError(t, err)
 	tx, err := db.Begin()
 	require.NoError(t, err)
@@ -81,20 +82,25 @@ func TestSMBReservationBeforeReadinessAndRetention(t *testing.T) {
 	}))
 }
 
-func TestSMBSingletonSQLRace(t *testing.T) {
+func TestSMBNonclusteredSQLRace(t *testing.T) {
 	db := setupSMBDB(t)
 	var wg sync.WaitGroup
+	start := make(chan struct{})
 	results := make(chan error, 2)
 	for _, member := range []string{"a", "b"} {
 		wg.Add(1)
 		go func(member string) {
 			defer wg.Done()
+			<-start
 			tx, err := db.Begin()
 			if err != nil {
 				results <- err
 				return
 			}
-			_, err = ReserveSMBOwner(context.Background(), tx, "single", member, false)
+			rank, err := ReserveSMBOwner(context.Background(), tx, "alpha", member, false)
+			if err == nil && rank != 0 {
+				err = fmt.Errorf("nonclustered reservation returned CTDB rank %d", rank)
+			}
 			if err == nil {
 				err = tx.Commit()
 			} else {
@@ -103,52 +109,85 @@ func TestSMBSingletonSQLRace(t *testing.T) {
 			results <- err
 		}(member)
 	}
+	close(start)
 	wg.Wait()
 	close(results)
-	success := 0
 	for err := range results {
-		if err == nil {
-			success++
-		}
+		require.NoError(t, err, "distinct members may concurrently reserve the same nonclustered group")
 	}
-	require.Equal(t, 1, success)
+	var raw string
+	require.NoError(t, db.QueryRow("SELECT config FROM service_groups WHERE group_id='alpha'").Scan(&raw))
+	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a","2":"b"}}`, raw)
 }
 
-func TestSMBOfflineRemovalRetainsUncertainty(t *testing.T) {
+func TestSMBOfflineRemovalRetainsMemberUncertainty(t *testing.T) {
 	db := setupSMBDB(t)
 	ctx := context.Background()
 	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
-		_, err := ReserveSMBOwner(ctx, tx, "single", "a", false)
+		_, err := ReserveSMBOwner(ctx, tx, "alpha", "a", false)
 		return err
 	}))
 	_, err := db.Exec("DELETE FROM core_cluster_members WHERE name='a'; INSERT INTO core_cluster_members(name) VALUES ('a')")
 	require.NoError(t, err)
-	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
-		_, err := ReserveSMBOwner(ctx, tx, "single", "b", false)
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+		_, err := ReserveSMBOwner(ctx, tx, "alpha", "b", false)
 		return err
-	}))
+	}), "an uncertain owner must not block a different member of the same group")
 	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
-		_, err := ReserveSMBOwner(ctx, tx, "single", "a", false)
+		_, err := ReserveSMBOwner(ctx, tx, "alpha", "a", false)
 		return err
 	}), "a replacement identity cannot take over an uncertain old owner")
-	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "single", "a") }))
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
+		_, err := ReserveSMBOwner(ctx, tx, "other", "a", false)
+		return err
+	}), "the uncertain member name must remain protected across groups")
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "alpha", "a") }))
+	var raw string
+	require.NoError(t, db.QueryRow("SELECT config FROM service_groups WHERE group_id='alpha'").Scan(&raw))
+	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a","2":"b"}}`, raw)
 }
 
 func TestSMBReservationModeAndUnownedRecord(t *testing.T) {
 	db := setupSMBDB(t)
 	ctx := context.Background()
 	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { return RecordSMBService(ctx, tx, "missing", "a", `{}`) }))
-	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "x", "a", true); return err }))
-	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "x", "b", false); return err }))
+	for _, clustered := range []bool{true, false} {
+		t.Run(fmt.Sprintf("clustered=%t", clustered), func(t *testing.T) {
+			db := setupSMBDB(t)
+			require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+				_, err := ReserveSMBOwner(ctx, tx, "x", "a", clustered)
+				return err
+			}))
+			require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
+				_, err := ReserveSMBOwner(ctx, tx, "x", "b", !clustered)
+				return err
+			}))
+			require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "x", "a") }))
+			require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
+				_, err := ReserveSMBOwner(ctx, tx, "x", "b", !clustered)
+				return err
+			}), "retirement must not permit a mode change")
+		})
+	}
 }
 
-func TestSMBSingletonDoesNotAllocateCTDBRank(t *testing.T) {
+func TestSMBNonclusteredReservationsDoNotAllocateCTDBRank(t *testing.T) {
 	db := setupSMBDB(t)
 	ctx := context.Background()
-	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "single", "a", false); return err }))
+	for _, member := range []string{"a", "b", "a"} {
+		require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+			rank, err := ReserveSMBOwner(ctx, tx, "alpha", member, false)
+			require.Zero(t, rank)
+			return err
+		}))
+	}
 	var raw string
-	require.NoError(t, db.QueryRow("SELECT config FROM service_groups WHERE group_id='single'").Scan(&raw))
-	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a"}}`, raw)
+	require.NoError(t, db.QueryRow("SELECT config FROM service_groups WHERE group_id='alpha'").Scan(&raw))
+	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a","2":"b"}}`, raw)
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
+		_, err := ReserveSMBOwner(ctx, tx, "other", "a", false)
+		return err
+	}), "retry must preserve exclusive ownership of the host")
 }
 
 func TestSMBStoppedUpdateWithdrawsRowNotOwner(t *testing.T) {
@@ -160,6 +199,111 @@ func TestSMBStoppedUpdateWithdrawsRowNotOwner(t *testing.T) {
 	var count int
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM grouped_services").Scan(&count))
 	require.Zero(t, count)
-	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", "b", false); return err }))
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", "b", false); return err }))
+	var raw string
+	require.NoError(t, db.QueryRow("SELECT config FROM service_groups WHERE group_id='alpha'").Scan(&raw))
+	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a","2":"b"}}`, raw)
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
+		_, err := ReserveSMBOwner(ctx, tx, "other", "a", false)
+		return err
+	}), "withdrawing a service row must retain exclusive ownership of the host")
 	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return RecordSMBService(ctx, tx, "alpha", "a", `{}`) }))
+}
+
+func TestSMBCTDBViewUsesReservedOwnersAndPrivateAddresses(t *testing.T) {
+	db := setupSMBDB(t)
+	ctx := context.Background()
+	_, err := db.Exec(`UPDATE core_cluster_members SET address=CASE name WHEN 'a' THEN '192.0.2.1:7443' WHEN 'b' THEN '192.0.2.2:7443' ELSE '[2001:db8::3]:7443' END;`)
+	require.NoError(t, err)
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+		for _, member := range []string{"a", "b", "c"} {
+			_, err := ReserveSMBOwner(ctx, tx, "alpha", member, true)
+			require.NoError(t, err)
+		}
+		return RetireSMBOwner(ctx, tx, "alpha", "b")
+	}))
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+		view, err := GetSMBCTDBView(ctx, tx, "alpha", "c")
+		require.NoError(t, err)
+		require.Equal(t, uint64(3), view.SlotCount)
+		require.Equal(t, SMBCTDBMember{Identity: "3", PNN: 2, Node: "2001:db8::3", State: "new"}, view.Member)
+		require.Equal(t, []SMBCTDBMember{{Identity: "1", PNN: 0, Node: "192.0.2.1", State: "new"}}, view.Peers)
+		return nil
+	}))
+	_, err = db.Exec("DELETE FROM core_cluster_members WHERE name='a'")
+	require.NoError(t, err)
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
+		_, err := GetSMBCTDBView(ctx, tx, "alpha", "c")
+		return err
+	}), "uncertain offline ownership must not silently disappear from a launch view")
+}
+
+func TestSMBRefreshObservationCannotCreatePlacement(t *testing.T) {
+	ctx := context.Background()
+	for _, clustered := range []bool{true, false} {
+		t.Run(fmt.Sprintf("clustered=%t", clustered), func(t *testing.T) {
+			db := setupSMBDB(t)
+			require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", "a", clustered); return err }))
+			require.ErrorIs(t, smbTx(t, db, func(tx *sql.Tx) error { return UpdateSMBServiceInfo(ctx, tx, "alpha", "a", `{}`) }), sql.ErrNoRows)
+			require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return RecordSMBService(ctx, tx, "alpha", "a", `{}`) }))
+			_, err := db.Exec(`CREATE TRIGGER forbid_refresh_reserve BEFORE UPDATE ON service_groups BEGIN SELECT RAISE(ABORT,'forbidden reservation'); END;
+   CREATE TRIGGER forbid_refresh_insert BEFORE INSERT ON grouped_services BEGIN SELECT RAISE(ABORT,'forbidden placement'); END;`)
+			require.NoError(t, err)
+			require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+				mode, err := GetSMBConfiguredService(ctx, tx, "alpha", "a")
+				require.NoError(t, err)
+				require.Equal(t, clustered, mode)
+				return UpdateSMBServiceInfo(ctx, tx, "alpha", "a", `{"smb_port":1445}`)
+			}))
+			var info string
+			require.NoError(t, db.QueryRow("SELECT info FROM grouped_services").Scan(&info))
+			require.JSONEq(t, `{"smb_port":1445}`, info)
+			require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { return UpdateSMBServiceInfo(ctx, tx, "alpha", "b", `{}`) }))
+			_, err = db.Exec("DELETE FROM grouped_services")
+			require.NoError(t, err)
+			require.ErrorIs(t, smbTx(t, db, func(tx *sql.Tx) error { return UpdateSMBServiceInfo(ctx, tx, "alpha", "a", `{}`) }), sql.ErrNoRows)
+		})
+	}
+}
+
+func TestSMBMembershipAddressReuseRequiresRetirement(t *testing.T) {
+	db := setupSMBDB(t)
+	ctx := context.Background()
+	_, err := db.Exec(`UPDATE core_cluster_members SET address=CASE name WHEN 'a' THEN '192.0.2.1:7443' WHEN 'b' THEN '192.0.2.2:7443' ELSE '192.0.2.3:7443' END;`)
+	require.NoError(t, err)
+	reserve := func(member string) error {
+		return smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", member, true); return err })
+	}
+	require.NoError(t, reserve("a"))
+	_, err = db.Exec(`UPDATE core_cluster_members SET address='192.0.2.1:7443' WHERE name='b'`)
+	require.NoError(t, err)
+	require.Error(t, reserve("b"), "another identity cannot reuse a retained owner's endpoint")
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "alpha", "a") }))
+	require.NoError(t, reserve("b"), "a verified retired endpoint may be reused with a new PNN")
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+		view, err := GetSMBCTDBView(ctx, tx, "alpha", "b")
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), view.Member.PNN)
+		require.Equal(t, uint64(2), view.SlotCount)
+		return nil
+	}))
+	// Simulate offline forced removal, which cannot retire an owner.
+	_, err = db.Exec(`DELETE FROM core_cluster_members WHERE name='b'; UPDATE core_cluster_members SET address='192.0.2.1:7443' WHERE name='c'`)
+	require.NoError(t, err)
+	require.Error(t, reserve("c"), "retain endpoint evidence after the core member row disappears")
+}
+
+func TestSMBOwnerRemovalFindsFailedReservations(t *testing.T) {
+	db := setupSMBDB(t)
+	ctx := context.Background()
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+		_, err := ReserveSMBOwner(ctx, tx, "alpha", "a", false)
+		require.NoError(t, err)
+		groups, err := GetSMBOwnerGroups(ctx, tx, "a")
+		require.Equal(t, []string{"alpha"}, groups, "no successful service row is required")
+		return err
+	}))
+	_, err := db.Exec(`DELETE FROM core_cluster_members WHERE name='a'; INSERT INTO core_cluster_members(name) VALUES('a')`)
+	require.NoError(t, err)
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := GetSMBOwnerGroups(ctx, tx, "a"); return err }))
 }

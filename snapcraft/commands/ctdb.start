@@ -1,0 +1,4 @@
+#!/bin/sh
+# Diagnostic controls enter the same supported private paths as the fixed apps.
+set -eu
+exec "$SNAP/bin/python3" -B "$SNAP/smb/native.py" control "$SNAP_COMMON/smb" "$@"

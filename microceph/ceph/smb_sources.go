@@ -1,11 +1,20 @@
 package ceph
 
 import (
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 )
 
 var errSMBSourceMissing = errors.New("SMB source does not exist")
@@ -13,6 +22,8 @@ var errSMBSourceMissing = errors.New("SMB source does not exist")
 type smbSpec struct {
 	ClusterID       string            `json:"cluster_id"`
 	Features        []string          `json:"features"`
+	ClusterMetaURI  string            `json:"cluster_meta_uri"`
+	ClusterLockURI  string            `json:"cluster_lock_uri"`
 	ConfigURI       string            `json:"config_uri"`
 	UserSources     []string          `json:"user_sources"`
 	JoinSources     []string          `json:"join_sources"`
@@ -26,14 +37,27 @@ type smbSpec struct {
 }
 
 type smbCandidate struct {
-	Logical    json.RawMessage   `json:"logical"`
-	CephConfig string            `json:"ceph_config"`
-	Spec       smbSpec           `json:"spec"`
-	SpecBytes  json.RawMessage   `json:"spec_document"`
-	Config     json.RawMessage   `json:"config"`
-	Users      []json.RawMessage `json:"users"`
-	Joins      []json.RawMessage `json:"joins"`
-	TLS        map[string]string `json:"tls"`
+	CTDB       *database.SMBCTDBView `json:"ctdb,omitempty"`
+	Logical    json.RawMessage       `json:"logical"`
+	CephConfig string                `json:"ceph_config"`
+	Spec       smbSpec               `json:"spec"`
+	SpecBytes  json.RawMessage       `json:"spec_document"`
+	Config     json.RawMessage       `json:"config"`
+	Users      []json.RawMessage     `json:"users"`
+	Joins      []json.RawMessage     `json:"joins"`
+	TLS        map[string]string     `json:"tls"`
+}
+
+func (c smbCandidate) configurationFingerprint() string {
+	c.CTDB = nil
+	// Python publication sorts JSON keys. Compare semantic source values rather
+	// than RawMessage whitespace/order introduced at the compiler boundary.
+	raw, _ := json.Marshal(c)
+	var value any
+	_ = json.Unmarshal(raw, &value)
+	data, _ := json.Marshal(value)
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
 }
 
 func (c smbCandidate) fingerprint() string {
@@ -165,4 +189,89 @@ func smbLogicalPresent(clusterID string, data []byte) (bool, error) {
 		return true, nil
 	}
 	return false, fmt.Errorf("logical SMB cluster response does not match requested identity")
+}
+
+// readSMBPreparedCandidate shares the read-only source and mode validation used
+// by placement and refresh. It never creates identities or reserves ownership.
+func readSMBPreparedCandidate(ctx context.Context, s interfaces.StateInterface, clusterID, root string, logical []byte, withView bool) (smbCandidate, error) {
+	read := func(uri string) ([]byte, error) { return smbReadSource(ctx, clusterID, root, uri) }
+	candidate, err := readSMBCandidate(clusterID, read)
+	if err != nil {
+		return candidate, err
+	}
+	cephConfig, err := os.ReadFile(filepath.Join(constants.GetPathConst().ConfPath, "ceph.conf"))
+	if err != nil {
+		return candidate, err
+	}
+	candidate.CephConfig = string(cephConfig)
+	candidate.Logical = json.RawMessage(logical)
+	_, err = smbCoreRoles(candidate.Spec, false)
+	if err != nil {
+		return candidate, err
+	}
+	if candidate.Spec.hasFeature("clustered") {
+		for _, uri := range []string{candidate.Spec.ClusterMetaURI, candidate.Spec.ClusterLockURI} {
+			err = validateSMBSourceURI(clusterID, uri)
+			if err != nil || !strings.HasPrefix(uri, "rados://.smb/"+clusterID+"/") {
+				return candidate, fmt.Errorf("native CTDB requires selected cluster RADOS metadata/lock sources")
+			}
+		}
+		if candidate.Spec.ClusterMetaURI == candidate.Spec.ClusterLockURI {
+			return candidate, fmt.Errorf("native CTDB metadata/lock objects must be distinct")
+		}
+	}
+	if len(candidate.Spec.BindAddresses) > 0 {
+		return candidate, fmt.Errorf("native bind-address planning requires the network feature stage")
+	}
+	if withView && candidate.Spec.hasFeature("clustered") {
+		err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			candidate.CTDB, err = database.GetSMBCTDBView(ctx, tx, clusterID, s.ClusterState().Name())
+			return err
+		})
+	}
+	return candidate, err
+}
+
+type smbLaunch struct {
+	Proxy     bool `json:"proxy"`
+	Clustered bool `json:"clustered"`
+	SMBPort   int  `json:"smb_port"`
+}
+
+// prepareSMBProjection uses the same real compiler, source recheck and nested
+// context consumption for explicit startup and configuration-only refresh.
+func prepareSMBProjection(ctx context.Context, s interfaces.StateInterface, candidate smbCandidate, root string) (smbLaunch, []string, error) {
+	launch := smbLaunch{}
+	raw, err := json.Marshal(candidate)
+	if err != nil {
+		return launch, nil, err
+	}
+	err = smbAtomicWrite(filepath.Join(root, "config", "candidate.next.json"), raw)
+	if err != nil {
+		return launch, nil, err
+	}
+	err = smbNativeCommand(ctx, "compile", root)
+	if err != nil {
+		return launch, nil, err
+	}
+	recheck, err := readSMBPreparedCandidate(ctx, s, candidate.Spec.ClusterID, root, candidate.Logical, candidate.CTDB != nil)
+	if err != nil {
+		return launch, nil, err
+	}
+	if recheck.fingerprint() != candidate.fingerprint() {
+		return launch, nil, fmt.Errorf("SMB sources changed during preparation; retry")
+	}
+	contextBytes, err := os.ReadFile(filepath.Join(root, "config", "next", "config", "context.json"))
+	if err != nil {
+		return launch, nil, err
+	}
+	err = json.Unmarshal(contextBytes, &launch)
+	if err != nil {
+		return launch, nil, err
+	}
+	if launch.Clustered != candidate.Spec.hasFeature("clustered") {
+		return launch, nil, fmt.Errorf("native SMB launch mode does not match reservation")
+	}
+	roles, err := smbCoreRoles(candidate.Spec, launch.Proxy)
+	return launch, roles, err
 }
