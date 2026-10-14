@@ -225,7 +225,7 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             expected_service_name = f"smb.{cluster_id}"
             if service_name and service_name != expected_service_name:
                 continue
-            descriptions.append(ServiceDescription(spec=spec, running=0))
+            descriptions.append(ServiceDescription(spec=spec, size=len(group["members"]), running=0))
         return descriptions
 
     @handle_orch_error

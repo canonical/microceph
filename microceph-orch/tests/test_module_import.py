@@ -22,6 +22,16 @@ class _Attrs:
         self.__dict__.update(kwargs)
 
 
+class _ServiceDescription:
+    """Model Ceph's count defaults and nested service-status serialization."""
+
+    def __init__(self, spec, size=0, running=0):
+        self.spec, self.size, self.running = spec, size, running
+
+    def to_json(self):
+        return dict(self.spec.to_json(), status={"size": self.size, "running": self.running})
+
+
 class _DescriptionSpec(_Attrs):
     @classmethod
     def from_json(cls, data):
@@ -70,8 +80,9 @@ def _install_ceph20_stubs(monkeypatch):
     orch.Orchestrator = type("Orchestrator", (), {})
     orch.OrchestratorCLICommandBase = OrchestratorCLICommandBase
     orch.HostSpec = HostSpec
-    for name in ("InventoryFilter", "InventoryHost", "ServiceDescription", "DaemonDescription"):
+    for name in ("InventoryFilter", "InventoryHost", "DaemonDescription"):
         setattr(orch, name, type(name, (_Attrs,), {}))
+    orch.ServiceDescription = _ServiceDescription
     orch.DaemonDescriptionStatus = types.SimpleNamespace(**{name: name for name in ("unknown", "error", "stopped", "running", "starting")})
     orch.handle_orch_error = lambda function: function
     orch.OrchResult = _OrchResult
@@ -205,13 +216,23 @@ def _nonclustered_spec():
     return spec
 
 
-def test_describe_smb_service_uses_grouped_service_state(monkeypatch):
+@pytest.mark.parametrize("members", [(), ("node-a",), ("node-a", "node-b", "node-c")])
+def test_describe_smb_service_uses_grouped_service_state(monkeypatch, members):
+    hosts = ("node-a", "node-b", "node-c")
     desired = _SMBSpec().to_json()
-    manager = _manager(monkeypatch, [_smb_record(name, desired) for name in ("node-a", "node-b")])
+    desired["placement"] = {"count": 3, "hosts": list(hosts)}
+    manager = _manager(monkeypatch, [_smb_record(name, desired) for name in members],
+                       members=hosts, offline=hosts)
     descriptions = manager.describe_service(service_type="smb", service_name="smb.files")
+    if not members:
+        # Without receipts there is still no deployment description to return.
+        assert descriptions == []
+        return
     assert len(descriptions) == 1
     assert descriptions[0].spec.to_json() == desired
-    assert descriptions[0].running == 0
+    serialized = json.loads(json.dumps(descriptions[0].to_json()))
+    assert serialized["status"] == {"size": len(members), "running": 0}
+    assert serialized["placement"] == desired["placement"]
 
 
 def test_describe_services_skips_malformed_smb_group(monkeypatch):
