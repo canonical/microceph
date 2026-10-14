@@ -108,6 +108,11 @@ A member can run one SMB cluster. The clustering mode controls whether CTDB runs
 not the number of members. Adding or removing members does not change that mode.
 If placement fails, existing members remain in place.
 
+Placement checks local SMB ownership as well as successful deployment records,
+so interrupted deployments are not overlooked. If a member's ownership cannot
+be checked, placement reports an error before changing local deployments. This
+can include an unreachable member that was not selected for the new placement.
+
 As upstream Ceph warns, running multiple instances of the same SMB service without
 CTDB can cause unexpected behaviour.
 

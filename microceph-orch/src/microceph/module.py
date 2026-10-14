@@ -539,6 +539,23 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             for target in targets
         }
 
+    def _smb_local_owners(
+        self, cluster_id: str, members: List[str]
+    ) -> Tuple[Dict[str, str], List[Tuple[str, Exception]]]:
+        """Read local ownership, keeping failed lookups distinct from empty hosts."""
+        owners: Dict[str, str] = {}
+        failures: List[Tuple[str, Exception]] = []
+        for member in sorted(members):
+            try:
+                local_state = self.microceph.services.get_smb_local_state(member, cluster_id)
+                owner = local_state.get("local_cluster_id")
+                if not isinstance(owner, str):
+                    raise RuntimeError("invalid local SMB ownership state")
+                owners[member] = owner
+            except Exception as err:
+                failures.append((member, err))
+        return owners, failures
+
     @handle_orch_error
     def apply_smb(self, spec: SMBSpec) -> str:
         """Reconcile an upstream SMB spec onto selected MicroCeph members."""
@@ -548,6 +565,11 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
         current = [record for record in records if record['service'] == 'smb']
         targets = self._smb_target_hosts(spec)
         target_set = set(targets)
+        members = [member['name'] for member in self.microceph.cluster.get_cluster_members()]
+        owners, ownership_failures = self._smb_local_owners(spec.cluster_id, members)
+        if ownership_failures:
+            details = "; ".join(f"ownership {member}: {err}" for member, err in ownership_failures)
+            raise RuntimeError(f"SMB reconciliation incomplete: {details}")
 
         # Multiple SMB clusters are supported on disjoint hosts; a host can
         # only serve one cluster (single smbd, single config, port 445).
@@ -556,6 +578,10 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             members_by_cluster.setdefault(record['group_id'], set()).add(
                 record['location']
             )
+        # Interrupted starts can own a deployment without a successful receipt.
+        for member, owner in owners.items():
+            if owner:
+                members_by_cluster.setdefault(owner, set()).add(member)
         conflicts = []
         for cluster_id in sorted(members_by_cluster):
             if cluster_id == spec.cluster_id:
@@ -571,11 +597,7 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
                 + "; ".join(conflicts)
             )
 
-        current_hosts = {
-            record['location']
-            for record in current
-            if record['group_id'] == spec.cluster_id
-        }
+        current_hosts = members_by_cluster.get(spec.cluster_id, set())
         cluster_records = [record for record in current if record['group_id'] == spec.cluster_id]
         clustered = "clustered" in (getattr(spec, "features", []) or [])
         for record in cluster_records:
@@ -667,17 +689,8 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
                     member = identity[len(prefix):]
                     if member in cluster_members and member not in other_smb_members:
                         members.add(member)
-        ownership_failures = []
-        for member in sorted(cluster_members):
-            try:
-                local_state = self.microceph.services.get_smb_local_state(member, cluster_id)
-                local_cluster_id = local_state.get("local_cluster_id")
-                if not isinstance(local_cluster_id, str):
-                    raise RuntimeError("invalid local SMB ownership state")
-                if local_cluster_id == cluster_id:
-                    members.add(member)
-            except Exception as err:
-                ownership_failures.append((member, err))
+        owners, ownership_failures = self._smb_local_owners(cluster_id, sorted(cluster_members))
+        members.update(member for member, owner in owners.items() if owner == cluster_id)
         failures = []
         for member in sorted(members):
             try:

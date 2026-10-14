@@ -329,10 +329,13 @@ def test_apply_smb_reconciles_clustered_members_and_ranks(monkeypatch):
     assert manager.microceph.services.events == [("apply", "node-b"), ("apply", "node-c"), ("remove", "node-a")]
 
 
-def test_apply_smb_rejects_a_second_cluster_on_an_occupied_host(monkeypatch):
-    manager = _manager(monkeypatch, [_smb_record("node-a", group="other")])
+@pytest.mark.parametrize("recorded", [True, False])
+def test_apply_smb_rejects_a_second_cluster_on_an_occupied_host(monkeypatch, recorded):
+    manager = _manager(monkeypatch, [_smb_record("node-a", group="other")] if recorded else [])
+    manager.microceph.services.local_states["node-a"] = "other"
     with pytest.raises(ValueError, match="at most one SMB cluster"):
         manager.apply_smb(_SMBSpec())
+    assert manager.microceph.services.events == []
 
 
 def test_apply_smb_permits_a_second_cluster_on_disjoint_hosts(monkeypatch):
@@ -344,6 +347,17 @@ def test_apply_smb_permits_a_second_cluster_on_disjoint_hosts(monkeypatch):
     assert manager.apply_smb(spec) == "Applied SMB service 'second'"
     assert manager.microceph.services.applied == [("node-b", _clustered_payload(spec.to_json(), "node-b", {"smb.second.node-b": 0}, 1, "second"))]
     assert manager.microceph.services.removed == []
+
+
+def test_apply_smb_leaves_a_retired_rank_host_owned_by_another_cluster(monkeypatch):
+    spec = _SMBSpec()
+    ranks = {"smb.files.node-a": 0, "smb.files.node-b": 1}
+    manager = _manager(monkeypatch, [_smb_record("node-b", spec.to_json(), ctdb_ranks=ranks, next_ctdb_rank=2)])
+    manager.microceph.services.local_states["node-a"] = "other"
+    spec.placement = _SMBPlacement(hosts=[_HostPlacement("node-b")], count=1)
+    manager.apply_smb(spec)
+    assert manager.microceph.services.events == [("apply", "node-b")]
+    assert manager.microceph.services.applied[0][1]["microceph"]["ctdb_ranks"] == ranks
 
 
 @pytest.mark.parametrize("recorded_spec", [False, True])
@@ -408,7 +422,9 @@ def test_smb_rank_state_recovers_partial_member_metadata(monkeypatch):
 
 
 def test_apply_smb_attempts_every_member_but_preserves_sources_after_failure(monkeypatch):
-    manager = _manager(monkeypatch, [_smb_record("node-old", _SMBSpec().to_json())], members=("node-a", "node-b", "node-old"))
+    manager = _manager(monkeypatch, [_smb_record("node-old", _SMBSpec().to_json())],
+                       members=("node-a", "node-b", "node-old", "node-orphan"))
+    manager.microceph.services.local_states["node-orphan"] = "files"
     manager.microceph.services.apply_failures["node-a"] = RuntimeError("node-a unavailable")
     spec = _SMBSpec()
     spec.placement = _SMBPlacement(hosts=[_HostPlacement("node-a"), _HostPlacement("node-b")], count=2)
@@ -418,7 +434,31 @@ def test_apply_smb_attempts_every_member_but_preserves_sources_after_failure(mon
     assert manager.microceph.services.removed == []
     manager.microceph.services.apply_failures.clear()
     manager.apply_smb(spec)
-    assert manager.microceph.services.removed == [("node-old", "files")]
+    assert manager.microceph.services.removed == [("node-old", "files"), ("node-orphan", "files")]
+
+
+@pytest.mark.parametrize("clustered", [True, False])
+def test_apply_smb_retires_receiptless_owner_after_success(monkeypatch, clustered):
+    manager = _manager(monkeypatch)
+    manager.microceph.services.local_states["node-a"] = "files"
+    spec = _SMBSpec() if clustered else _nonclustered_spec()
+    spec.placement = _SMBPlacement(hosts=[_HostPlacement("node-b")], count=1)
+    assert manager.apply_smb(spec) == "Applied SMB service 'files'"
+    assert manager.microceph.services.events == [("apply", "node-b"), ("remove", "node-a")]
+    if not clustered:
+        assert manager.microceph.services.applied == [("node-b", spec.to_json())]
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "invalid response"])
+def test_apply_smb_does_not_guess_unknown_ownership(monkeypatch, failure):
+    manager = _manager(monkeypatch, offline=("node-b",))
+    if failure == "unavailable":
+        manager.microceph.services.local_state_failures["node-b"] = RuntimeError("node unavailable")
+    else:
+        manager.microceph.services.local_states["node-b"] = None
+    with pytest.raises(RuntimeError, match="ownership node-b"):
+        manager.apply_smb(_SMBSpec())
+    assert manager.microceph.services.events == []
 
 
 def test_remove_absent_smb_service_is_idempotent_and_accepts_force(monkeypatch):
