@@ -84,5 +84,56 @@ class PackagingTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
 
 
+@unittest.skipUnless(shutil.which("snap"), "requires the real snap metadata validator")
+class SkeletonValidationTests(unittest.TestCase):
+    def validate(self, recipe, *, command_stubs=True):
+        """Project actual metadata; only normal build expansion/test version differ."""
+        keys = ("name", "base", "grade", "summary", "description", "license",
+                "confinement", "assumes", "plugs", "slots", "environment", "layout", "apps")
+        metadata = {key: recipe[key] for key in keys if key in recipe}
+        metadata["version"] = "0-test"
+        with tempfile.TemporaryDirectory(prefix="ctdb-skeleton-") as directory:
+            skeleton = Path(directory) / "prime"
+            skeleton.mkdir(mode=0o755)
+            (skeleton / "meta").mkdir()
+            (skeleton / "meta/snap.yaml").write_text(yaml.safe_dump(metadata))
+            # Normal prime directories required by snap's bind-source checks.
+            for layout in metadata["layout"].values():
+                source = layout.get("bind", "")
+                if source.startswith("$SNAP/"):
+                    (skeleton / source.removeprefix("$SNAP/")).mkdir(parents=True, exist_ok=True)
+            if command_stubs:
+                # Stubs satisfy skeleton file checks, not installed-binary qualification.
+                for app in recipe["apps"].values():
+                    for key in ("command", "reload-command", "stop-command"):
+                        if key in app:
+                            command = skeleton / app[key].split()[0]
+                            command.parent.mkdir(parents=True, exist_ok=True)
+                            command.write_text("#!/bin/sh\nexit 0\n")
+                            command.chmod(0o755)
+            return subprocess.run(["snap", "pack", "--check-skeleton", str(skeleton)],
+                                  capture_output=True, text=True, timeout=30)
+
+    def recipe(self):
+        return yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text().replace(
+            "$CRAFT_ARCH_TRIPLET_BUILD_FOR", "x86_64-linux-gnu"))
+
+    def test_actual_recipe_passes_real_metadata_validator(self):
+        result = self.validate(self.recipe())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_real_validator_rejects_forbidden_runtime_layout(self):
+        recipe = self.recipe()
+        recipe["layout"]["/run/ctdb"] = {"type": "tmpfs"}
+        result = self.validate(recipe)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('layout "/run/ctdb" defines a new top-level directory "/run"', result.stdout + result.stderr)
+
+    def test_missing_commands_are_reported_as_skeleton_diagnostics(self):
+        result = self.validate(self.recipe(), command_stubs=False)
+        self.assertIn("commands/", result.stdout + result.stderr)
+        self.assertNotIn('layout "/run/ctdb"', result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

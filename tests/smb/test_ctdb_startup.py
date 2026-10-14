@@ -173,7 +173,7 @@ class CTDBStartupTests(unittest.TestCase):
         self.assertIn("share/ctdb/**", part["prime"])
         self.assertEqual(part["organize"]["etc/ctdb/functions"], "share/ctdb/functions")
         self.assertEqual(part["organize"]["etc/ctdb/notify.sh"], "share/ctdb/notify.sh")
-        for target in ("/etc/ctdb", "/run/ctdb", "/var/lib/ctdb"):
+        for target in ("/etc/ctdb", "/var/lib/ctdb"):
             self.assertEqual(recipe["layout"][target], {"type": "tmpfs"})
         self.assertEqual(recipe["layout"]["/usr/libexec/ctdb"]["symlink"], "$SNAP/libexec/ctdb")
         self.assertEqual(recipe["apps"]["ctdb"]["command"], "commands/ctdb.start")

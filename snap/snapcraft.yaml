@@ -19,6 +19,10 @@ plugs:
   smb-identity:
     interface: microceph-support
     user-identity-switching: true
+  ctdb-run:
+    interface: system-files
+    write:
+      - /run/ctdb
   smb-mounts:
     interface: mount-control
     mount:
@@ -80,8 +84,6 @@ layout:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba
   /etc/ctdb:
     type: tmpfs
-  /run/ctdb:
-    type: tmpfs
   /var/lib/ctdb:
     type: tmpfs
   /usr/libexec/ctdb:
@@ -117,22 +119,22 @@ apps:
     daemon: simple
     install-mode: disable
     stop-mode: sigterm-all
-    plugs: [network, network-bind, network-control, smb-mounts, process-control, smb-identity]
+    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control, smb-identity]
   ctdbd:
     command: commands/ctdbd.start
     daemon: simple
     install-mode: disable
     stop-mode: sigterm-all
-    plugs: [network, network-bind, network-control, smb-mounts, process-control]
+    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control]
   ctdb:
     command: commands/ctdb.start
-    plugs: [network, network-bind, smb-mounts, process-control]
+    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control]
   ctdb-nodes:
     command: commands/ctdb-nodes.start
     daemon: simple
     install-mode: disable
     stop-mode: sigterm-all
-    plugs: [network, network-bind, network-control, smb-mounts, process-control]
+    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control]
   winbindd:
     command: commands/winbindd.start
     daemon: simple

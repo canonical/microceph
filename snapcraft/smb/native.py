@@ -518,6 +518,24 @@ def compile_files(root):
                 fs.shutdown()
 
 
+def _prepare_ctdb_mountpoint(path):
+    """Create only an empty runtime bind target; never alter host CTDB state."""
+    import os
+    import stat
+    from pathlib import Path
+    path = Path(path)
+    try:
+        path.mkdir(mode=0o755)
+    except FileExistsError:
+        pass
+    info = path.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or
+            info.st_mode & 0o022):
+        raise ValueError("unsafe CTDB runtime mountpoint")
+    if any(path.iterdir()):
+        raise ValueError("CTDB runtime mountpoint contains unrelated state")
+
+
 def enter_launch_context(role, root, context):
     """Enter the strictly confined app's own private mount context, then exec."""
     import ctypes
@@ -527,6 +545,10 @@ def enter_launch_context(role, root, context):
         raise OSError(ctypes.get_errno(), "native mount namespace")
     libc.mount.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_ulong, ctypes.c_char_p]
     for source, target, flags in launch_mounts(role, str(root), context):
+        if target == "/run/ctdb":
+            # The system-files plug permits this target, not a /run layout.
+            # MS_SLAVE above keeps the subsequent private bind off the host.
+            _prepare_ctdb_mountpoint(target)
         if libc.mount(source.encode() if source else None, target.encode(), None, flags, None) != 0:
             raise OSError(ctypes.get_errno(), "native private bind")
     if context.get("clustered"):
