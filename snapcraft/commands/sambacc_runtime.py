@@ -68,11 +68,16 @@ def ctdb_nodes_with_reserved_slots(nodes):
 
 
 def run():
-    """Invoke sambacc after replacing its passdb loader with a confined one."""
+    """Invoke sambacc with confined paths and an NSS-only identity import."""
     from sambacc import ctdb
     from sambacc import passdb_loader
     from sambacc import paths
+    from sambacc.commands.cli import commands
     from sambacc.commands.main import main
+    from sambacc.commands.users import import_sys_users
+
+    # Repair local NSS files before CTDB starts, without opening its passdb.
+    commands.command("import-nss")(import_sys_users)
 
     # sambacc 0.9 otherwise creates /run/samba before importing the
     # registry. That path is not writable by a strict snap.

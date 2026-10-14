@@ -3285,6 +3285,34 @@ def test_ctdb_clean_removal_allows_same_address_rejoin_without_renumbering():
     assert data["nodes"][0]["state"] == "ready"
 
 
+def test_sambacc_runtime_registers_nss_only_import(monkeypatch):
+    registered = {}
+    calls = []
+    context = object()
+
+    def command(name):
+        def register(func):
+            registered[name] = func
+            return func
+        return register
+
+    # Substitute the external registration API, then dispatch through the command
+    # installed by the production adapter. No Samba passdb implementation is supplied.
+    modules = {
+        "sambacc": types.SimpleNamespace(
+            ctdb=types.SimpleNamespace(), paths=types.SimpleNamespace(),
+            passdb_loader=types.SimpleNamespace(PassDBLoader=object),
+        ),
+        "sambacc.commands.cli": types.SimpleNamespace(commands=types.SimpleNamespace(command=command)),
+        "sambacc.commands.main": types.SimpleNamespace(main=lambda: registered["import-nss"](context)),
+        "sambacc.commands.users": types.SimpleNamespace(import_sys_users=calls.append),
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    _sambacc_runtime_namespace()["run"]()
+    assert calls == [context]
+
+
 def test_sambacc_runtime_creates_no_run_samba_directory(tmp_path):
     """The sambacc replacement creates its state below the Samba data layout."""
     _sambacc_runtime_namespace()["ensure_runtime_dirs"](tmp_path)
@@ -3437,17 +3465,79 @@ def test_smb_ctdb_wait_accepts_successful_probe(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
-def test_smb_identity_baseline_is_minimal_and_not_reset_by_ctdb(tmp_path):
-    result = _run_smb_helper('smb_identity_dir="$1"; smb_prepare_identity_files', tmp_path)
+def _stage_smb_nss_importer(root):
+    binary = root / "bin"
+    binary.mkdir()
+    importer = binary / "python3"
+    importer.write_text('''#!/bin/bash
+set -eu
+[ "${@: -1}" = import-nss ] || exit 80
+printf 'alice:x:1000:2000::/invalid:/bin/false\\n' >> "$NSS_WRAPPER_PASSWD"
+printf 'staff:x:2000:alice\\n' >> "$NSS_WRAPPER_GROUP"
+[ ! -e "$SNAP/fail-import" ] || exit 81
+''')
+    importer.chmod(0o755)
+
+
+@pytest.mark.parametrize("missing", ["none", "passwd", "group", "passwd-empty", "group-empty", "both-empty"])
+def test_smb_identity_preparation_rebuilds_configured_pair(tmp_path, missing):
+    _stage_smb_nss_importer(tmp_path)
+    script = 'export SNAP="$1"; smb_identity_dir="$1"; smb_sambacc_args=(); smb_prepare_identity_files'
+    result = _run_smb_helper(script, tmp_path)
     assert result.returncode == 0, result.stderr
-    passwd = tmp_path / "passwd"
-    group = tmp_path / "group"
-    assert [line.split(":")[0] for line in passwd.read_text().splitlines()] == ["root", "nobody"]
-    assert [line.split(":")[0] for line in group.read_text().splitlines()] == ["root", "nogroup"]
-    passwd.write_text(passwd.read_text() + "alice:x:1000:1000::/invalid:/bin/false\n")
-    result = _run_smb_helper('smb_identity_dir="$1"; smb_prepare_identity_files', tmp_path)
+    files = [tmp_path / "passwd", tmp_path / "group"]
+    assert [line.split(":")[0] for line in files[0].read_text().splitlines()] == ["root", "nobody", "alice"]
+    assert [line.split(":")[0] for line in files[1].read_text().splitlines()] == ["root", "nogroup", "staff"]
+    expected = [path.read_bytes() for path in files]
+    if missing == "both-empty":
+        for path in files:
+            path.write_text("")
+    elif missing.endswith("-empty"):
+        (tmp_path / missing.removesuffix("-empty")).write_text("")
+    elif missing != "none":
+        (tmp_path / missing).unlink()
+    result = _run_smb_helper(script, tmp_path)
     assert result.returncode == 0, result.stderr
-    assert "alice:" in passwd.read_text(), "CTDB's independent startup must preserve active Samba identities"
+    assert [path.read_bytes() for path in files] == expected
+    # A healthy pair is not re-imported or replaced on an independent CTDB start.
+    inodes = [path.stat().st_ino for path in files]
+    (tmp_path / "fail-import").touch()
+    result = _run_smb_helper(script, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert [path.read_bytes() for path in files] == expected
+    assert [path.stat().st_ino for path in files] == inodes
+    assert not list(tmp_path.glob("identity-import.*"))
+
+
+def test_smb_identity_preparation_failure_preserves_partial_state(tmp_path):
+    _stage_smb_nss_importer(tmp_path)
+    (tmp_path / "passwd").write_text("existing-passwd\n")
+    (tmp_path / "fail-import").touch()
+    result = _run_smb_helper(
+        'export SNAP="$1"; smb_identity_dir="$1"; smb_sambacc_args=(); smb_prepare_identity_files', tmp_path,
+    )
+    assert result.returncode == 81, result.stderr
+    assert (tmp_path / "passwd").read_text() == "existing-passwd\n"
+    assert not (tmp_path / "group").exists()
+    assert not list(tmp_path.glob("identity-import.*"))
+
+
+def test_smb_identity_repair_restores_absence_after_group_publication_failure(tmp_path):
+    _stage_smb_nss_importer(tmp_path)
+    (tmp_path / "group").write_text("existing-group\n")
+    result = _run_smb_helper('''
+export SNAP="$1"; smb_identity_dir="$1"; smb_sambacc_args=()
+mv() {
+    local source="${@: -2:1}"
+    [ "${source##*/}" != group ] || return 42
+    command mv "$@"
+}
+smb_prepare_identity_files
+''', tmp_path)
+    assert result.returncode == 42, result.stderr
+    assert not (tmp_path / "passwd").exists()
+    assert (tmp_path / "group").read_text() == "existing-group\n"
+    assert not list(tmp_path.glob("identity-import.*"))
 
 
 @pytest.mark.parametrize("failure", ["none", "import", "backup", "passwd", "group", "restore"])

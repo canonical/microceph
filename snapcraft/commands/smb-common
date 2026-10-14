@@ -42,45 +42,44 @@ smb_write_identity_baseline() {
     printf '%s\n' 'root:x:0:' 'nogroup:x:65534:' > "$1/group"
 }
 
-# CTDB calls this too: only initialize missing files, never reset a running
-# smbd's imported identities on an independent CTDB restart.
-smb_prepare_identity_files() (
-    set -eu
-    exec 9>"${smb_identity_dir}/identity.lock"
-    flock -w 30 9
-    if [ ! -s "${smb_identity_dir}/passwd" ] || [ ! -s "${smb_identity_dir}/group" ]; then
-        stage="$(mktemp -d "${smb_identity_dir}/identity-import.XXXXXX")"
-        trap 'rm -rf "${stage}"' EXIT
-        smb_write_identity_baseline "${stage}"
-        mv "${stage}/passwd" "${smb_identity_dir}/passwd"
-        mv "${stage}/group" "${smb_identity_dir}/group"
-    fi
-)
+# CTDB calls this too: reconstruct an incomplete pair from configured identities,
+# without touching Samba's password database or resetting a complete pair.
+smb_prepare_identity_files() {
+    smb_import_users import-nss
+}
 
-# smbd is stopped before its startup script runs. Import into fresh staging
-# files so failed imports never publish a partially rebuilt NSS database.
+# Full user/passdb imports run only during smbd startup. NSS-only repair can also
+# run before CTDB starts. Both use fresh staging files and the same publication.
 smb_import_users() (
     set -eu
+    command="${1:-import-users}"
     exec 9>"${smb_identity_dir}/identity.lock"
     flock -w 30 9
+    if [ "${command}" = import-nss ] && [ -s "${smb_identity_dir}/passwd" ] && [ -s "${smb_identity_dir}/group" ]; then
+        return 0
+    fi
     stage="$(mktemp -d "${smb_identity_dir}/identity-import.XXXXXX")"
     trap 'rm -rf "${stage}"' EXIT
     smb_write_identity_baseline "${stage}"
     NSS_WRAPPER_PASSWD="${stage}/passwd" NSS_WRAPPER_GROUP="${stage}/group" \
     "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" \
-        --etc-passwd-path "${stage}/passwd" --etc-group-path "${stage}/group" import-users
+        --etc-passwd-path "${stage}/passwd" --etc-group-path "${stage}/group" "${command}"
     # Each same-filesystem rename is atomic, not the pair. A failed group
-    # replacement leaves the old group in place, so restore the old passwd.
-    cp -p -- "${smb_identity_dir}/passwd" "${stage}/previous-passwd"
-    mv -T -- "${stage}/passwd" "${smb_identity_dir}/passwd"
-    if mv -T -- "${stage}/group" "${smb_identity_dir}/group"; then
+    # replacement leaves the old group in place, so restore passwd (or absence).
+    restore_passwd=(rm -f -- "${smb_identity_dir}/passwd")
+    if [ -e "${smb_identity_dir}/passwd" ]; then
+        cp -p -- "${smb_identity_dir}/passwd" "${stage}/previous-passwd"
+        restore_passwd=(mv -T -- "${stage}/previous-passwd" "${smb_identity_dir}/passwd")
+    fi
+    cmp -s "${stage}/passwd" "${smb_identity_dir}/passwd" || mv -T -- "${stage}/passwd" "${smb_identity_dir}/passwd"
+    if cmp -s "${stage}/group" "${smb_identity_dir}/group" || mv -T -- "${stage}/group" "${smb_identity_dir}/group"; then
         return 0
     else
         status=$?
     fi
-    if ! mv -T -- "${stage}/previous-passwd" "${smb_identity_dir}/passwd"; then
+    if ! "${restore_passwd[@]}"; then
         trap - EXIT
-        echo "Failed to restore SMB passwd; backup retained in ${stage}/previous-passwd" >&2
+        echo "Failed to restore SMB passwd; recovery staging retained in ${stage}" >&2
     fi
     exit "${status}"
 )
@@ -111,23 +110,6 @@ smb_prepare_runtime() {
     smb_wait_for_files "SMB configuration" \
         "${smb_config}" "${smb_container_config}" "${smb_cluster_id_path}"
 
-    smb_prepare_identity_files
-
-    local nss_wrapper=""
-    for path in "${SNAP}"/lib/*/libnss_wrapper.so; do
-        if [ -f "${path}" ]; then
-            nss_wrapper="${path}"
-            break
-        fi
-    done
-    if [ -z "${nss_wrapper}" ]; then
-        echo "Could not find libnss_wrapper.so" >&2
-        exit 1
-    fi
-    export LD_PRELOAD="${nss_wrapper}"
-    export NSS_WRAPPER_PASSWD="${smb_identity_dir}/passwd"
-    export NSS_WRAPPER_GROUP="${smb_identity_dir}/group"
-
     smb_cluster_id="$(cat "${smb_cluster_id_path}")"
     smb_sambacc_args=(
         --identity "${smb_cluster_id}"
@@ -143,6 +125,22 @@ smb_prepare_runtime() {
         smb_sambacc_args+=(--config "${user_config}")
         smb_config_sources+=("${user_config}")
     done
+
+    local nss_wrapper=""
+    for path in "${SNAP}"/lib/*/libnss_wrapper.so; do
+        if [ -f "${path}" ]; then
+            nss_wrapper="${path}"
+            break
+        fi
+    done
+    if [ -z "${nss_wrapper}" ]; then
+        echo "Could not find libnss_wrapper.so" >&2
+        exit 1
+    fi
+    export LD_PRELOAD="${nss_wrapper}"
+    export NSS_WRAPPER_PASSWD="${smb_identity_dir}/passwd"
+    export NSS_WRAPPER_GROUP="${smb_identity_dir}/group"
+    smb_prepare_identity_files
 }
 
 smb_prepare_ctdb_runtime() {
