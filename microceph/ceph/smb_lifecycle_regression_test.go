@@ -2,17 +2,98 @@ package ceph
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/canonical/lxd/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 )
+
+func TestSMBFinalizationDeletesSharedCredentialLastAndRetries(t *testing.T) {
+	for _, heldLease := range []bool{false, true} {
+		name := "without managed lease"
+		if heldLease {
+			name = "with managed lease"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			db := newSMBPlacementTestDB(t)
+			state := interfaces.CephState{State: &mocks.MockState{Cert: &shared.CertInfo{}, DBObj: db}}
+			snapshot := `{"desired_spec":{"features":["clustered"]},"ctdb_ranks":{"smb.files.node-a":0},"next_ctdb_rank":1}`
+			if heldLease {
+				snapshot = `{"desired_spec":{"features":["clustered"]},"ctdb_ranks":{"smb.files.node-a":0},"next_ctdb_rank":1,"managed_operation":{"token":"owner","expires_at":2000}}`
+			}
+			err := db.Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `INSERT INTO service_groups(service,group_id,config) VALUES ('smb','files',?), ('smb','other','{}')`, snapshot)
+				return err
+			})
+			require.NoError(t, err)
+			checkFinalized := func(mock.Arguments) {
+				config, found, err := database.GetSMBServiceGroupConfig(ctx, state, "files")
+				require.NoError(t, err)
+				require.Equal(t, heldLease, found)
+				if heldLease {
+					require.JSONEq(t, `{"desired_spec":null,"managed_operation":{"token":"owner","expires_at":2000}}`, config)
+				}
+				other, found, err := database.GetSMBServiceGroupConfig(ctx, state, "other")
+				require.NoError(t, err)
+				require.True(t, found)
+				require.Equal(t, "{}", other)
+			}
+			runner := smbTestRunner(t)
+			smbTestCommand(runner, "ceph", "auth", "del", "client.smb.config.files").Run(checkFinalized).Return("", assert.AnError).Once()
+			smbTestCommand(runner, "ceph", "auth", "del", "client.smb.config.files").Run(checkFinalized).Return("", nil).Twice()
+			require.ErrorIs(t, FinalizeSMBServiceGroup(ctx, state, "files", snapshot), assert.AnError)
+			// Retry with freshly observed group state, including when finalization
+			// already removed the group. Ceph auth del succeeds for an absent key.
+			for range 2 {
+				current, _, err := database.GetSMBServiceGroupConfig(ctx, state, "files")
+				require.NoError(t, err)
+				require.NoError(t, FinalizeSMBServiceGroup(ctx, state, "files", current))
+			}
+		})
+	}
+}
+
+func TestSMBFinalizationRejectsBeforeDeletingSharedCredential(t *testing.T) {
+	for _, reason := range []string{"records remain", "state changed"} {
+		t.Run(reason, func(t *testing.T) {
+			ctx := context.Background()
+			db := newSMBPlacementTestDB(t)
+			state := interfaces.CephState{State: &mocks.MockState{Cert: &shared.CertInfo{}, DBObj: db}}
+			err := db.Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `INSERT INTO service_groups(id,service,group_id,config) VALUES (1,'smb','files','{}')`)
+				if err != nil {
+					return err
+				}
+				if reason == "records remain" {
+					_, err = tx.ExecContext(ctx, `INSERT INTO grouped_services(service_group_id,member_id) VALUES (1,1)`)
+				}
+				return err
+			})
+			require.NoError(t, err)
+			expected := "{}"
+			if reason == "state changed" {
+				expected = `{"desired_spec":{}}`
+			}
+			runner := smbTestRunner(t)
+			require.ErrorContains(t, FinalizeSMBServiceGroup(ctx, state, "files", expected), reason)
+			runner.AssertNotCalled(t, "RunCommandContext", mock.Anything, "ceph", "auth", "del", "client.smb.config.files")
+			config, found, err := database.GetSMBServiceGroupConfig(ctx, state, "files")
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, "{}", config)
+		})
+	}
+}
 
 func TestGetLocalSMBClusterIDReadsOwnershipMarkerWithoutReceipt(t *testing.T) {
 	_, _, runtime := smbTestPaths(t, false)
@@ -82,7 +163,6 @@ func TestDisableSMBRetriesDatabaseRemovalBeforeDeletingRetirementInputs(t *testi
 	db.On("ExistsOnHost", mock.Anything, state, "smb", "files").Return(true, nil).Twice()
 	db.On("RemoveForHost", mock.Anything, state, "smb", "files").Return(assert.AnError).Once()
 	db.On("RemoveForHost", mock.Anything, state, "smb", "files").Return(nil).Once()
-	db.On("GetGroupedServices", mock.Anything, state).Return([]database.GroupedService{}, nil).Once()
 	runner := smbTestRunner(t)
 	for _, service := range []string{"smbd", "ctdb-nodes", "ctdbd"} {
 		smbTestCommand(runner, "snapctl", "stop", "microceph."+service, "--disable").Return("", nil).Twice()
@@ -91,7 +171,6 @@ func TestDisableSMBRetriesDatabaseRemovalBeforeDeletingRetirementInputs(t *testi
 		smbTestCommand(runner, "/snap/microceph/current/bin/python3", "/snap/microceph/current/commands/ctdb_ready.py",
 			"rados://.smb/files/cluster.meta.json", "files", "smb.files.node-a", "0", "--state", "gone").Return("", nil).Once()
 	}
-	smbTestCommand(runner, "ceph", "auth", "del", "client.smb.config.files").Return("", nil).Once()
 
 	err := DisableSMB(context.Background(), state, "files")
 	require.ErrorIs(t, err, assert.AnError)

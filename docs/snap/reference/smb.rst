@@ -78,6 +78,11 @@ and ``--force`` cannot be combined. The command displays its selected scope and
 retained assets before mutation. These flags do not change ``microceph.ceph``
 command meanings. See :doc:`commands/disable` for all flags.
 
+Member and deployment cleanup remove local keyring files but retain the shared
+Ceph configuration identity ``client.smb.config.<cluster-id>``. Logical-cluster
+finalization removes that identity only after all discovered owners have been
+cleaned up. Failed final credential removal is reported and can be retried.
+
 Runtime services
 ----------------
 
@@ -169,6 +174,11 @@ Expiry does not cancel outstanding Ceph work or guarantee that old callbacks hav
 finished. Inspect state after an uncertain outcome before retrying. Direct
 ``microceph.ceph smb`` updates do not acquire this managed-request lease and retain
 Ceph's full-resource replacement semantics.
+
+A late callback after lease expiry, or an overlapping direct update, can still
+leave MicroCeph's recorded SMB specification stale. This snapshot is used for
+service descriptions and recorded-mode checks; Ceph remains the authority for
+desired configuration. The managed-request lease does not fence these cases.
 
 Shares are Ceph SMB resources:
 

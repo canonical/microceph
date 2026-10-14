@@ -357,7 +357,7 @@ func expectSMBRetirement(t *testing.T) {
 }
 
 func TestDisableSMBLocalCleanup(t *testing.T) {
-	for _, scenario := range []string{"direct", "clustered auth failure", "clustered survivor"} {
+	for _, scenario := range []string{"direct", "clustered"} {
 		t.Run(scenario, func(t *testing.T) {
 			clustered := scenario != "direct"
 			if clustered {
@@ -365,7 +365,7 @@ func TestDisableSMBLocalCleanup(t *testing.T) {
 			} else {
 				stubSMBRecordedMode(t, nil)
 			}
-			root, conf, runtime := smbTestPaths(t, scenario == "clustered auth failure")
+			root, conf, runtime := smbTestPaths(t, clustered)
 			dataKey := filepath.Join(conf, "ceph.client.smb.fs.cluster.files.keyring")
 			configKey := filepath.Join(conf, "ceph.client.smb.config.files.keyring")
 			include := filepath.Join(root, "data", "samba", "smb.ctdb.conf")
@@ -377,7 +377,7 @@ func TestDisableSMBLocalCleanup(t *testing.T) {
 				smbTestWrite(t, filepath.Join(runtime, "ctdb.json"), "{}")
 				services = append(services, "ctdb-nodes", "ctdbd")
 			}
-			if scenario == "clustered auth failure" {
+			if clustered {
 				smbTestWrite(t, configKey, "keyring")
 				smbTestWrite(t, include, "stale")
 			}
@@ -385,26 +385,21 @@ func TestDisableSMBLocalCleanup(t *testing.T) {
 			db := smbTestGroupedDB(t)
 			db.On("ExistsOnHost", context.Background(), state, "smb", "files").Return(true, nil).Once()
 			db.On("RemoveForHost", context.Background(), state, "smb", "files").Return(nil).Once()
-			if clustered {
-				remaining := []database.GroupedService{}
-				if scenario == "clustered survivor" {
-					remaining = append(remaining, database.GroupedService{Service: "smb", GroupID: "files", Member: "node-b"})
-				}
-				db.On("GetGroupedServices", context.Background(), state).Return(remaining, nil).Once()
-			}
+			// Even with no remaining receipts, node cleanup must retain the shared
+			// identity: another owner may have no successful deployment record.
+			db.On("GetGroupedServices", context.Background(), state).Return([]database.GroupedService{}, nil).Maybe()
 			runner := smbTestRunner(t)
 			for _, service := range services {
 				smbTestCommand(runner, "snapctl", "stop", "microceph."+service, "--disable").Return("", nil).Once()
 			}
-			if scenario == "clustered auth failure" {
-				smbTestCommand(runner, "ceph", "auth", "del", "client.smb.config.files").Return("", assert.AnError).Once()
-			}
+			smbTestCommand(runner, "ceph", "auth", "del", "client.smb.config.files").Return("", nil).Maybe()
 			require.NoError(t, DisableSMB(context.Background(), state, "files"))
+			runner.AssertNotCalled(t, "RunCommandContext", mock.Anything, "ceph", "auth", "del", "client.smb.config.files")
 			assert.DirExists(t, filepath.Join(conf, "samba"))
 			assert.NoFileExists(t, filepath.Join(conf, "samba", "smb.conf"))
 			assert.NoDirExists(t, runtime)
 			assert.NoFileExists(t, dataKey)
-			if scenario == "clustered auth failure" {
+			if clustered {
 				assert.NoFileExists(t, configKey)
 				assert.NoFileExists(t, include)
 			}
@@ -558,11 +553,9 @@ func TestDisableSMBCleansMatchingLocalStateWithoutMemberRecord(t *testing.T) {
 	// after its retirement inputs and receipt are already gone.
 	smbTestWrite(t, filepath.Join(runtime, "cluster-id"), "files\n")
 	smbTestWrite(t, filepath.Join(runtime, "ctdb.json"), "{}")
-	db.On("GetGroupedServices", context.Background(), state).Return([]database.GroupedService{}, nil).Once()
 	for _, service := range []string{"ctdb-nodes", "ctdbd"} {
 		smbTestCommand(runner, "snapctl", "stop", "microceph."+service, "--disable").Return("", nil).Once()
 	}
-	smbTestCommand(runner, "ceph", "auth", "del", "client.smb.config.files").Return("", nil).Once()
 	require.NoError(t, DisableSMB(context.Background(), state, "files"))
 	require.NoDirExists(t, runtime)
 }

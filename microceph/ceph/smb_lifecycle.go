@@ -10,15 +10,26 @@ import (
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
-	"github.com/canonical/microceph/microceph/logger"
 )
 
 const smbSnapService = "smbd"
 
-// FinalizeSMBServiceGroup clears local SMB rank reservations after upstream
-// confirms the SMB cluster resource has been removed.
+// FinalizeSMBServiceGroup clears rank reservations and the shared configuration
+// identity after upstream confirms logical-cluster deletion and all owners retire.
 func FinalizeSMBServiceGroup(ctx context.Context, s interfaces.StateInterface, clusterID string, expectedConfig ...string) error {
-	return database.FinalizeSMBServiceGroup(ctx, s, clusterID, expectedConfig...)
+	err := database.FinalizeSMBServiceGroup(ctx, s, clusterID, expectedConfig...)
+	if err != nil {
+		return err
+	}
+	// Run only after the receipt/configuration guards succeed. A managed caller's
+	// lease remains held until its outer request completes. Ceph auth del is
+	// idempotent, including after a prior attempt already finalized the group.
+	entity := fmt.Sprintf("client.smb.config.%s", clusterID)
+	_, err = runSMBCommand(ctx, "ceph", "auth", "del", entity)
+	if err != nil {
+		return fmt.Errorf("failed to remove SMB configuration identity: %w", err)
+	}
+	return nil
 }
 
 // GetLocalSMBClusterID returns the local SMB ownership marker without relying
@@ -107,34 +118,8 @@ func DisableSMB(ctx context.Context, s interfaces.StateInterface, clusterID stri
 		return err
 	}
 
-	if clustered {
-		err = removeSMBConfigAuthIfUnused(ctx, s, clusterID)
-		if err != nil {
-			// The member and its database record are already gone, so returning
-			// an error would make every retry fail before reaching this cleanup.
-			logger.Warnf("failed to remove unused SMB configuration identity: %v", err)
-		}
-	}
-
-	return nil
-}
-
-func removeSMBConfigAuthIfUnused(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
-	services, err := database.GroupedServicesQuery.GetGroupedServices(ctx, s)
-	if err != nil {
-		return fmt.Errorf("failed to check remaining SMB service records: %w", err)
-	}
-	for _, service := range services {
-		if service.Service == "smb" && service.GroupID == clusterID {
-			return nil
-		}
-	}
-
-	entity := fmt.Sprintf("client.smb.config.%s", clusterID)
-	_, err = runSMBCommand(ctx, "ceph", "auth", "del", entity)
-	if err != nil {
-		return fmt.Errorf("failed to remove SMB configuration identity: %w", err)
-	}
+	// The logical cluster, or a receipt-less owner, may still need the shared
+	// configuration identity. Only whole logical-cluster finalization removes it.
 	return nil
 }
 

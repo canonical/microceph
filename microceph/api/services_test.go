@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/mocks"
 )
@@ -37,6 +38,12 @@ func TestEnableServiceFailureReturnsHTTPError(t *testing.T) {
 }
 
 func TestSMBServiceGroupGetReturnsEmptySnapshotWhenAbsentOrFinalized(t *testing.T) {
+	originalRunner := common.ProcessExec
+	t.Cleanup(func() { common.ProcessExec = originalRunner })
+	runner := mocks.NewRunner(t)
+	common.ProcessExec = runner
+	runner.On("RunCommandContext", mock.Anything, "ceph", "auth", "del", "client.smb.config.files").Return("", nil).Twice()
+	runner.On("RunCommandContext", mock.Anything, "ceph", "auth", "del", "client.smb.config.empty-config").Return("", nil).Once()
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })

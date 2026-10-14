@@ -126,7 +126,6 @@ func TestSMBRemovalUsesRecordedModeWhenMetadataFileIsMissing(t *testing.T) {
 	db := smbTestGroupedDB(t)
 	db.On("ExistsOnHost", mock.Anything, state, "smb", "files").Return(true, nil).Once()
 	db.On("RemoveForHost", mock.Anything, state, "smb", "files").Return(nil).Once()
-	db.On("GetGroupedServices", mock.Anything, state).Return([]database.GroupedService{{Service: "smb", GroupID: "files", Member: "other"}}, nil).Once()
 	require.NoError(t, DisableSMB(context.Background(), state, "files"))
 	require.Equal(t, []string{"smbd", "ctdb-nodes", "ctdbd", "retire"}, events)
 }

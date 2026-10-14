@@ -492,20 +492,28 @@ def test_remove_absent_smb_service_is_idempotent_and_accepts_force(monkeypatch):
 
 @pytest.mark.parametrize(("failure", "resource_survives"), [(False, False), (True, False), (False, True)])
 def test_remove_smb_service_attempts_every_member(monkeypatch, failure, resource_survives):
-    manager = _manager(monkeypatch, [_smb_record(n) for n in ("node-a", "node-b")])
+    hosts = ("node-a", "node-b", "node-pending")
+    manager = _manager(monkeypatch, [_smb_record(n) for n in hosts[:2]], members=hosts)
+    manager.microceph.services.local_states["node-pending"] = "files"
     if resource_survives:
         manager.remote = lambda *_args: ["files"]
     if failure:
-        manager.microceph.services.remove_failures["node-a"] = RuntimeError("node-a unavailable")
-        with pytest.raises(RuntimeError, match="node-a unavailable"):
+        manager.microceph.services.remove_failures["node-pending"] = RuntimeError("node-pending unavailable")
+        with pytest.raises(RuntimeError, match="node-pending unavailable"):
             manager.remove_service("smb.files")
     else:
         assert manager.remove_service("smb.files") == "Removed SMB service 'files'"
-    assert manager.microceph.services.removed == [("node-a", "files"), ("node-b", "files")]
-    expected = [("remove", "node-a"), ("remove", "node-b")]
+    assert manager.microceph.services.removed == [(host, "files") for host in hosts]
+    expected = [("remove", host) for host in hosts]
     if not failure and not resource_survives:
         expected.append(("finalize", "files"))
     assert manager.microceph.services.events == expected
+    if failure:
+        # Both recorded members have been processed, but the receipt-less owner
+        # must finish before finalization can delete the shared credential.
+        manager.microceph.services.remove_failures.clear()
+        manager.remove_service("smb.files")
+        assert manager.microceph.services.events == expected * 2 + [("finalize", "files")]
 
 
 def test_remove_smb_service_discovers_marker_only_nonclustered_rollback(monkeypatch):
