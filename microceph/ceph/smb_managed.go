@@ -34,7 +34,7 @@ var finalizeSMBServiceGroupIfUnchangedFunc = func(ctx context.Context, s interfa
 var ErrManagedSMBOutcomeUnknown = errors.New("SMB update outcome is uncertain; inspect Ceph state before retrying")
 
 // EnableManagedSMB submits a target's configuration to Ceph's SMB manager.
-// Concurrent full-placement updates follow upstream replacement semantics.
+// The managed API rejects overlapping requests before this read-modify-apply sequence.
 // Initial creation succeeds without member callbacks: Ceph waits for a share.
 func EnableManagedSMB(ctx context.Context, s interfaces.StateInterface, request types.ManagedSMBService) error {
 	err := ensureManagedSMBBackendFunc(ctx)

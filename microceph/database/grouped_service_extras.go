@@ -321,6 +321,9 @@ func mergeSMBGroupConfig(existingJSON, incomingJSON string) (string, error) {
 		return "", fmt.Errorf("invalid incoming SMB group config: %w", err)
 	}
 
+	// Only managed admission/release may change this field. Placement snapshots
+	// must not discard the owner or restore an older operation's token.
+	incoming.ManagedOperation = existing.ManagedOperation
 	if existing.NextCTDBRank < 0 || incoming.NextCTDBRank < 0 {
 		return "", fmt.Errorf("negative next CTDB rank")
 	}
@@ -595,6 +598,23 @@ func finalizeSMBServiceGroup(ctx context.Context, tx *sql.Tx, groupID string, ex
 	}
 	if count > 0 {
 		return fmt.Errorf("SMB service records remain after teardown")
+	}
+	var group SMBServiceGroupConfig
+	if config != "" {
+		err = json.Unmarshal([]byte(config), &group)
+		if err != nil {
+			return fmt.Errorf("invalid stored SMB group config: %w", err)
+		}
+	}
+	if group.ManagedOperation != nil {
+		// The managed request is still waiting for this callback. Clear retired
+		// deployment metadata, but keep its claim until the outer request ends.
+		encoded, err := json.Marshal(SMBServiceGroupConfig{ManagedOperation: group.ManagedOperation})
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE service_groups SET config = ? WHERE service = 'smb' AND group_id = ?`, string(encoded), groupID)
+		return err
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM service_groups WHERE service = 'smb' AND group_id = ?`, groupID)
 	if err != nil {

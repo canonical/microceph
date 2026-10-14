@@ -155,6 +155,21 @@ After a timeout or daemon crash, inspect the Ceph configuration, member
 services, and logs before retrying. Credentials are not retained; provide them
 again if creation must be retried.
 
+Managed enable and disable requests for the same SMB cluster share a database
+admission lease across MicroCeph members. A competing request receives HTTP 409
+(``operation in progress``), including when requesting background execution; it
+is not queued. Requests for different SMB clusters have independent leases.
+
+The request deadline is 15 minutes and the lease lasts 20 minutes from admission.
+Normal completion releases the lease. If the outcome is uncertain, or the daemon
+crashes or cannot release the lease, a later request can reclaim it after expiry.
+An old request cannot release a replacement request's lease.
+
+Expiry does not cancel outstanding Ceph work or guarantee that old callbacks have
+finished. Inspect state after an uncertain outcome before retrying. Direct
+``microceph.ceph smb`` updates do not acquire this managed-request lease and retain
+Ceph's full-resource replacement semantics.
+
 Shares are Ceph SMB resources:
 
 .. code-block:: none

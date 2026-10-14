@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,49 +10,204 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/canonical/lxd/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/ceph"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
 	"github.com/canonical/microceph/microceph/mocks"
 )
 
-func TestManagedSMBPutAcceptsRequestsWithoutDatabaseAdmission(t *testing.T) {
-	original := enableManagedSMBFunc
-	t.Cleanup(func() { enableManagedSMBFunc = original })
-	entered := make(chan context.Context, 2)
-	enableManagedSMBFunc = func(ctx context.Context, _ interfaces.StateInterface, _ types.ManagedSMBService) error {
-		entered <- ctx
-		return nil
+func stubManagedSMBAdmission(t *testing.T) {
+	t.Helper()
+	acquire, release := acquireManagedSMBOperationFunc, releaseManagedSMBOperationFunc
+	t.Cleanup(func() {
+		acquireManagedSMBOperationFunc, releaseManagedSMBOperationFunc = acquire, release
+	})
+	acquireManagedSMBOperationFunc = func(_ context.Context, _ interfaces.StateInterface, _, _ string, _ int64) (bool, error) {
+		return true, nil
 	}
-	for range 2 {
-		request := httptest.NewRequest(http.MethodPut, "/1.0/managed-services/smb", strings.NewReader(`{"cluster_id":"files","wait":false}`))
-		recorder := httptest.NewRecorder()
-		// No database is provided: managed admission must not reserve or lock a group.
-		response := cmdManagedSMBPut(&mocks.MockState{}, request)
-		require.NoError(t, response.Render(recorder, request))
-		require.Equal(t, http.StatusOK, recorder.Code)
-	}
-	for range 2 {
-		select {
-		case ctx := <-entered:
-			select {
-			case <-ctx.Done():
-			case <-time.After(time.Second):
-				t.Fatal("worker did not finish")
-			}
-		case <-time.After(time.Second):
-			t.Fatal("request was not dispatched")
-		}
+	releaseManagedSMBOperationFunc = func(_ context.Context, _ interfaces.StateInterface, _, _ string) (bool, error) {
+		return true, nil
 	}
 }
 
+func TestManagedSMBRequestsRejectBusyBeforeBackgroundDispatch(t *testing.T) {
+	stubManagedSMBAdmission(t)
+	original := enableManagedSMBFunc
+	t.Cleanup(func() { enableManagedSMBFunc = original })
+	var mu sync.Mutex
+	held := ""
+	acquireManagedSMBOperationFunc = func(_ context.Context, _ interfaces.StateInterface, clusterID, token string, expiresAt int64) (bool, error) {
+		require.Equal(t, "files", clusterID)
+		require.NotEmpty(t, token)
+		require.InDelta(t, 20*60, expiresAt-time.Now().Unix(), 2)
+		mu.Lock()
+		defer mu.Unlock()
+		if held != "" {
+			return false, nil
+		}
+		held = token
+		return true, nil
+	}
+	releaseManagedSMBOperationFunc = func(_ context.Context, _ interfaces.StateInterface, _, token string) (bool, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if held != token {
+			return false, nil
+		}
+		held = ""
+		return true, nil
+	}
+	entered := make(chan context.Context, 2)
+	proceed := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(proceed) })
+	defer unblock()
+	enableManagedSMBFunc = func(ctx context.Context, _ interfaces.StateInterface, _ types.ManagedSMBService) error {
+		entered <- ctx
+		<-proceed
+		return nil
+	}
+	request := httptest.NewRequest(http.MethodPut, "/1.0/managed-services/smb", strings.NewReader(`{"cluster_id":"files","wait":false}`))
+	recorder := httptest.NewRecorder()
+	response := cmdManagedSMBPut(&mocks.MockState{ClusterName: "node-a"}, request)
+	require.NoError(t, response.Render(recorder, request))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	ctx := <-entered
+	t.Cleanup(func() { unblock(); <-ctx.Done() })
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		request = httptest.NewRequest(method, "/1.0/managed-services/smb", strings.NewReader(`{"cluster_id":"files"}`))
+		recorder = httptest.NewRecorder()
+		state := &mocks.MockState{ClusterName: "node-b"}
+		if method == http.MethodPut {
+			response = cmdManagedSMBPut(state, request)
+		} else {
+			response = cmdManagedSMBDelete(state, request)
+		}
+		require.NoError(t, response.Render(recorder, request))
+		require.Equal(t, http.StatusConflict, recorder.Code)
+		require.Contains(t, recorder.Body.String(), "operation in progress")
+	}
+	unblock()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("worker did not finish")
+	}
+	request = httptest.NewRequest(http.MethodPut, "/1.0/managed-services/smb", strings.NewReader(`{"cluster_id":"files","wait":true}`))
+	recorder = httptest.NewRecorder()
+	response = cmdManagedSMBPut(&mocks.MockState{ClusterName: "node-b"}, request)
+	require.NoError(t, response.Render(recorder, request))
+	require.Equal(t, http.StatusOK, recorder.Code)
+}
+
+func TestManagedSMBOperationReleaseAndUncertainOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		workErr    error
+		released   bool
+		releaseErr error
+		wantCalls  int
+		wantCode   int
+	}{
+		{"success", nil, true, nil, 1, http.StatusOK},
+		{"known failure", errors.New("validation failed"), true, nil, 1, http.StatusInternalServerError},
+		{"uncertain", ceph.ErrManagedSMBOutcomeUnknown, true, nil, 0, http.StatusInternalServerError},
+		{"timeout", context.DeadlineExceeded, true, nil, 0, http.StatusInternalServerError},
+		{"ownership lost", nil, false, nil, 1, http.StatusInternalServerError},
+		{"release failed", nil, false, errors.New("database unavailable"), 1, http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubManagedSMBAdmission(t)
+			calls := 0
+			releaseManagedSMBOperationFunc = func(ctx context.Context, _ interfaces.StateInterface, _, _ string) (bool, error) {
+				calls++
+				require.NoError(t, ctx.Err())
+				_, bounded := ctx.Deadline()
+				require.True(t, bounded)
+				return tc.released, tc.releaseErr
+			}
+			request := httptest.NewRequest(http.MethodPut, "/1.0/managed-services/smb", nil)
+			response := runManagedSMBRequest(request.Context(), interfaces.CephState{State: &mocks.MockState{}}, "files", true, func(context.Context) error { return tc.workErr })
+			recorder := httptest.NewRecorder()
+			require.NoError(t, response.Render(recorder, request))
+			require.Equal(t, tc.wantCode, recorder.Code)
+			require.Equal(t, tc.wantCalls, calls)
+		})
+	}
+}
+
+func TestManagedSMBAdmissionFailureDoesNotDispatch(t *testing.T) {
+	stubManagedSMBAdmission(t)
+	acquireManagedSMBOperationFunc = func(context.Context, interfaces.StateInterface, string, string, int64) (bool, error) {
+		return false, errors.New("database unavailable")
+	}
+	request := httptest.NewRequest(http.MethodPut, "/1.0/managed-services/smb", nil)
+	response := runManagedSMBRequest(request.Context(), interfaces.CephState{State: &mocks.MockState{}}, "files", false, func(context.Context) error {
+		t.Error("work dispatched after failed admission")
+		return nil
+	})
+	recorder := httptest.NewRecorder()
+	require.NoError(t, response.Render(recorder, request))
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+}
+
+func TestManagedSMBFinalizationDoesNotAdmitAnotherRequestBeforeCompletion(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec(`
+CREATE TABLE service_groups (id INTEGER PRIMARY KEY, service TEXT, group_id TEXT, config TEXT, UNIQUE(service, group_id));
+CREATE TABLE grouped_services (id INTEGER PRIMARY KEY, service_group_id INTEGER);`)
+	require.NoError(t, err)
+	state := interfaces.CephState{State: &mocks.MockState{
+		Cert: &shared.CertInfo{},
+		DBObj: &mocks.MockDB{TxFn: func(ctx context.Context, work func(context.Context, *sql.Tx) error) error {
+			tx, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = tx.Rollback() }()
+			err = work(ctx, tx)
+			if err != nil {
+				return err
+			}
+			return tx.Commit()
+		}},
+	}}
+	request := httptest.NewRequest(http.MethodDelete, "/1.0/managed-services/smb", nil)
+	response := runManagedSMBRequest(request.Context(), state, "files", true, func(ctx context.Context) error {
+		// Simulate the native finalization callback while its managed caller is
+		// still waiting. No DB transaction is held over this work.
+		err := database.FinalizeSMBServiceGroup(ctx, state, "files")
+		require.NoError(t, err)
+		contender := runManagedSMBRequest(ctx, state, "files", false, func(context.Context) error {
+			t.Error("finalization released admission before the outer request ended")
+			return nil
+		})
+		recorder := httptest.NewRecorder()
+		require.NoError(t, contender.Render(recorder, request))
+		require.Equal(t, http.StatusConflict, recorder.Code)
+		return nil
+	})
+	recorder := httptest.NewRecorder()
+	require.NoError(t, response.Render(recorder, request))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var groups int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM service_groups`).Scan(&groups))
+	require.Zero(t, groups, "release removes the finalized metadata-only row")
+}
+
 func TestManagedSMBBackgroundOwnsDetachedBoundedContext(t *testing.T) {
+	stubManagedSMBAdmission(t)
 	original := enableManagedSMBFunc
 	t.Cleanup(func() { enableManagedSMBFunc = original })
 	entered := make(chan context.Context, 1)
@@ -82,6 +238,7 @@ func TestManagedSMBBackgroundOwnsDetachedBoundedContext(t *testing.T) {
 }
 
 func TestManagedSMBPutEnablesTargetThroughOrchestrator(t *testing.T) {
+	stubManagedSMBAdmission(t)
 	originalEnable := enableManagedSMBFunc
 	t.Cleanup(func() {
 		enableManagedSMBFunc = originalEnable
@@ -198,6 +355,7 @@ func TestValidateManagedSMBRequestRejectsInvalidInput(t *testing.T) {
 }
 
 func TestManagedSMBDeleteDispatchesRequestedScope(t *testing.T) {
+	stubManagedSMBAdmission(t)
 	originalDisable := disableManagedSMBFunc
 	originalRemoveService := removeManagedSMBServiceFunc
 	originalDeleteCluster := deleteManagedSMBClusterFunc

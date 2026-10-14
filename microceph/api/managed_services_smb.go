@@ -3,7 +3,9 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,9 +15,11 @@ import (
 	"time"
 
 	mcTypes "github.com/canonical/microcluster/v3/microcluster/types"
+	"github.com/pborman/uuid"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
 )
@@ -24,10 +28,16 @@ var enableManagedSMBFunc = ceph.EnableManagedSMB
 var disableManagedSMBFunc = ceph.DisableManagedSMB
 var removeManagedSMBServiceFunc = ceph.RemoveManagedSMBService
 var deleteManagedSMBClusterFunc = ceph.DeleteManagedSMBCluster
+var acquireManagedSMBOperationFunc = acquireManagedSMBOperation
+var releaseManagedSMBOperationFunc = releaseManagedSMBOperation
 
 // Each remote placement request is separately bounded. Allow a multi-member
 // apply to outlive a single startup wait without running indefinitely.
 const managedSMBRequestTimeout = 15 * time.Minute
+
+// Leave a cleanup margin beyond the request deadline. Expiry permits a retry;
+// it does not cancel Ceph work that outlives the request.
+const managedSMBOperationLease = 20 * time.Minute
 
 var managedSMBServiceCmd = mcTypes.Endpoint{
 	Path:   "managed-services/smb",
@@ -52,7 +62,7 @@ func cmdManagedSMBPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	}
 
 	state := interfaces.CephState{State: s}
-	return runManagedSMBRequest(r.Context(), request.ClusterID, request.Wait, func(ctx context.Context) error {
+	return runManagedSMBRequest(r.Context(), state, request.ClusterID, request.Wait, func(ctx context.Context) error {
 		return enableManagedSMBFunc(ctx, state, request)
 	})
 }
@@ -89,7 +99,7 @@ func cmdManagedSMBDelete(s mcTypes.State, r *http.Request) mcTypes.Response {
 	}
 
 	state := interfaces.CephState{State: s}
-	return runManagedSMBRequest(r.Context(), request.ClusterID, true, func(ctx context.Context) error {
+	return runManagedSMBRequest(r.Context(), state, request.ClusterID, true, func(ctx context.Context) error {
 		switch {
 		case request.Target != "":
 			return disableManagedSMBFunc(ctx, state, request.ClusterID)
@@ -135,11 +145,43 @@ func validateManagedSMBRemovalRequest(s mcTypes.State, r *http.Request, request 
 	return nil
 }
 
-func runManagedSMBRequest(ctx context.Context, clusterID string, wait bool, work func(context.Context) error) mcTypes.Response {
+func runManagedSMBRequest(ctx context.Context, s interfaces.StateInterface, clusterID string, wait bool, work func(context.Context) error) mcTypes.Response {
 	operationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), managedSMBRequestTimeout)
+	token := uuid.New()
+	expiresAt := time.Now().Add(managedSMBOperationLease).Unix()
+	acquired, err := acquireManagedSMBOperationFunc(operationCtx, s, clusterID, token, expiresAt)
+	if err != nil {
+		cancel()
+		return mcTypes.SmartError(err)
+	}
+	if !acquired {
+		cancel()
+		return mcTypes.ErrorResponse(http.StatusConflict, fmt.Sprintf("SMB cluster %q has an operation in progress; retry after completion or lease expiry", clusterID))
+	}
+	// Claim before dispatch: asynchronous acceptance must not conceal contention.
+	release := releaseManagedSMBOperationFunc
 	worker := func() error {
 		defer cancel()
-		return work(operationCtx)
+		err := work(operationCtx)
+		if operationCtx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return ceph.ErrManagedSMBOutcomeUnknown
+		}
+		if errors.Is(err, ceph.ErrManagedSMBOutcomeUnknown) {
+			// Remote callbacks may still be active. Let expiry bound this claim
+			// rather than declaring the cluster idle immediately on timeout.
+			return err
+		}
+		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(operationCtx), 30*time.Second)
+		defer releaseCancel()
+		released, releaseErr := release(releaseCtx, s, clusterID, token)
+		if releaseErr != nil {
+			logger.Warnf("failed releasing managed SMB operation for %q: %v", clusterID, releaseErr)
+			return fmt.Errorf("%w: operation lease release failed", ceph.ErrManagedSMBOutcomeUnknown)
+		}
+		if !released {
+			return fmt.Errorf("%w: operation lease ownership changed", ceph.ErrManagedSMBOutcomeUnknown)
+		}
+		return err
 	}
 	if wait {
 		err := worker()
@@ -156,6 +198,26 @@ func runManagedSMBRequest(ctx context.Context, clusterID string, wait bool, work
 	}()
 	// Existing API convention: this is acceptance, not deployment completion.
 	return mcTypes.EmptySyncResponse
+}
+
+func acquireManagedSMBOperation(ctx context.Context, s interfaces.StateInterface, clusterID, token string, expiresAt int64) (bool, error) {
+	var acquired bool
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		acquired, err = database.AcquireSMBManagedOperation(ctx, tx, clusterID, token, time.Now().Unix(), expiresAt)
+		return err
+	})
+	return acquired, err
+}
+
+func releaseManagedSMBOperation(ctx context.Context, s interfaces.StateInterface, clusterID, token string) (bool, error) {
+	var released bool
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		released, err = database.ReleaseSMBManagedOperation(ctx, tx, clusterID, token)
+		return err
+	})
+	return released, err
 }
 
 func validateManagedSMBRequest(request types.ManagedSMBService) error {

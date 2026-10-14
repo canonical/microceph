@@ -51,6 +51,14 @@ type SMBServiceGroupConfig struct {
 	DesiredSpec  json.RawMessage `json:"desired_spec"`
 	CTDBRanks    map[string]int  `json:"ctdb_ranks,omitempty"`
 	NextCTDBRank int             `json:"next_ctdb_rank,omitempty"`
+	// ManagedOperation is admission metadata, not upstream desired state.
+	ManagedOperation *SMBManagedOperation `json:"managed_operation,omitempty"`
+}
+
+// SMBManagedOperation identifies an expiring managed-request lease.
+type SMBManagedOperation struct {
+	Token     string `json:"token"`
+	ExpiresAt int64  `json:"expires_at"` // Unix seconds.
 }
 
 // SMBServiceInfo holds node-local SMB service metadata.
