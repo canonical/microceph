@@ -69,8 +69,20 @@ smb_import_users() (
     NSS_WRAPPER_PASSWD="${stage}/passwd" NSS_WRAPPER_GROUP="${stage}/group" \
     "${SNAP}/bin/python3" "${SNAP}/commands/sambacc.start" "${smb_sambacc_args[@]}" \
         --etc-passwd-path "${stage}/passwd" --etc-group-path "${stage}/group" import-users
-    mv "${stage}/passwd" "${smb_identity_dir}/passwd"
-    mv "${stage}/group" "${smb_identity_dir}/group"
+    # Each same-filesystem rename is atomic, not the pair. A failed group
+    # replacement leaves the old group in place, so restore the old passwd.
+    cp -p -- "${smb_identity_dir}/passwd" "${stage}/previous-passwd"
+    mv -T -- "${stage}/passwd" "${smb_identity_dir}/passwd"
+    if mv -T -- "${stage}/group" "${smb_identity_dir}/group"; then
+        return 0
+    else
+        status=$?
+    fi
+    if ! mv -T -- "${stage}/previous-passwd" "${smb_identity_dir}/passwd"; then
+        trap - EXIT
+        echo "Failed to restore SMB passwd; backup retained in ${stage}/previous-passwd" >&2
+    fi
+    exit "${status}"
 )
 
 smb_prepare_runtime() {

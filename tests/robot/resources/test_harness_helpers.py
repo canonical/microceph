@@ -3450,24 +3450,48 @@ def test_smb_identity_baseline_is_minimal_and_not_reset_by_ctdb(tmp_path):
     assert "alice:" in passwd.read_text(), "CTDB's independent startup must preserve active Samba identities"
 
 
-def test_smb_identity_import_publishes_only_after_success(tmp_path):
+@pytest.mark.parametrize("failure", ["none", "import", "backup", "passwd", "group", "restore"])
+def test_smb_identity_import_publishes_only_after_success(tmp_path, failure):
     identity = tmp_path / "identity"
     identity.mkdir()
     (identity / "passwd").write_text("old-passwd\n")
+    (identity / "passwd").chmod(0o640)
     (identity / "group").write_text("old-group\n")
+    (identity / "group").chmod(0o600)
     binary = tmp_path / "bin"
     binary.mkdir()
     importer = binary / "python3"
-    importer.write_text('#!/bin/sh\nprintf new-passwd > "$NSS_WRAPPER_PASSWD"\nprintf new-group > "$NSS_WRAPPER_GROUP"\nexit 1\n')
+    importer.write_text('#!/bin/sh\nprintf new-passwd > "$NSS_WRAPPER_PASSWD"\nprintf new-group > "$NSS_WRAPPER_GROUP"\n'
+                        f'exit {1 if failure == "import" else 0}\n')
     importer.chmod(0o755)
-    script = 'SNAP="$1"; smb_identity_dir="$1/identity"; smb_sambacc_args=(); smb_import_users'
-    failed = _run_smb_helper(script, tmp_path)
-    assert failed.returncode != 0
-    assert (identity / "passwd").read_text() == "old-passwd\n"
-    assert (identity / "group").read_text() == "old-group\n"
-    importer.write_text(importer.read_text().replace("exit 1", "exit 0"))
-    succeeded = _run_smb_helper(script, tmp_path)
-    assert succeeded.returncode == 0, succeeded.stderr
-    assert (identity / "passwd").read_text() == "new-passwd"
-    assert (identity / "group").read_text() == "new-group"
-    assert not list(identity.glob("identity-import.*"))
+    script = '''
+SNAP="$1"; smb_identity_dir="$1/identity"; smb_sambacc_args=(); failure="$2"
+cp() { if [ "$failure" = backup ]; then return 41; fi; command cp "$@"; }
+mv() {
+    local source="${@: -2:1}"
+    case "$failure:${source##*/}" in
+        passwd:passwd|group:group|restore:group) return 42 ;;
+        restore:previous-passwd) return 43 ;;
+    esac
+    command mv "$@"
+}
+smb_import_users
+'''
+    result = _run_smb_helper(script, tmp_path, failure)
+    expected_rc = {"none": 0, "import": 1, "backup": 41}.get(failure, 42)
+    assert result.returncode == expected_rc, result.stderr
+    passwd = "new-passwd" if failure in ("none", "restore") else "old-passwd\n"
+    group = "new-group" if failure == "none" else "old-group\n"
+    assert (identity / "passwd").read_text() == passwd
+    assert (identity / "group").read_text() == group
+    if failure not in ("none", "restore"):
+        assert (identity / "passwd").stat().st_mode & 0o777 == 0o640
+        assert (identity / "group").stat().st_mode & 0o777 == 0o600
+    stages = list(identity.glob("identity-import.*"))
+    if failure == "restore":
+        assert len(stages) == 1
+        assert (stages[0] / "previous-passwd").read_text() == "old-passwd\n"
+        assert (stages[0] / "previous-passwd").stat().st_mode & 0o777 == 0o640
+        assert "Failed to restore SMB passwd" in result.stderr
+    else:
+        assert not stages
