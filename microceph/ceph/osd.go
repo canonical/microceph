@@ -338,6 +338,15 @@ func (m *OSDManager) switchFailureDomain(old string, new string) error {
 	var err error
 
 	newRule := fmt.Sprintf("microceph_auto_%s", new)
+	// Adopted clusters may not yet have the microceph auto rules, so we need
+	// to create the target rules so the switch doesn't fail on rule lookup.
+	if !haveCrushRule(newRule) {
+		logger.Debugf("Adding missing crush rule %v", newRule)
+		err = addCrushRule(newRule, new)
+		if err != nil {
+			return fmt.Errorf("failed to add crush rule %s: %w", newRule, err)
+		}
+	}
 	logger.Debugf("Setting default crush rule to %v", newRule)
 	err = setDefaultCrushRule(newRule)
 	if err != nil {
@@ -471,17 +480,20 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 // updateFailureDomain checks if we need to update the crush rules failure domain.
 // Once we have at least 3 nodes with at least 1 OSD each, we set the failure domain to host.
 // Currently this function only handles scale-up scenarios, i.e. adding a new node.
-// When availability zones are configured, this is a no-op as topology is handled by updateTopology.
+// For clusters that have rack-level failure domain, we leave them alone. AZ tagged
+// clusters with fewer than three active zones intentionally fall through to the
+// host switch here so that updateTopology keeps the failure domain at OSD level for
+// them, which would otherwise leave such clusters stuck at osd level forever.
 func (m *OSDManager) updateFailureDomain(ctx context.Context, s mcTypes.State) error {
 	logger.Infof("Checking if we need to update failure domain for OSDs")
 
-	// When AZs are configured, topology is handled by updateTopology — skip.
-	data, err := getAZData(ctx, m.state, m.state.Name())
+	// Rack-level failure domain governs the cluster; don't override it.
+	onRack, err := IsOnRackRule()
 	if err != nil {
-		return fmt.Errorf("failed to check for AZs: %w", err)
+		return fmt.Errorf("failed to check for rack failure domain: %w", err)
 	}
-	if len(data.uniqueAZs) > 0 {
-		logger.Infof("Availability zones configured, skipping default failure domain update")
+	if onRack {
+		logger.Infof("Cluster is on rack failure domain, skipping default failure domain update")
 		return nil
 	}
 
