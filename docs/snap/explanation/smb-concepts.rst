@@ -71,9 +71,9 @@ CTDB coordination
 -----------------
 
 The default ``always`` mode runs CTDB, including for one instance. The
-``never`` mode permits one instance without CTDB. The mode cannot be changed;
-recreate the SMB cluster to change it. CTDB coordinates Samba recovery state;
-CephFS stores the shared file data.
+``never`` mode disables CTDB regardless of the number of instances. The mode
+cannot be changed; recreate the SMB cluster to change it. CTDB coordinates Samba
+recovery state; CephFS stores the shared file data.
 
 Network and recovery
 --------------------

@@ -274,17 +274,19 @@ def test_apply_smb_rejects_unsupported_native_features(monkeypatch, attribute, v
 
 
 @pytest.mark.parametrize("count", [1, 2])
-def test_apply_smb_nonclustered_member_limit(monkeypatch, count):
-    manager = _manager(monkeypatch)
+def test_apply_smb_nonclustered_uses_requested_placement(monkeypatch, count):
     spec = _nonclustered_spec()
+    manager = _manager(monkeypatch, [_smb_record("node-old", spec.to_json())],
+                       members=("node-a", "node-b", "node-old"))
     spec.placement = _SMBPlacement(count=count)
-    if count == 1:
-        manager.apply_smb(spec)
-        assert manager.microceph.services.applied == [("node-a", spec.to_json())]
-    else:
-        with pytest.raises(ValueError, match="exactly one"):
-            manager.apply_smb(spec)
-        assert manager.microceph.services.events == []
+    desired = spec.to_json()
+    desired["placement"] = {"count": count}
+    spec.to_json = lambda: desired
+    manager.apply_smb(spec)
+    targets = ("node-a", "node-b")[:count]
+    assert manager.microceph.services.applied == [(node, spec.to_json()) for node in targets]
+    assert manager.microceph.services.events == [("apply", node) for node in targets] + [("remove", "node-old")]
+    assert manager.microceph.services.removed == [("node-old", "files")]
 
 
 @pytest.mark.parametrize("to_clustered", [True, False])

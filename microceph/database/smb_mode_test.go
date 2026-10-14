@@ -47,23 +47,20 @@ func TestGetSMBPlacementModeUsesStoredSpec(t *testing.T) {
 	})
 }
 
-func TestSMBPlacementChecksSharedModeAndSingleMember(t *testing.T) {
+func TestSMBPlacementChecksSharedMode(t *testing.T) {
 	for _, clustered := range []bool{true, false} {
 		db := setupGroupedServiceDB(t)
+		_, err := db.Exec(`INSERT INTO core_cluster_members (name) VALUES ('node-b')`)
+		require.NoError(t, err)
 		config := `{"desired_spec":{"spec":{"features":[]}}}`
 		if clustered {
 			config = `{"desired_spec":{"spec":{"features":["clustered"]}}}`
 		}
 		withGroupTx(t, db, func(ctx context.Context, tx *sql.Tx) {
 			require.NoError(t, addOrUpdateGroupedService(ctx, tx, "node-a", "smb", "files", config, `{}`))
-			require.NoError(t, CheckSMBPlacementMode(ctx, tx, "files", "node-a", clustered))
-			require.ErrorContains(t, CheckSMBPlacementMode(ctx, tx, "files", "node-a", !clustered), "cannot be changed")
-			err := CheckSMBPlacementMode(ctx, tx, "files", "node-b", clustered)
-			if clustered {
-				require.NoError(t, err)
-			} else {
-				require.ErrorContains(t, err, "one member")
-			}
+			require.NoError(t, addOrUpdateGroupedService(ctx, tx, "node-b", "smb", "files", config, `{}`))
+			require.NoError(t, CheckSMBPlacementMode(ctx, tx, "files", clustered))
+			require.ErrorContains(t, CheckSMBPlacementMode(ctx, tx, "files", !clustered), "cannot be changed")
 		})
 	}
 }

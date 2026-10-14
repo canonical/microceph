@@ -248,7 +248,7 @@ func (smb *SMBServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 		preflightCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		state := s.ClusterState()
 		err := state.Database().Transaction(preflightCtx, func(ctx context.Context, tx *sql.Tx) error {
-			err := database.CheckSMBPlacementMode(ctx, tx, smb.ClusterID, state.Name(), smb.isClustered())
+			err := database.CheckSMBPlacementMode(ctx, tx, smb.ClusterID, smb.isClustered())
 			if err != nil {
 				return err
 			}

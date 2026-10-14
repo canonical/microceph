@@ -578,8 +578,6 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
         }
         cluster_records = [record for record in current if record['group_id'] == spec.cluster_id]
         clustered = "clustered" in (getattr(spec, "features", []) or [])
-        if not clustered and len(targets) != 1:
-            raise ValueError("non-clustered SMB requires exactly one member")
         for record in cluster_records:
             if not record.get("group_config"):
                 continue
@@ -589,8 +587,6 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
                 previous = previous.get("spec", previous)
                 if ("clustered" in (previous.get("features") or [])) != clustered:
                     raise ValueError("SMB clustering mode cannot be changed; recreate the cluster")
-        if not clustered and current_hosts.difference(target_set):
-            raise ValueError("remove the existing non-clustered member before relocating SMB")
         ranks, next_rank = {}, 0
         if clustered:
             ranks, next_rank = self._smb_rank_state(spec.cluster_id, cluster_records)

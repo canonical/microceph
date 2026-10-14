@@ -66,9 +66,6 @@ func EnableManagedSMB(ctx context.Context, s interfaces.StateInterface, request 
 		return fmt.Errorf("SMB clustering mode %q cannot be changed", mode)
 	}
 	members = appendUniqueSMBMember(members, s.ClusterState().Name())
-	if mode == "never" && len(members) > 1 {
-		return fmt.Errorf("non-clustered SMB cannot accept additional members; recreate with --clustering always")
-	}
 	updateManagedSMBResource(resource, members, request)
 	// Reapply even an existing desired member: a previous attempt may not have
 	// placed it. Node-local effective-config checks avoid unnecessary restarts.
@@ -169,9 +166,6 @@ func createManagedSMBCluster(ctx context.Context, request types.ManagedSMBServic
 	}
 	if mode != "always" && mode != "never" {
 		return fmt.Errorf("SMB clustering must be always or never")
-	}
-	if mode == "never" && len(targets) != 1 {
-		return fmt.Errorf("non-clustered SMB requires exactly one member")
 	}
 	resource := map[string]any{
 		"resource_type": "ceph.smb.cluster", "cluster_id": request.ClusterID,

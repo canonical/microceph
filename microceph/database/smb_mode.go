@@ -50,30 +50,15 @@ func GetSMBPlacementMode(ctx context.Context, tx *sql.Tx, groupID string) (*bool
 	return &clustered, nil
 }
 
-// CheckSMBPlacementMode rejects changing a group's recorded clustering mode or
-// placing an additional member of a non-clustered group. It is a preflight check;
-// it does not serialize direct upstream mutations with managed requests.
-func CheckSMBPlacementMode(ctx context.Context, tx *sql.Tx, groupID, member string, clustered bool) error {
+// CheckSMBPlacementMode rejects changing a group's recorded clustering mode.
+// It is a preflight check, not serialization of upstream and managed requests.
+func CheckSMBPlacementMode(ctx context.Context, tx *sql.Tx, groupID string, clustered bool) error {
 	mode, err := GetSMBPlacementMode(ctx, tx, groupID)
 	if err != nil {
 		return err
 	}
 	if mode != nil && *mode != clustered {
 		return fmt.Errorf("SMB clustering mode cannot be changed; recreate the cluster")
-	}
-	if !clustered {
-		var others int
-		err = tx.QueryRowContext(ctx, `
-SELECT count(*) FROM grouped_services g
- JOIN service_groups s ON s.id=g.service_group_id
- JOIN core_cluster_members m ON m.id=g.member_id
- WHERE s.service='smb' AND s.group_id=? AND m.name<>?`, groupID, member).Scan(&others)
-		if err != nil {
-			return err
-		}
-		if others > 0 {
-			return fmt.Errorf("non-clustered SMB supports only one member")
-		}
 	}
 	return nil
 }

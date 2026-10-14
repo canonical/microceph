@@ -362,7 +362,7 @@ func TestManagedSMBClusteringModeIsImmutable(t *testing.T) {
 	}
 }
 
-func TestManagedSMBNeverRejectsAdditionalMember(t *testing.T) {
+func TestManagedSMBAddingMemberPreservesNeverMode(t *testing.T) {
 	preserveManagedSMBFuncs(t)
 	ensureManagedSMBBackendFunc = func(context.Context) error { return nil }
 	loadManagedSMBClusterFunc = func(context.Context, string) (map[string]any, error) {
@@ -370,9 +370,16 @@ func TestManagedSMBNeverRejectsAdditionalMember(t *testing.T) {
 		resource["clustering"] = "never"
 		return resource, nil
 	}
-	applyManagedSMBClusterFunc = func(context.Context, map[string]any) error { t.Fatal("must not mutate"); return nil }
+	applied := false
+	applyManagedSMBClusterFunc = func(_ context.Context, resource map[string]any) error {
+		applied = true
+		require.Equal(t, "never", resource["clustering"])
+		require.Equal(t, map[string]any{"hosts": []string{"node-a", "node-b"}, "count": 2}, resource["placement"])
+		return nil
+	}
 	err := EnableManagedSMB(context.Background(), managedSMBTestState(t, "node-b"), types.ManagedSMBService{ClusterID: "files"})
-	require.ErrorContains(t, err, "cannot accept additional members")
+	require.NoError(t, err)
+	require.True(t, applied)
 }
 
 func TestManagedSMBPlacementRejectsSelectorsItCannotPreserve(t *testing.T) {

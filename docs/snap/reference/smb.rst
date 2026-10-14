@@ -19,8 +19,8 @@ Enable an SMB instance
 The first member creates the cluster and requires either ``--credentials-file``
 or ``--user-group-ref``. CTDB is enabled by default; connect
 ``microceph:smb-identity`` and ``microceph:ctdb-run`` before applying a share.
-With ``--clustering never``, only ``smb-identity`` is required and the cluster
-supports one member.
+With ``--clustering never``, CTDB is disabled regardless of the number of members;
+the ``ctdb-run`` connection is not required.
 
 Initial enable accepts the cluster and credential resources, but deployment
 starts only after a CephFS-backed share is applied. Later enables do not require
@@ -104,9 +104,12 @@ balancer.
 Placement and supported configuration
 -------------------------------------
 
-A member can run one SMB cluster. Clustered clusters support multiple members;
-non-clustered clusters support one. Adding or removing members does not change
-the clustering mode. If placement fails, existing members remain in place.
+A member can run one SMB cluster. The clustering mode controls whether CTDB runs,
+not the number of members. Adding or removing members does not change that mode.
+If placement fails, existing members remain in place.
+
+As upstream Ceph warns, running multiple instances of the same SMB service without
+CTDB can cause unexpected behaviour.
 
 Before removing a MicroCeph member, explicitly remove it from the desired SMB
 placement with the existing ``microceph disable smb --cluster-id <cluster-id>
