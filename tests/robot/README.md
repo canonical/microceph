@@ -70,6 +70,12 @@ inside the disposable VM. MicroCeph receives the returned mapper path without
 and refusal of ext4, GPT, BlueStore and ordinary non-zero data. Refusal checks
 compare signatures and the first 4 MiB, not every byte of each disk.
 
+The suite then cold-boots the VM with its file-backed Vault sealed. A fixture-only
+unit restores owned loop associations and stable aliases, but does not unlock
+mappers. The test samples the locked mapper for at least 90 seconds, unseals Vault
+using private guest state, and requires Vaultlocker and MicroCeph to recover the
+original 1 MiB object automatically. No OSD reload or manual unlock is issued.
+
 Override a pin with `--variable VAULTLOCKER_REVISION:<revision>` (or
 `VAULT_REVISION`). To select a channel instead, explicitly clear the revision:
 `--variable VAULTLOCKER_REVISION: --variable VAULTLOCKER_CHANNEL:latest/edge`.
@@ -80,8 +86,10 @@ or enter CI artifacts. CI uploads only the normal Robot results; teardown logs
 allowlisted snap/interface/block-device/Ceph diagnostics. For local debugging,
 `--variable KEEP_VAULTLOCKER_VM:True` preserves the VM, including its root-only
 test credentials; private failure details are in
-`/run/microceph-vaultlocker-ci/failure.log`. Delete that VM when finished.
-This is not a Juju/charm, reboot-unlock or Vault-outage recovery test.
+`/run/microceph-vaultlocker-ci/failure.log`. Reboot testing also retains root-only
+state in `/var/snap/vaultlocker/common/microceph-ci/reboot-state.json` inside that
+VM. Delete the VM when finished. This is not a Juju/charm, HA or cross-model test;
+the test Vault shares the VM and starts sealed after reboot.
 
 ## Host resource guide
 

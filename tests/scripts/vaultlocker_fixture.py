@@ -4,7 +4,7 @@
 Never accept an operator-supplied disk or print Vault responses/configuration.
 Only sparse files and their verified loop devices in this disposable VM are used.
 Credentials, server data and failure details stay private inside the VM; they are
-not CI artifacts. This fixture intentionally does not model reboot recovery.
+not CI artifacts. Reboot recovery persists private fixture state inside this VM.
 """
 
 import argparse
@@ -24,6 +24,9 @@ PRIVATE = Path("/run/microceph-vaultlocker-ci")
 STATE = PRIVATE / "state.json"
 COMMON = Path("/var/snap/vaultlocker/common/microceph-ci")
 CONFIG = COMMON / "vaultlocker.conf"
+REBOOT_STATE = COMMON / "reboot-state.json"
+REBOOT_UNIT = Path("/etc/systemd/system/microceph-vaultlocker-ci-restore.service")
+BY_ID = Path("/dev/disk/by-id")
 VAULT_COMMON = Path("/var/snap/vault/common/microceph-ci")
 VAULT_ADDR = "http://127.0.0.1:18200"
 MOUNT = "vaultlocker-ci"
@@ -172,7 +175,7 @@ def create_device(state, name):
     state["devices"][name] = device
     save(state)
     owned_device(state, name)
-    link = Path(f"/dev/disk/by-id/microceph-vaultlocker-ci-{name}")
+    link = BY_ID / f"microceph-vaultlocker-ci-{name}"
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(device)
     return str(link)
@@ -271,6 +274,71 @@ def object_io():
     }
 
 
+def arm_reboot(state):
+    """Persist private state and enable owned loop/Vault restoration, not unlock."""
+    write_private(REBOOT_STATE, json.dumps(state))
+    write_private(
+        REBOOT_UNIT,
+        "[Unit]\nDescription=Restore owned Vaultlocker CI devices\n"
+        "Wants=microceph-vaultlocker-ci.service\n"
+        "Before=microceph-vaultlocker-ci.service snap.vaultlocker.pebble.service\n"
+        "[Service]\nType=oneshot\n"
+        f"ExecStart=/usr/bin/python3 {Path(__file__).resolve()} restore\n"
+        "[Install]\nWantedBy=multi-user.target\n",
+    )
+    run("systemctl", "daemon-reload")
+    run("systemctl", "enable", REBOOT_UNIT.name)
+    return {"armed": True}
+
+
+def restore_after_reboot():
+    """Reattach only existing fixture images; never format or manually unlock."""
+    state = json.loads(REBOOT_STATE.read_text())
+    PRIVATE.mkdir(mode=0o700, exist_ok=True)
+    records = json.loads(run("losetup", "--json", "--list", "--output", "NAME,BACK-FILE"))
+    for name, previous in state["devices"].items():
+        if name not in NAMES:
+            raise ValueError("Unexpected reboot fixture device")
+        image = COMMON / f"{name}.img"
+        if not image.is_file():
+            raise ValueError("Missing owned reboot image")
+        matches = [
+            r["name"] for r in records.get("loopdevices", []) if r.get("back-file") == str(image)
+        ]
+        if len(matches) > 1:
+            raise ValueError("Ambiguous owned loop device")
+        device = matches[0] if matches else run("losetup", "--find", "--show", str(image)).strip()
+        if not re.fullmatch(r"/dev/loop[0-9]+", device):
+            raise ValueError("Unexpected restored loop device")
+        expected = state["mappers"].get(name)
+        if (
+            expected
+            and run("blkid", "-p", "-s", "UUID", "-o", "value", device).strip()
+            != expected["luks_uuid"]
+        ):
+            raise ValueError("Restored LUKS UUID mismatch")
+        link = BY_ID / f"microceph-vaultlocker-ci-{name}"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink() and str(link.readlink()) in (previous, device):
+            link.unlink()
+        link.symlink_to(device)  # Refuse to overwrite an unexpected existing path.
+        state["devices"][name] = device
+    save(state)
+    return {"restored": True}
+
+
+def object_read():
+    """Read the original object after reboot; never replace it or its reference."""
+    directory = Path("/var/snap/microceph/common/vaultlocker-ci")
+    source, restored = directory / "source", directory / "restored-after-reboot"
+    run("microceph.rados", "-p", "vaultlocker-ci", "get", "proof", str(restored), timeout=20)
+    return {
+        "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "restored_sha256": hashlib.sha256(restored.read_bytes()).hexdigest(),
+        "restored_bytes": restored.stat().st_size,
+    }
+
+
 def diagnostics():
     # Deliberately exclude Vault/Vaultlocker logs, config, state and secret APIs.
     commands = [
@@ -294,7 +362,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "operation",
-        choices=("start", "ready", "setup", "encrypt", "prepare", "snapshot", "io", "diagnostics"),
+        choices=(
+            "start",
+            "ready",
+            "setup",
+            "encrypt",
+            "prepare",
+            "snapshot",
+            "io",
+            "diagnostics",
+            "arm-reboot",
+            "restore",
+            "unseal",
+            "locked",
+            "read",
+        ),
     )
     parser.add_argument("name", choices=NAMES, nargs="?", default="fresh")
     args = parser.parse_args()
@@ -310,6 +392,23 @@ def main():
             result = object_io()
         elif args.operation == "diagnostics":
             result = diagnostics()
+        elif args.operation == "restore":
+            result = restore_after_reboot()
+        elif args.operation == "read":
+            result = object_read()
+        elif args.operation in ("arm-reboot", "unseal", "locked"):
+            state = json.loads(STATE.read_text())
+            if args.operation == "arm-reboot":
+                result = arm_reboot(state)
+            elif args.operation == "unseal":
+                response = vault("sys/unseal", {"key": state["unseal_key"]}, method="PUT")
+                result = {"unsealed": not response["sealed"]}
+            else:
+                result = {
+                    "locked": not Path(
+                        state["mappers"][args.name]["mapper_path"]
+                    ).is_block_device()
+                }
         else:
             state = json.loads(STATE.read_text())
             result = {"encrypt": encrypt, "prepare": prepare, "snapshot": snapshot}[

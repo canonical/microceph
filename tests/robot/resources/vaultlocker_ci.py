@@ -6,6 +6,7 @@ handling and scratch-device ownership stay in the root-only guest fixture.
 
 import json
 import shlex
+import time
 
 from robot.api import logger
 from robot.libraries.BuiltIn import BuiltIn
@@ -63,6 +64,10 @@ class vaultlocker_ci:
     def start_vaultlocker_test_vault(self):
         """Start the private Vault and poll its API through the shared waiter."""
         self.run_vaultlocker_fixture("start")
+        self.wait_for_vaultlocker_test_vault()
+
+    def wait_for_vaultlocker_test_vault(self):
+        """Wait for the private Vault API, which remains sealed after reboot."""
         self._harness._poll_until(
             lambda: self.run_vaultlocker_fixture("ready")["ready"],
             attempts=30,
@@ -75,6 +80,37 @@ class vaultlocker_ci:
         command = shlex.join(["python3", GUEST_FIXTURE, operation, name])
         result = self._harness.run_in_vm_and_check(command, 600)
         return json.loads(result.stdout)
+
+    def sample_locked_vaultlocker_mapper(self):
+        """Return mapper-state samples over at least 90 seconds, without unlocking."""
+        samples = []
+        started = time.monotonic()
+
+        def sample():
+            samples.append(self.run_vaultlocker_fixture("locked")["locked"])
+            return len(samples) >= 19
+
+        self._harness._poll_until(
+            sample, attempts=20, interval=5, fail_msg="Mapper sampling did not complete"
+        )
+        return {"samples": samples, "seconds": time.monotonic() - started}
+
+    def wait_for_vaultlocker_object(self):
+        """Poll a read of the original object; status flags alone are insufficient."""
+
+        result = {}
+
+        def read():
+            try:
+                result.update(self.run_vaultlocker_fixture("read"))
+                return True
+            except AssertionError:
+                return False
+
+        self._harness._poll_until(
+            read, attempts=12, interval=5, fail_msg="Original object unavailable after unlock"
+        )
+        return result
 
     def teardown_vaultlocker_test_vm(self):
         """Collect allowlisted diagnostics, then delete only this suite's VM."""

@@ -3,7 +3,7 @@ Documentation    vaultlocker-test
 ...    Real Vaultlocker snap + private Vault KV v2/AppRole, without Juju or a charm.
 ...    Vaultlocker owns encryption/keys; MicroCeph receives only its mapper path.
 ...    All disks are owned loop-backed scratch devices inside a disposable LXD VM.
-...    This suite does not test reboot or Vault-outage recovery.
+...    Reboot with sealed Vault must recover the original object after unseal.
 Resource        ../resources/microceph_harness.resource
 Library         ../resources/vaultlocker_ci.py
 Suite Setup     Vaultlocker Suite Setup
@@ -64,3 +64,24 @@ Enroll Vaultlocker Mapper Without Wipe Or Native Encryption
     Reject Existing Data Without Wiping    partitioned
     Reject Existing Data Without Wiping    bluestore
     Reject Existing Data Without Wiping    raw
+
+    # Cold boot loses loop associations and seals the file-backed test Vault.
+    # The fixture restores only its owned devices; Vaultlocker must unlock them.
+    ${armed}=    Run Vaultlocker Fixture    arm-reboot
+    Should Be True    ${armed}[armed]
+    Restart Outer Test VM
+    Wait For Vaultlocker Test Vault
+    ${observation}=    Sample Locked Vaultlocker Mapper
+    Should Not Contain    ${observation}[samples]    ${False}
+    Should Be True    ${observation}[seconds] >= 90
+    ${unsealed}=    Run Vaultlocker Fixture    unseal
+    Should Be True    ${unsealed}[unsealed]
+    ${recovered}=    Wait For Vaultlocker Object
+    Should Be Equal As Integers    ${recovered}[restored_bytes]    1048576
+    Should Be Equal    ${recovered}[source_sha256]    ${io}[source_sha256]
+    Should Be Equal    ${recovered}[restored_sha256]    ${io}[source_sha256]
+    Wait For OSD Count Up In    1
+    ${after_reboot}=    Run In VM And Check    microceph disk list --json    30
+    ${configured}=    Evaluate    json.loads($after_reboot.stdout)["ConfiguredDisks"]    modules=json
+    Length Should Be    ${configured}    1
+    Should Be Equal    ${configured}[0][path]    ${encrypted}[mapper_path]
