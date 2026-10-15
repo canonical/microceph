@@ -27,6 +27,17 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(recipe["plugs"]["smb-identity"]["user-identity-switching"], True)
         self.assertIn("dirty worktree detected", recipe["parts"]["microceph"]["override-build"])
 
+    def test_ctdb_socket_grant_is_exact_and_only_for_daemon_and_metrics(self):
+        recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
+        self.assertEqual(recipe["plugs"].get("ctdb-socket"), {
+            "interface": "system-files", "write": ["/run/ctdb/ctdbd.socket"],
+        })
+        consumers = {name for name, app in recipe["apps"].items()
+                     if "ctdb-socket" in app.get("plugs", [])}
+        self.assertEqual(consumers, {"daemon", "smbmetrics"})
+        for name in consumers:
+            self.assertNotIn("ctdb-run", recipe["apps"][name]["plugs"])
+
     def test_pinned_consumer_and_native_provider_closure(self):
         recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
         packages = recipe["parts"]["native-smb"]["stage-packages"]

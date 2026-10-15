@@ -23,6 +23,10 @@ plugs:
     interface: system-files
     write:
       - /run/ctdb
+  ctdb-socket:
+    interface: system-files
+    write:
+      - /run/ctdb/ctdbd.socket
   smb-mounts:
     interface: mount-control
     # AppArmor normalizes directory sources with a trailing slash.
@@ -160,12 +164,13 @@ apps:
     daemon: simple
     install-mode: disable
     stop-mode: sigterm-all
-    plugs: [network, network-bind, network-control, smb-mounts, process-control]
+    plugs: [network, network-bind, network-control, smb-mounts, ctdb-socket, process-control]
   # Service
   daemon:
     command: commands/daemon.start
     daemon: simple
     plugs:
+      - ctdb-socket
       - block-devices
       - dm-crypt
       - hardware-observe
