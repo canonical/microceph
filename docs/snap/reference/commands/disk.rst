@@ -96,7 +96,7 @@ Flags:
 
 
 Externally managed LUKS devices
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 An already-open LUKS1 or LUKS2 mapping can be supplied directly:
 
