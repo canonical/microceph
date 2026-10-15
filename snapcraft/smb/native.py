@@ -2,6 +2,7 @@
 
 This module does not generate shares, allocate identities or supervise apps.
 """
+import contextlib
 import copy
 import io
 
@@ -684,29 +685,105 @@ def update_ctdb_nodes(root):
         raise ValueError("CTDB daemon membership does not match published slots")
 
 
-def monitor_ctdb_nodes(root):
-    """Fixed node monitor retries transient reads/reloads; not a supervisor."""
+def check_ctdb_ready_owner(root):
+    """Readiness is only meaningful for the exact active, unstopped owner."""
+    if active_root(root.parent) != root:
+        raise ValueError("CTDB readiness owner mismatch")
+    if not load_launch(root).get("clustered"):
+        raise ValueError("CTDB readiness requires prepared clustered context")
+
+
+def probe_ctdb_ready(root):
+    """Ask the confined monitor for fresh health, without re-entering snap run.
+
+    The daemon cannot mount the CTDB production paths or select another app's
+    profile. This endpoint accepts no commands/data; a connection triggers the
+    monitor's existing PNN, nodestatus, recovery, membership and PID checks.
+    Neither a socket path nor a previous successful check is readiness.
+    """
+    import socket
+    check_ctdb_ready_owner(root)
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(25)
+        client.connect(str(root / "ctdb/run/native-ready.socket"))
+        if client.recv(1) != b"1":
+            raise ValueError("CTDB monitor did not confirm readiness")
+    check_ctdb_ready_owner(root)
+
+
+@contextlib.contextmanager
+def ctdb_readiness_listener(root):
+    """One fixed monitor endpoint; a crash may leave a socket, never health."""
+    import fcntl
     import os
-    import time
+    import socket
+    import stat
+    path = root / "ctdb/run/native-ready.socket"
+    lock = root / "ctdb/run/native-ready.lock"
+    # Keep a duplicate monitor from unlinking a live endpoint. O_NOFOLLOW and
+    # the type check also refuse unexpected objects in retained runtime state.
+    with os.fdopen(os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "r+") as guard:
+        info = os.fstat(guard.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            raise ValueError("unsafe CTDB readiness lock")
+        fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid():
+                raise ValueError("unsafe CTDB readiness socket")
+            path.unlink()
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(str(path))
+            os.chmod(path, 0o600)
+            listener.listen(4)
+            listener.settimeout(2)
+            try:
+                yield listener
+            finally:
+                path.unlink(missing_ok=True)
+
+
+def monitor_ctdb_nodes(root):
+    """Retry membership updates and answer only fresh, fixed readiness checks."""
+    import os
+    import socket
     pidfile = root / "ctdb/run/ctdb-nodes.pid"
     diagnostic = root / "diagnostics/nodes-error"
-    try:
-        while True:
-            try:
-                update_ctdb_nodes(root)
-                ready(root, "ctdbd")
-                atomic_write(pidfile, str(os.getpid()) + "\n")
-                diagnostic.unlink(missing_ok=True)
-            except Exception:
-                pidfile.unlink(missing_ok=True)
-                # Never expose candidate secrets or claim reload completion.
+    with ctdb_readiness_listener(root) as listener:
+        try:
+            while True:
                 try:
-                    atomic_write(diagnostic, "CTDB membership update is not confirmed.\n")
-                except OSError:
-                    pass
-            time.sleep(2)
-    finally:
-        pidfile.unlink(missing_ok=True)
+                    update_ctdb_nodes(root)
+                    ready(root, "ctdbd")
+                    atomic_write(pidfile, str(os.getpid()) + "\n")
+                    diagnostic.unlink(missing_ok=True)
+                except Exception:
+                    pidfile.unlink(missing_ok=True)
+                    # Never expose candidate secrets or claim reload completion.
+                    try:
+                        atomic_write(diagnostic, "CTDB membership update is not confirmed.\n")
+                    except OSError:
+                        pass
+                try:
+                    client, _ = listener.accept()
+                except socket.timeout:
+                    continue
+                with client:
+                    try:
+                        client.settimeout(1)
+                        check_ctdb_ready_owner(root)
+                        ready(root, "ctdb-nodes")
+                        check_ctdb_ready_owner(root)
+                        client.sendall(b"1")
+                    except Exception:
+                        # EOF is failure. No cached success, commands, error
+                        # details or CTDB protocol pass through this endpoint.
+                        pass
+        finally:
+            pidfile.unlink(missing_ok=True)
 
 
 def ready(root, role):
@@ -772,7 +849,10 @@ def main():
     elif command == "publish-config":
         publish_config(root)
     elif command == "ready":
-        ready(root, sys.argv[3])
+        if sys.argv[3] in ("ctdbd", "ctdb-nodes"):
+            probe_ctdb_ready(root)
+        else:
+            ready(root, sys.argv[3])
     elif command == "prepare-ctdb":
         prepare_ctdb(root, os.environ["SNAP"])
     elif command == "nodes":

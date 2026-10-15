@@ -66,7 +66,8 @@ class CTDBMembershipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "ctdb/run").mkdir(parents=True)
-            with patch.object(self.native, "update_ctdb_nodes", side_effect=[OSError("read failed"), RuntimeError("reload failed"), None]) as update, patch.object(self.native, "ready"), patch("time.sleep", side_effect=[None, None, KeyboardInterrupt]):
+            with patch.object(self.native, "ctdb_readiness_listener") as listen, patch.object(self.native, "update_ctdb_nodes", side_effect=[OSError("read failed"), RuntimeError("reload failed"), None]) as update, patch.object(self.native, "ready"):
+                listen.return_value.__enter__.return_value.accept.side_effect = [TimeoutError, TimeoutError, KeyboardInterrupt]
                 with self.assertRaises(KeyboardInterrupt):
                     self.native.monitor_ctdb_nodes(root)
             self.assertEqual(update.call_count, 3)

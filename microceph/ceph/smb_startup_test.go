@@ -115,10 +115,6 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 		}
 		return "", os.WriteFile(args[len(args)-1], []byte(data), 0600)
 	}
-	if name == "snap" {
-		require.Equal(r.t, []string{"run", "microceph.ctdb", "ready"}, args[:3])
-		return r.RunCommandContext(ctx, "/test-snap/bin/python3", "-B", "native.py", "ready", smbRoot("alpha"), args[3])
-	}
 	if name == "/test-snap/bin/python3" {
 		command, root := args[2], args[3]
 		r.root = root
@@ -184,7 +180,7 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 				return "", errors.New("not started")
 			}
 			r.events = append(r.events, "ready "+role)
-			if r.failure == "readiness" && role == "ctdbd" {
+			if (r.failure == "readiness" && role == "ctdbd") || (r.failure == "monitor-readiness" && role == "ctdb-nodes") {
 				r.cancel()
 				return "", context.Canceled
 			}
@@ -215,7 +211,7 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 			if role == "smbd" && !r.nonclustered {
 				require.True(r.t, r.readyRoles["ctdbd"], "CTDB ready before SAM/Samba")
 			}
-			if (r.failure == "start" && role == "ctdbd") || (r.failure == "samba-start" && role == "smbd") {
+			if (r.failure == "start" && role == "ctdbd") || (r.failure == "monitor-start" && role == "ctdb-nodes") || (r.failure == "samba-start" && role == "smbd") {
 				r.active[role] = true
 				return "", errors.New("uncertain start")
 			}
@@ -251,7 +247,7 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 }
 
 func TestSMBClusteredNativeStartupSQLOrderAndCompensation(t *testing.T) {
-	for _, failure := range []string{"", "compile", "publish", "prepare", "start", "samba-start", "readiness", "record", "applied"} {
+	for _, failure := range []string{"", "compile", "publish", "prepare", "start", "monitor-start", "samba-start", "readiness", "monitor-readiness", "record", "applied"} {
 		t.Run(failure, func(t *testing.T) {
 			runSMBStartup(t, failure, true, "")
 		})
@@ -387,7 +383,7 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 		}
 		want := []string{"key client.smb.fs.cluster.alpha", "compile", "publish", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
 		if clustered {
-			want = []string{"key client.smb.fs.cluster.alpha", "key client.smb.cluster.alpha", "compile", "publish", "prepare-ctdb", "start ctdbd", "ready ctdbd", "start ctdb-nodes", "ready ctdb-nodes", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
+			want = []string{"key client.smb.fs.cluster.alpha", "key client.smb.cluster.alpha", "compile", "publish", "prepare-ctdb", "start ctdbd", "start ctdb-nodes", "ready ctdbd", "ready ctdb-nodes", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
 		}
 		require.Equal(t, want, got)
 		if python != "" {

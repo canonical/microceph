@@ -75,6 +75,53 @@ class CTDBRuntimePathTests(unittest.TestCase):
         self.assertNotIn(("/native/alpha/ctdb/run", "/run/ctdb", 4096),
                          self.native.launch_mounts("smbd", "/native/alpha", {}))
 
+    def test_recipe_bind_rules_match_kernel_paths_and_flags(self):
+        # snapd 2.78 mount-control emits `what` literally, `where` + {,/},
+        # and exactly the configured allowed kernel options. AppArmor sees
+        # directory paths with '/'. For these bind rules, explicit rw is
+        # redundant (bundled AppArmor 5.0.2 compiles both forms identically).
+        # This is policy-construction coverage, not kernel enforcement.
+        recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
+        rules = recipe["plugs"]["smb-mounts"]["mount"]
+        resource = "/var/snap/microceph/common/smb/alpha"
+        directories = {"/etc/ctdb", "/run/ctdb", "/var/lib/ctdb"}
+        expected = {
+            "/etc/resolv.conf": "config/resolv.conf",
+            "/run/systemd/resolve/stub-resolv.conf": "config/resolv.conf",
+            "/etc/passwd": "config/passwd", "/etc/group": "config/group",
+            "/etc/nsswitch.conf": "config/nsswitch.conf",
+            "/etc/ctdb": "ctdb{,/}", "/run/ctdb": "ctdb/run{,/}",
+            "/var/lib/ctdb": "ctdb{,/}",
+            "/etc/ceph/ceph.conf": "config/ctdb-recovery.conf",
+        }
+        self.assertEqual(len(rules), len(expected))
+        for rule in rules:
+            target = rule["where"]
+            with self.subTest(target=target):
+                self.assertEqual(rule["what"], "/var/snap/microceph/common/smb/*/" + expected[target])
+                self.assertIn(set(rule["options"]), ({"bind"}, {"rw", "bind"}))
+                self.assertNotIn("type", rule)
+                self.assertNotIn("persistent", rule)
+        for role in ("ctdbd", "ctdb-nodes", "ctdb-control", "smbd"):
+            for dns in (False, True):
+                mounts = self.native.launch_mounts(role, resource, {"clustered": True, "custom_dns": dns})
+                self.assertEqual(mounts[0], (None, "/", (1 << 14) | (1 << 19)))
+                for source, target, flags in mounts[1:]:
+                    with self.subTest(role=role, target=target, dns=dns):
+                        self.assertEqual(flags, 4096)  # MS_BIND, not remount/recursive/readonly
+                        rule, = [rule for rule in rules if rule["where"] == target]
+                        # Model only the fixed one-resource-component pattern,
+                        # not a permissive fnmatch '*' that also consumes '/'.
+                        kernel_source = source + ("/" if target in directories else "")
+                        pattern = rule["what"].replace("/*/", "/alpha/")
+                        if target in directories:
+                            self.assertTrue(pattern.endswith("{,/}"))
+                            pattern = pattern.removesuffix("{,/}") + "/"
+                        self.assertEqual(pattern, kernel_source)
+                        self.assertIn(set(rule["options"]), ({"bind"}, {"rw", "bind"}))
+                        self.assertIn(target + ("/" if target in directories else ""),
+                                      (rule["where"], rule["where"] + "/"))
+
     def test_launch_prepares_target_after_nonpropagation_before_runtime_bind(self):
         import ctypes
         events = []

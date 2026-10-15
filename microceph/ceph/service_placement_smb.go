@@ -49,13 +49,6 @@ func smbBase() string                 { return filepath.Join(os.Getenv("SNAP_COM
 func smbRoot(clusterID string) string { return filepath.Join(smbBase(), clusterID) }
 
 func smbNativeCommand(ctx context.Context, command, root string, args ...string) error {
-	if command == "ready" && len(args) == 1 && (args[0] == "ctdbd" || args[0] == "ctdb-nodes") {
-		_, err := common.ProcessExec.RunCommandContext(ctx, "snap", "run", "microceph.ctdb", "ready", args[0])
-		if err != nil {
-			return fmt.Errorf("native SMB CTDB readiness failed; inspect private cluster diagnostics")
-		}
-		return nil
-	}
 	argv := []string{"-B", filepath.Join(os.Getenv("SNAP"), "smb", "native.py"), command, root}
 	argv = append(argv, args...)
 	_, err := common.ProcessExec.RunCommandContext(ctx, filepath.Join(os.Getenv("SNAP"), "bin", "python3"), argv...)

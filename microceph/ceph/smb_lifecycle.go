@@ -75,8 +75,22 @@ func startSMBApps(ctx context.Context, root string, roles []string, ops smbAppOp
 	if err != nil {
 		return err
 	}
-	for _, role := range roles {
-		err = ops.start(role)
+	for i, role := range roles {
+		err = ctx.Err()
+		if err == nil {
+			err = ops.start(role)
+		}
+		if err == nil && role == "ctdbd" {
+			// CTDB controls run in the confined node monitor's private mount
+			// context. Start that fixed peer before waiting for either role.
+			if i+1 < len(roles) && roles[i+1] == "ctdb-nodes" {
+				continue
+			}
+			err = fmt.Errorf("CTDB readiness requires the node monitor")
+		}
+		if err == nil && role == "ctdb-nodes" {
+			err = ops.ready(ctx, "ctdbd")
+		}
 		if err == nil {
 			err = ops.ready(ctx, role)
 		}
@@ -123,19 +137,22 @@ func smbSnapOps(root string) smbAppOps {
 			return smbWaitInactive(role)
 		},
 		ready: func(ctx context.Context, role string) error {
-			deadline := time.NewTimer(30 * time.Second)
-			defer deadline.Stop()
+			waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
 			tick := time.NewTicker(time.Second)
 			defer tick.Stop()
 			for {
-				err := smbNativeCommand(ctx, "ready", root, role)
+				err := smbNativeCommand(waitCtx, "ready", root, role)
 				if err == nil {
 					return nil
 				}
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case <-deadline.C:
+				case <-waitCtx.Done():
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
 					return fmt.Errorf("%s readiness timed out", role)
 				case <-tick.C:
 				}

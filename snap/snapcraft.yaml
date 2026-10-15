@@ -25,6 +25,8 @@ plugs:
       - /run/ctdb
   smb-mounts:
     interface: mount-control
+    # AppArmor normalizes directory sources with a trailing slash.
+    # {,/} is clean under snapd path validation.
     mount:
       - what: /var/snap/microceph/common/smb/*/config/resolv.conf
         where: /etc/resolv.conf
@@ -41,13 +43,13 @@ plugs:
       - what: /var/snap/microceph/common/smb/*/config/nsswitch.conf
         where: /etc/nsswitch.conf
         options: [bind]
-      - what: /var/snap/microceph/common/smb/*/ctdb
+      - what: /var/snap/microceph/common/smb/*/ctdb{,/}
         where: /etc/ctdb
         options: [bind]
-      - what: /var/snap/microceph/common/smb/*/ctdb/run
+      - what: /var/snap/microceph/common/smb/*/ctdb/run{,/}
         where: /run/ctdb
         options: [bind]
-      - what: /var/snap/microceph/common/smb/*/ctdb
+      - what: /var/snap/microceph/common/smb/*/ctdb{,/}
         where: /var/lib/ctdb
         options: [bind]
       - what: /var/snap/microceph/common/smb/*/config/ctdb-recovery.conf
