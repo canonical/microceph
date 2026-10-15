@@ -95,6 +95,32 @@ Flags:
    block device, not with loop files. Loop files do not support encryption.
 
 
+Externally managed LUKS devices
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An already-open LUKS1 or LUKS2 mapping can be supplied directly:
+
+.. code-block:: none
+
+   microceph disk add /dev/mapper/<mapping-name>
+
+Do not use ``--encrypt``: the external encryption provider remains responsible
+for its keys and for opening the mapping before MicroCeph starts after reboot.
+MicroCeph identifies LUKS mappings using kernel device metadata, not their names.
+
+Untouched sectors in a new LUKS mapping do not necessarily read as zeroes.
+For these mappings, MicroCeph probes for filesystem, partition-table and
+BlueStore signatures instead of requiring zero bytes. Detected signatures or
+failed probes prevent enrollment without an explicit ``--wipe``. Ordinary
+disks and other device-mapper targets retain the zero-byte pristine check.
+
+.. warning::
+
+   Signature checks cannot identify arbitrary data without a recognised
+   signature. Supply only an unused mapping whose contents may be overwritten;
+   an encrypted device is not necessarily an empty device.
+
+
 DSL-based device selection
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
