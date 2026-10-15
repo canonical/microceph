@@ -191,6 +191,11 @@ jobs:
             suite: wiping-test
             args: --variable XTRACE:True
 
+          - id: vaultlocker-test
+            name: Vaultlocker mapper admission (KV v2 and AppRole)
+            suite: vaultlocker-test
+            runner: ubuntu-24.04
+
           - id: cephadm-adopt-test
             name: Adopt test with cephadm
             suite: cephadm-adopt-test

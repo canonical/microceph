@@ -10,3 +10,4 @@ log.html
 output.xml
 tests/robot/__pycache__
 tests/robot/resources/__pycache__
+tests/scripts/__pycache__

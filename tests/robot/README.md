@@ -55,6 +55,34 @@ tox -e robot -- --snap-path /path/to/microceph_*.snap
 Results land in `output.xml`, `log.html`, and `report.html` in the working directory.
 Each suite creates and destroys its own LXD VM; a failed suite teardown also cleans up.
 
+### Vaultlocker mapper regression
+
+```bash
+tox -e robot -- --snap-path /path/to/microceph_*.snap \
+    --test-suite vaultlocker-test
+```
+
+This snap-only suite installs the real Vaultlocker snap (amd64 revision **12**)
+and Vault (revision **2487**, 2.0), with a private, loopback-only Vault server,
+KV v2 and a scoped AppRole. Vaultlocker encrypts owned loop-backed scratch disks
+inside the disposable VM. MicroCeph receives the returned mapper path without
+`--wipe` or `--encrypt`; the suite verifies OSD up/in, a 1 MiB object round-trip,
+and refusal of ext4, GPT, BlueStore and ordinary non-zero data. Refusal checks
+compare signatures and the first 4 MiB, not every byte of each disk.
+
+Override a pin with `--variable VAULTLOCKER_REVISION:<revision>` (or
+`VAULT_REVISION`). To select a channel instead, explicitly clear the revision:
+`--variable VAULTLOCKER_REVISION: --variable VAULTLOCKER_CHANNEL:latest/edge`.
+Pins must remain available in the Snap Store; channel overrides are not reproducible.
+
+Vault credentials/configuration and private failure details never leave the VM
+or enter CI artifacts. CI uploads only the normal Robot results; teardown logs
+allowlisted snap/interface/block-device/Ceph diagnostics. For local debugging,
+`--variable KEEP_VAULTLOCKER_VM:True` preserves the VM, including its root-only
+test credentials; private failure details are in
+`/run/microceph-vaultlocker-ci/failure.log`. Delete that VM when finished.
+This is not a Juju/charm, reboot-unlock or Vault-outage recovery test.
+
 ## Host resource guide
 
 Each suite runs sequentially. Peak resource usage per suite (not concurrent):
@@ -80,6 +108,7 @@ loop-file-tests                    test-sequential-mon-host-refresh
 messenger-v2-tests                 unit-tests
 multi-node-tests                   upgrade-squid-tests
 multi-node-tests-with-custom-microceph-ip
+                                   vaultlocker-test
                                    wal-db-tests
                                    wiping-test
 ```
