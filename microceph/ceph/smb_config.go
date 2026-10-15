@@ -76,16 +76,25 @@ func ensureSMBDataKey(ctx context.Context, clusterID, path string) error {
 }
 
 // ensureSMBRecoveryKey prepares the exact shared identity named by project_ctdb.
-// It has only monitor-read and the selected cluster's private CTDB RADOS access.
+// It has only monitor-read and the selected cluster's private CTDB RADOS access,
+// including object-class calls for the recovery lock's acquire/renew/unlock.
 func ensureSMBRecoveryKey(ctx context.Context, clusterID, root string) error {
 	err := validateSMBClusterID(clusterID)
 	if err != nil {
 		return err
 	}
 	name := "smb.cluster." + clusterID
-	key, err := CreateClientKey(ctx, name, []string{"mon", "allow r"}, []string{"osd", "allow rw pool=.smb namespace=" + clusterID})
+	// Get the stable key without requesting caps: get-or-create rejects an
+	// existing identity when its old caps differ. auth caps updates only caps,
+	// preserving the shared secret, including on upgrades and repeated calls.
+	key, err := CreateClientKey(ctx, name)
 	if err != nil {
 		return fmt.Errorf("retrieve SMB recovery identity failed")
+	}
+	_, err = cephRunContext(ctx, "auth", "caps", "client."+name,
+		"mon", "allow r", "osd", "allow rwx pool=.smb namespace="+clusterID)
+	if err != nil {
+		return fmt.Errorf("set SMB recovery identity capabilities failed")
 	}
 	return smbAtomicWrite(filepath.Join(root, "identity", "recovery.keyring"), []byte("[client."+name+"]\n\tkey = "+key+"\n"))
 }

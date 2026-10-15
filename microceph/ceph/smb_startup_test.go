@@ -77,6 +77,14 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 					identity = "1"
 				}
 				require.Contains(r.t, raw, `"`+identity+`":"a"`, "reserve native owner before runtime identities")
+				if args[1] == "caps" {
+					require.Equal(r.t, []string{"auth", "caps", "client.smb.cluster.alpha", "mon", "allow r", "osd", "allow rwx pool=.smb namespace=alpha"}, args)
+					r.events = append(r.events, "caps "+args[2])
+					return "", nil
+				}
+				if args[2] == "client.smb.cluster.alpha" {
+					require.Equal(r.t, []string{"auth", "get-or-create", "client.smb.cluster.alpha", "--format", "json"}, args)
+				}
 				r.events = append(r.events, "key "+args[2])
 			}
 			return `[{"entity":"` + args[2] + `","key":"AQAAAA=="}]`, nil
@@ -383,7 +391,7 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 		}
 		want := []string{"key client.smb.fs.cluster.alpha", "compile", "publish", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
 		if clustered {
-			want = []string{"key client.smb.fs.cluster.alpha", "key client.smb.cluster.alpha", "compile", "publish", "prepare-ctdb", "start ctdbd", "start ctdb-nodes", "ready ctdbd", "ready ctdb-nodes", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
+			want = []string{"key client.smb.fs.cluster.alpha", "key client.smb.cluster.alpha", "caps client.smb.cluster.alpha", "compile", "publish", "prepare-ctdb", "start ctdbd", "start ctdb-nodes", "ready ctdbd", "ready ctdb-nodes", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
 		}
 		require.Equal(t, want, got)
 		if python != "" {
