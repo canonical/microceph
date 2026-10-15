@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -284,11 +285,29 @@ func readRGWState() ([]byte, *rgwPendingApply, error) {
 	return current, pending, nil
 }
 
-// pendingApplyCompleted reports whether a leftover marker is stale: the
-// gateway already serves the config on disk rather than the pair the marker
-// names. "certificate set rgw" without --restart leaves a marker on purpose,
-// so this probes the gateway (the readiness handshake's certificate pin,
-// only when wasActive) to tell that case apart from a genuine crash. The
+// rgwLeafDER returns the first parsed certificate's DER bytes from a PEM
+// bundle, skipping non-certificate blocks. It reports false if none is valid.
+func rgwLeafDER(bundle []byte) ([]byte, bool) {
+	for len(bundle) > 0 {
+		block, rest := pem.Decode(bundle)
+		if block == nil {
+			return nil, false
+		}
+		if block.Type == "CERTIFICATE" {
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, false
+			}
+			return cert.Raw, true
+		}
+		bundle = rest
+	}
+	return nil, false
+}
+
+// pendingApplyCompleted reports whether a leftover marker is stale. A served
+// leaf can prove the current bundle is active only when the previous bundle
+// had a different leaf; chain-only changes remain indistinguishable. The
 // caller must not hold radosgwConfMu: the probe can take seconds.
 func pendingApplyCompleted(current []byte, pending *rgwPendingApply, wasActive bool) bool {
 	if pending == nil || !wasActive {
@@ -299,8 +318,20 @@ func pendingApplyCompleted(current []byte, pending *rgwPendingApply, wasActive b
 	if currentCert == "" || currentCert == previousCert {
 		return false
 	}
+	previousPEM, err := os.ReadFile(previousCert)
+	if err != nil {
+		return false
+	}
+	previousLeaf, ok := rgwLeafDER(previousPEM)
+	if !ok {
+		return false
+	}
 	certPEM, err := os.ReadFile(currentCert)
 	if err != nil {
+		return false
+	}
+	currentLeaf, ok := rgwLeafDER(certPEM)
+	if !ok || bytes.Equal(previousLeaf, currentLeaf) {
 		return false
 	}
 	port, sslPort, err := rgwConfPorts(current)
@@ -507,9 +538,8 @@ func applyRGWFrontend(spec rgwFrontendSpec, monitors []string, restartOnChange b
 	}
 
 	// Read radosgw.conf and any marker an unfinished apply left. The marker is
-	// normally the rollback target, but it is stale once the operator has
-	// restarted the gateway by hand after a deferred certificate update, so
-	// ask the gateway before trusting it. The probe dials the gateway, so
+	// normally the rollback target. Only differing leaves let a gateway probe
+	// prove a manual restart made it stale. The probe dials the gateway, so
 	// radosgw.conf stays unlocked while it runs.
 	current, pending, err := readRGWState()
 	if err != nil {
