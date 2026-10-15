@@ -70,3 +70,24 @@
  	return executeCommand(loc, args...)
  }
  
+--- a/internal/metrics/smbstatus_test.go
++++ b/internal/metrics/smbstatus_test.go
+@@ -5,6 +5,7 @@
+ import (
+ 	"io"
+ 	"os"
++	"sort"
+ 	"strings"
+ 	"testing"
+ 
+@@ -64,6 +65,10 @@
+ 	locks, err := parseSMBStatusLockedFiles(testdata)
+ 	assert.NoError(t, err)
+ 	assert.Equal(t, len(locks), 2)
++	// Map iteration does not guarantee the order of returned locks.
++	sort.Slice(locks, func(i, j int) bool {
++		return locks[i].FileID.Inode > locks[j].FileID.Inode
++	})
+ 	lock1 := locks[0]
+ 	assert.Equal(t, lock1.FileID.Inode, int64(61))
+ 	assert.Equal(t, lock1.NumPendingDeletes, 0)
