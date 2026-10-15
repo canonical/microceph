@@ -2081,6 +2081,12 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	if err != nil {
 		return err
 	}
+	// Upgrade legacy WAL/DB ownership records before purging the OSD, while
+	// its device links are still available to verify the partition identity.
+	err = m.migrateGeneratedAuxManifest(getOSDDataPath(osd))
+	if err != nil {
+		return fmt.Errorf("failed to migrate generated WAL/DB partitions for osd.%d: %w", osd, err)
+	}
 
 	if !bypassSafety {
 		// check: at least 3 OSDs

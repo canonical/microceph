@@ -44,6 +44,8 @@ type dslProvisionPlan struct {
 	Warnings []string
 }
 
+const generatedAuxManifestVersion = 1
+
 type generatedAuxDevice struct {
 	ParentPath string `json:"parent_path"`
 	Partition  uint64 `json:"partition"`
@@ -52,8 +54,9 @@ type generatedAuxDevice struct {
 }
 
 type generatedAuxDevicesManifest struct {
-	WAL *generatedAuxDevice `json:"wal,omitempty"`
-	DB  *generatedAuxDevice `json:"db,omitempty"`
+	Version int                 `json:"version"`
+	WAL     *generatedAuxDevice `json:"wal,omitempty"`
+	DB      *generatedAuxDevice `json:"db,omitempty"`
 }
 
 type localAuxDiskUsage struct {
@@ -504,6 +507,7 @@ func (m *OSDManager) writeGeneratedAuxManifest(osdDataPath string, manifest *gen
 		return nil
 	}
 
+	manifest.Version = generatedAuxManifestVersion
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal generated aux manifest: %w", err)
@@ -553,8 +557,119 @@ func (m *OSDManager) readGeneratedAuxManifest(osdDataPath string) (*generatedAux
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse generated aux manifest: %w", err)
 	}
+	if manifest.Version != 0 && manifest.Version != generatedAuxManifestVersion {
+		return nil, fmt.Errorf("unsupported generated aux manifest version %d", manifest.Version)
+	}
 	logger.Debugf("Loaded generated auxiliary-device manifest from %s", manifestPath)
 	return &manifest, nil
+}
+
+// migrateGeneratedAuxManifest identifies legacy partitions while their OSD
+// device links still exist, before removal can discard those links. A path or
+// partition number alone does not establish ownership after slot reuse.
+func (m *OSDManager) migrateGeneratedAuxManifest(osdDataPath string) error {
+	manifest, err := m.readGeneratedAuxManifest(osdDataPath)
+	if err != nil || manifest == nil {
+		return err
+	}
+
+	changed := false
+	for _, item := range []struct {
+		kind  string
+		entry *generatedAuxDevice
+	}{{"wal", manifest.WAL}, {"db", manifest.DB}} {
+		if item.entry == nil || item.entry.PartUUID != "" {
+			continue
+		}
+		_, err := m.fs.Stat(item.entry.ParentPath)
+		if os.IsNotExist(err) {
+			// Cleanup treats a missing carrier as gone, even without a UUID.
+			continue
+		}
+		if err != nil {
+			return err
+		}
+
+		err = m.lockCarrierFunc(item.entry.ParentPath, func(parentPath string) error {
+			table, err := m.readAuxPartitionTable(parentPath)
+			if err != nil {
+				return err
+			}
+			part := table.partition(parentPath, item.entry.Partition)
+			if part == nil {
+				// Nothing remains on disk to identify. Keep the entry without a
+				// UUID so cleanup can recheck absence and remove stale kernel state.
+				return nil
+			}
+			if part.UUID == "" {
+				return fmt.Errorf("partition %d on %s has no GPT identity", item.entry.Partition, parentPath)
+			}
+			link := "block." + item.kind
+			if item.entry.Encrypted {
+				link = "unencrypted." + item.kind
+			}
+			linkedPath, err := filepath.EvalSymlinks(filepath.Join(osdDataPath, link))
+			if err != nil {
+				return fmt.Errorf("cannot resolve OSD %s link: %w", link, err)
+			}
+			childPath, err := filepath.EvalSymlinks(partitionPathFromParentPath(parentPath, item.entry.Partition))
+			if err != nil {
+				return fmt.Errorf("cannot resolve carrier partition: %w", err)
+			}
+			if linkedPath != childPath {
+				return fmt.Errorf("OSD %s link points to %s, not %s", link, linkedPath, childPath)
+			}
+			kernelUUID, err := m.runner.RunCommand("lsblk", "-no", "PARTUUID", childPath)
+			if err != nil {
+				return fmt.Errorf("cannot identify kernel partition %s: %w", childPath, err)
+			}
+			if !strings.EqualFold(strings.TrimSpace(kernelUUID), part.UUID) {
+				return fmt.Errorf("kernel and GPT identities differ for %s", childPath)
+			}
+			// A link can still resolve to the same slot after that slot was
+			// reused. BlueStore's label binds its contents to this OSD's fsid.
+			osdUUID, err := afero.ReadFile(m.fs, filepath.Join(osdDataPath, "fsid"))
+			if err != nil {
+				return fmt.Errorf("cannot read OSD fsid: %w", err)
+			}
+			deviceLink := filepath.Join(osdDataPath, "block."+item.kind)
+			labelOutput, err := m.runner.RunCommand("ceph-bluestore-tool", "show-label", "--dev", deviceLink)
+			if err != nil {
+				return fmt.Errorf("cannot read BlueStore label on %s: %w", deviceLink, err)
+			}
+			var labels map[string]struct {
+				OSDUUID string `json:"osd_uuid"`
+			}
+			err = json.Unmarshal([]byte(labelOutput), &labels)
+			if err != nil {
+				return fmt.Errorf("invalid BlueStore label on %s: %w", deviceLink, err)
+			}
+			if len(labels) != 1 {
+				return fmt.Errorf("expected one BlueStore label on %s, got %d", deviceLink, len(labels))
+			}
+			for _, label := range labels {
+				if strings.TrimSpace(string(osdUUID)) == "" || !strings.EqualFold(label.OSDUUID, strings.TrimSpace(string(osdUUID))) {
+					return fmt.Errorf("BlueStore label on %s does not belong to this OSD", deviceLink)
+				}
+			}
+			item.entry.PartUUID = part.UUID
+			changed = true
+			return nil
+		})
+		if err != nil {
+			_, statErr := m.fs.Stat(item.entry.ParentPath)
+			if os.IsNotExist(statErr) {
+				// The carrier vanished while checking ownership. Normal cleanup
+				// will discard the entry without touching a replacement disk.
+				continue
+			}
+			return fmt.Errorf("cannot migrate generated %s partition on %s; manual cleanup required: %w", item.kind, item.entry.ParentPath, err)
+		}
+	}
+	if changed || manifest.Version == 0 {
+		return m.writeGeneratedAuxManifest(osdDataPath, manifest)
+	}
+	return nil
 }
 
 func auxDeviceMapperName(kind string, osdID int64) string {
@@ -732,11 +847,6 @@ func (m *OSDManager) cleanupGeneratedAuxDevice(_ context.Context, kind string, e
 		logger.Warnf("Generated %s carrier %q is missing; discarding its cleanup entry", kind, entry.ParentPath)
 		return nil
 	}
-	if entry.PartUUID == "" {
-		// Legacy manifests cannot prove ownership after a slot has been reused.
-		logger.Warnf("Generated %s partition %d on %s has no recorded PARTUUID; leaving it for manual cleanup", kind, entry.Partition, entry.ParentPath)
-		return nil
-	}
 	err = m.lockCarrierFunc(entry.ParentPath, func(parentPath string) error {
 		table, err := m.readAuxPartitionTable(parentPath)
 		if err != nil {
@@ -747,6 +857,9 @@ func (m *OSDManager) cleanupGeneratedAuxDevice(_ context.Context, kind string, e
 			// A previous attempt may have deleted GPT before its final kernel
 			// update or manifest write. Never zap a node without a matching GPT.
 			return m.deleteKernelPartitionEntry(parentPath, entry.Partition)
+		}
+		if entry.PartUUID == "" {
+			return fmt.Errorf("generated %s partition %d on %s has no verified PARTUUID; manual cleanup required", kind, entry.Partition, entry.ParentPath)
 		}
 		if part.UUID == "" {
 			return fmt.Errorf("partition %d on %s has no PARTUUID; refusing cleanup", entry.Partition, parentPath)

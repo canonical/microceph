@@ -540,6 +540,7 @@ func TestWriteAndReadGeneratedAuxManifest(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, loaded)
 	assert.Equal(t, manifest, loaded)
+	assert.Equal(t, generatedAuxManifestVersion, loaded.Version)
 
 	require.NoError(t, mgr.persistGeneratedAuxManifest(osdDataPath, &generatedAuxDevicesManifest{DB: manifest.DB}))
 	loaded, err = mgr.readGeneratedAuxManifest(osdDataPath)
@@ -552,6 +553,201 @@ func TestWriteAndReadGeneratedAuxManifest(t *testing.T) {
 	loaded, err = mgr.readGeneratedAuxManifest(osdDataPath)
 	require.NoError(t, err)
 	assert.Nil(t, loaded)
+}
+
+func TestMigrateLegacyGeneratedAuxManifestBeforeCleanup(t *testing.T) {
+	mgr, runner := newAuxTestManager(t)
+	mgr.fs = afero.NewOsFs()
+	root := t.TempDir()
+	osdDataPath := filepath.Join(root, "osd")
+	require.NoError(t, os.Mkdir(osdDataPath, 0700))
+	parent := filepath.Join(root, "carrier")
+	child := parent + "1"
+	require.NoError(t, os.WriteFile(parent, nil, 0600))
+	require.NoError(t, os.WriteFile(child, nil, 0600))
+	require.NoError(t, os.Symlink(child, filepath.Join(osdDataPath, "block.wal")))
+	require.NoError(t, os.WriteFile(filepath.Join(osdDataPath, "fsid"), []byte("osd-identity\n"), 0600))
+	legacy := fmt.Sprintf(`{"wal":{"parent_path":%q,"partition":1,"partition_path":"/dev/old-node"}}`, parent)
+	require.NoError(t, os.WriteFile(generatedAuxManifestPath(osdDataPath), []byte(legacy), 0600))
+	expectAuxTable(runner, parent, 1, "owned-uuid")
+	runner.On("RunCommand", "lsblk", "-no", "PARTUUID", child).Return("owned-uuid\n", nil).Once()
+	runner.On("RunCommand", "ceph-bluestore-tool", "show-label", "--dev", filepath.Join(osdDataPath, "block.wal")).Return(fmt.Sprintf(`{%q:{"osd_uuid":"osd-identity"}}`, filepath.Join(osdDataPath, "block.wal")), nil).Once()
+
+	require.NoError(t, mgr.migrateGeneratedAuxManifest(osdDataPath))
+	manifest, err := mgr.readGeneratedAuxManifest(osdDataPath)
+	require.NoError(t, err)
+	require.Equal(t, generatedAuxManifestVersion, manifest.Version)
+	require.Equal(t, "owned-uuid", manifest.WAL.PartUUID)
+	assert.NoFileExists(t, generatedAuxManifestPath(osdDataPath)+".tmp")
+	expectAuxTable(runner, parent, 1, "owned-uuid")
+	runner.On("RunCommandContext", mock.Anything, "ceph-bluestore-tool", "zap-device", "--dev", child, "--yes-i-really-really-mean-it").Return("", nil).Once()
+	expectAuxDelete(runner, parent, 1)
+	require.NoError(t, mgr.cleanupGeneratedAuxDevices(context.Background(), osdDataPath, 5))
+	assert.NoFileExists(t, generatedAuxManifestPath(osdDataPath))
+}
+
+func TestMigrateEncryptedLegacyAuxUsesUnderlyingPartitionAndMapperLabel(t *testing.T) {
+	mgr, runner := newAuxTestManager(t)
+	mgr.fs = afero.NewOsFs()
+	root := t.TempDir()
+	osdDataPath := filepath.Join(root, "osd")
+	require.NoError(t, os.Mkdir(osdDataPath, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(osdDataPath, "fsid"), []byte("encrypted-osd"), 0600))
+	parent := filepath.Join(root, "carrier")
+	child := parent + "1"
+	mapper := filepath.Join(root, "mapper")
+	require.NoError(t, os.WriteFile(parent, nil, 0600))
+	require.NoError(t, os.WriteFile(child, nil, 0600))
+	require.NoError(t, os.WriteFile(mapper, nil, 0600))
+	require.NoError(t, os.Symlink(child, filepath.Join(osdDataPath, "unencrypted.db")))
+	require.NoError(t, os.Symlink(mapper, filepath.Join(osdDataPath, "block.db")))
+	legacy := fmt.Sprintf(`{"db":{"parent_path":%q,"partition":1,"encrypted":true}}`, parent)
+	require.NoError(t, os.WriteFile(generatedAuxManifestPath(osdDataPath), []byte(legacy), 0600))
+	expectAuxTable(runner, parent, 1, "db-uuid")
+	runner.On("RunCommand", "lsblk", "-no", "PARTUUID", child).Return("db-uuid", nil).Once()
+	runner.On("RunCommand", "ceph-bluestore-tool", "show-label", "--dev", filepath.Join(osdDataPath, "block.db")).Return(`{"mapper":{"osd_uuid":"encrypted-osd"}}`, nil).Once()
+
+	require.NoError(t, mgr.migrateGeneratedAuxManifest(osdDataPath))
+	manifest, err := mgr.readGeneratedAuxManifest(osdDataPath)
+	require.NoError(t, err)
+	assert.Equal(t, "db-uuid", manifest.DB.PartUUID)
+	assert.Equal(t, generatedAuxManifestVersion, manifest.Version)
+}
+
+func TestMigrateLegacyGeneratedAuxManifestRejectsUnverifiedOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		linkTarget string
+		kernelUUID string
+		labelUUID  string
+	}{
+		{name: "missing OSD link"},
+		{name: "reassigned OSD link", linkTarget: "other"},
+		{name: "kernel GPT disagreement", linkTarget: "child", kernelUUID: "replacement"},
+		{name: "reused slot with another OSD label", linkTarget: "child", kernelUUID: "owned-uuid", labelUUID: "another-osd"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, runner := newAuxTestManager(t)
+			mgr.fs = afero.NewOsFs()
+			root := t.TempDir()
+			osdDataPath := filepath.Join(root, "osd")
+			require.NoError(t, os.Mkdir(osdDataPath, 0700))
+			parent := filepath.Join(root, "carrier")
+			require.NoError(t, os.WriteFile(filepath.Join(osdDataPath, "fsid"), []byte("osd-identity\n"), 0600))
+			child := parent + "1"
+			require.NoError(t, os.WriteFile(parent, nil, 0600))
+			require.NoError(t, os.WriteFile(child, nil, 0600))
+			if tc.linkTarget != "" {
+				target := child
+				if tc.linkTarget == "other" {
+					target = filepath.Join(root, "other")
+					require.NoError(t, os.WriteFile(target, nil, 0600))
+				}
+				require.NoError(t, os.Symlink(target, filepath.Join(osdDataPath, "block.wal")))
+			}
+			legacy := fmt.Sprintf(`{"wal":{"parent_path":%q,"partition":1,"partition_path":"/dev/old-node"}}`, parent)
+			require.NoError(t, os.WriteFile(generatedAuxManifestPath(osdDataPath), []byte(legacy), 0600))
+			expectAuxTable(runner, parent, 1, "owned-uuid")
+			if tc.kernelUUID != "" {
+				runner.On("RunCommand", "lsblk", "-no", "PARTUUID", child).Return(tc.kernelUUID, nil).Once()
+			}
+			if tc.labelUUID != "" {
+				runner.On("RunCommand", "ceph-bluestore-tool", "show-label", "--dev", filepath.Join(osdDataPath, "block.wal")).Return(fmt.Sprintf(`{%q:{"osd_uuid":%q}}`, filepath.Join(osdDataPath, "block.wal"), tc.labelUUID), nil).Once()
+			}
+
+			err := mgr.migrateGeneratedAuxManifest(osdDataPath)
+			require.ErrorContains(t, err, "manual cleanup required")
+			data, err := os.ReadFile(generatedAuxManifestPath(osdDataPath))
+			require.NoError(t, err)
+			assert.Equal(t, legacy, string(data))
+		})
+	}
+}
+
+func TestMigrateLegacyManifestAllowsAbsentPartitions(t *testing.T) {
+	const parent = "/dev/sde"
+	for _, tc := range []struct {
+		name       string
+		missing    bool
+		table      string
+		readErr    error
+		cleanupErr error
+	}{
+		{name: "missing carrier", missing: true},
+		{name: "wiped table", readErr: fmt.Errorf("sfdisk: does not contain a recognized partition table")},
+		{name: "missing slot", table: auxTableJSON(parent, 2, "sibling")},
+		{name: "busy stale kernel entry", table: auxTableJSON(parent, 2, "sibling"), cleanupErr: assert.AnError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, runner := newAuxTestManager(t)
+			require.NoError(t, mgr.fs.MkdirAll("/osd", 0700))
+			require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
+			if !tc.missing {
+				require.NoError(t, afero.WriteFile(mgr.fs, parent, nil, 0600))
+				runner.On("RunCommand", "env", "LC_ALL=C", "sfdisk", "--json", parent).Return(tc.table, tc.readErr).Twice()
+				attempts := 1
+				if tc.cleanupErr != nil {
+					attempts = kernelPartitionDeleteAttempts
+				}
+				runner.On("RunCommand", "partx", "-v", "-d", "--nr", "1:1", parent).Return("", tc.cleanupErr).Times(attempts)
+			}
+			// A cached node does not authorize a zap, even after migration.
+			require.NoError(t, afero.WriteFile(mgr.fs, parent+"1", []byte("unverified data"), 0600))
+			legacy := fmt.Sprintf(`{"wal":{"parent_path":%q,"partition":1,"partition_path":%q}}`, parent, parent+"1")
+			require.NoError(t, afero.WriteFile(mgr.fs, generatedAuxManifestPath("/osd"), []byte(legacy), 0600))
+
+			require.NoError(t, mgr.migrateGeneratedAuxManifest("/osd"))
+			err := mgr.cleanupGeneratedAuxDevices(context.Background(), "/osd", 3)
+			if tc.cleanupErr != nil {
+				require.ErrorIs(t, err, tc.cleanupErr)
+			} else {
+				require.NoError(t, err)
+			}
+			manifest, err := mgr.readGeneratedAuxManifest("/osd")
+			require.NoError(t, err)
+			if tc.cleanupErr != nil {
+				require.NotNil(t, manifest)
+				require.NotNil(t, manifest.WAL)
+				assert.Equal(t, parent, manifest.WAL.ParentPath)
+				assert.Equal(t, uint64(1), manifest.WAL.Partition)
+				assert.Empty(t, manifest.WAL.PartUUID)
+			} else {
+				assert.Nil(t, manifest)
+			}
+			data, err := afero.ReadFile(mgr.fs, parent+"1")
+			require.NoError(t, err)
+			assert.Equal(t, "unverified data", string(data))
+		})
+	}
+}
+
+func TestCleanupLegacyManifestRejectsSlotReusedAfterMigration(t *testing.T) {
+	mgr, runner := newAuxTestManager(t)
+	require.NoError(t, mgr.fs.MkdirAll("/osd", 0700))
+	require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
+	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sde", nil, 0600))
+	legacy := `{"wal":{"parent_path":"/dev/sde","partition":1}}`
+	require.NoError(t, afero.WriteFile(mgr.fs, generatedAuxManifestPath("/osd"), []byte(legacy), 0600))
+	expectAuxTable(runner, "/dev/sde", 2, "sibling")
+	require.NoError(t, mgr.migrateGeneratedAuxManifest("/osd"))
+	before, err := mgr.readGeneratedAuxManifest("/osd")
+	require.NoError(t, err)
+
+	// Cleanup must recheck absence, not trust the preflight snapshot.
+	expectAuxTable(runner, "/dev/sde", 1, "replacement")
+	err = mgr.cleanupGeneratedAuxDevices(context.Background(), "/osd", 3)
+	require.ErrorContains(t, err, "no verified PARTUUID")
+	after, err := mgr.readGeneratedAuxManifest("/osd")
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
+func TestReadGeneratedAuxManifestRejectsUnknownVersion(t *testing.T) {
+	mgr, _ := newAuxTestManager(t)
+	require.NoError(t, mgr.fs.MkdirAll("/osd", 0700))
+	require.NoError(t, afero.WriteFile(mgr.fs, generatedAuxManifestPath("/osd"), []byte(`{"version":2,"wal":{"parent_path":"/dev/sde","partition":1}}`), 0600))
+	_, err := mgr.readGeneratedAuxManifest("/osd")
+	require.ErrorContains(t, err, "unsupported generated aux manifest version 2")
 }
 
 func TestCleanupGeneratedAuxDevicesMissingManifest(t *testing.T) {
@@ -791,7 +987,7 @@ func TestCleanupGeneratedAuxDeviceOwnershipAndReadFailures(t *testing.T) {
 	}{
 		{name: "missing carrier", missing: true},
 		{name: "carrier disappears before lock", disappears: true},
-		{name: "legacy identity", legacy: true},
+		{name: "legacy identity", legacy: true, table: auxTableJSON(parent, 1, "unverified"), wantErr: true},
 		{name: "reused slot", table: auxTableJSON(parent, 1, "replacement")},
 		{name: "missing slot", table: auxTableJSON(parent, 2, "sibling"), kernelOnly: true},
 		{name: "wiped table", readErr: fmt.Errorf("sfdisk: does not contain a recognized partition table"), kernelOnly: true},
@@ -819,7 +1015,7 @@ func TestCleanupGeneratedAuxDeviceOwnershipAndReadFailures(t *testing.T) {
 					require.NoError(t, mgr.fs.Remove(path))
 					return os.ErrNotExist
 				}
-			} else if !tc.missing && !tc.legacy {
+			} else if !tc.missing {
 				runner.On("RunCommand", "env", "LC_ALL=C", "sfdisk", "--json", parent).Return(tc.table, tc.readErr).Once()
 			}
 			if tc.kernelOnly {

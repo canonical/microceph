@@ -235,6 +235,10 @@ Usage:
 
 Removes a single disk from the cluster.
 
+For generated WAL/DB partitions, missing carriers and already-absent partition table entries do not block cleanup, including for OSDs created by older MicroCeph versions. Busy kernel partition entries and partition-table read errors still prevent removal.
+
+MicroCeph refuses to wipe or delete an existing partition without verified ownership. The ``--bypass-safety-checks`` flag does not override this ownership check.
+
 Usage:
 
 .. code-block:: none
