@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,58 +33,51 @@ func (c *Config) validateConfigFile() error {
 	return nil
 }
 
-// WriteConfig writes the configuration file given a data bag and a filemode.
-// It writes atomically: the template is rendered to a uniquely-named temporary
-// file (created via os.CreateTemp in the same directory as the destination) and
-// then renamed into place. Using a unique temp file name — rather than a fixed
-// ".tmp" path — means concurrent renders of the same config file cannot collide
-// or rename a partially-written file from another writer into place, so the
-// atomic-rename guarantee holds under concurrency (AGENTS.md "Atomic file
-// writes"). A failed write cannot leave partial state on disk: the temp file is
-// removed on every error path.
+// WriteConfig renders the complete template before atomically publishing it.
 func (c *Config) WriteConfig(data map[string]any, mode int) error {
 	err := c.validateConfigFile()
 	if err != nil {
 		return err
 	}
 
-	destPath := c.GetPath()
-
-	// os.CreateTemp creates the file with O_RDWR|O_CREATE|O_EXCL and mode 0600,
-	// so two concurrent writers can never pick the same name. Create it in the
-	// same directory as the destination so os.Rename is same-filesystem/atomic.
-	fd, err := os.CreateTemp(filepath.Dir(destPath), filepath.Base(destPath)+".*")
+	var rendered bytes.Buffer
+	err = c.configTemplate.Execute(&rendered, data)
 	if err != nil {
-		return fmt.Errorf("Couldn't write %s: %w", c.configFile, err)
-	}
-	tmpPath := fd.Name()
-
-	// os.CreateTemp ignores the requested mode (uses 0600), so apply it now so
-	// the final renamed file has the requested permissions.
-	err = os.Chmod(tmpPath, os.FileMode(mode))
-	if err != nil {
-		fd.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("Couldn't write %s: %w", c.configFile, err)
-	}
-
-	err = c.configTemplate.Execute(fd, data)
-	closeErr := fd.Close()
-	if err != nil {
-		os.Remove(tmpPath)
 		return fmt.Errorf("Couldn't render %s: %w", c.configFile, err)
 	}
-	if closeErr != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("Couldn't close %s: %w", c.configFile, closeErr)
-	}
+	return publishConfigBytes(c.GetPath(), rendered.Bytes(), os.FileMode(mode), os.WriteFile, os.Rename)
+}
 
-	err = os.Rename(tmpPath, destPath)
+// publishConfigBytes replaces one file using a private same-directory temporary.
+// The callbacks retain the existing SMB writer's failure-injection seams.
+func publishConfigBytes(destPath string, data []byte, mode os.FileMode,
+	writeFileFunc func(string, []byte, os.FileMode) error,
+	renameFileFunc func(string, string) error,
+) error {
+	fd, err := os.CreateTemp(filepath.Dir(destPath), filepath.Base(destPath)+".*")
 	if err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("Couldn't rename %s: %w", c.configFile, err)
+		return fmt.Errorf("Couldn't write %s: %w", filepath.Base(destPath), err)
 	}
+	tmpPath := fd.Name()
+	defer os.Remove(tmpPath)
 
+	// CreateTemp starts at 0600; apply the requested mode explicitly.
+	err = fd.Chmod(mode)
+	closeErr := fd.Close()
+	if err != nil {
+		return fmt.Errorf("Couldn't chmod %s: %w", filepath.Base(destPath), err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("Couldn't close %s: %w", filepath.Base(destPath), closeErr)
+	}
+	err = writeFileFunc(tmpPath, data, mode)
+	if err != nil {
+		return fmt.Errorf("Couldn't write %s: %w", filepath.Base(destPath), err)
+	}
+	err = renameFileFunc(tmpPath, destPath)
+	if err != nil {
+		return fmt.Errorf("Couldn't rename %s: %w", filepath.Base(destPath), err)
+	}
 	return nil
 }
 

@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: 2023 - Canonical Ltd
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import logging
+from urllib.parse import urlencode
 
 from . import service
 
@@ -56,6 +58,46 @@ class ExtendedAPIService(service.BaseService):
         """List all services."""
         services = self._get("/1.0/services")
         return services.get("metadata")
+
+    def apply_smb(self, target: str, payload: dict) -> dict:
+        """Place or update an SMB service on a cluster member."""
+        query = urlencode({"target": target})
+        request = {
+            "name": "smb",
+            "bool": True,
+            "payload": json.dumps(payload),
+        }
+        response = self._put(f"/1.0/services/smb?{query}", json=request)
+        return response.get("metadata", {})
+
+    def remove_smb(self, target: str, cluster_id: str) -> dict:
+        """Remove an SMB service from a cluster member."""
+        query = urlencode({"target": target})
+        response = self._delete(
+            f"/1.0/services/smb?{query}",
+            json={"cluster_id": cluster_id},
+        )
+        return response.get("metadata", {})
+
+    def get_smb_group(self, cluster_id: str) -> dict:
+        """Return persisted SMB group state, including pending rank reservations."""
+        query = urlencode({"cluster_id": cluster_id})
+        response = self._get(f"/1.0/services/smb?{query}")
+        return response.get("metadata", {})
+
+    def get_smb_local_state(self, target: str, cluster_id: str) -> dict:
+        """Return local SMB ownership state from the named cluster member."""
+        query = urlencode({"cluster_id": cluster_id, "local": "true", "target": target})
+        response = self._get(f"/1.0/services/smb?{query}")
+        return response.get("metadata", {})
+
+    def finalize_smb(self, cluster_id: str, group_config: str) -> dict:
+        """Clear unchanged SMB placement state after local teardown."""
+        response = self._delete(
+            "/1.0/services/smb",
+            json={"cluster_id": cluster_id, "finalize": True, "group_config": group_config},
+        )
+        return response.get("metadata", {})
 
     def list_resources(self) -> list[dict]:
         """List all resources."""

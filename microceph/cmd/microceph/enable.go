@@ -20,6 +20,7 @@ func (c *cmdEnable) Command() *cobra.Command {
 	enableMgrCmd := cmdEnableMGR{common: c.common}
 	enableMdsCmd := cmdEnableMDS{common: c.common}
 	enableNFSCmd := cmdEnableNFS{common: c.common}
+	enableSMBCmd := cmdEnableSMB{common: c.common}
 	enableRbdMirrorCmd := cmdEnableRBDMirror{common: c.common}
 	enableFsMirrorCmd := cmdEnableFsMirror{common: c.common}
 
@@ -28,6 +29,7 @@ func (c *cmdEnable) Command() *cobra.Command {
 	cmd.AddCommand(enableMgrCmd.Command())
 	cmd.AddCommand(enableMdsCmd.Command())
 	cmd.AddCommand(enableNFSCmd.Command())
+	cmd.AddCommand(enableSMBCmd.Command())
 	cmd.AddCommand(enableRbdMirrorCmd.Command())
 	cmd.AddCommand(enableFsMirrorCmd.Command())
 

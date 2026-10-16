@@ -13,6 +13,9 @@ import (
 	"github.com/canonical/microceph/microceph/logger"
 )
 
+var disableManagedSMBForNodeFunc = client.DisableManagedSMB
+var deleteNFSForNodeFunc = client.DeleteNFSService
+
 // PreRemove cleans up the underlying ceph services before the node is removed from the dqlite cluster.
 func PreRemove(m *microcluster.MicroCluster) func(ctx context.Context, s mcTypes.State, force bool) error {
 	logger.Debug("Setting up PreRemove hook")
@@ -138,7 +141,14 @@ func deleteNodeServices(cli mcTypes.Client, name string) error {
 		logger.Debugf("Check for deletion: %s", service)
 		if service.Location == name {
 			logger.Debugf("Deleting service %s", service)
-			err = client.MClient.DeleteService(cli, service.Location, service.Service)
+			switch service.Service {
+			case "smb":
+				err = disableManagedSMBForNodeFunc(context.Background(), cli, &types.ManagedSMBRemoval{ClusterID: service.GroupID, Target: service.Location})
+			case "nfs":
+				err = deleteNFSForNodeFunc(context.Background(), cli, service.Location, &types.NFSService{ClusterID: service.GroupID})
+			default:
+				err = client.MClient.DeleteService(cli, service.Location, service.Service)
+			}
 			if err != nil {
 				logger.Warnf("Fault deleting service %v on node %v: %v", service.Service, service.Location, err)
 				deleteErrors = append(deleteErrors, fmt.Errorf("failed to delete service %q on node %q: %w", service.Service, service.Location, err))

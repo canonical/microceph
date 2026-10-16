@@ -1,0 +1,17 @@
+Description: Keep peer acknowledgements off the librados callback executor.
+ FSPolicy.remove_dir waits for a RADOS completion while holding its policy
+ lock. A peer acknowledgement that blocks on that lock can prevent librados
+ from delivering the completion. Queue the acknowledgement on the existing
+ policy finisher, like the other policy callbacks.
+Forwarded: not-yet
+--- a/share/ceph/mgr/mirroring/fs/snapshot_mirror.py
++++ b/share/ceph/mgr/mirroring/fs/snapshot_mirror.py
+@@ -168,4 +168,8 @@
+     def handle_peer_ack(self, dir_path, r):
++        # Do not block the librados callback executor on the policy lock.
++        self.finisher.queue(self._handle_peer_ack, [dir_path, r])
++
++    def _handle_peer_ack(self, dir_path, r):
+         log.info(f'handle_peer_ack: {dir_path} r={r}')
+         with self.lock:
+             try:

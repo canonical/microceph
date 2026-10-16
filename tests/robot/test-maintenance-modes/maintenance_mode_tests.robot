@@ -71,9 +71,16 @@ Remove Cluster Node With Retry
     [Documentation]    Removes ${node} from the cluster via ${head_node}, retrying on transient
     ...    'context canceled' RPC errors. The target may be busy rebalancing OSDs and not respond in time.
     [Arguments]    ${head_node}    ${node}    ${attempts}=3
+    ${saw_other_failure}=    Set Variable    ${False}
     FOR    ${attempt}    IN RANGE    ${attempts}
         ${result}=    Run In VM    lxc exec ${head_node} -- bash -eo pipefail -c "microceph cluster remove ${node}"    120
         IF    ${result.rc} == 0    RETURN
+        ${not_found}=    Is Member Not Found Error    ${result.stderr}
+        # Match the existing multi-node suite: a failed RPC may have completed removal.
+        IF    ${not_found} and ${saw_other_failure}    RETURN
+        IF    not ${not_found}
+            ${saw_other_failure}=    Set Variable    ${True}
+        END
         Log To Console    [maintenance] Remove ${node} attempt ${attempt} failed: ${result.stderr.strip()} — retrying in 10s
         IF    ${attempt} == ${attempts} - 1    Fail    Failed to remove ${node} after ${attempts} attempts: ${result.stderr}
         Sleep    10s

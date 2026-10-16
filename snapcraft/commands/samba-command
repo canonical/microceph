@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+program="$1"
+shift
+base="$(basename "${program}")"
+
+if [ -n "${SNAP:-}" ]; then
+    case "${program}" in
+        /usr/libexec/ctdb/*)
+            program="${SNAP}/libexec/ctdb/${base}"
+            ;;
+        /usr/sbin/*|/usr/bin/*)
+            if [ -x "${SNAP}/bin/${base}" ]; then
+                program="${SNAP}/bin/${base}"
+            fi
+            ;;
+        *)
+            if [ -x "${SNAP}/bin/${base}" ]; then
+                program="${SNAP}/bin/${base}"
+            fi
+            ;;
+    esac
+fi
+
+case "${base}" in
+    ctdb|ctdbd|ctdb_*|ltdbtool)
+        exec "${program}" "$@"
+        ;;
+    *)
+        exec "${program}" \
+            --option="lock directory=/var/lib/samba/lock" \
+            --option="pid directory=/var/lib/samba/run" \
+            --option="ncalrpc dir=/var/lib/samba/ncalrpc" \
+            --option="winbindd socket directory=/var/lib/samba/winbindd" \
+            "$@"
+        ;;
+esac

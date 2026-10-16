@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -29,17 +30,18 @@ func cmdServicesGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 		return mcTypes.InternalError(err)
 	}
 
-	groupedServices, err := database.GroupedServicesQuery.GetGroupedServices(r.Context(), interfaces.CephState{State: s})
+	groupedServices, err := database.GroupedServicesQuery.GetGroupedServicesWithGroupConfig(r.Context(), interfaces.CephState{State: s})
 	if err != nil {
 		return mcTypes.InternalError(err)
 	}
 
 	for _, groupedService := range groupedServices {
 		services = append(services, types.Service{
-			Service:  groupedService.Service,
-			Location: groupedService.Member,
-			GroupID:  groupedService.GroupID,
-			Info:     groupedService.Info,
+			Service:     groupedService.Service,
+			Location:    groupedService.Member,
+			GroupID:     groupedService.GroupID,
+			Info:        groupedService.Info,
+			GroupConfig: groupedService.GroupConfig,
 		})
 	}
 
@@ -67,6 +69,17 @@ var nfsServiceCmd = mcTypes.Endpoint{
 	Path:   "services/nfs",
 	Put:    mcTypes.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
 	Delete: mcTypes.EndpointAction{Handler: cmdNFSDeleteService, ProxyTarget: true},
+}
+var finalizeSMBServiceGroupIfUnchangedFunc = func(ctx context.Context, s interfaces.StateInterface, clusterID, config string) error {
+	return ceph.FinalizeSMBServiceGroup(ctx, s, clusterID, config)
+}
+var getLocalSMBClusterIDFunc = ceph.GetLocalSMBClusterID
+
+var smbServiceCmd = mcTypes.Endpoint{
+	Path:   "services/smb",
+	Get:    mcTypes.EndpointAction{Handler: cmdSMBServiceGroupGet, ProxyTarget: true},
+	Put:    mcTypes.EndpointAction{Handler: cmdEnableServicePut, ProxyTarget: true},
+	Delete: mcTypes.EndpointAction{Handler: cmdSMBDeleteService, ProxyTarget: true},
 }
 var rgwServiceCmd = mcTypes.Endpoint{
 	Path:   "services/rgw",
@@ -110,7 +123,7 @@ func cmdEnableServicePut(s mcTypes.State, r *http.Request) mcTypes.Response {
 
 	err = ceph.ServicePlacementHandler(r.Context(), interfaces.CephState{State: s}, payload)
 	if err != nil {
-		return mcTypes.SyncResponse(false, err)
+		return mcTypes.SmartError(err)
 	}
 
 	return mcTypes.SyncResponse(true, nil)
@@ -195,6 +208,69 @@ func cmdNFSDeleteService(s mcTypes.State, r *http.Request) mcTypes.Response {
 	err = ceph.DisableNFS(r.Context(), interfaces.CephState{State: s}, svc.ClusterID)
 	if err != nil {
 		logger.Errorf("Failed disabling NFS: %v", err)
+		return mcTypes.SmartError(err)
+	}
+
+	return mcTypes.EmptySyncResponse
+}
+
+func cmdSMBServiceGroupGet(s mcTypes.State, r *http.Request) mcTypes.Response {
+	clusterID := r.URL.Query().Get("cluster_id")
+	if !types.SMBClusterIDRegex.MatchString(clusterID) {
+		return mcTypes.SmartError(fmt.Errorf("expected cluster_id to be valid (regex: '%s')", types.SMBClusterIDRegex.String()))
+	}
+	if r.URL.Query().Get("local") == "true" {
+		target := r.URL.Query().Get("target")
+		if target == "" {
+			return mcTypes.SmartError(fmt.Errorf("SMB local state requires a target member"))
+		}
+		err := (types.ManagedSMBRemoval{ClusterID: clusterID, Target: target}).Validate()
+		if err != nil {
+			return mcTypes.SmartError(err)
+		}
+		localClusterID, err := getLocalSMBClusterIDFunc(r.Context())
+		if err != nil {
+			return mcTypes.SmartError(err)
+		}
+		return mcTypes.SyncResponse(true, types.SMBLocalState{ClusterID: clusterID, LocalClusterID: localClusterID})
+	}
+	config, found, err := database.GetSMBServiceGroupConfig(r.Context(), interfaces.CephState{State: s}, clusterID)
+	if err != nil {
+		return mcTypes.SmartError(err)
+	}
+	if !found {
+		config = ""
+	}
+	return mcTypes.SyncResponse(true, types.SMBServiceGroup{ClusterID: clusterID, GroupConfig: config})
+}
+
+func cmdSMBDeleteService(s mcTypes.State, r *http.Request) mcTypes.Response {
+	var svc types.SMBService
+
+	err := json.NewDecoder(r.Body).Decode(&svc)
+	if err != nil {
+		logger.Errorf("failed decoding disable service request: %v", err)
+		return mcTypes.InternalError(err)
+	}
+
+	if !types.SMBClusterIDRegex.MatchString(svc.ClusterID) {
+		err := fmt.Errorf("expected cluster_id to be valid (regex: '%s')", types.SMBClusterIDRegex.String())
+		return mcTypes.SmartError(err)
+	}
+
+	state := interfaces.CephState{State: s}
+	if svc.Finalize {
+		err = finalizeSMBServiceGroupIfUnchangedFunc(r.Context(), state, svc.ClusterID, svc.GroupConfig)
+		if err != nil {
+			logger.Errorf("failed finalizing SMB: %v", err)
+			return mcTypes.SmartError(err)
+		}
+		return mcTypes.EmptySyncResponse
+	}
+
+	err = ceph.DisableSMB(r.Context(), state, svc.ClusterID)
+	if err != nil {
+		logger.Errorf("failed disabling SMB: %v", err)
 		return mcTypes.SmartError(err)
 	}
 

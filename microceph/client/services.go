@@ -13,6 +13,9 @@ import (
 	"github.com/canonical/microceph/microceph/api/types"
 )
 
+// Allow the server's 15-minute operation budget plus transport overhead.
+const managedSMBClientTimeout = 16 * time.Minute
+
 // GetServices returns the list of configured ceph services.
 func GetServices(ctx context.Context, c mcTypes.Client) (types.Services, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*5)
@@ -73,6 +76,42 @@ func SendServicePlacementReq(ctx context.Context, c mcTypes.Client, data *types.
 		return fmt.Errorf("failed placing service %s: %w", data.Name, err)
 	}
 
+	return nil
+}
+
+// EnableManagedSMB requests cluster-level SMB reconciliation for a target member.
+func EnableManagedSMB(ctx context.Context, c mcTypes.Client, target string, service *types.ManagedSMBService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, managedSMBClientTimeout)
+	defer cancel()
+
+	c = c.UseTarget(target)
+	err := c.Query(queryCtx, "PUT", types.ExtendedPathPrefix, &api.NewURL().Path("managed-services", "smb").URL, service, nil)
+	if err != nil {
+		return fmt.Errorf("failed enabling managed SMB service: %w", err)
+	}
+	return nil
+}
+
+// DisableManagedSMB requests a scoped managed SMB removal.
+func DisableManagedSMB(ctx context.Context, c mcTypes.Client, request *types.ManagedSMBRemoval) error {
+	if request == nil {
+		return fmt.Errorf("managed SMB removal request is required")
+	}
+	err := request.Validate()
+	if err != nil {
+		return err
+	}
+
+	queryCtx, cancel := context.WithTimeout(ctx, managedSMBClientTimeout)
+	defer cancel()
+
+	if request.Target != "" {
+		c = c.UseTarget(request.Target)
+	}
+	err = c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("managed-services", "smb").URL, request, nil)
+	if err != nil {
+		return fmt.Errorf("failed disabling managed SMB service: %w", err)
+	}
 	return nil
 }
 

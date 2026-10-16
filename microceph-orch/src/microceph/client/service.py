@@ -144,9 +144,16 @@ class BaseService(ABC):
 
         try:
             response.raise_for_status()
+            result = response.json()
+            # Older daemons can return an error envelope with HTTP 200.
+            if result.get("type") == "error" or result.get("status") == "Failure":
+                raise HTTPError(
+                    result.get("error") or "MicroCeph API request failed",
+                    response=response,
+                )
         except HTTPError as e:
             # Do some nice translating to microclusterdexceptions
-            error = response.json().get("error")
+            error = response.json().get("error") or ""
             if "remote with name" in error:
                 raise NodeAlreadyExistsException(
                     "Already node exists in the microcluster"
@@ -191,7 +198,7 @@ class BaseService(ABC):
                 raise ConfigItemNotFoundException("ConfigItem not found")
             raise e
 
-        return response.json()
+        return result
 
     def _get(self, path, **kwargs):
         kwargs.setdefault("allow_redirects", True)
