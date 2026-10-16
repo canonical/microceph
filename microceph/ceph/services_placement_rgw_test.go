@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/canonical/lxd/shared/api"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
@@ -90,6 +92,32 @@ func newRGWTestState(t *testing.T, dbErr error) *mocks.StateInterface {
 	}
 	si.On("ClusterState").Return(state).Maybe()
 	return si
+}
+
+// stageFlatLayoutGateway leaves the member as an older snap did: the pair in
+// the flat server.crt/server.key files, referenced by radosgw.conf. The config
+// template has not changed since, so rendering it reproduces that file. The
+// monitor differs from the recorder's so a re-rendered config is detectable.
+func stageFlatLayoutGateway(t *testing.T, port int) (certPEM, keyPEM []byte, flatCert, flatKey string) {
+	t.Helper()
+	certB64, keyB64 := genTestTLSPair(t)
+	certPEM, err := base64.StdEncoding.DecodeString(certB64)
+	require.NoError(t, err)
+	keyPEM, err = base64.StdEncoding.DecodeString(keyB64)
+	require.NoError(t, err)
+
+	paths := constants.GetPathConst()
+	flatCert = filepath.Join(paths.SSLFilesPath, "server.crt")
+	flatKey = filepath.Join(paths.SSLFilesPath, "server.key")
+	require.NoError(t, os.WriteFile(flatCert, certPEM, 0600))
+	require.NoError(t, os.WriteFile(flatKey, keyPEM, 0600))
+	conf, err := newRadosGWConfig(paths.ConfPath).RenderConfig(map[string]any{
+		"runDir": paths.RunPath, "monitors": "10.0.0.9", "rgwPort": port, "sslPort": 443,
+		"sslCertificatePath": flatCert, "sslPrivateKeyPath": flatKey,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(rgwConfPath(), conf, 0644))
+	return certPEM, keyPEM, flatCert, flatKey
 }
 
 // TestPopulateParamsValidation verifies the full member-side payload
@@ -214,7 +242,6 @@ func TestServiceInitUsesBackwardCompatibleMonitors(t *testing.T) {
 	require.NoError(t, sp.ServiceInit(context.Background(), si))
 	assert.Contains(t, readTestConf(t), "mon host = 10.0.0.2")
 }
-
 // TestServiceInitReuseFailsClosed verifies ssl=true with no supplied material
 // and no valid local pair fails closed (operational error), never silently
 // enabling plaintext.
@@ -373,6 +400,7 @@ func TestServiceInitReuseMigrationRollbackKeepsFlatPair(t *testing.T) {
 	assert.NoFileExists(t, rgwPendingApplyPath())
 	assert.Equal(t, 2, rec.restarts, "one restart onto the generation, one back onto the flat pair")
 }
+
 // TestPostPlacementCheckFailureRollsBack verifies the readiness phase restores
 // the previous usable frontend when the gateway does not stay up.
 func TestPostPlacementCheckFailureRollsBack(t *testing.T) {
