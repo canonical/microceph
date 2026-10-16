@@ -1,6 +1,9 @@
 name: Tests
 on:
+  # Other branches are tested through their pull request; running on their
+  # pushes as well started the whole matrix twice for every push.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
