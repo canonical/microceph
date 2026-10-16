@@ -3,9 +3,13 @@ package ceph
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -15,7 +19,13 @@ import (
 
 func TestSMBRefreshDoesNotProvision(t *testing.T) {
 	for _, clustered := range []bool{false, true} {
-		for _, scenario := range []string{"healthy-unchanged", "unready-unchanged", "changed", "no-applied", "no-service", "stop", "source-failure", "publish-failure", "restart-failure", "logical-unknown", "logical-deleted", "disabled", "retry-reverted", "torn-source", "unknown-owner"} {
+		scenarios := []string{"healthy-unchanged", "unready-unchanged", "changed", "no-applied", "no-service", "stop", "source-failure", "publish-failure", "restart-failure", "logical-unknown", "logical-deleted", "disabled", "retry-reverted", "torn-source", "unknown-owner"}
+		if !clustered {
+			// These guards share the same branches in both modes. Keep all
+			// failures clustered, and both modes at compiler/health boundaries.
+			scenarios = []string{"healthy-unchanged", "changed", "logical-deleted"}
+		}
+		for _, scenario := range scenarios {
 			t.Run(map[bool]string{true: "clustered/", false: "nonclustered/"}[clustered]+scenario, func(t *testing.T) {
 				runSMBStartup(t, "", clustered, os.Getenv("MICROCEPH_SMB_TEST_PYTHON"), func(state interfaces.StateInterface, r *smbStartupRunner) {
 					root := r.root
@@ -111,6 +121,17 @@ func TestSMBRefreshDoesNotProvision(t *testing.T) {
 							groups, e := os.ReadFile(filepath.Join(root, "config/group"))
 							require.NoError(t, e)
 							require.Contains(t, string(groups), "team:x:2000:")
+							require.Contains(t, string(config), "interfaces = 2001:db8::7")
+							require.Contains(t, string(config), "smb ports = 2445")
+							var info string
+							require.NoError(t, r.db.QueryRow("SELECT info FROM grouped_services").Scan(&info))
+							require.JSONEq(t, fmt.Sprintf(`{"config_uri":"rados://.smb/alpha/config.smb","clustered":%t,"frontend_address":"2001:db8::7","smb_port":2445,"metrics_address":"0.0.0.0","metrics_port":29922}`, clustered), info)
+							if clustered {
+								private, e := os.ReadFile(filepath.Join(root, "ctdb/ctdb.conf"))
+								require.NoError(t, e)
+								require.Contains(t, string(private), "node address = 192.0.2.1")
+							}
+							require.Contains(t, r.events, "restart smbmetrics")
 						}
 					} else {
 						if scenario != "no-applied" {
@@ -360,6 +381,90 @@ func TestSMBRefreshHealthFailureDoesNotReapply(t *testing.T) {
 				})
 			})
 		}
+	}
+}
+
+// TestSMBJoinPeerPublicationBoundary accelerates the tick/publication/recovery
+// phases at the existing process seam; it does not emulate a live CTDB daemon.
+func TestSMBJoinPeerPublicationBoundary(t *testing.T) {
+	python := os.Getenv("MICROCEPH_SMB_TEST_PYTHON")
+	if python == "" {
+		t.Skip("requires pinned real compiler bridge")
+	}
+	for _, cancelStartup := range []bool{false, true} {
+		t.Run(map[bool]string{false: "converged", true: "cancelled"}[cancelStartup], func(t *testing.T) {
+			runSMBStartup(t, "", true, python, func(state interfaces.StateInterface, r *smbStartupRunner) {
+				_, err := r.db.Exec(`INSERT INTO core_cluster_members VALUES(2,'b','192.0.2.2:7443')`)
+				require.NoError(t, err)
+				require.NoError(t, state.ClusterState().Database().Transaction(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+					_, err := database.ReserveSMBOwner(ctx, tx, "alpha", "b", true)
+					return err
+				}))
+				published := func() bool {
+					raw, err := os.ReadFile(filepath.Join(r.root, "config/candidate.json"))
+					require.NoError(t, err)
+					return strings.Contains(string(raw), `"identity": "2"`)
+				}
+				require.False(t, published(), "reservation alone does not publish the peer view")
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				r.events = nil
+				attempts := 0
+				r.onReady = func(ctx context.Context, role string) error {
+					if role != "ctdbd" {
+						deadline, ok := ctx.Deadline()
+						require.True(t, ok)
+						require.LessOrEqual(t, time.Until(deadline), 30*time.Second, "other roles retain their short readiness budget")
+						return nil
+					}
+					attempts++
+					deadline, ok := ctx.Deadline()
+					require.True(t, ok)
+					// Represent a reservation just after the peer tick, a bounded
+					// publication, then the original convergence allowance. Assert
+					// the production deadline without spending 85 seconds asleep.
+					require.Greater(t, time.Until(deadline), 80*time.Second)
+					require.NotContains(t, r.events, "start smbd")
+					if cancelStartup {
+						cancel()
+						return nil // even an obsolete successful response must not win
+					}
+					if attempts == 1 {
+						return errors.New("peer has not published yet")
+					}
+					if attempts == 2 {
+						// Drive the actual existing peer updater/SQL/compiler path.
+						callback := r.onReady
+						r.onReady = nil
+						r.refresh = true
+						err := refreshSMBLocked(ctx, state)
+						r.refresh = false
+						r.onReady = callback
+						require.NoError(t, err)
+						require.True(t, published())
+						return errors.New("published but recovery/membership not confirmed")
+					}
+					return nil
+				}
+				err = startSMBApps(ctx, r.root, []string{"ctdbd", "ctdb-nodes", "smbd", "smbmetrics"}, smbSnapOps(r.root))
+				if cancelStartup {
+					require.ErrorIs(t, err, context.Canceled)
+					require.NotContains(t, r.events, "ready ctdb-nodes", "cancelled health cannot admit the next readiness gate")
+					require.NotContains(t, r.events, "start smbd")
+					for _, role := range smbStopOrder {
+						require.Contains(t, r.events, "stop "+role)
+					}
+					require.False(t, published())
+				} else {
+					require.NoError(t, err)
+					require.Equal(t, 3, attempts)
+					require.Contains(t, r.events, "start smbd")
+				}
+				var ownership string
+				require.NoError(t, r.db.QueryRow("SELECT config FROM service_groups").Scan(&ownership))
+				require.Contains(t, ownership, `"2":"b"`, "cancellation must not release a reserved owner")
+			})
+		})
 	}
 }
 

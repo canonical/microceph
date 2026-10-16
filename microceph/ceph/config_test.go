@@ -146,9 +146,10 @@ func (s *configSuite) TestGetMonitorsFromConfigIgnoresOrphanedMemberEntry() {
 		"node-a": {},
 	}
 
-	monitorAddresses := getMonitorsFromConfig(configs, activeMembers)
-
-	assert.ElementsMatch(s.T(), []string{"10.0.0.1", "192.0.2.1"}, monitorAddresses)
+	for range 64 {
+		monitorAddresses := getMonitorsFromConfig(configs, activeMembers)
+		assert.Equal(s.T(), []string{"10.0.0.1", "192.0.2.1"}, monitorAddresses)
+	}
 }
 
 func (s *configSuite) TestGetMonitorsFromConfigRetainsLargeNumericAdoptedEntry() {
@@ -183,6 +184,50 @@ func (s *configSuite) TestGetMonitorAddressesFailsWhenNoMonitorCanBeFound() {
 	monitorAddresses, err := GetMonitorAddresses(context.Background(), nil)
 	assert.Nil(s.T(), monitorAddresses)
 	assert.ErrorContains(s.T(), err, "no monitor addresses found")
+}
+
+// TestSMBExplicitEnableStableMonitorRendering crosses the real config producer,
+// placement, SQL ownership and native compiler/publication path.
+func (s *configSuite) TestSMBExplicitEnableStableMonitorRendering() {
+	python := os.Getenv("MICROCEPH_SMB_TEST_PYTHON")
+	if python == "" {
+		s.T().Skip("requires pinned real compiler bridge")
+	}
+	t := s.T()
+	runSMBStartup(t, "", true, python, func(state interfaces.StateInterface, r *smbStartupRunner) {
+		config := map[string]string{
+			"fsid": "test-fsid", "public_network": "10.0.0.0/24",
+			"mon.host.1": "192.0.2.1", "mon.host.2": "192.0.2.2", "mon.host.3": "192.0.2.3",
+		}
+		s.setupUpdateConfigMocks(config)
+		oldUpdate := updateConfigFunc
+		defer func() { updateConfigFunc = oldUpdate }()
+		updateConfigFunc = UpdateConfig
+		payload := types.EnableService{Name: "smb", Wait: true, Payload: `{"cluster_id":"alpha"}`}
+		enable := func() {
+			err := ServicePlacementHandler(context.Background(), state, payload)
+			s.Require().NoError(err)
+		}
+		// Replace the fixture's minimal ceph.conf with the actual producer output.
+		enable()
+		// One full-path no-op is enough here; the cheap 64-iteration monitor
+		// test owns repeated canonical-order coverage without compiler calls.
+		r.events = nil
+		enable()
+		for _, event := range r.events {
+			s.NotEqual("publish", event, "unchanged ready enable must not publish")
+			s.False(strings.HasPrefix(event, "stop ") || strings.HasPrefix(event, "start "), "unchanged ready enable must not control roles")
+		}
+		config["mon.host.2"] = "192.0.2.22"
+		r.events = nil
+		enable()
+		s.Contains(r.events, "publish", "a real monitor change remains an effective input change")
+		s.Contains(r.events, "start ctdbd")
+		r.active["ctdbd"] = false
+		r.events = nil
+		enable()
+		s.Contains(r.events, "start ctdbd", "unchanged but unhealthy explicit enable still recovers")
+	})
 }
 
 // --- UpdateConfig / radosgw.conf mon host refresh tests (issue #766) ---

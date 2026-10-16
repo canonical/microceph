@@ -314,9 +314,8 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
-	info, _ := json.Marshal(map[string]any{"clustered": launch.Clustered, "smb_port": launch.SMBPort})
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		return database.RecordSMBService(ctx, tx, clusterID, s.ClusterState().Name(), string(info))
+		return database.RecordSMBService(ctx, tx, clusterID, s.ClusterState().Name(), launch.serviceInfo(candidate.Spec.ConfigURI))
 	})
 	if err != nil {
 		return errors.Join(err, stopSMBApps(root, ops))

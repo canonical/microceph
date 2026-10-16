@@ -31,7 +31,10 @@ func smbTx(t *testing.T, db *sql.DB, fn func(*sql.Tx) error) error {
 	t.Helper()
 	tx, err := db.Begin()
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() {
+		// Best-effort cleanup; a successful commit already closes the transaction.
+		_ = tx.Rollback()
+	}()
 	err = fn(tx)
 	if err != nil {
 		return err
@@ -104,7 +107,8 @@ func TestSMBNonclusteredSQLRace(t *testing.T) {
 			if err == nil {
 				err = tx.Commit()
 			} else {
-				tx.Rollback()
+				// Preserve the reservation error while still releasing the transaction.
+				_ = tx.Rollback()
 			}
 			results <- err
 		}(member)

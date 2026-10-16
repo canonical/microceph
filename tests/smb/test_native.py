@@ -1,4 +1,5 @@
 """Consumer contracts: run with the pinned Sambacc 0.9 on PYTHONPATH."""
+import configparser
 import copy
 import importlib.util
 import io
@@ -8,6 +9,7 @@ import os
 import subprocess
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from sambacc.config import GlobalConfig
 from sambacc.netcmd_loader import template_config
@@ -195,6 +197,58 @@ class NativeConsumerTests(unittest.TestCase):
         self.assertEqual(context["metrics_port"], 9922)
         self.assertFalse(context["proxy"])
         self.assertIn("smb ports = 445", files["smb.conf"])
+        endpoint = {"frontend_address": "198.51.100.7", "smb_port": 1445, "metrics_port": 19922}
+        candidate = {"config": self.config(), "spec": {"cluster_id": "alpha"}, "endpoint": endpoint}
+        files, context = self.native.compile_core(candidate, "/native/alpha")
+        parsed = configparser.ConfigParser(interpolation=None, strict=False, delimiters=("=",))
+        parsed.read_string(files["smb.conf"])
+        self.assertEqual(parsed["global"]["interfaces"], endpoint["frontend_address"])
+        self.assertEqual(parsed["global"]["bind interfaces only"], "yes")
+        self.assertEqual(parsed["global"]["smb ports"], "1445")
+        self.assertEqual(self.native.role_command("smbmetrics", "/native/alpha", context, "/snap"),
+                         ["/snap/bin/smbmetrics", "--address", "0.0.0.0", "--port", "19922"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config").mkdir()
+            (root / "config/context.json").write_text(json.dumps(context))
+            with patch("urllib.request.urlopen") as request:
+                request.return_value.__enter__.return_value.status = 200
+                self.native.ready(root, "smbmetrics")
+                request.assert_called_once_with("http://127.0.0.1:19922/metrics", timeout=3)
+        for key, value in (("interfaces", "192.0.2.1"), ("bind interfaces only", "no"), ("smb ports", "445")):
+            doc = self.config()
+            doc["globals"]["default"]["options"][key] = value
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "native option conflict"):
+                self.native.compile_core(dict(candidate, config=doc), "/native/alpha")
+
+    def test_generated_user_share_options_survive_native_adapter(self):
+        # Pinned mgr/smb handler._generate_config/_generate_share output shape.
+        # This tests passthrough, not a second resource validator/share generator.
+        doc = self.config()
+        doc["globals"]["default"]["options"]["server string"] = "User gateway"
+        doc["configs"]["alpha"]["shares"] = ["Friendly Data"]
+        options = {"path": "/resolved/subvolume/data", "vfs objects": "acl_xattr ceph_snapshots ceph_new",
+                   "ceph_new:proxy": "yes", "ceph_new:config_file": "/etc/ceph/ceph.conf",
+                   "ceph_new:filesystem": "fs", "ceph_new:user_id": "smb.fs.cluster.alpha",
+                   "read only": "yes", "browseable": "no", "comment": "Team archive",
+                   "max connections": "12", "valid users": "alice @team", "read list": "alice",
+                   "write list": "@team", "invalid users": "blocked", "admin users": "admin",
+                   "create mask": "0640", "x:ceph:id": "alpha.data"}
+        doc["shares"]["Friendly Data"] = {"options": options}
+        candidate = {"config": doc, "spec": {"cluster_id": "alpha"}, "users": [
+            {"users": {"all_entries": [{"name": "alice", "password": "secret", "gid": 3000}]}},
+            {"groups": {"all_entries": [{"name": "team", "gid": 3000}]}}]}
+        files, context = self.native.compile_core(candidate, "/native/alpha")
+        parsed = configparser.ConfigParser(interpolation=None, strict=False, delimiters=("=",))
+        parsed.read_string(files["smb.conf"])
+        expected = dict(options, **{"ceph_new:config_file": "/native/alpha/config/ceph-proxy.conf"})
+        for key, value in expected.items():
+            self.assertEqual(parsed["Friendly Data"][key], value)
+        self.assertEqual(parsed["global"]["server string"], "User gateway")
+        self.assertIn("alice:x:1000:3000:", files["passwd"])
+        self.assertIn("team:x:3000:", files["group"])
+        self.assertTrue(context["proxy"])
+        self.assertNotIn("secret", files["smb.conf"])
 
     @unittest.skipUnless(os.environ.get("SMB_NATIVE_PACKAGE_TESTS"), "requires the exact extracted native packages")
     def test_real_package_text_config_and_cephfs_constructor(self):

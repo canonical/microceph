@@ -1,4 +1,5 @@
 """Native clustered wiring contracts; no daemons or namespaces are launched."""
+import configparser
 import importlib.util
 import json
 import os
@@ -31,6 +32,7 @@ class CTDBStartupTests(unittest.TestCase):
 
     def test_clustered_compile_calls_projection_with_authoritative_view(self):
         candidate = self.candidate()
+        candidate["endpoint"] = {"frontend_address": "2001:db8::7", "smb_port": 1445, "metrics_port": 19922}
         with patch.object(self.native, "project_ctdb", wraps=self.native.project_ctdb) as projection:
             files, context = self.native.compile_core(candidate, "/native/alpha")
         self.assertEqual(projection.call_args.kwargs["member"], candidate["ctdb"]["member"])
@@ -39,6 +41,17 @@ class CTDBStartupTests(unittest.TestCase):
         self.assertIn("config/smb.conf", files)
         self.assertEqual(context["ctdb_pnn"], 2)
         self.assertTrue(context["clustered"])
+        parsed = configparser.ConfigParser(interpolation=None, strict=False, delimiters=("=",))
+        parsed.read_string(files["config/smb.conf"])
+        self.assertEqual(parsed["global"]["interfaces"], "2001:db8::7")
+        self.assertEqual(parsed["global"]["smb ports"], "1445")
+        self.assertIn("node address = 192.0.2.3", files["ctdb/ctdb.conf"])
+        self.assertEqual(files["config/ctdb-address"], "192.0.2.3\n")
+        self.assertIn("client.smb.cluster.alpha", files["ctdb/ctdb.conf"])
+        self.assertEqual(context["metrics_port"], 19922)
+        # Retained pre-endpoint candidates must remain readable by the monitor.
+        legacy, _ = self.native.compile_core(self.candidate(), "/native/alpha")
+        self.assertIn("interfaces = 192.0.2.3", legacy["config/smb.conf"])
         for modification in ("view", "feature", "effective"):
             bad = self.candidate()
             if modification == "view":
@@ -87,7 +100,7 @@ class CTDBStartupTests(unittest.TestCase):
                 self.native.publish(root)
             self.assertFalse((Path(directory) / "outside").exists())
 
-    def test_config_only_publication_preserves_ctdb_and_monitor_reload(self):
+    def test_config_only_publication_preserves_ctdb(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "alpha"
             (root / "config").mkdir(parents=True)
@@ -106,12 +119,6 @@ class CTDBStartupTests(unittest.TestCase):
             self.assertIn("alice:x:2000:2000:", (root / "config/passwd").read_text())
             self.assertEqual((root / "ctdb/nodes").read_text(), "192.0.2.1\n#\n#\n")
             self.assertEqual((root / "ctdb/state/retained").read_text(), "runtime")
-            with patch.object(self.native, "ctdb_control", side_effect=[
-                    b"Number of nodes:3\npnn:0 192.0.2.1 OK\nRecovery mode:NORMAL (0)\n", b"",
-                    b"Number of nodes:3\npnn:0 192.0.2.1 OK\npnn:2 192.0.2.3 OK\nRecovery mode:NORMAL (0)\n"]) as control:
-                self.native.update_ctdb_nodes(root)
-            self.assertEqual([call.args[1] for call in control.call_args_list], ["status", "reloadnodes", "status"])
-            self.assertEqual((root / "ctdb/nodes").read_text(), "192.0.2.1\n#\n192.0.2.3\n")
             (root / "stop-requested").write_text("stop")
             with self.assertRaisesRegex(ValueError, "stop requested"):
                 self.native.publish_config(root)

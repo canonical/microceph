@@ -116,7 +116,9 @@ else:
         self.assertIn("pnn", commands)
         self.assertIn("nodestatus 2", commands)
         self.assertIn("status", commands)
-        self.assertIn("reloadnodes", commands)
+        # A request can see transient bad membership after accept even if no
+        # updater iteration sees it. Reload issuance/map verification belongs
+        # to CTDBMembershipTests, not this fresh-health transport test.
 
     def test_stop_owner_and_nonclustered_checks_reject_even_live_endpoint(self):
         self.monitor()

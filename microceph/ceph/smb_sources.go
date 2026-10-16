@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -8,10 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -36,7 +39,16 @@ type smbSpec struct {
 	TLSCA           string            `json:"remote_control_ca_cert"`
 }
 
+// smbEndpoint is resolved from upstream settings and local network inventory,
+// not a member-local desired configuration. Omitted only on retained candidates.
+type smbEndpoint struct {
+	FrontendAddress string `json:"frontend_address"`
+	SMBPort         int    `json:"smb_port"`
+	MetricsPort     int    `json:"metrics_port"`
+}
+
 type smbCandidate struct {
+	Endpoint   *smbEndpoint          `json:"endpoint,omitempty"`
 	CTDB       *database.SMBCTDBView `json:"ctdb,omitempty"`
 	Logical    json.RawMessage       `json:"logical"`
 	CephConfig string                `json:"ceph_config"`
@@ -97,6 +109,10 @@ func readSMBCandidate(clusterID string, read func(string) ([]byte, error)) (smbC
 		return c, fmt.Errorf("invalid SMB spec document")
 	}
 	c.Spec = transport.Spec
+	_, err = c.Spec.endpointPorts()
+	if err != nil {
+		return c, err
+	}
 	c.SpecBytes = data
 	if transport.ServiceType != "smb" || transport.ServiceID != clusterID || c.Spec.ClusterID != clusterID {
 		return c, fmt.Errorf("SMB spec cluster identity mismatch")
@@ -220,9 +236,11 @@ func readSMBPreparedCandidate(ctx context.Context, s interfaces.StateInterface, 
 			return candidate, fmt.Errorf("native CTDB metadata/lock objects must be distinct")
 		}
 	}
-	if len(candidate.Spec.BindAddresses) > 0 {
-		return candidate, fmt.Errorf("native bind-address planning requires the network feature stage")
+	endpoint, err := candidate.Spec.resolveEndpoint(ctx, s)
+	if err != nil {
+		return candidate, err
 	}
+	candidate.Endpoint = &endpoint
 	if withView && candidate.Spec.hasFeature("clustered") {
 		err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 			candidate.CTDB, err = database.GetSMBCTDBView(ctx, tx, clusterID, s.ClusterState().Name())
@@ -232,10 +250,127 @@ func readSMBPreparedCandidate(ctx context.Context, s interfaces.StateInterface, 
 	return candidate, err
 }
 
+// endpointPorts validates the complete map, including inactive services' defaults,
+// just like the pinned resource validator. CTDB and remote-control are not tunable.
+func (s smbSpec) endpointPorts() (smbEndpoint, error) {
+	ports := map[string]int{"smb": 445, "smbmetrics": 9922, "ctdb": 4379, "remote-control": 54445}
+	for name, port := range s.CustomPorts {
+		defaultPort, known := ports[name]
+		if !known || port < 1 || port > 65535 {
+			return smbEndpoint{}, fmt.Errorf("invalid SMB custom port for service %q", name)
+		}
+		if (name == "ctdb" || name == "remote-control") && port != defaultPort {
+			return smbEndpoint{}, fmt.Errorf("nondefault %s port is not supported", name)
+		}
+		ports[name] = port
+	}
+	seen := map[int]bool{}
+	for _, port := range ports {
+		if seen[port] {
+			return smbEndpoint{}, fmt.Errorf("SMB service ports must be unique")
+		}
+		seen[port] = true
+	}
+	return smbEndpoint{SMBPort: ports["smb"], MetricsPort: ports["smbmetrics"]}, nil
+}
+
+func (s smbSpec) resolveEndpoint(ctx context.Context, state interfaces.StateInterface) (smbEndpoint, error) {
+	endpoint, err := s.endpointPorts()
+	if err != nil {
+		return endpoint, err
+	}
+	type selector struct {
+		Address string `json:"address"`
+		Network string `json:"network"`
+	}
+	selectors := []selector{}
+	if s.BindAddresses != nil && len(s.BindAddresses) == 0 {
+		return endpoint, fmt.Errorf("bind_addrs must not be empty")
+	}
+	// Validate every selector before choosing a locally usable alternative.
+	for _, raw := range s.BindAddresses {
+		var bind selector
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		err = decoder.Decode(&bind)
+		if err != nil || (bind.Address == "") == (bind.Network == "") {
+			return endpoint, fmt.Errorf("SMB bind selector requires exactly one address or network")
+		}
+		if bind.Address != "" {
+			ip := net.ParseIP(bind.Address)
+			if ip == nil || !ip.IsGlobalUnicast() {
+				return endpoint, fmt.Errorf("SMB bind address must be an unscoped unicast IP literal")
+			}
+			bind.Address = ip.String()
+		} else {
+			// ip_network in the upstream grammar also accepts a bare host literal.
+			ip := net.ParseIP(bind.Network)
+			if ip != nil {
+				bits := 128
+				if ip.To4() != nil {
+					bits = 32
+				}
+				bind.Network = fmt.Sprintf("%s/%d", ip.String(), bits)
+			}
+			ip, network, parseErr := net.ParseCIDR(bind.Network)
+			if parseErr != nil || !ip.Equal(network.IP) {
+				return endpoint, fmt.Errorf("SMB bind network must be a canonical CIDR or IP literal")
+			}
+		}
+		selectors = append(selectors, bind)
+	}
+	if len(selectors) == 0 {
+		config, err := fetchConfigDb(ctx, state)
+		if err != nil {
+			return endpoint, fmt.Errorf("read SMB public_network: %w", err)
+		}
+		// The common helper validates the entire ordered Ceph subnet list.
+		address, err := common.Network.FindIpOnSubnet(config["public_network"])
+		if err != nil {
+			return endpoint, fmt.Errorf("resolve SMB address on public_network: %w", err)
+		}
+		endpoint.FrontendAddress = address
+		return endpoint, nil
+	}
+	for _, bind := range selectors {
+		if bind.Address != "" {
+			_, err = common.Network.FindNetworkAddress(bind.Address)
+			if err == nil {
+				endpoint.FrontendAddress = bind.Address
+				return endpoint, nil
+			}
+		} else {
+			address, err := common.Network.FindIpOnSubnet(bind.Network)
+			if err == nil {
+				endpoint.FrontendAddress = address
+				return endpoint, nil
+			}
+		}
+	}
+	return endpoint, fmt.Errorf("no SMB bind selector matches a suitable local address")
+}
+
 type smbLaunch struct {
-	Proxy     bool `json:"proxy"`
-	Clustered bool `json:"clustered"`
-	SMBPort   int  `json:"smb_port"`
+	Proxy           bool   `json:"proxy"`
+	Clustered       bool   `json:"clustered"`
+	FrontendAddress string `json:"frontend_address"`
+	SMBPort         int    `json:"smb_port"`
+	MetricsPort     int    `json:"metrics_port"`
+}
+
+// serviceInfo exposes only successfully applied nonsecret facts. configURI is
+// the validated source reference in the applied spec, not its contents or an
+// assertion about override selection. Legacy endpoint omissions stay omitted.
+func (l smbLaunch) serviceInfo(configURI string) string {
+	info, _ := json.Marshal(struct {
+		ConfigURI       string `json:"config_uri,omitempty"`
+		Clustered       bool   `json:"clustered"`
+		FrontendAddress string `json:"frontend_address,omitempty"`
+		SMBPort         int    `json:"smb_port,omitempty"`
+		MetricsAddress  string `json:"metrics_address,omitempty"`
+		MetricsPort     int    `json:"metrics_port,omitempty"`
+	}{configURI, l.Clustered, l.FrontendAddress, l.SMBPort, "0.0.0.0", l.MetricsPort})
+	return string(info)
 }
 
 // prepareSMBProjection uses the same real compiler, source recheck and nested
@@ -268,6 +403,9 @@ func prepareSMBProjection(ctx context.Context, s interfaces.StateInterface, cand
 	err = json.Unmarshal(contextBytes, &launch)
 	if err != nil {
 		return launch, nil, err
+	}
+	if candidate.Endpoint == nil || launch.FrontendAddress != candidate.Endpoint.FrontendAddress || launch.SMBPort != candidate.Endpoint.SMBPort || launch.MetricsPort != candidate.Endpoint.MetricsPort {
+		return launch, nil, fmt.Errorf("native SMB launch endpoint does not match preparation")
 	}
 	if launch.Clustered != candidate.Spec.hasFeature("clustered") {
 		return launch, nil, fmt.Errorf("native SMB launch mode does not match reservation")

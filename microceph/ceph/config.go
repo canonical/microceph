@@ -6,14 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
-
-	"github.com/canonical/microceph/microceph/constants"
-	"github.com/canonical/microceph/microceph/interfaces"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
+	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/logger"
 )
 
@@ -579,6 +579,9 @@ func getMonitorsFromConfig(configs map[string]string, activeMembers map[string]s
 		}
 	}
 
+	// Map iteration order is not stable. Raw ceph.conf is an SMB effective
+	// input, so order-only rewrites must not trigger a new application.
+	sort.Strings(monHosts)
 	return monHosts
 }
 

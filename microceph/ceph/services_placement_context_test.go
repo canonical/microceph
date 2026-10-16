@@ -55,7 +55,7 @@ func TestServicePlacementHandlerRequestContext(t *testing.T) {
 			}}
 			state := interfaces.CephState{State: &mocks.MockState{DBObj: db}}
 			go func() {
-				returned <- ServicePlacementHandler(ctx, state, types.EnableService{Name: "smb", Wait: wait})
+				returned <- ServicePlacementHandler(ctx, state, types.EnableService{Name: "smb", Payload: `{"cluster_id":"alpha"}`, Wait: wait})
 			}()
 			// Always release and drain the placement critical section before this
 			// subtest ends, including on assertion failure. The async error path
@@ -76,8 +76,9 @@ func TestServicePlacementHandlerRequestContext(t *testing.T) {
 					t.Error("monitor-count transaction did not finish")
 					return
 				}
+				// Acquiring the placement mutex drains work before cleanup returns.
 				serviceStartMu.Lock()
-				serviceStartMu.Unlock()
+				defer serviceStartMu.Unlock()
 				if wait {
 					select {
 					case err := <-returned:

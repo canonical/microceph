@@ -16,6 +16,11 @@ import (
 	"github.com/canonical/microceph/microceph/logger"
 )
 
+const (
+	smbUpdateInterval = 30 * time.Second
+	smbUpdateTimeout  = 25 * time.Second
+)
+
 const smbMembershipPending = "membership publication is not confirmed applied\n"
 
 const smbUnreadyDiagnostic = "Local SMB gateway is not ready; previously applied configuration is unchanged.\n"
@@ -62,7 +67,7 @@ func SMBLocalStatus(ctx context.Context) (types.SMBStatus, error) {
 // native periodic source updater. Placement remains an explicit/startup path.
 func startSMBUpdater(ctx context.Context, s interfaces.StateInterface) {
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(smbUpdateInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -70,7 +75,7 @@ func startSMBUpdater(ctx context.Context, s interfaces.StateInterface) {
 				return
 			case <-ticker.C:
 			}
-			queryCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+			queryCtx, cancel := context.WithTimeout(ctx, smbUpdateTimeout)
 			if s.ClusterState().Database().IsOpen(queryCtx) == nil {
 				serviceStartMu.Lock()
 				err := refreshSMBLocked(queryCtx, s)
@@ -263,9 +268,8 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 			return err
 		}
 	}
-	info, _ := json.Marshal(map[string]any{"clustered": current.Clustered, "smb_port": current.SMBPort})
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		return database.UpdateSMBServiceInfo(ctx, tx, clusterID, s.ClusterState().Name(), string(info))
+		return database.UpdateSMBServiceInfo(ctx, tx, clusterID, s.ClusterState().Name(), current.serviceInfo(candidate.Spec.ConfigURI))
 	})
 	if err != nil {
 		return err

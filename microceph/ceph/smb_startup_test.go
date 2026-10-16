@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,7 @@ type smbStartupRunner struct {
 	unready          bool
 	sourceFailure    bool
 	logical          string
+	spec             string
 	containment      bool
 	reads            int
 	disabled         bool
@@ -44,6 +46,7 @@ type smbStartupRunner struct {
 	expectedIdentity string
 	expectedPNN      uint64
 	onStop           func()
+	onReady          func(context.Context, string) error
 }
 
 func (r *smbStartupRunner) RunCommand(name string, args ...string) (string, error) {
@@ -109,6 +112,16 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 		default:
 			return "", errors.New("Error ENOENT")
 		}
+		if object == "spec.smb" && r.python != "" {
+			endpoint := `"custom_ports":{"smb":1445,"smbmetrics":19922},`
+			if r.changed {
+				endpoint = `"bind_addrs":[{"address":"2001:db8::7"}],"custom_ports":{"smb":2445,"smbmetrics":29922},`
+			}
+			data = strings.Replace(data, `"spec":{`, `"spec":{`+endpoint, 1)
+		}
+		if object == "spec.smb" && r.spec != "" {
+			data = r.spec
+		}
 		if !r.changed && object == "users.smb" {
 			data = strings.Replace(data, `"password":"changed"`, `"password":"initial"`, 1)
 			data = strings.Replace(data, `"groups":{"all_entries":[{"name":"team","gid":2000}]}`, `"groups":{"all_entries":[]}`, 1)
@@ -162,11 +175,10 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 				return r.runNativeFiles(ctx, "compile", root)
 			}
 			require.NoError(r.t, os.MkdirAll(filepath.Join(root, "config/next/config"), 0700))
-			launch := `{"clustered":true,"ctdb_pnn":0,"smb_port":445}`
-			if r.nonclustered {
-				launch = `{"clustered":false,"smb_port":445}`
-			}
-			return "", os.WriteFile(filepath.Join(root, "config/next/config/context.json"), []byte(launch), 0600)
+			launch, err := json.Marshal(smbLaunch{Clustered: !r.nonclustered,
+				FrontendAddress: candidate.Endpoint.FrontendAddress, SMBPort: candidate.Endpoint.SMBPort, MetricsPort: candidate.Endpoint.MetricsPort})
+			require.NoError(r.t, err)
+			return "", os.WriteFile(filepath.Join(root, "config/next/config/context.json"), launch, 0600)
 		case "prepare-ctdb":
 			r.events = append(r.events, "prepare-ctdb")
 			if r.failure == "prepare" {
@@ -188,6 +200,12 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 				return "", errors.New("not started")
 			}
 			r.events = append(r.events, "ready "+role)
+			if r.onReady != nil {
+				err := r.onReady(ctx, role)
+				if err != nil {
+					return "", err
+				}
+			}
 			if (r.failure == "readiness" && role == "ctdbd") || (r.failure == "monitor-readiness" && role == "ctdb-nodes") {
 				r.cancel()
 				return "", context.Canceled
@@ -338,9 +356,13 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 	require.NoError(t, database.SchemaExtensions[5](ctx, tx))
 	require.NoError(t, tx.Commit())
 	runner := &smbStartupRunner{t: t, db: db, active: map[string]bool{}, readyRoles: map[string]bool{}, failure: failure, cancel: cancel, python: python, nonclustered: !clustered}
-	oldRunner := common.ProcessExec
+	oldRunner, oldNetwork, oldFetch := common.ProcessExec, common.Network, fetchConfigDb
 	common.ProcessExec = runner
-	defer func() { common.ProcessExec = oldRunner }()
+	common.Network = smbEndpointNetwork{addresses: []string{"198.51.100.7", "2001:db8::7"}}
+	fetchConfigDb = func(context.Context, interfaces.StateInterface) (map[string]string, error) {
+		return map[string]string{"public_network": "198.51.100.0/24"}, nil
+	}
+	defer func() { common.ProcessExec, common.Network, fetchConfigDb = oldRunner, oldNetwork, oldFetch }()
 	root := t.TempDir()
 	t.Setenv("SNAP_COMMON", root)
 	t.Setenv("SNAP", "/test-snap")
@@ -353,7 +375,10 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		defer func() {
+			// Best-effort cleanup; a successful commit already closes the transaction.
+			_ = tx.Rollback()
+		}()
 		err = fn(ctx, tx)
 		if err != nil {
 			return err
@@ -397,13 +422,15 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 		if python != "" {
 			contextBytes, err := os.ReadFile(filepath.Join(runner.root, "config/context.json"))
 			require.NoError(t, err)
-			var launch struct {
-				Clustered bool `json:"clustered"`
-				SMBPort   int  `json:"smb_port"`
-			}
+			var launch map[string]any
 			require.NoError(t, json.Unmarshal(contextBytes, &launch))
-			require.Equal(t, clustered, launch.Clustered)
-			require.Equal(t, 445, launch.SMBPort)
+			require.Equal(t, clustered, launch["clustered"])
+			require.Equal(t, "198.51.100.7", launch["frontend_address"])
+			require.Equal(t, float64(1445), launch["smb_port"])
+			require.Equal(t, float64(19922), launch["metrics_port"])
+			var info string
+			require.NoError(t, db.QueryRow("SELECT info FROM grouped_services").Scan(&info))
+			require.JSONEq(t, fmt.Sprintf(`{"config_uri":"rados://.smb/alpha/config.smb","clustered":%t,"frontend_address":"198.51.100.7","smb_port":1445,"metrics_address":"0.0.0.0","metrics_port":19922}`, clustered), info)
 			_, err = os.Stat(filepath.Join(runner.root, "config/next/context.json"))
 			require.ErrorIs(t, err, os.ErrNotExist, "no obsolete flat context can mask the seam")
 		}

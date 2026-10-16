@@ -81,6 +81,8 @@ def render(document, cluster_id, root, context, sources):
         "log file": root + "/diagnostics/log.%m",
         "smb ports": str(context.get("smb_port", 445)),
     }
+    if context.get("frontend_address"):
+        required.update({"interfaces": context["frontend_address"], "bind interfaces only": "yes"})
     for name in instance.get("globals", []):
         _overlay(doc["globals"][name].setdefault("options", {}), required)
     doc["globals"]["_native"] = {"options": required}
@@ -187,7 +189,8 @@ def project_ctdb(document, cluster_id, root, *, cluster_meta_uri,
     required.update({
         "config backend": "file", "registry shares": "no",
         "ctdbd socket": root + "/ctdb/run/ctdbd.socket",
-        "bind interfaces only": "yes", "interfaces": member["node"],
+        # Retained pre-endpoint candidates are also read by the nodes monitor.
+        "bind interfaces only": "yes", "interfaces": (context or {}).get("frontend_address", member["node"]),
         "winbindd socket directory": root + "/samba/winbindd",
     })
     for name in doc["configs"][cluster_id].get("globals", []):
@@ -273,6 +276,12 @@ def compile_core(candidate, root):
         raise ValueError("CTDB view requires clustered mode")
     ports = spec.get("custom_ports") or {}
     context = {"proxy": False, "data_checks": [], "smb_port": ports.get("smb", 445), "metrics_port": ports.get("smbmetrics", 9922), "custom_dns": bool(spec.get("custom_dns"))}
+    # New Go preparation always resolves/validates this derived projection.
+    # Missing endpoint is a narrow reader fallback for retained candidates only;
+    # it keeps their former clustered/private or nonclustered/unrestricted bind.
+    if "endpoint" in candidate:
+        endpoint = candidate["endpoint"]
+        context.update({key: endpoint[key] for key in ("frontend_address", "smb_port", "metrics_port")})
     for share in instance.shares():
         options = dict(share.share_options())
         _normalize_native_share_options(options)

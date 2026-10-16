@@ -137,14 +137,28 @@ func smbSnapOps(root string) smbAppOps {
 			return smbWaitInactive(role)
 		},
 		ready: func(ctx context.Context, role string) error {
-			waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			budget := 30 * time.Second
+			if role == "ctdbd" {
+				// A new/rejoining owner can miss the peer updater's tick. Allow
+				// one tick + bounded publication before the usual convergence
+				// window (pinned CTDB also waits RerecoveryTimeout+3 after
+				// recovery). The monitor still requires PNN/NORMAL/full map
+				// health; this is not permission for eventual startup success.
+				// The caller's deadline, including the 120s client limit, wins.
+				budget += smbUpdateInterval + smbUpdateTimeout
+			}
+			waitCtx, cancel := context.WithTimeout(ctx, budget)
 			defer cancel()
 			tick := time.NewTicker(time.Second)
 			defer tick.Stop()
 			for {
-				err := smbNativeCommand(waitCtx, "ready", root, role)
+				err := waitCtx.Err()
 				if err == nil {
-					return nil
+					err = smbNativeCommand(waitCtx, "ready", root, role)
+				}
+				if err == nil {
+					// A helper response racing cancellation is not fresh health.
+					return waitCtx.Err()
 				}
 				select {
 				case <-ctx.Done():
