@@ -314,7 +314,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph cluster migrate <SRC> <DST [flags]
+   microceph cluster migrate <SRC> <DST> [flags]
 
 
 ``remove``
