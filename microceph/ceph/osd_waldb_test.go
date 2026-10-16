@@ -627,7 +627,9 @@ func TestExclusiveCarrierLockWaitsForSharedHolder(t *testing.T) {
 	require.NoError(t, err)
 	defer holder.Close()
 	require.NoError(t, unix.Flock(int(holder.Fd()), unix.LOCK_SH))
-	defer unix.Flock(int(holder.Fd()), unix.LOCK_UN)
+	defer func() {
+		assert.NoError(t, unix.Flock(int(holder.Fd()), unix.LOCK_UN))
+	}()
 
 	entered := make(chan struct{})
 	done := make(chan error, 1)
