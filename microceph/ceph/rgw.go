@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -31,6 +32,7 @@ var (
 	stopRGWFunc          = stopRGW
 	checkRGWActiveFunc   = checkRGWActive
 	checkRGWReadyFunc    = checkRGWReady
+	checkRGWFrontendFunc = checkRGWFrontend
 	createRGWKeyringFunc = createRGWKeyring
 	getConfigDbFunc      = GetConfigDb
 )
@@ -40,6 +42,11 @@ var errRGWInactive = errors.New("rgw service is not active")
 // A first start creates the gateway's pools before it listens, so readiness
 // waits far longer than a restart of an already-initialised gateway needs.
 var rgwReadyTimeout = 2 * time.Minute
+
+// The probe of a leftover apply marker (pendingApplyCompleted) asks the gateway
+// which pair it serves. It asks more than once because the gateway may be in
+// the middle of a restart at that moment.
+var rgwPendingProbeInterval = 300 * time.Millisecond
 
 func rgwConfPath() string {
 	return filepath.Join(constants.GetPathConst().ConfPath, "radosgw.conf")
@@ -257,6 +264,88 @@ func writePendingApplyMarker(previous []byte, active bool) error {
 	return writeRGWFile(rgwPendingApplyPath(), data, 0600)
 }
 
+// readRGWState returns radosgw.conf (nil when RGW is not configured) and the
+// marker an unfinished apply left, if any, both read under radosgwConfMu.
+func readRGWState() ([]byte, *rgwPendingApply, error) {
+	radosgwConfMu.Lock()
+	defer radosgwConfMu.Unlock()
+	current, err := os.ReadFile(rgwConfPath())
+	if err != nil && !os.IsNotExist(err) {
+		return nil, nil, fmt.Errorf("%w: cannot read RGW configuration: %w", ErrPlacementOperationFailed, err)
+	}
+	pending, err := readPendingApply()
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", ErrPlacementOperationFailed, err)
+	}
+	return current, pending, nil
+}
+
+// rgwLeafDER returns the first parsed certificate's DER bytes from a PEM
+// bundle, skipping non-certificate blocks. It reports false if none is valid.
+func rgwLeafDER(bundle []byte) ([]byte, bool) {
+	for len(bundle) > 0 {
+		block, rest := pem.Decode(bundle)
+		if block == nil {
+			return nil, false
+		}
+		if block.Type == "CERTIFICATE" {
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, false
+			}
+			return cert.Raw, true
+		}
+		bundle = rest
+	}
+	return nil, false
+}
+
+// pendingApplyCompleted reports whether a leftover marker is stale. A served
+// leaf can prove the current bundle is active only when the previous bundle
+// had a different leaf; chain-only changes remain indistinguishable. The
+// caller must not hold radosgwConfMu: the probe can take seconds.
+func pendingApplyCompleted(current []byte, pending *rgwPendingApply, wasActive bool) bool {
+	if pending == nil || !wasActive {
+		return false
+	}
+	previousCert, _ := rgwConfTLSPaths([]byte(*pending.PreviousConfig))
+	currentCert, _ := rgwConfTLSPaths(current)
+	if currentCert == "" || currentCert == previousCert {
+		return false
+	}
+	previousPEM, err := os.ReadFile(previousCert)
+	if err != nil {
+		return false
+	}
+	previousLeaf, ok := rgwLeafDER(previousPEM)
+	if !ok {
+		return false
+	}
+	certPEM, err := os.ReadFile(currentCert)
+	if err != nil {
+		return false
+	}
+	currentLeaf, ok := rgwLeafDER(certPEM)
+	if !ok || bytes.Equal(previousLeaf, currentLeaf) {
+		return false
+	}
+	port, sslPort, err := rgwConfPorts(current)
+	if err != nil {
+		return false
+	}
+	spec := rgwFrontendSpec{port: port, sslPort: sslPort, ssl: true, certPEM: certPEM}
+	for attempt := 1; ; attempt++ {
+		err = checkRGWFrontendFunc(spec)
+		if err == nil {
+			return true
+		}
+		if attempt == 3 {
+			return false
+		}
+		time.Sleep(rgwPendingProbeInterval)
+	}
+}
+
 type rgwRollback struct {
 	confPath        string
 	prevConf        []byte
@@ -443,17 +532,34 @@ func applyRGWFrontend(spec rgwFrontendSpec, monitors []string, restartOnChange b
 		return nil, err
 	}
 
-	// Lock radosgw.conf, then read it and any marker an unfinished apply left.
+	// Read radosgw.conf and any marker an unfinished apply left. The marker is
+	// normally the rollback target. Only differing leaves let a gateway probe
+	// prove a manual restart made it stale. The probe dials the gateway, so
+	// radosgw.conf stays unlocked while it runs.
+	current, pending, err := readRGWState()
+	if err != nil {
+		return nil, err
+	}
+	completed := pendingApplyCompleted(current, pending, wasActive)
+
+	// Lock radosgw.conf and read it again: the monitor line may have been
+	// refreshed while the probe ran. The frontend line and the marker cannot
+	// have changed, every writer of them holds serviceStartMu.
 	radosgwConfMu.Lock()
 	current, readErr := os.ReadFile(rgwConfPath())
 	if readErr != nil && !os.IsNotExist(readErr) {
 		radosgwConfMu.Unlock()
 		return nil, fmt.Errorf("%w: cannot read RGW configuration: %w", ErrPlacementOperationFailed, readErr)
 	}
-	pending, err := readPendingApply()
-	if err != nil {
-		radosgwConfMu.Unlock()
-		return nil, fmt.Errorf("%w: %w", ErrPlacementOperationFailed, err)
+	if completed {
+		// The gateway serves what the config on disk names, so that config,
+		// not the marker, is what a rollback returns to.
+		err = removeIgnoreMissing(rgwPendingApplyPath())
+		if err != nil {
+			radosgwConfMu.Unlock()
+			return nil, fmt.Errorf("%w: cannot clear a completed RGW apply: %w", ErrPlacementOperationFailed, err)
+		}
+		pending = nil
 	}
 
 	// What differs: the frontend line, the pair on disk, or an unfinished apply?
@@ -565,7 +671,7 @@ func checkRGWReady(spec rgwFrontendSpec) error {
 	for {
 		err := checkRGWActiveFunc()
 		if err == nil {
-			err = checkRGWFrontend(spec)
+			err = checkRGWFrontendFunc(spec)
 		}
 		if err == nil || time.Now().After(deadline) {
 			return err
