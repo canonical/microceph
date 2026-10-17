@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/spf13/afero"
 	"golang.org/x/sys/unix"
@@ -231,6 +232,17 @@ func checkLUKSDeviceLabels(devicePath string) (bool, error) {
 	var exitError *exec.ExitError
 	if !errors.As(err, &exitError) || exitError.ExitCode() != 1 {
 		return false, fmt.Errorf("cannot inspect BlueStore labels on %s: %w", devicePath, err)
+	}
+	// Require no-label diagnostics: exit 1 and empty JSON also occur on probe failures.
+	var runError shared.RunError
+	if !errors.As(err, &runError) || runError.StdErr() == nil {
+		return false, fmt.Errorf("missing BlueStore probe diagnostics for %s: %w", devicePath, err)
+	}
+	diagnostics := strings.Split(strings.TrimSpace(runError.StdErr().String()), "\n")
+	if len(diagnostics) != 2 ||
+		!strings.HasSuffix(diagnostics[0], " -1 bluestore("+devicePath+") No valid bdev label found") ||
+		diagnostics[1] != "unable to read label for "+devicePath+": (2) No such file or directory" {
+		return false, fmt.Errorf("cannot establish absence of BlueStore labels on %s: %w", devicePath, err)
 	}
 	// With no labels, show-label exits 1 and emits {"<device>": {}}.
 	// A missing executable, invalid JSON or missing device result must not
