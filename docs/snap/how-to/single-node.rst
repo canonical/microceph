@@ -4,7 +4,7 @@ How to install MicroCeph on a single node
 =========================================
 
 .. The note below is only visible when viewed through MicroCloud's docs site:
-   https://documentation.ubuntu.com/microcloud/latest/microceph/
+   https://canonical.com/microcloud/docs/latest/microceph/
 
 .. only:: integrated
 
