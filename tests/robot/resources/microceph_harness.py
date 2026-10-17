@@ -1629,6 +1629,19 @@ class microceph_harness:
             raise AssertionError(f"cloud-init failed in {vm_name}: {res.stderr}")
         logger.console(f"[setup] VM {vm_name} ready.")
 
+    def restart_outer_test_vm(self):
+        """Restart only this suite's VM and verify a new boot after agent recovery."""
+        before = self.run_in_vm_and_check("cat /proc/sys/kernel/random/boot_id").stdout.strip()
+        vm = self._outer_vm()
+        result = self._exec(["lxc", "restart", vm], 180)
+        if result.rc != 0:
+            raise AssertionError(f"Failed to restart {vm}: {result.stderr}")
+        self.wait_for_vm_agent(vm)
+        after = self.run_in_vm_and_check("cat /proc/sys/kernel/random/boot_id").stdout.strip()
+        if after == before:
+            raise AssertionError(f"Restart of {vm} did not change boot ID")
+        return after
+
     def _copy_files_to_vm(self, manifest):
         """Pushes each (src_rel_to_repo, dest_on_vm, chmod_x) entry of *manifest* into the outer VM."""
         repo, vm = self._repo_root(), self._outer_vm()
