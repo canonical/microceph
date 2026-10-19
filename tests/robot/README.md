@@ -93,6 +93,44 @@ state in `/var/snap/vaultlocker/common/microceph-ci/reboot-state.json` inside th
 VM. Delete the VM when finished. This is not a Juju/charm, HA or cross-model test;
 the test Vault shares the VM and starts sealed after reboot.
 
+## Native SMB lifecycle
+
+```bash
+tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-tests \
+    --variable SMB_SNAPD_CHANNEL:latest/candidate
+```
+
+Run the **whole ordered suite**. Seven cases cover clustered deployment, real
+password-authenticated put/get and cross-gateway reads (plus wrong-password denial),
+endpoint refresh/no-op, retirement/rejoin, daemon restart, ordinary VM reboot and
+independent gateways with scoped local purge. Reboot recovery never starts a role
+or re-enables a placement. A prior failure remains failed even if later, independent
+mode tests can run. Missing deployment prerequisites are reported as skips, not passes.
+
+This suite creates three **real Ubuntu 26.04 VMs**, not nested containers; VM0 also
+runs `smbclient`. Each VM has 2 vCPU, 3 GiB RAM, a 20 GiB root disk and a dedicated
+4 GiB block volume. Before allocation it requires 50 GiB storage/4 GiB memory
+headroom (initially at least 122 GiB free in the LXD pool and 13 GiB available RAM).
+Use a sufficiently large pool; CI uses the xlarge runner with the `dir` backend,
+not LXD's small default loop pool. `SMB_STORAGE_POOL` selects a pre-existing pool.
+The local LXD remote must use the default project. No existing VM/profile is altered.
+
+Exactly one supplied snap is required and its SHA256 is checked in every VM; there
+is no store-snap fallback. The candidate currently needs snapd >= 2.78, hence the
+**guest-only** candidate channel override above. No host MicroCeph installation or
+AppArmor profile is changed. Credentials remain in private guest files (a temporary
+cluster-join token copy is also private); status and failure diagnostics go into the
+normal Robot artifacts. Allocation names, owner tags and the snap hash are logged.
+Teardown deletes only the named/tagged resources; foreign tags or attached volumes
+fail closed. Installation/network helpers may retry known infrastructure failures,
+but SMB placement, resource updates, retirement and reboot are issued only once.
+
+Dry-run checks keyword resolution, not installed behavior:
+
+```bash
+tox -e robot -- --dryrun --test-suite smb-tests
+```
+
 ## Host resource guide
 
 Each suite runs sequentially. Peak resource usage per suite (not concurrent):
@@ -102,6 +140,7 @@ Each suite runs sequentially. Peak resource usage per suite (not concurrent):
 | Single-node               | 4    | 6 GB | 50 GB | ~10 min         |
 | Multi-node (4 containers) | 4    | 6 GB | 50 GB | ~20 min         |
 | Replication (8 containers)| 4    | 6 GB | 50 GB | ~30 min         |
+| Native SMB (3 VMs)        | 6    | 9 GiB | 72 GiB + headroom | Not yet measured |
 
 ## Suite names
 
@@ -120,6 +159,7 @@ multi-node-tests                             upgrade-squid-tests
 multi-node-tests-with-custom-microceph-ip    vaultlocker-test
 nfs-multinode-test                           wal-db-tests
 nfs-test                                    wiping-test
+smb-tests
 ```
 
 ## Harness conventions

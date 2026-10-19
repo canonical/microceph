@@ -81,6 +81,184 @@ def test_stop_named_vm_requires_confirmed_offline_state(monkeypatch, result):
 
 
 # ---------------------------------------------------------------------------
+# Owned VM launch (no pre-existing deletion or application retries).
+# ---------------------------------------------------------------------------
+
+def test_owned_vm_launch_tags_before_start_and_attaches_persistent_disk(monkeypatch):
+    h = H()
+    assert callable(getattr(h, "launch_owned_test_vm", None)), "missing owned VM lifecycle primitive"
+    calls = []
+    def execute(argv, timeout):
+        calls.append(argv)
+        return _Res(0, "", "")
+    monkeypatch.setattr(h, "_exec", execute)
+    monkeypatch.setattr(h, "wait_for_vm_agent", lambda name: None)
+    h.launch_owned_test_vm("test-vm", "owner-token", data_volume="test-osd")
+    init = next(argv for argv in calls if argv[:2] == ["lxc", "init"])
+    assert "user.microceph-test-owner=owner-token" in init
+    assert "--vm" in init and "local:test-vm" in init
+    attach = next(argv for argv in calls if argv[:4] == ["lxc", "config", "device", "add"])
+    assert "source=test-osd" in attach and "pool=default" in attach
+    assert calls.index(attach) < next(i for i, argv in enumerate(calls) if argv[:2] == ["lxc", "start"])
+    assert not any("delete" in argv for argv in calls)
+
+
+def test_owned_vm_launch_refuses_existing_or_unknown_state(monkeypatch):
+    import pytest
+    for result in (_Res(0, "test-vm\n", ""), _Res(1, "", "unavailable")):
+        h = H()
+        assert callable(getattr(h, "launch_owned_test_vm", None)), "missing owned VM lifecycle primitive"
+        calls = []
+        def execute(argv, timeout):
+            calls.append(argv)
+            return result
+        monkeypatch.setattr(h, "_exec", execute)
+        with pytest.raises(AssertionError):
+            h.launch_owned_test_vm("test-vm", "owner-token")
+        assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# SMB integration observations and ownership (no Robot run context required).
+# ---------------------------------------------------------------------------
+
+def _smb_module():
+    import importlib
+    spec = importlib.util.find_spec("smb_ops")
+    assert spec is not None, "missing SMB area library"
+    return importlib.import_module("smb_ops")
+
+
+def _smb_snapshot(node="node0", clustered=True):
+    roles = {r: {"ActiveState": "active", "MainPID": str(i + 10),
+                 "ExecMainStartTimestampMonotonic": str(i + 100)}
+             for i, r in enumerate(("smbd", "smbmetrics", "ctdbd", "ctdb-nodes", "daemon"))}
+    if not clustered:
+        for role in ("ctdbd", "ctdb-nodes"):
+            roles[role]["ActiveState"] = "inactive"
+            roles[role]["MainPID"] = "0"
+    return {"node": node, "owner": "robot-smb", "status": {"cluster_id": "robot-smb", "ready": True, "stop_requested": False},
+            "context": {"clustered": clustered, "smb_port": 1445, "metrics_port": 19922},
+            "applied": True, "pending": False, "applied_mtime": 123, "boot_id": "boot-a", "roles": roles}
+
+
+def test_smb_readiness_requires_owner_applied_error_free_roles():
+    import copy
+    m = _smb_module()
+    s = _smb_snapshot()
+    assert m.snapshot_ready(s, "robot-smb", 1445, True)
+    for field, value in (("owner", "other"), ("applied", False), ("pending", True), ("status", None)):
+        bad = copy.deepcopy(s); bad[field] = value
+        assert not m.snapshot_ready(bad, "robot-smb", 1445, True)
+    bad = copy.deepcopy(s); bad["status"]["error"] = "local update failed"
+    assert not m.snapshot_ready(bad, "robot-smb", 1445, True)
+    bad = copy.deepcopy(s); bad["roles"]["ctdbd"]["ActiveState"] = "failed"
+    assert not m.snapshot_ready(bad, "robot-smb", 1445, True)
+    bad = copy.deepcopy(s); bad["roles"]["smbmetrics"]["MainPID"] = ""
+    assert not m.snapshot_ready(bad, "robot-smb", 1445, True)
+    assert not m.snapshot_ready(s, "robot-smb", 2445, True)
+    assert m.snapshot_ready(_smb_snapshot(clustered=False), "robot-smb", 1445, False)
+    assert not m.snapshot_ready(s, "robot-smb", 1445, False)
+
+
+def test_smb_stability_never_hides_a_transient_error_or_restart():
+    import copy
+    m = _smb_module()
+    before = [_smb_snapshot("a"), _smb_snapshot("b")]
+    assert m.observations_stable(before, [copy.deepcopy(before)])
+    assert not m.observations_stable(before, [])
+    assert not m.observations_stable(before, [[before[0]]])
+    for mutate in (lambda s: s[0]["status"].update(error="failed"),
+                   lambda s: s[0]["roles"]["smbd"].update(MainPID="999"),
+                   lambda s: s[0].update(applied_mtime=456)):
+        bad = copy.deepcopy(before); mutate(bad)
+        assert not m.observations_stable(before, [bad, copy.deepcopy(before)])
+
+
+def test_smb_owned_resources_refuse_foreign_tags_and_ignore_unlisted_names():
+    import pytest
+    m = _smb_module()
+    rows = [{"name": "mine", "config": {"user.microceph-test-owner": "token"}},
+            {"name": "unrelated", "config": {}}]
+    assert m.owned_resources(rows, ["mine", "absent"], "token") == ["mine"]
+    with pytest.raises(AssertionError):
+        m.owned_resources(rows, ["unrelated"], "token")
+
+
+def test_smb_snapshot_parser_preserves_real_control_observations():
+    m = _smb_module()
+    assert callable(getattr(m, "parse_snapshot", None)), "missing raw SMB snapshot parser"
+    raw = {"api": json.dumps({"metadata": {"cluster_id": "robot-smb", "ready": True}}),
+           "services": "Id=snap.microceph.smbd.service\nMainPID=12\nActiveState=active\nExecMainStartTimestampMonotonic=99\n",
+           "owner": "robot-smb"}
+    parsed = m.parse_snapshot(json.dumps(raw), "node0")
+    assert parsed["node"] == "node0" and parsed["status"]["ready"]
+    assert parsed["roles"]["smbd"]["MainPID"] == "12"
+    raw["api"] = "interrupted response"
+    assert m.parse_snapshot(json.dumps(raw), "node0")["status"] is None
+
+
+def test_smb_guest_resources_and_redaction_are_explicit():
+    import smb_guest
+    docs = smb_guest.resource_documents(["192.0.2.1", "192.0.2.2", "192.0.2.3"], "PRIVATE-PASSWORD")
+    assert docs["clustered"]["resources"][1]["custom_ports"] == {"smb": 1445, "smbmetrics": 19922}
+    assert docs["refresh"]["custom_ports"] == {"smb": 2445, "smbmetrics": 29922}
+    assert docs["nonclustered"]["resources"][0]["custom_ports"] == {"smb": 3445, "smbmetrics": 39922}
+    assert docs["nonclustered"]["resources"][0]["clustering"] == "never"
+    raw = json.dumps({"success": False, "results": [{"resource": {"password": "PRIVATE-PASSWORD"}, "msg": "rejected PRIVATE-PASSWORD"}]})
+    result = smb_guest.safe_apply_result(0, raw, "PRIVATE-PASSWORD", ["PRIVATE-PASSWORD"])
+    assert result["success"] is False and "PRIVATE-PASSWORD" not in json.dumps(result)
+
+
+def test_smb_area_instantiates_without_robot_and_never_retries_mutations():
+    m = _smb_module()
+    assert callable(getattr(m, "smb_ops", None)), "missing SMB Robot class"
+    library = m.smb_ops()
+    calls = []
+    class Node:
+        name = "node0"
+        def command(self, *args, **kwargs):
+            calls.append(args)
+            return _Res(1, "", "first failure")
+    library.nodes = [Node()]
+    result = library.smb_node_command(0, "microceph", "enable", "smb", "--cluster-id", "robot-smb")
+    assert result.rc == 1 and len(calls) == 1
+
+
+def test_smb_fixture_retirement_never_retries_or_touches_other_owners(monkeypatch):
+    import pytest
+    m = _smb_module()
+    library = m.smb_ops()
+    assert callable(getattr(library, "retire_smb_fixture_placements", None)), "missing explicit fixture retirement"
+    calls = []
+    class Node:
+        name = "node0"
+        def command(self, *args, **kwargs):
+            calls.append(args)
+            return _Res(0, "", "")
+    library.nodes = [Node()]
+    monkeypatch.setattr(library, "smb_snapshot", lambda *args: {"owner": "other-cluster"})
+    with pytest.raises(AssertionError):
+        library.retire_smb_fixture_placements()
+    assert calls == []
+    monkeypatch.setattr(library, "smb_snapshot", lambda *args: {"owner": "robot-smb"})
+    library.retire_smb_fixture_placements()
+    assert len(calls) == 1 and calls[0] == ("microceph", "disable", "smb", "--cluster-id", "robot-smb")
+
+
+def test_smb_private_shared_state_compares_keys_without_logging_them():
+    m = _smb_module()
+    resources = '{"resources":[{"resource_type":"ceph.smb.cluster","cluster_id":"robot-never"}]}'
+    a = m.shared_state(resources, '{"auth_dump":[{"entity":"client.smb","key":"PRIVATE-KEY","caps":{"mon":"allow r"}}]}')
+    b = m.shared_state(resources, '{"auth_dump":[{"entity":"client.smb","key":"OTHER-KEY","caps":{"mon":"allow r"}}]}')
+    assert a != b and a == m.shared_state(resources, '{"auth_dump":[{"caps":{"mon":"allow r"},"key":"PRIVATE-KEY","entity":"client.smb"}]}')
+    assert "PRIVATE-KEY" not in repr(a) and "PRIVATE-KEY" not in str(a)
+    import pytest
+    with pytest.raises(AssertionError):
+        m.shared_state('{"resources":[]}', '{"auth_dump":[{"entity":"client.smb","key":"PRIVATE","caps":{}}]}')
+
+
+# ---------------------------------------------------------------------------
 # _csv_lists_instance
 # ---------------------------------------------------------------------------
 

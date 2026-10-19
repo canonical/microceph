@@ -1619,6 +1619,39 @@ class microceph_harness:
             between=delete,
         )
 
+    def launch_owned_test_vm(self, vm_name, owner, image="ubuntu:26.04",
+                             disk_size="20GiB", memory="3GiB", cpu=2,
+                             storage_pool="default", data_volume=""):
+        """Create one tagged VM without deleting/retrying an existing allocation.
+
+        Optional data_volume is an already-created persistent block volume. The
+        caller owns tagged-resource teardown, including a partially failed start.
+        """
+        res = self._exec(["lxc", "list", "local:", vm_name, "--project", "default",
+                          "--format", "csv", "-c", "n"], 30)
+        if res.rc != 0 or self._csv_lists_instance(res.stdout, vm_name):
+            raise AssertionError(f"Refusing VM launch: {vm_name} exists or its state is unknown")
+        if not owner:
+            raise AssertionError("An explicit test owner is required")
+        target = f"local:{vm_name}"
+        commands = [["lxc", "init", image, target, "--vm", "--project", "default",
+                     "--storage", storage_pool, "-c", f"limits.cpu={cpu}",
+                     "-c", f"limits.memory={memory}", "-d", f"root,size={disk_size}",
+                     "-c", f"user.microceph-test-owner={owner}"]]
+        if data_volume:
+            commands.append(["lxc", "config", "device", "add", target, "test-data", "disk",
+                             "--project", "default", f"pool={storage_pool}", f"source={data_volume}"])
+        commands.append(["lxc", "start", target, "--project", "default"])
+        for argv in commands:
+            res = self._exec(argv, 300)
+            if res.rc != 0:
+                raise AssertionError(f"Owned VM setup failed for {vm_name}: {res.stderr}")
+        self.wait_for_vm_agent(target)
+        res = self._exec(["lxc", "exec", "-n", target, "--project", "default", "--",
+                          "cloud-init", "status", "--wait"], 300)
+        if res.rc != 0:
+            raise AssertionError(f"cloud-init failed in {vm_name}: {res.stderr}")
+
     def launch_outer_test_vm(self, vm_name=None, disk_size=None, enable_nesting=False):
         """Launches the LXD VM used as the test boundary, deleting any pre-existing instance."""
         vm_name = vm_name or BuiltIn().get_variable_value("${OUTER_VM}", "microceph-test-vm")
