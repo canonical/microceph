@@ -14,39 +14,19 @@ import (
 	"github.com/canonical/microceph/microceph/common"
 )
 
-// smbConfinedReadinessRunner rejects the exact invocation independently denied
-// in the installed daemon profile. It does not translate snap run into Python
-// or simulate AppArmor enforcement; direct helper calls execute real processes.
-type smbConfinedReadinessRunner struct {
-	t *testing.T
-}
+// smbConfinedReadinessRunner rejects every subprocess: CTDB readiness belongs
+// to the daemon's direct Go socket probe, not snap run or daemon self-execution.
+type smbConfinedReadinessRunner struct{ t *testing.T }
 
 func (r smbConfinedReadinessRunner) RunCommand(name string, args ...string) (string, error) {
 	return r.RunCommandContext(context.Background(), name, args...)
 }
-
-func (r smbConfinedReadinessRunner) RunCommandContext(ctx context.Context, name string, args ...string) (string, error) {
-	if name == "snap" {
-		require.Equal(r.t, []string{"run", "microceph.ctdb", "ready", "ctdbd"}, args)
-		return "", errors.New("installed daemon profile denies execution of snapd")
-	}
-	require.Equal(r.t, filepath.Join(os.Getenv("SNAP"), "bin/python3"), name)
-	return (common.RunnerImpl{}).RunCommandContext(ctx, name, args...)
+func (r smbConfinedReadinessRunner) RunCommandContext(_ context.Context, name string, args ...string) (string, error) {
+	r.t.Errorf("daemon readiness executed subprocess %s %q", name, args)
+	return "", errors.New("subprocess forbidden")
 }
 
-func TestSMBReadinessExecutesDirectHelperWithRealSocket(t *testing.T) {
-	python := os.Getenv("MICROCEPH_SMB_TEST_PYTHON")
-	if python == "" {
-		t.Skip("set MICROCEPH_SMB_TEST_PYTHON and PYTHONPATH for real native helper")
-	}
-	snap := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(snap, "bin"), 0700))
-	require.NoError(t, os.MkdirAll(filepath.Join(snap, "smb"), 0700))
-	require.NoError(t, os.Symlink(python, filepath.Join(snap, "bin/python3")))
-	native, err := filepath.Abs("../../snapcraft/smb/native.py")
-	require.NoError(t, err)
-	require.NoError(t, os.Symlink(native, filepath.Join(snap, "smb/native.py")))
-	t.Setenv("SNAP", snap)
+func TestSMBReadinessUsesDirectGoWithRealSocket(t *testing.T) {
 	// Unix pathname length is limited; Go's nested test temp path is too long.
 	base, err := os.MkdirTemp("", "smb-ready-")
 	require.NoError(t, err)
@@ -61,8 +41,8 @@ func TestSMBReadinessExecutesDirectHelperWithRealSocket(t *testing.T) {
 	listener, err := net.Listen("unix", filepath.Join(root, "ctdb/run/native-ready.socket"))
 	require.NoError(t, err)
 	defer listener.Close()
-	// A readiness-only peer, not a CTDB daemon substitute. Python integration
-	// tests separately require the peer to run fresh real CLI invocations.
+	// A readiness-only peer, not a CTDB daemon substitute. Go monitor tests
+	// separately require the peer to run fresh real CLI invocations.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -72,13 +52,13 @@ func TestSMBReadinessExecutesDirectHelperWithRealSocket(t *testing.T) {
 			_ = conn.Close()
 		}
 	}()
-	err = smbNativeCommand(context.Background(), "ready", root, "ctdbd")
+	err = smbReadyNative(context.Background(), root, "ctdbd")
 	_ = listener.Close()
 	<-done
-	require.NoError(t, err, "readiness must not re-enter snap run from the daemon")
+	require.NoError(t, err, "readiness must not execute a helper from the daemon")
 	// The same direct path serves every caller, including refresh health-only
 	// retries. A stale path, EOF or cancellation must never confirm readiness.
-	require.Error(t, smbNativeCommand(context.Background(), "ready", root, "ctdb-nodes"))
+	require.Error(t, smbReadyNative(context.Background(), root, "ctdb-nodes"))
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	listener, err = net.Listen("unix", filepath.Join(root, "ctdb/run/native-ready.socket"))

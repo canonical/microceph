@@ -62,8 +62,8 @@ type smbCandidate struct {
 
 func (c smbCandidate) configurationFingerprint() string {
 	c.CTDB = nil
-	// Python publication sorts JSON keys. Compare semantic source values rather
-	// than RawMessage whitespace/order introduced at the compiler boundary.
+	// Retained Python and current Go publications can differ in JSON encoding.
+	// Compare semantic source values, not RawMessage whitespace/key ordering.
 	raw, _ := json.Marshal(c)
 	var value any
 	_ = json.Unmarshal(raw, &value)
@@ -351,11 +351,14 @@ func (s smbSpec) resolveEndpoint(ctx context.Context, state interfaces.StateInte
 }
 
 type smbLaunch struct {
-	Proxy           bool   `json:"proxy"`
-	Clustered       bool   `json:"clustered"`
-	FrontendAddress string `json:"frontend_address"`
-	SMBPort         int    `json:"smb_port"`
-	MetricsPort     int    `json:"metrics_port"`
+	Proxy           bool           `json:"proxy"`
+	Clustered       bool           `json:"clustered"`
+	FrontendAddress string         `json:"frontend_address"`
+	SMBPort         int            `json:"smb_port"`
+	MetricsPort     int            `json:"metrics_port"`
+	CustomDNS       bool           `json:"custom_dns"`
+	CTDBPNN         *uint64        `json:"ctdb_pnn,omitempty"`
+	DataChecks      []smbDataCheck `json:"data_checks"`
 }
 
 // serviceInfo exposes only successfully applied nonsecret facts. configURI is
@@ -385,7 +388,7 @@ func prepareSMBProjection(ctx context.Context, s interfaces.StateInterface, cand
 	if err != nil {
 		return launch, nil, err
 	}
-	err = smbNativeCommand(ctx, "compile", root)
+	err = compileSMBNativeFunc(ctx, root, candidate)
 	if err != nil {
 		return launch, nil, err
 	}

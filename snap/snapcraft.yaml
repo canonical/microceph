@@ -123,6 +123,8 @@ apps:
   smbd:
     command: commands/smbd.start
     daemon: simple
+    # Boot-time CTDB readiness failures must not consume the default 5/10s burst.
+    restart-delay: 10s
     install-mode: disable
     stop-mode: sigterm-all
     plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control, smb-identity]
@@ -632,12 +634,16 @@ parts:
       go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microceph" -ldflags "-X 'github.com/canonical/microceph/microceph/version.version=${MC_VERSION}'" ./cmd/microceph
       go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 -ldflags "-X 'github.com/canonical/microceph/microceph/version.version=${MC_VERSION}'" ./cmd/microcephd
 
+      go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microceph-smb-runtime" -tags=libsqlite3 ./cmd/microceph-smb-runtime
+
       # Strip binaries
       strip -s "${CRAFT_PART_INSTALL}/bin/microceph"
       strip -s "${CRAFT_PART_INSTALL}/bin/microcephd"
+      strip -s "${CRAFT_PART_INSTALL}/bin/microceph-smb-runtime"
     prime:
       - bin/microceph
       - bin/microcephd
+      - bin/microceph-smb-runtime
 
   nfs-ganesha:
     plugin: nil

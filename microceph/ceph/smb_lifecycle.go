@@ -154,10 +154,10 @@ func smbSnapOps(root string) smbAppOps {
 			for {
 				err := waitCtx.Err()
 				if err == nil {
-					err = smbNativeCommand(waitCtx, "ready", root, role)
+					err = smbReadyNativeFunc(waitCtx, root, role)
 				}
 				if err == nil {
-					// A helper response racing cancellation is not fresh health.
+					// A probe response racing cancellation is not fresh health.
 					return waitCtx.Err()
 				}
 				select {

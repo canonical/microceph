@@ -58,7 +58,7 @@ func SMBLocalStatus(ctx context.Context) (types.SMBStatus, error) {
 		status.Error = "local configuration update is not confirmed applied"
 	}
 	if !status.StopRequested {
-		status.Ready = smbNativeCommand(ctx, "ready", root, "smbd") == nil
+		status.Ready = smbReadyNativeFunc(ctx, root, "smbd") == nil
 	}
 	return status, nil
 }
@@ -75,18 +75,29 @@ func startSMBUpdater(ctx context.Context, s interfaces.StateInterface) {
 				return
 			case <-ticker.C:
 			}
-			queryCtx, cancel := context.WithTimeout(ctx, smbUpdateTimeout)
-			if s.ClusterState().Database().IsOpen(queryCtx) == nil {
-				serviceStartMu.Lock()
-				err := refreshSMBLocked(queryCtx, s)
-				if err != nil {
-					logger.Warn("SMB local update failed; inspect targeted service status")
-				}
-				serviceStartMu.Unlock()
+			err := runSMBUpdate(ctx, s)
+			if err != nil && ctx.Err() == nil {
+				logger.Warn("SMB local update failed; inspect targeted service status")
 			}
-			cancel()
 		}
 	}()
+}
+
+func runSMBUpdate(ctx context.Context, s interfaces.StateInterface) error {
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+	// The work budget must not expire while a placement holds the lock.
+	// Shutdown while queued is not a failed configuration application.
+	err := ctx.Err()
+	if err != nil {
+		return err
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, smbUpdateTimeout)
+	defer cancel()
+	if s.ClusterState().Database().IsOpen(queryCtx) != nil {
+		return nil
+	}
+	return refreshSMBLocked(queryCtx, s)
 }
 
 // refreshSMBLocked only updates an already owned, configured deployment. Call
@@ -192,7 +203,7 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		// Health is observation, not an input change or permission to reimport
 		// SAM/start services. snapd and CTDB own ordinary process recovery.
 		for _, role := range roles {
-			err = smbNativeCommand(ctx, "ready", root, role)
+			err = smbReadyNativeFunc(ctx, root, role)
 			if err != nil {
 				diagnostic = smbUnreadyDiagnostic
 				return err
@@ -242,7 +253,7 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		if err != nil {
 			return err
 		}
-		err = smbNativeCommand(ctx, "publish-config", root)
+		err = publishSMBNativeFunc(ctx, root, true)
 		if err != nil {
 			return err
 		}
@@ -263,7 +274,7 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		current, roles = launch, nextRoles
 	}
 	for _, role := range roles {
-		err = smbNativeCommand(ctx, "ready", root, role)
+		err = smbReadyNativeFunc(ctx, root, role)
 		if err != nil {
 			return err
 		}

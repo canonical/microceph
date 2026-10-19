@@ -19,13 +19,25 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(app["install-mode"], "disable")
             wrapper = ROOT / "snapcraft" / app["command"]
             self.assertTrue(wrapper.exists())
-            self.assertIn("launch", wrapper.read_text())
+            self.assertIn(f'exec "$SNAP/bin/microceph-smb-runtime" {role} "$SNAP_COMMON/smb"', wrapper.read_text())
+            self.assertNotIn("native.py", wrapper.read_text())
             self.assertIn(role, wrapper.read_text())
             self.assertNotIn("snapctl", wrapper.read_text())
             self.assertNotIn("smb-identity", app["plugs"] if role in ("ctdbd", "ctdb-nodes") else [])
         self.assertNotIn("firewall-control", recipe["plugs"])
         self.assertEqual(recipe["plugs"]["smb-identity"]["user-identity-switching"], True)
         self.assertIn("dirty worktree detected", recipe["parts"]["microceph"]["override-build"])
+        part = recipe["parts"]["microceph"]
+        self.assertIn('./cmd/microceph-smb-runtime', part["override-build"])
+        self.assertIn('strip -s "${CRAFT_PART_INSTALL}/bin/microceph-smb-runtime"', part["override-build"])
+        self.assertIn("bin/microceph-smb-runtime", part["prime"])
+        self.assertIn("./cmd/microceph-smb-runtime", (ROOT / "microceph/Makefile").read_text())
+        self.assertNotIn("microceph-smb-runtime", recipe["apps"])
+
+    def test_smb_boot_retries_do_not_exhaust_the_default_start_limit(self):
+        recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
+        self.assertEqual(recipe["apps"]["smbd"].get("restart-delay"), "10s")
+        self.assertEqual(recipe["apps"]["smbd"].get("restart-condition", "on-failure"), "on-failure")
 
     def test_ctdb_socket_grant_is_exact_and_only_for_daemon_and_metrics(self):
         recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
@@ -37,6 +49,40 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(consumers, {"daemon", "smbmetrics"})
         for name in consumers:
             self.assertNotIn("ctdb-run", recipe["apps"][name]["plugs"])
+
+    def test_ctdb_runtime_bind_rules_and_pinned_event_resources(self):
+        recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
+        self.assertNotIn("/run/ctdb", recipe["layout"])
+        self.assertNotIn("/var/run/ctdb", recipe["layout"])
+        self.assertEqual(recipe["plugs"]["ctdb-run"], {"interface": "system-files", "write": ["/run/ctdb"]})
+        consumers = {name for name, app in recipe["apps"].items() if "ctdb-run" in app.get("plugs", [])}
+        self.assertEqual(consumers, {"ctdbd", "ctdb-nodes", "ctdb", "smbd"})
+        for name in consumers:
+            self.assertIn("smb-mounts", recipe["apps"][name]["plugs"])
+            self.assertIn("network-control", recipe["apps"][name]["plugs"])
+        expected = {
+            "/etc/resolv.conf": "config/resolv.conf", "/run/systemd/resolve/stub-resolv.conf": "config/resolv.conf",
+            "/etc/passwd": "config/passwd", "/etc/group": "config/group", "/etc/nsswitch.conf": "config/nsswitch.conf",
+            "/etc/ctdb": "ctdb{,/}", "/run/ctdb": "ctdb/run{,/}", "/var/lib/ctdb": "ctdb{,/}",
+            "/etc/ceph/ceph.conf": "config/ctdb-recovery.conf",
+        }
+        rules = recipe["plugs"]["smb-mounts"]["mount"]
+        self.assertEqual(len(rules), len(expected))
+        for rule in rules:
+            self.assertEqual(rule["what"], "/var/snap/microceph/common/smb/*/" + expected[rule["where"]])
+            self.assertIn(set(rule["options"]), ({"bind"}, {"rw", "bind"}))
+            self.assertNotIn("type", rule)
+            self.assertNotIn("persistent", rule)
+        part = recipe["parts"]["native-smb"]
+        self.assertIn("libexec/ctdb/**", part["prime"])
+        self.assertIn("share/ctdb/**", part["prime"])
+        for name in ("functions", "notify.sh"):
+            self.assertEqual(part["organize"]["etc/ctdb/" + name], "share/ctdb/" + name)
+        self.assertEqual(recipe["layout"]["/usr/libexec/ctdb"]["symlink"], "$SNAP/libexec/ctdb")
+        for target in ("/etc/ctdb", "/var/lib/ctdb"):
+            self.assertEqual(recipe["layout"][target], {"type": "tmpfs"})
+        control = (ROOT / "snapcraft/commands/ctdb.start").read_text()
+        self.assertIn('microceph-smb-runtime" ctdb-control', control)
 
     def test_pinned_consumer_and_native_provider_closure(self):
         recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())

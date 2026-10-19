@@ -48,16 +48,6 @@ func (p *SMBServicePlacement) DbUpdate(ctx context.Context, s interfaces.StateIn
 func smbBase() string                 { return filepath.Join(os.Getenv("SNAP_COMMON"), "smb") }
 func smbRoot(clusterID string) string { return filepath.Join(smbBase(), clusterID) }
 
-func smbNativeCommand(ctx context.Context, command, root string, args ...string) error {
-	argv := []string{"-B", filepath.Join(os.Getenv("SNAP"), "smb", "native.py"), command, root}
-	argv = append(argv, args...)
-	_, err := common.ProcessExec.RunCommandContext(ctx, filepath.Join(os.Getenv("SNAP"), "bin", "python3"), argv...)
-	if err != nil {
-		return fmt.Errorf("native SMB %s failed; inspect private cluster diagnostics", command)
-	}
-	return nil
-}
-
 func smbWaitInactive(role string) error {
 	out, err := common.ProcessExec.RunCommand("snapctl", "services", "microceph."+role)
 	if err != nil {
@@ -275,7 +265,7 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	unchanged := string(applied) == candidate.fingerprint() && errors.Is(pendingErr, os.ErrNotExist)
 	ready := true
 	for _, role := range roles {
-		if smbNativeCommand(ctx, "ready", root, role) != nil {
+		if smbReadyNativeFunc(ctx, root, role) != nil {
 			ready = false
 			break
 		}
@@ -296,12 +286,12 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
-	err = smbNativeCommand(ctx, "publish", root)
+	err = publishSMBNativeFunc(ctx, root, false)
 	if err != nil {
 		return err
 	}
 	if launch.Clustered {
-		err = smbNativeCommand(ctx, "prepare-ctdb", root)
+		err = prepareSMBCTDBFilesFunc(ctx, root, os.Getenv("SNAP"))
 		if err != nil {
 			return err
 		}

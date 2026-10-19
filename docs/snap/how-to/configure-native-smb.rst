@@ -123,7 +123,7 @@ The nondefault ports and bind selectors above have source/compiler coverage;
 live listening and client I/O with those endpoint settings remain unqualified.
 
 Endpoint rules and updates
--------------------------
+--------------------------
 
 ``bind_addrs`` is an ordered list of alternatives, **not** simultaneous listeners.
 Each entry specifies exactly one ``address`` (IP literal) or ``network`` (CIDR
@@ -162,6 +162,27 @@ are not reported as successful applied endpoints.
 
 Credential-free observation and retirement
 ------------------------------------------
+
+The ``orch`` inventory commands require the separate ``microceph`` manager
+module and orchestrator backend. Enabling the upstream ``smb`` module does not
+select this backend. First inspect the current selection:
+
+.. code-block:: bash
+
+   sudo microceph.ceph orch status
+
+If no orchestrator is configured, enable and select the MicroCeph backend:
+
+.. code-block:: bash
+
+   sudo microceph.ceph mgr module enable microceph
+   sudo microceph.ceph orch set backend microceph
+
+Do not automatically replace a different backend that is already configured.
+This selection supplies observed MicroCeph inventory; it does not transfer SMB
+placement to upstream orchestration. Keep
+``mgr/smb/update_orchestration=false``. These inventory prerequisites are separate
+from native SMB serving.
 
 ``microceph.ceph orch ls --service_type smb`` reports unmanaged observed group
 placement in JSON or YAML, not a resource suitable for applying back to the SMB

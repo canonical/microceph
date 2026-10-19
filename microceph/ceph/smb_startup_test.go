@@ -28,6 +28,7 @@ type smbStartupRunner struct {
 	events           []string
 	active           map[string]bool
 	readyRoles       map[string]bool
+	startupErr       error
 	failure          string
 	cancel           context.CancelFunc
 	root             string
@@ -136,83 +137,13 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 		}
 		return "", os.WriteFile(args[len(args)-1], []byte(data), 0600)
 	}
+	if name == "/test-snap/bin/testparm" {
+		require.Equal(r.t, "--suppress-prompt", args[0])
+		require.Equal(r.t, filepath.Join(r.root, "config/next/config/smb.conf"), args[1])
+		return "", nil // Only the external validation command is intercepted.
+	}
 	if name == "/test-snap/bin/python3" {
-		command, root := args[2], args[3]
-		r.root = root
-		if r.refresh {
-			require.NotEqual(r.t, "prepare-ctdb", command, "refresh never prepares CTDB")
-			require.NotEqual(r.t, "publish", command, "refresh never uses full startup publication")
-		}
-		switch command {
-		case "compile":
-			raw, err := os.ReadFile(filepath.Join(root, "config/candidate.next.json"))
-			require.NoError(r.t, err)
-			var candidate smbCandidate
-			require.NoError(r.t, json.Unmarshal(raw, &candidate))
-			if r.nonclustered {
-				require.Nil(r.t, candidate.CTDB)
-			} else {
-				require.NotNil(r.t, candidate.CTDB)
-				require.Equal(r.t, r.expectedPNN, candidate.CTDB.Member.PNN)
-				require.Equal(r.t, "192.0.2.1", candidate.CTDB.Member.Node)
-				identity := r.expectedIdentity
-				if identity == "" {
-					identity = "1"
-				}
-				require.Equal(r.t, identity, candidate.CTDB.Member.Identity)
-				key, err := os.ReadFile(filepath.Join(root, "identity/recovery.keyring"))
-				require.NoError(r.t, err)
-				require.Contains(r.t, string(key), "[client.smb.cluster.alpha]")
-			}
-			r.events = append(r.events, "compile")
-			if r.refresh && r.torn {
-				r.changed = false
-			}
-			if r.failure == "compile" {
-				return "", errors.New("compile failed")
-			}
-			if r.python != "" {
-				return r.runNativeFiles(ctx, "compile", root)
-			}
-			require.NoError(r.t, os.MkdirAll(filepath.Join(root, "config/next/config"), 0700))
-			launch, err := json.Marshal(smbLaunch{Clustered: !r.nonclustered,
-				FrontendAddress: candidate.Endpoint.FrontendAddress, SMBPort: candidate.Endpoint.SMBPort, MetricsPort: candidate.Endpoint.MetricsPort})
-			require.NoError(r.t, err)
-			return "", os.WriteFile(filepath.Join(root, "config/next/config/context.json"), launch, 0600)
-		case "prepare-ctdb":
-			r.events = append(r.events, "prepare-ctdb")
-			if r.failure == "prepare" {
-				return "", errors.New("event preparation failed")
-			}
-			return "", nil
-		case "publish", "publish-config":
-			r.events = append(r.events, "publish")
-			if r.failure == "publish" {
-				return "", errors.New("publish failed")
-			}
-			if r.python != "" {
-				return r.runNativeFiles(ctx, command, root)
-			}
-			return "", nil
-		case "ready":
-			role := args[4]
-			if !r.active[role] || (r.unready && role == "smbd") {
-				return "", errors.New("not started")
-			}
-			r.events = append(r.events, "ready "+role)
-			if r.onReady != nil {
-				err := r.onReady(ctx, role)
-				if err != nil {
-					return "", err
-				}
-			}
-			if (r.failure == "readiness" && role == "ctdbd") || (r.failure == "monitor-readiness" && role == "ctdb-nodes") {
-				r.cancel()
-				return "", context.Canceled
-			}
-			r.readyRoles[role] = true
-			return "", nil
-		}
+		return r.runUpstreamBinding(ctx, args[2], args[3])
 	}
 	if name == "snapctl" {
 		role := strings.TrimPrefix(args[1], "microceph.")
@@ -272,6 +203,83 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 	return "", errors.New("unexpected command")
 }
 
+func (r *smbStartupRunner) compile(ctx context.Context, root string, candidate smbCandidate) error {
+	r.root = root
+
+	if r.nonclustered {
+		require.Nil(r.t, candidate.CTDB)
+	} else {
+		require.NotNil(r.t, candidate.CTDB)
+		require.Equal(r.t, r.expectedPNN, candidate.CTDB.Member.PNN)
+		require.Equal(r.t, "192.0.2.1", candidate.CTDB.Member.Node)
+		identity := r.expectedIdentity
+		if identity == "" {
+			identity = "1"
+		}
+		require.Equal(r.t, identity, candidate.CTDB.Member.Identity)
+		key, err := os.ReadFile(filepath.Join(root, "identity/recovery.keyring"))
+		require.NoError(r.t, err)
+		require.Contains(r.t, string(key), "[client.smb.cluster.alpha]")
+	}
+	r.events = append(r.events, "compile")
+	if r.refresh && r.torn {
+		r.changed = false
+	}
+	if r.failure == "compile" {
+		return errors.New("compile failed")
+	}
+	if r.python != "" {
+		return compileSMBNative(ctx, root, candidate)
+	}
+	require.NoError(r.t, os.MkdirAll(filepath.Join(root, "config/next/config"), 0700))
+	launch, err := json.Marshal(smbLaunch{Clustered: !r.nonclustered,
+		FrontendAddress: candidate.Endpoint.FrontendAddress, SMBPort: candidate.Endpoint.SMBPort, MetricsPort: candidate.Endpoint.MetricsPort})
+	require.NoError(r.t, err)
+	return os.WriteFile(filepath.Join(root, "config/next/config/context.json"), launch, 0600)
+}
+
+func (r *smbStartupRunner) prepareCTDB(ctx context.Context, root, snap string) error {
+	require.False(r.t, r.refresh, "refresh never prepares CTDB")
+
+	r.events = append(r.events, "prepare-ctdb")
+	if r.failure == "prepare" {
+		return errors.New("event preparation failed")
+	}
+	return nil
+}
+
+func (r *smbStartupRunner) publish(ctx context.Context, root string, configOnly bool) error {
+	require.True(r.t, !r.refresh || configOnly, "refresh never uses full publication")
+
+	r.events = append(r.events, "publish")
+	if r.failure == "publish" {
+		return errors.New("publish failed")
+	}
+	if r.python != "" {
+		return r.publishFiles(ctx, root, configOnly)
+	}
+	return nil
+}
+
+func (r *smbStartupRunner) ready(ctx context.Context, root, role string) error {
+	if !r.active[role] || (r.unready && role == "smbd") {
+		return errors.New("not started")
+	}
+	r.events = append(r.events, "ready "+role)
+	if r.onReady != nil {
+		err := r.onReady(ctx, role)
+		if err != nil {
+			return err
+		}
+	}
+	if (r.failure == "readiness" && role == "ctdbd") || (r.failure == "monitor-readiness" && role == "ctdb-nodes") {
+		r.cancel()
+		return context.Canceled
+	}
+	r.readyRoles[role] = true
+	return nil
+}
+
 func TestSMBClusteredNativeStartupSQLOrderAndCompensation(t *testing.T) {
 	for _, failure := range []string{"", "compile", "publish", "prepare", "start", "monitor-start", "samba-start", "readiness", "monitor-readiness", "record", "applied"} {
 		t.Run(failure, func(t *testing.T) {
@@ -280,49 +288,34 @@ func TestSMBClusteredNativeStartupSQLOrderAndCompensation(t *testing.T) {
 	}
 }
 
-// runNativeFiles crosses the compiler/publication process edge without replacing
-// their filesystem output. Only testparm is intercepted; no daemon is launched.
-func (r *smbStartupRunner) runNativeFiles(ctx context.Context, command, root string) (string, error) {
+// publishFiles uses the shared publisher; failures exercise real atomic writes.
+func (r *smbStartupRunner) publishFiles(ctx context.Context, root string, configOnly bool) error {
+	if r.failure == "publish-partial" {
+		// Exercise a real failed atomic rename after candidate.json publication.
+		path := filepath.Join(root, "config/passwd")
+		backup := path + ".test-retained"
+		require.NoError(r.t, os.Rename(path, backup))
+		require.NoError(r.t, os.Mkdir(path, 0700))
+		defer func() {
+			require.NoError(r.t, os.Remove(path))
+			require.NoError(r.t, os.Rename(backup, path))
+		}()
+	}
+	return publishSMBNative(ctx, root, configOnly)
+}
+
+func (r *smbStartupRunner) runUpstreamBinding(ctx context.Context, command, request string) (string, error) {
+	if r.failure == "binding" {
+		return "", errors.New("source-password-private")
+	}
+
 	native, err := filepath.Abs("../../snapcraft/smb/native.py")
 	if err != nil {
 		return "", err
 	}
-	const bridge = `
-import importlib.util
-import os
-from pathlib import Path
-import sys
-from unittest.mock import patch
-spec = importlib.util.spec_from_file_location("native_startup_bridge", sys.argv[1])
-native = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(native)
-root = Path(sys.argv[3])
-if sys.argv[2] == "compile":
-    with patch("subprocess.run") as testparm:
-        native.compile_files(root)
-    testparm.assert_called_once_with(
-        [os.environ["SNAP"] + "/bin/testparm", "--suppress-prompt", str(root / "config/next/config/smb.conf")],
-        check=True, stdout=-3, stderr=-3)
-elif sys.argv[2] == "publish":
-    native.publish(root)
-else:
-    if sys.argv[4] == "publish-partial":
-        original_write = native.atomic_write
-        def fail_mid_publication(path, data):
-            if path == root / "config/passwd":
-                raise OSError("injected local publication failure")
-            original_write(path, data)
-        with patch.object(native, "atomic_write", side_effect=fail_mid_publication):
-            native.publish_config(root)
-    else:
-        native.publish_config(root)
-`
-	cmd := exec.CommandContext(ctx, r.python, "-B", "-c", bridge, native, command, root, r.failure)
+	cmd := exec.CommandContext(ctx, r.python, "-B", native, command, request)
 	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		r.t.Logf("native %s: %s", command, out)
-	}
+	out, err := cmd.Output()
 	return string(out), err
 }
 
@@ -357,6 +350,11 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 	require.NoError(t, tx.Commit())
 	runner := &smbStartupRunner{t: t, db: db, active: map[string]bool{}, readyRoles: map[string]bool{}, failure: failure, cancel: cancel, python: python, nonclustered: !clustered}
 	oldRunner, oldNetwork, oldFetch := common.ProcessExec, common.Network, fetchConfigDb
+	oldCompile, oldPublish, oldPrepare, oldReady := compileSMBNativeFunc, publishSMBNativeFunc, prepareSMBCTDBFilesFunc, smbReadyNativeFunc
+	compileSMBNativeFunc, publishSMBNativeFunc, prepareSMBCTDBFilesFunc, smbReadyNativeFunc = runner.compile, runner.publish, runner.prepareCTDB, runner.ready
+	defer func() {
+		compileSMBNativeFunc, publishSMBNativeFunc, prepareSMBCTDBFilesFunc, smbReadyNativeFunc = oldCompile, oldPublish, oldPrepare, oldReady
+	}()
 	common.ProcessExec = runner
 	common.Network = smbEndpointNetwork{addresses: []string{"198.51.100.7", "2001:db8::7"}}
 	fetchConfigDb = func(context.Context, interfaces.StateInterface) (map[string]string, error) {
@@ -405,6 +403,7 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 	}}
 	state := interfaces.CephState{State: &mocks.MockState{ClusterName: "a", DBObj: mockDB}}
 	err = enableSMBLocked(ctx, state, "alpha", true)
+	runner.startupErr = err
 	if failure == "" {
 		require.NoError(t, err)
 		require.Contains(t, runner.events, "record")

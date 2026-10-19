@@ -1,4 +1,4 @@
 #!/bin/sh
 # Fixed native role; microcephd owns all service-control operations.
 set -eu
-exec "$SNAP/bin/python3" -B "$SNAP/smb/native.py" launch "$SNAP_COMMON/smb" cephfs-proxy
+exec "$SNAP/bin/microceph-smb-runtime" cephfs-proxy "$SNAP_COMMON/smb"

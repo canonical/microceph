@@ -1,13 +1,14 @@
 package ceph
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -117,7 +118,9 @@ func TestSMBRefreshDoesNotProvision(t *testing.T) {
 							require.Contains(t, string(config), "[data]")
 							accounts, e := os.ReadFile(filepath.Join(root, "config/candidate.json"))
 							require.NoError(t, e)
-							require.Contains(t, string(accounts), `"password": "changed"`)
+							var compact bytes.Buffer
+							require.NoError(t, json.Compact(&compact, accounts))
+							require.Contains(t, compact.String(), `"password":"changed"`)
 							groups, e := os.ReadFile(filepath.Join(root, "config/group"))
 							require.NoError(t, e)
 							require.Contains(t, string(groups), "team:x:2000:")
@@ -192,7 +195,9 @@ func TestSMBRefreshDoesNotProvision(t *testing.T) {
 						if r.python != "" {
 							partial, e := os.ReadFile(filepath.Join(root, "config/candidate.json"))
 							require.NoError(t, e)
-							require.Contains(t, string(partial), `"password": "changed"`, "exercise a real mid-publication failure, not only a process stub")
+							var compact bytes.Buffer
+							require.NoError(t, json.Compact(&compact, partial))
+							require.Contains(t, compact.String(), `"password":"changed"`, "exercise a real mid-publication failure, not only a process stub")
 						}
 						// A failed publication may have changed some live files.
 						// Even source reversion must retry until locally confirmed.
@@ -403,7 +408,15 @@ func TestSMBJoinPeerPublicationBoundary(t *testing.T) {
 				published := func() bool {
 					raw, err := os.ReadFile(filepath.Join(r.root, "config/candidate.json"))
 					require.NoError(t, err)
-					return strings.Contains(string(raw), `"identity": "2"`)
+					var candidate smbCandidate
+					require.NoError(t, json.Unmarshal(raw, &candidate))
+					require.NotNil(t, candidate.CTDB)
+					for _, peer := range candidate.CTDB.Peers {
+						if peer.Identity == "2" {
+							return true
+						}
+					}
+					return false
 				}
 				require.False(t, published(), "reservation alone does not publish the peer view")
 				ctx, cancel := context.WithCancel(context.Background())
@@ -490,7 +503,11 @@ func TestSMBMembershipRefreshDoesNotRestartConsumers(t *testing.T) {
 		require.NotContains(t, r.events, "restart smbmetrics")
 		candidate, err := os.ReadFile(filepath.Join(r.root, "config/candidate.json"))
 		require.NoError(t, err)
-		require.Contains(t, string(candidate), `"identity": "2"`)
+		var published smbCandidate
+		require.NoError(t, json.Unmarshal(candidate, &published))
+		require.NotNil(t, published.CTDB)
+		require.Len(t, published.CTDB.Peers, 1)
+		require.Equal(t, "2", published.CTDB.Peers[0].Identity)
 		nodes, err := os.ReadFile(filepath.Join(r.root, "ctdb/nodes"))
 		require.NoError(t, err)
 		require.Equal(t, "192.0.2.1\n", string(nodes), "only the fixed node monitor may publish/reload live nodes")
