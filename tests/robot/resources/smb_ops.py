@@ -187,8 +187,13 @@ class smb_ops:
         space = json.loads(self._host("lxc", "query", f"local:/1.0/storage-pools/{self.pool}/resources"))["space"]
         memory = next(int(line.split()[1]) * 1024 for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:"))
         gib = 1024 ** 3
-        if space["total"] - space["used"] < (50 + remaining * 24) * gib or memory < (4 + remaining * 3) * gib:
-            raise AssertionError("SMB lab requires 3x3GiB RAM/24GiB disk plus 4GiB memory/50GiB disk headroom")
+        disk = space["total"] - space["used"]
+        required_disk, required_memory = (50 + remaining * 24) * gib, (4 + remaining * 3) * gib
+        if disk < required_disk or memory < required_memory:
+            raise AssertionError(
+                f"SMB lab capacity: disk free={disk / gib:.1f} GiB, required={required_disk / gib:.1f} GiB; "
+                f"memory available={memory / gib:.1f} GiB, required={required_memory / gib:.1f} GiB "
+                "(includes 50 GiB disk/4 GiB memory headroom)")
 
     def provision_smb_lab(self):
         """Create three tagged real VMs; no existing instance/profile is modified."""
@@ -225,14 +230,11 @@ class smb_ops:
                        "--project", "default", "--type=block", "size=4GiB", f"{OWNER_KEY}={self.owner}")
             self.harness.launch_owned_test_vm(name, self.owner, image=image, storage_pool=self.pool, data_volume=volume)
             node.probe_instance_network()
-            node.command("snap", "wait", "system", "seed.loaded", timeout=300, check=True)
-            action = "refresh" if node.command("snap", "list", "snapd", quiet=True).rc == 0 else "install"
-            node.run_in_vm_with_snap_retry(shlex.join(["snap", action, "snapd", "--channel=" + channel]), 300)
             node.copy_snap_to_vm(snap)
             digest = node.command("sha256sum", "/root/" + SNAP_DEST_NAME, check=True).stdout.split()[0]
             if digest != expected:
                 raise AssertionError("Guest candidate snap differs from the supplied artifact")
-            node.install_microceph_from_local_snap(snap)
+            node.install_microceph_from_local_snap(snap, snapd_channel=channel)
             for plug in ("network", "network-control", "dm-crypt", "smb-identity", "smb-mounts", "ctdb-run", "ctdb-socket"):
                 node.command("snap", "connect", "microceph:" + plug, check=True)
             node.command("snap", "restart", "microceph.daemon", check=True)

@@ -1948,7 +1948,35 @@ class microceph_harness:
         self.apt_update(vm_name=vm_name)
         self.apt_install(VM_APT_TOOLS, vm_name=vm_name)
 
-    def install_microceph_from_local_snap(self, snap_path=None, vm_name=None):
+    def prepare_snapd_for_local_snap(self, container="", channel=None, vm_name=None):
+        """Opt in to a snapd channel inside the test guest, never on the host.
+
+        CI sets MICROCEPH_TEST_SNAPD_CHANNEL for artifacts whose minimum snapd
+        version is not stable yet. Store-snap baseline installs are unchanged.
+        """
+        if channel is None:
+            channel = os.environ.get("MICROCEPH_TEST_SNAPD_CHANNEL", "")
+        if not channel:
+            return
+        if container:
+            execute = lambda cmd, timeout: self.run_in_container_unchecked(container, cmd, timeout, quiet=True)
+            install = lambda cmd: self.run_in_container_with_snap_retry(container, cmd, 300)
+        elif vm_name is not None:
+            execute = lambda cmd, timeout: self.run_in_vm(cmd, timeout, quiet=True, vm_name=vm_name)
+            install = lambda cmd: self.run_in_vm_with_snap_retry(cmd, 300, vm_name=vm_name)
+        else:
+            execute = lambda cmd, timeout: self.run_in_vm(cmd, timeout, quiet=True)
+            install = lambda cmd: self.run_in_vm_with_snap_retry(cmd, 300)
+        ready = execute("sudo snap wait system seed.loaded", 300)
+        if ready.rc != 0:
+            raise AssertionError(f"Guest snapd seeding failed: {ready.stderr}")
+        present = execute("sudo snap list snapd", 30)
+        if present.rc not in (0, 1):
+            raise AssertionError(f"Cannot inspect guest snapd: {present.stderr}")
+        action = "refresh" if present.rc == 0 else "install"
+        install(f"sudo snap {action} snapd --channel={shlex.quote(channel)}")
+
+    def install_microceph_from_local_snap(self, snap_path=None, vm_name=None, snapd_channel=None):
         """Installs the locally-built snap and connects all interfaces (except dm-crypt)."""
         snap_path = snap_path or self._snap_path()
         if not snap_path:
@@ -1957,6 +1985,10 @@ class microceph_harness:
         # snap_path only gates the skip above; the install uses the ~/microceph_*.snap
         # glob below, so the argument value is otherwise unused.
         logger.console("[install] Installing MicroCeph snap...")
+        if vm_name is None:
+            self.prepare_snapd_for_local_snap(channel=snapd_channel)
+        else:
+            self.prepare_snapd_for_local_snap(channel=snapd_channel, vm_name=vm_name)
         self.run_in_vm_and_check("sudo snap install core26 || true", 120, vm_name=vm_name)
         # The core26 prefetch above tolerates failure, so a transient store error
         # resurfaces here as 'cannot install snap base "core26": ...' and is retried.
@@ -2104,6 +2136,7 @@ class microceph_harness:
         # without repeating the update, and each gets its own attempt budget.
         self.apt_update(builder)
         self.apt_install(VM_APT_TOOLS, builder)
+        self.prepare_snapd_for_local_snap(builder)
         self.run_in_container_with_snap_retry(
             builder, f"snap install --dangerous {MNT_SNAP_GLOB}", 600
         )
@@ -2401,6 +2434,7 @@ class microceph_harness:
         connects = " && ".join(f"snap connect microceph:{iface}" for iface in SNAP_INTERFACES_MINIMAL)
         for container in NODES:
             logger.console(f"[upgrade] Upgrading {container}...")
+            self.prepare_snapd_for_local_snap(container)
             self.run_in_container_with_snap_retry(
                 container, f"sudo snap install --dangerous {MNT_SNAP_GLOB}", 600
             )

@@ -246,6 +246,17 @@ def test_smb_fixture_retirement_never_retries_or_touches_other_owners(monkeypatc
     assert len(calls) == 1 and calls[0] == ("microceph", "disable", "smb", "--cluster-id", "robot-smb")
 
 
+def test_smb_capacity_failure_reports_observed_and_required_resources(monkeypatch):
+    import pytest
+    library = _smb_module().smb_ops()
+    monkeypatch.setattr(library, "_host", lambda *args: json.dumps({"space": {"total": 100 * 1024 ** 3, "used": 0}}))
+    monkeypatch.setattr(Path, "read_text", lambda *args, **kwargs: "MemAvailable: 16777216 kB\n")
+    with pytest.raises(AssertionError) as failure:
+        library._capacity(3)
+    assert "disk free=100.0 GiB, required=122.0 GiB" in str(failure.value)
+    assert "memory available=16.0 GiB, required=13.0 GiB" in str(failure.value)
+
+
 def test_smb_private_shared_state_compares_keys_without_logging_them():
     m = _smb_module()
     resources = '{"resources":[{"resource_type":"ceph.smb.cluster","cluster_id":"robot-never"}]}'
@@ -2274,6 +2285,12 @@ def test_member_in_ceph_status_substring():
     assert placement_status.member_in_ceph_status(None, "node-wrk0") is False
 
 
+@pytest.fixture(autouse=True)
+def isolated_guest_snapd_channel(monkeypatch):
+    # Unit tests opt in explicitly, even when invoked by a configured CI run.
+    monkeypatch.delenv("MICROCEPH_TEST_SNAPD_CHANNEL", raising=False)
+
+
 # ---------------------------------------------------------------------------
 # _poll_until failure semantics
 # ---------------------------------------------------------------------------
@@ -3343,6 +3360,98 @@ def test_no_public_apt_wrapper_takes_a_hand_built_command():
 # ---------------------------------------------------------------------------
 # snap retry call sites
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("container,installed", [("", True), ("node-wrk0", False)])
+def test_local_artifact_snapd_channel_is_prepared_in_the_guest(monkeypatch, container, installed):
+    h, events = _recording_harness(monkeypatch)
+    assert callable(getattr(h, "prepare_snapd_for_local_snap", None)), "missing guest snapd preparation"
+    monkeypatch.setenv("MICROCEPH_TEST_SNAPD_CHANNEL", "latest/candidate")
+    def execute(command, timeout, quiet=False):
+        events.append(("query", container, command))
+        return _Res(0 if installed or "wait" in command else 1, "", "")
+    monkeypatch.setattr(h, "run_in_vm", execute)
+    monkeypatch.setattr(h, "run_in_container_unchecked", lambda node, command, timeout, quiet=False: execute(command, timeout, quiet))
+    h.prepare_snapd_for_local_snap(container)
+    action = "refresh" if installed else "install"
+    expected = ("ct-snap-retry", container) if container else ("vm-snap-retry",)
+    assert events[-1] == (*expected, f"sudo snap {action} snapd --channel=latest/candidate", 300)
+    assert events[0] == ("query", container, "sudo snap wait system seed.loaded")
+
+
+def test_local_artifact_snapd_preparation_targets_explicit_vm(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+    monkeypatch.setenv("MICROCEPH_TEST_SNAPD_CHANNEL", "latest/candidate")
+
+    def query(command, timeout, quiet=False, vm_name=None):
+        events.append(("query", vm_name, command))
+        return _Res(0, "", "")
+
+    def install(command, timeout, vm_name=None):
+        events.append(("install", vm_name, command))
+        return _Res(0, "", "")
+
+    monkeypatch.setattr(h, "run_in_vm", query)
+    monkeypatch.setattr(h, "run_in_vm_with_snap_retry", install)
+    monkeypatch.setattr(h, "run_in_vm_and_check", install)
+    h.install_microceph_from_local_snap("candidate.snap", vm_name="rgw-node")
+    assert events
+    assert all(event[1] == "rgw-node" for event in events)
+    snapd = next(i for i, event in enumerate(events) if "snap refresh snapd" in event[2])
+    artifact = next(i for i, event in enumerate(events) if "snap install --dangerous" in event[2])
+    assert snapd < artifact
+
+
+def test_local_artifact_snapd_preparation_is_opt_in(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+    assert callable(getattr(h, "prepare_snapd_for_local_snap", None)), "missing guest snapd preparation"
+    monkeypatch.delenv("MICROCEPH_TEST_SNAPD_CHANNEL", raising=False)
+    h.prepare_snapd_for_local_snap()
+    assert events == []
+
+
+@pytest.mark.parametrize("path", ["vm", "builder", "upgrade"])
+def test_local_snap_install_paths_prepare_snapd_before_artifact(monkeypatch, path):
+    h, events = _recording_harness(monkeypatch)
+    assert callable(getattr(h, "prepare_snapd_for_local_snap", None)), "missing guest snapd preparation"
+    monkeypatch.setattr(h, "prepare_snapd_for_local_snap", lambda container="", channel=None: events.append(("snapd", container)))
+    monkeypatch.setattr(h, "_poll_until", lambda *args, **kwargs: None)
+    if path == "vm":
+        h.install_microceph_from_local_snap("candidate.snap")
+    elif path == "builder":
+        h.build_base_lxd_image("/root")
+    else:
+        h.upgrade_multi_node()
+    installs = [(i, e) for i, e in enumerate(events) if e[0] in ("vm-snap-retry", "ct-snap-retry") and "snap install --dangerous" in e[-2]]
+    assert installs
+    assert sum(e[0] == "snapd" for e in events) == len(installs)
+    for index, event in installs:
+        target = event[1] if event[0] == "ct-snap-retry" else ""
+        assert ("snapd", target) in events[:index]
+
+
+@pytest.mark.parametrize("channel,installed", [("", True), ("latest/candidate", True), ("latest/candidate", False)])
+def test_dsl_snapd_preparation_stays_in_the_vm(monkeypatch, tmp_path, channel, installed):
+    import subprocess
+    monkeypatch.setenv("MICROCEPH_TEST_SNAPD_CHANNEL", channel)
+    script = Path(__file__).resolve().parents[2] / "scripts/test_dsl_functest.sh"
+    trace = tmp_path / "calls"
+    result = subprocess.run(["bash", "-c", '''
+source "$1"
+TRACE_FILE="$2"
+INSTALLED="$3"
+log() { :; }
+vm_exec() {
+    printf '%s\\n' "$*" >> "$TRACE_FILE"
+    if [[ "$*" == "snap list snapd" && "$INSTALLED" == "false" ]]; then return 1; fi
+}
+declare -F prepare_snapd_for_local_snap >/dev/null || { echo 'missing DSL snapd preparation'; exit 1; }
+prepare_snapd_for_local_snap
+''', "test", str(script), str(trace), str(installed).lower()], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = trace.read_text().splitlines() if trace.exists() else []
+    expected = ["snap wait system seed.loaded", "snap list snapd", f"snap {'refresh' if installed else 'install'} snapd --channel={channel}"] if channel else []
+    assert calls == expected
+
 
 def test_build_base_lxd_image_retries_the_builder_snap_install(monkeypatch):
     h, events = _recording_harness(monkeypatch)

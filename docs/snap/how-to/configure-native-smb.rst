@@ -32,7 +32,7 @@ Snap Store approval/auto-connection policy.
 Create resources
 ----------------
 
-This example requires an existing CephFS volume ``smbfs`` with a **preprepared**
+This example requires an existing CephFS volume ``smbfs`` with a **prepared**
 ``/data`` directory owned by UID 2201/GID 2200 and writable by that identity
 (for example, mode 0770). Prepare and verify it using an existing administrative
 CephFS client before applying the resources. Every ancestor must permit that
@@ -110,7 +110,7 @@ Apply the resources, then place the gateway on the intended member:
    sudo microceph enable smb --cluster-id files --target node1 --wait=true
 
 Repeat native enable on another member to use the same clustered resource. For
-independent nonclustered gateways, choose ``clustering: never`` when creating the
+independent gateways without CTDB, choose ``clustering: never`` when creating the
 resource instead. Changing a running gateway's mode requires explicit maintenance.
 Share login controls do not replace CephFS ownership and filesystem ACLs; ensure
 the managed user's Unix identity has the intended data access.
@@ -119,7 +119,7 @@ The example explicitly selects ``samba-vfs/new`` (direct CephFS), the provider
 used for the demonstrated authenticated I/O milestone. Provider expansion and
 defaults remain upstream authority: in the current upstream version,
 ``samba-vfs`` expands to ``samba-vfs/proxied``, not the demonstrated direct path.
-The nondefault ports and bind selectors above have source/compiler coverage;
+The custom ports and bind selectors above have source/compiler coverage;
 live listening and client I/O with those endpoint settings remain unqualified.
 
 Endpoint rules and updates
@@ -146,9 +146,10 @@ outside the common network helper's suitable-address policy.
 
 SMB defaults to port 445 and metrics to 9922. ``custom_ports.smb`` and
 ``custom_ports.smbmetrics`` accept integers 1–65535, unique across all upstream
-service defaults/custom values. CTDB remains on port 4379; nondefault CTDB and
-remote-control ports are rejected. Metrics retains its IPv4 wildcard listener
-``0.0.0.0`` (readiness uses ``127.0.0.1``), **not** the selected SMB address.
+service defaults/custom values. CTDB remains on port 4379; CTDB and
+remote-control ports must retain their default values. Metrics retains its IPv4
+wildcard listener ``0.0.0.0`` (readiness uses ``127.0.0.1``), **not** the selected
+SMB address.
 CTDB membership, private address, PNNs and recovery identity are separate from
 the SMB frontend. No address, VIP or firewall rule is created by this feature.
 
@@ -194,9 +195,9 @@ contents or a claim about which override supplied the effective bytes.
 
 If any member lacks a valid applied reference, or members' references disagree,
 that group is omitted from ``orch ls`` with a manager warning rather than
-inventing a source or breaking global inventory. Legacy rows are not backfilled
-by an unchanged enable/refresh; a subsequent successful publication records the
-reference. Their daemon rows remain available through ``orch ps``.
+inventing a source or breaking global inventory. Legacy rows gain the reference
+only after a successful publication, not an unchanged enable/refresh. Their
+daemon rows remain available through ``orch ps``.
 
 ``microceph.ceph orch ps --daemon_type smb --format json-pretty`` reports the
 observed SMB address/port; its status description names the separate metrics

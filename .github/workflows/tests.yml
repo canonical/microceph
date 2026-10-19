@@ -85,6 +85,10 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner || 'ubuntu-22.04' }}
     needs: [preflight, build-microceph]
+    env:
+      # The local artifact requires snapd >= 2.78 in EVERY consuming guest.
+      # This does not update the runner host or qualify stable-snapd support.
+      MICROCEPH_TEST_SNAPD_CHANNEL: latest/candidate
     strategy:
       fail-fast: false
       matrix:
@@ -217,7 +221,8 @@ jobs:
           - id: smb-tests
             name: Native SMB lifecycle and authenticated IO
             suite: smb-tests
-            runner: self-hosted-linux-amd64-jammy-xlarge
+            # The 100 GB xlarge disk cannot satisfy the 122 GiB capacity gate.
+            runner: self-hosted-linux-amd64-noble-2xlarge-extra
             lxd_args: --storage-backend=dir
             # Guest-only: native SMB mount namespaces require snapd >= 2.78.
             args: --variable SMB_SNAPD_CHANNEL:latest/candidate

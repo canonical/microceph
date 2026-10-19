@@ -203,6 +203,16 @@ function adopt_cephadm() {
 
   lxc --quiet file push $snap_glob $name/root/
 
+  # Prepare the artifact's required snapd in this guest, not on the runner.
+  if [[ -n "${MICROCEPH_TEST_SNAPD_CHANNEL:-}" ]]; then
+    lxc exec "$name" -- snap wait system seed.loaded
+    local snapd_action=install
+    if lxc exec "$name" -- snap list snapd >/dev/null 2>&1; then
+      snapd_action=refresh
+    fi
+    lxc exec "$name" -- snap "$snapd_action" snapd --channel="$MICROCEPH_TEST_SNAPD_CHANNEL"
+  fi
+
   # install microceph snap
   lxc exec $name -- sh -c "sudo snap install --dangerous /root/microceph_*.snap"
   for feat in block-devices hardware-observe mount-observe load-rbd microceph-support network-bind process-control; do

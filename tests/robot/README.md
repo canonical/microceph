@@ -54,6 +54,13 @@ Run all suites sequentially (omitting `--test-suite` defaults to the full tree):
 tox -e robot -- --snap-path /path/to/microceph_*.snap
 ```
 
+The current native-SMB artifact requires snapd >= 2.78. CI sets
+`MICROCEPH_TEST_SNAPD_CHANNEL=latest/candidate` to prepare snapd in every VM or
+nested container before installing/upgrading the **local artifact**, including
+DSL, adoption and wiping guests. Set the same variable for local runs when needed. The
+runner host snapd and MicroCeph store-channel selection are unchanged; this does
+not qualify installation on stable snapd. Without the variable, existing guest snapd is kept.
+
 Results land in `output.xml`, `log.html`, and `report.html` in the working directory.
 Each suite creates and destroys its own LXD VM; a failed suite teardown also cleans up.
 
@@ -111,8 +118,8 @@ This suite creates three **real Ubuntu 26.04 VMs**, not nested containers; VM0 a
 runs `smbclient`. Each VM has 2 vCPU, 3 GiB RAM, a 20 GiB root disk and a dedicated
 4 GiB block volume. Before allocation it requires 50 GiB storage/4 GiB memory
 headroom (initially at least 122 GiB free in the LXD pool and 13 GiB available RAM).
-Use a sufficiently large pool; CI uses the xlarge runner with the `dir` backend,
-not LXD's small default loop pool. `SMB_STORAGE_POOL` selects a pre-existing pool.
+Use a sufficiently large pool; CI uses the extra-disk runner with the `dir`
+backend, not the 100 GB xlarge runner or LXD's small default loop pool. `SMB_STORAGE_POOL` selects a pre-existing pool.
 The local LXD remote must use the default project. No existing VM/profile is altered.
 
 Exactly one supplied snap is required and its SHA256 is checked in every VM; there

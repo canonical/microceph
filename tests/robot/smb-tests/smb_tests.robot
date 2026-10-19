@@ -114,8 +114,8 @@ Refresh Endpoints And Prove Stable Unchanged Enable
     SMB Exact Transfer    0    refreshed.bin
     SMB Exact Transfer    2    refreshed.bin    ${False}
     SMB Exact Transfer    1    initial-0.bin    ${False}
-    Run SMB Checked    0    microceph    enable    smb    --cluster-id    robot-smb    --wait=true
-    Run SMB Checked    2    microceph    enable    smb    --cluster-id    robot-smb    --wait=true
+    Enable And Check SMB Member    0    port=2445
+    Enable And Check SMB Member    2    port=2445
     ${observations}=    Collect SMB Observations    35
     ${stable}=    SMB Observations Are Stable    ${after}    ${observations}
     Should Be True    ${stable}    msg=Unchanged enable/updater changed processes, applied state or reported an error
@@ -181,7 +181,7 @@ Deploy Independent Gateways On A Separate Data Path
     SMB Exact Transfer    1    never-1.bin    cluster=robot-never
     ${before}=    SMB Snapshots    robot-never    0    1
     ${tokens}=    SMB Role Tokens    ${before}    smbd    smbmetrics
-    Run SMB Checked    1    microceph    enable    smb    --cluster-id    robot-never    --wait=true
+    Enable And Check SMB Member    1    robot-never    3445    ${False}
     ${after}=    SMB Snapshots    robot-never    0    1
     ${after_tokens}=    SMB Role Tokens    ${after}    smbd    smbmetrics
     Should Be Equal    ${after_tokens}    ${tokens}
