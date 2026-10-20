@@ -17,18 +17,30 @@ SMB Suite Setup
     Should Be Equal As Integers    ${join.rc}    0    msg=First member join failed; no retry performed
     ${join}=    Join SMB Member    2
     Should Be Equal As Integers    ${join.rc}    0    msg=Second member join failed; no retry performed
-    Run SMB Checked    0    microceph    disk    add    /dev/sdb    --wipe
-    Run SMB Checked    1    microceph    disk    add    /dev/sdb    --wipe
-    Run SMB Checked    2    microceph    disk    add    /dev/sdb    --wipe
-    Wait For SMB Ceph Health
+    Add Verified SMB OSD    0
+    Add Verified SMB OSD    1
+    Add Verified SMB OSD    2
+    Require SMB Ceph Health
     Run SMB Checked    0    microceph.ceph    config    set    mgr    mgr/smb/update_orchestration    false
     Run SMB Checked    0    microceph.ceph    mgr    module    enable    smb
     Run SMB Checked    0    microceph.ceph    fs    volume    create    robotsmb
-    Wait For SMB Ceph Health
+    Require SMB Ceph Health
     ${prepared}=    Prepare SMB Data Paths
     Should Be Equal As Integers    ${prepared.rc}    0    msg=${prepared.stderr}
     Run SMB Checked    0    microceph.ceph    mgr    module    enable    microceph
     Run SMB Checked    0    microceph.ceph    orch    set    backend    microceph
+
+Add Verified SMB OSD
+    [Arguments]    ${node}
+    ${disk}=    SMB OSD Path    ${node}
+    Should Not Be Empty    ${disk}    msg=No exact owned 4GiB OSD identity; refusing disk add
+    Run SMB Checked    ${node}    microceph    disk    add    ${disk}    --wipe
+
+Require SMB Ceph Health
+    Wait For SMB Ceph Health
+    ${health}=    Observe SMB Ceph Health
+    Should Be Equal    ${health}[status]    HEALTH_OK
+    Dictionary Should Not Contain Key    ${health}[checks]    MON_CLOCK_SKEW
 
 SMB Suite Cleanup
     TRY

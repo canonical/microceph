@@ -123,6 +123,27 @@ Use a sufficiently large pool; CI uses the extra-disk runner with the `dir`
 backend, not the 100 GB xlarge runner or LXD's small default loop pool. `SMB_STORAGE_POOL` selects a pre-existing pool.
 The local LXD remote must use the default project. No existing VM/profile is altered.
 
+Both SMB suites discover each OSD immediately before disk add: the tagged VM's
+`test-data` attachment must reference the exact tagged block volume in the selected
+pool. Structured guest inventory must contain exactly one `lxd_test--data` serial
+(the LXD-escaped device ID, verified on a real Ubuntu 26.04 VM). It must be a
+childless, unmounted 4 GiB disk, with a distinct visible root filesystem; mounted
+ancestors/holders, missing identity or ambiguous matches fail closed. No `/dev/sdX`
+letter or size-only fallback is used. A different LXD device identity contract
+requires investigation, not a guessed replacement.
+
+Gateway and DC preparation enables the guest's supported `chrony` service
+(installing it inside that guest if absent), requests one bounded measurement
+burst and permits stepping only during initial preparation. Readiness polls at
+most 60 times, two seconds apart, requiring NTP synchronization and normal chrony
+tracking with at most 10 ms remaining system-clock correction. Automatic stepping
+is disabled before application setup. Tracking, sources and bounded guest time
+journals are recorded on success/failure; there are no host-clock changes or
+service-restart loops. This is not proof of inter-monitor accuracy: the shared
+Robot setup separately requires `HEALTH_OK`, no `MON_CLOCK_SKEW`, and records
+Ceph `time-sync-status` before application cases. Neither Ceph tolerance nor
+Kerberos checks are relaxed.
+
 Exactly one supplied snap is required and its SHA256 is checked in every VM; there
 is no store-snap fallback. The candidate currently needs snapd >= 2.78, hence the
 **guest-only** candidate channel override above. No host MicroCeph installation or
@@ -161,9 +182,9 @@ RAM initially**, retaining 50 GiB disk/4 GiB RAM headroom and rounding the DC to
 a 100 GB xlarge runner is not adequate. No guard or disk-size check is weakened.
 
 Prerequisites: outbound guest APT/image access; working local LXD/default project;
-the exact strict snap and guest snapd >= 2.78; stable guest clocks and the dedicated
-4 GiB OSD on `/dev/sdb` in each gateway. Stop at a disk mismatch or monitor clock
-skew: do not wipe another disk or disable time checks. The DC installs
+the exact strict snap and guest snapd >= 2.78; stable guest clocks and the exact
+owned 4 GiB OSD in each gateway, verified by the shared prerequisites above.
+Stop at a disk mismatch or monitor clock skew: do not wipe another disk or disable time checks. The DC installs
 `samba`, `samba-ad-dc`, `python3-samba`, `krb5-user`, `bind9-host`; the client uses
 `smbclient`, `samba-common-bin` and `krb5-user`. Package versions, snap hash and allocation ownership
 are logged. Only the newly owned DC's packaged default Samba/resolved services

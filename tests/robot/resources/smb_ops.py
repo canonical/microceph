@@ -1,7 +1,9 @@
 """SMB integration I/O and observations; scenario assertions stay in Robot."""
+import csv
 import glob
 import hashlib
 import json
+import math
 import re
 import shlex
 import tempfile
@@ -16,6 +18,61 @@ from microceph_harness import microceph_harness as Harness, SNAP_DEST_NAME
 
 ROLES = ("smbd", "smbmetrics", "ctdbd", "ctdb-nodes")
 OWNER_KEY = "user.microceph-test-owner"
+# LXD's test-data disk device ID escapes '-' as '--'. Verified on a real VM;
+# bind this serial to the tagged host attachment before considering guest size.
+OSD_SERIAL = "lxd_test--data"
+
+
+def select_owned_osd(instance, volume, inventory, node, volume_name, pool, owner):
+    """Select only the exact owned, unmounted, childless 4 GiB data disk."""
+    devices = instance.get("expanded_devices", {})
+    attachment = devices.get("test-data", {})
+    if (not owner or instance.get("name") != node
+            or instance.get("expanded_config", {}).get(OWNER_KEY) != owner
+            or volume.get("name") != volume_name or volume.get("content_type") != "block"
+            or volume.get("config", {}).get(OWNER_KEY) != owner
+            or attachment.get("type") != "disk" or attachment.get("pool") != pool
+            or attachment.get("source") != volume_name or "path" in attachment
+            or not any(d.get("type") == "disk" and d.get("path") == "/"
+                       for name, d in devices.items() if name != "test-data")):
+        raise AssertionError("Refusing OSD: exact tagged data-volume attachment is not established")
+    records = []
+    def visit(rows):
+        for row in rows:
+            records.append(row)
+            visit(row.get("children", []))
+    visit(inventory.get("blockdevices", []))
+    matches = [r for r in records if r.get("serial") == OSD_SERIAL]
+    if len(matches) != 1:
+        raise AssertionError("Refusing OSD: missing or ambiguous attached-device serial")
+    disk = matches[0]
+    if (disk.get("type") != "disk" or "pkname" not in disk or disk["pkname"] is not None
+            or not any(disk is row for row in inventory["blockdevices"])
+            or disk.get("size") != 4 * 1024 ** 3
+            or "mountpoints" not in disk or any(disk["mountpoints"])
+            or disk.get("children") or not re.fullmatch(r"/dev/[A-Za-z0-9_-]+", disk.get("name", ""))
+            or not any("/" in (r.get("mountpoints") or []) for r in records)
+            or sum(r.get("name") == disk["name"] for r in records) != 1
+            or any(r.get("pkname") == disk["name"] for r in records)):
+        raise AssertionError("Refusing OSD: not a dedicated unmounted, childless 4GiB disk with visible root")
+    return disk["name"]
+
+
+def guest_time_ready(flags, tracking):
+    """Require NTP plus chrony's synchronized, <=10 ms remaining correction.
+
+    This is guest preparation, not proof of inter-monitor skew: Ceph HEALTH_OK
+    and its clock health checks remain a separate application prerequisite.
+    """
+    properties = dict(line.split("=", 1) for line in flags.splitlines() if "=" in line)
+    try:
+        fields = next(csv.reader([tracking.strip()]))
+        correction = float(fields[4])
+        return (properties.get("NTP") == "yes" and properties.get("NTPSynchronized") == "yes"
+                and len(fields) == 14 and 0 < int(fields[2]) < 16 and fields[13] == "Normal"
+                and math.isfinite(correction) and abs(correction) <= 0.01)
+    except (ValueError, IndexError, StopIteration):
+        return False
 
 
 def parse_snapshot(raw, node):
@@ -154,6 +211,34 @@ class _VM(Harness):
         method = self.run_in_vm_and_check if check else self.run_in_vm
         return method(shlex.join(str(arg) for arg in argv), timeout, quiet)
 
+    def prepare_time(self):
+        """Prepare only this owned guest, once, before Ceph or AD initialization."""
+        try:
+            if self.command("sh", "-ec", "command -v chronyc", timeout=10).rc != 0:
+                self.command("apt-get", "update", check=True, timeout=180)
+                self.command("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "chrony",
+                             check=True, timeout=180)
+            self.command("systemctl", "enable", "--now", "chrony", check=True, timeout=30)
+            # Allow stepping only during initial fixture preparation, not joins,
+            # application failures or subsequent serving-role restarts.
+            self.command("chronyc", "makestep", "0.01", "3", check=True, timeout=10)
+            self.command("chronyc", "burst", "4/4", check=True, timeout=10)
+            def ready():
+                flags = self.command("timedatectl", "show", "--property=NTP", "--property=NTPSynchronized", timeout=10)
+                tracking = self.command("chronyc", "-c", "tracking", timeout=10)
+                return flags.rc == 0 and tracking.rc == 0 and guest_time_ready(flags.stdout, tracking.stdout)
+            self._poll_until(ready, attempts=60, interval=2,
+                             fail_msg=f"{self.name}: guest clock did not synchronize with <=10 ms correction")
+            self.command("chronyc", "makestep", "0.01", "0", check=True, timeout=10)
+        finally:
+            # Public, bounded evidence on both success and the first failure.
+            for args in (("timedatectl",), ("chronyc", "tracking"), ("chronyc", "sources", "-v"),
+                         ("journalctl", "-b", "-u", "chrony", "--no-pager", "-n", "60")):
+                try:
+                    self.command(*args, timeout=10)
+                except Exception as error:
+                    logger.warn(f"{self.name}: guest clock diagnostics unavailable: {error}")
+
 
 class smb_ops:
     """Suite-scoped SMB I/O/topology primitives, not test-case bodies."""
@@ -231,6 +316,7 @@ class smb_ops:
                        "--project", "default", "--type=block", "size=4GiB", f"{OWNER_KEY}={self.owner}")
             self.harness.launch_owned_test_vm(name, self.owner, image=image, storage_pool=self.pool, data_volume=volume)
             node.probe_instance_network()
+            node.prepare_time()
             node.copy_snap_to_vm(snap)
             digest = node.command("sha256sum", "/root/" + SNAP_DEST_NAME, check=True).stdout.split()[0]
             if digest != expected:
@@ -243,8 +329,6 @@ class smb_ops:
             node.command("grep", "-Fx", "confinement: strict", "/snap/microceph/current/meta/snap.yaml", check=True)
             if node.command("snap", "debug", "confinement", check=True).stdout.strip() != "strict":
                 raise AssertionError("SMB suite requires actual strict confinement")
-            if node.command("blockdev", "--getsize64", "/dev/sdb", check=True).stdout.strip() != str(4 * 1024 ** 3):
-                raise AssertionError("Refusing to use a disk other than the dedicated 4GiB OSD")
             node.command("mkdir", "-p", self._base, check=True)
             node.command("chmod", "0700", self._base, check=True)
             self.harness._lxc_file_push(str(Path(__file__).with_name("smb_guest.py")), f"local:{name}{self._base}/smb_guest.py", 60, "copy SMB guest fixture")
@@ -253,6 +337,17 @@ class smb_ops:
         self.nodes[0].apt_install(["smbclient"])
         addresses = [json.loads(n.command("ip", "-4", "-j", "route", "get", "1.1.1.1", check=True, quiet=True).stdout)[0]["prefsrc"] for n in self.nodes]
         self.nodes[0].command("python3", self._base + "/smb_guest.py", "init", json.dumps(addresses), check=True)
+
+    def smb_osd_path(self, node):
+        """Revalidate host ownership/attachment and live guest inventory before wipe."""
+        index = int(node)
+        vm = self._node(index)
+        volume_name = self.volumes[index]
+        instance = json.loads(self._host("lxc", "query", f"local:/1.0/instances/{vm.name}?project=default"))
+        volume = json.loads(self._host("lxc", "query", f"local:/1.0/storage-pools/{self.pool}/volumes/custom/{volume_name}?project=default"))
+        inventory = json.loads(vm.command("lsblk", "--json", "--bytes", "--paths", "--output",
+                                         "NAME,TYPE,SIZE,SERIAL,PKNAME,MOUNTPOINTS", check=True).stdout)
+        return select_owned_osd(instance, volume, inventory, vm.name, volume_name, self.pool, self.owner)
 
     def smb_node_command(self, node, *argv):
         """Execute one request once; Robot asserts rc and postconditions."""
@@ -274,6 +369,13 @@ class smb_ops:
 
     def wait_for_smb_ceph_health(self):
         self.nodes[0].wait_for_cluster_health_ok()
+
+    def observe_smb_ceph_health(self):
+        """Fetch health and real monitor time evidence without changing tolerance."""
+        vm = self.nodes[0]
+        health = vm.command("microceph.ceph", "health", "detail", "-f", "json", check=True)
+        vm.command("microceph.ceph", "time-sync-status", "-f", "json", check=True)
+        return json.loads(health.stdout)
 
     def prepare_smb_data_paths(self):
         return self.nodes[0].command("timeout", "--kill-after=5", "60", "snap", "run", "--shell", "microceph.ceph", "-c",
@@ -401,6 +503,7 @@ class smb_ops:
                     "nodes": [n.name for n in self.nodes], "volumes": self.volumes}))
         self.harness.launch_owned_test_vm(dc.name, self.owner, image=str(self._variable("SMB_VM_IMAGE", "ubuntu:26.04")), storage_pool=self.pool)
         dc.probe_instance_network()
+        dc.prepare_time()
         dc.apt_update()
         dc.command("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "samba", "samba-ad-dc", "python3-samba", "krb5-user", "bind9-host", check=True, timeout=300)
         self.nodes[0].command("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "krb5-user", "samba-common-bin", check=True, timeout=300)

@@ -4128,3 +4128,182 @@ for name, doc in resource_documents(['192.0.2.1','192.0.2.2'],'192.0.2.4','priva
 
 def test_smb_ad_partial_setup_diagnostics_do_not_hide_the_original_failure():
     _smb_module().smb_ops().smb_ad_diagnostics()
+
+# Shared SMB fixture prerequisites: exact owned device identity and guest clocks.
+def _owned_osd_inventory():
+    m = _smb_module()
+    instance = {'name': 'node', 'expanded_config': {m.OWNER_KEY: 'owner'},
+                'expanded_devices': {'root': {'type': 'disk', 'path': '/', 'pool': 'default'},
+                                     'test-data': {'type': 'disk', 'pool': 'default', 'source': 'node-osd'}}}
+    volume = {'name': 'node-osd', 'content_type': 'block', 'config': {m.OWNER_KEY: 'owner'}}
+    blocks = {'blockdevices': [
+        {'name': '/dev/sdb', 'type': 'disk', 'size': 20 * 1024**3, 'serial': 'lxd_root',
+         'pkname': None, 'mountpoints': [], 'children': [
+             {'name': '/dev/sdb1', 'type': 'part', 'pkname': '/dev/sdb', 'serial': None, 'mountpoints': ['/']}]},
+        {'name': '/dev/sdc', 'type': 'disk', 'size': 4 * 1024**3, 'serial': 'lxd_test--data',
+         'pkname': None, 'mountpoints': []}]}
+    return instance, volume, blocks
+
+
+def test_smb_osd_selector_uses_owned_attachment_serial_not_letter_or_size():
+    m = _smb_module()
+    assert callable(getattr(m, 'select_owned_osd', None)), 'missing exact owned OSD selector'
+    instance, volume, blocks = _owned_osd_inventory()
+    blocks['blockdevices'].append({'name': '/dev/sda', 'type': 'disk', 'size': 4 * 1024**3,
+                                   'serial': 'unrelated', 'pkname': None, 'mountpoints': []})
+    assert m.select_owned_osd(instance, volume, blocks, 'node', 'node-osd', 'default', 'owner') == '/dev/sdc'
+
+
+def test_smb_osd_selector_refuses_unsafe_or_unproven_identity():
+    import copy
+    import pytest
+    m = _smb_module()
+    assert callable(getattr(m, 'select_owned_osd', None)), 'missing exact owned OSD selector'
+    mutations = [
+        lambda i, v, b: i['expanded_config'].update({m.OWNER_KEY: 'foreign'}),
+        lambda i, v, b: v['config'].update({m.OWNER_KEY: 'foreign'}),
+        lambda i, v, b: i['expanded_devices']['test-data'].update(source='other-volume'),
+        lambda i, v, b: i['expanded_devices']['test-data'].update(pool='other-pool'),
+        lambda i, v, b: i['expanded_devices']['test-data'].update(path='/'),
+        lambda i, v, b: v.update(content_type='filesystem'),
+        lambda i, v, b: b['blockdevices'][1].update(serial=None),
+        lambda i, v, b: b['blockdevices'][1].update(size=20 * 1024**3),
+        lambda i, v, b: b['blockdevices'][1].update(type='part', pkname='/dev/sdb'),
+        lambda i, v, b: b['blockdevices'][1].update(mountpoints=['/mnt']),
+        lambda i, v, b: b['blockdevices'][1].update(children=[{'name': '/dev/sdc1', 'mountpoints': ['/']}]),
+        lambda i, v, b: b['blockdevices'].append(copy.deepcopy(b['blockdevices'][1])),
+        lambda i, v, b: b['blockdevices'][0]['children'][0].update(mountpoints=[]),
+        lambda i, v, b: b['blockdevices'][1].pop('mountpoints'),
+        lambda i, v, b: b['blockdevices'][1].pop('pkname'),
+        lambda i, v, b: b['blockdevices'][0]['children'].append(b['blockdevices'].pop()),
+        lambda i, v, b: b['blockdevices'][1].update(name='/dev/../sdc'),
+    ]
+    for mutation in mutations:
+        instance, volume, blocks = copy.deepcopy(_owned_osd_inventory())
+        mutation(instance, volume, blocks)
+        with pytest.raises(AssertionError):
+            m.select_owned_osd(instance, volume, blocks, 'node', 'node-osd', 'default', 'owner')
+
+
+def test_smb_osd_path_revalidates_host_attachment_and_guest_inventory():
+    from types import SimpleNamespace
+    library = _smb_module().smb_ops()
+    assert callable(getattr(library, 'smb_osd_path', None)), 'missing per-node OSD discovery'
+    instance, volume, blocks = _owned_osd_inventory()
+    calls = []
+    def command(*args, **kwargs):
+        calls.append(args)
+        return _Res(0, json.dumps(blocks), '')
+    library.owner, library.volumes = 'owner', ['node-osd']
+    library.nodes = [SimpleNamespace(name='node', command=command)]
+    library._host = lambda *args: json.dumps(instance if '/instances/' in args[-1] else volume)
+    assert library.smb_osd_path(0) == '/dev/sdc'
+    assert calls[0][0] == 'lsblk' and '--json' in calls[0] and 'SERIAL' in calls[0][-1]
+    blocks['blockdevices'][1]['mountpoints'] = ['/mounted-since-first-probe']
+    import pytest
+    with pytest.raises(AssertionError):
+        library.smb_osd_path(0)
+    assert len(calls) == 2
+
+
+def _chrony_tracking(correction='0.001', leap='Normal', stratum='3'):
+    return f'5BBD5B70,91.189.91.112,{stratum},1792494375.1,{correction},0.001,0.002,1,1,1,0.02,0.003,2,{leap}'
+
+
+def test_smb_guest_time_requires_real_chrony_tracking_not_only_sync_flag():
+    m = _smb_module()
+    assert callable(getattr(m, 'guest_time_ready', None)), 'missing guest clock readiness parser'
+    flags = 'NTP=yes\nNTPSynchronized=yes\n'
+    assert m.guest_time_ready(flags, _chrony_tracking())
+    for tracking in (_chrony_tracking('0.286'), _chrony_tracking('-0.05'), _chrony_tracking('nan'),
+                     _chrony_tracking('inf'), _chrony_tracking(leap='Not synchronised'),
+                     _chrony_tracking(stratum='0'), _chrony_tracking(stratum='16'), '', 'malformed'):
+        assert not m.guest_time_ready(flags, tracking)
+    assert not m.guest_time_ready('NTP=yes\nNTPSynchronized=no', _chrony_tracking())
+
+
+def test_smb_guest_time_preparation_is_bounded_guest_only_and_keeps_diagnostics(monkeypatch):
+    m = _smb_module()
+    node = m._VM('owned-node')
+    assert callable(getattr(node, 'prepare_time', None)), 'missing guest time preparation'
+    calls = []
+    def command(*args, **kwargs):
+        calls.append(args)
+        if args[:2] == ('timedatectl', 'show'):
+            return _Res(0, 'NTP=yes\nNTPSynchronized=yes\n', '')
+        if args == ('chronyc', '-c', 'tracking'):
+            return _Res(0, _chrony_tracking('0.286' if sum(c == args for c in calls) == 1 else '0.001'), '')
+        return _Res(0, '', '')
+    monkeypatch.setattr(node, 'command', command)
+    monkeypatch.setattr('microceph_harness.time.sleep', lambda _: None)
+    node.prepare_time()
+    assert calls.count(('chronyc', 'makestep', '0.01', '3')) == 1
+    assert calls.count(('chronyc', 'burst', '4/4')) == 1
+    assert calls.count(('chronyc', 'makestep', '0.01', '0')) == 1
+    assert calls.count(('chronyc', '-c', 'tracking')) == 2
+    assert ('chronyc', 'sources', '-v') in calls
+    assert not any('restart' in c for c in calls)
+
+
+def test_smb_guest_time_timeout_preserves_failure_diagnostics(monkeypatch):
+    import pytest
+    m = _smb_module()
+    node = m._VM('owned-node')
+    assert callable(getattr(node, 'prepare_time', None)), 'missing guest time preparation'
+    calls = []
+    def command(*args, **kwargs):
+        calls.append(args)
+        return _Res(1, '', 'NTP unavailable')
+    monkeypatch.setattr(node, 'command', command)
+    monkeypatch.setattr('microceph_harness.time.sleep', lambda _: None)
+    with pytest.raises(AssertionError, match='clock'):
+        node.prepare_time()
+    assert ('journalctl', '-b', '-u', 'chrony', '--no-pager', '-n', '60') in calls
+    assert len(calls) < 150
+
+
+def test_smb_gateway_and_dc_prepare_time_before_application_setup(tmp_path, monkeypatch):
+    import pytest
+    m = _smb_module()
+    class Prepared(Exception):
+        pass
+    class Node:
+        def __init__(self, name):
+            self.name = name
+        def probe_instance_network(self):
+            pass
+        def prepare_time(self):
+            raise Prepared()
+    monkeypatch.setattr(m, '_VM', Node)
+    snap = tmp_path / 'candidate.snap'
+    snap.write_bytes(b'test-only')
+    for ad in (False, True):
+        library = m.smb_ops()
+        monkeypatch.setattr(library, '_variable', lambda key, default: str(snap) if key == 'SNAP_PATH' else default)
+        monkeypatch.setattr(library, '_capacity', lambda _: None)
+        monkeypatch.setattr(library.harness, 'launch_owned_test_vm', lambda *args, **kwargs: None)
+        monkeypatch.setattr(library, '_host', lambda *args: 'local' if args[1:] == ('remote', 'get-default') else '{"local":{}}')
+        with pytest.raises(Prepared):
+            (library.provision_smb_ad_directory if ad else library.provision_smb_lab)()
+
+
+def test_smb_ceph_health_observation_records_clock_status():
+    from types import SimpleNamespace
+    library = _smb_module().smb_ops()
+    assert callable(getattr(library, 'observe_smb_ceph_health', None)), 'missing Ceph clock gate observation'
+    calls = []
+    def command(*args, **kwargs):
+        calls.append(args)
+        return _Res(0, '{"status":"HEALTH_WARN","checks":{"MON_CLOCK_SKEW":{}}}', '')
+    library.nodes = [SimpleNamespace(command=command)]
+    assert 'MON_CLOCK_SKEW' in library.observe_smb_ceph_health()['checks']
+    assert ('microceph.ceph', 'time-sync-status', '-f', 'json') in calls
+
+
+def test_smb_ad_setup_rechecks_ceph_clock_health_after_directory_preparation():
+    from robot.api import get_model
+    model = get_model(Path(__file__).parents[1] / 'smb-ad-tests' / 'smb_ad_tests.robot')
+    setup = next(block for section in model.sections for block in section.body
+                 if getattr(block, 'name', '') == 'AD Suite Setup' and hasattr(block, 'body'))
+    calls = [statement.keyword for statement in setup.body if hasattr(statement, 'keyword')]
+    assert calls.index('Require SMB Ceph Health') > calls.index('Provision SMB AD Directory')

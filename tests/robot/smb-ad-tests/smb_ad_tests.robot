@@ -20,6 +20,7 @@ AD Suite Setup
     Require SMB AD Capacity
     SMB Suite Setup
     Provision SMB AD Directory
+    Require SMB Ceph Health
     ${prepared}=    Prepare SMB AD Data    0    0
     Should Be Equal As Integers    ${prepared.rc}    0    msg=${prepared.stderr}
 
