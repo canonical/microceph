@@ -44,7 +44,40 @@ class NativeBridgeTests(unittest.TestCase):
         self.assertNotIn("private-password", repr(result))
         self.assertNotIn("abababab", repr(result))
         self.assertFalse(result["clustered"])
-        self.assertFalse(result["domain"])
+        self.assertFalse(result["domain_controller"])
+
+    def test_member_is_not_a_controller_and_cannot_import_sam(self):
+        request = self.request()
+        request["config"]["globals"]["native"]["options"].update({"security": "ads", "realm": "EXAMPLE.TEST"})
+        result = self.call("inspect", request)
+        self.assertFalse(result["domain_controller"])
+        with self.assertRaisesRegex(ValueError, "member.*SAM"):
+            self.call("accounts", request)
+        request["config"]["configs"]["alpha"]["instance_features"] = ["addc"]
+        self.assertTrue(self.call("inspect", request)["domain_controller"])
+
+    def test_join_uses_actual_pinned_joiner_stdin_and_stops_on_uncertainty(self):
+        # Patch only Popen: execute the real pinned Joiner and command builder.
+        request = dict(self.request(), config_path="/private/alpha/config/smb.conf",
+                       joins=[{"username": "first", "password": "first-private"},
+                              {"username": "second", "password": "second-private"}])
+        process = Mock()
+        process.wait.return_value = 0
+        with patch("sambacc.join.subprocess.Popen", return_value=process) as popen:
+            self.assertEqual(self.call("join", request), {})
+        argv = popen.call_args.args[0]
+        self.assertIn("/private/alpha/config/smb.conf", argv)
+        self.assertIn("--no-dns-updates", argv)
+        self.assertIn("first", argv)
+        self.assertNotIn("first-private", repr(argv))
+        self.assertNotIn("second", repr(argv))
+        self.assertEqual(popen.call_args.kwargs["stdin"], subprocess.PIPE)
+        self.assertEqual(process.stdin.write.call_args_list[0].args, (b"first-private",))
+        process.wait.return_value = 1
+        with patch("sambacc.join.subprocess.Popen", return_value=process) as popen:
+            with self.assertRaises(Exception):
+                self.call("join", request)
+        self.assertEqual(popen.call_count, 1, "nonzero upstream exit is not proof of no mutation")
 
     def test_render_is_the_pinned_renderer_and_does_not_publish_files(self):
         request = self.request()

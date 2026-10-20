@@ -97,6 +97,12 @@ func compileSMBNative(ctx context.Context, root string, candidate smbCandidate) 
 			}
 		}
 	}
+	if plan.Launch.AD != nil {
+		err = prepareSMBADPaths(root)
+		if err != nil {
+			return err
+		}
+	}
 	next := filepath.Join(root, "config/next")
 	err = smbPrivateDir(next)
 	if err != nil {

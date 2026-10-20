@@ -147,17 +147,6 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 		return err
 	}
 	root := smbRoot(clusterID)
-	for _, dir := range []string{"config", "identity", "samba/private", "samba/state", "samba/cache", "samba/lock", "samba/run", "samba/ncalrpc", "ctdb", "proxy-work", "diagnostics"} {
-		err = smbPrivateDir(filepath.Join(root, dir))
-		if err != nil {
-			return err
-		}
-	}
-	defer func() {
-		if retErr != nil {
-			_ = smbAtomicWrite(filepath.Join(root, "diagnostics", "last-error"), []byte("Local SMB application failed; configuration is not confirmed applied.\n"))
-		}
-	}()
 	if !explicit {
 		err = checkSMBStartIntent(root)
 		if err != nil {
@@ -192,11 +181,40 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 		}
 		return fmt.Errorf("logical SMB cluster is absent; local serving is stopped, retained ownership requires explicit retirement")
 	}
+	// Read the generated effective mode without a local key or source files.
+	// In particular invalid AD must not reserve an owner or stage identity state.
+	specRaw, err := common.ProcessExec.RunCommandContext(ctx, "rados", "-p", ".smb", "-N", clusterID, "get", "spec.smb", "-")
+	if err != nil {
+		return fmt.Errorf("read logical SMB policy spec failed")
+	}
+	spec, err := decodeSMBSpec(clusterID, []byte(specRaw))
+	if err != nil {
+		return err
+	}
+	err = validateSMBLogicalPolicy([]byte(logical), spec)
+	if err != nil {
+		return err
+	}
+	for _, dir := range []string{"config", "identity", "samba/private", "samba/state", "samba/cache", "samba/lock", "samba/run", "samba/ncalrpc", "ctdb", "proxy-work", "diagnostics"} {
+		err = smbPrivateDir(filepath.Join(root, dir))
+		if err != nil {
+			return err
+		}
+	}
+	defer func() {
+		if retErr != nil {
+			_ = smbAtomicWrite(filepath.Join(root, "diagnostics", "last-error"), []byte("Local SMB application failed; configuration is not confirmed applied.\n"))
+		}
+	}()
 	err = ensureSMBConfigKey(ctx, clusterID, root)
 	if err != nil {
 		return err
 	}
 	candidate, err := readSMBPreparedCandidate(ctx, s, clusterID, root, []byte(logical), false)
+	if err != nil {
+		return err
+	}
+	member, err := inspectSMBPolicyFunc(ctx, root, candidate)
 	if err != nil {
 		return err
 	}
@@ -208,8 +226,19 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	var policyWarning string
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := database.ReserveSMBOwner(ctx, tx, clusterID, s.ClusterState().Name(), candidate.Spec.hasFeature("clustered"))
+		var err error
+		if member != nil {
+			identity, _ := json.Marshal(member)
+			_, err = database.ReserveSMBADOwner(ctx, tx, clusterID, s.ClusterState().Name(), string(identity))
+		} else {
+			_, err = database.ReserveSMBOwner(ctx, tx, clusterID, s.ClusterState().Name(), candidate.Spec.hasFeature("clustered"))
+		}
+		if err != nil {
+			return err
+		}
+		policyWarning, err = database.GetSMBPolicyWarning(ctx, tx, clusterID)
 		if err != nil {
 			return err
 		}
@@ -218,6 +247,10 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 		}
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	err = writeSMBPolicyWarning(root, policyWarning)
 	if err != nil {
 		return err
 	}
@@ -274,6 +307,26 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 		os.Remove(filepath.Join(root, "diagnostics", "last-error"))
 		return nil
 	}
+	if launch.AD != nil && ready && errors.Is(pendingErr, os.ErrNotExist) {
+		raw, readErr := os.ReadFile(filepath.Join(root, "config/candidate.json"))
+		if readErr == nil {
+			var live smbCandidate
+			readErr = json.Unmarshal(raw, &live)
+			if readErr != nil {
+				return readErr
+			}
+			if live.configurationFingerprint() == candidate.configurationFingerprint() {
+				err = publishSMBNativeFunc(ctx, root, true)
+				if err != nil {
+					return err
+				}
+				return smbAtomicWrite(filepath.Join(root, "applied.json"), []byte(candidate.fingerprint()))
+			}
+		} else if !os.IsNotExist(readErr) {
+			return readErr
+		}
+	}
+
 	ops := smbSnapOps(root)
 	// Conservatively stop consumers before every changed effective projection.
 	err = stopSMBApps(root, ops)
@@ -299,6 +352,26 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	err = os.Remove(filepath.Join(root, "stop-requested"))
 	if err != nil {
 		return err
+	}
+	if launch.AD != nil {
+		ops.prepare = func(ctx context.Context, role string) error {
+			if role != "winbindd" {
+				return nil
+			}
+			return prepareSMBADRuntime(ctx, s, root, clusterID)
+		}
+		ops.prepared = func(ctx context.Context, role string) error {
+			if role != "winbindd" {
+				return nil
+			}
+			err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				return database.InitializeSMBAD(ctx, tx, clusterID, s.ClusterState().Name())
+			})
+			if err != nil {
+				return err
+			}
+			return nil
+		}
 	}
 	err = startSMBApps(ctx, root, roles, ops)
 	if err != nil {
@@ -352,8 +425,15 @@ func disableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterI
 		return fmt.Errorf("SMB local owner does not match requested cluster")
 	}
 	var groups []string
+	adIdentity := false
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		groups, err = database.GetSMBOwnerGroups(ctx, tx, s.ClusterState().Name())
+		if err != nil {
+			return err
+		}
+		if len(groups) <= 1 && (len(groups) == 1 || ownerErr == nil) {
+			adIdentity, err = database.HasSMBADIdentity(ctx, tx, clusterID)
+		}
 		return err
 	})
 	if err != nil {
@@ -371,6 +451,12 @@ func disableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterI
 		return err
 	}
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if purge {
+			err := database.CheckSMBADPurge(ctx, tx, clusterID, s.ClusterState().Name())
+			if err != nil {
+				return err
+			}
+		}
 		return database.RetireSMBOwner(ctx, tx, clusterID, s.ClusterState().Name())
 	})
 	if err != nil {
@@ -381,6 +467,18 @@ func disableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterI
 		return err
 	}
 	if purge {
+		// AD purge never removes identity databases, even when a peer is retained.
+		// Final-state purge was refused transactionally above. Keep the stopped
+		// replica for manual maintenance rather than treating peer count as backup.
+		if adIdentity {
+			for _, name := range []string{"config", "identity", "proxy-work"} {
+				err = os.RemoveAll(filepath.Join(root, name))
+				if err != nil {
+					return err
+				}
+			}
+			return smbAtomicWrite(filepath.Join(root, "diagnostics/identity-retained"), []byte("AD trust/idmap replica retained after local purge. Do not delete or reset; manual maintenance required.\n"))
+		}
 		return os.RemoveAll(root)
 	}
 	return nil

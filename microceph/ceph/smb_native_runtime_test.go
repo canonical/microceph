@@ -1,15 +1,19 @@
 package ceph
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -220,4 +224,61 @@ func TestSMBGoReadinessRequiresLiveMonitorAndExactOwner(t *testing.T) {
 	require.Empty(t, recorder.name, "daemon readiness must not execute CTDB or re-enter snap run")
 	require.NoError(t, smbAtomicWrite(filepath.Join(base, "owner.json"), []byte("other")))
 	require.Error(t, smbReadyNative(context.Background(), root, "ctdbd"))
+}
+
+// This proves compiled NSS -> private bind -> socket connectivity only, not AD
+// authentication. No host /run files or accounts are modified by the probe.
+func TestSMBADNSSPrivateSocketInAppNamespace(t *testing.T) {
+	library := os.Getenv("MICROCEPH_SMB_TEST_NSS_LIBRARY")
+	if library == "" {
+		t.Skip("set MICROCEPH_SMB_TEST_NSS_LIBRARY to the pinned extracted NSS library")
+	}
+	if os.Getenv("MICROCEPH_SMB_NSS_CHILD") == "1" {
+		runtime.LockOSThread()
+		require.NoError(t, unix.Mount("tmpfs", "/run", "tmpfs", 0, "mode=0755"))
+		root := os.Getenv("MICROCEPH_SMB_NSS_ROOT")
+		plan, err := smbNativeRolePlan("smbd", root, smbLaunch{Clustered: true, AD: &smbADMember{}}, "/snap")
+		require.NoError(t, err)
+		mounts := []smbNativeMount{}
+		for _, mount := range plan.Mounts {
+			if mount.Target == "/" || mount.Target == "/run/samba/winbindd" {
+				mounts = append(mounts, mount)
+			}
+		}
+		plan.Mounts = mounts
+		require.NoError(t, enterSMBNativeContext(plan))
+		// Use the actual pinned module, not a SELFTEST socket environment override.
+		code := `import ctypes,os
+class Passwd(ctypes.Structure):
+    _fields_=[("name",ctypes.c_void_p),("passwd",ctypes.c_void_p),("uid",ctypes.c_uint),("gid",ctypes.c_uint),("gecos",ctypes.c_void_p),("dir",ctypes.c_void_p),("shell",ctypes.c_void_p)]
+lib=ctypes.CDLL(os.environ["MICROCEPH_SMB_TEST_NSS_LIBRARY"])
+f=lib._nss_winbind_getpwnam_r
+f.argtypes=[ctypes.c_char_p,ctypes.POINTER(Passwd),ctypes.c_void_p,ctypes.c_size_t,ctypes.POINTER(ctypes.c_int)]
+buf=ctypes.create_string_buffer(16384);pw=Passwd();err=ctypes.c_int()
+f(b"PROBE\\socket-only",ctypes.byref(pw),buf,len(buf),ctypes.byref(err))
+print("compiled NSS lookup returned; socket reachability checked by parent")`
+		plan.Args = []string{os.Getenv("MICROCEPH_SMB_TEST_PYTHON"), "-B", "-c", code}
+		require.NoError(t, execSMBNativeRole(root, "smbd", plan))
+		t.Fatal("exec returned")
+	}
+	require.NotEmpty(t, os.Getenv("MICROCEPH_SMB_TEST_PYTHON"))
+	root := filepath.Join(t.TempDir(), "alpha")
+	require.NoError(t, prepareSMBADPaths(root))
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(root, "samba/winbindd/pipe"), Net: "unix"})
+	require.NoError(t, err)
+	defer listener.Close()
+	require.NoError(t, listener.SetDeadline(time.Now().Add(10*time.Second)))
+	cmd := exec.Command("unshare", "--user", "--map-root-user", "--mount", os.Args[0], "-test.run=^TestSMBADNSSPrivateSocketInAppNamespace$")
+	cmd.Env = append(os.Environ(), "MICROCEPH_SMB_NSS_CHILD=1", "MICROCEPH_SMB_NSS_ROOT="+root)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	require.NoError(t, cmd.Start())
+	conn, acceptErr := listener.AcceptUnix()
+	if conn != nil {
+		require.NoError(t, conn.Close())
+	}
+	waitErr := cmd.Wait()
+	require.NoError(t, waitErr, output.String())
+	require.NoError(t, acceptErr, "compiled NSS did not reach the app-private public socket: %s", output.String())
 }

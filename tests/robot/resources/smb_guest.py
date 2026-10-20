@@ -10,12 +10,13 @@ import subprocess
 import sys
 
 BASE = Path("/var/snap/microceph/common/robot-smb")
-ROLES = ("smbd", "smbmetrics", "ctdbd", "ctdb-nodes", "daemon")
+ROLES = ("smbd", "smbmetrics", "ctdbd", "ctdb-nodes", "daemon", "winbindd")
+DATA_PATHS = {"robot-smb": "/clustered", "robot-never": "/independent", "robot-other": "/independent-other"}
 PAYLOAD = b"MicroCeph Robot SMB sentinel\n" + bytes(range(256)) * 16
 
 
 def resource_documents(addresses, password):
-    """Return the three explicit test inputs; keep shared resources upstream-owned."""
+    """Return the explicit test inputs; keep shared resources upstream-owned."""
     users = {"resource_type": "ceph.smb.usersgroups", "users_groups_id": "robot-users",
              "values": {"users": [{"name": "alice", "password": password, "uid": 2201, "gid": 2200}],
                         "groups": [{"name": "robot-team", "gid": 2200}]}}
@@ -29,7 +30,8 @@ def resource_documents(addresses, password):
                 "cephfs": {"volume": "robotsmb", "path": path, "provider": "samba-vfs/new"}}
     return {"clustered": {"resources": [users, cluster("robot-smb", "always", 1445, 19922), share("robot-smb", "/clustered")]},
             "refresh": cluster("robot-smb", "always", 2445, 29922),
-            "nonclustered": {"resources": [cluster("robot-never", "never", 3445, 39922), share("robot-never", "/independent")]}}
+            "nonclustered": {"resources": [cluster("robot-never", "never", 3445, 39922), share("robot-never", "/independent")]},
+            "independent": {"resources": [cluster("robot-other", "never", 4445, 49922), share("robot-other", "/independent-other")]}}
 
 
 def safe_apply_result(rc, stdout, stderr, passwords):
@@ -57,7 +59,7 @@ def initialize(addresses):
 
 
 def apply_resource(kind):
-    if kind not in ("clustered", "refresh", "nonclustered"):
+    if kind not in ("clustered", "refresh", "nonclustered", "independent"):
         raise ValueError("unknown test resource")
     result = subprocess.run(["/snap/bin/microceph.ceph", "smb", "apply", "-i", str(BASE / f"{kind}.json"), "-f", "json"],
                             capture_output=True, text=True, timeout=120)
@@ -69,7 +71,7 @@ def apply_resource(kind):
     return 0 if safe["success"] else 1
 
 
-def cephfs_operation(action, filename=None):
+def cephfs_operation(action, filename=None, cluster="robot-never"):
     # Run with the snap's Python/libcephfs via the existing ceph app profile.
     import cephfs
     config = Path(os.environ["SNAP_DATA"]) / "conf"
@@ -80,12 +82,12 @@ def cephfs_operation(action, filename=None):
         fs.mount()
         if action == "prepare-fs":
             fs.chmod("/", 0o755)
-            for path in ("/clustered", "/independent"):
+            for path in DATA_PATHS.values():
                 fs.mkdir(path, 0o770)
                 fs.chown(path, 2201, 2200)
                 fs.chmod(path, 0o770)
         else:
-            handle = fs.open("/independent/" + filename, "r")
+            handle = fs.open(DATA_PATHS[cluster] + "/" + filename, "r")
             try:
                 content = fs.read(handle, 0, 1024 * 1024)
             finally:
@@ -122,7 +124,7 @@ def snapshot(cluster):
                               capture_output=True, text=True, timeout=10)
     applied = root / "applied.json"
     print(json.dumps({"api": api, "owner": text(root.parent / "owner.json"), "local_exists": root.exists(),
-                      "context": {k: context.get(k) for k in ("clustered", "frontend_address", "smb_port", "metrics_port")},
+                      "context": {k: context.get(k) for k in ("clustered", "frontend_address", "smb_port", "metrics_port", "ad_member")},
                       "services": services.stdout, "applied": applied.exists() and applied.stat().st_size > 0,
                       "applied_mtime": applied.stat().st_mtime_ns if applied.exists() else None,
                       "pending": (root / "config-update-pending").exists(),
@@ -142,6 +144,6 @@ if __name__ == "__main__":
     elif operation == "prepare-fs":
         cephfs_operation(operation)
     elif operation == "read-data":
-        cephfs_operation(operation, sys.argv[2])
+        cephfs_operation(operation, sys.argv[3], sys.argv[2])
     else:
         raise ValueError("unknown fixture operation")

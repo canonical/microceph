@@ -36,7 +36,8 @@ class PackagingTests(unittest.TestCase):
 
     def test_smb_boot_retries_do_not_exhaust_the_default_start_limit(self):
         recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
-        self.assertEqual(recipe["apps"]["smbd"].get("restart-delay"), "10s")
+        for role in ("smbd", "winbindd"):
+            self.assertEqual(recipe["apps"][role].get("restart-delay"), "10s")
         self.assertEqual(recipe["apps"]["smbd"].get("restart-condition", "on-failure"), "on-failure")
 
     def test_ctdb_socket_grant_is_exact_and_only_for_daemon_and_metrics(self):
@@ -56,7 +57,7 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("/var/run/ctdb", recipe["layout"])
         self.assertEqual(recipe["plugs"]["ctdb-run"], {"interface": "system-files", "write": ["/run/ctdb"]})
         consumers = {name for name, app in recipe["apps"].items() if "ctdb-run" in app.get("plugs", [])}
-        self.assertEqual(consumers, {"ctdbd", "ctdb-nodes", "ctdb", "smbd"})
+        self.assertEqual(consumers, {"ctdbd", "ctdb-nodes", "ctdb", "smbd", "winbindd"})
         for name in consumers:
             self.assertIn("smb-mounts", recipe["apps"][name]["plugs"])
             self.assertIn("network-control", recipe["apps"][name]["plugs"])
@@ -65,6 +66,7 @@ class PackagingTests(unittest.TestCase):
             "/etc/passwd": "config/passwd", "/etc/group": "config/group", "/etc/nsswitch.conf": "config/nsswitch.conf",
             "/etc/ctdb": "ctdb{,/}", "/run/ctdb": "ctdb/run{,/}", "/var/lib/ctdb": "ctdb{,/}",
             "/etc/ceph/ceph.conf": "config/ctdb-recovery.conf",
+            "/run/samba/winbindd": "samba/winbindd{,/}",
         }
         rules = recipe["plugs"]["smb-mounts"]["mount"]
         self.assertEqual(len(rules), len(expected))
@@ -83,6 +85,20 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(recipe["layout"][target], {"type": "tmpfs"})
         control = (ROOT / "snapcraft/commands/ctdb.start").read_text()
         self.assertIn('microceph-smb-runtime" ctdb-control', control)
+
+    def test_ad_socket_binding_is_app_scoped_and_public_only(self):
+        recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
+        self.assertEqual(recipe["plugs"].get("winbind-run"), {
+            "interface": "system-files", "write": ["/run/samba"],
+        })
+        self.assertEqual({name for name, app in recipe["apps"].items()
+                          if "winbind-run" in app.get("plugs", [])}, {"smbd", "winbindd"})
+        self.assertIn("ctdb-run", recipe["apps"]["winbindd"]["plugs"])
+        rule = {"what": "/var/snap/microceph/common/smb/*/samba/winbindd{,/}",
+                "where": "/run/samba/winbindd", "options": ["bind"]}
+        self.assertIn(rule, recipe["plugs"]["smb-mounts"]["mount"])
+        self.assertNotIn("/run/samba", recipe["layout"])
+        self.assertNotIn("/run/samba/winbindd", recipe["layout"])
 
     def test_pinned_consumer_and_native_provider_closure(self):
         recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())

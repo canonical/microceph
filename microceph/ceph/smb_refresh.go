@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	"github.com/canonical/microceph/microceph/api/types"
@@ -46,6 +47,11 @@ func SMBLocalStatus(ctx context.Context) (types.SMBStatus, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return status, err
 	}
+	warning, err := os.ReadFile(filepath.Join(root, "diagnostics", "policy-warning"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return status, err
+	}
+	status.PolicyWarning = string(warning)
 	diagnostic, err := os.ReadFile(filepath.Join(root, "diagnostics", "last-error"))
 	if err == nil {
 		status.Error = "local update failed; configuration is not confirmed applied"
@@ -138,13 +144,22 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		}
 	}()
 	var clustered bool
+	var policyWarning string
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		clustered, err = database.GetSMBConfiguredService(ctx, tx, clusterID, s.ClusterState().Name())
+		if err != nil {
+			return err
+		}
+		policyWarning, err = database.GetSMBPolicyWarning(ctx, tx, clusterID)
 		return err
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
+	if err != nil {
+		return err
+	}
+	err = writeSMBPolicyWarning(root, policyWarning)
 	if err != nil {
 		return err
 	}
@@ -235,6 +250,9 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		launch, nextRoles, err := prepareSMBProjection(ctx, s, candidate, root)
 		if err != nil {
 			return err
+		}
+		if !reflect.DeepEqual(launch.AD, current.AD) {
+			return fmt.Errorf("SMB authentication identity changed; new logical ID and manual maintenance required")
 		}
 		if launch.Clustered != current.Clustered || launch.Proxy != current.Proxy {
 			return fmt.Errorf("SMB runtime roles changed; explicit maintenance required")

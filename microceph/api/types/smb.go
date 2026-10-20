@@ -13,4 +13,5 @@ type SMBStatus struct {
 	Ready         bool   `json:"ready"`
 	StopRequested bool   `json:"stop_requested"`
 	Error         string `json:"error,omitempty"`
+	PolicyWarning string `json:"policy_warning,omitempty"`
 }

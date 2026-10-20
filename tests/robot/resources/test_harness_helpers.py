@@ -205,6 +205,11 @@ def test_smb_guest_resources_and_redaction_are_explicit():
     assert docs["refresh"]["custom_ports"] == {"smb": 2445, "smbmetrics": 29922}
     assert docs["nonclustered"]["resources"][0]["custom_ports"] == {"smb": 3445, "smbmetrics": 39922}
     assert docs["nonclustered"]["resources"][0]["clustering"] == "never"
+    independent = docs["independent"]["resources"]
+    assert independent[0]["cluster_id"] != docs["nonclustered"]["resources"][0]["cluster_id"]
+    assert independent[0]["clustering"] == "never"
+    assert independent[1]["cephfs"]["path"] != docs["nonclustered"]["resources"][1]["cephfs"]["path"]
+    assert set(smb_guest.DATA_PATHS.values()) == {"/clustered", "/independent", "/independent-other"}
     raw = json.dumps({"success": False, "results": [{"resource": {"password": "PRIVATE-PASSWORD"}, "msg": "rejected PRIVATE-PASSWORD"}]})
     result = smb_guest.safe_apply_result(0, raw, "PRIVATE-PASSWORD", ["PRIVATE-PASSWORD"])
     assert result["success"] is False and "PRIVATE-PASSWORD" not in json.dumps(result)
@@ -3971,3 +3976,155 @@ def test_rgw_scenario_stops_sampler_when_request_fails(failure, tmp_path, rgw_sc
         assert result.stdout == ""
     finally:
         release.set()
+
+
+# External directory fixtures: assertions remain in the Robot suite.
+def test_smb_ad_resource_allowlist_and_wrong_join_are_separate():
+    import smb_ad_guest as ad
+    docs = ad.resource_documents(['192.0.2.1', '192.0.2.2'], '192.0.2.4', 'PRIVATE')
+    good = docs['ad']['resources']
+    cluster = next(r for r in good if r['resource_type'] == 'ceph.smb.cluster')
+    assert cluster['auth_mode'] == 'active-directory' and cluster['clustering'] == 'always'
+    assert cluster['domain_settings']['realm'] == ad.REALM
+    assert cluster['custom_dns'] == ['192.0.2.4']
+    shares = [r for r in good if r['resource_type'] == 'ceph.smb.share']
+    assert {s['share_id'] for s in shares} == {'data', 'read', 'auth'}
+    assert all(s['restrict_access'] for s in shares)
+    assert shares[0]['login_control'] == [{'name': 'ROBOT\\writers', 'category': 'group', 'access': 'read-write'}]
+    assert next(s for s in shares if s['share_id'] == 'read')['readonly'] is True
+    wrong = docs['ad-wrong']['resources']
+    assert next(r for r in wrong if r['resource_type'] == 'ceph.smb.cluster')['cluster_id'] != cluster['cluster_id']
+    assert next(r for r in wrong if r['resource_type'] == 'ceph.smb.join.auth')['auth']['password'] != 'PRIVATE'
+    refresh = docs['ad-refresh']
+    assert refresh['resource_type'] == 'ceph.smb.join.auth' and refresh['auth']['username'] == 'bob'
+
+
+def test_smb_ad_protocols_cannot_fallback_or_leak_passwords():
+    import smb_ad_guest as ad
+    kerberos = ad.client_argv('192.0.2.2', 'data', 'alice', 'kerberos', 'get sentinel.bin /tmp/read')
+    assert '//robot-ad.robot.test/data' in kerberos and '--use-kerberos=required' in kerberos
+    assert '-I' in kerberos and '192.0.2.2' in kerberos and '-A' not in kerberos
+    assert '-N' in kerberos and any('ccache' in arg for arg in kerberos)
+    ntlm = ad.client_argv('192.0.2.2', 'auth', 'bob', 'ntlm', 'ls')
+    assert '--use-kerberos=off' in ntlm and '--option=client ntlmv2 auth=yes' in ntlm
+    assert '-A' in ntlm and '-U' not in ntlm
+    import pytest
+    with pytest.raises(ValueError):
+        ad.client_argv('192.0.2.2', 'data', 'alice', 'desired', 'ls')
+    with pytest.raises(ValueError):
+        ad.client_argv('192.0.2.2', 'data', 'alice%secret', 'ntlm', 'ls')
+
+
+def test_smb_ad_mapping_parser_requires_actual_sid_uid_gid_and_group():
+    import smb_ad_guest as ad
+    import pytest
+    raw = {'alice': ['S-1-5-21-1-2-3-1101 SID_USER (1)', 'ROBOT\\alice:*:2201:2200::/:/bin/false'],
+           'bob': ['S-1-5-21-1-2-3-1102 SID_USER (1)', 'ROBOT\\bob:*:2202:2200::/:/bin/false'],
+           'writers': ['S-1-5-21-1-2-3-1103 SID_DOM_GROUP (2)', 'ROBOT\\writers:x:2203:']}
+    value = ad.parse_mappings(raw)
+    assert value['alice'] == {'sid': 'S-1-5-21-1-2-3-1101', 'uid': 2201, 'gid': 2200}
+    assert value['writers']['gid'] == 2203
+    raw['alice'][1] = ''
+    with pytest.raises(ValueError):
+        ad.parse_mappings(raw)
+
+
+def test_smb_ad_readiness_includes_winbind():
+    import copy
+    m = _smb_module()
+    state = _smb_snapshot()
+    state['context']['ad_member'] = {'realm': 'ROBOT.TEST'}
+    assert not m.snapshot_ready(state, 'robot-smb')
+    state['roles']['winbindd'] = copy.deepcopy(state['roles']['smbd'])
+    assert m.snapshot_ready(state, 'robot-smb')
+
+
+def test_smb_ad_client_uses_fresh_cache_and_single_io_process(tmp_path, monkeypatch, capsys):
+    import smb_ad_guest as ad
+    monkeypatch.setattr(ad, 'BASE', tmp_path)
+    (tmp_path / 'ad-secrets.json').write_text(json.dumps({'alice': 'PRIVATE', 'bob': 'BOB'}))
+    (tmp_path / 'payload.bin').write_bytes(b'payload')
+    (tmp_path / 'client.ccache').write_text('stale')
+    bin_dir = tmp_path / 'bin'; bin_dir.mkdir()
+    (bin_dir / 'kinit').write_text('#!/bin/sh\n[ ! -f "${KRB5CCNAME#FILE:}" ] || exit 9\nread -r pw\n[ "$pw" = PRIVATE ] || exit 8\nprintf fresh > "${KRB5CCNAME#FILE:}"\n')
+    (bin_dir / 'smbclient').write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "' + str(tmp_path / 'calls') + '"\necho PRIVATE\nexit 1\n')
+    (bin_dir / 'klist').write_text('#!/bin/sh\necho cifs/robot-ad.robot.test@ROBOT.TEST\n')
+    for f in bin_dir.iterdir():
+        f.chmod(0o700)
+    import os
+    monkeypatch.setenv('PATH', str(bin_dir) + ':' + os.environ['PATH'])
+    ad.client('192.0.2.1', 'data', 'alice', 'kerberos', 'get', 'sentinel.bin')
+    value = json.loads(capsys.readouterr().out)
+    assert value['rc'] == 1 and 'PRIVATE' not in value['message'] and 'cifs/' in value['ticket']
+    assert len((tmp_path / 'calls').read_text().splitlines()) == 1
+    assert (tmp_path / 'client.ccache').read_text() == 'fresh'
+
+
+def test_smb_ad_dc_observes_account_identity_not_trust_secrets():
+    import smb_ad_guest as ad
+    value = ad.account_values({'objectSid': ['S-1-5-21-1-2-3-1101'], 'pwdLastSet': ['123'], 'msDS-KeyVersionNumber': ['2'], 'unicodePwd': ['SECRET']})
+    assert value == {'objectSid': 'S-1-5-21-1-2-3-1101', 'pwdLastSet': '123', 'msDS-KeyVersionNumber': '2'}
+    import pytest
+    with pytest.raises(ValueError):
+        ad.account_values({})
+
+
+def test_smb_ad_capacity_counts_four_guests(monkeypatch):
+    library = _smb_module().smb_ops()
+    monkeypatch.setattr(library, '_variable', lambda name, default: default)
+    monkeypatch.setattr(library, '_host', lambda *args: json.dumps({'space': {'total': 140 * 1024 ** 3, 'used': 0}}))
+    monkeypatch.setattr(Path, 'read_text', lambda *args, **kwargs: 'MemAvailable: 20000000 kB\n')
+    import pytest
+    with pytest.raises(AssertionError, match='required=146.0 GiB'):
+        library.require_smb_ad_capacity()
+
+
+def test_smb_ad_client_reports_bounded_directory_timeout_without_raw_output(tmp_path, monkeypatch, capsys):
+    import smb_ad_guest as ad
+    import subprocess
+    monkeypatch.setattr(ad, 'BASE', tmp_path)
+    (tmp_path / 'ad-secrets.json').write_text('{"alice":"PRIVATE"}')
+    def expired(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 65, output='PRIVATE')
+    monkeypatch.setattr(ad, 'run', expired)
+    ad.client('192.0.2.1', 'data', 'alice', 'ntlm', 'get', 'sentinel.bin')
+    result = json.loads(capsys.readouterr().out)
+    assert result['rc'] == 124 and result['digest'] == ''
+    assert 'PRIVATE' not in repr(result)
+
+
+def test_smb_ad_resources_use_actual_pinned_mgr_allowlist():
+    import os
+    import pytest
+    import subprocess
+    source = os.environ.get('MICROCEPH_SMB_TEST_CEPH_SRC')
+    if not source:
+        pytest.skip('requires pinned Ceph source via MICROCEPH_SMB_TEST_CEPH_SRC')
+    # A package/type alias bypasses only mgr daemon imports in the sparse source;
+    # actual load/validation and login-control generation execute unmodified.
+    code = '''
+import sys, types, typing
+from pathlib import Path
+src=Path(sys.argv[1])
+sys.path[:0]=[str(src/'pybind/mgr'),str(src/'python-common'),sys.argv[2]]
+pkg=types.ModuleType('smb');pkg.__path__=[str(src/'pybind/mgr/smb')];sys.modules['smb']=pkg
+mgr=types.ModuleType('mgr_module');mgr.HandlerFuncType=typing.Callable;sys.modules['mgr_module']=mgr
+from smb.resources import load, Share
+from smb.handler import _generate_share_login_control
+from smb_ad_guest import resource_documents
+for name, doc in resource_documents(['192.0.2.1','192.0.2.2'],'192.0.2.4','private').items():
+    for resource in load(doc):
+        if isinstance(resource, Share):
+            config={'options':{}}
+            _generate_share_login_control(resource, config)
+            assert config['options']['valid users'] in ('@ROBOT\\\\writers','@ROBOT\\\\readers')
+            key='write list' if resource.share_id == 'data' else 'read list'
+            assert config['options'][key] == config['options']['valid users']
+'''
+    result = subprocess.run([os.environ.get('MICROCEPH_SMB_TEST_PYTHON', '/usr/bin/python3'), '-B', '-c', code,
+                             source, str(Path(__file__).parent)], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+
+
+def test_smb_ad_partial_setup_diagnostics_do_not_hide_the_original_failure():
+    _smb_module().smb_ops().smb_ad_diagnostics()

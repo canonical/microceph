@@ -16,10 +16,12 @@ import (
 // Owners are recorded before startup, not desired or successful deployments.
 // Removing a member must not remove its uncertain ownership from this object.
 type SMBServiceGroupConfig struct {
-	Clustered bool              `json:"clustered"`
-	NextRank  uint64            `json:"next_rank"`
-	Ranks     map[string]uint64 `json:"ranks"`
-	Owners    map[string]string `json:"owners"` // member database identity -> member name
+	Clustered    bool              `json:"clustered"`
+	AuthIdentity string            `json:"auth_identity,omitempty"`
+	AD           *SMBADState       `json:"ad,omitempty"`
+	NextRank     uint64            `json:"next_rank"`
+	Ranks        map[string]uint64 `json:"ranks"`
+	Owners       map[string]string `json:"owners"` // member database identity -> member name
 	// Endpoints retains private IP evidence even after core-member removal.
 	Endpoints map[string]string `json:"endpoints,omitempty"`
 }
@@ -118,6 +120,18 @@ func saveSMBGroup(ctx context.Context, tx *sql.Tx, id int64, config SMBServiceGr
 // Call in a short database write transaction, before starting any app. Retain
 // the reservation if startup cleanup cannot prove that every app has stopped.
 func ReserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string, clustered bool) (uint64, error) {
+	return reserveSMBOwner(ctx, tx, clusterID, member, clustered, "")
+}
+
+// ReserveSMBADOwner retains an immutable logical member identity, not credentials.
+func ReserveSMBADOwner(ctx context.Context, tx *sql.Tx, clusterID, member, identity string) (uint64, error) {
+	if identity == "" || identity == "user" {
+		return 0, fmt.Errorf("invalid AD identity")
+	}
+	return reserveSMBOwner(ctx, tx, clusterID, member, true, identity)
+}
+
+func reserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string, clustered bool, authIdentity string) (uint64, error) {
 	if clusterID == "" || member == "" {
 		return 0, fmt.Errorf("SMB cluster and member must be nonempty")
 	}
@@ -184,7 +198,10 @@ func ReserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string, 
 	}
 	id, config, err := smbGroup(ctx, tx, clusterID)
 	if errors.Is(err, sql.ErrNoRows) {
-		config = SMBServiceGroupConfig{Clustered: clustered, Ranks: map[string]uint64{}, Owners: map[string]string{}}
+		config = SMBServiceGroupConfig{Clustered: clustered, AuthIdentity: authIdentity, Ranks: map[string]uint64{}, Owners: map[string]string{}}
+		if authIdentity != "" {
+			config.AD = &SMBADState{}
+		}
 		raw, marshalErr := json.Marshal(config)
 		if marshalErr != nil {
 			return 0, marshalErr
@@ -198,8 +215,29 @@ func ReserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string, 
 	if err != nil {
 		return 0, err
 	}
+	retainedIdentity := config.AuthIdentity
+	// Empty identity denotes legacy/current user-mode, never an empty AD identity.
+	if retainedIdentity != authIdentity {
+		return 0, fmt.Errorf("SMB authentication identity changed; new logical ID and manual maintenance required")
+	}
+	if authIdentity != "" && config.AD == nil {
+		return 0, fmt.Errorf("AD attempt state lost; retain identity and use manual maintenance")
+	}
+	if authIdentity == "" && config.AD != nil {
+		return 0, fmt.Errorf("retained AD identity conflicts with user mode")
+	}
 	if config.Clustered != clustered {
 		return 0, fmt.Errorf("SMB mode conflicts with retained rank/identity state; maintenance required")
+	}
+	// Only an exact retained owner may retry a legacy multi-owner group.
+	// Failed/offline reservations are just as authoritative as healthy owners.
+	if !clustered && config.Owners[identity] != member && len(config.Owners) > 0 {
+		owners := make([]string, 0, len(config.Owners))
+		for _, name := range config.Owners {
+			owners = append(owners, name)
+		}
+		sort.Strings(owners)
+		return 0, fmt.Errorf("Nonclustered SMB cluster %q already has owner %q; retire that owner after verified stop or create a new logical cluster in clustered mode", clusterID, owners[0])
 	}
 	rank, exists := config.Ranks[identity]
 	if clustered && !exists {
@@ -420,4 +458,115 @@ func UpdateSMBServiceInfo(ctx context.Context, tx *sql.Tx, clusterID, member, in
 		return fmt.Errorf("SMB configured service changed during update")
 	}
 	return nil
+}
+
+// GetSMBPolicyWarning reports legacy placement without changing retained owners.
+func GetSMBPolicyWarning(ctx context.Context, tx *sql.Tx, clusterID string) (string, error) {
+	_, config, err := smbGroup(ctx, tx, clusterID)
+	if err != nil {
+		return "", err
+	}
+	if config.Clustered || len(config.Owners) <= 1 {
+		return "", nil
+	}
+	owners := make([]string, 0, len(config.Owners))
+	for _, name := range config.Owners {
+		owners = append(owners, name)
+	}
+	sort.Strings(owners)
+	return fmt.Sprintf("Nonclustered SMB cluster %q is policy-noncompliant: retained owners %q; exact-owner retries remain allowed, new owners are blocked. Retire surplus owners after verified stop; no automatic shutdown or mode conversion.", clusterID, owners), nil
+}
+
+// SMBADState is the narrow initial-join record, never an expiring placement lease.
+// A nonempty JoinOwner without Joined is an uncertain external effect. It is
+// deliberately not cleared by stop, retirement, time, credential refresh or retry.
+// Samba owns all passwords and mappings; no secrets are kept in this record.
+type SMBADState struct {
+	JoinOwner   string `json:"join_owner,omitempty"`
+	Joined      bool   `json:"joined"`
+	Initialized bool   `json:"initialized"`
+}
+
+func smbADOwner(ctx context.Context, tx *sql.Tx, clusterID, member string) (int64, SMBServiceGroupConfig, string, error) {
+	identity, err := smbMemberIdentity(ctx, tx, member)
+	if err != nil {
+		return 0, SMBServiceGroupConfig{}, "", err
+	}
+	id, config, err := smbGroup(ctx, tx, clusterID)
+	if err != nil {
+		return 0, config, "", err
+	}
+	if !config.Clustered || config.AD == nil || config.Owners[identity] != member {
+		return 0, config, "", fmt.Errorf("AD requires an exact clustered owner")
+	}
+	return id, config, identity, nil
+}
+
+// GetSMBADState observes join history for an exact retained owner.
+func GetSMBADState(ctx context.Context, tx *sql.Tx, clusterID, member string) (SMBADState, error) {
+	_, config, _, err := smbADOwner(ctx, tx, clusterID, member)
+	if err != nil {
+		return SMBADState{}, err
+	}
+	return *config.AD, nil
+}
+
+// BeginSMBADJoin consumes the sole initial attempt in a short write transaction.
+// Commit before execution. Even the same actor cannot automatically retry.
+func BeginSMBADJoin(ctx context.Context, tx *sql.Tx, clusterID, member string) error {
+	id, config, identity, err := smbADOwner(ctx, tx, clusterID, member)
+	if err != nil {
+		return err
+	}
+	if config.AD.JoinOwner != "" || config.AD.Joined {
+		return fmt.Errorf("AD join already attempted or uncertain; manual maintenance required, never retry on timeout")
+	}
+	config.AD.JoinOwner = identity
+	return saveSMBGroup(ctx, tx, id, config)
+}
+
+// CompleteSMBADJoin records only the initiating actor's confirmed success.
+func CompleteSMBADJoin(ctx context.Context, tx *sql.Tx, clusterID, member string) error {
+	id, config, identity, err := smbADOwner(ctx, tx, clusterID, member)
+	if err != nil {
+		return err
+	}
+	if config.AD.JoinOwner != identity || config.AD.Joined {
+		return fmt.Errorf("AD join actor does not match pending attempt")
+	}
+	config.AD.Joined = true
+	return saveSMBGroup(ctx, tx, id, config)
+}
+
+// InitializeSMBAD records that trust, autorid and Winbind/NSS were checked before serving.
+func InitializeSMBAD(ctx context.Context, tx *sql.Tx, clusterID, member string) error {
+	id, config, identity, err := smbADOwner(ctx, tx, clusterID, member)
+	if err != nil {
+		return err
+	}
+	if !config.AD.Joined || (!config.AD.Initialized && config.AD.JoinOwner != identity) {
+		return fmt.Errorf("AD initial state is not confirmed")
+	}
+	config.AD.Initialized = true
+	return saveSMBGroup(ctx, tx, id, config)
+}
+
+// CheckSMBADPurge refuses deletion of the final retained AD identity replica.
+// Caller must check in the same transaction as retirement. Local AD persistent
+// databases are retained even on peer purge; this is not a backup guarantee.
+func CheckSMBADPurge(ctx context.Context, tx *sql.Tx, clusterID, member string) error {
+	_, config, err := smbGroup(ctx, tx, clusterID)
+	if err != nil {
+		return err
+	}
+	if config.AD != nil && (len(config.Owners) <= 1 || !config.AD.Initialized) {
+		return fmt.Errorf("refusing purge of final or uncertain AD identity state; manual maintenance required")
+	}
+	return nil
+}
+
+// HasSMBADIdentity identifies retained AD state, including after owner retirement.
+func HasSMBADIdentity(ctx context.Context, tx *sql.Tx, clusterID string) (bool, error) {
+	_, config, err := smbGroup(ctx, tx, clusterID)
+	return config.AD != nil || config.AuthIdentity != "", err
 }

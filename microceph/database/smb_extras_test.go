@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -116,12 +117,23 @@ func TestSMBNonclusteredSQLRace(t *testing.T) {
 	close(start)
 	wg.Wait()
 	close(results)
+	successes, rejected := 0, 0
 	for err := range results {
-		require.NoError(t, err, "distinct members may concurrently reserve the same nonclustered group")
+		if err == nil {
+			successes++
+		} else {
+			require.Contains(t, err.Error(), "Nonclustered SMB cluster")
+			rejected++
+		}
 	}
+	require.Equal(t, 1, successes)
+	require.Equal(t, 1, rejected)
 	var raw string
 	require.NoError(t, db.QueryRow("SELECT config FROM service_groups WHERE group_id='alpha'").Scan(&raw))
-	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a","2":"b"}}`, raw)
+	var config SMBServiceGroupConfig
+	require.NoError(t, json.Unmarshal([]byte(raw), &config))
+	require.Len(t, config.Owners, 1)
+	require.Empty(t, config.Ranks)
 }
 
 func TestSMBOfflineRemovalRetainsMemberUncertainty(t *testing.T) {
@@ -133,10 +145,10 @@ func TestSMBOfflineRemovalRetainsMemberUncertainty(t *testing.T) {
 	}))
 	_, err := db.Exec("DELETE FROM core_cluster_members WHERE name='a'; INSERT INTO core_cluster_members(name) VALUES ('a')")
 	require.NoError(t, err)
-	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+	require.ErrorContains(t, smbTx(t, db, func(tx *sql.Tx) error {
 		_, err := ReserveSMBOwner(ctx, tx, "alpha", "b", false)
 		return err
-	}), "an uncertain owner must not block a different member of the same group")
+	}), `already has owner "a"`)
 	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
 		_, err := ReserveSMBOwner(ctx, tx, "alpha", "a", false)
 		return err
@@ -148,7 +160,7 @@ func TestSMBOfflineRemovalRetainsMemberUncertainty(t *testing.T) {
 	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "alpha", "a") }))
 	var raw string
 	require.NoError(t, db.QueryRow("SELECT config FROM service_groups WHERE group_id='alpha'").Scan(&raw))
-	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a","2":"b"}}`, raw)
+	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a"}}`, raw)
 }
 
 func TestSMBReservationModeAndUnownedRecord(t *testing.T) {
@@ -178,7 +190,7 @@ func TestSMBReservationModeAndUnownedRecord(t *testing.T) {
 func TestSMBNonclusteredReservationsDoNotAllocateCTDBRank(t *testing.T) {
 	db := setupSMBDB(t)
 	ctx := context.Background()
-	for _, member := range []string{"a", "b", "a"} {
+	for _, member := range []string{"a", "a"} {
 		require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
 			rank, err := ReserveSMBOwner(ctx, tx, "alpha", member, false)
 			require.Zero(t, rank)
@@ -187,7 +199,7 @@ func TestSMBNonclusteredReservationsDoNotAllocateCTDBRank(t *testing.T) {
 	}
 	var raw string
 	require.NoError(t, db.QueryRow("SELECT config FROM service_groups WHERE group_id='alpha'").Scan(&raw))
-	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a","2":"b"}}`, raw)
+	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a"}}`, raw)
 	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
 		_, err := ReserveSMBOwner(ctx, tx, "other", "a", false)
 		return err
@@ -203,10 +215,10 @@ func TestSMBStoppedUpdateWithdrawsRowNotOwner(t *testing.T) {
 	var count int
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM grouped_services").Scan(&count))
 	require.Zero(t, count)
-	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", "b", false); return err }))
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", "b", false); return err }))
 	var raw string
 	require.NoError(t, db.QueryRow("SELECT config FROM service_groups WHERE group_id='alpha'").Scan(&raw))
-	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a","2":"b"}}`, raw)
+	require.JSONEq(t, `{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a"}}`, raw)
 	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error {
 		_, err := ReserveSMBOwner(ctx, tx, "other", "a", false)
 		return err
@@ -310,4 +322,149 @@ func TestSMBOwnerRemovalFindsFailedReservations(t *testing.T) {
 	_, err := db.Exec(`DELETE FROM core_cluster_members WHERE name='a'; INSERT INTO core_cluster_members(name) VALUES('a')`)
 	require.NoError(t, err)
 	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := GetSMBOwnerGroups(ctx, tx, "a"); return err }))
+}
+
+func TestSMBNonclusteredRelocationAndIndependentIDs(t *testing.T) {
+	db := setupSMBDB(t)
+	ctx := context.Background()
+	reserve := func(cluster, member string) error {
+		return smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, cluster, member, false); return err })
+	}
+	require.NoError(t, reserve("alpha", "a"))
+	require.NoError(t, reserve("beta", "b"))
+	require.Error(t, reserve("alpha", "c"), "failed startup reservation blocks replacement without success row")
+	require.NoError(t, reserve("alpha", "a"), "exact retry")
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "alpha", "a") }))
+	require.NoError(t, reserve("alpha", "c"), "caller verified stop before explicit retirement")
+	require.Error(t, reserve("beta", "c"), "one logical cluster per host")
+}
+
+func TestSMBLegacyNonclusteredOwnersCannotGrow(t *testing.T) {
+	db := setupSMBDB(t)
+	ctx := context.Background()
+	_, err := db.Exec(`INSERT INTO service_groups(service,group_id,config) VALUES('smb','alpha','{"clustered":false,"next_rank":4,"ranks":{"99":3},"owners":{"1":"a","2":"b"}}')`)
+	require.NoError(t, err)
+	for _, member := range []string{"a", "b"} {
+		require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", member, false); return err }))
+	}
+	require.ErrorContains(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", "c", false); return err }), "Nonclustered SMB cluster")
+	var raw string
+	require.NoError(t, db.QueryRow("SELECT config FROM service_groups").Scan(&raw))
+	require.JSONEq(t, `{"clustered":false,"next_rank":4,"ranks":{"99":3},"owners":{"1":"a","2":"b"}}`, raw)
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "alpha", "b") }))
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", "c", false); return err }))
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "alpha", "a") }))
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", "c", false); return err }))
+	require.NoError(t, db.QueryRow("SELECT config FROM service_groups").Scan(&raw))
+	require.JSONEq(t, `{"clustered":false,"next_rank":4,"ranks":{"99":3},"owners":{"3":"c"}}`, raw, "historical ranks do not block relocation or get discarded")
+}
+
+func TestSMBLegacyPolicyDiagnosticUsesReservations(t *testing.T) {
+	db := setupSMBDB(t)
+	ctx := context.Background()
+	_, err := db.Exec(`INSERT INTO service_groups(service,group_id,config) VALUES('smb','alpha','{"clustered":false,"next_rank":0,"ranks":{},"owners":{"1":"a","99":"offline"}}')`)
+	require.NoError(t, err)
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+		warning, err := GetSMBPolicyWarning(ctx, tx, "alpha")
+		require.Contains(t, warning, "policy-noncompliant")
+		require.Contains(t, warning, "offline")
+		require.Contains(t, warning, "alpha")
+		return err
+	}))
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "alpha", "a") }))
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+		warning, err := GetSMBPolicyWarning(ctx, tx, "alpha")
+		require.Empty(t, warning)
+		return err
+	}))
+}
+
+func TestSMBADJoinExclusionAndRetention(t *testing.T) {
+	db := setupSMBDB(t)
+	ctx := context.Background()
+	identity := `{"realm":"EXAMPLE.TEST","workgroup":"EXAMPLE","netbios_name":"ALPHA"}`
+	for _, member := range []string{"a", "b"} {
+		require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+			_, err := ReserveSMBADOwner(ctx, tx, "alpha", member, identity)
+			return err
+		}))
+	}
+	start := make(chan struct{})
+	results := make(chan string, 2)
+	var wg sync.WaitGroup
+	for _, member := range []string{"a", "b"} {
+		wg.Add(1)
+		go func(member string) {
+			defer wg.Done()
+			<-start
+			err := smbTx(t, db, func(tx *sql.Tx) error { return BeginSMBADJoin(ctx, tx, "alpha", member) })
+			if err == nil {
+				results <- member
+			} else {
+				results <- ""
+			}
+		}(member)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	winner := ""
+	for member := range results {
+		if member != "" {
+			require.Empty(t, winner)
+			winner = member
+		}
+	}
+	require.NotEmpty(t, winner)
+	// A failed/timed out invocation, same-owner retry, retirement and elapsed time
+	// never release an attempt. No lease or automatic takeover exists.
+	for _, member := range []string{"a", "b"} {
+		require.ErrorContains(t, smbTx(t, db, func(tx *sql.Tx) error { return BeginSMBADJoin(ctx, tx, "alpha", member) }), "uncertain")
+	}
+	loser := "a"
+	if winner == "a" {
+		loser = "b"
+	}
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { return CompleteSMBADJoin(ctx, tx, "alpha", loser) }))
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return CompleteSMBADJoin(ctx, tx, "alpha", winner) }))
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error {
+		state, err := GetSMBADState(ctx, tx, "alpha", loser)
+		require.True(t, state.Joined)
+		require.False(t, state.Initialized)
+		return err
+	}))
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return InitializeSMBAD(ctx, tx, "alpha", winner) }))
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "alpha", winner) }))
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { return BeginSMBADJoin(ctx, tx, "alpha", loser) }))
+	require.ErrorContains(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", winner, true); return err }), "identity")
+	require.ErrorContains(t, smbTx(t, db, func(tx *sql.Tx) error {
+		_, err := ReserveSMBADOwner(ctx, tx, "alpha", winner, "another-realm")
+		return err
+	}), "identity")
+	require.ErrorContains(t, smbTx(t, db, func(tx *sql.Tx) error { return CheckSMBADPurge(ctx, tx, "alpha", loser) }), "final")
+}
+
+func TestSMBADCannotConvertLegacyUserIdentity(t *testing.T) {
+	db := setupSMBDB(t)
+	ctx := context.Background()
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBOwner(ctx, tx, "alpha", "a", true); return err }))
+	require.ErrorContains(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBADOwner(ctx, tx, "alpha", "b", "EXAMPLE.TEST"); return err }), "identity")
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { return RetireSMBOwner(ctx, tx, "alpha", "a") }))
+	require.Error(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBADOwner(ctx, tx, "alpha", "a", "EXAMPLE.TEST"); return err }))
+}
+
+func TestSMBADMissingAttemptRecordIsNotReconstructed(t *testing.T) {
+	db := setupSMBDB(t)
+	ctx := context.Background()
+	require.NoError(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBADOwner(ctx, tx, "alpha", "a", "EXAMPLE.TEST"); return err }))
+	var raw string
+	require.NoError(t, db.QueryRow("SELECT config FROM service_groups").Scan(&raw))
+	var config map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &config))
+	delete(config, "ad")
+	data, err := json.Marshal(config)
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE service_groups SET config=?", string(data))
+	require.NoError(t, err)
+	require.ErrorContains(t, smbTx(t, db, func(tx *sql.Tx) error { _, err := ReserveSMBADOwner(ctx, tx, "alpha", "a", "EXAMPLE.TEST"); return err }), "state lost")
 }

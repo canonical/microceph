@@ -24,6 +24,7 @@ import (
 
 type smbStartupRunner struct {
 	t                *testing.T
+	sourceCandidate  *smbCandidate
 	db               *sql.DB
 	events           []string
 	active           map[string]bool
@@ -65,6 +66,9 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 		case "config":
 			return "false", nil
 		case "smb":
+			if r.sourceCandidate != nil {
+				return `{"resource_type":"ceph.smb.cluster","cluster_id":"alpha",` + strings.TrimPrefix(string(r.sourceCandidate.Logical), "{"), nil
+			}
 			if r.refresh {
 				r.reads++
 				if r.logical != "" {
@@ -93,6 +97,13 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 			}
 			return `[{"entity":"` + args[2] + `","key":"AQAAAA=="}]`, nil
 		}
+	}
+	if name == "ceph" && len(args) > 2 && args[0] == "--id" && r.sourceCandidate != nil && args[len(args)-2] == "get" {
+		index := 0
+		if strings.HasSuffix(args[len(args)-1], "join-b") {
+			index = 1
+		}
+		return string(r.sourceCandidate.Joins[index]), nil
 	}
 	if name == "rados" {
 		if r.refresh {
@@ -131,9 +142,35 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 			data = strings.Replace(data, `"shares":{}`, `"shares":{"data":{"options":{"path":"/srv/data"}}}`, 1)
 			data = strings.Replace(data, `"shares":[]`, `"shares":["data"]`, 1)
 		}
+		policyOptions := map[string]string{
+			"policy-auto-pdc":            `"security":"user","domain logons":"yes","domain master":"yes"`,
+			"policy-auto-bdc":            `"security":"auto","server role":"auto","domain logons":"yes","domain master":"no"`,
+			"policy-override":            `"realm":"EXAMPLE.TEST"`,
+			"policy-role-spelling":       `"serverrole":"active directory domain controller"`,
+			"policy-security-spelling":   `"sec urity":"ads"`,
+			"policy-realm-spelling":      `"r e a l m":"EXAMPLE.TEST"`,
+			"policy-clustering-spelling": `"clu\tstering":"yes"`,
+		}
+		if object == "config.smb" && policyOptions[r.failure] != "" {
+			data = strings.Replace(data, `"globals":{}`, `"globals":{"policy":{"options":{`+policyOptions[r.failure]+`}}}`, 1)
+			data = strings.Replace(data, `"globals":[]`, `"globals":["policy"]`, 1)
+		}
 		if r.nonclustered {
 			data = strings.ReplaceAll(data, `["clustered"]`, `[]`)
 			data = strings.ReplaceAll(data, `["ctdb"]`, `[]`)
+		}
+		if r.sourceCandidate != nil {
+			c := r.sourceCandidate
+			switch object {
+			case "spec.smb":
+				raw, _ := json.Marshal(map[string]any{"service_type": "smb", "service_id": "alpha", "spec": c.Spec})
+				data = string(raw)
+			case "config.smb":
+				data = string(c.Config)
+			}
+		}
+		if args[len(args)-1] == "-" {
+			return data, nil
 		}
 		return "", os.WriteFile(args[len(args)-1], []byte(data), 0600)
 	}
@@ -337,6 +374,11 @@ func TestSMBNativeStartupRealCompilerContext(t *testing.T) {
 
 func runSMBStartup(t *testing.T, failure string, clustered bool, python string, after ...func(interfaces.StateInterface, *smbStartupRunner)) {
 	t.Helper()
+	runSMBStartupFixture(t, failure, clustered, python, nil, after...)
+}
+
+func runSMBStartupFixture(t *testing.T, failure string, clustered bool, python string, source *smbCandidate, after ...func(interfaces.StateInterface, *smbStartupRunner)) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "startup.db")+"?_foreign_keys=on")
@@ -348,8 +390,16 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 	require.NoError(t, err)
 	require.NoError(t, database.SchemaExtensions[5](ctx, tx))
 	require.NoError(t, tx.Commit())
-	runner := &smbStartupRunner{t: t, db: db, active: map[string]bool{}, readyRoles: map[string]bool{}, failure: failure, cancel: cancel, python: python, nonclustered: !clustered}
+	runner := &smbStartupRunner{sourceCandidate: source, t: t, db: db, active: map[string]bool{}, readyRoles: map[string]bool{}, failure: failure, cancel: cancel, python: python, nonclustered: !clustered}
 	oldRunner, oldNetwork, oldFetch := common.ProcessExec, common.Network, fetchConfigDb
+	oldInspect := inspectSMBPolicyFunc
+	inspectSMBPolicyFunc = func(ctx context.Context, root string, candidate smbCandidate) (*smbADMember, error) {
+		if python != "" {
+			return inspectSMBPolicy(ctx, root, candidate)
+		}
+		return nil, nil
+	}
+	defer func() { inspectSMBPolicyFunc = oldInspect }()
 	oldCompile, oldPublish, oldPrepare, oldReady := compileSMBNativeFunc, publishSMBNativeFunc, prepareSMBCTDBFilesFunc, smbReadyNativeFunc
 	compileSMBNativeFunc, publishSMBNativeFunc, prepareSMBCTDBFilesFunc, smbReadyNativeFunc = runner.compile, runner.publish, runner.prepareCTDB, runner.ready
 	defer func() {
@@ -401,6 +451,34 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 		}
 		return tx.Commit()
 	}}
+	oldADControl := smbADControlFunc
+	if source != nil {
+		smbADControlFunc = func(ctx context.Context, root, op string) error {
+			var state database.SMBADState
+			tx, e := db.Begin()
+			require.NoError(t, e)
+			state, e = database.GetSMBADState(ctx, tx, "alpha", "a")
+			require.NoError(t, e)
+			require.NoError(t, tx.Rollback())
+			if op == "join" {
+				require.NotEmpty(t, state.JoinOwner)
+				require.False(t, state.Joined)
+				require.True(t, runner.readyRoles["ctdbd"])
+				require.False(t, runner.active["smbd"])
+			}
+			if op == "start" {
+				require.True(t, state.Joined)
+			}
+			if op != "probe" {
+				runner.events = append(runner.events, "ad "+op)
+				if op == "join" && failure == "ad-join" {
+					return errors.New("ambiguous external result")
+				}
+			}
+			return nil
+		}
+	}
+	defer func() { smbADControlFunc = oldADControl }()
 	state := interfaces.CephState{State: &mocks.MockState{ClusterName: "a", DBObj: mockDB}}
 	err = enableSMBLocked(ctx, state, "alpha", true)
 	runner.startupErr = err
@@ -416,6 +494,14 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 		want := []string{"key client.smb.fs.cluster.alpha", "compile", "publish", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
 		if clustered {
 			want = []string{"key client.smb.fs.cluster.alpha", "key client.smb.cluster.alpha", "caps client.smb.cluster.alpha", "compile", "publish", "prepare-ctdb", "start ctdbd", "start ctdb-nodes", "ready ctdbd", "ready ctdb-nodes", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
+		}
+		if source != nil {
+			for i, event := range want {
+				if event == "start smbd" {
+					want = append(want[:i], append([]string{"start winbindd", "ad join", "ad start", "ready winbindd"}, want[i:]...)...)
+					break
+				}
+			}
 		}
 		require.Equal(t, want, got)
 		if python != "" {
@@ -447,8 +533,12 @@ func runSMBStartup(t *testing.T, failure string, clustered bool, python string, 
 		require.Zero(t, count)
 	}
 	var raw string
-	require.NoError(t, db.QueryRow("SELECT config FROM service_groups").Scan(&raw))
-	require.Contains(t, raw, `"1":"a"`, "failure retains ownership and rank")
+	if failure == "binding" || strings.HasPrefix(failure, "policy-") {
+		require.ErrorIs(t, db.QueryRow("SELECT config FROM service_groups").Scan(&raw), sql.ErrNoRows, "policy inspection fails before reservation")
+	} else {
+		require.NoError(t, db.QueryRow("SELECT config FROM service_groups").Scan(&raw))
+		require.Contains(t, raw, `"1":"a"`, "failure retains ownership and rank")
+	}
 	for _, callback := range after {
 		callback(state, runner)
 	}

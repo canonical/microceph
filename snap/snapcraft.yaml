@@ -23,6 +23,12 @@ plugs:
     interface: system-files
     write:
       - /run/ctdb
+  winbind-run:
+    interface: system-files
+    write:
+      # Parent creation is required on hosts without a Samba installation.
+      # Runtime refuses foreign contents; only the public leaf is bound.
+      - /run/samba
   ctdb-socket:
     interface: system-files
     write:
@@ -55,6 +61,9 @@ plugs:
         options: [bind]
       - what: /var/snap/microceph/common/smb/*/ctdb{,/}
         where: /var/lib/ctdb
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/samba/winbindd{,/}
+        where: /run/samba/winbindd
         options: [bind]
       - what: /var/snap/microceph/common/smb/*/config/ctdb-recovery.conf
         where: /etc/ceph/ceph.conf
@@ -127,7 +136,7 @@ apps:
     restart-delay: 10s
     install-mode: disable
     stop-mode: sigterm-all
-    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control, smb-identity]
+    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, winbind-run, process-control, smb-identity]
   ctdbd:
     command: commands/ctdbd.start
     daemon: simple
@@ -146,9 +155,10 @@ apps:
   winbindd:
     command: commands/winbindd.start
     daemon: simple
+    restart-delay: 10s
     install-mode: disable
     stop-mode: sigterm-all
-    plugs: [network, network-bind, network-control, smb-mounts, process-control, smb-identity]
+    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, winbind-run, process-control, smb-identity]
   cephfs-proxy:
     command: commands/cephfs-proxy.start
     daemon: simple
@@ -326,6 +336,7 @@ parts:
       - samba-vfs-modules=2:4.23.6+dfsg-1ubuntu2.2
       - ctdb=2:4.23.6+dfsg-1ubuntu2.2
       - winbind=2:4.23.6+dfsg-1ubuntu2.2
+      - libc-bin
       - libnss-winbind=2:4.23.6+dfsg-1ubuntu2.2
       - python3-samba=2:4.23.6+dfsg-1ubuntu2.2
       - libcephfs-proxy2=20.2.4+ds-0ubuntu1~bpo26.04.1~ppa202609282139
@@ -351,6 +362,7 @@ parts:
       - bin/testparm
       - bin/net
       - bin/wbinfo
+      - bin/getent
       - bin/pdbedit
       - bin/libcephfsd
       - lib/**

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -34,10 +35,10 @@ type smbBindingIdentity struct {
 }
 
 type smbBindingDescription struct {
-	Clustered bool        `json:"clustered"`
-	Domain    bool        `json:"domain"`
-	Globals   [][2]string `json:"globals"`
-	Shares    []struct {
+	Clustered        bool        `json:"clustered"`
+	DomainController bool        `json:"domain_controller"`
+	Globals          [][2]string `json:"globals"`
+	Shares           []struct {
 		Name    string      `json:"name"`
 		Options [][2]string `json:"options"`
 	} `json:"shares"`
@@ -311,19 +312,12 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 		return plan, err
 	}
 	clustered := candidate.Spec.hasFeature("clustered")
-	if description.Domain {
-		return plan, fmt.Errorf("effective domain mode is not prepared")
+	member, err := smbMemberContext(candidate, description)
+	if err != nil {
+		return plan, err
 	}
-	if description.Clustered != clustered || clustered != (candidate.CTDB != nil) {
+	if clustered != (candidate.CTDB != nil) {
 		return plan, fmt.Errorf("effective CTDB mode does not match native reservation")
-	}
-	for _, option := range description.Globals {
-		if smbOptionName(option[0]) == "security" {
-			value := strings.TrimSpace(strings.ToLower(option[1]))
-			if value == "ads" || value == "domain" {
-				return plan, fmt.Errorf("effective domain mode is not prepared")
-			}
-		}
 	}
 	endpoint, err := candidate.Spec.endpointPorts()
 	if err != nil {
@@ -332,7 +326,7 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 	if candidate.Endpoint != nil {
 		endpoint = *candidate.Endpoint
 	}
-	plan.Launch = smbLaunch{Clustered: clustered, FrontendAddress: endpoint.FrontendAddress, SMBPort: endpoint.SMBPort, MetricsPort: endpoint.MetricsPort, CustomDNS: len(candidate.Spec.CustomDNS) > 0}
+	plan.Launch = smbLaunch{AD: member, Clustered: clustered, FrontendAddress: endpoint.FrontendAddress, SMBPort: endpoint.SMBPort, MetricsPort: endpoint.MetricsPort, CustomDNS: len(candidate.Spec.CustomDNS) > 0}
 	required := map[string]any{"config backend": "file", "private dir": root + "/samba/private", "state directory": root + "/samba/state", "cache directory": root + "/samba/cache", "lock directory": root + "/samba/lock", "pid directory": root + "/samba/run", "ncalrpc dir": root + "/samba/ncalrpc", "log file": root + "/diagnostics/log.%m", "smb ports": strconv.Itoa(endpoint.SMBPort)}
 	if clustered {
 		if plan.Launch.FrontendAddress == "" {
@@ -351,6 +345,13 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 		err = projectSMBCTDB(candidate, root, document, description.CTDB, plan.Files)
 		if err != nil {
 			return plan, err
+		}
+	}
+	if member != nil {
+		required["winbindd socket directory"] = "/run/samba/winbindd"
+		required["kerberos method"] = "secrets only"
+		for _, name := range []string{"secrets.tdb", "autorid.tdb", "winbindd_idmap.tdb"} {
+			required["ctdb:"+name] = "yes"
 		}
 	}
 	if plan.Launch.FrontendAddress != "" {
@@ -373,6 +374,10 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 	if err != nil {
 		return plan, err
 	}
+	// Clustering was checked using its final effective value. Do not reject
+	// superseded occurrences here; the required native value is still last.
+	overlayRequired := maps.Clone(required)
+	delete(overlayRequired, "clustering")
 	for _, name := range globalNames {
 		section, err := smbObject(globals, name)
 		if err != nil {
@@ -382,12 +387,7 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 		if err != nil {
 			return plan, err
 		}
-		for key := range options {
-			if clustered && smbOptionName(key) == "include" {
-				return plan, fmt.Errorf("native option conflict: include")
-			}
-		}
-		err = smbOverlay(options, required)
+		err = smbOverlay(options, overlayRequired)
 		if err != nil {
 			return plan, err
 		}
@@ -480,7 +480,11 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 		return plan, fmt.Errorf("empty upstream SMB rendering")
 	}
 	plan.Files["config/smb.conf"] = []byte(rendered.Config)
-	plan.Files["config/nsswitch.conf"] = []byte("passwd: files\ngroup: files\nhosts: files dns\nservices: files\n")
+	nss := "files"
+	if member != nil {
+		nss = "files winbind"
+	}
+	plan.Files["config/nsswitch.conf"] = []byte("passwd: " + nss + "\ngroup: " + nss + "\nhosts: files dns\nservices: files\n")
 	if plan.Launch.CustomDNS {
 		var resolv strings.Builder
 		for _, address := range candidate.Spec.CustomDNS {

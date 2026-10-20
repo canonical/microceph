@@ -60,6 +60,7 @@ type smbRuntimeOps struct {
 	enter     func(smbRolePlan) error
 	ctdbReady func(context.Context, string) error
 	accounts  func(context.Context, string) error
+	member    func(context.Context, string, bool) error
 	exec      func(smbRolePlan) error
 }
 
@@ -87,7 +88,7 @@ func launchSMBNative(ctx context.Context, root, role string, ops smbRuntimeOps) 
 	if err != nil {
 		return err
 	}
-	if role == "smbd" && launch.Clustered {
+	if (role == "smbd" || role == "winbindd") && launch.Clustered {
 		err = ops.ctdbReady(ctx, root)
 		if err != nil {
 			return err
@@ -97,7 +98,13 @@ func launchSMBNative(ctx context.Context, root, role string, ops smbRuntimeOps) 
 	if err != nil {
 		return err
 	}
-	if role == "smbd" {
+	if launch.AD != nil && role == "smbd" {
+		err = ops.member(ctx, root, false)
+		if err != nil {
+			return err
+		}
+	}
+	if role == "smbd" && launch.AD == nil {
 		err = ops.accounts(ctx, root)
 		if err != nil {
 			return err
@@ -124,6 +131,12 @@ func enterSMBNativeContext(plan smbRolePlan) error {
 		return fmt.Errorf("native mount namespace: %w", err)
 	}
 	for _, mount := range plan.Mounts {
+		if mount.Target == "/run/samba/winbindd" {
+			err = prepareSMBWinbindMountpoint(mount.Target, uint32(os.Geteuid()))
+			if err != nil {
+				return err
+			}
+		}
 		if mount.Target == "/run/ctdb" {
 			err = prepareSMBCTDBMountpoint(mount.Target, uint32(os.Geteuid()))
 			if err != nil {
@@ -175,7 +188,17 @@ func nativeSMBRuntimeOps(ctx context.Context, root, role string) smbRuntimeOps {
 		enter:     enterSMBNativeContext,
 		ctdbReady: func(ctx context.Context, root string) error { return checkSMBCTDBHealth(ctx, root, false) },
 		accounts:  prepareSMBAccounts,
+		member: func(ctx context.Context, root string, initial bool) error {
+			err := checkSMBADMember(ctx, root, initial)
+			if err != nil {
+				return err
+			}
+			return smbADControl(ctx, root, "ready")
+		},
 		exec: func(plan smbRolePlan) error {
+			if role == "winbindd" {
+				return serveSMBADRuntime(ctx, root, plan)
+			}
 			if role == "ctdb-nodes" {
 				return monitorSMBCTDB(ctx, root)
 			}
@@ -197,6 +220,9 @@ func prepareSMBAccounts(ctx context.Context, root string) error {
 	err = smbNativeRoot(root, candidate.Spec.ClusterID)
 	if err != nil {
 		return err
+	}
+	if candidate.Spec.hasFeature("domain") {
+		return fmt.Errorf("AD member must not import local SAM accounts")
 	}
 	document, err := smbCombinedDocument(candidate)
 	if err != nil {
@@ -231,6 +257,9 @@ func controlSMBNative(ctx context.Context, root string, args []string) error {
 }
 
 func smbNativeRolePlan(role, root string, launch smbLaunch, snap string) (smbRolePlan, error) {
+	if launch.AD != nil && !launch.Clustered {
+		return smbRolePlan{}, fmt.Errorf("AD member requires clustered runtime context")
+	}
 	plan := smbRolePlan{Mounts: []smbNativeMount{{Target: "/", Flags: unix.MS_REC | unix.MS_SLAVE}}, Env: map[string]string{
 		"LIBCEPHFSD_SOCKET":    root + "/proxy-work/libcephfsd.sock",
 		"SMBMETRICS_SMBSTATUS": snap + "/bin/smbstatus",
@@ -244,6 +273,11 @@ func smbNativeRolePlan(role, root string, launch smbLaunch, snap string) (smbRol
 		for _, name := range []string{"passwd", "group", "nsswitch.conf"} {
 			plan.Mounts = append(plan.Mounts, smbNativeMount{Source: root + "/config/" + name, Target: "/etc/" + name, Flags: unix.MS_BIND})
 		}
+	case "winbindd":
+		if launch.AD == nil || !launch.Clustered {
+			return plan, fmt.Errorf("Winbind requires prepared clustered AD member context")
+		}
+		plan.Args = []string{snap + "/bin/winbindd", "--foreground", "--no-process-group", "--configfile", root + "/config/smb.conf"}
 	case "smbmetrics":
 		plan.Args = []string{snap + "/bin/smbmetrics", "--address", "0.0.0.0", "--port", strconv.Itoa(launch.MetricsPort)}
 	case "ctdbd":
@@ -258,11 +292,19 @@ func smbNativeRolePlan(role, root string, launch smbLaunch, snap string) (smbRol
 	default:
 		return plan, fmt.Errorf("native role is not prepared")
 	}
+	if launch.AD != nil && (role == "smbd" || role == "winbindd") {
+		plan.Mounts = append(plan.Mounts, smbNativeMount{Source: root + "/samba/winbindd", Target: "/run/samba/winbindd", Flags: unix.MS_BIND})
+		if role == "winbindd" {
+			for _, name := range []string{"passwd", "group", "nsswitch.conf"} {
+				plan.Mounts = append(plan.Mounts, smbNativeMount{Source: root + "/config/" + name, Target: "/etc/" + name, Flags: unix.MS_BIND})
+			}
+		}
+	}
 	ctdbRole := role == "ctdbd" || role == "ctdb-nodes" || role == "ctdb-control"
 	if ctdbRole && !launch.Clustered {
 		return plan, fmt.Errorf("CTDB role requires prepared clustered context")
 	}
-	if ctdbRole || (role == "smbd" && launch.Clustered) {
+	if ctdbRole || ((role == "smbd" || role == "winbindd") && launch.Clustered) {
 		for _, pair := range [][2]string{{"ctdb", "/etc/ctdb"}, {"ctdb/run", "/run/ctdb"}, {"ctdb", "/var/lib/ctdb"}} {
 			plan.Mounts = append(plan.Mounts, smbNativeMount{Source: root + "/" + pair[0], Target: pair[1], Flags: unix.MS_BIND})
 		}
@@ -471,6 +513,15 @@ func smbReadyNative(ctx context.Context, root, role string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	if launch.AD != nil && (role == "smbd" || role == "winbindd") {
+		err = smbADControlFunc(ctx, root, "ready")
+		if err != nil {
+			return err
+		}
+		if role == "winbindd" {
+			return nil
+		}
+	}
 	switch role {
 	case "ctdbd", "ctdb-nodes":
 		return probeSMBCTDB(ctx, root)
@@ -521,4 +572,33 @@ func smbReadyNative(ctx context.Context, root, role string) (retErr error) {
 	default:
 		return fmt.Errorf("native readiness role is not prepared")
 	}
+}
+
+// The NSS compiled path needs a containing /run/samba directory on hosts without
+// Samba. Never overlay host Samba state, accept symlinks, or export privileged
+// pipes; only an empty public Winbind mountpoint may exist under this parent.
+func prepareSMBWinbindMountpoint(path string, owner uint32) error {
+	parent := filepath.Dir(path)
+	err := os.Mkdir(parent, 0755)
+	if err != nil && !os.IsExist(err) {
+		return err
+	}
+	info, err := os.Lstat(parent)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || stat.Uid != owner || info.Mode().Perm()&0022 != 0 {
+		return fmt.Errorf("unsafe Winbind runtime parent")
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() != filepath.Base(path) {
+			return fmt.Errorf("Winbind runtime parent contains unrelated state")
+		}
+	}
+	return prepareSMBCTDBMountpoint(path, owner)
 }

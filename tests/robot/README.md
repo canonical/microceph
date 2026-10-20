@@ -107,10 +107,11 @@ tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-tests \
     --variable SMB_SNAPD_CHANNEL:latest/candidate
 ```
 
-Run the **whole ordered suite**. Seven cases cover clustered deployment, real
+Run the **whole ordered suite**. Nine cases cover clustered deployment, real
 password-authenticated put/get and cross-gateway reads (plus wrong-password denial),
 endpoint refresh/no-op, retirement/rejoin, daemon restart, ordinary VM reboot and
-independent gateways with scoped local purge. Reboot recovery never starts a role
+clustered peer-preserving purge, nonclustered second-owner rejection and verified
+relocation, plus independent logical IDs on disjoint data paths with scoped purge. Reboot recovery never starts a role
 or re-enables a placement. A prior failure remains failed even if later, independent
 mode tests can run. Missing deployment prerequisites are reported as skips, not passes.
 
@@ -138,6 +139,75 @@ Dry-run checks keyword resolution, not installed behavior:
 tox -e robot -- --dryrun --test-suite smb-tests
 ```
 
+## Native SMB external AD authentication
+
+```bash
+tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-ad-tests \
+    --variable SMB_SNAPD_CHANNEL:latest/candidate
+```
+
+Run the whole ordered suite on an **accepted, human-signed source artifact**.
+This is executable qualification code, not a record of an installed AD pass.
+It reuses `smb_suite.resource`, the owned-VM/exec/polling/artifact/hash machinery
+and tagged cleanup from `smb-tests`; it does not join the host or use enterprise
+credentials. The native placement/user-mode suite remains a separate CI job.
+
+The additional, dedicated Ubuntu Samba AD DC is **test infrastructure**, not a
+MicroCeph domain-controller feature. VM0 remains the client. The four guests need
+8 vCPU / 12 GiB allocated RAM, 92 GiB disks (three 24 GiB gateways, one 20 GiB DC).
+The conservative capacity guard budgets **146 GiB free pool / 16 GiB available
+RAM initially**, retaining 50 GiB disk/4 GiB RAM headroom and rounding the DC to
+24 GiB. CI retains the extra-disk runner and `dir` backend measured for #931;
+a 100 GB xlarge runner is not adequate. No guard or disk-size check is weakened.
+
+Prerequisites: outbound guest APT/image access; working local LXD/default project;
+the exact strict snap and guest snapd >= 2.78; stable guest clocks and the dedicated
+4 GiB OSD on `/dev/sdb` in each gateway. Stop at a disk mismatch or monitor clock
+skew: do not wipe another disk or disable time checks. The DC installs
+`samba`, `samba-ad-dc`, `python3-samba`, `krb5-user`, `bind9-host`; the client uses
+`smbclient`, `samba-common-bin` and `krb5-user`. Package versions, snap hash and allocation ownership
+are logged. Only the newly owned DC's packaged default Samba/resolved services
+are disabled; its Samba provision and private client Kerberos config are scoped
+to the fixture. Gateways consume the DC through upstream app-private `custom_dns`.
+No runner-host DNS/time/account changes are needed.
+
+Nine compact cases cover wrong join credentials with a retained uncertain
+attempt, two-gateway SID/UID/GID equality, fresh valid/invalid/unknown domain
+logins, authenticated group nonmember denial and read/write versus read-only
+shares, cross-gateway exact contents, role restart, ordinary reboot, join-input
+refresh, retained-state re-enable/initial-joiner stop, short DC outage and
+peer-safe purge. **Kerberos-required** name-based I/O and CIFS ticket checks run
+separately from **Kerberos-disabled domain NTLMv2**. Every operation starts a
+fresh client; Kerberos obtains a fresh cache/ticket, never `desired` fallback.
+Bob first reads through the authenticated reader share before writers-share
+denial, distinguishing authorization from bad credentials. The CephFS backing
+UID/GID and exact content are checked. App-namespace `wbinfo`/`getent` observations
+are real installed data, not a synthetic UID allocator; the root observation is
+not proof of unprivileged NSS permissions outside that profile.
+
+Credential refresh waits for applied-file metadata to advance on both gateways,
+then checks serving PID/start identities and DC computer SID/password-generation
+metadata. Persistence checks reauthenticate and compare mappings. The short
+outage spans at least one ordinary updater interval and accepts either bounded failure or exact cached success, not a promise of
+offline login. It restores only the intentionally stopped DC in `FINALLY`;
+there is no automatic join retry, leave or trust/idmap reset. SQL/process source
+regressions separately gate exclusion/ambiguous outcomes; ordered live admission
+alone is not a distributed-join-race proof.
+
+Secrets are generated inside the DC and transferred via mode-0600 private files,
+never password argv, Robot variables or public artifacts. Provision/operation
+first errors stay private in the guest; bounded redacted diagnostics and normal
+public observations enter Robot logs before tagged teardown. Do not upload
+`ad-secrets.json`, `.ad-auth`, credential caches, resource inputs, CTDB databases
+or raw private native diagnostics. A qualification failure remains failed; no
+control mutation is retried to green. Missing prerequisites skip dependent cases,
+not the original failure. The disposable fixture's VM teardown is not production
+AD cleanup or a supported last-replica recovery operation.
+
+Samba-DC evidence qualifies only the tested protocols/policy. No Windows release,
+GPO, cross-forest, forced rotation, broad backup/replacement or cache-revocation
+matrix is implied. Windows-specific claims need separate Windows infrastructure.
+
 ## Host resource guide
 
 Each suite runs sequentially. Peak resource usage per suite (not concurrent):
@@ -148,6 +218,7 @@ Each suite runs sequentially. Peak resource usage per suite (not concurrent):
 | Multi-node (4 containers) | 4    | 6 GB | 50 GB | ~20 min         |
 | Replication (8 containers)| 4    | 6 GB | 50 GB | ~30 min         |
 | Native SMB (3 VMs)        | 6    | 9 GiB | 72 GiB + headroom | Not yet measured |
+| Native SMB AD (4 VMs)     | 8    | 12 GiB | 92 GiB + headroom | Not yet measured |
 
 ## Suite names
 
@@ -166,7 +237,7 @@ multi-node-tests                             upgrade-squid-tests
 multi-node-tests-with-custom-microceph-ip    vaultlocker-test
 nfs-multinode-test                           wal-db-tests
 nfs-test                                    wiping-test
-smb-tests
+smb-tests                                   smb-ad-tests
 ```
 
 ## Harness conventions

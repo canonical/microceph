@@ -15,9 +15,11 @@ import (
 var smbStopOrder = []string{"smbmetrics", "smbd", "smb-remote", "winbindd", "cephfs-proxy", "ctdb-nodes", "ctdbd"}
 
 type smbAppOps struct {
-	start func(string) error
-	stop  func(string) error
-	ready func(context.Context, string) error
+	prepare  func(context.Context, string) error
+	prepared func(context.Context, string) error
+	start    func(string) error
+	stop     func(string) error
+	ready    func(context.Context, string) error
 }
 
 func smbAtomicWrite(path string, content []byte) error {
@@ -80,6 +82,9 @@ func startSMBApps(ctx context.Context, root string, roles []string, ops smbAppOp
 		if err == nil {
 			err = ops.start(role)
 		}
+		if err == nil && ops.prepare != nil {
+			err = ops.prepare(ctx, role)
+		}
 		if err == nil && role == "ctdbd" {
 			// CTDB controls run in the confined node monitor's private mount
 			// context. Start that fixed peer before waiting for either role.
@@ -93,6 +98,9 @@ func startSMBApps(ctx context.Context, root string, roles []string, ops smbAppOp
 		}
 		if err == nil {
 			err = ops.ready(ctx, role)
+		}
+		if err == nil && ops.prepared != nil {
+			err = ops.prepared(ctx, role)
 		}
 		if err != nil {
 			// Attempted roles may have started despite a failed control response.
@@ -111,9 +119,12 @@ func smbCoreRoles(spec smbSpec, proxy bool) ([]string, error) {
 	// Optional feature stages attach their preparation/readiness here. Do not
 	// start a partially configured domain/cluster/remote service as successful.
 	for _, feature := range spec.Features {
-		if feature != "cephfs-proxy" && feature != "clustered" {
+		if feature != "cephfs-proxy" && feature != "clustered" && feature != "domain" {
 			return nil, fmt.Errorf("SMB native %s preparation is not available in this core milestone", feature)
 		}
+	}
+	if spec.hasFeature("domain") && !spec.hasFeature("clustered") {
+		return nil, fmt.Errorf("AD requires clustered SMB")
 	}
 	roles := []string{}
 	if spec.hasFeature("clustered") {
@@ -121,6 +132,9 @@ func smbCoreRoles(spec smbSpec, proxy bool) ([]string, error) {
 	}
 	if proxy {
 		roles = append(roles, "cephfs-proxy")
+	}
+	if spec.hasFeature("domain") {
+		roles = append(roles, "winbindd")
 	}
 	return append(roles, "smbd", "smbmetrics"), nil
 }

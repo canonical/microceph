@@ -6,6 +6,7 @@ Requests and stderr are private subprocess data captured by the Go caller.
 """
 import io
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -26,8 +27,24 @@ def bridge(command, request):
             finally:
                 handle.shutdown()
         return {}
+    if command == "join":
+        from sambacc import samba_cmds
+        from sambacc.join import Joiner, UserPass
+        # JoinError does not classify a definite no-effect credential rejection.
+        # Never fall through to another external attempt after an ambiguous exit.
+        credential = request["joins"][0]
+        joiner = Joiner()  # No joined marker, retry waiter or DNS administration.
+        joiner._net_ads_join = samba_cmds.SambaCommand(str(Path(os.environ.get("SNAP", "/")) / "bin/net"))["--configfile", request["config_path"], "ads", "join"]
+        joiner.add_pw_source(UserPass(credential["username"], credential["password"]))
+        joiner.join()
+        return {}
     instance = GlobalConfig(initial_data=request["config"]).get(request["cluster_id"])
     if command == "accounts":
+        # with_addc is a controller flag, not external ADS member detection.
+        effective = {"".join(key.lower().split()): str(value).strip().lower()
+                     for key, value in instance.global_options()}
+        if instance.with_addc or "".join(effective.get("security", "").split()) in ("ads", "domain"):
+            raise ValueError("AD member/controller must not import local SAM accounts")
         from sambacc.passdb_loader import PassDBLoader
         loader = PassDBLoader(request["config_path"])
         users = list(instance.users())
@@ -42,7 +59,7 @@ def bridge(command, request):
     if command == "inspect":
         return {
             "clustered": instance.with_ctdb,
-            "domain": instance.with_addc,
+            "domain_controller": instance.with_addc,
             "globals": [(key, str(value)) for key, value in instance.global_options()],
             "shares": [{"name": share.name, "options": [(key, str(value)) for key, value in share.share_options()]}
                        for share in instance.shares()],
@@ -63,6 +80,6 @@ def bridge(command, request):
 
 if __name__ == "__main__":
     command, request_path = sys.argv[1:]
-    request = json.loads(Path(request_path).read_text())
+    request = json.load(sys.stdin) if request_path == "-" else json.loads(Path(request_path).read_text())
     json.dump(bridge(command, request), sys.stdout)
     sys.stdout.write("\n")

@@ -62,6 +62,21 @@ type smbCandidate struct {
 
 func (c smbCandidate) configurationFingerprint() string {
 	c.CTDB = nil
+	if c.Spec.hasFeature("domain") {
+		c.Joins = nil
+		c.Spec.JoinSources = nil
+		// This is a transport copy of the spec; all effective fields are in Spec.
+		c.SpecBytes = nil
+		var logical map[string]any
+		err := json.Unmarshal(c.Logical, &logical)
+		if err == nil {
+			domain, ok := logical["domain_settings"].(map[string]any)
+			if ok {
+				delete(domain, "join_sources")
+			}
+			c.Logical, _ = json.Marshal(logical)
+		}
+	}
 	// Retained Python and current Go publications can differ in JSON encoding.
 	// Compare semantic source values, not RawMessage whitespace/key ordering.
 	raw, _ := json.Marshal(c)
@@ -99,26 +114,13 @@ func readSMBCandidate(clusterID string, read func(string) ([]byte, error)) (smbC
 	if err != nil {
 		return c, err
 	}
-	var transport struct {
-		ServiceType string  `json:"service_type"`
-		ServiceID   string  `json:"service_id"`
-		Spec        smbSpec `json:"spec"`
-	}
-	err = json.Unmarshal(data, &transport)
-	if err != nil {
-		return c, fmt.Errorf("invalid SMB spec document")
-	}
-	c.Spec = transport.Spec
-	_, err = c.Spec.endpointPorts()
+	c.Spec, err = decodeSMBSpec(clusterID, data)
 	if err != nil {
 		return c, err
 	}
 	c.SpecBytes = data
-	if transport.ServiceType != "smb" || transport.ServiceID != clusterID || c.Spec.ClusterID != clusterID {
-		return c, fmt.Errorf("SMB spec cluster identity mismatch")
-	}
-	if len(c.Spec.PublicAddresses) > 0 {
-		return c, fmt.Errorf("public addresses require a separate HA/LB implementation")
+	if c.Spec.hasFeature("domain") && !c.Spec.hasFeature("clustered") {
+		return c, fmt.Errorf("Active Directory requires clustered SMB; use clustering: always")
 	}
 	uris := []string{c.Spec.ConfigURI}
 	uris = append(uris, c.Spec.UserSources...)
@@ -221,6 +223,10 @@ func readSMBPreparedCandidate(ctx context.Context, s interfaces.StateInterface, 
 	}
 	candidate.CephConfig = string(cephConfig)
 	candidate.Logical = json.RawMessage(logical)
+	err = validateSMBLogicalPolicy(logical, candidate.Spec)
+	if err != nil {
+		return candidate, err
+	}
 	_, err = smbCoreRoles(candidate.Spec, false)
 	if err != nil {
 		return candidate, err
@@ -351,6 +357,7 @@ func (s smbSpec) resolveEndpoint(ctx context.Context, state interfaces.StateInte
 }
 
 type smbLaunch struct {
+	AD              *smbADMember   `json:"ad_member,omitempty"`
 	Proxy           bool           `json:"proxy"`
 	Clustered       bool           `json:"clustered"`
 	FrontendAddress string         `json:"frontend_address"`

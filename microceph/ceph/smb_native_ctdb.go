@@ -265,12 +265,16 @@ func checkSMBCTDBHealth(ctx context.Context, root string, monitor bool) error {
 }
 
 func openSMBCTDBListener(root string) (*net.UnixListener, *os.File, error) {
-	path := filepath.Join(root, "ctdb/run/native-ready.socket")
-	fd, err := unix.Open(filepath.Join(root, "ctdb/run/native-ready.lock"), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	return openSMBPrivateListener(filepath.Join(root, "ctdb/run/native-ready.socket"))
+}
+
+// The local lock protects the listener path only; it is never AD join exclusion.
+func openSMBPrivateListener(path string) (*net.UnixListener, *os.File, error) {
+	fd, err := unix.Open(strings.TrimSuffix(path, ".socket")+".lock", unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {
 		return nil, nil, err
 	}
-	guard := os.NewFile(uintptr(fd), "native CTDB readiness lock")
+	guard := os.NewFile(uintptr(fd), "native SMB socket lock")
 	fail := func(err error) (*net.UnixListener, *os.File, error) { _ = guard.Close(); return nil, nil, err }
 	info, err := guard.Stat()
 	if err != nil {
@@ -278,7 +282,7 @@ func openSMBCTDBListener(root string) (*net.UnixListener, *os.File, error) {
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || !info.Mode().IsRegular() || stat.Uid != uint32(os.Geteuid()) {
-		return fail(fmt.Errorf("unsafe CTDB readiness lock"))
+		return fail(fmt.Errorf("unsafe SMB socket lock"))
 	}
 	err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
 	if err != nil {
@@ -291,7 +295,7 @@ func openSMBCTDBListener(root string) (*net.UnixListener, *os.File, error) {
 	if err == nil {
 		stat, ok = info.Sys().(*syscall.Stat_t)
 		if !ok || info.Mode()&os.ModeSocket == 0 || stat.Uid != uint32(os.Geteuid()) {
-			return fail(fmt.Errorf("unsafe CTDB readiness socket"))
+			return fail(fmt.Errorf("unsafe SMB private socket"))
 		}
 		err = os.Remove(path)
 		if err != nil {
