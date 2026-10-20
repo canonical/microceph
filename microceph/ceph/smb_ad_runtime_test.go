@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
@@ -247,8 +248,9 @@ func smbADProcessFixture(t *testing.T) (string, string) {
 	// Samba secrets uses string_tdb_data (no NUL); autorid CONFIG uses
 	// string_term_tdb_data. The CTDB CLI decodes \\00, it does not add it.
 	script := `#!/bin/sh
-[ "$5" = pfetch ] || exit 7
-case "$6:$7" in
+[ "$1" = -t ] && [ "$2" = 5 ] || exit 6
+[ "$3" = pfetch ] || exit 7
+case "$4:$5" in
  secrets.tdb:SECRETS/MACHINE_PASSWORD/EXAMPLE|secrets.tdb:SECRETS/SID/EXAMPLE) printf 'retained\n';;
  'autorid.tdb:CONFIG\00') [ ! -e "$SNAP/missing-idmap" ] && printf 'minvalue:2000 rangesize:100000 maxranges:99\n';;
  *) exit 8;;
@@ -259,6 +261,36 @@ esac
 	raw, _ := json.Marshal(launch)
 	require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/context.json"), raw))
 	return root, snap
+}
+
+func TestSMBADCTDBUsesPinnedCLIInPrivateNamespace(t *testing.T) {
+	root, snap := smbADProcessFixture(t)
+	// The packaged CTDB 4.23.6 CLI has no -s/--socket option. Its default
+	// /run/ctdb socket is private because the Winbind role bind-mounts it.
+	launch := smbLaunch{Clustered: true, CTDBPNN: new(uint64), AD: &smbADMember{Workgroup: "EXAMPLE"}}
+	plan, err := smbNativeRolePlan("winbindd", root, launch, snap)
+	require.NoError(t, err)
+	privateSocket := false
+	for _, mount := range plan.Mounts {
+		if mount.Target == "/run/ctdb" {
+			require.Equal(t, filepath.Join(root, "ctdb/run"), mount.Source)
+			require.Equal(t, uintptr(unix.MS_BIND), mount.Flags)
+			privateSocket = true
+		}
+	}
+	require.True(t, privateSocket, "the default CTDB socket must remain cluster-private")
+	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700))
+	for _, args := range [][]string{
+		{"getdbmap"},
+		{"pfetch", "secrets.tdb", "SECRETS/SID/EXAMPLE"},
+		{"pfetch", "autorid.tdb", `CONFIG\00`},
+	} {
+		t.Run(args[0]+"/"+strings.Join(args[1:], "/"), func(t *testing.T) {
+			raw, err := smbADCTDB(context.Background(), root, args...)
+			require.NoError(t, err)
+			require.Equal(t, append([]string{"-t", "5"}, args...), strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n"))
+		})
+	}
 }
 
 func TestSMBADStateUsesPinnedKeysAndRefusesMissingRecords(t *testing.T) {
@@ -379,7 +411,7 @@ func TestSMBADAppSupervisesWinbindChildAndReadinessSocket(t *testing.T) {
 	require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/context.json"), raw))
 	raw, err := os.ReadFile(filepath.Join(snap, "bin/ctdb"))
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), append([]byte("#!/bin/sh\nif [ \"$1\" = -s ]; then echo retained; exit 0; fi\n"), raw...), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), append([]byte("#!/bin/sh\nif [ \"$1\" = -t ] && [ \"$2\" = 5 ]; then echo retained; exit 0; fi\n"), raw...), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/wbinfo"), []byte("#!/bin/sh\ncase \"$1\" in --domain-info=*) echo 'SID : S-1-5-21-1-2-3';; --sid-to-gid=*) echo 20000;; esac\n"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/getent"), []byte("#!/bin/sh\necho 'EXAMPLE\\users:x:20000:'\n"), 0700))
 	child := filepath.Join(snap, "bin/child")
@@ -432,9 +464,10 @@ func TestSMBADJoinProcessUsesPinnedBindingAndPrivateStdin(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, writeSMBNativeFile(filepath.Join(snap, "smb/native.py"), native))
 	script := `#!/bin/sh
-if [ "$5" = getdbmap ]; then
+[ "$1" = -t ] && [ "$2" = 5 ] || exit 6
+if [ "$3" = getdbmap ]; then
  if [ -e "$SNAP/joined" ]; then echo 'dbid:0x1 name:secrets.tdb path:retained PERSISTENT'; else echo 'Number of databases:0'; fi
-elif [ "$5" = pfetch ] && [ -e "$SNAP/joined" ]; then echo retained
+elif [ "$3" = pfetch ] && [ -e "$SNAP/joined" ]; then echo retained
 else exit 9
 fi
 `

@@ -119,6 +119,112 @@ def test_owned_vm_launch_refuses_existing_or_unknown_state(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Private uploads: confined root cannot bypass a foreign-owned mode0600 file.
+# ---------------------------------------------------------------------------
+
+def test_lxc_file_push_preserves_default_transfer_arguments(monkeypatch):
+    h = H()
+    calls = []
+    result = _Res(0, '', '')
+    monkeypatch.setattr(h, '_exec', lambda argv, timeout: calls.append((argv, timeout)) or result)
+    assert h._lxc_file_push('source', 'local:node/destination', 60, 'copy file') is result
+    assert calls == [(['lxc', 'file', 'push', 'source', 'local:node/destination'], 60)]
+
+
+def test_lxc_file_push_private_sets_root_owner_and_restrictive_mode(monkeypatch):
+    h = H()
+    calls = []
+    result = _Res(0, '', '')
+    monkeypatch.setattr(h, '_exec', lambda argv, timeout: calls.append((argv, timeout)) or result)
+    assert h._lxc_file_push('source', 'local:node/private', 60, 'copy private file', private=True) is result
+    assert calls == [(['lxc', 'file', 'push', '--uid=0', '--gid=0', '--mode=0600',
+                      'source', 'local:node/private'], 60)]
+
+
+def test_lxc_file_push_private_propagates_transfer_failure(monkeypatch):
+    import pytest
+    h = H()
+    monkeypatch.setattr(h, '_exec', lambda argv, timeout: _Res(1, '', 'push denied'))
+    with pytest.raises(AssertionError, match='Failed to copy private file: push denied'):
+        h._lxc_file_push('source', 'local:node/private', 60, 'copy private file', private=True)
+
+
+def test_smb_private_transfer_call_paths_use_root_owned_mode0600(tmp_path, monkeypatch):
+    """Exercise gateway, AD/DC, secret and join-token transfers, not just one script."""
+    import hashlib
+    m = _smb_module()
+    snap = tmp_path / 'candidate.snap'
+    snap.write_bytes(b'test-only candidate')
+    digest = hashlib.sha256(snap.read_bytes()).hexdigest()
+    commands = []
+
+    class Node:
+        def __init__(self, name):
+            self.name = name
+        def probe_instance_network(self):
+            pass
+        def prepare_time(self):
+            pass
+        def copy_snap_to_vm(self, path):
+            pass
+        def install_microceph_from_local_snap(self, *args, **kwargs):
+            pass
+        def wait_for_microceph_control_socket(self):
+            pass
+        def apt_update(self):
+            pass
+        def apt_install(self, packages):
+            pass
+        def command(self, *args, **kwargs):
+            commands.append((self.name, args))
+            stdout = ''
+            if args[0] == 'sha256sum':
+                stdout = digest
+            elif args == ('snap', 'debug', 'confinement'):
+                stdout = 'strict'
+            elif args[:2] == ('ip', '-4'):
+                stdout = '[{"prefsrc":"192.0.2.1"}]'
+            return _Res(0, stdout, '')
+
+    monkeypatch.setattr(m, '_VM', Node)
+    transfers = {}
+    for phase in ('gateway', 'ad', 'join'):
+        library = m.smb_ops()
+        pushes = []
+        monkeypatch.setattr(library, '_capacity', lambda _: None)
+        monkeypatch.setattr(library, '_variable', lambda key, default: str(snap) if key == 'SNAP_PATH' else default)
+        monkeypatch.setattr(library.harness, 'launch_owned_test_vm', lambda *args, **kwargs: None)
+        monkeypatch.setattr(library.harness, '_exec', lambda argv, timeout: pushes.append(argv) or _Res(0, '', ''))
+        def host(*args):
+            if args[1:] == ('remote', 'get-default'):
+                return 'local'
+            if args[1:3] == ('remote', 'list'):
+                return '{"local":{}}'
+            if args[1:3] == ('file', 'pull'):
+                Path(args[4]).write_text('test-only private input')
+            return ''
+        monkeypatch.setattr(library, '_host', host)
+        if phase == 'gateway':
+            library.provision_smb_lab()
+            expected = ['smb_guest.py'] * 3
+        else:
+            library.owner = 'test-owner'
+            library.nodes = [Node(f'node{i}') for i in range(3)]
+            if phase == 'ad':
+                library.provision_smb_ad_directory()
+                expected = ['smb_ad_guest.py'] * 3 + ['smb_guest.py', 'smb_ad_guest.py', 'ad-secrets.json']
+            else:
+                library.join_smb_member(1)
+                expected = ['join.token']
+        assert [Path(argv[-1]).name for argv in pushes] == expected
+        transfers[phase] = pushes
+    for phase, pushes in transfers.items():
+        assert all(argv[:6] == ['lxc', 'file', 'push', '--uid=0', '--gid=0', '--mode=0600'] for argv in pushes), transfers
+    assert any(args == ('chmod', '0700', library._base) for _, args in commands)
+    assert not any('0644' in args or '0777' in args for _, args in commands)
+
+
+# ---------------------------------------------------------------------------
 # SMB integration observations and ownership (no Robot run context required).
 # ---------------------------------------------------------------------------
 
@@ -4307,3 +4413,153 @@ def test_smb_ad_setup_rechecks_ceph_clock_health_after_directory_preparation():
                  if getattr(block, 'name', '') == 'AD Suite Setup' and hasattr(block, 'body'))
     calls = [statement.keyword for statement in setup.body if hasattr(statement, 'keyword')]
     assert calls.index('Require SMB Ceph Health') > calls.index('Provision SMB AD Directory')
+
+
+# Captured Ceph startup placement transition: phase06, not an AD acceptance pass.
+def _smb_ceph_readiness_fixture():
+    return json.loads((Path(__file__).parent / 'fixtures' / 'smb_ceph_readiness.json').read_text())
+
+
+def test_smb_ceph_readiness_rejects_premature_health_ok_during_placement():
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    ready = m.smb_ceph_readiness_signature
+    assert ready(sample['health_ok'], sample['clock'], sample['unsettled_map'],
+                 sample['pgs'], sample['unsettled_map']) is None
+    assert ready(sample['health_warn'], sample['clock'], sample['settled_map'],
+                 sample['pgs'], sample['settled_map']) is None
+    assert ready(sample['health_ok'], sample['clock'], sample['settled_map'],
+                 sample['pgs'], sample['settled_map']) is not None
+
+
+def test_smb_ceph_readiness_fails_closed_for_incomplete_or_inconsistent_data():
+    import copy
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    baseline = [sample['health_ok'], sample['clock'], sample['settled_map'],
+                sample['pgs'], copy.deepcopy(sample['settled_map'])]
+    cases = []
+    for index in range(len(baseline)):
+        for value in (None, [], {}, 'invalid'):
+            args = copy.deepcopy(baseline)
+            args[index] = value
+            cases.append(args)
+    mutations = [
+        (0, lambda d: d.update(checks={'MON_CLOCK_SKEW': {}})),
+        (1, lambda d: d.update(time_skew_status={})),
+        (1, lambda d: d.pop('timechecks')),
+        (1, lambda d: next(iter(d['time_skew_status'].values())).pop('health')),
+        (1, lambda d: next(iter(d['time_skew_status'].values())).update(health='HEALTH_WARN')),
+        (2, lambda d: d.update(pools=[])),
+        (2, lambda d: d.update(osds=[])),
+        (2, lambda d: d['osds'][0].update(up=0)),
+        (2, lambda d: d['pools'][0].pop('pg_placement_num_target')),
+        (2, lambda d: d['pools'][0].update(pg_num_target=2)),
+        (2, lambda d: d['pools'][0].update(pg_num_pending=2)),
+        (2, lambda d: d['pools'][0].update(pg_num=True)),
+        (2, lambda d: d['pools'].append(d['pools'][0])),
+        (3, lambda d: d.update(pg_ready=False)),
+        (3, lambda d: d.update(pg_stats=[])),
+        (3, lambda d: d['pg_stats'].pop()),
+        (3, lambda d: d['pg_stats'].append(d['pg_stats'][0])),
+        (3, lambda d: d['pg_stats'][0].update(state='peering')),
+        (3, lambda d: d['pg_stats'][0].update(pgid='99.0')),
+        (3, lambda d: d['pg_stats'][0].update(acting=[])),
+        (3, lambda d: d['pg_stats'][0].update(up=[999, 2, 3])),
+        (4, lambda d: d.update(epoch=d['epoch'] + 1)),
+        (4, lambda d: d.update(fsid='different-cluster')),
+    ]
+    for index, mutate in mutations:
+        args = copy.deepcopy(baseline)
+        mutate(args[index])
+        if index == 2:
+            args[4] = copy.deepcopy(args[2])
+        cases.append(args)
+    for args in cases:
+        assert m.smb_ceph_readiness_signature(*args) is None, args
+
+
+def _smb_ceph_readiness_node(sample, observations, clock, calls, seconds_per_read=1):
+    from types import SimpleNamespace
+    state = {'index': 0, 'maps': 0}
+    def command(*argv, timeout, **kwargs):
+        assert 0 < timeout <= min(30, 300 - clock[0])
+        calls.append((argv, timeout))
+        clock[0] += min(seconds_per_read, timeout)
+        observation = observations[min(state['index'], len(observations) - 1)]
+        if argv[1:] == ('osd', 'dump', '-f', 'json'):
+            value = observation['map']
+            state['maps'] += 1
+            if state['maps'] % 2 == 0:
+                state['index'] += 1
+        elif argv[1:] == ('pg', 'dump', 'pgs_brief', '-f', 'json'):
+            value = observation.get('pgs', sample['pgs'])
+        elif argv[1:] == ('health', 'detail', '-f', 'json'):
+            value = observation['health']
+        elif argv[1:] == ('time-sync-status', '-f', 'json'):
+            value = sample['clock']
+        else:
+            raise AssertionError(f'Unexpected readiness command: {argv}')
+        return _Res(0, json.dumps(value), '')
+    return SimpleNamespace(command=command, wait_for_cluster_health_ok=lambda: None)
+
+
+def test_smb_ceph_wait_requires_two_coherent_settled_observations(monkeypatch):
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    settled = {'health': sample['health_ok'], 'map': sample['settled_map']}
+    observations = [
+        {'health': sample['health_ok'], 'map': sample['unsettled_map']},
+        {'health': sample['health_warn'], 'map': sample['settled_map']},
+        settled,
+        dict(settled, pgs={'pg_ready': True, 'pg_stats': []}),
+        settled,
+        settled,
+    ]
+    clock, calls = [0], []
+    monkeypatch.setattr(m.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(m.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    library = m.smb_ops()
+    library.nodes = [_smb_ceph_readiness_node(sample, observations, clock, calls)]
+    assert library.wait_for_smb_ceph_health() == sample['health_ok']
+    assert len(calls) == 5 * len(observations)
+    assert not any(argv == ('microceph.ceph', 'health') for argv, _ in calls)
+
+
+def test_smb_ceph_wait_bounds_all_reads_and_sleeps_by_original_budget(monkeypatch):
+    import pytest
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    clock, calls = [0], []
+    monkeypatch.setattr(m.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(m.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    library = m.smb_ops()
+    library.nodes = [_smb_ceph_readiness_node(sample,
+        [{'health': sample['health_ok'], 'map': sample['settled_map']}], clock, calls, seconds_per_read=30)]
+    with pytest.raises(AssertionError, match='SMB Ceph readiness'):
+        library.wait_for_smb_ceph_health()
+    assert clock[0] <= 300
+    assert calls[-1][1] < 30
+
+
+def test_smb_ceph_readiness_json_rejects_malformed_read(monkeypatch):
+    import pytest
+    from types import SimpleNamespace
+    m = _smb_module()
+    monkeypatch.setattr(m.time, 'monotonic', lambda: 0)
+    library = m.smb_ops()
+    library.nodes = [SimpleNamespace(command=lambda *args, **kwargs: _Res(0, '{invalid', ''))]
+    with pytest.raises(AssertionError, match='SMB Ceph readiness received malformed JSON'):
+        library.wait_for_smb_ceph_health()
+
+
+def test_smb_ceph_robot_asserts_the_accepted_detailed_observation():
+    from robot.api import get_model
+    model = get_model(Path(__file__).parent / 'smb_suite.resource')
+    gate = next(block for section in model.sections for block in section.body
+                if getattr(block, 'name', '') == 'Require SMB Ceph Health' and hasattr(block, 'body'))
+    calls = [statement for statement in gate.body if hasattr(statement, 'keyword')]
+    assert calls[0].keyword == 'Wait For SMB Ceph Health'
+    assert calls[0].assign == ('${health}=',)
+    assert all(statement.keyword != 'Observe SMB Ceph Health' for statement in calls)
+    assert [statement.keyword for statement in calls[1:]] == ['Should Be Equal', 'Dictionary Should Not Contain Key']

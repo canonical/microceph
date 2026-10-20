@@ -1554,9 +1554,16 @@ class microceph_harness:
         """Returns the configured snap path from ${SNAP_PATH}, or "" when unset."""
         return BuiltIn().get_variable_value("${SNAP_PATH}", "") or ""
 
-    def _lxc_file_push(self, src, dest, timeout, errlabel):
-        """Pushes *src* to *dest* via lxc file push, failing on non-zero rc."""
-        res = self._exec(["lxc", "file", "push", src, dest], timeout)
+    def _lxc_file_push(self, src, dest, timeout, errlabel, *, private=False):
+        """Push a file, optionally root-owned mode0600 for private guest inputs.
+
+        Confined root cannot use DAC bypass to read a foreign-owned private file.
+        Unrelated uploads retain LXD's default ownership and mode behavior.
+        """
+        argv = ["lxc", "file", "push"]
+        if private:
+            argv.extend(["--uid=0", "--gid=0", "--mode=0600"])
+        res = self._exec(argv + [src, dest], timeout)
         if res.rc != 0:
             raise AssertionError(f"Failed to {errlabel}: {res.stderr}")
         return res

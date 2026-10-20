@@ -248,7 +248,9 @@ func runSMBADProcess(ctx context.Context, root string, args []string, input io.R
 }
 
 func smbADCTDB(ctx context.Context, root string, args ...string) ([]byte, error) {
-	argv := []string{filepath.Join(os.Getenv("SNAP"), "bin/ctdb"), "-s", filepath.Join(root, "ctdb/run/ctdbd.socket"), "-t", "5"}
+	// The pinned CLI has no socket option. The Winbind namespace bind-mounts
+	// this cluster's private run directory at the default /run/ctdb path.
+	argv := []string{filepath.Join(os.Getenv("SNAP"), "bin/ctdb"), "-t", "5"}
 	return runSMBADProcess(ctx, root, append(argv, args...), nil)
 }
 

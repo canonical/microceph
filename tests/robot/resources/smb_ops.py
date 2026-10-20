@@ -75,6 +75,76 @@ def guest_time_ready(flags, tracking):
         return False
 
 
+def smb_ceph_readiness_signature(health, clock, before, pgs, after):
+    """Identify a coherent, fully placed startup observation, or fail closed.
+
+    HEALTH_OK can occur between automatic pgp_num_actual increments. Require
+    complete active/clean PG mappings and settled pool targets on one OSD epoch
+    before treating that point-in-time health result as fixture readiness.
+    """
+    try:
+        if (not isinstance(health, dict) or health.get("status") != "HEALTH_OK"
+                or health.get("checks") != {} or not isinstance(clock, dict)):
+            return None
+        monitors = clock["time_skew_status"]
+        if (not isinstance(monitors, dict) or not monitors
+                or any(not isinstance(row, dict) or row.get("health") != "HEALTH_OK"
+                       for row in monitors.values())
+                or clock["timechecks"]["round_status"] != "finished"):
+            return None
+        if (not isinstance(before, dict) or before != after
+                or not isinstance(before["fsid"], str)
+                or str(uuid.UUID(before["fsid"])) != before["fsid"]
+                or type(before["epoch"]) is not int or before["epoch"] <= 0):
+            return None
+        pools, osds = before["pools"], before["osds"]
+        if not isinstance(pools, list) or not pools or not isinstance(osds, list) or not osds:
+            return None
+        available = set()
+        for osd in osds:
+            if (type(osd["osd"]) is not int or osd["osd"] < 0 or osd["osd"] in available
+                    or type(osd["up"]) is not int or osd["up"] != 1
+                    or type(osd["in"]) is not int or osd["in"] != 1):
+                return None
+            available.add(osd["osd"])
+        expected = {}
+        pool_signature = []
+        pool_ids = set()
+        fields = ("pool", "size", "pg_num", "pg_num_target", "pg_num_pending",
+                  "pg_placement_num", "pg_placement_num_target")
+        for pool in pools:
+            if any(type(pool[field]) is not int or pool[field] <= 0 for field in fields):
+                return None
+            if (pool["pool"] in pool_ids
+                    or pool["pg_num"] != pool["pg_num_target"]
+                    or pool["pg_num"] != pool["pg_num_pending"]
+                    or pool["pg_placement_num"] != pool["pg_placement_num_target"]
+                    or pool["pg_placement_num"] != pool["pg_num"]):
+                return None
+            pool_ids.add(pool["pool"])
+            pool_signature.append(tuple(pool[field] for field in fields))
+            for number in range(pool["pg_num"]):
+                expected[f'{pool["pool"]}.{number:x}'] = pool["size"]
+        if not isinstance(pgs, dict) or pgs.get("pg_ready") is not True:
+            return None
+        rows = pgs["pg_stats"]
+        if not isinstance(rows, list) or len(rows) != len(expected):
+            return None
+        observed = {}
+        for row in rows:
+            pgid, up, acting = row["pgid"], row["up"], row["acting"]
+            if (pgid not in expected or pgid in observed or row["state"] != "active+clean"
+                    or not isinstance(up, list) or not isinstance(acting, list) or up != acting
+                    or len(acting) != expected[pgid]
+                    or any(type(osd) is not int or osd not in available for osd in acting)
+                    or len(set(acting)) != len(acting)):
+                return None
+            observed[pgid] = tuple(acting)
+        return (before["fsid"], before["epoch"], tuple(sorted(pool_signature)), tuple(sorted(observed.items())))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
 def parse_snapshot(raw, node):
     """Parse raw control/systemd observations; unavailable API is not readiness."""
     value = json.loads(raw)
@@ -331,8 +401,7 @@ class smb_ops:
                 raise AssertionError("SMB suite requires actual strict confinement")
             node.command("mkdir", "-p", self._base, check=True)
             node.command("chmod", "0700", self._base, check=True)
-            self.harness._lxc_file_push(str(Path(__file__).with_name("smb_guest.py")), f"local:{name}{self._base}/smb_guest.py", 60, "copy SMB guest fixture")
-            node.command("chmod", "0600", self._base + "/smb_guest.py", check=True)
+            self.harness._lxc_file_push(str(Path(__file__).with_name("smb_guest.py")), f"local:{name}{self._base}/smb_guest.py", 60, "copy SMB guest fixture", private=True)
         self.nodes[0].apt_update()
         self.nodes[0].apt_install(["smbclient"])
         addresses = [json.loads(n.command("ip", "-4", "-j", "route", "get", "1.1.1.1", check=True, quiet=True).stdout)[0]["prefsrc"] for n in self.nodes]
@@ -361,14 +430,50 @@ class smb_ops:
         with tempfile.TemporaryDirectory(prefix="smb-token-") as directory:
             local = str(Path(directory) / "token")
             self._host("lxc", "file", "pull", f"local:{self.nodes[0].name}{token}", local, "--project", "default")
-            self.harness._lxc_file_push(local, f"local:{target.name}{token}", 60, "copy join token")
+            self.harness._lxc_file_push(local, f"local:{target.name}{token}", 60, "copy join token", private=True)
         self.nodes[0].command("rm", "-f", token, check=True, quiet=True)
         # Keep both the token and any token-bearing join error private.
         return target.command("sh", "-c", 'microceph cluster join "$(cat "$1")" > "$2" 2>&1; rc=$?; rm -f "$1"; exit "$rc"',
                               "join", token, self._base + "/join.result", timeout=180)
 
+    def _smb_ceph_json(self, deadline, *args):
+        remaining = math.floor(deadline - time.monotonic())
+        if remaining <= 0:
+            raise AssertionError("SMB Ceph readiness did not settle within 300 seconds")
+        result = self.nodes[0].command("microceph.ceph", *args, timeout=min(30, remaining), check=True, quiet=True)
+        try:
+            return json.loads(result.stdout)
+        except (TypeError, ValueError) as error:
+            raise AssertionError(f"SMB Ceph readiness received malformed JSON from {args}") from error
+
     def wait_for_smb_ceph_health(self):
-        self.nodes[0].wait_for_cluster_health_ok()
+        """Return detailed health only after two coherent settled startup samples."""
+        deadline = time.monotonic() + 300
+        previous = None
+        accepted = None
+
+        def probe():
+            nonlocal previous, accepted
+            before = self._smb_ceph_json(deadline, "osd", "dump", "-f", "json")
+            pgs = self._smb_ceph_json(deadline, "pg", "dump", "pgs_brief", "-f", "json")
+            health = self._smb_ceph_json(deadline, "health", "detail", "-f", "json")
+            clock = self._smb_ceph_json(deadline, "time-sync-status", "-f", "json")
+            after = self._smb_ceph_json(deadline, "osd", "dump", "-f", "json")
+            signature = smb_ceph_readiness_signature(health, clock, before, pgs, after)
+            if time.monotonic() >= deadline:
+                raise AssertionError("SMB Ceph readiness did not settle within 300 seconds")
+            ready = signature is not None and signature == previous
+            previous = signature
+            if ready:
+                accepted = health
+            return ready
+
+        def pause():
+            time.sleep(min(3, max(0, deadline - time.monotonic())))
+
+        self.harness._poll_until(probe, attempts=100, interval=0, between=pause,
+                                 fail_msg="SMB Ceph readiness did not settle within 300 seconds")
+        return accepted
 
     def observe_smb_ceph_health(self):
         """Fetch health and real monitor time evidence without changing tolerance."""
@@ -511,8 +616,7 @@ class smb_ops:
             node.command("mkdir", "-p", self._base, check=True)
             node.command("chmod", "0700", self._base, check=True)
             for script in (("smb_guest.py", "smb_ad_guest.py") if node is dc else ("smb_ad_guest.py",)):
-                self.harness._lxc_file_push(str(Path(__file__).with_name(script)), f"local:{node.name}{self._base}/{script}", 60, "copy AD fixture")
-                node.command("chmod", "0600", self._base + "/" + script, check=True)
+                self.harness._lxc_file_push(str(Path(__file__).with_name(script)), f"local:{node.name}{self._base}/{script}", 60, "copy AD fixture", private=True)
         address = lambda n: json.loads(n.command("ip", "-4", "-j", "route", "get", "1.1.1.1", check=True).stdout)[0]["prefsrc"]
         addresses, dc_address = [address(n) for n in self.nodes[:3]], address(dc)
         # Stop packaged default roles/resolved only inside this disposable DC.
@@ -526,8 +630,7 @@ class smb_ops:
             local = str(Path(directory) / "secrets")
             self._host("lxc", "file", "pull", f"local:{dc.name}{self._base}/ad-secrets.json", local, "--project", "default")
             Path(local).chmod(0o600)
-            self.harness._lxc_file_push(local, f"local:{self.nodes[0].name}{self._base}/ad-secrets.json", 60, "copy private AD inputs")
-        self.nodes[0].command("chmod", "0600", self._base + "/ad-secrets.json", check=True)
+            self.harness._lxc_file_push(local, f"local:{self.nodes[0].name}{self._base}/ad-secrets.json", 60, "copy private AD inputs", private=True)
         self.nodes[0].command("python3", self._base + "/smb_ad_guest.py", "init", json.dumps(addresses), dc_address, check=True)
         for node in (dc, self.nodes[0]):
             node.command("dpkg-query", "-W", "samba-common-bin", "krb5-user", check=True)

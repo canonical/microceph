@@ -37,8 +37,7 @@ Add Verified SMB OSD
     Run SMB Checked    ${node}    microceph    disk    add    ${disk}    --wipe
 
 Require SMB Ceph Health
-    Wait For SMB Ceph Health
-    ${health}=    Observe SMB Ceph Health
+    ${health}=    Wait For SMB Ceph Health
     Should Be Equal    ${health}[status]    HEALTH_OK
     Dictionary Should Not Contain Key    ${health}[checks]    MON_CLOCK_SKEW
 
