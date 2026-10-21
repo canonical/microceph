@@ -201,6 +201,11 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 			}
 			return "", nil
 		case "start":
+			if role == "ctdbd" {
+				conf, err := os.ReadFile(filepath.Join(constants.GetPathConst().ConfPath, "ceph.conf"))
+				require.NoError(r.t, err)
+				require.Contains(r.t, string(conf), "[client.smb.cluster.alpha]\nkeyring = "+filepath.Join(r.root, "identity/recovery.keyring")+"\n", "canonical client section must precede the first CTDB start")
+			}
 			r.events = append(r.events, "start "+role)
 			if role == "smbd" && !r.nonclustered {
 				require.True(r.t, r.readyRoles["ctdbd"], "CTDB ready before SAM/Samba")
@@ -318,7 +323,7 @@ func (r *smbStartupRunner) ready(ctx context.Context, root, role string) error {
 }
 
 func TestSMBClusteredNativeStartupSQLOrderAndCompensation(t *testing.T) {
-	for _, failure := range []string{"", "compile", "publish", "prepare", "start", "monitor-start", "samba-start", "readiness", "monitor-readiness", "record", "applied"} {
+	for _, failure := range []string{"", "recovery-config", "compile", "publish", "prepare", "start", "monitor-start", "samba-start", "readiness", "monitor-readiness", "record", "applied"} {
 		t.Run(failure, func(t *testing.T) {
 			runSMBStartup(t, failure, true, "")
 		})
@@ -414,9 +419,30 @@ func runSMBStartupFixture(t *testing.T, failure string, clustered bool, python s
 	root := t.TempDir()
 	t.Setenv("SNAP_COMMON", root)
 	t.Setenv("SNAP", "/test-snap")
-	oldPaths := constants.GetPathConst
+	oldPaths, oldUpdate := constants.GetPathConst, updateConfigFunc
 	constants.GetPathConst = func() constants.PathConst { return constants.PathConst{ConfPath: root} }
-	defer func() { constants.GetPathConst = oldPaths }()
+	// Exercise the real SQL reservation projection and canonical template. The
+	// unrelated global/admin config queries have their own UpdateConfig tests.
+	updateConfigFunc = func(ctx context.Context, state interfaces.StateInterface) error {
+		clients, err := getSMBRecoveryClients(ctx, state)
+		if err != nil {
+			return err
+		}
+		if failure == "recovery-config" {
+			path := filepath.Join(root, constants.CephConfFileName)
+			require.NoError(t, os.Rename(path, path+".retained"))
+			require.NoError(t, os.Mkdir(path, 0700))
+			defer func() {
+				require.NoError(t, os.Remove(path))
+				require.NoError(t, os.Rename(path+".retained", path))
+			}()
+		}
+		return NewCephConfig(constants.CephConfFileName).WriteConfig(map[string]any{
+			"fsid": "fixture-fsid", "monitors": "192.0.2.1", "pubNet": "198.51.100.0/24",
+			"smbRecoveryClients": clients,
+		}, 0644)
+	}
+	defer func() { constants.GetPathConst, updateConfigFunc = oldPaths, oldUpdate }()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "ceph.conf"), []byte("[global]\n"), 0600))
 	mockDB := &mocks.MockDB{TxFn: func(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
 		tx, err := db.Begin()

@@ -8,6 +8,7 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
@@ -400,8 +401,15 @@ func backwardCompatMonitors(ctx context.Context, s interfaces.StateInterface) ([
 	return monitorAddresses, nil
 }
 
+// cephConfigMu keeps ownership snapshots and canonical publication ordered. An
+// older pre-reservation render must not erase a newly configured SMB client.
+var cephConfigMu sync.Mutex
+
 // UpdateConfig updates the ceph.conf file with the current configuration.
 func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
+	cephConfigMu.Lock()
+	defer cephConfigMu.Unlock()
+
 	pathConsts := constants.GetPathConst()
 	confPath := pathConsts.ConfPath
 	runPath := pathConsts.RunPath
@@ -464,9 +472,15 @@ func UpdateConfig(ctx context.Context, s interfaces.StateInterface) error {
 		return err
 	}
 
+	recoveryClients, err := getSMBRecoveryClients(ctx, s)
+	if err != nil {
+		return fmt.Errorf("failed to resolve SMB recovery configuration: %w", err)
+	}
+
 	// Populate Template
 	err = conf.WriteConfig(
 		map[string]any{
+			"smbRecoveryClients":  recoveryClients,
 			"fsid":                config["fsid"],
 			"runDir":              runPath,
 			"monitors":            strings.Join(monitorAddresses, ","),

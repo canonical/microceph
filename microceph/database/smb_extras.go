@@ -89,6 +89,26 @@ func GetSMBOwnerGroups(ctx context.Context, tx *sql.Tx, member string) ([]string
 	return groups, rows.Err()
 }
 
+// GetSMBRecoveryGroups returns clustered reservations owned by this exact local
+// member, including pending/failed startup but excluding retired and foreign owners.
+func GetSMBRecoveryGroups(ctx context.Context, tx *sql.Tx, member string) ([]string, error) {
+	groups, err := GetSMBOwnerGroups(ctx, tx, member)
+	if err != nil {
+		return nil, err
+	}
+	clustered := []string{}
+	for _, group := range groups {
+		_, config, err := smbGroup(ctx, tx, group)
+		if err != nil {
+			return nil, err
+		}
+		if config.Clustered {
+			clustered = append(clustered, group)
+		}
+	}
+	return clustered, nil
+}
+
 func smbGroup(ctx context.Context, tx *sql.Tx, clusterID string) (int64, SMBServiceGroupConfig, error) {
 	var id int64
 	var raw string

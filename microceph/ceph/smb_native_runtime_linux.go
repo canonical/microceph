@@ -308,9 +308,6 @@ func smbNativeRolePlan(role, root string, launch smbLaunch, snap string) (smbRol
 		for _, pair := range [][2]string{{"ctdb", "/etc/ctdb"}, {"ctdb/run", "/run/ctdb"}, {"ctdb", "/var/lib/ctdb"}} {
 			plan.Mounts = append(plan.Mounts, smbNativeMount{Source: root + "/" + pair[0], Target: pair[1], Flags: unix.MS_BIND})
 		}
-		if role == "ctdbd" {
-			plan.Mounts = append(plan.Mounts, smbNativeMount{Source: root + "/config/ctdb-recovery.conf", Target: "/etc/ceph/ceph.conf", Flags: unix.MS_BIND})
-		}
 	}
 	if launch.CustomDNS {
 		plan.Mounts = append(plan.Mounts, smbNativeMount{Source: root + "/config/resolv.conf", Target: "/etc/resolv.conf", Flags: unix.MS_BIND})

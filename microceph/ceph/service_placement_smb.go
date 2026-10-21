@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
@@ -282,6 +283,19 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 		if err != nil {
 			return err
 		}
+		// The initial shared render preceded this SQL reservation. Render again
+		// before CTDB can start, now including its client-specific keyring.
+		err = updateConfigFunc(ctx, s)
+		if err != nil {
+			return fmt.Errorf("render SMB recovery client configuration: %w", err)
+		}
+		config, err := os.ReadFile(filepath.Join(constants.GetPathConst().ConfPath, constants.CephConfFileName))
+		if err != nil {
+			return err
+		}
+		// Record the actual canonical input so our own new client section does
+		// not cause a spurious configuration restart on the next updater tick.
+		candidate.CephConfig = string(config)
 	}
 	launch, roles, err := prepareSMBProjection(ctx, s, candidate, root)
 	if err != nil {

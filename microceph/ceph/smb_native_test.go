@@ -85,6 +85,7 @@ func TestSMBNativeProjectionUsesUpstreamRenderingWithoutPublication(t *testing.T
 		_, err = os.Stat(root)
 		require.True(t, os.IsNotExist(err), "projection must not publish or create directories")
 		require.Equal(t, clustered, plan.Launch.Clustered)
+		require.NotContains(t, plan.Files, "config/ctdb-recovery.conf", "CTDB uses the generated canonical client section")
 		require.True(t, plan.Launch.Proxy)
 		conf := string(plan.Files["config/smb.conf"])
 		for _, value := range []string{"literal {{.value}}", "read only = yes", "browseable = no", "comment = Archive", "max connections = 2", "interfaces = 2001:db8::7", "smb ports = 1445", root + "/config/ceph-proxy.conf"} {
@@ -187,9 +188,9 @@ func TestSMBNativeProjectionRejectsNativeOverrideAndIdentityEscapes(t *testing.T
 }
 
 func TestSMBNativeCephConfigPreservesProtectedRendering(t *testing.T) {
-	data, err := smbNativeCephConfig("[global]\nmon host = 192.0.2.1\nrun dir = /run/ceph\n[client.admin]\nkeyring = /admin\n", "alpha", "/native/alpha", true)
+	data, err := smbNativeCephConfig("[global]\nmon host = 192.0.2.1\nrun dir = /run/ceph\n[client.admin]\nkeyring = /admin\n", "alpha", "/native/alpha")
 	require.NoError(t, err)
-	require.Equal(t, "[global]\nmon host = 192.0.2.1\nrun dir = /run/ceph\nkeyring = /native/alpha/identity/recovery.keyring\n\n[client.smb.cluster.alpha]\nkeyring = /native/alpha/identity/recovery.keyring\n\n", string(data))
+	require.Equal(t, "[global]\nmon host = 192.0.2.1\nrun dir = /run/ceph\nkeyring = /native/alpha/identity/data.keyring\n\n[client.smb.fs.cluster.alpha]\nkeyring = /native/alpha/identity/data.keyring\n\n", string(data))
 }
 
 func TestSMBNativeRefreshRetainsEquivalentCTDBDescriptorBytes(t *testing.T) {

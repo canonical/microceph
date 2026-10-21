@@ -65,7 +65,6 @@ class PackagingTests(unittest.TestCase):
             "/etc/resolv.conf": "config/resolv.conf", "/run/systemd/resolve/stub-resolv.conf": "config/resolv.conf",
             "/etc/passwd": "config/passwd", "/etc/group": "config/group", "/etc/nsswitch.conf": "config/nsswitch.conf",
             "/etc/ctdb": "ctdb{,/}", "/run/ctdb": "ctdb/run{,/}", "/var/lib/ctdb": "ctdb{,/}",
-            "/etc/ceph/ceph.conf": "config/ctdb-recovery.conf",
             "/run/samba/winbindd": "samba/winbindd{,/}",
         }
         rules = recipe["plugs"]["smb-mounts"]["mount"]

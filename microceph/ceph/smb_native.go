@@ -497,13 +497,7 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 		plan.Files["config/resolv.conf"] = []byte(resolv.String())
 	}
 	for _, kind := range []string{"direct", "proxy"} {
-		plan.Files["config/ceph-"+kind+".conf"], err = smbNativeCephConfig(candidate.CephConfig, id, root, false)
-		if err != nil {
-			return plan, err
-		}
-	}
-	if clustered {
-		plan.Files["config/ctdb-recovery.conf"], err = smbNativeCephConfig(candidate.CephConfig, id, root, true)
+		plan.Files["config/ceph-"+kind+".conf"], err = smbNativeCephConfig(candidate.CephConfig, id, root)
 		if err != nil {
 			return plan, err
 		}
@@ -681,7 +675,7 @@ func projectSMBCTDB(candidate smbCandidate, root string, document map[string]any
 	return err
 }
 
-func smbNativeCephConfig(text, id, root string, recovery bool) ([]byte, error) {
+func smbNativeCephConfig(text, id, root string) ([]byte, error) {
 	options := map[string]string{}
 	keys := []string{}
 	section := ""
@@ -708,13 +702,8 @@ func smbNativeCephConfig(text, id, root string, recovery bool) ([]byte, error) {
 		}
 		options[key] = strings.TrimSpace(value)
 	}
-	kind := "data"
 	identity := "client.smb.fs.cluster." + id
-	if recovery {
-		kind = "recovery"
-		identity = "client.smb.cluster." + id
-	}
-	keyring := root + "/identity/" + kind + ".keyring"
+	keyring := root + "/identity/data.keyring"
 	_, exists := options["keyring"]
 	if !exists {
 		keys = append(keys, "keyring")

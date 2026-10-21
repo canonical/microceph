@@ -65,9 +65,6 @@ plugs:
       - what: /var/snap/microceph/common/smb/*/samba/winbindd{,/}
         where: /run/samba/winbindd
         options: [bind]
-      - what: /var/snap/microceph/common/smb/*/config/ctdb-recovery.conf
-        where: /etc/ceph/ceph.conf
-        options: [bind]
   load-rbd:
     interface: kernel-module-load
     modules:
