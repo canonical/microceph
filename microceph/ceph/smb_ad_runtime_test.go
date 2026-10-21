@@ -246,14 +246,15 @@ func smbADProcessFixture(t *testing.T) (string, string) {
 	t.Setenv("SNAP", snap)
 	require.NoError(t, os.MkdirAll(filepath.Join(snap, "bin"), 0700))
 	// Samba secrets uses string_tdb_data (no NUL); autorid CONFIG uses
-	// string_term_tdb_data. The CTDB CLI decodes \\00, it does not add it.
+	// string_term_tdb_data. CTDB accepts binary keys as 0x-prefixed hex.
+	// Like real pfetch, an absent key returns success with empty output.
 	script := `#!/bin/sh
 [ "$1" = -t ] && [ "$2" = 5 ] || exit 6
 [ "$3" = pfetch ] || exit 7
 case "$4:$5" in
  secrets.tdb:SECRETS/MACHINE_PASSWORD/EXAMPLE|secrets.tdb:SECRETS/SID/EXAMPLE) printf 'retained\n';;
- 'autorid.tdb:CONFIG\00') [ ! -e "$SNAP/missing-idmap" ] && printf 'minvalue:2000 rangesize:100000 maxranges:99\n';;
- *) exit 8;;
+ autorid.tdb:0x434f4e46494700) if [ ! -e "$SNAP/missing-idmap" ]; then printf 'minvalue:2000 rangesize:100000 maxranges:99\n'; fi;;
+ *) exit 0;;
 esac
 `
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), []byte(script), 0700))
@@ -283,12 +284,35 @@ func TestSMBADCTDBUsesPinnedCLIInPrivateNamespace(t *testing.T) {
 	for _, args := range [][]string{
 		{"getdbmap"},
 		{"pfetch", "secrets.tdb", "SECRETS/SID/EXAMPLE"},
-		{"pfetch", "autorid.tdb", `CONFIG\00`},
+		{"pfetch", "autorid.tdb", "0x434f4e46494700"},
 	} {
 		t.Run(args[0]+"/"+strings.Join(args[1:], "/"), func(t *testing.T) {
 			raw, err := smbADCTDB(context.Background(), root, args...)
 			require.NoError(t, err)
 			require.Equal(t, append([]string{"-t", "5"}, args...), strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n"))
+		})
+	}
+}
+
+func TestSMBADRecordUsesCTDBHexForNULTerminatedKeys(t *testing.T) {
+	root, snap := smbADProcessFixture(t)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SNAP/record-argv\"\nprintf 'retained\\n'\n"
+	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), []byte(script), 0700))
+	for _, test := range []struct {
+		database string
+		key      string
+		argument string
+	}{
+		{"secrets.tdb", "SECRETS/MACHINE_PASSWORD/EXAMPLE", "SECRETS/MACHINE_PASSWORD/EXAMPLE"},
+		{"secrets.tdb", "SECRETS/SID/EXAMPLE", "SECRETS/SID/EXAMPLE"},
+		{"autorid.tdb", "CONFIG", "0x434f4e46494700"},
+	} {
+		t.Run(test.key, func(t *testing.T) {
+			err := smbADRecord(context.Background(), root, test.database, test.key)
+			require.NoError(t, err)
+			raw, err := os.ReadFile(filepath.Join(snap, "record-argv"))
+			require.NoError(t, err)
+			require.Equal(t, []string{"-t", "5", "pfetch", test.database, test.argument}, strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n"))
 		})
 	}
 }
@@ -301,7 +325,7 @@ func TestSMBADStateUsesPinnedKeysAndRefusesMissingRecords(t *testing.T) {
 
 	require.NoError(t, checkSMBADMember(context.Background(), root, false))
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "missing-idmap"), nil, 0600))
-	require.Error(t, checkSMBADMember(context.Background(), root, false), "no idmap reconstruction on restart")
+	require.ErrorContains(t, checkSMBADMember(context.Background(), root, false), "AD trust/idmap state lost", "no idmap reconstruction on restart")
 	raw, _ = json.Marshal(launch.AD)
 	require.NoError(t, smbAtomicWrite(filepath.Join(root, "ad-initializing"), raw))
 	require.NoError(t, checkSMBADMember(context.Background(), root, true), "only initial actor may create first idmap")

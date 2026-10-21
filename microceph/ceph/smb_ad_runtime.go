@@ -3,6 +3,7 @@ package ceph
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -256,7 +257,9 @@ func smbADCTDB(ctx context.Context, root string, args ...string) ([]byte, error)
 
 func smbADRecord(ctx context.Context, root, db, key string) error {
 	if db == "autorid.tdb" {
-		key += `\00`
+		// Samba terminates this key with NUL; CTDB decodes only 0x-prefixed
+		// hex, not backslash escapes. Never put a literal NUL in argv.
+		key = "0x" + hex.EncodeToString([]byte(key+"\x00"))
 	}
 	raw, err := smbADCTDB(ctx, root, "pfetch", db, key)
 	if err != nil {
