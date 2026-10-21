@@ -6,17 +6,19 @@
 Explanation
 ===========
 
-The explanatory and conceptual guides in this section provide a better understanding of MicroCeph.
-They enable you to expand your knowledge and become better at configuring, encrypting, managing, deploying and backing up your workloads.
+Our explanation section will help you gain a conceptual understanding of MicroCeph;
+how it works and why it works the way it does.
 
-Working with MicroCeph
-----------------------
+How MicroCeph works
+-------------------
 
-Understand the steps to take to successfully deploy and manage your Ceph clusters quickly.
+Before you change how your cluster runs, it helps to understand the MicroCeph architecture, i.e. the components that make up MicroCeph and how they fit together, 
+and what MicroCeph is doing for you behind the scenes, e.g. how it configures the cluster, keeps your data safe, and scales as you grow.
 
 .. toctree::
    :maxdepth: 1
 
+   microceph-architecture
    cluster-configurations
    cluster-maintenance
    cluster-scaling
