@@ -4140,6 +4140,37 @@ def test_smb_ad_prepares_isolated_paths_before_and_after_identity_mapping(monkey
     assert len(shutdowns) == 2
 
 
+def test_smb_ad_backing_stat_uses_namedtuple_fields(monkeypatch, capsys):
+    import hashlib
+    import sys
+    from collections import namedtuple
+    from types import SimpleNamespace
+    import smb_ad_guest as ad
+    # Match the independently observed packaged LibCephFS.stat return contract.
+    fields = ('st_dev st_ino st_mode st_nlink st_uid st_gid st_rdev st_size '
+              'st_blksize st_blocks st_atime st_mtime st_ctime').split()
+    StatResult = namedtuple('StatResult', fields, defaults=[0] * len(fields))
+    closed, shutdowns, reads = [], [], []
+    fs = SimpleNamespace(
+        conf_set=lambda *args: None,
+        mount=lambda: None,
+        stat=lambda path: StatResult(st_uid=103103, st_gid=102513, st_mode=0o100640),
+        open=lambda path, mode: 17,
+        read=lambda *args: reads.append(args) or ad.PAYLOAD,
+        close=lambda fd: closed.append(fd),
+        shutdown=lambda: shutdowns.append(True),
+    )
+    monkeypatch.setitem(sys.modules, 'cephfs', SimpleNamespace(LibCephFS=lambda **kwargs: fs))
+    monkeypatch.setenv('SNAP_DATA', '/fixture/snap-data')
+    ad.data_stat('kerberos.bin')
+    assert json.loads(capsys.readouterr().out) == {
+        'uid': 103103, 'gid': 102513, 'mode': 0o640,
+        'digest': hashlib.sha256(ad.PAYLOAD).hexdigest(),
+    }
+    assert reads == [(17, 0, len(ad.PAYLOAD) + 1)]
+    assert closed == [17] and shutdowns == [True]
+
+
 def test_smb_ad_protocols_cannot_fallback_or_leak_passwords():
     import smb_ad_guest as ad
     kerberos = ad.client_argv('192.0.2.2', 'data', 'alice', 'kerberos', 'get sentinel.bin /tmp/read')

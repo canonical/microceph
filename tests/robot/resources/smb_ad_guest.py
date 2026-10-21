@@ -264,7 +264,7 @@ def data_stat(filename):
             content = fs.read(fd, 0, len(PAYLOAD) + 1)
         finally:
             fs.close(fd)
-        print(json.dumps({"uid": stat["st_uid"], "gid": stat["st_gid"], "mode": stat["st_mode"] & 0o777,
+        print(json.dumps({"uid": stat.st_uid, "gid": stat.st_gid, "mode": stat.st_mode & 0o777,
                           "digest": hashlib.sha256(content).hexdigest()}))
     finally:
         fs.shutdown()
