@@ -21,6 +21,7 @@ type SimpleBootstrapper struct {
 	ClusterNet       string // Cluster Network subnet.
 	AvailabilityZone string // Availability Zone of the host.
 	V2Only           bool   // Whether only V2 addresses should be used.
+	DefaultCipher    string // Default cipher for CephX keys ("aes" or "aes256k").
 }
 
 // ##### Interface Implementations for SimpleBootstrapper #####
@@ -33,7 +34,14 @@ func (sb *SimpleBootstrapper) Prefill(bd common.BootstrapConfig, state interface
 	sb.AvailabilityZone = bd.AvailabilityZone
 	sb.V2Only = bd.V2Only
 
-	err := PopulateDefaultNetworkParams(state, &sb.MonIP, &sb.PublicNet, &sb.ClusterNet)
+	cipher, err := common.ResolveDefaultCipher(bd.DefaultCipher)
+	if err != nil {
+		logger.Errorf("failed to resolve the default CephX cipher: %v", err)
+		return err
+	}
+	sb.DefaultCipher = cipher
+
+	err = PopulateDefaultNetworkParams(state, &sb.MonIP, &sb.PublicNet, &sb.ClusterNet)
 	if err != nil {
 		logger.Errorf("failed to populate default network parameters: %v", err)
 		return err
@@ -102,7 +110,7 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 		return err
 	}
 
-	path, err := ceph.CreateKeyrings(pathConsts.ConfPath)
+	path, err := ceph.CreateKeyrings(pathConsts.ConfPath, sb.DefaultCipher)
 	defer os.RemoveAll(path)
 	if err != nil {
 		return err
@@ -120,7 +128,7 @@ func (sb *SimpleBootstrapper) Bootstrap(ctx context.Context, state interfaces.St
 	}
 
 	// Bring up essential ceph services
-	err = ceph.BootstrapCephServices(state, path, fsid, sb.MonIP)
+	err = ceph.BootstrapCephServices(state, path, fsid, sb.MonIP, sb.DefaultCipher)
 	if err != nil {
 		return err
 	}

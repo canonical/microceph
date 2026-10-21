@@ -21,6 +21,7 @@ type cmdClusterBootstrapCeph struct {
 	flagMonIp            string
 	flagPubNet           string
 	flagClusterNet       string
+	flagDefaultCipher    string
 	flagV2Only           bool
 	flagAvailabilityZone string
 	flagForce            bool
@@ -39,6 +40,7 @@ func (c *cmdClusterBootstrapCeph) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.flagMonIp, "mon-ip", "", "Public address for bootstrapping ceph mon service.")
 	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).")
 	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).")
+	cmd.Flags().StringVar(&c.flagDefaultCipher, "default-cipher", "", "Default cipher for CephX keys: 'aes' or 'aes256k' (AES-256). Defaults to AES-256 when supported, otherwise Ceph's default is left unchanged.")
 	cmd.Flags().BoolVar(&c.flagV2Only, "v2-only", false, "Whether to support V2 messenger only or both V1 and V2")
 	cmd.Flags().StringVar(&c.flagAvailabilityZone, "availability-zone", "", "Availability zone for the bootstrap target host.")
 	cmd.Flags().BoolVar(&c.flagForce, "force", false, "Recover from a stale in_progress bootstrap state (reset to failed then retry). Not for normal use. Must not be used while a live bootstrap may be running on another member.")
@@ -51,6 +53,12 @@ func (c *cmdClusterBootstrapCeph) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--target is required")
 	}
 
+	cipher, err := common.ResolveDefaultCipher(c.flagDefaultCipher)
+	if err != nil {
+		return err
+	}
+	c.flagDefaultCipher = cipher
+
 	// Validate client-side preconditions before round-tripping to the server:
 	// an invalid mon-ip/public-network combination should be rejected locally
 	// rather than mutating cluster state (in_progress -> failed).
@@ -61,7 +69,7 @@ func (c *cmdClusterBootstrapCeph) Run(cmd *cobra.Command, args []string) error {
 		V2Only:     c.flagV2Only,
 	}
 
-	err := preCheckBootstrapConfig(checkData)
+	err = preCheckBootstrapConfig(checkData)
 	if err != nil {
 		return err
 	}
@@ -126,6 +134,7 @@ func (c *cmdClusterBootstrapCeph) buildRequest() types.CephBootstrapRequest {
 		MonIp:            c.flagMonIp,
 		PublicNet:        c.flagPubNet,
 		ClusterNet:       c.flagClusterNet,
+		DefaultCipher:    c.flagDefaultCipher,
 		V2Only:           c.flagV2Only,
 		AvailabilityZone: c.flagAvailabilityZone,
 		Force:            c.flagForce,

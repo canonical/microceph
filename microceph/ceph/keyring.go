@@ -12,11 +12,27 @@ import (
 )
 
 func genKeyring(path, name string, caps ...[]string) error {
+	return genKeyringWithCipher(path, name, "", caps...)
+}
+
+func createKeyring(path, name string, cipher string, caps ...[]string) error {
+	if cipher == "" {
+		return genKeyring(path, name, caps...)
+	}
+
+	return genKeyringWithCipher(path, name, cipher, caps...)
+}
+
+func genKeyringWithCipher(path, name string, cipher string, caps ...[]string) error {
 	args := []string{
 		"--create-keyring",
 		path,
 		"--gen-key",
 		"-n", name,
+	}
+
+	if cipher != "" {
+		args = append(args, "--key-type", cipher)
 	}
 
 	for _, capability := range caps {

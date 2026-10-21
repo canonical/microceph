@@ -83,3 +83,21 @@ func TestClusterBootstrapCephForceFlag(t *testing.T) {
 	req := cmd.buildRequest()
 	assert.True(t, req.Force, "--force must be threaded into the request")
 }
+
+// TestClusterBootstrapCephDefaultCipherFlag verifies that --default-cipher is
+// parsed and threaded into the request.
+func TestClusterBootstrapCephDefaultCipherFlag(t *testing.T) {
+	cmd := &cmdClusterBootstrapCeph{
+		common:     &CmdControl{FlagStateDir: "/tmp/nonexistent"},
+		cluster:    &cmdCluster{},
+		flagTarget: "node-a",
+	}
+
+	c := cmd.Command()
+	err := c.ParseFlags([]string{"--target", "node-a", "--default-cipher", "aes"})
+	assert.NoError(t, err)
+	assert.Equal(t, "aes", cmd.flagDefaultCipher)
+
+	req := cmd.buildRequest()
+	assert.Equal(t, "aes", req.DefaultCipher)
+}
