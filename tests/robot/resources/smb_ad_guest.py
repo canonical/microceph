@@ -49,7 +49,9 @@ def client_argv(address, share, user, protocol, command):
         raise ValueError("unknown AD fixture share/user")
     argv = ["smbclient", "//" + SERVICE + "/" + share, "-I", address, "-p", "1445", "-m", "SMB3"]
     if protocol == "kerberos":
-        argv += ["--use-kerberos=required", "--use-krb5-ccache=FILE:" + str(BASE / "client.ccache"), "-N"]
+        # -N invalidates the explicit cache during Samba's option finalization.
+        # A valid named cache already suppresses the password callback.
+        argv += ["--use-kerberos=required", "--use-krb5-ccache=FILE:" + str(BASE / "client.ccache")]
     elif protocol == "ntlm":
         argv += ["--use-kerberos=off", "--option=client ntlmv2 auth=yes", "-A", str(BASE / (user + ".ad-auth"))]
     else:

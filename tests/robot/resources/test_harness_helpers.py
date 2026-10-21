@@ -4145,7 +4145,10 @@ def test_smb_ad_protocols_cannot_fallback_or_leak_passwords():
     kerberos = ad.client_argv('192.0.2.2', 'data', 'alice', 'kerberos', 'get sentinel.bin /tmp/read')
     assert '//robot-ad.robot.test/data' in kerberos and '--use-kerberos=required' in kerberos
     assert '-I' in kerberos and '192.0.2.2' in kerberos and '-A' not in kerberos
-    assert '-N' in kerberos and any('ccache' in arg for arg in kerberos)
+    # Samba's -N marks a NULL password as specified, invalidating the cache in POST.
+    assert '-N' not in kerberos and '--no-pass' not in kerberos
+    assert '--use-krb5-ccache=FILE:' + str(ad.BASE / 'client.ccache') in kerberos
+    assert '-U' not in kerberos and '--password' not in kerberos
     ntlm = ad.client_argv('192.0.2.2', 'auth', 'bob', 'ntlm', 'ls')
     assert '--use-kerberos=off' in ntlm and '--option=client ntlmv2 auth=yes' in ntlm
     assert '-A' in ntlm and '-U' not in ntlm
