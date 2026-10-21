@@ -14,6 +14,8 @@ tox -e robot -- --test-suite static-checks   # golangci-lint + go vet
 tox -e robot -- --test-suite unit-tests       # go test ./...
 ```
 
+In CI, the host-only suites and vulnerability scans depend on the shared `dqlite-preflight.yml` workflow: it checks that the `dqlite/dev` PPA index and both `libdqlite1.18` packages can be downloaded before those jobs start. An outage produces a `kind=preflight` infrastructure annotation in each invoking workflow and skips its dependent jobs.
+
 ### Integration suites
 
 1. **LXD initialised** — if not already done:

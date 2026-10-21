@@ -1,0 +1,22 @@
+name: Dqlite preflight
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight dqlite PPA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout preflight script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: tests/scripts/preflight.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download dqlite PPA packages
+        run: tests/scripts/preflight.sh dqlite_canary
