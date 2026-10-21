@@ -146,23 +146,9 @@ func (s *osdSuite) TestSanityCheckMissingOSDReturnsNotFound() {
 	assert.EqualError(s.T(), err, "osd.9999 not found")
 }
 
-// Expect: run ceph osd crush rule ls. switchFailureDomain looks up the target
-// rule (haveCrushRule) and then the old rule inside getPoolsForDomain, so
-// tests must register this helper once per ls call, in call order. The
-// generic matchers tolerate shorter calls, so registrations must not outrun
-// the actual calls.
+// Expect: run ceph osd crush rule ls
 func addCrushRuleLsExpectations(r *mocks.Runner) {
-	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return("microceph_auto_osd\nmicroceph_auto_host\nmicroceph_auto_rack", nil).Once()
-}
-
-// addIsOnRackRuleExpectations registers the lookups behind IsOnRackRule with
-// the given default and rack rule ids. Callers must register these before the
-// generic CmdAny expectations, which would otherwise match first.
-func addIsOnRackRuleExpectations(r *mocks.Runner, defaultID string, rackID string) {
-	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
-		Return(defaultID+"\n", nil).Once()
-	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
-		Return(fmt.Sprintf(`{"rule_id": %s}`, rackID), nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return("microceph_auto_osd", nil).Once()
 }
 
 // Expect: run ceph osd crush rule dump
@@ -287,10 +273,6 @@ func (s *osdSuite) SetupTest() {
 func (s *osdSuite) TestSwitchHostFailureDomain() {
 	r := mocks.NewRunner(s.T())
 
-	// switchFailureDomain("osd", "host") expectations, in call order. The
-	// leading haveCrushRule lookup made the ls calls precede the dump calls,
-	// and the generic matchers only match calls at their registered position.
-	addCrushRuleLsExpectations(r)
 	// dump crush rules to resolve names
 	addCrushRuleDumpExpectations(r)
 	// set default crush rule
@@ -314,6 +296,9 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 
 // TestUpdateFailureDomain tests the updateFailureDomain function
 func (s *osdSuite) TestUpdateFailureDomain() {
+	// Mock getAZData to return no AZs so the test proceeds to member count check.
+	defer withMockAZData(azData{})()
+
 	u := api.NewURL()
 	state := &mocks.MockState{
 		URL:         u,
@@ -322,10 +307,6 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 
 	r := mocks.NewRunner(s.T())
 
-	// IsOnRackRule lookups, not on rack, then switchFailureDomain("osd",
-	// "host") expectations — all in call order, see TestSwitchHostFailureDomain.
-	addIsOnRackRuleExpectations(r, "77", "99")
-	addCrushRuleLsExpectations(r)
 	// dump crush rules to resolve names
 	addCrushRuleDumpExpectations(r)
 	// set default crush rule
