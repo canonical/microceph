@@ -118,10 +118,58 @@ func TestSMBADPrivateRoleBindingsRemainFailClosed(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 }
 
+func TestPrepareSMBADPathsWinbindPrivilegedDirectoryContract(t *testing.T) {
+	for _, existingMode := range []os.FileMode{0, 0700, 0750} {
+		t.Run(fmt.Sprintf("existing-%04o", existingMode), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "alpha")
+			privileged := filepath.Join(root, "samba/state/winbindd_privileged")
+			if existingMode != 0 {
+				require.NoError(t, smbPrivateDir(privileged))
+				require.NoError(t, os.Chmod(privileged, existingMode))
+			}
+			require.NoError(t, prepareSMBADPaths(root))
+			for name, mode := range map[string]os.FileMode{
+				"samba/winbindd":                  0755,
+				"samba/state/winbindd_privileged": 0750,
+				".":                               0700,
+				"samba":                           0700,
+				"samba/state":                     0700,
+			} {
+				info, err := os.Stat(filepath.Join(root, name))
+				require.NoError(t, err)
+				require.Equal(t, mode, info.Mode().Perm(), name)
+			}
+		})
+	}
+}
+
+func TestPrepareSMBADPathsRejectsUnsafePrivilegedDirectory(t *testing.T) {
+	for _, kind := range []string{"symlink", "file", "group-writable", "world-writable"} {
+		t.Run(kind, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "alpha")
+			path := filepath.Join(root, "samba/state/winbindd_privileged")
+			require.NoError(t, smbPrivateDir(filepath.Dir(path)))
+			switch kind {
+			case "symlink":
+				require.NoError(t, os.Symlink(t.TempDir(), path))
+			case "file":
+				require.NoError(t, os.WriteFile(path, []byte("not-a-directory"), 0600))
+			case "group-writable":
+				require.NoError(t, smbPrivateDir(path))
+				require.NoError(t, os.Chmod(path, 0770))
+			case "world-writable":
+				require.NoError(t, smbPrivateDir(path))
+				require.NoError(t, os.Chmod(path, 0777))
+			}
+			require.Error(t, prepareSMBADPaths(root))
+		})
+	}
+}
+
 func TestSMBADPrivatePathsPreserveState(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "alpha")
 	require.NoError(t, prepareSMBADPaths(root))
-	for name, mode := range map[string]os.FileMode{"samba/winbindd": 0755, "samba/state/winbindd_privileged": 0700} {
+	for name, mode := range map[string]os.FileMode{"samba/winbindd": 0755, "samba/state/winbindd_privileged": 0750} {
 		info, err := os.Stat(filepath.Join(root, name))
 		require.NoError(t, err)
 		require.Equal(t, mode, info.Mode().Perm())
@@ -134,6 +182,9 @@ func TestSMBADPrivatePathsPreserveState(t *testing.T) {
 		raw, err := os.ReadFile(filepath.Join(root, name))
 		require.NoError(t, err)
 		require.Equal(t, "retained-database", string(raw))
+		info, err := os.Stat(filepath.Join(root, name))
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0600), info.Mode().Perm())
 	}
 	require.NoError(t, os.Chmod(filepath.Join(root, "samba/state/winbindd_privileged"), 0777))
 	require.Error(t, prepareSMBADPaths(root), "never silently accept/reconstruct exposed privileged state")

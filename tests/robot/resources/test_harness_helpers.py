@@ -4105,6 +4105,41 @@ def test_smb_ad_resource_allowlist_and_wrong_join_are_separate():
     assert refresh['resource_type'] == 'ceph.smb.join.auth' and refresh['auth']['username'] == 'bob'
 
 
+def test_smb_ad_negative_cluster_does_not_claim_positive_data_paths():
+    import smb_ad_guest as ad
+    docs = ad.resource_documents(['192.0.2.1', '192.0.2.2'], '192.0.2.4', 'PRIVATE')
+    def paths(kind):
+        return {(r['cephfs']['volume'], r['cephfs']['path'])
+                for r in docs[kind]['resources'] if r['resource_type'] == 'ceph.smb.share'}
+    # Retirement retains mgr resources/earmarks; both logical clusters coexist.
+    assert paths('ad') == {('robotsmb', '/ad')}
+    assert paths('ad-wrong')
+    assert paths('ad-wrong').isdisjoint(paths('ad'))
+
+
+def test_smb_ad_prepares_isolated_paths_before_and_after_identity_mapping(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    import smb_ad_guest as ad
+    created, ownership, modes, shutdowns = set(), [], [], []
+    fs = SimpleNamespace(
+        conf_set=lambda *args: None,
+        mount=lambda: None,
+        mkdirs=lambda path, mode: created.add(path),
+        chown=lambda *args: ownership.append(args),
+        chmod=lambda *args: modes.append(args),
+        shutdown=lambda: shutdowns.append(True),
+    )
+    monkeypatch.setitem(sys.modules, 'cephfs', SimpleNamespace(LibCephFS=lambda **kwargs: fs))
+    monkeypatch.setenv('SNAP_DATA', '/fixture/snap-data')
+    for uid, gid in ((0, 0), (2201, 2203)):
+        ad.prepare_data(uid, gid)
+        assert created == {'/ad', '/ad-wrong'}
+        assert ('/ad', uid, gid) in ownership
+        assert ('/ad', 0o755) in modes
+    assert len(shutdowns) == 2
+
+
 def test_smb_ad_protocols_cannot_fallback_or_leak_passwords():
     import smb_ad_guest as ad
     kerberos = ad.client_argv('192.0.2.2', 'data', 'alice', 'kerberos', 'get sentinel.bin /tmp/read')
@@ -4226,6 +4261,30 @@ for name, doc in resource_documents(['192.0.2.1','192.0.2.2'],'192.0.2.4','priva
             assert config['options']['valid users'] in ('@ROBOT\\\\writers','@ROBOT\\\\readers')
             key='write list' if resource.share_id == 'data' else 'read list'
             assert config['options'][key] == config['options']['valid users']
+# Exercise the unmodified manager's ownership check in actual suite order.
+# Only filesystem I/O is replaced; retirement deliberately retains earmarks.
+from smb.config_store import MemConfigStore
+from smb.staging import Staging, cross_check_resource
+staging = Staging(MemConfigStore())
+earmarks = {}
+def set_earmark(path, volume, value):
+    earmarks[(volume, path)] = value
+resolver = types.SimpleNamespace(
+    get_earmark=lambda path, volume: earmarks.get((volume, path)),
+    set_earmark=set_earmark,
+    check_earmark=lambda value, scope: value.startswith(scope.value + '.'),
+)
+paths = types.SimpleNamespace(resolve_exists=lambda volume, group, subvolume, path: path)
+docs = resource_documents(['192.0.2.1','192.0.2.2'],'192.0.2.4','private')
+for kind in ('ad-wrong', 'ad'):
+    loaded = list(load(docs[kind]))
+    for resource in loaded:
+        staging.stage(resource)
+    for resource in loaded:
+        if isinstance(resource, Share):
+            cross_check_resource(resource, staging=staging,
+                                 path_resolver=paths, earmark_resolver=resolver)
+assert set(earmarks.values()) == {'smb.cluster.robot-bad', 'smb.cluster.robot-ad'}
 '''
     result = subprocess.run([os.environ.get('MICROCEPH_SMB_TEST_PYTHON', '/usr/bin/python3'), '-B', '-c', code,
                              source, str(Path(__file__).parent)], capture_output=True, text=True, timeout=20)

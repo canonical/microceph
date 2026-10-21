@@ -20,7 +20,7 @@ DC_ROOT = Path("/root/robot-ad-dc")
 
 def resource_documents(addresses, dc, password):
     """Use the real mgr resource shape and an explicit positive group allowlist."""
-    def document(cluster, credential, secret):
+    def document(cluster, credential, secret, path):
         resources = [
             {"resource_type": "ceph.smb.join.auth", "auth_id": credential,
              "auth": {"username": "Administrator", "password": secret}},
@@ -31,12 +31,14 @@ def resource_documents(addresses, dc, password):
              "custom_ports": {"smb": 1445, "smbmetrics": 19922}}]
         for share, group, readonly in (("data", "writers", False), ("read", "writers", True), ("auth", "readers", True)):
             resources.append({"resource_type": "ceph.smb.share", "cluster_id": cluster, "share_id": share,
-                              "cephfs": {"volume": "robotsmb", "path": "/ad", "provider": "samba-vfs/new"},
+                              "cephfs": {"volume": "robotsmb", "path": path, "provider": "samba-vfs/new"},
                               "readonly": readonly, "restrict_access": True,
                               "login_control": [{"name": DOMAIN + "\\" + group, "category": "group", "access": "read" if readonly else "read-write"}]})
         return {"resources": resources}
-    return {"ad": document("robot-ad", "robot-join", password),
-            "ad-wrong": document("robot-bad", "robot-bad-join", password + "-incorrect"),
+    # Placement retirement retains mgr resources and their path earmarks.
+    # Keep the failed-join cluster isolated without deleting its retained state.
+    return {"ad": document("robot-ad", "robot-join", password, "/ad"),
+            "ad-wrong": document("robot-bad", "robot-bad-join", password + "-incorrect", "/ad-wrong"),
             "ad-refresh": {"resource_type": "ceph.smb.join.auth", "auth_id": "robot-join",
                            "auth": {"username": "bob", "password": "deliberately-not-a-join-credential"}}}
 
@@ -236,9 +238,10 @@ def prepare_data(uid, gid):
         fs.conf_set("keyring", str(config / "ceph.keyring"))
         fs.conf_set("client_fs", "robotsmb")
         fs.mount()
-        fs.mkdirs("/ad", 0o755)
-        fs.chown("/ad", int(uid), int(gid))
-        fs.chmod("/ad", 0o755)
+        for path in ("/ad", "/ad-wrong"):
+            fs.mkdirs(path, 0o755)
+            fs.chown(path, int(uid), int(gid))
+            fs.chmod(path, 0o755)
     finally:
         fs.shutdown()
 

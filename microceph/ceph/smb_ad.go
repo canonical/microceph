@@ -132,8 +132,10 @@ func smbMemberContext(candidate smbCandidate, description smbBindingDescription)
 // prepareSMBADPaths prepares only sockets, never databases or a joined marker.
 // Binding the public directory bypasses the private root's traversal barrier;
 // keep the privileged pipe under the root-only state directory, not that bind.
+// Winbind requires its privileged directory to be exactly 0750, even beneath
+// that root-only parent; it rejects an existing 0700 directory at listener setup.
 func prepareSMBADPaths(root string) error {
-	for name, mode := range map[string]os.FileMode{"samba/winbindd": 0755, "samba/state/winbindd_privileged": 0700} {
+	for name, mode := range map[string]os.FileMode{"samba/winbindd": 0755, "samba/state/winbindd_privileged": 0750} {
 		path := filepath.Join(root, name)
 		err := smbPrivateDir(path)
 		if err != nil {
