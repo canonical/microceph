@@ -516,7 +516,7 @@ func (m *OSDManager) writeGeneratedAuxManifest(osdDataPath string, manifest *gen
 	manifestPath := generatedAuxManifestPath(osdDataPath)
 	// A failed rewrite must leave the remaining cleanup entries readable.
 	tmpPath := manifestPath + ".tmp"
-	defer m.fs.Remove(tmpPath)
+	defer func() { _ = m.fs.Remove(tmpPath) }()
 	err = afero.WriteFile(m.fs, tmpPath, data, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to write generated aux manifest: %w", err)
