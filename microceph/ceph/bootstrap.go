@@ -96,13 +96,13 @@ func CreateKeyrings(confPath string, ciphers ...string) (string, error) {
 		return "", fmt.Errorf("Unable to create temporary path: %w", err)
 	}
 
-	err = createKeyring(filepath.Join(path, "mon.keyring"), "mon.", cipher, []string{"mon", "allow *"})
+	err = genKeyringWithCipher(filepath.Join(path, "mon.keyring"), "mon.", cipher, []string{"mon", "allow *"})
 	if err != nil {
 		return "", fmt.Errorf("Failed to generate monitor keyring: %w", err)
 	}
 
 	// Generate the admin keyring.
-	err = createKeyring(filepath.Join(confPath, "ceph.client.admin.keyring"), "client.admin", cipher, []string{"mon", "allow *"}, []string{"osd", "allow *"}, []string{"mds", "allow *"}, []string{"mgr", "allow *"})
+	err = genKeyringWithCipher(filepath.Join(confPath, "ceph.client.admin.keyring"), "client.admin", cipher, []string{"mon", "allow *"}, []string{"osd", "allow *"}, []string{"mds", "allow *"}, []string{"mgr", "allow *"})
 	if err != nil {
 		return "", fmt.Errorf("Failed to generate admin keyring: %w", err)
 	}

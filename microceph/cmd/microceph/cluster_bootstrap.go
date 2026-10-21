@@ -48,15 +48,6 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 }
 
 func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
-	defaultCipher := ""
-	if !c.flagDeferCeph {
-		var err error
-		defaultCipher, err = common.ResolveDefaultCipher(c.flagDefaultCipher)
-		if err != nil {
-			return err
-		}
-	}
-
 	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return fmt.Errorf("unable to configure MicroCeph: %w", err)
@@ -82,7 +73,7 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 		ClusterNet:       c.flagClusterNet,
 		V2Only:           c.flagV2Only,
 		AvailabilityZone: c.flagAvailabilityZone,
-		DefaultCipher:    defaultCipher,
+		DefaultCipher:    c.flagDefaultCipher,
 		DeferCeph:        c.flagDeferCeph,
 	}
 

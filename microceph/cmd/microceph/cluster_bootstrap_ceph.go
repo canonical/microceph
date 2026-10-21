@@ -53,12 +53,6 @@ func (c *cmdClusterBootstrapCeph) Run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--target is required")
 	}
 
-	cipher, err := common.ResolveDefaultCipher(c.flagDefaultCipher)
-	if err != nil {
-		return err
-	}
-	c.flagDefaultCipher = cipher
-
 	// Validate client-side preconditions before round-tripping to the server:
 	// an invalid mon-ip/public-network combination should be rejected locally
 	// rather than mutating cluster state (in_progress -> failed).
@@ -69,7 +63,7 @@ func (c *cmdClusterBootstrapCeph) Run(cmd *cobra.Command, args []string) error {
 		V2Only:     c.flagV2Only,
 	}
 
-	err = preCheckBootstrapConfig(checkData)
+	err := preCheckBootstrapConfig(checkData)
 	if err != nil {
 		return err
 	}
