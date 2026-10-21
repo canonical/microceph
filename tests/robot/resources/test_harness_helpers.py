@@ -2720,3 +2720,105 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "dpkg-deb -x" not in script
     assert "cat >" not in script
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
+
+
+# Vaultlocker fixture helpers run without root, LXD, Vault or a Robot context.
+def _vaultlocker_fixture_module():
+    import importlib.util
+
+    path = Path(__file__).parents[2] / "scripts" / "vaultlocker_fixture.py"
+    spec = importlib.util.spec_from_file_location("vaultlocker_fixture", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_vaultlocker_snap_revision_is_pinned_without_channel():
+    from vaultlocker_ci import snap_install_args
+
+    assert snap_install_args("vaultlocker", "12", "") == [
+        "snap", "install", "vaultlocker", "--revision=12",
+    ]
+    assert snap_install_args("vaultlocker", "", "latest/edge") == [
+        "snap", "install", "vaultlocker", "--channel=latest/edge",
+    ]
+
+
+@pytest.mark.parametrize("revision,channel", [("12", "latest/edge"), ("", ""), ("bad", "")])
+def test_vaultlocker_snap_selection_rejects_ambiguous_or_invalid_input(revision, channel):
+    from vaultlocker_ci import snap_install_args
+
+    with pytest.raises(ValueError):
+        snap_install_args("vaultlocker", revision, channel)
+
+
+def test_vaultlocker_result_whitelists_metadata_and_validates_uuid():
+    fixture = _vaultlocker_fixture_module()
+    uuid = "32d91bc4-5b4c-43bc-87d4-db08a23c341a"
+    mapper = f"/dev/mapper/crypt-{uuid}"
+    result = fixture.parse_mapper_result(json.dumps({
+        "luks_uuid": uuid, "mapper_path": mapper, "unexpected_secret": "do not return",
+    }))
+    assert result == {"luks_uuid": uuid, "mapper_path": mapper}
+
+
+@pytest.mark.parametrize("result", [
+    {}, {"luks_uuid": "not-a-uuid", "mapper_path": "/dev/mapper/wrong"},
+    {"luks_uuid": "32d91bc4-5b4c-43bc-87d4-db08a23c341a", "mapper_path": "/dev/sda"},
+])
+def test_vaultlocker_result_rejects_invalid_or_unrelated_devices(result):
+    with pytest.raises(ValueError):
+        _vaultlocker_fixture_module().parse_mapper_result(json.dumps(result))
+
+
+def test_vaultlocker_loop_binding_refuses_unowned_devices():
+    fixture = _vaultlocker_fixture_module()
+    records = {"loopdevices": [{"name": "/dev/loop4", "back-file": "/fixture/fresh.img"}]}
+    assert fixture.loop_binding_matches(records, "/dev/loop4", "/fixture/fresh.img")
+    assert not fixture.loop_binding_matches(records, "/dev/loop4", "/fixture/other.img")
+    assert not fixture.loop_binding_matches(records, "/dev/sda", "/fixture/fresh.img")
+    assert not fixture.loop_binding_matches({}, "/dev/loop4", "/fixture/fresh.img")
+
+
+def test_vaultlocker_failure_never_returns_output_or_command_arguments():
+    import subprocess
+
+    secret = "private-token-never-log"
+    error = subprocess.CalledProcessError(
+        3, ["vaultlocker", secret], output=secret, stderr=secret
+    )
+    result = _vaultlocker_fixture_module().safe_failure(error)
+    assert result == "CalledProcessError (exit 3)"
+    assert secret not in result
+
+
+def test_vaultlocker_private_logging_failure_cannot_expose_exception(monkeypatch, tmp_path, capsys):
+    import os
+    import sys
+
+    fixture = _vaultlocker_fixture_module()
+    secret = "private-token-never-log"
+
+    def fail_setup():
+        raise RuntimeError(secret)
+
+    def fail_write(*args, **kwargs):
+        raise PermissionError("Cannot write private diagnostics")
+
+    monkeypatch.setattr(fixture, "setup", fail_setup)
+    monkeypatch.setattr(fixture, "PRIVATE", tmp_path)
+    monkeypatch.setattr(Path, "write_text", fail_write)
+    monkeypatch.setattr(sys, "argv", ["fixture", "setup"])
+    previous_umask = os.umask(0o077)
+    outcome = None
+    try:
+        fixture.main()
+    except BaseException as error:
+        outcome = error
+    finally:
+        os.umask(previous_umask)
+    assert isinstance(outcome, SystemExit)
+    assert outcome.code == 1
+    captured = capsys.readouterr()
+    assert "Fixture setup/fresh: RuntimeError" in captured.err
+    assert secret not in captured.out + captured.err

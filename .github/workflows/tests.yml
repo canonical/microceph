@@ -1,6 +1,9 @@
 name: Tests
 on:
+  # Other branches are tested through their pull request; running on their
+  # pushes as well started the whole matrix twice for every push.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -190,6 +193,11 @@ jobs:
             name: Verify pristineness and wiping
             suite: wiping-test
             args: --variable XTRACE:True
+
+          - id: vaultlocker-test
+            name: Vaultlocker mapper admission (KV v2 and AppRole)
+            suite: vaultlocker-test
+            runner: ubuntu-24.04
 
           - id: cephadm-adopt-test
             name: Adopt test with cephadm

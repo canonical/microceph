@@ -328,6 +328,7 @@ parts:
       - lib/cargo/bin/coreutils/truncate
       - bin/uuidgen
       - bin/findmnt
+      - bin/wipefs
       - bin/sfdisk
       - bin/partx
       - bin/blockdev

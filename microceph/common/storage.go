@@ -1,21 +1,25 @@
 package common
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
+	"github.com/spf13/afero"
+	"golang.org/x/sys/unix"
+
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/logger"
-	"github.com/spf13/afero"
-	"golang.org/x/sys/unix"
 )
 
 // IsMounted checks if a device is mounted.
@@ -118,8 +122,9 @@ func IsCephDeviceWithFs(device string, fs afero.Fs) (bool, error) {
 	return false, nil
 }
 
-// IsPristineDisk checks if a block device is pristine. It uses both zero-byte checking and ceph-bluestore-tool to
-// detect any existing labels or data.
+// IsPristineDisk checks for existing data or storage signatures. LUKS mappings
+// use signature checks instead of zero-byte checks: untouched encrypted sectors
+// do not decrypt to zero plaintext.
 func IsPristineDisk(devicePath string) (bool, error) {
 	return IsPristineDiskWithFs(devicePath, afero.NewOsFs())
 }
@@ -127,6 +132,18 @@ func IsPristineDisk(devicePath string) (bool, error) {
 // IsPristineDiskWithFs checks if a block device is pristine using the provided filesystem.
 func IsPristineDiskWithFs(devicePath string, fs afero.Fs) (bool, error) {
 	logger.Infof("Start pristine disk check for device: %s", devicePath)
+
+	luks, err := isLUKSMapping(devicePath, fs)
+	if err != nil {
+		return false, err
+	}
+	if luks {
+		pristine, err := checkDeviceSignatures(devicePath)
+		if err != nil || !pristine {
+			return false, err
+		}
+		return checkLUKSDeviceLabels(devicePath)
+	}
 
 	// First, quick check of some likely locations for non-zero data
 	logger.Debugf("Perform zero-byte check on device: %s", devicePath)
@@ -151,6 +168,95 @@ func IsPristineDiskWithFs(devicePath string, fs afero.Fs) (bool, error) {
 
 	logger.Infof("Device %s pristine", devicePath)
 	return pristineByCephTool, nil
+}
+
+var luksMappingUUID = regexp.MustCompile(`^CRYPT-LUKS[12]-[[:xdigit:]]{32}-.+$`)
+
+// isLUKSMapping uses kernel metadata, not a caller-controlled device path or
+// mapper name. Other device-mapper targets retain ordinary pristine checks.
+func isLUKSMapping(devicePath string, fs afero.Fs) (bool, error) {
+	info, err := fs.Stat(devicePath)
+	if err != nil {
+		return false, err
+	}
+	if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+		return false, nil
+	}
+	deviceStat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false, fmt.Errorf("cannot inspect device number for %s", devicePath)
+	}
+	path := fmt.Sprintf("/sys/dev/block/%d:%d/dm/uuid", unix.Major(deviceStat.Rdev), unix.Minor(deviceStat.Rdev))
+	uuid, err := afero.ReadFile(fs, path)
+	if os.IsNotExist(err) {
+		return false, nil // A block device that is not a device-mapper target.
+	}
+	if err != nil {
+		return false, fmt.Errorf("cannot inspect mapper UUID for %s: %w", devicePath, err)
+	}
+	return luksMappingUUID.MatchString(strings.TrimSpace(string(uuid))), nil
+}
+
+// checkDeviceSignatures probes without erasing anything. In particular this
+// rejects filesystem, partition-table, nested LUKS and BlueStore signatures.
+// Probe failures or malformed output must never authorize device enrollment.
+func checkDeviceSignatures(devicePath string) (bool, error) {
+	output, err := ProcessExec.RunCommand("wipefs", "--no-act", "--json", devicePath)
+	if err != nil {
+		return false, fmt.Errorf("cannot inspect storage signatures on %s: %w", devicePath, err)
+	}
+	var result map[string]json.RawMessage
+	err = json.Unmarshal([]byte(output), &result)
+	if err != nil {
+		return false, fmt.Errorf("invalid signature probe output for %s: %w", devicePath, err)
+	}
+	raw, ok := result["signatures"]
+	if !ok {
+		return false, fmt.Errorf("signature probe output for %s has no signatures field", devicePath)
+	}
+	var signatures []json.RawMessage
+	err = json.Unmarshal(raw, &signatures)
+	if err != nil {
+		return false, fmt.Errorf("invalid signatures for %s: %w", devicePath, err)
+	}
+	return len(signatures) == 0, nil
+}
+
+// checkLUKSDeviceLabels retains BlueStore's secondary-label checks without the
+// legacy raw-disk check's assumption that any tool failure means no labels.
+func checkLUKSDeviceLabels(devicePath string) (bool, error) {
+	output, err := ProcessExec.RunCommand("ceph-bluestore-tool", "show-label", "--dev", devicePath)
+	if err == nil {
+		return false, nil // At least one existing BlueStore label was found.
+	}
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) || exitError.ExitCode() != 1 {
+		return false, fmt.Errorf("cannot inspect BlueStore labels on %s: %w", devicePath, err)
+	}
+	// Require no-label diagnostics: exit 1 and empty JSON also occur on probe failures.
+	var runError shared.RunError
+	if !errors.As(err, &runError) || runError.StdErr() == nil {
+		return false, fmt.Errorf("missing BlueStore probe diagnostics for %s: %w", devicePath, err)
+	}
+	diagnostics := strings.Split(strings.TrimSpace(runError.StdErr().String()), "\n")
+	if len(diagnostics) != 2 ||
+		!strings.HasSuffix(diagnostics[0], " -1 bluestore("+devicePath+") No valid bdev label found") ||
+		diagnostics[1] != "unable to read label for "+devicePath+": (2) No such file or directory" {
+		return false, fmt.Errorf("cannot establish absence of BlueStore labels on %s: %w", devicePath, err)
+	}
+	// With no labels, show-label exits 1 and emits {"<device>": {}}.
+	// A missing executable, invalid JSON or missing device result must not
+	// silently authorize enrollment of a mapping whose contents are non-zero.
+	var labels map[string]map[string]json.RawMessage
+	decodeErr := json.Unmarshal([]byte(output), &labels)
+	if decodeErr != nil {
+		return false, fmt.Errorf("invalid BlueStore probe output for %s: %w", devicePath, decodeErr)
+	}
+	deviceLabels, ok := labels[devicePath]
+	if !ok || deviceLabels == nil {
+		return false, fmt.Errorf("BlueStore probe output has no device result for %s", devicePath)
+	}
+	return len(deviceLabels) == 0, nil
 }
 
 // checkForZeros performs lightweight zero-byte checking on some strategic locations of the device

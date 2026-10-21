@@ -31,8 +31,8 @@ Global flags:
 ----------
 
 Sets the replication factor for one or more pools in the cluster.
-The command takes two arguments: The pool specification (a string) and the
-replication factor (an integer).
+The replication factor (an integer) is set with the required ``--size`` flag.
+The command takes the pool specification (a string) as one or more arguments.
 
 The pool specification can take one of three forms: Either a list of pools,
 separated by a space, in which case the replication factor is applied only to
@@ -44,4 +44,10 @@ Usage:
 
 .. code-block:: none
 
-   microceph pool set-rf <pool-spec> <replication-factor>
+   microceph pool set-rf --size <replication-factor> <pool-spec>... [flags]
+
+Flags:
+
+.. code-block:: none
+
+   --size int   Pool size (required)
