@@ -33,6 +33,38 @@ plugs:
     interface: system-files
     write:
       - /run/ctdb/ctdbd.socket
+  smb-control-access:
+    interface: system-files
+    read:
+      - /run/ctdb
+      - /run/samba
+    write:
+      - /run/samba/winbindd/pipe
+  smb-control-mounts:
+    interface: mount-control
+    # Transient daemon clients only; no root-propagation or runtime-dir writes.
+    mount:
+      - what: /var/snap/microceph/common/smb/*/config/passwd
+        where: /etc/passwd
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/config/group
+        where: /etc/group
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/config/nsswitch.conf
+        where: /etc/nsswitch.conf
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/config/resolv.conf
+        where: /etc/resolv.conf
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/config/resolv.conf
+        where: /run/systemd/resolve/stub-resolv.conf
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/ctdb/run{,/}
+        where: /run/ctdb
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/samba/winbindd{,/}
+        where: /run/samba/winbindd
+        options: [bind]
   smb-mounts:
     interface: mount-control
     # AppArmor normalizes directory sources with a trailing slash.
@@ -53,14 +85,8 @@ plugs:
       - what: /var/snap/microceph/common/smb/*/config/nsswitch.conf
         where: /etc/nsswitch.conf
         options: [bind]
-      - what: /var/snap/microceph/common/smb/*/ctdb{,/}
-        where: /etc/ctdb
-        options: [bind]
       - what: /var/snap/microceph/common/smb/*/ctdb/run{,/}
         where: /run/ctdb
-        options: [bind]
-      - what: /var/snap/microceph/common/smb/*/ctdb{,/}
-        where: /var/lib/ctdb
         options: [bind]
       - what: /var/snap/microceph/common/smb/*/samba/winbindd{,/}
         where: /run/samba/winbindd
@@ -95,7 +121,7 @@ layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba
   /etc/ctdb:
-    type: tmpfs
+    bind: $SNAP_COMMON/smb/.conf/ctdb
   /var/lib/ctdb:
     type: tmpfs
   /usr/libexec/ctdb:
@@ -137,17 +163,12 @@ apps:
   ctdbd:
     command: commands/ctdbd.start
     daemon: simple
+    restart-delay: 10s
     install-mode: disable
     stop-mode: sigterm-all
     plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control]
   ctdb:
     command: commands/ctdb.start
-    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control]
-  ctdb-nodes:
-    command: commands/ctdb-nodes.start
-    daemon: simple
-    install-mode: disable
-    stop-mode: sigterm-all
     plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control]
   winbindd:
     command: commands/winbindd.start
@@ -158,12 +179,6 @@ apps:
     plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, winbind-run, process-control, smb-identity]
   cephfs-proxy:
     command: commands/cephfs-proxy.start
-    daemon: simple
-    install-mode: disable
-    stop-mode: sigterm-all
-    plugs: [network, network-bind, network-control, smb-mounts, process-control]
-  smb-remote:
-    command: commands/smb-remote.start
     daemon: simple
     install-mode: disable
     stop-mode: sigterm-all
@@ -180,6 +195,8 @@ apps:
     daemon: simple
     plugs:
       - ctdb-socket
+      - smb-control-mounts
+      - smb-control-access
       - block-devices
       - dm-crypt
       - hardware-observe
@@ -325,6 +342,25 @@ apps:
       - home
 
 parts:
+  smb-startup-tools:
+    plugin: nil
+    stage-packages:
+      - mount
+      - util-linux
+    organize:
+      usr/bin/: bin/
+      usr/sbin/: bin/
+      usr/lib/: lib/
+    prime:
+      - bin/mount
+      - bin/unshare
+      - lib/**
+    permissions:
+      - path: bin/mount
+        mode: "0755"
+      - path: bin/unshare
+        mode: "0755"
+
   native-smb:
     plugin: nil
     stage-packages:
@@ -643,16 +679,12 @@ parts:
       go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microceph" -ldflags "-X 'github.com/canonical/microceph/microceph/version.version=${MC_VERSION}'" ./cmd/microceph
       go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microcephd" -tags=libsqlite3 -ldflags "-X 'github.com/canonical/microceph/microceph/version.version=${MC_VERSION}'" ./cmd/microcephd
 
-      go build -trimpath -o "${CRAFT_PART_INSTALL}/bin/microceph-smb-runtime" -tags=libsqlite3 ./cmd/microceph-smb-runtime
-
       # Strip binaries
       strip -s "${CRAFT_PART_INSTALL}/bin/microceph"
       strip -s "${CRAFT_PART_INSTALL}/bin/microcephd"
-      strip -s "${CRAFT_PART_INSTALL}/bin/microceph-smb-runtime"
     prime:
       - bin/microceph
       - bin/microcephd
-      - bin/microceph-smb-runtime
 
   nfs-ganesha:
     plugin: nil
@@ -697,6 +729,7 @@ parts:
       - dqlite
       - microceph
       - native-smb
+      - smb-startup-tools
       - logrotate
     plugin: nil
     override-prime: |

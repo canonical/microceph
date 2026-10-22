@@ -60,7 +60,15 @@ func smbPythonBinding(ctx context.Context, root string) smbBinding {
 			return err
 		}
 		snap := os.Getenv("SNAP")
-		output, err := common.ProcessExec.RunCommandContext(ctx, filepath.Join(snap, "bin/python3"), "-B", filepath.Join(snap, "smb/native.py"), command, path)
+		argv := []string{filepath.Join(snap, "bin/python3"), "-B", filepath.Join(snap, "smb/native.py"), command, path}
+		var output string
+		if command == "accounts" {
+			var raw []byte
+			raw, err = runSMBPrivateCommandFunc(ctx, root, argv, nil)
+			output = string(raw)
+		} else {
+			output, err = common.ProcessExec.RunCommandContext(ctx, argv[0], argv[1:]...)
+		}
 		if err != nil {
 			return fmt.Errorf("upstream %s binding failed: %w", command, err)
 		}

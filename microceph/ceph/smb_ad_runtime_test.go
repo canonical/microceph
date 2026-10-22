@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,53 +12,28 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/sys/unix"
 
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
 
-func TestSMBADRuntimeOrderingAndNoSAM(t *testing.T) {
-	for _, role := range []string{"smbd", "winbindd"} {
-		t.Run(role, func(t *testing.T) {
-			base := t.TempDir()
-			root := filepath.Join(base, "alpha")
-			require.NoError(t, smbAtomicWrite(filepath.Join(base, "owner.json"), []byte("alpha")))
-			raw, _ := json.Marshal(smbLaunch{Clustered: true, CTDBPNN: new(uint64), AD: &smbADMember{Realm: "EXAMPLE.TEST"}})
-			require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/context.json"), raw))
-			events := []string{}
-			ops := smbRuntimeOps{
-				enter:     func(smbRolePlan) error { events = append(events, "namespace"); return nil },
-				ctdbReady: func(context.Context, string) error { events = append(events, "ctdb"); return nil },
-				member:    func(context.Context, string, bool) error { events = append(events, "member"); return nil },
-				accounts:  func(context.Context, string) error { t.Fatal("AD must never import SAM"); return nil },
-				exec:      func(smbRolePlan) error { events = append(events, "exec"); return nil },
-			}
-			require.NoError(t, launchSMBNative(context.Background(), root, role, ops))
-			want := []string{"namespace", "ctdb", "member", "exec"}
-			if role == "winbindd" {
-				want = []string{"namespace", "ctdb", "exec"}
-			}
-			require.Equal(t, want, events)
-			if role == "winbindd" {
-				return
-			}
-			ops.member = func(context.Context, string, bool) error { return errors.New("lost state") }
-			events = nil
-			require.ErrorContains(t, launchSMBNative(context.Background(), root, role, ops), "lost state")
-			require.Equal(t, []string{"namespace", "ctdb"}, events)
-		})
-	}
+func TestSMBADRolesKeepNativeDependencyOrderAndRejectSAM(t *testing.T) {
 	c := nativeADCandidate()
 	roles, err := smbCoreRoles(c.Spec, true)
 	require.NoError(t, err)
-	require.Equal(t, []string{"ctdbd", "ctdb-nodes", "cephfs-proxy", "winbindd", "smbd", "smbmetrics"}, roles)
+	require.Equal(t, []string{"ctdbd", "cephfs-proxy", "winbindd", "smbd", "smbmetrics"}, roles)
 	require.NoError(t, validateSMBLogicalPolicy(c.Logical, c.Spec))
 	c.Spec.Features = []string{"domain"}
 	require.Error(t, validateSMBLogicalPolicy(c.Logical, c.Spec))
+	root, _ := smbADProcessFixture(t)
+	raw, err := json.Marshal(nativeADCandidate())
+	require.NoError(t, err)
+	require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/candidate.json"), raw))
+	require.ErrorContains(t, prepareSMBAccounts(context.Background(), root), "must not import local SAM")
 }
 
 func TestSMBADBoundedProcessKillsChildAndProtectsSecrets(t *testing.T) {
+	useSMBNativeProcesses(t)
 	dir := t.TempDir()
 	child := filepath.Join(dir, "child")
 	script := filepath.Join(dir, "probe")
@@ -100,53 +73,6 @@ func TestSMBADJoinOnlyFingerprintDoesNotRestart(t *testing.T) {
 	require.NotEqual(t, full, c.fingerprint())
 	c.Config = json.RawMessage(strings.Replace(string(c.Config), "EXAMPLE.TEST", "OTHER.TEST", 1))
 	require.NotEqual(t, old, c.configurationFingerprint())
-}
-
-func TestSMBADMountTargetRefusesForeignState(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "winbindd")
-	require.NoError(t, prepareSMBCTDBMountpoint(path, uint32(os.Geteuid())))
-	require.NoError(t, os.WriteFile(filepath.Join(path, "pipe"), []byte("foreign"), 0600))
-	require.Error(t, prepareSMBCTDBMountpoint(path, uint32(os.Geteuid())))
-}
-
-func TestSMBADPrivateSocketCancelsActorOnDisconnect(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "alpha")
-	require.NoError(t, smbPrivateDir(filepath.Join(root, "samba/run")))
-	entered := make(chan struct{})
-	cancelled := make(chan struct{})
-	listener, guard, err := openSMBPrivateListener(filepath.Join(root, "samba/run/native-ad.socket"))
-	require.NoError(t, err)
-	defer guard.Close()
-	defer listener.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		done <- serveSMBADControls(ctx, listener, func(ctx context.Context, op byte) error {
-			require.Equal(t, byte('J'), op)
-			close(entered)
-			<-ctx.Done()
-			close(cancelled)
-			return ctx.Err()
-		})
-	}()
-	conn, err := net.Dial("unix", listener.Addr().String())
-	require.NoError(t, err)
-	_, err = conn.Write([]byte("J"))
-	require.NoError(t, err)
-	<-entered
-	require.NoError(t, conn.Close())
-	select {
-	case <-cancelled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("join must cancel when daemon disconnects")
-	}
-	cancel()
-	require.NoError(t, <-done)
-	info, err := os.Stat(listener.Addr().String())
-	if err == nil {
-		require.Equal(t, os.FileMode(0600), info.Mode().Perm())
-	}
 }
 
 func TestSMBADStartupRefreshRestartAndRetirement(t *testing.T) {
@@ -238,6 +164,7 @@ func TestSMBADStartupRefreshRestartAndRetirement(t *testing.T) {
 
 func smbADProcessFixture(t *testing.T) (string, string) {
 	t.Helper()
+	useSMBNativeProcesses(t)
 	base, err := os.MkdirTemp("", "smb-ad-process-")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(base) })
@@ -250,6 +177,12 @@ func smbADProcessFixture(t *testing.T) (string, string) {
 	// Like real pfetch, an absent key returns success with empty output.
 	script := `#!/bin/sh
 [ "$1" = -t ] && [ "$2" = 5 ] || exit 6
+printf '%s\n' "$*" >> "$SNAP/ctdb-calls"
+if [ "$3" = getdbmap ]; then
+ echo 'dbid:0x1 name:secrets.tdb path:retained PERSISTENT'
+ if [ ! -e "$SNAP/missing-database" ]; then echo 'dbid:0x2 name:autorid.tdb path:retained PERSISTENT'; fi
+ exit 0
+fi
 [ "$3" = pfetch ] || exit 7
 case "$4:$5" in
  secrets.tdb:SECRETS/MACHINE_PASSWORD/EXAMPLE|secrets.tdb:SECRETS/SID/EXAMPLE) printf 'retained\n';;
@@ -260,26 +193,18 @@ esac
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), []byte(script), 0700))
 	launch := smbLaunch{Clustered: true, CTDBPNN: new(uint64), AD: &smbADMember{Workgroup: "EXAMPLE"}}
 	raw, _ := json.Marshal(launch)
+	require.NoError(t, smbAtomicWrite(filepath.Join(filepath.Dir(root), "owner.json"), []byte("alpha")))
 	require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/context.json"), raw))
 	return root, snap
 }
 
 func TestSMBADCTDBUsesPinnedCLIInPrivateNamespace(t *testing.T) {
 	root, snap := smbADProcessFixture(t)
-	// The packaged CTDB 4.23.6 CLI has no -s/--socket option. Its default
-	// /run/ctdb socket is private because the Winbind role bind-mounts it.
-	launch := smbLaunch{Clustered: true, CTDBPNN: new(uint64), AD: &smbADMember{Workgroup: "EXAMPLE"}}
-	plan, err := smbNativeRolePlan("winbindd", root, launch, snap)
+	// CTDB 4.23.6 has no production socket override. Only this fixed client
+	// gets the compatibility bind inside a daemon-created child namespace.
+	cmd, err := newSMBPrivateCommand(context.Background(), root, []string{filepath.Join(snap, "bin/ctdb"), "getdbmap"})
 	require.NoError(t, err)
-	privateSocket := false
-	for _, mount := range plan.Mounts {
-		if mount.Target == "/run/ctdb" {
-			require.Equal(t, filepath.Join(root, "ctdb/run"), mount.Source)
-			require.Equal(t, uintptr(unix.MS_BIND), mount.Flags)
-			privateSocket = true
-		}
-	}
-	require.True(t, privateSocket, "the default CTDB socket must remain cluster-private")
+	require.Contains(t, cmd.Args[2], "smb_setup_ctdb")
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700))
 	for _, args := range [][]string{
 		{"getdbmap"},
@@ -296,7 +221,7 @@ func TestSMBADCTDBUsesPinnedCLIInPrivateNamespace(t *testing.T) {
 
 func TestSMBADRecordUsesCTDBHexForNULTerminatedKeys(t *testing.T) {
 	root, snap := smbADProcessFixture(t)
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SNAP/record-argv\"\nprintf 'retained\\n'\n"
+	script := "#!/bin/sh\nif [ \"$3\" = getdbmap ]; then echo 'name:secrets.tdb path:retained'; echo 'name:autorid.tdb path:retained'; exit 0; fi\nprintf '%s\\n' \"$@\" > \"$SNAP/record-argv\"\nprintf 'retained\\n'\n"
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), []byte(script), 0700))
 	for _, test := range []struct {
 		database string
@@ -330,15 +255,6 @@ func TestSMBADStateUsesPinnedKeysAndRefusesMissingRecords(t *testing.T) {
 	require.NoError(t, smbAtomicWrite(filepath.Join(root, "ad-initializing"), raw))
 	require.NoError(t, checkSMBADMember(context.Background(), root, true), "only initial actor may create first idmap")
 	require.Error(t, checkSMBADMember(context.Background(), root, false), "serving never accepts initialization permission as readiness")
-}
-
-func TestSMBADSocketMountpointPreparesOnlyEmptyParent(t *testing.T) {
-	base := t.TempDir()
-	target := filepath.Join(base, "samba/winbindd")
-	require.NoError(t, prepareSMBWinbindMountpoint(target, uint32(os.Geteuid())))
-	require.NoError(t, os.WriteFile(filepath.Join(base, "samba/host-state"), []byte("preserve"), 0600))
-	require.Error(t, prepareSMBWinbindMountpoint(target, uint32(os.Geteuid())))
-	require.FileExists(t, filepath.Join(base, "samba/host-state"))
 }
 
 func TestSMBADJoinReferenceRefreshIsNotServingConfig(t *testing.T) {
@@ -385,6 +301,7 @@ esac
 `
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/wbinfo"), []byte(script), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/getent"), []byte("#!/bin/sh\n[ \"$1\" = group ] && [ \"$2\" = 20000 ] && echo 'EXAMPLE\\users:x:20000:'\n"), 0700))
+	require.NoError(t, setSMBPrepared(root, "winbindd", false))
 	require.NoError(t, checkSMBADReady(context.Background(), root))
 	calls, err := os.ReadFile(filepath.Join(snap, "wbinfo-calls"))
 	require.NoError(t, err)
@@ -397,77 +314,12 @@ esac
 	require.True(t, os.IsNotExist(err), "missing initialized mapping state must refuse before lookup can allocate")
 }
 
-func TestSMBADSocketIdleShutdownIsBounded(t *testing.T) {
-	base, err := os.MkdirTemp("", "smb-ad-idle-")
-	require.NoError(t, err)
-	defer os.RemoveAll(base)
-	listener, guard, err := openSMBPrivateListener(filepath.Join(base, "ad.socket"))
-	require.NoError(t, err)
-	defer guard.Close()
-	defer listener.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- serveSMBADControls(ctx, listener, func(context.Context, byte) error { return nil }) }()
-	conn, err := net.Dial("unix", listener.Addr().String())
-	require.NoError(t, err)
-	defer conn.Close()
-	time.Sleep(30 * time.Millisecond)
-	cancel()
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		_ = conn.Close()
-		<-done
-		t.Fatal("idle peer delayed app shutdown")
-	}
-}
-
-func TestSMBADAppSupervisesWinbindChildAndReadinessSocket(t *testing.T) {
-	root, snap := nativeCTDBFixture(t)
-	for _, dir := range []string{"samba/run", "diagnostics"} {
-		require.NoError(t, smbPrivateDir(filepath.Join(root, dir)))
-	}
-	launch := smbLaunch{Clustered: true, CTDBPNN: new(uint64), AD: &smbADMember{Realm: "EXAMPLE.TEST", Workgroup: "EXAMPLE", NetBIOSName: "ALPHA"}}
-	*launch.CTDBPNN = 2
-	raw, _ := json.Marshal(launch)
-	require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/context.json"), raw))
-	raw, err := os.ReadFile(filepath.Join(snap, "bin/ctdb"))
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), append([]byte("#!/bin/sh\nif [ \"$1\" = -t ] && [ \"$2\" = 5 ]; then echo retained; exit 0; fi\n"), raw...), 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/wbinfo"), []byte("#!/bin/sh\ncase \"$1\" in --domain-info=*) echo 'SID : S-1-5-21-1-2-3';; --sid-to-gid=*) echo 20000;; esac\n"), 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/getent"), []byte("#!/bin/sh\necho 'EXAMPLE\\users:x:20000:'\n"), 0700))
-	child := filepath.Join(snap, "bin/child")
-	require.NoError(t, os.WriteFile(child, []byte("#!/bin/sh\necho $$ > \"$SNAP/child.pid\"\nexec sleep 60\n"), 0700))
-	raw, _ = json.Marshal(launch.AD)
-	require.NoError(t, smbAtomicWrite(filepath.Join(root, "ad-initializing"), raw))
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- serveSMBADRuntime(ctx, root, smbRolePlan{Args: []string{child}}) }()
-	require.Eventually(t, func() bool { return smbADControl(ctx, root, "ready") == nil }, 3*time.Second, 20*time.Millisecond)
-	_, err = os.Stat(filepath.Join(root, "ad-initializing"))
-	require.True(t, os.IsNotExist(err), "first usable readiness must revoke permission to initialize mappings")
-	raw, err = os.ReadFile(filepath.Join(snap, "child.pid"))
-	require.NoError(t, err)
-	pid := strings.TrimSpace(string(raw))
-	cancel()
-	require.NoError(t, <-done)
-	_, err = os.Stat("/proc/" + pid)
-	require.True(t, os.IsNotExist(err), "app shutdown must reap Winbind")
-	// An exited child must fail the app so snapd can restart it; a PID is not health.
-	require.NoError(t, os.WriteFile(child, []byte("#!/bin/sh\nexit 1\n"), 0700))
-	err = serveSMBADRuntime(context.Background(), root, smbRolePlan{Args: []string{child}})
-	require.ErrorContains(t, err, "Winbind child exited")
-}
-
 func TestSMBADServingRequiresWinbindInAdditionToRetainedState(t *testing.T) {
 	root, _ := smbADProcessFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	ops := nativeSMBRuntimeOps(ctx, root, "smbd")
-	require.Error(t, ops.member(ctx, root, false), "retained TDB records are not enough to launch smbd without usable Winbind")
+	require.NoError(t, setSMBPrepared(root, "winbindd", false))
+	require.Error(t, checkSMBADReady(ctx, root), "retained TDB records are not enough without usable Winbind")
 }
 
 func TestSMBADJoinProcessUsesPinnedBindingAndPrivateStdin(t *testing.T) {

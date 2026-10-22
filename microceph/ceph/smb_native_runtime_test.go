@@ -3,7 +3,6 @@ package ceph
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,129 +11,44 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
-
-	"github.com/canonical/microceph/microceph/common"
 )
 
-func TestSMBNativeLaunchGatesAccountsAndExecWithinTheApp(t *testing.T) {
-	cases := []struct {
-		failure string
-		want    []string
-	}{
-		{"namespace", []string{"namespace"}},
-		{"ctdb", []string{"namespace", "ctdb"}},
-		{"cancel", []string{"namespace", "ctdb"}},
-		{"accounts", []string{"namespace", "ctdb", "accounts"}},
-		{"stop", []string{"namespace", "ctdb", "accounts"}},
-		{"", []string{"namespace", "ctdb", "accounts", "exec"}},
-	}
-	for _, tc := range cases {
-		name := tc.failure
-		if name == "" {
-			name = "success"
-		}
-		t.Run(name, func(t *testing.T) {
-			base := t.TempDir()
-			root := filepath.Join(base, "alpha")
-			require.NoError(t, smbAtomicWrite(filepath.Join(base, "owner.json"), []byte("alpha")))
-			require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/context.json"), []byte(`{"clustered":true,"ctdb_pnn":2}`)))
-			t.Setenv("SNAP", "/snap")
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			events := []string{}
-			ops := smbRuntimeOps{
-				enter: func(plan smbRolePlan) error {
-					events = append(events, "namespace")
-					if tc.failure == "namespace" {
-						return errors.New("namespace refused")
-					}
-					return nil
-				},
-				ctdbReady: func(context.Context, string) error {
-					events = append(events, "ctdb")
-					if tc.failure == "ctdb" {
-						return errors.New("CTDB not ready")
-					}
-					if tc.failure == "cancel" {
-						cancel()
-					}
-					return nil
-				},
-				accounts: func(context.Context, string) error {
-					events = append(events, "accounts")
-					if tc.failure == "accounts" {
-						return errors.New("SAM refused")
-					}
-					if tc.failure == "stop" {
-						return smbAtomicWrite(filepath.Join(root, "stop-requested"), []byte("stop"))
-					}
-					return nil
-				},
-				exec: func(plan smbRolePlan) error {
-					events = append(events, "exec")
-					require.Equal(t, "/snap/bin/smbd", plan.Args[0])
-					return nil
-				},
-			}
-			err := launchSMBNative(ctx, root, "smbd", ops)
-			if tc.failure == "" {
-				require.NoError(t, err)
-			} else {
-				require.Error(t, err)
-			}
-			require.Equal(t, tc.want, events)
-		})
-	}
-}
-
-func TestSMBNativeRolePlanKeepsFixedCommandsAndPrivateMounts(t *testing.T) {
-	root := "/native/alpha"
-	plan, err := smbNativeRolePlan("smbd", root, smbLaunch{Clustered: true, CustomDNS: true}, "/snap/microceph/x1")
+func TestSMBPrivateClientNeverExecutesServersOrMutatesParent(t *testing.T) {
+	root, snap := nativeCTDBFixture(t)
+	before, err := os.Readlink("/proc/self/ns/mnt")
 	require.NoError(t, err)
-	require.Equal(t, []string{"/snap/microceph/x1/bin/smbd", "--foreground", "--no-process-group", "--configfile", root + "/config/smb.conf"}, plan.Args)
-	require.Equal(t, smbNativeMount{Target: "/", Flags: unix.MS_REC | unix.MS_SLAVE}, plan.Mounts[0])
-	for _, mount := range []smbNativeMount{
-		{Source: root + "/config/passwd", Target: "/etc/passwd", Flags: unix.MS_BIND},
-		{Source: root + "/ctdb/run", Target: "/run/ctdb", Flags: unix.MS_BIND},
-		{Source: root + "/config/resolv.conf", Target: "/etc/resolv.conf", Flags: unix.MS_BIND},
-	} {
-		require.Contains(t, plan.Mounts, mount)
-	}
-	require.NotContains(t, plan.Args, "snap")
-	require.Equal(t, root+"/ctdb", plan.Env["CTDB_BASE"])
-	metrics, err := smbNativeRolePlan("smbmetrics", root, smbLaunch{MetricsPort: 19922}, "/snap")
+	cwd, err := os.Getwd()
 	require.NoError(t, err)
-	require.Equal(t, []string{"/snap/bin/smbmetrics", "--address", "0.0.0.0", "--port", "19922"}, metrics.Args)
-	require.Equal(t, "/snap/bin/testparm", metrics.Env["SMBMETRICS_TESTPARM"])
-	require.Equal(t, "/snap/bin/ctdb", metrics.Env["SMBMETRICS_CTDB"])
-	for _, role := range []string{"ctdbd", "ctdb-nodes", "ctdb-control", "/bin/sh"} {
-		_, err = smbNativeRolePlan(role, root, smbLaunch{}, "/snap")
+	for _, name := range []string{"smbd", "winbindd", "ctdbd", "microcephd", "sh"} {
+		_, err := newSMBPrivateCommand(context.Background(), root, []string{filepath.Join(snap, "bin", name)})
 		require.Error(t, err)
 	}
-}
-
-func TestSMBNativeMountpointRefusesForeignOrNonemptyState(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "run-ctdb")
-	owner := uint32(os.Geteuid())
-	require.NoError(t, prepareSMBCTDBMountpoint(path, owner))
-	require.NoError(t, prepareSMBCTDBMountpoint(path, owner))
-	require.Error(t, prepareSMBCTDBMountpoint(path, owner+1))
-	require.NoError(t, os.Chmod(path, 0777))
-	require.Error(t, prepareSMBCTDBMountpoint(path, owner))
-	require.NoError(t, os.Chmod(path, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(path, "unrelated"), []byte("retain"), 0600))
-	require.Error(t, prepareSMBCTDBMountpoint(path, owner))
-	data, err := os.ReadFile(filepath.Join(path, "unrelated"))
+	cmd, err := newSMBPrivateCommand(context.Background(), root, []string{filepath.Join(snap, "bin/ctdb"), "status"})
 	require.NoError(t, err)
-	require.Equal(t, "retain", string(data))
-	link := filepath.Join(t.TempDir(), "link")
-	require.NoError(t, os.Symlink(path, link))
-	require.Error(t, prepareSMBCTDBMountpoint(link, owner))
+	require.Equal(t, uintptr(syscall.CLONE_NEWNS), cmd.SysProcAttr.Cloneflags)
+	require.Zero(t, cmd.SysProcAttr.Unshareflags)
+	require.True(t, cmd.SysProcAttr.Setpgid)
+	require.Zero(t, cmd.SysProcAttr.Pdeathsig)
+	require.Contains(t, cmd.Args[2], "smb_setup_ctdb")
+	require.NotContains(t, cmd.Args[2], "smb_setup_nss")
+	require.Contains(t, cmd.Env, "SMB_CREATE_MOUNTPOINTS=0")
+	require.Contains(t, cmd.Env, "SMB_EXPECTED_ROOT="+root)
+	after, err := os.Readlink("/proc/self/ns/mnt")
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	afterCWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.Equal(t, cwd, afterCWD)
+	require.Empty(t, os.Getenv("SMB_EXPECTED_ROOT"))
+	require.NoError(t, smbAtomicWrite(filepath.Join(root, "stop-requested"), []byte("stop")))
+	_, err = newSMBPrivateCommand(context.Background(), root, []string{filepath.Join(snap, "bin/ctdb"), "status"})
+	require.Error(t, err)
 }
 
 func TestSMBNativeCTDBPreparationUsesOnlyPinnedMinimalEvents(t *testing.T) {
@@ -157,7 +71,7 @@ func TestSMBNativeCTDBPreparationUsesOnlyPinnedMinimalEvents(t *testing.T) {
 	require.NoError(t, prepareSMBCTDBFiles(context.Background(), root, snap))
 	target, err := os.Readlink(filepath.Join(root, "ctdb/events/legacy/00.ctdb.script"))
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(snap, "share/ctdb/events/legacy/00.ctdb.script"), target)
+	require.Equal(t, "/usr/share/ctdb/events/legacy/00.ctdb.script", target)
 	_, err = os.Stat(filepath.Join(root, "ctdb/run/ctdb-nodes.pid"))
 	require.True(t, os.IsNotExist(err))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "ctdb/events/legacy/10.interface.script"), []byte("must not delete"), 0600))
@@ -196,38 +110,8 @@ func TestSMBGoReadinessUsesActualPIDControlAndMetricsEndpoint(t *testing.T) {
 	require.Error(t, smbReadyNative(context.Background(), root, "smbmetrics"))
 }
 
-func TestSMBGoReadinessRequiresLiveMonitorAndExactOwner(t *testing.T) {
-	base, err := os.MkdirTemp("", "smb-go-ready-")
-	require.NoError(t, err)
-	defer os.RemoveAll(base)
-	root := filepath.Join(base, "alpha")
-	require.NoError(t, smbPrivateDir(filepath.Join(root, "ctdb/run")))
-	require.NoError(t, smbAtomicWrite(filepath.Join(base, "owner.json"), []byte("alpha")))
-	require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/context.json"), []byte(`{"clustered":true,"ctdb_pnn":2}`)))
-	old := common.ProcessExec
-	recorder := &smbNativeCommandRecorder{}
-	common.ProcessExec = recorder
-	defer func() { common.ProcessExec = old }()
-	listener, err := net.Listen("unix", filepath.Join(root, "ctdb/run/native-ready.socket"))
-	require.NoError(t, err)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		conn, err := listener.Accept()
-		if err == nil {
-			_, _ = conn.Write([]byte("1"))
-			_ = conn.Close()
-		}
-	}()
-	t.Cleanup(func() { _ = listener.Close(); <-done })
-	require.NoError(t, smbReadyNative(context.Background(), root, "ctdbd"))
-	require.Empty(t, recorder.name, "daemon readiness must not execute CTDB or re-enter snap run")
-	require.NoError(t, smbAtomicWrite(filepath.Join(base, "owner.json"), []byte("other")))
-	require.Error(t, smbReadyNative(context.Background(), root, "ctdbd"))
-}
-
-// This proves compiled NSS -> private bind -> socket connectivity only, not AD
-// authentication. No host /run files or accounts are modified by the probe.
+// Socket connectivity using compiled NSS only, not AD authentication. All /run
+// changes are inside a disposable user/mount namespace, never on the host.
 func TestSMBADNSSPrivateSocketInAppNamespace(t *testing.T) {
 	library := os.Getenv("MICROCEPH_SMB_TEST_NSS_LIBRARY")
 	if library == "" {
@@ -236,18 +120,6 @@ func TestSMBADNSSPrivateSocketInAppNamespace(t *testing.T) {
 	if os.Getenv("MICROCEPH_SMB_NSS_CHILD") == "1" {
 		runtime.LockOSThread()
 		require.NoError(t, unix.Mount("tmpfs", "/run", "tmpfs", 0, "mode=0755"))
-		root := os.Getenv("MICROCEPH_SMB_NSS_ROOT")
-		plan, err := smbNativeRolePlan("smbd", root, smbLaunch{Clustered: true, AD: &smbADMember{}}, "/snap")
-		require.NoError(t, err)
-		mounts := []smbNativeMount{}
-		for _, mount := range plan.Mounts {
-			if mount.Target == "/" || mount.Target == "/run/samba/winbindd" {
-				mounts = append(mounts, mount)
-			}
-		}
-		plan.Mounts = mounts
-		require.NoError(t, enterSMBNativeContext(plan))
-		// Use the actual pinned module, not a SELFTEST socket environment override.
 		code := `import ctypes,os
 class Passwd(ctypes.Structure):
     _fields_=[("name",ctypes.c_void_p),("passwd",ctypes.c_void_p),("uid",ctypes.c_uint),("gid",ctypes.c_uint),("gecos",ctypes.c_void_p),("dir",ctypes.c_void_p),("shell",ctypes.c_void_p)]
@@ -255,24 +127,35 @@ lib=ctypes.CDLL(os.environ["MICROCEPH_SMB_TEST_NSS_LIBRARY"])
 f=lib._nss_winbind_getpwnam_r
 f.argtypes=[ctypes.c_char_p,ctypes.POINTER(Passwd),ctypes.c_void_p,ctypes.c_size_t,ctypes.POINTER(ctypes.c_int)]
 buf=ctypes.create_string_buffer(16384);pw=Passwd();err=ctypes.c_int()
-f(b"PROBE\\socket-only",ctypes.byref(pw),buf,len(buf),ctypes.byref(err))
-print("compiled NSS lookup returned; socket reachability checked by parent")`
-		plan.Args = []string{os.Getenv("MICROCEPH_SMB_TEST_PYTHON"), "-B", "-c", code}
-		require.NoError(t, execSMBNativeRole(root, "smbd", plan))
-		t.Fatal("exec returned")
+f(b"PROBE\\socket-only",ctypes.byref(pw),buf,len(buf),ctypes.byref(err))`
+		body := `. "$MICROCEPH_SMB_STARTUP_LIBRARY"; SMB_ROOT="$MICROCEPH_SMB_NSS_ROOT"; SMB_CLUSTERED=1; SMB_WORKGROUP=EXAMPLE; SMB_CREATE_MOUNTPOINTS=1; smb_setup_winbind; exec "$MICROCEPH_SMB_TEST_PYTHON" -B -c "$1"`
+		cmd := exec.Command("/bin/bash", "-euc", body, "nss-probe", code)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		require.NoError(t, cmd.Run())
+		return
 	}
 	require.NotEmpty(t, os.Getenv("MICROCEPH_SMB_TEST_PYTHON"))
 	root := filepath.Join(t.TempDir(), "alpha")
 	require.NoError(t, prepareSMBADPaths(root))
+	snap := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(snap, "bin"), 0700))
+	for name, program := range map[string]string{"python3": "python3", "mount": "mount"} {
+		path, err := exec.LookPath(program)
+		require.NoError(t, err)
+		require.NoError(t, os.Symlink(path, filepath.Join(snap, "bin", name)))
+	}
+	t.Setenv("SNAP", snap)
+	startup, err := filepath.Abs("../../snapcraft/commands/smb-startup")
+	require.NoError(t, err)
+	t.Setenv("MICROCEPH_SMB_STARTUP_LIBRARY", startup)
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(root, "samba/winbindd/pipe"), Net: "unix"})
 	require.NoError(t, err)
 	defer listener.Close()
 	require.NoError(t, listener.SetDeadline(time.Now().Add(10*time.Second)))
-	cmd := exec.Command("unshare", "--user", "--map-root-user", "--mount", os.Args[0], "-test.run=^TestSMBADNSSPrivateSocketInAppNamespace$")
+	cmd := exec.Command("unshare", "--user", "--map-root-user", "--mount", "--propagation", "slave", os.Args[0], "-test.run=^TestSMBADNSSPrivateSocketInAppNamespace$")
 	cmd.Env = append(os.Environ(), "MICROCEPH_SMB_NSS_CHILD=1", "MICROCEPH_SMB_NSS_ROOT="+root)
 	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	cmd.Stdout, cmd.Stderr = &output, &output
 	require.NoError(t, cmd.Start())
 	conn, acceptErr := listener.AcceptUnix()
 	if conn != nil {

@@ -30,7 +30,7 @@ func TestSMBCoreApplyReadinessAndFailureStopOrder(t *testing.T) {
 	err := startSMBApps(context.Background(), root, []string{"cephfs-proxy", "smbd", "smbmetrics"}, ops)
 	require.Error(t, err)
 	require.NoError(t, checkSMBStartIntent(root), "a confirmed-clean failed update can retry; it is not explicit disable intent")
-	require.Equal(t, []string{"start cephfs-proxy", "ready cephfs-proxy", "start smbd", "ready smbd", "stop smbmetrics", "stop smbd", "stop smb-remote", "stop winbindd", "stop cephfs-proxy", "stop ctdb-nodes", "stop ctdbd"}, events)
+	require.Equal(t, []string{"start cephfs-proxy", "ready cephfs-proxy", "start smbd", "ready smbd", "stop smbmetrics", "stop smbd", "stop winbindd", "stop cephfs-proxy", "stop ctdbd"}, events)
 	_, err = os.Stat(filepath.Join(root, "applied.json"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 }

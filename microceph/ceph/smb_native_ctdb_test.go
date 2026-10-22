@@ -3,7 +3,6 @@ package ceph
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -22,9 +21,11 @@ const nativeHealthyCTDB = "Number of nodes:3\npnn:0 192.0.2.1 OK\npnn:2 192.0.2.
 func nativeCTDBFixture(t *testing.T) (string, string) {
 	t.Helper()
 	useSMBNativeProcesses(t)
-	base, err := os.MkdirTemp("", "smb-ctdb-")
+	common, err := os.MkdirTemp("", "smb-ctdb-")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	t.Cleanup(func() { _ = os.RemoveAll(common) })
+	t.Setenv("SNAP_COMMON", common)
+	base := filepath.Join(common, "smb")
 	root := filepath.Join(base, "alpha")
 	snap := filepath.Join(base, "snap")
 	require.NoError(t, smbPrivateDir(filepath.Join(root, "ctdb/run")))
@@ -68,56 +69,101 @@ esac
 	return root, snap
 }
 
-func startNativeCTDBMonitor(t *testing.T, root string) {
-	t.Helper()
+func TestSMBMembershipReconciliationDoesNotSweepHealth(t *testing.T) {
+	root, snap := nativeCTDBFixture(t)
+	require.NoError(t, reconcileSMBCTDB(context.Background(), filepath.Dir(root)))
+	commands, err := os.ReadFile(filepath.Join(snap, "commands"))
+	require.NoError(t, err)
+	require.Equal(t, "status\n", string(commands), "membership convergence needs one status query, not a full health sweep")
+}
+
+func TestSMBMembershipUpdaterDoesNotPollEveryTwoSeconds(t *testing.T) {
+	_, snap := nativeCTDBFixture(t)
+	require.Equal(t, 30*time.Second, smbMembershipFallbackInterval)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	runSMBMembershipUpdater(ctx, filepath.Join(os.Getenv("SNAP_COMMON"), "smb"), make(chan struct{}), nil)
+	_, err := os.Stat(filepath.Join(snap, "commands"))
+	require.True(t, os.IsNotExist(err), "unchanged membership must not trigger a two-second native polling loop")
+}
+
+func TestSMBMembershipUpdaterRespondsToPublicationAndFallback(t *testing.T) {
+	root, snap := nativeCTDBFixture(t)
+	changes := make(chan struct{}, 1)
+	fallback := make(chan time.Time, 1)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	ops := nativeSMBRuntimeOps(ctx, root, "ctdb-nodes")
-	ops.enter = func(plan smbRolePlan) error {
-		// Only the privileged namespace syscall is replaced. Exercise production
-		// app launch and in-process monitoring, including its real CTDB children.
-		if len(plan.Args) != 0 {
-			return fmt.Errorf("node monitor must not self-exec: %q", plan.Args)
-		}
-		return nil
-	}
-	go func() { done <- launchSMBNative(ctx, root, "ctdb-nodes", ops) }()
-	t.Cleanup(func() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runSMBMembershipUpdater(ctx, filepath.Dir(root), changes, fallback)
+	}()
+	defer func() {
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(3 * time.Second):
-			t.Error("monitor did not stop on cancellation")
+		case <-time.After(time.Second):
+			t.Error("membership worker did not cancel")
 		}
-	})
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-done:
-			done <- err
-			require.NoError(t, err)
-			t.Fatal("monitor exited before readiness")
-		default:
-		}
-		probe, cancelProbe := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		err := smbReadyNative(probe, root, "ctdbd")
-		cancelProbe()
-		if err == nil {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	}()
+	observed := func(want string) bool {
+		raw, err := os.ReadFile(filepath.Join(snap, "commands"))
+		return err == nil && string(raw) == want
 	}
-	t.Fatal("monitor did not confirm readiness")
+	changes <- struct{}{}
+	require.Eventually(t, func() bool { return observed("status\n") }, 3*time.Second, 10*time.Millisecond)
+	fallback <- time.Now()
+	require.Eventually(t, func() bool { return observed("status\nstatus\n") }, 3*time.Second, 10*time.Millisecond)
+}
+
+func TestSMBMembershipPublicationNotifiesOnlyCompletedChanges(t *testing.T) {
+	root, _ := nativeCTDBFixture(t)
+	configuration := "[database]\n"
+	for _, kind := range []string{"volatile", "persistent", "state"} {
+		configuration += kind + " database directory = " + root + "/ctdb/" + kind + "\n"
+	}
+	require.NoError(t, smbAtomicWrite(filepath.Join(root, "ctdb/ctdb.conf"), []byte(configuration)))
+	require.NoError(t, publishSMBCTDBLayout(root, false))
+	raw, err := os.ReadFile(filepath.Join(root, "config/candidate.json"))
+	require.NoError(t, err)
+	var candidate smbCandidate
+	require.NoError(t, json.Unmarshal(raw, &candidate))
+	contextData, err := os.ReadFile(filepath.Join(root, "config/context.json"))
+	require.NoError(t, err)
+	require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/next/config/context.json"), contextData))
+	stage := func() {
+		raw, err := json.Marshal(candidate)
+		require.NoError(t, err)
+		require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/next/config/candidate.json"), raw))
+	}
+	oldNotify := notifySMBMembershipChangeFunc
+	notifications := 0
+	notifySMBMembershipChangeFunc = func() { notifications++ }
+	defer func() { notifySMBMembershipChangeFunc = oldNotify }()
+	stage()
+	require.NoError(t, publishSMBNative(context.Background(), root, true))
+	require.Zero(t, notifications, "unchanged membership must not wake a worker")
+	candidate.CTDB.SlotCount = 4
+	candidate.CTDB.Peers = append(candidate.CTDB.Peers, database.SMBCTDBMember{Identity: "new", PNN: 3, Node: "192.0.2.4", State: "new"})
+	stage()
+	require.NoError(t, publishSMBNative(context.Background(), root, true))
+	require.Equal(t, 1, notifications)
+	require.NoError(t, publishSMBNative(context.Background(), root, true))
+	require.Equal(t, 1, notifications, "repeated publication must not retrigger membership work")
+	candidate.CTDB.SlotCount = 5
+	stage()
+	require.NoError(t, smbAtomicWrite(filepath.Join(root, "ctdb/ctdb.conf"), []byte(configuration+"# changed\n")))
+	require.Error(t, publishSMBNative(context.Background(), root, true))
+	require.Equal(t, 1, notifications, "partial/failed publication must not emit a completion hint")
 }
 
 func TestSMBGoCTDBControlRejectsUnknownOperationsBeforeExecution(t *testing.T) {
-	_, snap := nativeCTDBFixture(t)
+	root, snap := nativeCTDBFixture(t)
 	for _, args := range [][]string{{"shell"}, {"pnn", "--help"}, {"nodestatus", "-1"}, {"nodestatus", "2", "3"}} {
-		_, err := runSMBCTDB(context.Background(), args[0], args[1:]...)
+		_, err := runSMBCTDB(context.Background(), root, args[0], args[1:]...)
 		require.Error(t, err)
 	}
 	_, err := os.Stat(filepath.Join(snap, "commands"))
-	require.True(t, os.IsNotExist(err), "invalid controls must not reach the executable")
+	require.True(t, os.IsNotExist(err))
 }
 
 func TestSMBGoCTDBStatusRejectsMalformedOrUnconfirmedMaps(t *testing.T) {
@@ -163,7 +209,7 @@ func TestSMBGoCTDBReloadPreservesPublishedTargetAndVerifiesResult(t *testing.T) 
 	missing := strings.Replace(nativeHealthyCTDB, "pnn:0 192.0.2.1 OK\n", "", 1)
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "status"), []byte(missing), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "ctdb/nodes"), []byte("#\n#\n192.0.2.3\n"), 0600))
-	require.Error(t, updateSMBCTDBNodes(context.Background(), root), "exit zero without actual daemon map change is not success")
+	require.Error(t, updateSMBCTDBNodes(context.Background(), root), "exit zero without map convergence is not success")
 	published, err := os.ReadFile(filepath.Join(root, "ctdb/nodes"))
 	require.NoError(t, err)
 	require.Equal(t, "192.0.2.1\n#\n192.0.2.3\n", string(published))
@@ -178,7 +224,6 @@ func TestSMBGoCTDBReloadRejectsChangedOrUnhealthySurvivors(t *testing.T) {
 	root, snap := nativeCTDBFixture(t)
 	for _, line := range []string{"pnn:0 192.0.2.99 OK", "pnn:0 192.0.2.1 UNHEALTHY"} {
 		status := strings.Replace(nativeHealthyCTDB, "pnn:0 192.0.2.1 OK", line, 1)
-		// A fourth retained slot makes this a changed map even with the same addresses.
 		status = strings.Replace(status, "Number of nodes:3", "Number of nodes:4", 1)
 		require.NoError(t, os.WriteFile(filepath.Join(snap, "status"), []byte(status), 0600))
 		require.Error(t, updateSMBCTDBNodes(context.Background(), root))
@@ -188,24 +233,19 @@ func TestSMBGoCTDBReloadRejectsChangedOrUnhealthySurvivors(t *testing.T) {
 	require.NotContains(t, string(commands), "reloadnodes")
 	require.NoError(t, os.Remove(filepath.Join(root, "ctdb/nodes")))
 	require.NoError(t, os.Mkdir(filepath.Join(root, "ctdb/nodes"), 0700))
-	require.Error(t, updateSMBCTDBNodes(context.Background(), root), "publication failure must not issue reload")
+	require.Error(t, updateSMBCTDBNodes(context.Background(), root))
 }
 
-func TestSMBGoCTDBMonitorRequiresFreshControlsAndPreservesListenerOwnership(t *testing.T) {
+func TestSMBGoCTDBReadinessUsesFreshControlsNotLegacyIPC(t *testing.T) {
 	root, snap := nativeCTDBFixture(t)
-	// A genuine stale Unix socket and live PID file must not count as readiness.
 	require.NoError(t, writeSMBNativeFile(filepath.Join(root, "ctdb/run/ctdb-nodes.pid"), []byte(strconv.Itoa(os.Getpid()))))
 	stale, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(root, "ctdb/run/native-ready.socket"), Net: "unix"})
 	require.NoError(t, err)
 	stale.SetUnlinkOnClose(false)
 	require.NoError(t, stale.Close())
-	require.Error(t, smbReadyNative(context.Background(), root, "ctdbd"))
-	startNativeCTDBMonitor(t, root)
-	require.Error(t, monitorSMBCTDB(context.Background(), root), "duplicate monitor must not steal listener or PID")
-	require.NoError(t, smbReadyNative(context.Background(), root, "ctdbd"))
 	for _, mode := range []string{"pnn", "node", "recovery", "membership", "healthy"} {
 		require.NoError(t, writeSMBNativeFile(filepath.Join(snap, "mode"), []byte(mode)))
-		err := smbReadyNative(context.Background(), root, "ctdb-nodes")
+		err := smbReadyNative(context.Background(), root, "ctdbd")
 		if mode == "healthy" {
 			require.NoError(t, err)
 		} else {
@@ -213,36 +253,35 @@ func TestSMBGoCTDBMonitorRequiresFreshControlsAndPreservesListenerOwnership(t *t
 		}
 	}
 	require.NoError(t, writeSMBNativeFile(filepath.Join(snap, "mode"), []byte("timeout")))
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	start := time.Now()
 	require.Error(t, smbReadyNative(ctx, root, "ctdbd"))
-	require.Less(t, time.Since(start), 8*time.Second)
+	require.Less(t, time.Since(start), 2*time.Second)
 }
 
-func TestSMBGoCTDBMonitorCannotAcknowledgeStopDuringControl(t *testing.T) {
+func TestSMBGoCTDBCannotAcknowledgeStopDuringControl(t *testing.T) {
 	root, snap := nativeCTDBFixture(t)
-	startNativeCTDBMonitor(t, root)
 	require.NoError(t, writeSMBNativeFile(filepath.Join(snap, "mode"), []byte("pause")))
-	conn, err := net.Dial("unix", filepath.Join(root, "ctdb/run/native-ready.socket"))
-	require.NoError(t, err)
-	defer conn.Close()
-	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
-	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(snap, "in-control")); return err == nil }, 3*time.Second, 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- smbReadyNative(ctx, root, "ctdbd") }()
+	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(snap, "in-control")); return err == nil }, time.Second, 10*time.Millisecond)
 	require.NoError(t, smbAtomicWrite(filepath.Join(root, "stop-requested"), []byte("stop")))
 	require.NoError(t, os.WriteFile(filepath.Join(snap, "release-control"), nil, 0600))
-	var response [1]byte
-	n, _ := conn.Read(response[:])
-	require.Zero(t, n, "server must recheck stop intent after control work")
+	require.Error(t, <-done)
 }
 
-func TestSMBGoCTDBMonitorRefusesSymlinkSocket(t *testing.T) {
-	root, _ := nativeCTDBFixture(t)
-	outside := filepath.Join(filepath.Dir(root), "retain")
-	require.NoError(t, os.WriteFile(outside, []byte("unchanged"), 0600))
-	require.NoError(t, os.Symlink(outside, filepath.Join(root, "ctdb/run/native-ready.socket")))
-	require.Error(t, monitorSMBCTDB(context.Background(), root))
-	data, err := os.ReadFile(outside)
-	require.NoError(t, err)
-	require.Equal(t, "unchanged", string(data))
+func TestSMBMembershipCancellationDoesNotControlServices(t *testing.T) {
+	root, snap := nativeCTDBFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, reconcileSMBCTDB(ctx, filepath.Dir(root)), context.Canceled)
+	_, err := os.Stat(filepath.Join(snap, "commands"))
+	require.True(t, os.IsNotExist(err))
+	require.NoError(t, smbAtomicWrite(filepath.Join(root, "stop-requested"), []byte("stop")))
+	require.NoError(t, reconcileSMBCTDB(context.Background(), filepath.Dir(root)))
+	_, err = os.Stat(filepath.Join(snap, "commands"))
+	require.True(t, os.IsNotExist(err))
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,16 +189,22 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 			return "active", nil // unrelated startup checks, not service operations
 		}
 		if r.refresh && !r.containment {
-			require.NotContains(r.t, []string{"start", "stop"}, args[0], "ordinary refresh never enters app enable/disable/start/stop")
+			if args[0] == "start" || args[0] == "stop" {
+				require.Equal(r.t, "smbd", role, "only SAM preparation may stop/start a refresh consumer")
+				require.Nil(r.t, r.sourceCandidate, "AD refresh must not import SAM")
+			}
 			require.NotContains(r.t, args, "--enable")
 			require.NotContains(r.t, args, "--disable")
-			require.NotContains(r.t, []string{"ctdbd", "ctdb-nodes"}, role, "refresh must not control CTDB")
+			require.NotContains(r.t, []string{"ctdbd"}, role, "refresh must not control CTDB")
 		}
 		switch args[0] {
 		case "restart":
 			r.events = append(r.events, "restart "+role)
 			if r.failure == "restart" {
 				return "", errors.New("restart failed")
+			}
+			if role == "smbd" {
+				r.active[role] = true
 			}
 			return "", nil
 		case "start":
@@ -210,7 +217,7 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 			if role == "smbd" && !r.nonclustered {
 				require.True(r.t, r.readyRoles["ctdbd"], "CTDB ready before SAM/Samba")
 			}
-			if (r.failure == "start" && role == "ctdbd") || (r.failure == "monitor-start" && role == "ctdb-nodes") || (r.failure == "samba-start" && role == "smbd") {
+			if (r.failure == "start" && role == "ctdbd") || (r.failure == "samba-start" && role == "smbd") || (r.refresh && r.failure == "restart" && role == "smbd") {
 				r.active[role] = true
 				return "", errors.New("uncertain start")
 			}
@@ -229,16 +236,14 @@ func (r *smbStartupRunner) RunCommandContext(ctx context.Context, name string, a
 			r.active[role] = false
 			return "", nil
 		case "services":
-			if r.refresh {
-				if r.containment {
-					return args[1] + " disabled inactive", nil
-				}
-				if r.disabled {
-					return args[1] + " disabled inactive", nil
-				}
-				return args[1] + " enabled active", nil
+			intent, activity := "disabled", "inactive"
+			if r.refresh && !r.containment && !r.disabled {
+				intent = "enabled"
 			}
-			return args[1] + " disabled inactive", nil
+			if r.active[role] {
+				activity = "active"
+			}
+			return args[1] + " " + intent + " " + activity, nil
 		}
 	}
 	r.t.Fatalf("unexpected command %s %q", name, args)
@@ -274,18 +279,34 @@ func (r *smbStartupRunner) compile(ctx context.Context, root string, candidate s
 		return compileSMBNative(ctx, root, candidate)
 	}
 	require.NoError(r.t, os.MkdirAll(filepath.Join(root, "config/next/config"), 0700))
-	launch, err := json.Marshal(smbLaunch{Clustered: !r.nonclustered,
-		FrontendAddress: candidate.Endpoint.FrontendAddress, SMBPort: candidate.Endpoint.SMBPort, MetricsPort: candidate.Endpoint.MetricsPort})
+	projection := smbLaunch{Clustered: !r.nonclustered,
+		FrontendAddress: candidate.Endpoint.FrontendAddress, SMBPort: candidate.Endpoint.SMBPort, MetricsPort: candidate.Endpoint.MetricsPort}
+	if candidate.CTDB != nil {
+		projection.CTDBPNN = &candidate.CTDB.Member.PNN
+	}
+	projection.Startup = smbDefaultStartup(projection)
+	launch, err := json.Marshal(projection)
 	require.NoError(r.t, err)
+	raw, err := json.Marshal(candidate)
+	require.NoError(r.t, err)
+	require.NoError(r.t, os.WriteFile(filepath.Join(root, "config/next/config/candidate.json"), raw, 0600))
 	return os.WriteFile(filepath.Join(root, "config/next/config/context.json"), launch, 0600)
 }
 
 func (r *smbStartupRunner) prepareCTDB(ctx context.Context, root, snap string) error {
-	require.False(r.t, r.refresh, "refresh never prepares CTDB")
+	if r.refresh {
+		require.False(r.t, smbCTDBResourcesPrepared(root), "ordinary refresh never replaces valid CTDB resources")
+	}
 
 	r.events = append(r.events, "prepare-ctdb")
 	if r.failure == "prepare" {
 		return errors.New("event preparation failed")
+	}
+	for _, name := range []string{"functions", "notify.sh", "events/legacy/00.ctdb.script"} {
+		path := filepath.Join(root, "ctdb", name)
+		require.NoError(r.t, smbPrivateDir(filepath.Dir(path)))
+		_ = os.Remove(path)
+		require.NoError(r.t, os.Symlink(filepath.Join("/usr/share/ctdb", name), path))
 	}
 	return nil
 }
@@ -300,7 +321,19 @@ func (r *smbStartupRunner) publish(ctx context.Context, root string, configOnly 
 	if r.python != "" {
 		return r.publishFiles(ctx, root, configOnly)
 	}
-	return nil
+	raw, err := os.ReadFile(filepath.Join(root, "config/next/config/context.json"))
+	if err != nil {
+		return err
+	}
+	err = publishSMBContext(root, raw, configOnly && !r.changed)
+	if err != nil {
+		return err
+	}
+	raw, err = os.ReadFile(filepath.Join(root, "config/next/config/candidate.json"))
+	if err != nil {
+		return err
+	}
+	return writeSMBNativeFile(filepath.Join(root, "config/candidate.json"), raw)
 }
 
 func (r *smbStartupRunner) ready(ctx context.Context, root, role string) error {
@@ -314,17 +347,24 @@ func (r *smbStartupRunner) ready(ctx context.Context, root, role string) error {
 			return err
 		}
 	}
-	if (r.failure == "readiness" && role == "ctdbd") || (r.failure == "monitor-readiness" && role == "ctdb-nodes") {
+	if r.failure == "readiness" && role == "ctdbd" {
 		r.cancel()
 		return context.Canceled
+	}
+	if role == "winbindd" {
+		require.NoError(r.t, setSMBPrepared(root, "winbindd", false))
+		require.NoError(r.t, setSMBPrepared(root, "smbd", false))
 	}
 	r.readyRoles[role] = true
 	return nil
 }
 
 func TestSMBClusteredNativeStartupSQLOrderAndCompensation(t *testing.T) {
-	for _, failure := range []string{"", "recovery-config", "compile", "publish", "prepare", "start", "monitor-start", "samba-start", "readiness", "monitor-readiness", "record", "applied"} {
+	for _, failure := range []string{"success", "recovery-config", "compile", "publish", "prepare", "start", "samba-start", "readiness", "accounts", "record", "applied"} {
 		t.Run(failure, func(t *testing.T) {
+			if failure == "success" {
+				failure = ""
+			}
 			runSMBStartup(t, failure, true, "")
 		})
 	}
@@ -347,6 +387,14 @@ func (r *smbStartupRunner) publishFiles(ctx context.Context, root string, config
 }
 
 func (r *smbStartupRunner) runUpstreamBinding(ctx context.Context, command, request string) (string, error) {
+	if command == "accounts" {
+		require.False(r.t, r.active["smbd"], "Go must import SAM before starting the server")
+		r.events = append(r.events, "accounts")
+		if r.failure == "accounts" {
+			return "", errors.New("private SAM preparation failed")
+		}
+		return "{}", nil // Real SAM bindings are covered by the native Python tests.
+	}
 	if r.failure == "binding" {
 		return "", errors.New("source-password-private")
 	}
@@ -464,7 +512,7 @@ func runSMBStartupFixture(t *testing.T, failure string, clustered bool, python s
 		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM grouped_services").Scan(&count))
 		if count > 0 {
 			if clustered {
-				require.True(t, runner.readyRoles["ctdbd"] && runner.readyRoles["ctdb-nodes"])
+				require.True(t, runner.readyRoles["ctdbd"])
 			}
 			require.True(t, runner.readyRoles["smbd"] && runner.readyRoles["smbmetrics"])
 			runner.events = append(runner.events, "record")
@@ -477,9 +525,15 @@ func runSMBStartupFixture(t *testing.T, failure string, clustered bool, python s
 		}
 		return tx.Commit()
 	}}
-	oldADControl := smbADControlFunc
+	oldPrivate := runSMBPrivateCommandFunc
+	runSMBPrivateCommandFunc = func(ctx context.Context, root string, argv []string, input io.Reader) ([]byte, error) {
+		out, err := runner.RunCommandContext(ctx, argv[0], argv[1:]...)
+		return []byte(out), err
+	}
+	defer func() { runSMBPrivateCommandFunc = oldPrivate }()
+	oldProbe, oldJoin, oldADPrepare := smbADProbeFunc, smbADJoinFunc, smbADPrepareFunc
 	if source != nil {
-		smbADControlFunc = func(ctx context.Context, root, op string) error {
+		control := func(ctx context.Context, root, op string) error {
 			var state database.SMBADState
 			tx, e := db.Begin()
 			require.NoError(t, e)
@@ -503,8 +557,17 @@ func runSMBStartupFixture(t *testing.T, failure string, clustered bool, python s
 			}
 			return nil
 		}
+		smbADProbeFunc = func(ctx context.Context, root string) error { return control(ctx, root, "probe") }
+		smbADJoinFunc = func(ctx context.Context, root string) error { return control(ctx, root, "join") }
+		smbADPrepareFunc = func(ctx context.Context, root string, initial bool) error {
+			err := control(ctx, root, "start")
+			if err != nil {
+				return err
+			}
+			return setSMBPrepared(root, "winbindd", initial)
+		}
 	}
-	defer func() { smbADControlFunc = oldADControl }()
+	defer func() { smbADProbeFunc, smbADJoinFunc, smbADPrepareFunc = oldProbe, oldJoin, oldADPrepare }()
 	state := interfaces.CephState{State: &mocks.MockState{ClusterName: "a", DBObj: mockDB}}
 	err = enableSMBLocked(ctx, state, "alpha", true)
 	runner.startupErr = err
@@ -517,11 +580,18 @@ func runSMBStartupFixture(t *testing.T, failure string, clustered bool, python s
 				got = append(got, event)
 			}
 		}
-		want := []string{"key client.smb.fs.cluster.alpha", "compile", "publish", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
+		want := []string{"key client.smb.fs.cluster.alpha", "compile", "publish", "accounts", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
 		if clustered {
-			want = []string{"key client.smb.fs.cluster.alpha", "key client.smb.cluster.alpha", "caps client.smb.cluster.alpha", "compile", "publish", "prepare-ctdb", "start ctdbd", "start ctdb-nodes", "ready ctdbd", "ready ctdb-nodes", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
+			want = []string{"key client.smb.fs.cluster.alpha", "key client.smb.cluster.alpha", "caps client.smb.cluster.alpha", "compile", "publish", "prepare-ctdb", "start ctdbd", "ready ctdbd", "accounts", "start smbd", "ready smbd", "start smbmetrics", "ready smbmetrics", "record"}
 		}
 		if source != nil {
+			withoutSAM := []string{}
+			for _, event := range want {
+				if event != "accounts" {
+					withoutSAM = append(withoutSAM, event)
+				}
+			}
+			want = withoutSAM
 			for i, event := range want {
 				if event == "start smbd" {
 					want = append(want[:i], append([]string{"start winbindd", "ad join", "ad start", "ready winbindd"}, want[i:]...)...)

@@ -11,12 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
+	"sync"
 	"time"
-
-	"golang.org/x/sys/unix"
-
-	"github.com/canonical/microceph/microceph/common"
 )
 
 type smbCTDBNode struct {
@@ -31,7 +27,25 @@ type smbCTDBStatus struct {
 var smbCTDBCountPattern = regexp.MustCompile(`^Number of nodes:(\d+)(?: \(including \d+ deleted nodes\))?$`)
 var smbCTDBNodePattern = regexp.MustCompile(`^pnn:(\d+)\s+(\S+)\s+(.+)$`)
 
-func runSMBCTDB(ctx context.Context, operation string, args ...string) (string, error) {
+// Retirement publishes stop intent before draining this actor's last operation.
+// It is separate from the placement lock so membership can converge while a
+// placement waits for native readiness.
+var smbMembershipMu sync.Mutex
+
+// Coalesce publication hints; the worker always rereads the active owner's
+// latest prepared membership, not a stale event payload. The fallback covers
+// daemon restarts and lost hints without a persistent notification protocol.
+var smbMembershipChanges = make(chan struct{}, 1)
+var notifySMBMembershipChangeFunc = notifySMBMembershipChange
+
+func notifySMBMembershipChange() {
+	select {
+	case smbMembershipChanges <- struct{}{}:
+	default:
+	}
+}
+
+func runSMBCTDB(ctx context.Context, root, operation string, args ...string) (string, error) {
 	switch operation {
 	case "pnn", "nodestatus", "status", "reloadnodes":
 	default:
@@ -48,7 +62,9 @@ func runSMBCTDB(ctx context.Context, operation string, args ...string) (string, 
 	}
 	commandCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return common.ProcessExec.RunCommandContext(commandCtx, filepath.Join(os.Getenv("SNAP"), "bin/ctdb"), append([]string{operation}, args...)...)
+	argv := append([]string{filepath.Join(os.Getenv("SNAP"), "bin/ctdb"), operation}, args...)
+	out, err := runSMBPrivateCommandFunc(commandCtx, root, argv, nil)
+	return string(out), err
 }
 
 func parseSMBCTDBStatus(text string) (smbCTDBStatus, error) {
@@ -125,8 +141,8 @@ func preparedSMBCTDBNodes(root string) ([]byte, map[uint64]string, error) {
 	return nodes, desired, nil
 }
 
-func observeSMBCTDBNodes(ctx context.Context, expected []byte, desired map[uint64]string) (bool, smbCTDBStatus, error) {
-	output, err := runSMBCTDB(ctx, "status")
+func observeSMBCTDBNodes(ctx context.Context, root string, expected []byte, desired map[uint64]string) (bool, smbCTDBStatus, error) {
+	output, err := runSMBCTDB(ctx, root, "status")
 	if err != nil {
 		return false, smbCTDBStatus{}, err
 	}
@@ -156,17 +172,18 @@ func updateSMBCTDBNodes(ctx context.Context, root string) error {
 		return err
 	}
 	if !bytes.Equal(current, expected) {
+		err = checkSMBCTDBOwner(root)
+		if err != nil {
+			return err
+		}
 		err = writeSMBNativeFile(path, expected)
 		if err != nil {
 			return err
 		}
 	}
-	matches, status, err := observeSMBCTDBNodes(ctx, expected, desired)
-	if err != nil {
+	matches, status, err := observeSMBCTDBNodes(ctx, root, expected, desired)
+	if err != nil || matches {
 		return err
-	}
-	if matches {
-		return nil
 	}
 	for pnn, node := range status.Nodes {
 		address, exists := desired[pnn]
@@ -184,29 +201,37 @@ func updateSMBCTDBNodes(ctx context.Context, root string) error {
 			}
 		}
 	}
-	_, err = runSMBCTDB(ctx, "reloadnodes")
+	err = checkSMBCTDBOwner(root)
 	if err != nil {
 		return err
 	}
-	matches, _, err = observeSMBCTDBNodes(ctx, expected, desired)
+	_, err = runSMBCTDB(ctx, root, "reloadnodes")
+	if err != nil {
+		return err
+	}
+	matches, _, err = observeSMBCTDBNodes(ctx, root, expected, desired)
 	if err != nil {
 		return err
 	}
 	if !matches {
 		return fmt.Errorf("CTDB daemon membership does not match published slots")
 	}
-	return nil
+	return checkSMBCTDBOwner(root)
 }
 
-func checkSMBCTDBHealth(ctx context.Context, root string, monitor bool) error {
+func checkSMBCTDBHealth(ctx context.Context, root string, membership bool) error {
+	err := checkSMBCTDBOwner(root)
+	if err != nil {
+		return err
+	}
 	launch, err := loadSMBLaunch(root)
 	if err != nil {
 		return err
 	}
-	if !launch.Clustered || launch.CTDBPNN == nil {
+	if launch.CTDBPNN == nil {
 		return fmt.Errorf("CTDB readiness requires assigned clustered context")
 	}
-	output, err := runSMBCTDB(ctx, "pnn")
+	output, err := runSMBCTDB(ctx, root, "pnn")
 	if err != nil {
 		return err
 	}
@@ -217,11 +242,11 @@ func checkSMBCTDBHealth(ctx context.Context, root string, monitor bool) error {
 	if pnn != *launch.CTDBPNN {
 		return fmt.Errorf("CTDB assigned PNN mismatch")
 	}
-	_, err = runSMBCTDB(ctx, "nodestatus", strconv.FormatUint(pnn, 10))
+	_, err = runSMBCTDB(ctx, root, "nodestatus", strconv.FormatUint(pnn, 10))
 	if err != nil {
 		return err
 	}
-	output, err = runSMBCTDB(ctx, "status")
+	output, err = runSMBCTDB(ctx, root, "status")
 	if err != nil {
 		return err
 	}
@@ -229,12 +254,12 @@ func checkSMBCTDBHealth(ctx context.Context, root string, monitor bool) error {
 	if err != nil {
 		return err
 	}
-	if monitor {
+	if membership {
 		expected, desired, err := preparedSMBCTDBNodes(root)
 		if err != nil {
 			return err
 		}
-		matches, _, err := observeSMBCTDBNodes(ctx, expected, desired)
+		matches, _, err := observeSMBCTDBNodes(ctx, root, expected, desired)
 		if err != nil {
 			return err
 		}
@@ -245,137 +270,61 @@ func checkSMBCTDBHealth(ctx context.Context, root string, monitor bool) error {
 		if !matches || !bytes.Equal(current, expected) {
 			return fmt.Errorf("CTDB daemon membership is not confirmed")
 		}
-		data, err := os.ReadFile(filepath.Join(root, "ctdb/run/ctdb-nodes.pid"))
-		if err != nil {
-			return err
-		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			return err
-		}
-		if pid <= 0 {
-			return fmt.Errorf("invalid node monitor PID")
-		}
-		err = unix.Kill(pid, 0)
-		if err != nil {
-			return err
-		}
 	}
-	return ctx.Err()
+	err = ctx.Err()
+	if err != nil {
+		return err
+	}
+	return checkSMBCTDBOwner(root)
 }
 
-func openSMBCTDBListener(root string) (*net.UnixListener, *os.File, error) {
-	return openSMBPrivateListener(filepath.Join(root, "ctdb/run/native-ready.socket"))
-}
-
-// The local lock protects the listener path only; it is never AD join exclusion.
-func openSMBPrivateListener(path string) (*net.UnixListener, *os.File, error) {
-	fd, err := unix.Open(strings.TrimSuffix(path, ".socket")+".lock", unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+func reconcileSMBCTDB(ctx context.Context, base string) error {
+	wait := time.NewTicker(20 * time.Millisecond)
+	defer wait.Stop()
+	for !smbMembershipMu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-wait.C:
+		}
+	}
+	defer smbMembershipMu.Unlock()
+	err := ctx.Err()
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-	guard := os.NewFile(uintptr(fd), "native SMB socket lock")
-	fail := func(err error) (*net.UnixListener, *os.File, error) { _ = guard.Close(); return nil, nil, err }
-	info, err := guard.Stat()
+	root, err := activeSMBRoot(base)
+	if os.IsNotExist(err) {
+		return nil
+	}
 	if err != nil {
-		return fail(err)
+		return err
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || stat.Uid != uint32(os.Geteuid()) {
-		return fail(fmt.Errorf("unsafe SMB socket lock"))
-	}
-	err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
-	if err != nil {
-		return fail(err)
-	}
-	info, err = os.Lstat(path)
-	if err != nil && !os.IsNotExist(err) {
-		return fail(err)
-	}
+	_, err = os.Lstat(filepath.Join(root, "stop-requested"))
 	if err == nil {
-		stat, ok = info.Sys().(*syscall.Stat_t)
-		if !ok || info.Mode()&os.ModeSocket == 0 || stat.Uid != uint32(os.Geteuid()) {
-			return fail(fmt.Errorf("unsafe SMB private socket"))
-		}
-		err = os.Remove(path)
-		if err != nil {
-			return fail(err)
-		}
+		return nil
 	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
-	if err != nil {
-		return fail(err)
-	}
-	err = os.Chmod(path, 0600)
-	if err != nil {
-		_ = listener.Close()
-		return fail(err)
-	}
-	return listener, guard, nil
-}
-
-func monitorSMBCTDB(ctx context.Context, root string) error {
-	err := checkSMBCTDBOwner(root)
-	if err != nil {
+	if !os.IsNotExist(err) {
 		return err
 	}
-	listener, guard, err := openSMBCTDBListener(root)
-	if err != nil {
+	launch, err := loadSMBLaunch(root)
+	if os.IsNotExist(err) {
+		return nil // The initial projection has not been published yet.
+	}
+	if err != nil || !launch.Clustered {
 		return err
 	}
-	defer guard.Close()
-	defer listener.Close()
-	stop := context.AfterFunc(ctx, func() { _ = listener.Close() })
-	defer stop()
-	pidfile := filepath.Join(root, "ctdb/run/ctdb-nodes.pid")
-	diagnostic := filepath.Join(root, "diagnostics/nodes-error")
-	defer os.Remove(pidfile)
-	for ctx.Err() == nil {
-		err = updateSMBCTDBNodes(ctx, root)
-		if err == nil {
-			err = checkSMBCTDBHealth(ctx, root, false)
-		}
-		if err == nil {
-			err = writeSMBNativeFile(pidfile, []byte(strconv.Itoa(os.Getpid())+"\n"))
-		}
-		if err == nil {
-			_ = os.Remove(diagnostic)
-		} else {
-			_ = os.Remove(pidfile)
-			_ = writeSMBNativeFile(diagnostic, []byte("CTDB membership update is not confirmed.\n"))
-		}
-		err = listener.SetDeadline(time.Now().Add(2 * time.Second))
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
-		}
-		conn, err := listener.AcceptUnix()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			networkErr, ok := err.(net.Error)
-			if ok && networkErr.Timeout() {
-				continue
-			}
-			return err
-		}
-		err = checkSMBCTDBOwner(root)
-		if err == nil {
-			err = checkSMBCTDBHealth(ctx, root, true)
-		}
-		if err == nil {
-			err = checkSMBCTDBOwner(root)
-		}
-		if err == nil && ctx.Err() == nil {
-			err = conn.SetWriteDeadline(time.Now().Add(time.Second))
-			if err == nil {
-				_, _ = conn.Write([]byte("1"))
-			}
-		}
-		_ = conn.Close()
+	workCtx, cancel := context.WithTimeout(ctx, smbUpdateTimeout)
+	defer cancel()
+	err = updateSMBCTDBNodes(workCtx, root)
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	return nil
+	path := filepath.Join(root, "diagnostics/nodes-error")
+	if err != nil {
+		_ = writeSMBNativeFile(path, []byte("CTDB membership update is not confirmed.\n"))
+	} else {
+		_ = os.Remove(path)
+	}
+	return err
 }

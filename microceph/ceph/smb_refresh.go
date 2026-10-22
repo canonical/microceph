@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	smbUpdateInterval = 30 * time.Second
-	smbUpdateTimeout  = 25 * time.Second
+	smbUpdateInterval             = 30 * time.Second
+	smbUpdateTimeout              = 25 * time.Second
+	smbMembershipFallbackInterval = 30 * time.Second
 )
 
 const smbMembershipPending = "membership publication is not confirmed applied\n"
@@ -42,7 +43,7 @@ func SMBLocalStatus(ctx context.Context) (types.SMBStatus, error) {
 		return status, err
 	}
 	root := smbRoot(status.ClusterID)
-	_, err = os.Stat(filepath.Join(root, "stop-requested"))
+	_, err = os.Lstat(filepath.Join(root, "stop-requested"))
 	status.StopRequested = err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return status, err
@@ -72,6 +73,15 @@ func SMBLocalStatus(ctx context.Context) (types.SMBStatus, error) {
 // startSMBUpdater has no dependency on the monitor-change loop. It is the only
 // native periodic source updater. Placement remains an explicit/startup path.
 func startSMBUpdater(ctx context.Context, s interfaces.StateInterface) {
+	// Keep both maintenance jobs under the existing Ceph startup context.
+	// Neither owns upstream process lifetimes or calls service Stop on shutdown.
+	base := smbBase()
+	changes := smbMembershipChanges
+	go func() {
+		ticker := time.NewTicker(smbMembershipFallbackInterval)
+		defer ticker.Stop()
+		runSMBMembershipUpdater(ctx, base, changes, ticker.C)
+	}()
 	go func() {
 		ticker := time.NewTicker(smbUpdateInterval)
 		defer ticker.Stop()
@@ -89,8 +99,31 @@ func startSMBUpdater(ctx context.Context, s interfaces.StateInterface) {
 	}()
 }
 
+func runSMBMembershipUpdater(ctx context.Context, base string, changes <-chan struct{}, fallback <-chan time.Time) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-changes:
+		case <-fallback:
+		}
+		err := reconcileSMBCTDB(ctx, base)
+		if err != nil && ctx.Err() == nil {
+			logger.Warn("SMB membership is not confirmed; inspect private diagnostics")
+		}
+	}
+}
+
 func runSMBUpdate(ctx context.Context, s interfaces.StateInterface) error {
-	serviceStartMu.Lock()
+	wait := time.NewTicker(20 * time.Millisecond)
+	defer wait.Stop()
+	for !serviceStartMu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-wait.C:
+		}
+	}
 	defer serviceStartMu.Unlock()
 	// The work budget must not expire while a placement holds the lock.
 	// Shutdown while queued is not a failed configuration application.
@@ -214,7 +247,8 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 	if pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist) {
 		return pendingErr
 	}
-	if string(applied) == candidate.fingerprint() && errors.Is(pendingErr, os.ErrNotExist) {
+	needsStartup := current.Startup == nil || (current.Clustered && !smbCTDBResourcesPrepared(root))
+	if !needsStartup && string(applied) == candidate.fingerprint() && errors.Is(pendingErr, os.ErrNotExist) {
 		// Health is observation, not an input change or permission to reimport
 		// SAM/start services. snapd and CTDB own ordinary process recovery.
 		for _, role := range roles {
@@ -242,6 +276,7 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		} else if !errors.Is(readErr, os.ErrNotExist) {
 			return readErr
 		}
+		configurationChanged = configurationChanged || needsStartup
 		// A partial publication/control failure still requires the config path.
 		if pendingErr == nil && len(pendingFingerprint) != 64 && string(pendingFingerprint) != smbMembershipPending {
 			configurationChanged = true
@@ -275,10 +310,40 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		if err != nil {
 			return err
 		}
-		// NSS files are private bind mounts, and SAM preparation runs at smbd
-		// launch. Restart only Samba consumers, without enable/disable flags.
+		if needsStartup && launch.Clustered {
+			err = prepareSMBCTDBFilesFunc(ctx, root, os.Getenv("SNAP"))
+			if err != nil {
+				return err
+			}
+		}
+		if configurationChanged && launch.AD != nil {
+			// Refresh/upgrade can only use already initialized retained AD
+			// state. It cannot authorize first mapping setup or another join.
+			var adState database.SMBADState
+			err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				var queryErr error
+				adState, queryErr = database.GetSMBADState(ctx, tx, clusterID, s.ClusterState().Name())
+				return queryErr
+			})
+			if err != nil {
+				return err
+			}
+			if !adState.Joined || !adState.Initialized {
+				return fmt.Errorf("AD initialization is incomplete; explicit maintenance required")
+			}
+			err = smbADPrepareFunc(ctx, root, false)
+			if err != nil {
+				return err
+			}
+			err = setSMBPrepared(root, "smbd", false)
+			if err != nil {
+				return err
+			}
+		}
+		// Go prepares user SAM with smbd stopped. Restart requests preserve
+		// enable/disable intent and are never daemon-owned child supervisors.
 		if configurationChanged {
-			err = refreshSMBApps(root, nextRoles)
+			err = refreshSMBApps(ctx, root, nextRoles)
 			if err != nil {
 				return err
 			}

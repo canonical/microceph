@@ -42,13 +42,9 @@ func TestCanonicalCephConfigScopedSMBRecoveryKeyring(t *testing.T) {
 }
 
 func TestSMBNativeCTDBUsesCanonicalCephConfig(t *testing.T) {
-	for _, role := range []string{"ctdbd", "ctdb-nodes", "ctdb-control"} {
-		plan, err := smbNativeRolePlan(role, "/native/alpha", smbLaunch{Clustered: true}, "/snap")
-		require.NoError(t, err)
-		for _, mount := range plan.Mounts {
-			require.NotEqual(t, "/etc/ceph/ceph.conf", mount.Target, "atomic canonical config replacement must not detach a file bind")
-		}
-		require.NotContains(t, plan.Env, "CEPH_CONF")
-		require.NotContains(t, plan.Env, "CEPH_ARGS")
-	}
+	raw, err := os.ReadFile("../../snapcraft/commands/smb-startup")
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "export CEPH_CONF", "CTDB uses the canonical /etc/ceph directory layout")
+	require.NotContains(t, string(raw), "CEPH_ARGS")
+	require.NotContains(t, string(raw), "--bind /etc/ceph/ceph.conf", "canonical config must follow atomic replacement, not a stale file bind")
 }

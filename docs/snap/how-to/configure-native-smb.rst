@@ -22,9 +22,16 @@ intended gateway, in addition to the normal MicroCeph storage connections:
    sudo snap connect microceph:process-control
    sudo snap connect microceph:smb-identity
    sudo snap connect microceph:smb-mounts
+   sudo snap connect microceph:smb-control-mounts
+   sudo snap connect microceph:smb-control-access
    sudo snap connect microceph:ctdb-run
    sudo snap connect microceph:ctdb-socket
    sudo snap connect microceph:winbind-run
+
+The two ``smb-control-*`` plugs grant the daemon the reviewed paths needed by
+short-lived CTDB, NSS, account and AD clients. They do not grant the daemon
+``network-control`` or the serving applications' identity-switching permissions.
+Serving processes remain independently managed by snapd.
 
 These are the declared SMB interfaces, not a request for broader permissions.
 Manual local connections do not establish stable-channel snapd compatibility or

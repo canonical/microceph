@@ -11,7 +11,6 @@ default: build
 build:
 	go install -v -ldflags $(LDFLAGS) ./cmd/microceph
 	go install -v -ldflags $(LDFLAGS) ./cmd/microcephd
-	go install -v ./cmd/microceph-smb-runtime
 
 # Testing targets.
 .PHONY: check

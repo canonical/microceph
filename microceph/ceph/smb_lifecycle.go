@@ -7,15 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
-
-	"github.com/canonical/microceph/microceph/common"
 )
 
-var smbStopOrder = []string{"smbmetrics", "smbd", "smb-remote", "winbindd", "cephfs-proxy", "ctdb-nodes", "ctdbd"}
+var smbStopOrder = []string{"smbmetrics", "smbd", "winbindd", "cephfs-proxy", "ctdbd"}
 
 type smbAppOps struct {
 	prepare  func(context.Context, string) error
+	started  func(context.Context, string) error
 	prepared func(context.Context, string) error
 	start    func(string) error
 	stop     func(string) error
@@ -47,7 +45,7 @@ func smbAtomicWrite(path string, content []byte) error {
 }
 
 func checkSMBStartIntent(root string) error {
-	_, err := os.Stat(filepath.Join(root, "stop-requested"))
+	_, err := os.Lstat(filepath.Join(root, "stop-requested"))
 	if err == nil {
 		return fmt.Errorf("SMB stop requested; explicit enable required after confirmed stop")
 	}
@@ -62,6 +60,10 @@ func stopSMBApps(root string, ops smbAppOps) error {
 	if err != nil {
 		return err
 	}
+	// Stop intent fences the next membership operation; drain any current
+	// operation before stopping CTDB or retiring owner-local files.
+	smbMembershipMu.Lock()
+	defer smbMembershipMu.Unlock()
 	failures := []error{}
 	for _, role := range smbStopOrder {
 		err = ops.stop(role)
@@ -77,24 +79,19 @@ func startSMBApps(ctx context.Context, root string, roles []string, ops smbAppOp
 	if err != nil {
 		return err
 	}
-	for i, role := range roles {
+	for _, role := range roles {
 		err = ctx.Err()
-		if err == nil {
-			err = ops.start(role)
-		}
 		if err == nil && ops.prepare != nil {
 			err = ops.prepare(ctx, role)
 		}
-		if err == nil && role == "ctdbd" {
-			// CTDB controls run in the confined node monitor's private mount
-			// context. Start that fixed peer before waiting for either role.
-			if i+1 < len(roles) && roles[i+1] == "ctdb-nodes" {
-				continue
-			}
-			err = fmt.Errorf("CTDB readiness requires the node monitor")
+		if err == nil {
+			err = ctx.Err()
 		}
-		if err == nil && role == "ctdb-nodes" {
-			err = ops.ready(ctx, "ctdbd")
+		if err == nil {
+			err = ops.start(role)
+		}
+		if err == nil && ops.started != nil {
+			err = ops.started(ctx, role)
 		}
 		if err == nil {
 			err = ops.ready(ctx, role)
@@ -128,7 +125,7 @@ func smbCoreRoles(spec smbSpec, proxy bool) ([]string, error) {
 	}
 	roles := []string{}
 	if spec.hasFeature("clustered") {
-		roles = append(roles, "ctdbd", "ctdb-nodes")
+		roles = append(roles, "ctdbd")
 	}
 	if proxy {
 		roles = append(roles, "cephfs-proxy")
@@ -140,51 +137,36 @@ func smbCoreRoles(spec smbSpec, proxy bool) ([]string, error) {
 }
 
 func smbSnapOps(root string) smbAppOps {
+	services := newSMBServiceTable(root)
+	lookup := func(role string) (smbService, error) {
+		service, ok := services[role]
+		if !ok {
+			return nil, fmt.Errorf("unsupported SMB service %q", role)
+		}
+		return service, nil
+	}
 	return smbAppOps{
-		start: func(role string) error { return snapStart(role, true) },
-		stop: func(role string) error {
-			err := snapStop(role, true)
+		start: func(role string) error {
+			service, err := lookup(role)
 			if err != nil {
 				return err
 			}
-			// snapd stop is synchronous; separately confirm there is no active app.
-			return smbWaitInactive(role)
+			return service.Start(context.Background())
+		},
+		stop: func(role string) error {
+			service, err := lookup(role)
+			if err != nil {
+				return err
+			}
+			// Compensation must still run after cancellation of placement.
+			return service.Stop(context.Background())
 		},
 		ready: func(ctx context.Context, role string) error {
-			budget := 30 * time.Second
-			if role == "ctdbd" {
-				// A new/rejoining owner can miss the peer updater's tick. Allow
-				// one tick + bounded publication before the usual convergence
-				// window (pinned CTDB also waits RerecoveryTimeout+3 after
-				// recovery). The monitor still requires PNN/NORMAL/full map
-				// health; this is not permission for eventual startup success.
-				// The caller's deadline, including the 120s client limit, wins.
-				budget += smbUpdateInterval + smbUpdateTimeout
+			service, err := lookup(role)
+			if err != nil {
+				return err
 			}
-			waitCtx, cancel := context.WithTimeout(ctx, budget)
-			defer cancel()
-			tick := time.NewTicker(time.Second)
-			defer tick.Stop()
-			for {
-				err := waitCtx.Err()
-				if err == nil {
-					err = smbReadyNativeFunc(waitCtx, root, role)
-				}
-				if err == nil {
-					// A probe response racing cancellation is not fresh health.
-					return waitCtx.Err()
-				}
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-waitCtx.Done():
-					if ctx.Err() != nil {
-						return ctx.Err()
-					}
-					return fmt.Errorf("%s readiness timed out", role)
-				case <-tick.C:
-				}
-			}
+			return service.Ready(ctx)
 		},
 	}
 }
@@ -215,12 +197,26 @@ func smbPrivateDir(path string) error {
 	return nil
 }
 
+func requireSMBEnabled(ctx context.Context, role string) error {
+	out, err := runSMBServiceCommand(ctx, "services", "microceph."+role)
+	if err != nil {
+		return fmt.Errorf("SMB service intent check failed")
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[0] == "microceph."+role && fields[1] == "enabled" {
+			return nil
+		}
+	}
+	return fmt.Errorf("SMB %s is disabled or its intent is unknown", role)
+}
+
 // refreshSMBApps preserves snapd enable/disable intent and never controls CTDB.
 // Restart rather than reload smbd to renew its NSS binds and import changed SAM.
 // Readiness is observed separately after recording completed configuration work.
-func refreshSMBApps(root string, roles []string) error {
+func refreshSMBApps(ctx context.Context, root string, roles []string) error {
 	for _, role := range roles {
-		if role == "ctdbd" || role == "ctdb-nodes" {
+		if role == "ctdbd" {
 			continue
 		}
 		err := checkSMBStartIntent(root)
@@ -228,23 +224,37 @@ func refreshSMBApps(root string, roles []string) error {
 			return err
 		}
 		// Do not resurrect a separately disabled app on an update.
-		out, err := common.ProcessExec.RunCommand("snapctl", "services", "microceph."+role)
+		err = requireSMBEnabled(ctx, role)
 		if err != nil {
-			return fmt.Errorf("SMB service intent check failed")
+			return err
 		}
-		enabled := false
-		for _, line := range strings.Split(out, "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 && fields[0] == "microceph."+role {
-				enabled = fields[1] == "enabled"
+		launch, err := loadSMBLaunch(root)
+		if err != nil {
+			return err
+		}
+		if role == "smbd" && launch.AD == nil {
+			// Prepare SAM only with smbd stopped, without changing enablement.
+			_, err = runSMBServiceCommand(ctx, "stop", "microceph.smbd")
+			if err == nil {
+				err = confirmSMBInactive(ctx, "smbd")
 			}
+			if err == nil {
+				err = prepareSMBAccounts(ctx, root)
+			}
+			if err == nil {
+				err = checkSMBStartIntent(root)
+			}
+			if err == nil {
+				err = requireSMBEnabled(ctx, role)
+			}
+			if err == nil {
+				_, err = runSMBServiceCommand(ctx, "restart", "microceph.smbd")
+			}
+		} else {
+			_, err = runSMBServiceCommand(ctx, "restart", "microceph."+role)
 		}
-		if !enabled {
-			return fmt.Errorf("SMB %s is disabled or its intent is unknown", role)
-		}
-		err = snapRestart(role, false)
 		if err != nil {
-			return fmt.Errorf("SMB %s configuration restart failed", role)
+			return fmt.Errorf("SMB %s configuration restart failed: %w", role, err)
 		}
 	}
 	return nil

@@ -357,15 +357,17 @@ func (s smbSpec) resolveEndpoint(ctx context.Context, state interfaces.StateInte
 }
 
 type smbLaunch struct {
-	AD              *smbADMember   `json:"ad_member,omitempty"`
-	Proxy           bool           `json:"proxy"`
-	Clustered       bool           `json:"clustered"`
-	FrontendAddress string         `json:"frontend_address"`
-	SMBPort         int            `json:"smb_port"`
-	MetricsPort     int            `json:"metrics_port"`
-	CustomDNS       bool           `json:"custom_dns"`
-	CTDBPNN         *uint64        `json:"ctdb_pnn,omitempty"`
-	DataChecks      []smbDataCheck `json:"data_checks"`
+	// Startup contains Go-selected preparation and independent-start checks.
+	Startup         map[string]smbStartupChecks `json:"startup,omitempty"`
+	AD              *smbADMember                `json:"ad_member,omitempty"`
+	Proxy           bool                        `json:"proxy"`
+	Clustered       bool                        `json:"clustered"`
+	FrontendAddress string                      `json:"frontend_address"`
+	SMBPort         int                         `json:"smb_port"`
+	MetricsPort     int                         `json:"metrics_port"`
+	CustomDNS       bool                        `json:"custom_dns"`
+	CTDBPNN         *uint64                     `json:"ctdb_pnn,omitempty"`
+	DataChecks      []smbDataCheck              `json:"data_checks"`
 }
 
 // serviceInfo exposes only successfully applied nonsecret facts. configURI is

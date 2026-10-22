@@ -1,0 +1,282 @@
+# shellcheck shell=bash
+# Mechanical startup support for snap-managed native SMB services.
+# Consume existing prepared context; never render config, join AD, control
+# services, choose policy, or supervise a running upstream process here.
+
+smb_startup_context() {
+  "$SNAP/bin/python3" -B - <<'PY'
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+def checked_path(path, directory=False):
+    for parent in (path, *path.parents):
+        if parent.is_symlink():
+            raise ValueError("symlink in prepared path")
+    info = path.lstat()
+    if info.st_uid != os.geteuid() or info.st_mode & 0o022:
+        raise ValueError("unsafe prepared path ownership or mode")
+    expected = stat.S_ISDIR if directory else stat.S_ISREG
+    if not expected(info.st_mode):
+        raise ValueError("unexpected prepared path type")
+
+
+try:
+    base = Path(os.environ["SNAP_COMMON"]) / "smb"
+    checked_path(base / "owner.json")
+    owner = (base / "owner.json").read_text()
+    if re.fullmatch(r"[a-zA-Z0-9]([a-zA-Z0-9-]{0,16}[a-zA-Z0-9])?", owner) is None:
+        raise ValueError("invalid owner")
+    root = base / owner
+    if re.fullmatch(r"(/[a-zA-Z0-9_.-]+)+", str(root)) is None:
+        raise ValueError("invalid root")
+    checked_path(root, directory=True)
+    checked_path(root / "config", directory=True)
+    checked_path(root / "config/context.json")
+    context = json.loads((root / "config/context.json").read_text())
+    if not isinstance(context, dict):
+        raise ValueError("invalid context object")
+    dns = context.get("custom_dns", False)
+    clustered = context.get("clustered", False)
+    port = context.get("metrics_port", 0)
+    if type(dns) is not bool or type(clustered) is not bool:
+        raise ValueError("invalid context flags")
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ValueError("invalid metrics port")
+    pnn = context.get("ctdb_pnn")
+    if clustered and pnn is None:
+        raise ValueError("missing assigned PNN")
+    if pnn is not None and (type(pnn) is not int or not 0 <= pnn < 2**64):
+        raise ValueError("invalid assigned PNN")
+    member = context.get("ad_member")
+    workgroup = "-"
+    if member is not None:
+        if not clustered or not isinstance(member, dict):
+            raise ValueError("AD requires clustered context")
+        workgroup = member.get("workgroup")
+        if not isinstance(workgroup, str) or re.fullmatch(r"[A-Z0-9][A-Z0-9_-]{0,14}", workgroup) is None:
+            raise ValueError("invalid prepared member identity")
+    if dns:
+        checked_path(root / "config/resolv.conf")
+    stop = root / "stop-requested"
+    if stop.exists() or stop.is_symlink() or (base / "owner.json").read_text() != owner:
+        raise ValueError("stop requested or owner changed")
+    if os.environ.get("SMB_EXPECTED_OWNER", owner) != owner or os.environ.get("SMB_EXPECTED_ROOT", str(root)) != str(root):
+        raise ValueError("command owner changed")
+except (OSError, ValueError, TypeError, KeyError):
+    sys.exit("Native SMB prepared context is unsafe or unavailable")
+# Output only after every check succeeds; the shell never evaluates this data.
+for value in (owner, str(root), str(int(dns)), str(port), str(int(clustered)), str(pnn) if pnn is not None else "-", workgroup):
+    sys.stdout.write(value + "\0")
+PY
+}
+
+smb_load_context() {
+  local -a context
+  mapfile -d '' -t context < <(smb_startup_context)
+  [[ ${#context[@]} == 7 ]] || return 1
+  SMB_OWNER="${context[0]}"
+  SMB_ROOT="${context[1]}"
+  SMB_CUSTOM_DNS="${context[2]}"
+  # Consumed by the fixed service entry scripts sourcing this library.
+  # shellcheck disable=SC2034
+  SMB_METRICS_PORT="${context[3]}"
+  SMB_CLUSTERED="${context[4]}"
+  SMB_PNN="${context[5]}"
+  SMB_WORKGROUP="${context[6]}"
+  export LIBCEPHFSD_SOCKET="$SMB_ROOT/proxy-work/libcephfsd.sock"
+  export SMBMETRICS_SMBSTATUS="$SNAP/bin/smbstatus"
+  export SMBMETRICS_SMBCONF="$SMB_ROOT/config/smb.conf"
+  export SMBMETRICS_TESTPARM="$SNAP/bin/testparm"
+  export SMBMETRICS_CTDB="$SNAP/bin/ctdb"
+  if [[ "${context[4]}" == 1 ]]; then
+    export CTDB_BASE="$SMB_ROOT/ctdb" CTDB="$SNAP/bin/ctdb"
+  fi
+}
+
+smb_check_start_intent() {
+  local owner
+  IFS= read -r -d '' owner < "$SNAP_COMMON/smb/owner.json" || [[ $? == 1 ]]
+  [[ "$owner" == "$SMB_OWNER" && ! -e "$SMB_ROOT/stop-requested" && ! -L "$SMB_ROOT/stop-requested" ]]
+}
+
+smb_bind_custom_dns() {
+  [[ "$SMB_CUSTOM_DNS" == 1 ]] || return 0
+  local target
+  target=$("$SNAP/bin/python3" -B -c 'import os; print(os.path.realpath("/etc/resolv.conf", strict=True))')
+  case "$target" in
+    /etc/resolv.conf|/run/systemd/resolve/stub-resolv.conf) ;;
+    *) printf '%s\n' 'Native SMB resolver target is not approved' >&2; return 1 ;;
+  esac
+  [[ -f "$target" ]] || return 1
+  # This is called only after the service's unshare --propagation slave.
+  # No userspace mount-table writes; no new-mount-API privilege expansion.
+  smb_bind_private "$SMB_ROOT/config/resolv.conf" "$target"
+}
+
+smb_bind_private() {
+  # Clone alone does not isolate shared propagation. Check both source and
+  # destination before every bind; do not request a root-wide propagation grant.
+  "$SNAP/bin/python3" -B - "$1" "$2" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+source, target = map(Path, sys.argv[1:])
+for path in (source, *source.parents):
+    if path.is_symlink():
+        sys.exit("Unsafe SMB bind source")
+info = source.lstat()
+if info.st_uid != os.geteuid() or info.st_mode & 0o022 or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+    sys.exit("Unsafe SMB bind source")
+paths = [str(source.resolve(strict=True)), str(target.resolve(strict=True))]
+with open("/proc/self/mountinfo") as stream:
+    for line in stream:
+        fields = line.split()
+        point = fields[4]
+        for escaped, decoded in ((r"\040", " "), (r"\011", "\t"), (r"\012", "\n"), (r"\134", "\\")):
+            point = point.replace(escaped, decoded)
+        if any(point == "/" or path == point or path.startswith(point + "/") for path in paths):
+            optional = fields[6:fields.index("-")]
+            if any(field.startswith("shared:") for field in optional):
+                sys.exit("SMB bind has shared propagation")
+PY
+  LIBMOUNT_FORCE_MOUNT2=always "$SNAP/bin/mount" --no-mtab --internal-only --bind "$1" "$2"
+}
+
+smb_setup_nss() {
+  local name
+  for name in passwd group nsswitch.conf; do
+    smb_bind_private "$SMB_ROOT/config/$name" "/etc/$name"
+  done
+}
+
+smb_runtime_mountpoint() {
+  "$SNAP/bin/python3" -B - "$1" "${SMB_CREATE_MOUNTPOINTS:-0}" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+path, create = Path(sys.argv[1]), sys.argv[2] == "1"
+def directory(path):
+    if create and not os.path.lexists(path):
+        path.mkdir(mode=0o755)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+        sys.exit("Unsafe SMB runtime mountpoint")
+if str(path) == "/run/samba/winbindd":
+    directory(path.parent)
+    if any(entry.name != path.name for entry in path.parent.iterdir()):
+        sys.exit("Winbind runtime parent contains unrelated state")
+directory(path)
+if any(path.iterdir()):
+    sys.exit("SMB runtime mountpoint contains unrelated state")
+PY
+}
+
+smb_setup_ctdb() {
+  [[ "$SMB_CLUSTERED" == 1 ]] || return 1
+  export CTDB_BASE="$SMB_ROOT/ctdb"
+  "$SNAP/bin/python3" -B - "$SMB_ROOT" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+fixed = root.parent / ".conf/ctdb"
+for path in (fixed, fixed / "owner", fixed / "ctdb.conf", root / "ctdb/ctdb.conf"):
+    if path.is_symlink():
+        sys.exit("Unsafe CTDB compatibility configuration")
+if (fixed / "owner").read_text() != root.name or (fixed / "ctdb.conf").read_bytes() != (root / "ctdb/ctdb.conf").read_bytes():
+    sys.exit("CTDB compatibility configuration belongs to another generation")
+PY
+  smb_runtime_mountpoint /run/ctdb
+  smb_bind_private "$SMB_ROOT/ctdb/run" /run/ctdb
+}
+
+smb_setup_winbind() {
+  [[ "$SMB_WORKGROUP" != - && "$SMB_CLUSTERED" == 1 ]] || return 1
+  smb_runtime_mountpoint /run/samba/winbindd
+  smb_bind_private "$SMB_ROOT/samba/winbindd" /run/samba/winbindd
+}
+
+smb_ctdb_health() {
+  local pnn status line normal=false count=0
+  pnn=$("$SNAP/bin/ctdb" -t 5 pnn 2>/dev/null) || return 1
+  [[ "$pnn" == "$SMB_PNN" ]] || return 1
+  "$SNAP/bin/ctdb" -t 5 nodestatus "$SMB_PNN" >/dev/null 2>&1 || return 1
+  status=$("$SNAP/bin/ctdb" -t 5 status 2>/dev/null) || return 1
+  while IFS= read -r line; do
+    [[ "$line" != 'Recovery mode:NORMAL (0)' ]] || normal=true
+    if [[ "$line" =~ ^Number\ of\ nodes:([0-9]+)(\ \(including\ [0-9]+\ deleted\ nodes\))?$ ]]; then
+      ((10#${BASH_REMATCH[1]} > 0 && 10#${BASH_REMATCH[1]} <= 65536)) || return 1
+      count=$((count + 1))
+    fi
+  done <<< "$status"
+  [[ "$normal" == true && "$count" == 1 ]]
+}
+
+smb_assert_prepared() {
+  local role="$1" attempt requirements rc database key extra value inventory
+  for ((attempt=0; attempt<90; attempt++)); do
+    smb_check_start_intent || return 1
+    # Go alone selects prepared/initialization policy and required records.
+    if requirements=$("$SNAP/bin/python3" -B - "$role" "$SMB_ROOT" <<'PY'
+import json
+from pathlib import Path
+import sys
+role, root = sys.argv[1], Path(sys.argv[2])
+if role not in ("smbd", "winbindd"):
+    sys.exit(1)
+context = json.loads((root / "config/context.json").read_text())
+checks = context.get("startup", {}).get(role, {})
+if checks.get("prepared") is not True:
+    sys.exit(75)
+records = checks.get("records", [])
+if not isinstance(records, list) or len(records) > 16:
+    sys.exit(1)
+lines = []
+for record in records:
+    database, key = record.get("database"), record.get("key")
+    if database not in ("secrets.tdb", "autorid.tdb") or not isinstance(key, str) or not key or any(c.isspace() or c == "\0" for c in key):
+        sys.exit(1)
+    lines.append(database + "\t" + key)
+print("\n".join(lines), end="")
+PY
+    ); then
+      break
+    else
+      rc=$?
+      [[ "$rc" == 75 ]] || return "$rc"
+    fi
+    sleep 1
+  done
+  [[ "$attempt" -lt 90 ]] || return 1
+  if [[ -n "$requirements" ]]; then
+    # pfetch may attach/create a database. Inventory first and never interpret
+    # absence as permission to initialize or repair retained identity state.
+    inventory=$("$SNAP/bin/ctdb" -t 5 getdbmap 2>/dev/null) || return 1
+    while IFS=$'\t' read -r database key extra; do
+      [[ -z "$extra" && "$inventory" == *"name:$database "* ]] || return 1
+      value=$("$SNAP/bin/ctdb" -t 5 pfetch "$database" "$key" 2>/dev/null) || return 1
+      [[ -n "${value//[$' \t\r\n']/}" ]] || return 1
+      unset value
+    done <<< "$requirements"
+  fi
+  smb_check_start_intent
+}
+
+smb_private_log() {
+  "$SNAP/bin/python3" -B - "$1" <<'PY'
+import os
+import stat
+import sys
+path = sys.argv[1]
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+info = os.fstat(fd)
+os.close(fd)
+if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+    sys.exit("Unsafe private SMB diagnostics")
+PY
+}

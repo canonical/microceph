@@ -23,20 +23,21 @@ func prepareSMBADRuntime(ctx context.Context, s interfaces.StateInterface, root,
 	if state.JoinOwner != "" && !state.Joined {
 		return fmt.Errorf("AD initial join outcome is uncertain; retain ownership/state and reconcile in manual maintenance, never retry on timeout")
 	}
-	// snap start confirms process launch, not socket readiness. Wait only for the
-	// fixed confined listener before consuming the sole initial attempt.
+	// The snap-started wrapper prepares safe mountpoint stubs before waiting
+	// for Go-owned startup data. Confirm the context before consuming the sole
+	// join attempt; there is no helper socket or live daemon handshake.
 	waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		err = smbADControlFunc(waitCtx, root, "probe")
+		err = smbADProbeFunc(waitCtx, root)
 		if err == nil {
 			break
 		}
 		select {
 		case <-waitCtx.Done():
-			return fmt.Errorf("AD runtime socket is unavailable")
+			return fmt.Errorf("AD runtime context is unavailable")
 		case <-ticker.C:
 		}
 	}
@@ -49,7 +50,7 @@ func prepareSMBADRuntime(ctx context.Context, s interfaces.StateInterface, root,
 		}
 		// Every failure from this point retains the consumed SQL attempt. A lost
 		// response is not evidence that AD rejected or did not change the account.
-		err = smbADControlFunc(ctx, root, "join")
+		err = smbADJoinFunc(ctx, root)
 		if err != nil {
 			return fmt.Errorf("AD initial join is not confirmed; manual maintenance required, no automatic retry")
 		}
@@ -78,5 +79,5 @@ func prepareSMBADRuntime(ctx context.Context, s interfaces.StateInterface, root,
 			return fmt.Errorf("initial AD member has not completed trust/idmap readiness; retain state and retry after initialization")
 		}
 	}
-	return smbADControlFunc(ctx, root, "start")
+	return smbADPrepareFunc(ctx, root, !state.Initialized)
 }

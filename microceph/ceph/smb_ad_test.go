@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/sys/unix"
 
 	"github.com/canonical/microceph/microceph/common"
 )
@@ -97,20 +96,24 @@ func TestSMBADPrivateRoleBindingsRemainFailClosed(t *testing.T) {
 	plan, err := projectSMBNative(c, "/native/alpha", nativeTestBinding(t))
 	require.NoError(t, err)
 	for _, role := range []string{"smbd", "winbindd"} {
-		rolePlan, err := smbNativeRolePlan(role, "/native/alpha", plan.Launch, "/snap")
-		require.NoError(t, err)
-		require.Contains(t, rolePlan.Mounts, smbNativeMount{Source: "/native/alpha/samba/winbindd", Target: "/run/samba/winbindd", Flags: unix.MS_BIND})
-		require.Contains(t, rolePlan.Mounts, smbNativeMount{Source: "/native/alpha/ctdb/run", Target: "/run/ctdb", Flags: unix.MS_BIND})
-		require.NotContains(t, rolePlan.Env, "SELFTEST_WINBINDD_SOCKET_DIR")
+		require.False(t, plan.Launch.Startup[role].Prepared)
+		require.Len(t, plan.Launch.Startup[role].Records, 3)
 	}
+	startup, err := os.ReadFile("../../snapcraft/commands/smb-startup")
+	require.NoError(t, err)
+	require.Contains(t, string(startup), `smb_bind_private "$SMB_ROOT/samba/winbindd" /run/samba/winbindd`)
+	require.Contains(t, string(startup), `smb_bind_private "$SMB_ROOT/ctdb/run" /run/ctdb`)
+	require.NotContains(t, string(startup), "SELFTEST_WINBINDD_SOCKET_DIR")
 	base := t.TempDir()
 	root := filepath.Join(base, "alpha")
 	require.NoError(t, smbAtomicWrite(filepath.Join(base, "owner.json"), []byte("alpha")))
 	raw, err := json.Marshal(plan.Launch)
 	require.NoError(t, err)
 	require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/context.json"), raw))
-	err = launchSMBNative(context.Background(), root, "smbd", smbRuntimeOps{enter: func(smbRolePlan) error { return nil }, ctdbReady: func(context.Context, string) error { return nil }, member: func(context.Context, string, bool) error { return fmt.Errorf("AD trust/idmap state lost") }, exec: func(smbRolePlan) error { t.Fatal("missing trust must not exec"); return nil }})
-	require.ErrorContains(t, err, "AD trust/idmap state lost")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = prepareSMBADStart(ctx, root, false)
+	require.ErrorContains(t, err, "AD trust/idmap database unavailable")
 	require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/candidate.json"), plan.Files["config/candidate.json"]))
 	err = prepareSMBAccounts(context.Background(), root)
 	require.ErrorContains(t, err, "AD member must not import local SAM accounts")
@@ -259,7 +262,9 @@ func TestSMBADLogicalAndRuntimeModeCannotDisagree(t *testing.T) {
 		require.ErrorContains(t, err, "logical authentication does not match generated spec")
 	})
 	t.Run("runtime", func(t *testing.T) {
-		_, err := smbNativeRolePlan("smbd", "/native/alpha", smbLaunch{AD: &smbADMember{}}, "/snap")
+		root := filepath.Join(t.TempDir(), "alpha")
+		require.NoError(t, smbAtomicWrite(filepath.Join(root, "config/context.json"), []byte(`{"ad_member":{}}`)))
+		_, err := loadSMBLaunch(root)
 		require.ErrorContains(t, err, "AD member requires clustered runtime context")
 	})
 }
@@ -278,7 +283,8 @@ func TestSMBADIncompleteReadinessCannotPublishLegacySmbdHealth(t *testing.T) {
 	require.Empty(t, recorder.name)
 	diagnostic, err := os.ReadFile(filepath.Join(root, "diagnostics/native-error"))
 	require.NoError(t, err)
-	require.Contains(t, string(diagnostic), "native-ad.socket")
+	require.Contains(t, string(diagnostic), "owner.json")
+	require.NotContains(t, string(diagnostic), "native-ad.socket")
 }
 
 func TestSMBADMemberRejectsOverlongServiceFQDN(t *testing.T) {

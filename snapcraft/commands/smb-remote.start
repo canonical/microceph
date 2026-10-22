@@ -1,4 +1,0 @@
-#!/bin/sh
-# Fixed native role; microcephd owns all service-control operations.
-set -eu
-exec "$SNAP/bin/microceph-smb-runtime" smb-remote "$SNAP_COMMON/smb"

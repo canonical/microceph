@@ -502,6 +502,7 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 			return plan, err
 		}
 	}
+	plan.Launch.Startup = smbDefaultStartup(plan.Launch)
 	plan.Files["config/context.json"], err = json.Marshal(plan.Launch)
 	if err != nil {
 		return plan, err
@@ -822,6 +823,19 @@ func publishSMBNative(ctx context.Context, root string, configOnly bool) (retErr
 	if err != nil {
 		return err
 	}
+	sameConfiguration := false
+	membershipChanged := false
+	if configOnly {
+		current, readErr := os.ReadFile(filepath.Join(root, "config/candidate.json"))
+		var previous, nextCandidate smbCandidate
+		previousErr := readErr
+		if readErr == nil {
+			previousErr = json.Unmarshal(current, &previous)
+		}
+		nextErr := json.Unmarshal(files["config/candidate.json"], &nextCandidate)
+		sameConfiguration = previousErr == nil && nextErr == nil && previous.configurationFingerprint() == nextCandidate.configurationFingerprint()
+		membershipChanged = nextErr == nil && nextCandidate.CTDB != nil && (previousErr != nil || !reflect.DeepEqual(previous.CTDB, nextCandidate.CTDB))
+	}
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -838,10 +852,21 @@ func publishSMBNative(ctx context.Context, root string, configOnly bool) (retErr
 				return err
 			}
 		}
-		err = writeSMBNativeFile(filepath.Join(root, name), files[name])
+		if name == "config/context.json" {
+			err = publishSMBContext(root, files[name], sameConfiguration)
+		} else {
+			err = writeSMBNativeFile(filepath.Join(root, name), files[name])
+		}
 		if err != nil {
 			return err
 		}
+	}
+	err = publishSMBCTDBLayout(root, configOnly)
+	if err != nil {
+		return err
+	}
+	if membershipChanged {
+		notifySMBMembershipChangeFunc()
 	}
 	return nil
 }

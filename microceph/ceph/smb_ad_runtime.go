@@ -7,9 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -19,189 +17,77 @@ import (
 
 const smbADJoinTimeout = 60 * time.Second
 
-// Only the fixed Winbind app enters these namespaces. The daemon consumes a
-// committed SQL attempt before invoking join; ordinary app startup never joins.
-var smbADControlFunc = smbADControl
+var smbADProbeFunc = probeSMBADRuntime
+var smbADJoinFunc = runSMBADJoin
+var smbADPrepareFunc = prepareSMBADStart
+var smbADReadyFunc = readySMBADRuntime
 
-func smbADControl(ctx context.Context, root, operation string) error {
-	code, ok := map[string]byte{"join": 'J', "ready": 'R', "start": 'S', "probe": 'P'}[operation]
-	if !ok {
-		return fmt.Errorf("unsupported AD operation")
-	}
-	budget := 15 * time.Second
-	if operation == "join" {
-		budget = smbADJoinTimeout + 5*time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(root, "samba/run/native-ad.socket"))
+func probeSMBADRuntime(ctx context.Context, root string) error {
+	err := checkSMBCTDBOwner(root)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer stop()
-	deadline, _ := ctx.Deadline()
-	err = conn.SetDeadline(deadline)
-	if err != nil {
-		return err
-	}
-	_, err = conn.Write([]byte{code})
-	if err != nil {
-		return err
-	}
-	var response [1]byte
-	_, err = io.ReadFull(conn, response[:])
-	if err != nil {
-		return err
-	}
-	if response[0] != '1' {
-		return fmt.Errorf("AD member operation is not confirmed; inspect private diagnostics; never automatically retry joining")
-	}
-	return ctx.Err()
-}
-
-// Requests are fixed bytes on a root-only socket; no paths, credentials or
-// arbitrary commands cross it. Losing the daemon cancels an in-flight join.
-func serveSMBADControls(ctx context.Context, listener *net.UnixListener, operation func(context.Context, byte) error) error {
-	stop := context.AfterFunc(ctx, func() { _ = listener.Close() })
-	defer stop()
-	for ctx.Err() == nil {
-		conn, err := listener.AcceptUnix()
+	// The independently snap-started wrapper creates only safe empty stubs.
+	// Observe them before consuming SQL authorization; do not create them from
+	// the daemon or mistake host Winbind for the owner-local service.
+	for _, path := range []string{"/run/samba", "/run/samba/winbindd"} {
+		info, err := os.Lstat(path)
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || stat.Uid != uint32(os.Geteuid()) || info.Mode().Perm()&0022 != 0 {
+			return fmt.Errorf("unsafe Winbind runtime mountpoint")
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if path != "/run/samba" || entry.Name() != "winbindd" {
+				return fmt.Errorf("Winbind runtime mountpoint contains unrelated state")
 			}
-			return err
 		}
-		closeOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
-		err = conn.SetDeadline(time.Now().Add(smbADJoinTimeout + time.Second))
-		var request [1]byte
-		if err == nil {
-			_, err = io.ReadFull(conn, request[:])
-		}
-		if err != nil {
-			_ = conn.Close()
-			closeOnCancel()
-			continue
-		}
-		requestCtx, cancel := context.WithTimeout(ctx, smbADJoinTimeout)
-		disconnected := make(chan struct{})
-		go func() { var extra [1]byte; _, _ = conn.Read(extra[:]); cancel(); close(disconnected) }()
-		err = operation(requestCtx, request[0])
-		response := byte('0')
-		if err == nil && requestCtx.Err() == nil {
-			response = '1'
-		}
-		_, _ = conn.Write([]byte{response})
-		_ = conn.Close()
-		closeOnCancel()
-		cancel()
-		<-disconnected
 	}
-	return nil
+	return checkSMBCTDBHealth(ctx, root, false)
 }
 
-func serveSMBADRuntime(ctx context.Context, root string, plan smbRolePlan) (retErr error) {
-	parentCtx := ctx
-	listener, guard, err := openSMBPrivateListener(filepath.Join(root, "samba/run/native-ad.socket"))
+func prepareSMBADStart(ctx context.Context, root string, initial bool) error {
+	err := checkSMBADMember(ctx, root, initial)
 	if err != nil {
 		return err
 	}
-	defer guard.Close()
-	defer listener.Close()
-	ctx, cancel := context.WithCancel(ctx)
+	_, err = os.Stat(filepath.Join(root, "ad-initializing"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// This publishes prepared data, not a request to a helper supervisor.
+	// The snap-started wrapper can now assert it and exec native Winbind.
+	return setSMBPrepared(root, "winbindd", initial && err == nil)
+}
+
+func readySMBADRuntime(ctx context.Context, root string) error {
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-	var child *exec.Cmd
-	var exited chan error
-	start := func(ctx context.Context) error {
-		if child != nil {
-			return nil
-		}
-		err := checkSMBADMember(ctx, root, true)
-		if err != nil {
-			return err
-		}
-		// The long-lived child must follow the app lifetime, not this request.
-		child = exec.CommandContext(context.WithoutCancel(ctx), plan.Args[0], plan.Args[1:]...)
-		child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
-		// Samba's own logging is private. Never inherit the journal for diagnostics.
-		log, err := os.OpenFile(filepath.Join(root, "diagnostics/winbindd.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-		if err != nil {
-			child = nil
-			return err
-		}
-		child.Stdout = log
-		child.Stderr = log
-		err = child.Start()
-		_ = log.Close()
-		if err != nil {
-			child = nil
-			return err
-		}
-		exited = make(chan error, 1)
-		go func(cmd *exec.Cmd) { exited <- cmd.Wait(); cancel() }(child)
+	err := checkSMBCTDBHealth(ctx, root, false)
+	if err != nil {
+		return err
+	}
+	err = checkSMBADReady(ctx, root)
+	if err != nil {
+		return err
+	}
+	// Tighten durable independent-startup requirements before acknowledging
+	// readiness or removing the one-time initialization permission.
+	err = advanceSMBADStartup(root, true)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(filepath.Join(root, "ad-initializing"))
+	if os.IsNotExist(err) {
 		return nil
 	}
-	defer func() {
-		if child != nil {
-			select {
-			case <-exited:
-			default:
-				_ = syscall.Kill(-child.Process.Pid, syscall.SIGKILL)
-				<-exited
-			}
-			if parentCtx.Err() == nil {
-				retErr = fmt.Errorf("Winbind child exited; member service stopped")
-			}
-		}
-	}()
-	// Reboots/restarts use retained trust only. Missing state waits for explicit
-	// SQL-authorized initialization; it can never cause an automatic join.
-	_ = start(ctx)
-	attempted := false
-	return serveSMBADControls(ctx, listener, func(requestCtx context.Context, op byte) (err error) {
-		defer func() {
-			if err != nil {
-				_ = writeSMBNativeFile(filepath.Join(root, "diagnostics/ad-member-error"), []byte(err.Error()+"\n"))
-			}
-		}()
-		err = checkSMBStartIntent(root)
-		if err != nil {
-			return err
-		}
-		err = checkSMBCTDBHealth(requestCtx, root, false)
-		if err != nil {
-			return err
-		}
-		switch op {
-		case 'P':
-			return nil
-		case 'J':
-			if attempted || child != nil {
-				return fmt.Errorf("AD join already attempted or member running")
-			}
-			attempted = true
-			return runSMBADJoin(requestCtx, root)
-		case 'S':
-			return start(requestCtx)
-		case 'R':
-			if child == nil {
-				return fmt.Errorf("Winbind is not started")
-			}
-			err = checkSMBADReady(requestCtx, root)
-			if err != nil {
-				return err
-			}
-			err = os.Remove(filepath.Join(root, "ad-initializing"))
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		default:
-			return fmt.Errorf("unsupported AD member operation")
-		}
-	})
+	return err
 }
 
 type smbADOutput struct{ bytes.Buffer }
@@ -218,25 +104,19 @@ func (b *smbADOutput) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// Bound the whole child process group, including upstream Joiner's net child.
-// Neither argv nor public errors contain credentials/output. Failed output is
-// bounded and retained only under the private cluster diagnostics directory.
+// Bound the whole transient group, including Joiner's net child, without
+// binding the lifetime of native Winbind to this daemon or request.
 func runSMBADProcess(ctx context.Context, root string, args []string, input io.Reader) ([]byte, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("missing AD command")
-	}
 	err := ctx.Err()
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = time.Second
+	cmd, err := newSMBPrivateCommandFunc(ctx, root, args)
+	if err != nil {
+		return nil, err
+	}
 	var out smbADOutput
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	cmd.Stdin = input
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = &out, &out, input
 	err = cmd.Run()
 	if err == nil {
 		err = ctx.Err()
@@ -249,16 +129,16 @@ func runSMBADProcess(ctx context.Context, root string, args []string, input io.R
 }
 
 func smbADCTDB(ctx context.Context, root string, args ...string) ([]byte, error) {
-	// The pinned CLI has no socket option. The Winbind namespace bind-mounts
-	// this cluster's private run directory at the default /run/ctdb path.
 	argv := []string{filepath.Join(os.Getenv("SNAP"), "bin/ctdb"), "-t", "5"}
 	return runSMBADProcess(ctx, root, append(argv, args...), nil)
 }
 
 func smbADRecord(ctx context.Context, root, db, key string) error {
+	inventory, err := smbADCTDB(ctx, root, "getdbmap")
+	if err != nil || !strings.Contains(string(inventory), "name:"+db+" ") {
+		return fmt.Errorf("AD trust/idmap database unavailable; refusing attachment or reconstruction")
+	}
 	if db == "autorid.tdb" {
-		// Samba terminates this key with NUL; CTDB decodes only 0x-prefixed
-		// hex, not backslash escapes. Never put a literal NUL in argv.
 		key = "0x" + hex.EncodeToString([]byte(key+"\x00"))
 	}
 	raw, err := smbADCTDB(ctx, root, "pfetch", db, key)
@@ -285,6 +165,9 @@ func checkSMBADMember(ctx context.Context, root string, initial bool) error {
 			return err
 		}
 	}
+	if launch.Startup["winbindd"].Initialized {
+		initial = false
+	}
 	if initial {
 		raw, readErr := os.ReadFile(filepath.Join(root, "ad-initializing"))
 		if readErr == nil {
@@ -292,7 +175,7 @@ func checkSMBADMember(ctx context.Context, root string, initial bool) error {
 			if !bytes.Equal(raw, expected) {
 				return fmt.Errorf("AD initialization identity mismatch")
 			}
-			return nil // First mapping initialization is allowed only before any serving.
+			return nil
 		}
 		if !os.IsNotExist(readErr) {
 			return readErr
@@ -311,7 +194,6 @@ func runSMBADJoin(ctx context.Context, root string) (retErr error) {
 		if err != nil {
 			return
 		}
-		// Retain the first initial-attempt failure independently of health probes.
 		file, err := os.OpenFile(filepath.Join(directory, "ad-initial-join-error"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return
@@ -320,11 +202,9 @@ func runSMBADJoin(ctx context.Context, root string) (retErr error) {
 		detail, _ := os.ReadFile(filepath.Join(directory, "ad-process-error"))
 		_, _ = file.Write(append([]byte(retErr.Error()+"\n"), detail...))
 	}()
-
 	ctx, cancel := context.WithTimeout(ctx, smbADJoinTimeout)
 	defer cancel()
-	// Do not reinterpret unexpected preexisting identity as a new installation.
-	// getdbmap is non-creating; pfetch/catdb cannot be used to infer safe absence.
+	// getdbmap is non-creating. Never use pfetch to infer safe absence.
 	raw, err := smbADCTDB(ctx, root, "getdbmap")
 	if err != nil {
 		return err
@@ -343,7 +223,6 @@ func runSMBADJoin(ctx context.Context, root string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("invalid private AD candidate")
 	}
-	// Reuse the complete pinned-binding policy checks before the external effect.
 	document, err := smbCombinedDocument(candidate)
 	if err != nil {
 		return err
@@ -381,7 +260,6 @@ func runSMBADJoin(ctx context.Context, root string) (retErr error) {
 	if err != nil {
 		return err
 	}
-	// Stdin goes to Python; pinned Joiner sends only the password to net stdin.
 	_, err = runSMBADProcess(ctx, root, []string{filepath.Join(os.Getenv("SNAP"), "bin/python3"), "-B", filepath.Join(os.Getenv("SNAP"), "smb/native.py"), "join", "-"}, bytes.NewReader(raw))
 	if err != nil {
 		return err
@@ -422,13 +300,13 @@ func checkSMBADReady(ctx context.Context, root string) error {
 	if launch.AD == nil {
 		return fmt.Errorf("AD member context required")
 	}
-	// Check retained allocations before any lookup could create fresh ranges.
-	// The initial actor's permission expires on its first successful readiness.
+	if !launch.Startup["winbindd"].Prepared {
+		return fmt.Errorf("AD runtime is not prepared")
+	}
 	err = checkSMBADMember(ctx, root, true)
 	if err != nil {
 		return err
 	}
-	// This is a live trust test, not proof of any SMB/Kerberos client protocol.
 	wbinfo := func(args ...string) ([]byte, error) {
 		return runSMBADProcess(ctx, root, append([]string{filepath.Join(os.Getenv("SNAP"), "bin/wbinfo")}, args...), nil)
 	}
@@ -448,7 +326,10 @@ func checkSMBADReady(ctx context.Context, root string) error {
 	if len(sid) != 2 {
 		return fmt.Errorf("Winbind did not resolve the member domain SID")
 	}
-	// RID 513 is the domain's primary users group, independent of its local name.
+	err = advanceSMBADStartup(root, false)
+	if err != nil {
+		return err
+	}
 	raw, err = wbinfo("--sid-to-gid=" + string(sid[1]) + "-513")
 	if err != nil {
 		return err

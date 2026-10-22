@@ -14,29 +14,64 @@ class PackagingTests(unittest.TestCase):
     def test_fixed_disabled_apps_and_narrow_permissions(self):
         recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
         self.assertIn("snapd2.78", recipe["assumes"])
-        for role in ("smbd", "ctdbd", "ctdb-nodes", "winbindd", "cephfs-proxy", "smb-remote", "smbmetrics"):
+        programs = {"smbd": "smbd", "ctdbd": "ctdbd", "winbindd": "winbindd",
+                    "cephfs-proxy": "libcephfsd", "smbmetrics": "smbmetrics"}
+        for role, native in programs.items():
             app = recipe["apps"][role]
             self.assertEqual(app["install-mode"], "disable")
             wrapper = ROOT / "snapcraft" / app["command"]
             self.assertTrue(wrapper.exists())
-            self.assertIn(f'exec "$SNAP/bin/microceph-smb-runtime" {role} "$SNAP_COMMON/smb"', wrapper.read_text())
+            self.assertIn(f'exec "$SNAP/bin/{native}"', wrapper.read_text())
+            self.assertNotIn("microceph-smb-runtime", wrapper.read_text())
+            self.assertIn('"$SNAP/commands/smb-startup"', wrapper.read_text())
             self.assertNotIn("native.py", wrapper.read_text())
-            self.assertIn(role, wrapper.read_text())
             self.assertNotIn("snapctl", wrapper.read_text())
-            self.assertNotIn("smb-identity", app["plugs"] if role in ("ctdbd", "ctdb-nodes") else [])
+            self.assertNotIn("smb-identity", app["plugs"] if role == "ctdbd" else [])
+        for obsolete in ("ctdb-nodes", "smb-remote"):
+            self.assertNotIn(obsolete, recipe["apps"])
+            self.assertFalse((ROOT / "snapcraft/commands" / (obsolete + ".start")).exists())
         self.assertNotIn("firewall-control", recipe["plugs"])
         self.assertEqual(recipe["plugs"]["smb-identity"]["user-identity-switching"], True)
         self.assertIn("dirty worktree detected", recipe["parts"]["microceph"]["override-build"])
         part = recipe["parts"]["microceph"]
-        self.assertIn('./cmd/microceph-smb-runtime', part["override-build"])
-        self.assertIn('strip -s "${CRAFT_PART_INSTALL}/bin/microceph-smb-runtime"', part["override-build"])
-        self.assertIn("bin/microceph-smb-runtime", part["prime"])
-        self.assertIn("./cmd/microceph-smb-runtime", (ROOT / "microceph/Makefile").read_text())
+        self.assertNotIn('microceph-smb-runtime', part["override-build"])
+        self.assertEqual(part["prime"], ["bin/microceph", "bin/microcephd"])
+        self.assertNotIn("microceph-smb-runtime", (ROOT / "microceph/Makefile").read_text())
+        self.assertEqual({path.name for path in (ROOT / "microceph/cmd").iterdir() if path.is_dir()},
+                         {"microceph", "microcephd"})
         self.assertNotIn("microceph-smb-runtime", recipe["apps"])
+
+    def test_native_startup_tools_are_primed_without_blanket_daemon_permissions(self):
+        recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
+        part = recipe["parts"]["smb-startup-tools"]
+        self.assertEqual(set(part["stage-packages"]), {"mount", "util-linux"})
+        self.assertTrue({"bin/mount", "bin/unshare", "lib/**"}.issubset(part["prime"]))
+        self.assertEqual(part["organize"]["usr/bin/"], "bin/")
+        self.assertEqual(part["permissions"], [{"path": "bin/mount", "mode": "0755"},
+                                               {"path": "bin/unshare", "mode": "0755"}])
+        self.assertIn("smb-startup-tools", recipe["parts"]["strip"]["after"])
+        self.assertNotIn("network-control", recipe["apps"]["daemon"]["plugs"])
+        self.assertNotIn("smb-mounts", recipe["apps"]["daemon"]["plugs"])
+        for grant in ("smb-identity", "process-control", "ctdb-run", "winbind-run"):
+            self.assertNotIn(grant, recipe["apps"]["daemon"]["plugs"])
+        self.assertTrue({"smb-control-mounts", "smb-control-access", "ctdb-socket"}.issubset(
+            recipe["apps"]["daemon"]["plugs"]))
+        self.assertEqual(recipe["plugs"]["smb-control-access"], {
+            "interface": "system-files", "read": ["/run/ctdb", "/run/samba"],
+            "write": ["/run/samba/winbindd/pipe"],
+        })
+        self.assertEqual(recipe["plugs"]["smb-control-mounts"]["mount"],
+                         [rule for rule in recipe["plugs"]["smb-mounts"]["mount"]
+                          if rule["where"] in ("/etc/passwd", "/etc/group", "/etc/nsswitch.conf")]
+                         + [rule for rule in recipe["plugs"]["smb-mounts"]["mount"]
+                            if rule["where"] not in ("/etc/passwd", "/etc/group", "/etc/nsswitch.conf")])
+        for role in ("cephfs-proxy", "smbmetrics"):
+            self.assertIn("network-control", recipe["apps"][role]["plugs"])
+            self.assertIn("smb-mounts", recipe["apps"][role]["plugs"])
 
     def test_smb_boot_retries_do_not_exhaust_the_default_start_limit(self):
         recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
-        for role in ("smbd", "winbindd"):
+        for role in ("smbd", "winbindd", "ctdbd"):
             self.assertEqual(recipe["apps"][role].get("restart-delay"), "10s")
         self.assertEqual(recipe["apps"]["smbd"].get("restart-condition", "on-failure"), "on-failure")
 
@@ -57,14 +92,14 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("/var/run/ctdb", recipe["layout"])
         self.assertEqual(recipe["plugs"]["ctdb-run"], {"interface": "system-files", "write": ["/run/ctdb"]})
         consumers = {name for name, app in recipe["apps"].items() if "ctdb-run" in app.get("plugs", [])}
-        self.assertEqual(consumers, {"ctdbd", "ctdb-nodes", "ctdb", "smbd", "winbindd"})
+        self.assertEqual(consumers, {"ctdbd", "ctdb", "smbd", "winbindd"})
         for name in consumers:
             self.assertIn("smb-mounts", recipe["apps"][name]["plugs"])
             self.assertIn("network-control", recipe["apps"][name]["plugs"])
         expected = {
             "/etc/resolv.conf": "config/resolv.conf", "/run/systemd/resolve/stub-resolv.conf": "config/resolv.conf",
             "/etc/passwd": "config/passwd", "/etc/group": "config/group", "/etc/nsswitch.conf": "config/nsswitch.conf",
-            "/etc/ctdb": "ctdb{,/}", "/run/ctdb": "ctdb/run{,/}", "/var/lib/ctdb": "ctdb{,/}",
+            "/run/ctdb": "ctdb/run{,/}",
             "/run/samba/winbindd": "samba/winbindd{,/}",
         }
         rules = recipe["plugs"]["smb-mounts"]["mount"]
@@ -80,10 +115,11 @@ class PackagingTests(unittest.TestCase):
         for name in ("functions", "notify.sh"):
             self.assertEqual(part["organize"]["etc/ctdb/" + name], "share/ctdb/" + name)
         self.assertEqual(recipe["layout"]["/usr/libexec/ctdb"]["symlink"], "$SNAP/libexec/ctdb")
-        for target in ("/etc/ctdb", "/var/lib/ctdb"):
-            self.assertEqual(recipe["layout"][target], {"type": "tmpfs"})
+        self.assertEqual(recipe["layout"]["/etc/ctdb"], {"bind": "$SNAP_COMMON/smb/.conf/ctdb"})
+        self.assertEqual(recipe["layout"]["/var/lib/ctdb"], {"type": "tmpfs"})
         control = (ROOT / "snapcraft/commands/ctdb.start").read_text()
-        self.assertIn('microceph-smb-runtime" ctdb-control', control)
+        self.assertIn('exec "$SNAP/bin/ctdb" -t 5 "$@"', control)
+        self.assertNotIn("microceph-smb-runtime", control)
 
     def test_ad_socket_binding_is_app_scoped_and_public_only(self):
         recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())

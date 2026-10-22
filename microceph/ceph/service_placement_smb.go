@@ -49,20 +49,6 @@ func (p *SMBServicePlacement) DbUpdate(ctx context.Context, s interfaces.StateIn
 func smbBase() string                 { return filepath.Join(os.Getenv("SNAP_COMMON"), "smb") }
 func smbRoot(clusterID string) string { return filepath.Join(smbBase(), clusterID) }
 
-func smbWaitInactive(role string) error {
-	out, err := common.ProcessExec.RunCommand("snapctl", "services", "microceph."+role)
-	if err != nil {
-		return err
-	}
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 3 && fields[0] == "microceph."+role && fields[2] == "inactive" {
-			return nil
-		}
-	}
-	return fmt.Errorf("SMB %s exit is unconfirmed", role)
-}
-
 func ensureSMBModule(ctx context.Context) error {
 	out, err := cephRunContext(ctx, "mgr", "module", "ls", "--format", "json")
 	if err != nil {
@@ -368,7 +354,7 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 		return err
 	}
 	if launch.AD != nil {
-		ops.prepare = func(ctx context.Context, role string) error {
+		ops.started = func(ctx context.Context, role string) error {
 			if role != "winbindd" {
 				return nil
 			}
@@ -383,6 +369,13 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 			})
 			if err != nil {
 				return err
+			}
+			return nil
+		}
+	} else {
+		ops.prepare = func(ctx context.Context, role string) error {
+			if role == "smbd" {
+				return prepareSMBAccounts(ctx, root)
 			}
 			return nil
 		}

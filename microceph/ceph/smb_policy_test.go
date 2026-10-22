@@ -629,7 +629,7 @@ func TestSMBADJoinRejectsReservedGlobalSharesBeforeEffect(t *testing.T) {
 			native, err := os.ReadFile("../../snapcraft/smb/native.py")
 			require.NoError(t, err)
 			require.NoError(t, writeSMBNativeFile(filepath.Join(snap, "smb/native.py"), native))
-			require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), []byte("#!/bin/sh\n[ \"$5\" = getdbmap ] || exit 7\necho 'Number of databases:0'\n"), 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/ctdb"), []byte("#!/bin/sh\n[ \"$3\" = getdbmap ] || exit 7\necho 'Number of databases:0'\n"), 0700))
 			require.NoError(t, os.WriteFile(filepath.Join(snap, "bin/net"), []byte("#!/bin/sh\ntouch \"$SNAP/join-attempted\"\nexit 1\n"), 0700))
 			err = runSMBADJoin(context.Background(), root)
 			_, statErr := os.Stat(filepath.Join(snap, "join-attempted"))

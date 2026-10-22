@@ -1,4 +1,22 @@
-#!/bin/sh
-# Fixed native role; microcephd owns all service-control operations.
+#!/bin/bash
 set -eu
-exec "$SNAP/bin/microceph-smb-runtime" smbd "$SNAP_COMMON/smb"
+# Only a private app child establishes mounts; the final exec is always native.
+# shellcheck disable=SC2016
+exec "$SNAP/bin/unshare" --mount --propagation slave -- /bin/bash -euc '
+  . "$SNAP/commands/smb-startup"
+  smb_load_context
+  SMB_CREATE_MOUNTPOINTS=1
+  smb_setup_nss
+  if [[ "$SMB_CLUSTERED" == 1 ]]; then
+    smb_setup_ctdb
+    smb_ctdb_health
+  fi
+  if [[ "$SMB_WORKGROUP" != - ]]; then
+    smb_setup_winbind
+  fi
+  smb_bind_custom_dns
+  smb_assert_prepared smbd
+  smb_check_start_intent
+  exec "$SNAP/bin/smbd" --foreground --no-process-group \
+    --configfile "$SMB_ROOT/config/smb.conf"
+'

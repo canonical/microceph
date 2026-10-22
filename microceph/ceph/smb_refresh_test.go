@@ -35,11 +35,9 @@ func TestSMBRefreshDoesNotProvision(t *testing.T) {
 						candidate, err := os.ReadFile(filepath.Join(root, "config/candidate.next.json"))
 						require.NoError(t, err)
 						require.NoError(t, os.WriteFile(filepath.Join(root, "config/candidate.json"), candidate, 0600))
-						context := `{"clustered":true,"proxy":false,"smb_port":445}`
-						if !clustered {
-							context = `{"clustered":false,"proxy":false,"smb_port":445}`
-						}
-						require.NoError(t, os.WriteFile(filepath.Join(root, "config/context.json"), []byte(context), 0600))
+						// Keep the real prepared startup fields from placement. Replacing
+						// them with a pre-cutover context would exercise upgrade instead
+						// of the unchanged-refresh branch this test is about.
 					}
 					var ownership string
 					require.NoError(t, r.db.QueryRow("SELECT config FROM service_groups").Scan(&ownership))
@@ -293,13 +291,8 @@ func TestSMBRefreshHealthFailureDoesNotReapply(t *testing.T) {
 			name += map[bool]string{true: "source-reverted", false: "health-recovered"}[revert]
 			t.Run(name, func(t *testing.T) {
 				runSMBStartup(t, "", clustered, os.Getenv("MICROCEPH_SMB_TEST_PYTHON"), func(state interfaces.StateInterface, r *smbStartupRunner) {
-					if r.python == "" {
-						launch := `{"clustered":false,"smb_port":445}`
-						if clustered {
-							launch = `{"clustered":true,"smb_port":445}`
-						}
-						require.NoError(t, smbAtomicWrite(filepath.Join(r.root, "config/context.json"), []byte(launch)))
-					}
+					// Preserve the placement's actual prepared context, including PNN
+					// and startup requirements; this is not an upgrade fixture.
 					// Enforce the same configuration-only SQL boundary on every tick.
 					_, err := r.db.Exec(`CREATE TRIGGER forbid_group_update BEFORE UPDATE ON service_groups BEGIN SELECT RAISE(ABORT,'forbidden owner reservation'); END;
      CREATE TRIGGER forbid_group_insert BEFORE INSERT ON service_groups BEGIN SELECT RAISE(ABORT,'forbidden group creation'); END;
@@ -333,7 +326,7 @@ func TestSMBRefreshHealthFailureDoesNotReapply(t *testing.T) {
 					require.NotEqual(t, before, controlFingerprint)
 					wantReady := []string{"ready smbd"}
 					if clustered {
-						wantReady = append([]string{"ready ctdbd", "ready ctdb-nodes"}, wantReady...)
+						wantReady = append([]string{"ready ctdbd"}, wantReady...)
 					}
 					for tick := 0; tick < 2; tick++ {
 						r.events = nil
@@ -459,10 +452,10 @@ func TestSMBJoinPeerPublicationBoundary(t *testing.T) {
 					}
 					return nil
 				}
-				err = startSMBApps(ctx, r.root, []string{"ctdbd", "ctdb-nodes", "smbd", "smbmetrics"}, smbSnapOps(r.root))
+				err = startSMBApps(ctx, r.root, []string{"ctdbd", "smbd", "smbmetrics"}, smbSnapOps(r.root))
 				if cancelStartup {
 					require.ErrorIs(t, err, context.Canceled)
-					require.NotContains(t, r.events, "ready ctdb-nodes", "cancelled health cannot admit the next readiness gate")
+					require.NotContains(t, r.events, "ready smbd", "cancelled CTDB health cannot admit the next readiness gate")
 					require.NotContains(t, r.events, "start smbd")
 					for _, role := range smbStopOrder {
 						require.Contains(t, r.events, "stop "+role)
@@ -479,6 +472,25 @@ func TestSMBJoinPeerPublicationBoundary(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestSMBRefreshReprojectsRevisionBoundResourcesOnce(t *testing.T) {
+	runSMBStartup(t, "", true, os.Getenv("MICROCEPH_SMB_TEST_PYTHON"), func(state interfaces.StateInterface, r *smbStartupRunner) {
+		path := filepath.Join(r.root, "ctdb/functions")
+		require.NoError(t, os.Remove(path))
+		require.NoError(t, os.Symlink("/snap/microceph/old/share/ctdb/functions", path))
+		r.refresh = true
+		r.events = nil
+		require.NoError(t, refreshSMBLocked(context.Background(), state))
+		require.Contains(t, r.events, "prepare-ctdb")
+		require.NotContains(t, r.events, "stop ctdbd")
+		require.NotContains(t, r.events, "restart ctdbd")
+		require.True(t, smbCTDBResourcesPrepared(r.root))
+		r.events = nil
+		require.NoError(t, refreshSMBLocked(context.Background(), state))
+		require.NotContains(t, r.events, "compile")
+		require.NotContains(t, r.events, "prepare-ctdb")
+	})
 }
 
 func TestSMBMembershipRefreshDoesNotRestartConsumers(t *testing.T) {
