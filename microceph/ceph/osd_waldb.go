@@ -13,12 +13,14 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/units"
+	"github.com/spf13/afero"
+	"golang.org/x/sys/unix"
+
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/dsl"
 	"github.com/canonical/microceph/microceph/logger"
-	"github.com/spf13/afero"
 )
 
 type plannedAuxPartition struct {
@@ -26,6 +28,8 @@ type plannedAuxPartition struct {
 	ParentPath     string
 	Partition      uint64
 	SizeBytes      uint64
+	PartUUID       string
+	InitializeGPT  bool
 	ResetBeforeUse bool
 }
 
@@ -40,16 +44,19 @@ type dslProvisionPlan struct {
 	Warnings []string
 }
 
+const generatedAuxManifestVersion = 1
+
 type generatedAuxDevice struct {
-	ParentPath    string `json:"parent_path"`
-	Partition     uint64 `json:"partition"`
-	PartitionPath string `json:"partition_path"`
-	Encrypted     bool   `json:"encrypted"`
+	ParentPath string `json:"parent_path"`
+	Partition  uint64 `json:"partition"`
+	PartUUID   string `json:"part_uuid,omitempty"`
+	Encrypted  bool   `json:"encrypted"`
 }
 
 type generatedAuxDevicesManifest struct {
-	WAL *generatedAuxDevice `json:"wal,omitempty"`
-	DB  *generatedAuxDevice `json:"db,omitempty"`
+	Version int                 `json:"version"`
+	WAL     *generatedAuxDevice `json:"wal,omitempty"`
+	DB      *generatedAuxDevice `json:"db,omitempty"`
 }
 
 type localAuxDiskUsage struct {
@@ -105,7 +112,7 @@ func plannedAuxPartitionSummary(plan *plannedAuxPartition) string {
 	action := "new"
 	if plan.ResetBeforeUse {
 		action = "reset"
-	} else if plan.Partition > 1 {
+	} else if !plan.InitializeGPT {
 		action = "append"
 	}
 
@@ -140,6 +147,7 @@ func planAuxiliaryPartitionsDetailed(osdPaths []string, carriers []api.Resources
 			remaining = disk.Size
 			partitionNo = 1
 			partitionCnt = 0
+			disk.Partitions = nil // A reset discards all previously occupied slots.
 		} else if disk.Size > used {
 			remaining = disk.Size - used
 		}
@@ -174,11 +182,26 @@ func planAuxiliaryPartitionsDetailed(osdPaths []string, carriers []api.Resources
 			Partition:      states[choice].PartitionNo,
 			SizeBytes:      sizeBytes,
 			ResetBeforeUse: states[choice].ResetBeforeUse,
+			// Slot 1 can be a hole before a live sibling; it does not imply an empty disk.
+			InitializeGPT: states[choice].PartitionCnt == 0,
 		}
 		logger.Debugf("Planned %s partition for OSD %s: %s", strings.ToUpper(kind), osdPaths[i], plannedAuxPartitionSummary(out[i]))
 		states[choice].RemainingSize -= sizeBytes
 		states[choice].PartitionCnt++
 		states[choice].PartitionNo++
+		for {
+			occupied := false
+			for _, part := range states[choice].Disk.Partitions {
+				if part.Partition == states[choice].PartitionNo {
+					occupied = true
+					break
+				}
+			}
+			if !occupied {
+				break
+			}
+			states[choice].PartitionNo++
+		}
 		states[choice].ResetBeforeUse = false
 	}
 
@@ -341,7 +364,7 @@ func partitionSizeMiB(sizeBytes uint64) uint64 {
 }
 
 func (m *OSDManager) initializeGPT(parentPath string) error {
-	cmd := fmt.Sprintf("printf 'label: gpt\n' | sfdisk %q", parentPath)
+	cmd := fmt.Sprintf("printf 'label: gpt\n' | sfdisk --lock=no %q", parentPath)
 	_, err := m.runner.RunCommand("sh", "-c", cmd)
 	if err != nil {
 		return fmt.Errorf("failed to initialize GPT on %s: %w", parentPath, err)
@@ -349,13 +372,11 @@ func (m *OSDManager) initializeGPT(parentPath string) error {
 	return nil
 }
 
-func (m *OSDManager) createPartition(parentPath string, sizeBytes uint64) error {
-	sizeMiB := partitionSizeMiB(sizeBytes)
-	// Appending a new partition to a carrier that already has an in-use WAL/DB
-	// partition is an expected DSL workflow. sfdisk refuses that by default, so
-	// bypass its in-use preflight and let partx refresh the kernel view
-	// afterwards.
-	cmd := fmt.Sprintf("printf ',+%dMiB\n' | sfdisk --append --force --no-reread %q", sizeMiB, parentPath)
+func (m *OSDManager) createPartition(parentPath string, sectors uint64) error {
+	// A relative MiB size can be silently shrunk to fit. An exact sector count
+	// lets sfdisk choose a suitable free extent (including holes) or fail.
+	// The caller holds flock, so sfdisk must not try to acquire another lock.
+	cmd := fmt.Sprintf("printf ',%d\n' | sfdisk --lock=no --append --force --no-reread --no-tell-kernel %q", sectors, parentPath)
 	_, err := m.runner.RunCommand("sh", "-c", cmd)
 	if err != nil {
 		return fmt.Errorf("failed to create partition on %s: %w", parentPath, err)
@@ -363,19 +384,12 @@ func (m *OSDManager) createPartition(parentPath string, sizeBytes uint64) error 
 	return nil
 }
 
-func (m *OSDManager) refreshPartitionTable(parentPath string) {
-	_, err := m.runner.RunCommand("partx", "-u", parentPath)
-	if err == nil {
-		return
-	}
-	_, _ = m.runner.RunCommand("blockdev", "--rereadpt", parentPath)
-}
-
 func partitionPathFromParentPath(parentPath string, partition uint64) string {
 	if strings.Contains(parentPath, "/dev/disk/by-id/") || strings.Contains(parentPath, "/dev/disk/by-path/") {
 		return fmt.Sprintf("%s-part%d", parentPath, partition)
 	}
-	if strings.Contains(parentPath, "nvme") {
+	// Numeric kernel disk names (NVMe, loop, mmcblk) need a 'p' separator.
+	if len(parentPath) > 0 && parentPath[len(parentPath)-1] >= '0' && parentPath[len(parentPath)-1] <= '9' {
 		return fmt.Sprintf("%sp%d", parentPath, partition)
 	}
 	return fmt.Sprintf("%s%d", parentPath, partition)
@@ -493,15 +507,23 @@ func (m *OSDManager) writeGeneratedAuxManifest(osdDataPath string, manifest *gen
 		return nil
 	}
 
+	manifest.Version = generatedAuxManifestVersion
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal generated aux manifest: %w", err)
 	}
 
 	manifestPath := generatedAuxManifestPath(osdDataPath)
-	err = afero.WriteFile(m.fs, manifestPath, data, 0600)
+	// A failed rewrite must leave the remaining cleanup entries readable.
+	tmpPath := manifestPath + ".tmp"
+	defer func() { _ = m.fs.Remove(tmpPath) }()
+	err = afero.WriteFile(m.fs, tmpPath, data, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to write generated aux manifest: %w", err)
+	}
+	err = m.fs.Rename(tmpPath, manifestPath)
+	if err != nil {
+		return fmt.Errorf("failed to replace generated aux manifest: %w", err)
 	}
 
 	logger.Infof("Persisted generated auxiliary-device manifest at %s", manifestPath)
@@ -535,8 +557,119 @@ func (m *OSDManager) readGeneratedAuxManifest(osdDataPath string) (*generatedAux
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse generated aux manifest: %w", err)
 	}
+	if manifest.Version != 0 && manifest.Version != generatedAuxManifestVersion {
+		return nil, fmt.Errorf("unsupported generated aux manifest version %d", manifest.Version)
+	}
 	logger.Debugf("Loaded generated auxiliary-device manifest from %s", manifestPath)
 	return &manifest, nil
+}
+
+// migrateGeneratedAuxManifest identifies legacy partitions while their OSD
+// device links still exist, before removal can discard those links. A path or
+// partition number alone does not establish ownership after slot reuse.
+func (m *OSDManager) migrateGeneratedAuxManifest(osdDataPath string) error {
+	manifest, err := m.readGeneratedAuxManifest(osdDataPath)
+	if err != nil || manifest == nil {
+		return err
+	}
+
+	changed := false
+	for _, item := range []struct {
+		kind  string
+		entry *generatedAuxDevice
+	}{{"wal", manifest.WAL}, {"db", manifest.DB}} {
+		if item.entry == nil || item.entry.PartUUID != "" {
+			continue
+		}
+		_, err := m.fs.Stat(item.entry.ParentPath)
+		if os.IsNotExist(err) {
+			// Cleanup treats a missing carrier as gone, even without a UUID.
+			continue
+		}
+		if err != nil {
+			return err
+		}
+
+		err = m.lockCarrierFunc(item.entry.ParentPath, func(parentPath string) error {
+			table, err := m.readAuxPartitionTable(parentPath)
+			if err != nil {
+				return err
+			}
+			part := table.partition(parentPath, item.entry.Partition)
+			if part == nil {
+				// Nothing remains on disk to identify. Keep the entry without a
+				// UUID so cleanup can recheck absence and remove stale kernel state.
+				return nil
+			}
+			if part.UUID == "" {
+				return fmt.Errorf("partition %d on %s has no GPT identity", item.entry.Partition, parentPath)
+			}
+			link := "block." + item.kind
+			if item.entry.Encrypted {
+				link = "unencrypted." + item.kind
+			}
+			linkedPath, err := filepath.EvalSymlinks(filepath.Join(osdDataPath, link))
+			if err != nil {
+				return fmt.Errorf("cannot resolve OSD %s link: %w", link, err)
+			}
+			childPath, err := filepath.EvalSymlinks(partitionPathFromParentPath(parentPath, item.entry.Partition))
+			if err != nil {
+				return fmt.Errorf("cannot resolve carrier partition: %w", err)
+			}
+			if linkedPath != childPath {
+				return fmt.Errorf("OSD %s link points to %s, not %s", link, linkedPath, childPath)
+			}
+			kernelUUID, err := m.runner.RunCommand("lsblk", "-no", "PARTUUID", childPath)
+			if err != nil {
+				return fmt.Errorf("cannot identify kernel partition %s: %w", childPath, err)
+			}
+			if !strings.EqualFold(strings.TrimSpace(kernelUUID), part.UUID) {
+				return fmt.Errorf("kernel and GPT identities differ for %s", childPath)
+			}
+			// A link can still resolve to the same slot after that slot was
+			// reused. BlueStore's label binds its contents to this OSD's fsid.
+			osdUUID, err := afero.ReadFile(m.fs, filepath.Join(osdDataPath, "fsid"))
+			if err != nil {
+				return fmt.Errorf("cannot read OSD fsid: %w", err)
+			}
+			deviceLink := filepath.Join(osdDataPath, "block."+item.kind)
+			labelOutput, err := m.runner.RunCommand("ceph-bluestore-tool", "show-label", "--dev", deviceLink)
+			if err != nil {
+				return fmt.Errorf("cannot read BlueStore label on %s: %w", deviceLink, err)
+			}
+			var labels map[string]struct {
+				OSDUUID string `json:"osd_uuid"`
+			}
+			err = json.Unmarshal([]byte(labelOutput), &labels)
+			if err != nil {
+				return fmt.Errorf("invalid BlueStore label on %s: %w", deviceLink, err)
+			}
+			if len(labels) != 1 {
+				return fmt.Errorf("expected one BlueStore label on %s, got %d", deviceLink, len(labels))
+			}
+			for _, label := range labels {
+				if strings.TrimSpace(string(osdUUID)) == "" || !strings.EqualFold(label.OSDUUID, strings.TrimSpace(string(osdUUID))) {
+					return fmt.Errorf("BlueStore label on %s does not belong to this OSD", deviceLink)
+				}
+			}
+			item.entry.PartUUID = part.UUID
+			changed = true
+			return nil
+		})
+		if err != nil {
+			_, statErr := m.fs.Stat(item.entry.ParentPath)
+			if os.IsNotExist(statErr) {
+				// The carrier vanished while checking ownership. Normal cleanup
+				// will discard the entry without touching a replacement disk.
+				continue
+			}
+			return fmt.Errorf("cannot migrate generated %s partition on %s; manual cleanup required: %w", item.kind, item.entry.ParentPath, err)
+		}
+	}
+	if changed || manifest.Version == 0 {
+		return m.writeGeneratedAuxManifest(osdDataPath, manifest)
+	}
+	return nil
 }
 
 func auxDeviceMapperName(kind string, osdID int64) string {
@@ -562,70 +695,204 @@ func (m *OSDManager) closeEncryptedAuxDevice(kind string, osdID int64) error {
 	return nil
 }
 
-func (m *OSDManager) deletePartition(parentPath string, partition uint64) error {
-	_, err := m.resolvePartitionStablePath(parentPath, partition)
+// auxPartitionTable is an on-disk snapshot, not udev's possibly stale inventory.
+// The same snapshot supplies allocation geometry and cleanup ownership.
+type auxPartitionTable struct {
+	Label      string         `json:"label"`
+	SectorSize uint64         `json:"sectorsize"`
+	Partitions []auxPartition `json:"partitions"`
+}
+
+type auxPartition struct {
+	Node string `json:"node"`
+	UUID string `json:"uuid"`
+	Size uint64 `json:"size"`
+}
+
+func (m *OSDManager) readAuxPartitionTable(parentPath string) (*auxPartitionTable, error) {
+	// sfdisk uses the same exit status for a blank disk and an I/O error.
+	// Pin its diagnostic locale and recognize only the explicit no-table case.
+	output, err := m.runner.RunCommand("env", "LC_ALL=C", "sfdisk", "--json", parentPath)
 	if err != nil {
-		logger.Infof("Partition %d on %s is already absent, skipping delete", partition, parentPath)
+		if strings.Contains(err.Error(), "does not contain a recognized partition table") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read partition table on %s: %w", parentPath, err)
+	}
+	var result struct {
+		Table auxPartitionTable `json:"partitiontable"`
+	}
+	err = json.Unmarshal([]byte(output), &result)
+	if err != nil {
+		return nil, fmt.Errorf("invalid partition table on %s: %w", parentPath, err)
+	}
+	if result.Table.Label == "" || result.Table.SectorSize == 0 {
+		return nil, fmt.Errorf("incomplete partition table on %s", parentPath)
+	}
+	return &result.Table, nil
+}
+
+func (table *auxPartitionTable) partition(parentPath string, number uint64) *auxPartition {
+	if table == nil {
 		return nil
 	}
-
-	_, err = m.runner.RunCommand("sfdisk", "--delete", parentPath, strconv.FormatUint(partition, 10))
-	if err != nil {
-		_, resolveErr := m.resolvePartitionStablePath(parentPath, partition)
-		if resolveErr != nil {
-			logger.Infof("Partition %d on %s disappeared despite delete error, treating as cleaned", partition, parentPath)
-			return nil
+	node := partitionPathFromParentPath(parentPath, number)
+	for i := range table.Partitions {
+		if table.Partitions[i].Node == node {
+			return &table.Partitions[i]
 		}
-		return fmt.Errorf("failed to delete partition %d on %s: %w", partition, parentPath, err)
 	}
-
-	partitionRange := fmt.Sprintf("%d:%d", partition, partition)
-	_, err = m.runner.RunCommand("partx", "-d", "--nr", partitionRange, parentPath)
-	if err != nil {
-		_, resolveErr := m.resolvePartitionStablePath(parentPath, partition)
-		if resolveErr != nil {
-			logger.Infof("Kernel partition entry %d on %s already removed, treating as cleaned", partition, parentPath)
-			return nil
-		}
-		return fmt.Errorf("failed to remove kernel partition entry %d on %s: %w", partition, parentPath, err)
-	}
-
 	return nil
 }
 
-func (m *OSDManager) cleanupGeneratedAuxDevice(ctx context.Context, kind string, entry *generatedAuxDevice, osdID int64) error {
-	if entry == nil {
-		return nil
-	}
+const (
+	kernelPartitionDeleteAttempts = 6
+	kernelPartitionDeleteBackoff  = 200 * time.Millisecond
+)
 
-	partitionPath := entry.PartitionPath
-	if partitionPath == "" {
-		partitionPath = partitionPathFromParentPath(entry.ParentPath, entry.Partition)
-	}
-	logger.Infof("Cleaning generated %s device for osd.%d: parent=%s partition=%d path=%s encrypted=%t", strings.ToUpper(kind), osdID, entry.ParentPath, entry.Partition, partitionPath, entry.Encrypted)
+var partxDeleteSleepFunc = time.Sleep
 
-	if entry.Encrypted {
-		logger.Infof("Closing encrypted %s mapper for osd.%d before partition cleanup", strings.ToUpper(kind), osdID)
-		err := m.closeEncryptedAuxDevice(kind, osdID)
-		if err != nil {
-			return err
-		}
-	}
-
-	if partitionPath != "" {
-		_, err := m.fs.Stat(partitionPath)
+func (m *OSDManager) deleteKernelPartitionEntry(parentPath string, partition uint64) error {
+	var err error
+	partitionRange := fmt.Sprintf("%d:%d", partition, partition)
+	for attempt := 1; attempt <= kernelPartitionDeleteAttempts; attempt++ {
+		// partx treats an already-absent kernel entry as success. A missing
+		// /dev link alone must never turn a real deletion error into success.
+		_, err = m.runner.RunCommand("partx", "-v", "-d", "--nr", partitionRange, parentPath)
 		if err == nil {
-			logger.Infof("Wiping generated %s partition %s before delete", strings.ToUpper(kind), partitionPath)
-			m.wipeDevice(ctx, partitionPath)
+			return nil
+		}
+		if attempt < kernelPartitionDeleteAttempts {
+			partxDeleteSleepFunc(kernelPartitionDeleteBackoff)
 		}
 	}
+	return fmt.Errorf("failed to remove kernel partition %d on %s after %d attempts: %w", partition, parentPath, kernelPartitionDeleteAttempts, err)
+}
 
-	err := m.deletePartition(entry.ParentPath, entry.Partition)
+// withExclusiveCarrierLock excludes udev probes, not just other MicroCeph calls.
+// The API mutex already serializes add/remove, including planning and rollback.
+// Resolve the carrier once so every command uses the node whose lock we hold.
+func withExclusiveCarrierLock(parentPath string, operation func(string) error) error {
+	parentPath, err := filepath.EvalSymlinks(parentPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve carrier: %w", err)
+	}
+	disk, err := os.OpenFile(parentPath, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open carrier %s: %w", parentPath, err)
+	}
+	// Closing a writable descriptor both releases flock and prompts udev to
+	// reprobe the final state. Never wait for udev links inside the operation.
+	defer disk.Close()
+	deadline := time.Now().Add(45 * time.Second) // Allow another 30-second zap to finish.
+	for {
+		// LOCK_NB returns immediately on contention so we can check the deadline;
+		// a blocking flock could wait indefinitely before reaching that check.
+		err = unix.Flock(int(disk.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			return operation(parentPath)
+		}
+		if err != unix.EWOULDBLOCK && err != unix.EAGAIN {
+			return fmt.Errorf("failed to lock carrier %s: %w", parentPath, err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out locking carrier %s: %w", parentPath, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// deletePartition requires the carrier lock and established ownership, either
+// a matching recorded UUID or a slot just created while this lock was held.
+// Removing the kernel entry first leaves GPT intact if a holder stays busy.
+func (m *OSDManager) deletePartition(parentPath string, partition uint64) error {
+	err := m.deleteKernelPartitionEntry(parentPath, partition)
 	if err != nil {
 		return err
 	}
-	logger.Infof("Cleaned generated %s partition %d on %s for osd.%d", strings.ToUpper(kind), entry.Partition, entry.ParentPath, osdID)
-	return nil
+	_, err = m.runner.RunCommand("sfdisk", "--delete", "--lock=no", "--no-reread", "--no-tell-kernel", parentPath, strconv.FormatUint(partition, 10))
+	if err != nil {
+		return fmt.Errorf("failed to delete GPT partition %d on %s: %w", partition, parentPath, err)
+	}
+	// An external opener can recreate an entry between the first deletion
+	// and the GPT write. This targeted, idempotent delete leaves siblings alone.
+	return m.deleteKernelPartitionEntry(parentPath, partition)
+}
+
+func (m *OSDManager) cleanupGeneratedAuxDevice(_ context.Context, kind string, entry *generatedAuxDevice, osdID int64) error {
+	if entry == nil {
+		return nil
+	}
+	_, err := m.fs.Stat(entry.ParentPath)
+	missing := entry.ParentPath == "" || os.IsNotExist(err)
+	if err != nil && !missing {
+		return err
+	}
+	// Auxiliary allocation can fail before an OSD ID exists. In that case
+	// there is no mapper to close; zero is a real OSD ID, not a sentinel.
+	if entry.Encrypted && osdID >= 0 {
+		err = m.closeEncryptedAuxDevice(kind, osdID)
+		if err != nil {
+			_, statErr := m.fs.Stat(entry.ParentPath)
+			missing = missing || os.IsNotExist(statErr)
+			if !missing {
+				return err
+			}
+			logger.Warnf("Failed to close encrypted %s mapper for missing carrier %s: %v; manual mapper cleanup may be required", kind, entry.ParentPath, err)
+		}
+	}
+	// The mapper can outlive its carrier. Try to close it above, but a dead
+	// carrier must not prevent removal even if the mapper cannot be released.
+	if missing {
+		logger.Warnf("Generated %s carrier %q is missing; discarding its cleanup entry", kind, entry.ParentPath)
+		return nil
+	}
+	err = m.lockCarrierFunc(entry.ParentPath, func(parentPath string) error {
+		table, err := m.readAuxPartitionTable(parentPath)
+		if err != nil {
+			return err
+		}
+		part := table.partition(parentPath, entry.Partition)
+		if part == nil {
+			// A previous attempt may have deleted GPT before its final kernel
+			// update or manifest write. Never zap a node without a matching GPT.
+			return m.deleteKernelPartitionEntry(parentPath, entry.Partition)
+		}
+		if entry.PartUUID == "" {
+			return fmt.Errorf("generated %s partition %d on %s has no verified PARTUUID; manual cleanup required", kind, entry.Partition, entry.ParentPath)
+		}
+		if part.UUID == "" {
+			return fmt.Errorf("partition %d on %s has no PARTUUID; refusing cleanup", entry.Partition, parentPath)
+		}
+		if !strings.EqualFold(part.UUID, entry.PartUUID) {
+			logger.Warnf("Generated %s partition %d on %s was replaced; leaving UUID %s untouched", kind, entry.Partition, parentPath, part.UUID)
+			return nil
+		}
+		// Old manifests may contain partition_path, which is deliberately not
+		// decoded: raw names can be reassigned. Use the locked carrier's child.
+		partitionPath := partitionPathFromParentPath(parentPath, entry.Partition)
+		_, err = m.fs.Stat(partitionPath)
+		if err == nil {
+			// Zap is best effort, but bound it to one attempt while holding flock.
+			err = m.timeoutWipe(partitionPath)
+			if err != nil {
+				logger.Warnf("Failed to wipe generated %s partition %s: %v", kind, partitionPath, err)
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		return m.deletePartition(parentPath, entry.Partition)
+	})
+	if err != nil {
+		// Hot-unplug between the initial stat and any later command must not
+		// strand the OSD. An existing but unreadable carrier remains an error.
+		_, statErr := m.fs.Stat(entry.ParentPath)
+		if os.IsNotExist(statErr) {
+			logger.Warnf("Generated %s carrier %s disappeared; discarding its cleanup entry", kind, entry.ParentPath)
+			return nil
+		}
+	}
+	return err
 }
 
 func (m *OSDManager) cleanupGeneratedAuxEntries(ctx context.Context, manifest *generatedAuxDevicesManifest, osdID int64) error {
@@ -709,33 +976,109 @@ func (m *OSDManager) resolvePartitionStablePath(parentPath string, partition uin
 	return "", fmt.Errorf("partition %d on %s not found", partition, parentPath)
 }
 
+func (table *auxPartitionTable) checkAllocationSlot(parentPath string, plan *plannedAuxPartition) error {
+	if table == nil || table.Label != "gpt" {
+		return fmt.Errorf("carrier %s has no usable GPT", parentPath)
+	}
+	// Planning uses the storage inventory. Check its chosen slot against disk
+	// before appending, so a stale inventory cannot bind us to someone else's slot.
+	next := uint64(1)
+	for table.partition(parentPath, next) != nil {
+		next++
+	}
+	if next != plan.Partition {
+		return fmt.Errorf("planned partition %d on %s does not match free slot %d", plan.Partition, parentPath, next)
+	}
+	return nil
+}
+
 func (m *OSDManager) createPlannedAuxPartition(plan *plannedAuxPartition) (string, error) {
 	if plan == nil {
 		return "", nil
 	}
 
 	logger.Infof("Creating planned auxiliary partition: %s", plannedAuxPartitionSummary(plan))
-	if plan.ResetBeforeUse {
-		logger.Infof("Resetting %s carrier %s before repartitioning", strings.ToUpper(plan.Kind), plan.ParentPath)
-		err := m.timeoutWipe(plan.ParentPath)
+	err := m.lockCarrierFunc(plan.ParentPath, func(parentPath string) (retErr error) {
+		table, err := m.readAuxPartitionTable(parentPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to wipe %s carrier %s: %w", strings.ToUpper(plan.Kind), plan.ParentPath, err)
+			return err
 		}
-		m.refreshPartitionTable(plan.ParentPath)
-	}
-	if plan.ResetBeforeUse || plan.Partition == 1 {
-		logger.Infof("Initializing GPT on %s for %s provisioning", plan.ParentPath, strings.ToUpper(plan.Kind))
-		err := m.initializeGPT(plan.ParentPath)
+		// API serialization spans discovery through provisioning. No reset
+		// snapshots or reservations are needed; concurrent manual repartitioning
+		// of MicroCeph carriers is not supported.
+		if plan.ResetBeforeUse {
+			err = m.timeoutWipe(parentPath)
+			if err != nil {
+				return fmt.Errorf("failed to reset carrier %s: %w", parentPath, err)
+			}
+		} else if plan.InitializeGPT && table != nil && len(table.Partitions) != 0 {
+			return fmt.Errorf("carrier %s is no longer empty; refusing GPT initialization", parentPath)
+		}
+		if plan.InitializeGPT || plan.ResetBeforeUse {
+			err = m.initializeGPT(parentPath)
+			if err != nil {
+				return err
+			}
+			table, err = m.readAuxPartitionTable(parentPath)
+			if err != nil {
+				return err
+			}
+		}
+		err = table.checkAllocationSlot(parentPath, plan)
 		if err != nil {
-			return "", err
+			return err
 		}
-	}
-	logger.Infof("Creating %s partition %d on %s with size %s", strings.ToUpper(plan.Kind), plan.Partition, plan.ParentPath, formatBytesIEC(int64(plan.SizeBytes)))
-	err := m.createPartition(plan.ParentPath, plan.SizeBytes)
+		// A free GPT slot may still have an old kernel entry after an interrupted
+		// removal. Refuse a busy stale entry before assigning this slot again.
+		err = m.deleteKernelPartitionEntry(parentPath, plan.Partition)
+		if err != nil {
+			return err
+		}
+		sectors := (partitionSizeMiB(plan.SizeBytes)*1024*1024 + table.SectorSize - 1) / table.SectorSize
+		err = m.createPartition(parentPath, sectors)
+		if err != nil {
+			return err
+		}
+		// No other MicroCeph operation can take this newly allocated slot while
+		// we hold the lock. Even a failed UUID read must roll it back, rather
+		// than leave a partition that no generated-device manifest records.
+		defer func() {
+			if retErr == nil {
+				return
+			}
+			cleanupErr := m.deletePartition(parentPath, plan.Partition)
+			if cleanupErr != nil {
+				retErr = fmt.Errorf("%w (rollback of partition %d on %s failed: %v; manual cleanup required)", retErr, plan.Partition, parentPath, cleanupErr)
+			} else {
+				plan.PartUUID = ""
+			}
+		}()
+		table, err = m.readAuxPartitionTable(parentPath)
+		if err != nil {
+			return err
+		}
+		part := table.partition(parentPath, plan.Partition)
+		if part == nil || part.UUID == "" {
+			return fmt.Errorf("cannot identify created partition %d on %s", plan.Partition, parentPath)
+		}
+		if part.Size != sectors {
+			return fmt.Errorf("created partition %d on %s has %d sectors, requested %d", plan.Partition, parentPath, part.Size, sectors)
+		}
+		// Capture ownership before udev sees the new partition. A later removal
+		// must not trust this slot number after it has been freed and reused.
+		plan.PartUUID = part.UUID
+		// Publish only this partition, and do not ignore a kernel update error:
+		// an existing /dev node alone is not proof that the new extent is usable.
+		_, err = m.runner.RunCommand("partx", "-u", "--nr", fmt.Sprintf("%d:%d", plan.Partition, plan.Partition), parentPath)
+		if err != nil {
+			return fmt.Errorf("failed to publish partition %d on %s: %w", plan.Partition, parentPath, err)
+		}
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	m.refreshPartitionTable(plan.ParentPath)
+	// udev skips probes while flock is held; wait for its links only after close.
 
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
@@ -746,7 +1089,14 @@ func (m *OSDManager) createPlannedAuxPartition(plan *plannedAuxPartition) (strin
 		}
 		time.Sleep(1 * time.Second)
 	}
-	return "", fmt.Errorf("timed out waiting for %s partition %d on %s to appear", plan.Kind, plan.Partition, plan.ParentPath)
+	err = fmt.Errorf("timed out waiting for %s partition %d on %s to appear", plan.Kind, plan.Partition, plan.ParentPath)
+	entry := &generatedAuxDevice{ParentPath: plan.ParentPath, Partition: plan.Partition, PartUUID: plan.PartUUID}
+	cleanupErr := m.cleanupGeneratedAuxDevice(context.Background(), plan.Kind, entry, -1)
+	if cleanupErr != nil {
+		return "", fmt.Errorf("%w (rollback failed: %v; manual cleanup required)", err, cleanupErr)
+	}
+	plan.PartUUID = ""
+	return "", err
 }
 
 func buildGeneratedAuxDiskParameter(plan *plannedAuxPartition, path string, encrypt bool, wipe bool) (*types.DiskParameter, *generatedAuxDevice) {
@@ -755,10 +1105,10 @@ func buildGeneratedAuxDiskParameter(plan *plannedAuxPartition, path string, encr
 	}
 
 	return &types.DiskParameter{Path: path, Encrypt: encrypt, Wipe: wipe, SkipPristineCheck: true}, &generatedAuxDevice{
-		ParentPath:    plan.ParentPath,
-		Partition:     plan.Partition,
-		PartitionPath: path,
-		Encrypted:     encrypt,
+		ParentPath: plan.ParentPath,
+		Partition:  plan.Partition,
+		PartUUID:   plan.PartUUID,
+		Encrypted:  encrypt,
 	}
 }
 
@@ -775,7 +1125,6 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 		var walParam *types.DiskParameter
 		var dbParam *types.DiskParameter
 		var generatedAux *generatedAuxDevicesManifest
-		createdAux := false
 
 		dataStorage, err := m.getStorageWithRetry()
 		if err != nil {
@@ -789,18 +1138,9 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 			if err != nil {
 				logger.Errorf("Failed creating planned WAL partition for OSD %s: %v", planned.OSDPath, err)
 				reportErr := err.Error()
-				if createdAux {
-					cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, 0)
-					if cleanupErr != nil {
-						logger.Warnf("Automatic cleanup after WAL partition creation failure for OSD %s also failed: %v", planned.OSDPath, cleanupErr)
-						reportErr = fmt.Sprintf("%s (automatic cleanup also failed: %v)", reportErr, cleanupErr)
-						resp.Warnings = append(resp.Warnings, "Automatic cleanup of generated WAL/DB partitions failed; manual cleanup may be required")
-					}
-				}
 				resp.Reports = append(resp.Reports, types.DiskAddReport{Path: planned.OSDPath, Report: "Failure", Error: reportErr})
 				break
 			}
-			createdAux = true
 			var generatedWAL *generatedAuxDevice
 			walParam, generatedWAL = buildGeneratedAuxDiskParameter(planned.WAL, path, req.WALEncrypt, req.WALWipe)
 			logger.Infof("Prepared WAL partition %s for OSD %s (encrypt=%t wipe=%t)", path, planned.OSDPath, req.WALEncrypt, req.WALWipe)
@@ -815,8 +1155,8 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 			if err != nil {
 				logger.Errorf("Failed creating planned DB partition for OSD %s: %v", planned.OSDPath, err)
 				reportErr := err.Error()
-				if createdAux {
-					cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, 0)
+				if generatedAux != nil {
+					cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, -1)
 					if cleanupErr != nil {
 						logger.Warnf("Automatic cleanup after DB partition creation failure for OSD %s also failed: %v", planned.OSDPath, cleanupErr)
 						reportErr = fmt.Sprintf("%s (automatic cleanup also failed: %v)", reportErr, cleanupErr)
@@ -826,7 +1166,6 @@ func (m *OSDManager) executeDSLProvisionPlan(ctx context.Context, plan *dslProvi
 				resp.Reports = append(resp.Reports, types.DiskAddReport{Path: planned.OSDPath, Report: "Failure", Error: reportErr})
 				break
 			}
-			createdAux = true
 			var generatedDB *generatedAuxDevice
 			dbParam, generatedDB = buildGeneratedAuxDiskParameter(planned.DB, path, req.DBEncrypt, req.DBWipe)
 			logger.Infof("Prepared DB partition %s for OSD %s (encrypt=%t wipe=%t)", path, planned.OSDPath, req.DBEncrypt, req.DBWipe)
