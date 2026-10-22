@@ -233,6 +233,7 @@ func cmdCephBootstrapPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 		MonIp:            req.MonIp,
 		PublicNet:        req.PublicNet,
 		ClusterNet:       req.ClusterNet,
+		DefaultCipher:    req.DefaultCipher,
 		V2Only:           req.V2Only,
 		AvailabilityZone: req.AvailabilityZone,
 	}

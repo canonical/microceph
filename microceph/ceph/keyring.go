@@ -11,12 +11,16 @@ import (
 	"github.com/canonical/microceph/microceph/common"
 )
 
-func genKeyring(path, name string, caps ...[]string) error {
+func genKeyringWithCipher(path, name string, cipher string, caps ...[]string) error {
 	args := []string{
 		"--create-keyring",
 		path,
 		"--gen-key",
 		"-n", name,
+	}
+
+	if cipher != "" {
+		args = append(args, "--key-type", cipher)
 	}
 
 	for _, capability := range caps {

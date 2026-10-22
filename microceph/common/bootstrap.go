@@ -16,6 +16,7 @@ type BootstrapConfig struct {
 	MonIp            string // IP address of the monitor to be created.
 	AvailabilityZone string // Availability Zone of the host.
 	V2Only           bool   // Whether only V2 addresses should be used.
+	DefaultCipher    string // Default cipher for CephX keys ("aes" or "aes256k").
 
 	// ### Common Parameters
 	PublicNet  string // Public Network subnet.
@@ -45,6 +46,7 @@ func EncodeBootstrapConfig(data BootstrapConfig) map[string]string {
 		"AdoptAdminKey":    data.AdoptAdminKey,
 		"AvailabilityZone": data.AvailabilityZone,
 		"DeferCeph":        strconv.FormatBool(data.DeferCeph),
+		"DefaultCipher":    data.DefaultCipher,
 	}
 }
 
@@ -60,4 +62,5 @@ func DecodeBootstrapConfig(input map[string]string, data *BootstrapConfig) {
 	data.AdoptAdminKey = input["AdoptAdminKey"]
 	data.AvailabilityZone = input["AvailabilityZone"]
 	data.DeferCeph, _ = strconv.ParseBool(input["DeferCeph"])
+	data.DefaultCipher = input["DefaultCipher"]
 }

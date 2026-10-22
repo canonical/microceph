@@ -84,20 +84,25 @@ func GenerateCephConfFile(fsid string, runPath string, monIP string, pubNet stri
 	return nil
 }
 
-func CreateKeyrings(confPath string) (string, error) {
+func CreateKeyrings(confPath string, ciphers ...string) (string, error) {
+	cipher := ""
+	if len(ciphers) > 0 {
+		cipher = ciphers[0]
+	}
+
 	// Generate the temporary monitor keyring.
 	path, err := os.MkdirTemp("", "")
 	if err != nil {
 		return "", fmt.Errorf("Unable to create temporary path: %w", err)
 	}
 
-	err = genKeyring(filepath.Join(path, "mon.keyring"), "mon.", []string{"mon", "allow *"})
+	err = genKeyringWithCipher(filepath.Join(path, "mon.keyring"), "mon.", cipher, []string{"mon", "allow *"})
 	if err != nil {
 		return "", fmt.Errorf("Failed to generate monitor keyring: %w", err)
 	}
 
 	// Generate the admin keyring.
-	err = genKeyring(filepath.Join(confPath, "ceph.client.admin.keyring"), "client.admin", []string{"mon", "allow *"}, []string{"osd", "allow *"}, []string{"mds", "allow *"}, []string{"mgr", "allow *"})
+	err = genKeyringWithCipher(filepath.Join(confPath, "ceph.client.admin.keyring"), "client.admin", cipher, []string{"mon", "allow *"}, []string{"osd", "allow *"}, []string{"mds", "allow *"}, []string{"mgr", "allow *"})
 	if err != nil {
 		return "", fmt.Errorf("Failed to generate admin keyring: %w", err)
 	}
@@ -111,13 +116,13 @@ func CreateKeyrings(confPath string) (string, error) {
 }
 
 // BootstrapCephServices bootstraps the automatic services on simple bootstrap of a ceph cluster.
-func BootstrapCephServices(state interfaces.StateInterface, tempKeyringPath string, fsid string, monIP string) error {
+func BootstrapCephServices(state interfaces.StateInterface, tempKeyringPath string, fsid string, monIP string, ciphers ...string) error {
 	serviceStartMu.Lock()
 	defer serviceStartMu.Unlock()
 
 	pathConsts := constants.GetPathConst()
 
-	err := createMonMap(state, tempKeyringPath, fsid, monIP)
+	err := createMonMap(state, tempKeyringPath, fsid, monIP, ciphers...)
 	if err != nil {
 		return err
 	}

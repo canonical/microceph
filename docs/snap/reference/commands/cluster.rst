@@ -70,8 +70,9 @@ Flags:
    --mon-ip            string Public address for bootstrapping ceph mon service.
    --public-network    string Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).
    --cluster-network   string Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).
+   --default-cipher    string Default cipher for CephX keys: 'aes' or 'aes256k' (AES-256). Defaults to AES-256 when supported, otherwise Ceph's default is left unchanged.
    --v2-only                  Whether to support V2 messenger only or both V1 and V2.
-   --defer-ceph               Initialize Microcluster only and defer Ceph bootstrap. Ceph network flags (--mon-ip, --public-network, --cluster-network, --v2-only) are ignored with this option; pass them to 'cluster bootstrap-ceph' instead.
+   --defer-ceph               Initialize Microcluster only and defer Ceph bootstrap. Ceph bootstrap flags (--mon-ip, --public-network, --cluster-network, --v2-only, --default-cipher) cannot be used with this option; pass them to 'cluster bootstrap-ceph' instead.
 
 ``bootstrap-ceph``
 ------------------
@@ -92,6 +93,7 @@ Flags:
 
    --availability-zone   string Availability zone for the bootstrap target host.
    --cluster-network     string Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).
+   --default-cipher      string Default cipher for CephX keys: 'aes' or 'aes256k' (AES-256). Defaults to AES-256 when supported, otherwise Ceph's default is left unchanged.
    --force                      Recover from a stale in_progress bootstrap state (reset to failed then retry). Not for normal use. Must not be used while a live bootstrap may be running on another member.
    --mon-ip             string Public address for bootstrapping ceph mon service.
    --public-network     string Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).

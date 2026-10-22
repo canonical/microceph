@@ -105,6 +105,7 @@ type CephBootstrapRequest struct {
 	MonIp            string `json:"mon_ip,omitempty" yaml:"mon_ip,omitempty"`
 	PublicNet        string `json:"public_network,omitempty" yaml:"public_network,omitempty"`
 	ClusterNet       string `json:"cluster_network,omitempty" yaml:"cluster_network,omitempty"`
+	DefaultCipher    string `json:"default_cipher,omitempty" yaml:"default_cipher,omitempty"`
 	V2Only           bool   `json:"v2_only,omitempty" yaml:"v2_only,omitempty"`
 	AvailabilityZone string `json:"availability_zone,omitempty" yaml:"availability_zone,omitempty"`
 	// Force recovers from a stale in_progress lifecycle state left by a

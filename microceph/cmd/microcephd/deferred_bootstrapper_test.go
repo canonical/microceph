@@ -30,6 +30,12 @@ func (s *deferredBootstrapSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
 	s.CopyCephConfigs()
 
+	originalSupportsAES256 := common.SupportsAES256Func
+	common.SupportsAES256Func = func() (bool, error) {
+		return false, nil
+	}
+	s.T().Cleanup(func() { common.SupportsAES256Func = originalSupportsAES256 })
+
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
 	u := api.NewURL()
 	u.Host("1.1.1.1")
