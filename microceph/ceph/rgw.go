@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -47,11 +46,6 @@ var errRGWInactive = errors.New("rgw service is not active")
 // A first start creates the gateway's pools before it listens, so readiness
 // waits far longer than a restart of an already-initialised gateway needs.
 var rgwReadyTimeout = 2 * time.Minute
-
-// The probe of a leftover apply marker (pendingApplyCompleted) asks the gateway
-// which pair it serves. It asks more than once because the gateway may be in
-// the middle of a restart at that moment.
-var rgwPendingProbeInterval = 300 * time.Millisecond
 
 func rgwConfPath() string {
 	return filepath.Join(constants.GetPathConst().ConfPath, "radosgw.conf")
@@ -232,7 +226,7 @@ func stageRGWTLSGeneration(genDir string, certPEM, keyPEM []byte) error {
 }
 
 // The journal contains configuration paths, not certificate or private-key bytes.
-// Keep the previous state until readiness and database recording both succeed.
+// Recovery activates the pending frontend before a new apply replaces this target.
 type rgwPendingApply struct {
 	PreviousConfig *string `json:"previous_config"`
 	PreviousActive *bool   `json:"previously_active"`
@@ -285,70 +279,85 @@ func readRGWState() ([]byte, *rgwPendingApply, error) {
 	return current, pending, nil
 }
 
-// rgwLeafDER returns the first parsed certificate's DER bytes from a PEM
-// bundle, skipping non-certificate blocks. It reports false if none is valid.
-func rgwLeafDER(bundle []byte) ([]byte, bool) {
-	for len(bundle) > 0 {
-		block, rest := pem.Decode(bundle)
-		if block == nil {
-			return nil, false
-		}
-		if block.Type == "CERTIFICATE" {
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				return nil, false
-			}
-			return cert.Raw, true
-		}
-		bundle = rest
+// rgwFrontendFromConfig reads the frontend we must activate, independently of
+// the next request. Missing listeners or TLS material must fail closed.
+func rgwFrontendFromConfig(conf []byte) (rgwFrontendSpec, error) {
+	var spec rgwFrontendSpec
+	if !strings.HasPrefix(rgwFrontendLine(conf), "rgw frontends = beast ") {
+		return spec, errors.New("RGW configuration has no supported frontend")
 	}
-	return nil, false
+	port, sslPort, err := rgwConfPorts(conf)
+	if err != nil {
+		return spec, err
+	}
+	if port < 0 || port > 65535 || sslPort < 0 || sslPort > 65535 || port == sslPort {
+		return spec, errors.New("RGW configuration has invalid listener ports")
+	}
+	certPath, keyPath := rgwConfTLSPaths(conf)
+	spec = rgwFrontendSpec{port: port, sslPort: sslPort, ssl: sslPort != 0}
+	if !spec.ssl {
+		if certPath != "" || keyPath != "" {
+			return spec, errors.New("RGW TLS material has no TLS listener")
+		}
+		return spec, nil
+	}
+	spec.certPEM, spec.keyPEM, err = resolveRGWTLSReuse(conf)
+	return spec, err
 }
 
-// pendingApplyCompleted reports whether a leftover marker is stale. A served
-// leaf can prove the current bundle is active only when the previous bundle
-// had a different leaf; chain-only changes remain indistinguishable. The
-// caller must not hold radosgwConfMu: the probe can take seconds.
-func pendingApplyCompleted(current []byte, pending *rgwPendingApply, wasActive bool) bool {
-	if pending == nil || !wasActive {
-		return false
+// recoverPendingRGWApply establishes the on-disk frontend as a known baseline
+// before another request can replace it. The caller holds serviceStartMu.
+func recoverPendingRGWApply() error {
+	current, pending, err := readRGWState()
+	if err != nil || pending == nil {
+		return err
 	}
-	previousCert, _ := rgwConfTLSPaths([]byte(*pending.PreviousConfig))
-	currentCert, _ := rgwConfTLSPaths(current)
-	if currentCert == "" || currentCert == previousCert {
-		return false
+	activeErr := checkRGWActiveFunc()
+	if activeErr != nil && !errors.Is(activeErr, errRGWInactive) {
+		return fmt.Errorf("%w: cannot inspect RGW service: %w", ErrPlacementOperationFailed, activeErr)
 	}
-	previousPEM, err := os.ReadFile(previousCert)
-	if err != nil {
-		return false
+	// A manual restart or an interrupted apply may already have changed the
+	// service, even if this recovery fails before issuing a service command.
+	rb := &rgwRollback{
+		confPath: rgwConfPath(), prevConf: []byte(*pending.PreviousConfig),
+		prevActive: *pending.PreviousActive, serviceChanged: true,
 	}
-	previousLeaf, ok := rgwLeafDER(previousPEM)
-	if !ok {
-		return false
+	spec, err := rgwFrontendFromConfig(current)
+	if err == nil {
+		err = prepareRGWKeyring()
 	}
-	certPEM, err := os.ReadFile(currentCert)
-	if err != nil {
-		return false
-	}
-	currentLeaf, ok := rgwLeafDER(certPEM)
-	if !ok || bytes.Equal(previousLeaf, currentLeaf) {
-		return false
-	}
-	port, sslPort, err := rgwConfPorts(current)
-	if err != nil {
-		return false
-	}
-	spec := rgwFrontendSpec{port: port, sslPort: sslPort, ssl: true, certPEM: certPEM}
-	for attempt := 1; ; attempt++ {
-		err = checkRGWFrontendFunc(spec)
-		if err == nil {
-			return true
+	if err == nil {
+		if activeErr == nil {
+			err = restartRGWFunc()
+		} else {
+			err = startRGWFunc()
 		}
-		if attempt == 3 {
-			return false
-		}
-		time.Sleep(rgwPendingProbeInterval)
 	}
+	if err == nil {
+		err = checkRGWReadyFunc(spec)
+	}
+	if err != nil {
+		return fmt.Errorf("%w: cannot recover pending RGW apply: %w", ErrPlacementOperationFailed, errors.Join(err, rb.restore()))
+	}
+
+	radosgwConfMu.Lock()
+	defer radosgwConfMu.Unlock()
+	// A monitor refresh may have updated the config during readiness. Rebase
+	// durably before removing the journal, so even a failed removal (or crash)
+	// cannot leave the old rollback target attached to the next publication.
+	current, err = readRGWConf()
+	if err == nil {
+		err = writePendingApplyMarker(current, true)
+	}
+	if err == nil {
+		err = removeIgnoreMissing(rgwPendingApplyPath())
+	}
+	if err != nil {
+		return fmt.Errorf("%w: cannot finish pending RGW recovery: %w", ErrPlacementOperationFailed, err)
+	}
+	// Recovery confirms local service state, not a database transaction.
+	// Keep generations until the requested apply finishes or rolls back.
+	return nil
 }
 
 type rgwRollback struct {
@@ -392,13 +401,32 @@ func (rb *rgwRollback) restore() error {
 	}
 	if rb.serviceChanged {
 		if rb.prevActive {
+			spec, err := rgwFrontendFromConfig(rb.prevConf)
+			if err != nil {
+				return fmt.Errorf("cannot verify restored RGW frontend: %w", err)
+			}
 			restoreErr = restartRGWFunc()
+			if restoreErr == nil {
+				restoreErr = checkRGWReadyFunc(spec)
+			}
 		} else {
 			restoreErr = stopRGWFunc()
+			if restoreErr == nil {
+				activeErr := checkRGWActiveFunc()
+				if !errors.Is(activeErr, errRGWInactive) {
+					restoreErr = errors.Join(errors.New("RGW did not become inactive"), activeErr)
+				}
+			}
 		}
 		if restoreErr != nil {
 			return fmt.Errorf("failed to restore RGW service state: %w", restoreErr)
 		}
+	}
+	// The rollback is itself the completed corrective action, so the marker
+	// is cleared here rather than left for a later apply to redrive.
+	restoreErr = removeIgnoreMissing(rgwPendingApplyPath())
+	if restoreErr != nil {
+		return restoreErr
 	}
 	// Delete the newly staged generation only if the restored config no
 	// longer names it; an apply that never changed the pair leaves
@@ -408,12 +436,6 @@ func (rb *rgwRollback) restore() error {
 		if restoreErr != nil {
 			return restoreErr
 		}
-	}
-	// The rollback is itself the completed corrective action, so the marker
-	// is cleared here rather than left for a later apply to redrive.
-	restoreErr = removeIgnoreMissing(rgwPendingApplyPath())
-	if restoreErr != nil {
-		return restoreErr
 	}
 	// Material staged by an earlier unfinished update is unreferenced now.
 	pruneRGWTLSGenerations()
@@ -430,7 +452,7 @@ func readRGWConf() ([]byte, error) {
 
 func pruneRGWTLSGenerations() {
 	conf, err := os.ReadFile(rgwConfPath())
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return
 	}
 	certPath, keyPath := rgwConfTLSPaths(conf)
@@ -495,10 +517,28 @@ func finishRGWApply() error {
 	return nil
 }
 
+func prepareRGWKeyring() error {
+	paths := constants.GetPathConst()
+	keyringPath := filepath.Join(paths.DataPath, "radosgw", "ceph-radosgw.gateway")
+	err := createRGWKeyringFunc(keyringPath)
+	if err != nil {
+		return fmt.Errorf("%w: cannot create RGW keyring: %w", ErrPlacementOperationFailed, err)
+	}
+	err = symlinkRGWKeyring(keyringPath, paths.ConfPath)
+	if err != nil {
+		return fmt.Errorf("%w: cannot link RGW keyring: %w", ErrPlacementOperationFailed, err)
+	}
+	return nil
+}
+
 // applyRGWFrontend publishes complete settings and starts or updates RGW.
 // serviceStartMu is held by the caller; file writers take radosgwConfMu second.
 // The returned rollback remains valid until the service record is committed.
 func applyRGWFrontend(spec rgwFrontendSpec, monitors []string, restartOnChange bool) (*rgwRollback, error) {
+	err := recoverPendingRGWApply()
+	if err != nil {
+		return nil, err
+	}
 	// Is the gateway running now? A rollback normally returns it to this state.
 	activeErr := checkRGWActiveFunc()
 	if activeErr != nil && !errors.Is(activeErr, errRGWInactive) {
@@ -506,17 +546,11 @@ func applyRGWFrontend(spec rgwFrontendSpec, monitors []string, restartOnChange b
 	}
 	wasActive := activeErr == nil
 
-	// Every gateway needs the keyring and its symlink. Both calls are safe to repeat.
+	err = prepareRGWKeyring()
+	if err != nil {
+		return nil, err
+	}
 	paths := constants.GetPathConst()
-	keyringPath := filepath.Join(paths.DataPath, "radosgw", "ceph-radosgw.gateway")
-	err := createRGWKeyringFunc(keyringPath)
-	if err != nil {
-		return nil, fmt.Errorf("%w: cannot create RGW keyring: %w", ErrPlacementOperationFailed, err)
-	}
-	err = symlinkRGWKeyring(keyringPath, paths.ConfPath)
-	if err != nil {
-		return nil, fmt.Errorf("%w: cannot link RGW keyring: %w", ErrPlacementOperationFailed, err)
-	}
 
 	// Render the config we want. With TLS it points at the pair's hashed directory.
 	monitors = formatIPv6(monitors)
@@ -537,50 +571,22 @@ func applyRGWFrontend(spec rgwFrontendSpec, monitors []string, restartOnChange b
 		return nil, err
 	}
 
-	// Read radosgw.conf and any marker an unfinished apply left. The marker is
-	// normally the rollback target. Only differing leaves let a gateway probe
-	// prove a manual restart made it stale. The probe dials the gateway, so
-	// radosgw.conf stays unlocked while it runs.
-	current, pending, err := readRGWState()
-	if err != nil {
-		return nil, err
-	}
-	completed := pendingApplyCompleted(current, pending, wasActive)
-
-	// Lock radosgw.conf and read it again: the monitor line may have been
-	// refreshed while the probe ran. The frontend line and the marker cannot
-	// have changed, every writer of them holds serviceStartMu.
+	// Recovery finished before rendering or choosing this apply's rollback
+	// target. Only monitor/run-directory updates can happen under this lock.
 	radosgwConfMu.Lock()
 	current, readErr := os.ReadFile(rgwConfPath())
 	if readErr != nil && !os.IsNotExist(readErr) {
 		radosgwConfMu.Unlock()
 		return nil, fmt.Errorf("%w: cannot read RGW configuration: %w", ErrPlacementOperationFailed, readErr)
 	}
-	if completed {
-		// The gateway serves what the config on disk names, so that config,
-		// not the marker, is what a rollback returns to.
-		err = removeIgnoreMissing(rgwPendingApplyPath())
-		if err != nil {
-			radosgwConfMu.Unlock()
-			return nil, fmt.Errorf("%w: cannot clear a completed RGW apply: %w", ErrPlacementOperationFailed, err)
-		}
-		pending = nil
-	}
 
-	// What differs: the frontend line, the pair on disk, or an unfinished apply?
+	// What differs: the frontend line or the pair on disk?
 	changed := readErr != nil || rgwFrontendLine(current) != rgwFrontendLine(desired)
 	materialChanged := spec.ssl && !pairOnDisk(certPath, keyPath, spec.certPEM, spec.keyPEM)
 	var rb *rgwRollback
-	if changed || materialChanged || pending != nil {
-		// Record how to get back. A leftover marker, not the half-applied file,
-		// is the rollback target.
+	if changed || materialChanged {
+		// Recovery made the current config the rollback baseline.
 		rb = &rgwRollback{confPath: rgwConfPath(), prevConf: current, prevActive: wasActive}
-		if pending != nil {
-			// Override the just-read default: the marker is what an earlier,
-			// unfinished attempt actually started from.
-			rb.prevConf = []byte(*pending.PreviousConfig)
-			rb.prevActive = *pending.PreviousActive
-		}
 		// The old TLS generation isn't stored as its own field; recover its
 		// directory by parsing the frontends line out of this rollback's own
 		// config text.
@@ -598,9 +604,7 @@ func applyRGWFrontend(spec rgwFrontendSpec, monitors []string, restartOnChange b
 			// partial, is restaged safely rather than skipped.
 			err = stageRGWTLSGeneration(genDir, spec.certPEM, spec.keyPEM)
 		}
-		if err == nil && pending == nil {
-			// Only when no marker exists yet: one from an earlier interrupted
-			// attempt is left as the true rollback target, not overwritten.
+		if err == nil {
 			err = writePendingApplyMarker(current, wasActive)
 		}
 		if err == nil && changed {
@@ -619,8 +623,11 @@ func applyRGWFrontend(spec rgwFrontendSpec, monitors []string, restartOnChange b
 		return nil, fmt.Errorf("%w: cannot publish RGW frontend: %w", ErrPlacementOperationFailed, errors.Join(err, rb.restore()))
 	}
 
-	// Without a restart the marker stays, so the next apply restarts.
+	// Only the new change is deferred; any previous one was recovered above.
 	if !restartOnChange {
+		if rb == nil {
+			return nil, finishRGWApply()
+		}
 		return rb, nil
 	}
 
@@ -801,6 +808,10 @@ func UpdateRGWCertificates(ctx context.Context, s interfaces.StateInterface, cer
 	}
 	serviceStartMu.Lock()
 	defer serviceStartMu.Unlock()
+	err = recoverPendingRGWApply()
+	if err != nil {
+		return err
+	}
 	err = checkRGWActiveFunc()
 	if err != nil {
 		return fmt.Errorf("%w: RGW is not running: %w", ErrPlacementOperationFailed, err)

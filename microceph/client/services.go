@@ -63,10 +63,14 @@ func DeleteNFSService(ctx context.Context, c mcTypes.Client, target string, svc 
 }
 
 // Send a request to start certain service at the target node (hostname for remote target).
-// A first RGW start may wait up to two minutes for readiness, so the request
-// budget must exceed that plus the surrounding work.
+// RGW may need readiness waits for pending recovery, the requested activation,
+// and a verified rollback (up to two minutes each, plus one minute of overhead).
 func SendServicePlacementReq(ctx context.Context, c mcTypes.Client, data *types.EnableService, target string) error {
-	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	timeout := 5 * time.Minute
+	if data.Name == "rgw" {
+		timeout = 7 * time.Minute
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// Send this request to target.
