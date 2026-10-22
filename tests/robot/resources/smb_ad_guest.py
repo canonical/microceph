@@ -18,7 +18,7 @@ SERVICE = "robot-ad.robot.test"
 DC_ROOT = Path("/root/robot-ad-dc")
 
 
-def resource_documents(addresses, dc, password):
+def resource_documents(addresses, dc, password, negative_id="robot-bad"):
     """Use the real mgr resource shape and an explicit positive group allowlist."""
     def document(cluster, credential, secret, path):
         resources = [
@@ -38,7 +38,8 @@ def resource_documents(addresses, dc, password):
     # Placement retirement retains mgr resources and their path earmarks.
     # Keep the failed-join cluster isolated without deleting its retained state.
     return {"ad": document("robot-ad", "robot-join", password, "/ad"),
-            "ad-wrong": document("robot-bad", "robot-bad-join", password + "-incorrect", "/ad-wrong"),
+            "ad-wrong": document(negative_id, negative_id + "-join", password + "-incorrect",
+                                 "/ad-wrong" if negative_id == "robot-bad" else "/ad-wrong-" + negative_id),
             "ad-refresh": {"resource_type": "ceph.smb.join.auth", "auth_id": "robot-join",
                            "auth": {"username": "bob", "password": "deliberately-not-a-join-credential"}}}
 
@@ -107,9 +108,22 @@ def provision_dc(address, gateway):
     Path("/etc/systemd/system/robot-ad-dc.service").write_text(unit)
 
 
-def initialize(addresses, dc):
+def initialize(addresses, dc, negative_id="robot-bad"):
+    import shutil
+    if not re.fullmatch(r"robot-bad|bad-[0-9a-f]{8}", negative_id):
+        raise ValueError("invalid negative fixture ID")
+    previous = BASE / "ad-wrong.json"
+    if previous.exists():
+        old = next(r["cluster_id"] for r in json.loads(previous.read_text())["resources"]
+                   if r["resource_type"] == "ceph.smb.cluster")
+        history = BASE / "history" / old
+        history.mkdir(mode=0o700, parents=True, exist_ok=False)
+        for name in ("ad.json", "ad-wrong.json", "ad-refresh.json", "ad.result", "ad-wrong.result", "ad-refresh.result"):
+            path = BASE / name
+            if path.exists():
+                shutil.copy2(path, history / name)
     credentials = json.loads((BASE / "ad-secrets.json").read_text())
-    for kind, document in resource_documents(addresses, dc, credentials["Administrator"]).items():
+    for kind, document in resource_documents(addresses, dc, credentials["Administrator"], negative_id).items():
         (BASE / (kind + ".json")).write_text(json.dumps(document))
     for selector, user, password in (("alice", "alice", credentials["alice"]), ("bob", "bob", credentials["bob"]),
                                      ("wrong", "alice", credentials["bob"]), ("unknown", "no-such-robot-user", credentials["bob"])):
@@ -160,12 +174,19 @@ def client(address, share, user, protocol, action, filename):
     except subprocess.TimeoutExpired:
         print(json.dumps({"rc": 124, "message": "SMB request reached the 65-second deadline", "ticket": "", "digest": ""}))
         return
-    ticket = run(["klist", "-c", str(cache)], env=env).stdout if protocol == "kerberos" else ""
+    listing = run(["klist", "-c", str(cache)], env=env).stdout if protocol == "kerberos" else ""
+    ticket = ticket_evidence(listing)
     message = result.stdout + result.stderr
     for secret in credentials.values():
         message = message.replace(secret, "<redacted>")
     print(json.dumps({"rc": result.returncode, "message": message, "ticket": ticket,
                       "digest": hashlib.sha256(readback.read_bytes()).hexdigest() if readback.exists() else ""}))
+
+
+def ticket_evidence(listing):
+    """Export only the intended SPN predicate, never a credential-cache listing."""
+    service = "cifs/" + SERVICE + "@" + REALM
+    return service if service in listing else ""
 
 
 def account_values(row):
@@ -198,7 +219,9 @@ def account():
 
 
 def join_error():
-    text = Path("/var/snap/microceph/common/smb/robot-bad/diagnostics/ad-initial-join-error").read_text()[-16384:]
+    cluster = next(r["cluster_id"] for r in json.loads((BASE / "ad-wrong.json").read_text())["resources"]
+                   if r["resource_type"] == "ceph.smb.cluster")
+    text = (Path("/var/snap/microceph/common/smb") / cluster / "diagnostics/ad-initial-join-error").read_text()[-16384:]
     for secret in json.loads((BASE / "ad-secrets.json").read_text()).values():
         text = text.replace(secret, "<redacted>")
     print(text)
@@ -206,7 +229,12 @@ def join_error():
 
 def diagnostics():
     credentials = json.loads((BASE / "ad-secrets.json").read_text()) if (BASE / "ad-secrets.json").exists() else {}
-    for file in sorted(BASE.glob("*.first-error")) + [BASE / "dc-provision.log", Path("/var/snap/microceph/common/smb/robot-bad/diagnostics/ad-initial-join-error")]:
+    files = sorted(BASE.glob("*.first-error")) + [BASE / "dc-provision.log"]
+    if (BASE / 'ad-wrong.json').exists():
+        cluster = next(r['cluster_id'] for r in json.loads((BASE / 'ad-wrong.json').read_text())['resources']
+                       if r['resource_type'] == 'ceph.smb.cluster')
+        files.append(Path('/var/snap/microceph/common/smb') / cluster / 'diagnostics/ad-initial-join-error')
+    for file in files:
         if file.is_file():
             text = file.read_text()[-16384:]
             for secret in credentials.values():
@@ -240,7 +268,9 @@ def prepare_data(uid, gid):
         fs.conf_set("keyring", str(config / "ceph.keyring"))
         fs.conf_set("client_fs", "robotsmb")
         fs.mount()
-        for path in ("/ad", "/ad-wrong"):
+        negative_path = next(r["cephfs"]["path"] for r in json.loads((BASE / "ad-wrong.json").read_text())["resources"]
+                             if r["resource_type"] == "ceph.smb.share")
+        for path in ("/ad", negative_path):
             fs.mkdirs(path, 0o755)
             fs.chown(path, int(uid), int(gid))
             fs.chmod(path, 0o755)
@@ -278,7 +308,7 @@ if __name__ == "__main__":
         if operation == "dc":
             provision_dc(*args)
         elif operation == "init":
-            initialize(json.loads(args[0]), args[1])
+            initialize(json.loads(args[0]), *args[1:])
         elif operation == "apply":
             sys.exit(apply(*args))
         elif operation == "client":

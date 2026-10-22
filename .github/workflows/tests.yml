@@ -6,6 +6,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      smb_permutations:
+        description: Run all six SMB suite orders on the shared lab
+        type: boolean
+        default: false
   schedule:
     - cron: "0 2 * * *" # Nightly full run on main for flaky rate data
 
@@ -218,23 +223,15 @@ jobs:
             suite: deferred-ceph-multinode-tests
             runner: self-hosted-linux-amd64-jammy-xlarge
 
-          - id: smb-tests
-            name: Native SMB lifecycle and authenticated IO
-            suite: smb-tests
-            # The 100 GB xlarge disk cannot satisfy the 122 GiB capacity gate.
+          - id: smb-integration
+            name: SMB singleton, clustered and AD (one shared lab)
+            suite: smb-integration
+            # One job owns all four VMs; three sequential scenario suites do not
+            # share runners/labs through separate matrix entries. Preserve the
+            # 146 GiB pool / 16 GiB initial RAM gate and guest-only snapd policy.
             runner: self-hosted-linux-amd64-noble-2xlarge-extra
             lxd_args: --storage-backend=dir
-            # Guest-only: native SMB mount namespaces require snapd >= 2.78.
-            args: --variable SMB_SNAPD_CHANNEL:latest/candidate
-
-          - id: smb-ad-tests
-            name: Native SMB external AD authentication and group IO
-            suite: smb-ad-tests
-            # Four real VMs need 146 GiB free pool / 16 GiB available RAM initially.
-            # Preserve #931's dir/extra-disk and guest-only snapd lessons.
-            runner: self-hosted-linux-amd64-noble-2xlarge-extra
-            lxd_args: --storage-backend=dir
-            args: --variable SMB_SNAPD_CHANNEL:latest/candidate
+            args: --variable SMB_SNAPD_CHANNEL:latest/candidate ${{ inputs.smb_permutations && '--smb-permutations' || '' }}
 
           - id: legacy-placement-tests
             name: Legacy bootstrap placement regression
@@ -300,4 +297,8 @@ jobs:
             output.xml
             log.html
             report.html
+            smb-summary.json
+            smb-results/*/output.xml
+            smb-results/*/log.html
+            smb-results/*/report.html
           retention-days: 5

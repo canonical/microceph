@@ -30,8 +30,8 @@ def resource_documents(addresses, password):
                 "cephfs": {"volume": "robotsmb", "path": path, "provider": "samba-vfs/new"}}
     return {"clustered": {"resources": [users, cluster("robot-smb", "always", 1445, 19922), share("robot-smb", "/clustered")]},
             "refresh": cluster("robot-smb", "always", 2445, 29922),
-            "nonclustered": {"resources": [cluster("robot-never", "never", 3445, 39922), share("robot-never", "/independent")]},
-            "independent": {"resources": [cluster("robot-other", "never", 4445, 49922), share("robot-other", "/independent-other")]}}
+            "nonclustered": {"resources": [cluster("robot-never", "never", 3445, 39922), share("robot-never", "/independent"), users]},
+            "independent": {"resources": [cluster("robot-other", "never", 4445, 49922), share("robot-other", "/independent-other"), users]}}
 
 
 def safe_apply_result(rc, stdout, stderr, passwords):

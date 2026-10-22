@@ -100,6 +100,51 @@ state in `/var/snap/vaultlocker/common/microceph-ci/reboot-state.json` inside th
 VM. Delete the VM when finished. This is not a Juju/charm, HA or cross-model test;
 the test Vault shares the VM and starts sealed after reboot.
 
+## Shared-lab SMB CI
+
+The `smb-integration` matrix entry is **one CI job** with one verified snap and
+one owned four-VM lab (three gateways plus the Samba AD DC). Three ordered
+scenario suites run sequentially on the same Ceph cluster: singleton/independent
+non-AD (3 cases), clustered non-AD (6), and external AD (9).
+
+```bash
+tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-integration \
+    --variable SMB_SNAPD_CHANNEL:latest/candidate
+# Another complete-suite order, repeated without reallocating the lab:
+tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-integration \
+    --smb-suites ad,clustered,singleton --smb-repeat 2 \
+    --variable SMB_SNAPD_CHANNEL:latest/candidate
+# All six orders: long-running acceptance, not the default PR job:
+tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-integration \
+    --smb-permutations --variable SMB_SNAPD_CHANNEL:latest/candidate
+```
+
+`tests/robot/smb_runner.py` provisions once, passes a private owner/name manifest
+to each suite and tears down once in finalization, including partial setup failure.
+It emits separate `smb-results/<execution>-<suite>/` reports, a combined Robot
+report and `smb-summary.json`. An earlier failure never becomes success; an
+unconfirmed stop or unhealthy boundary blocks later suites. Lifecycle errors are
+infrastructure failures in the combined report, not hidden skips. Private manifests,
+inputs and credential caches are not uploaded. `--dryrun` allocates no VMs.
+The existing GitHub workflow's optional `smb_permutations` dispatch input enables
+all six orders in its single SMB job; default PR runs execute each suite once.
+
+Each scenario supplies its own inputs and starts with idle, owned gateway slots
+and coherent Ceph health. Singleton no longer depends on clustered deployment.
+Cleanup retires only known fixture owners using the native API and confirms stop.
+Logical resources/data and local AD identity remain in the owned lab for repeats
+until final VM teardown: no last-identity purge, trust reset or automatic rejoin.
+Each AD execution uses a new negative-join ID/path, retaining earlier private
+inputs/outcomes. The positive AD identity stays stable. An issued/uncertain DC
+stop is restored in finalization. Cases within each scenario remain ordered;
+live repeat/order validation is required, not inferred from dry-run success.
+
+Standalone CLI selections are `smb-singleton-tests`, `smb-clustered-tests` and
+`smb-ad-tests`. The legacy `smb-tests` alias selects both non-AD suites. All use
+the coordinator. Raw Robot invocations retain isolated scenario setup; shared
+binding requires an explicit manifest. Storage, clock, strict-confinement and
+50 GiB/4 GiB headroom guards are unchanged.
+
 ## Native SMB lifecycle
 
 ```bash
@@ -107,7 +152,8 @@ tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-tests \
     --variable SMB_SNAPD_CHANNEL:latest/candidate
 ```
 
-Run the **whole ordered suite**. Nine cases cover clustered deployment, real
+Run the **whole ordered scenario** (six clustered cases or three singleton/
+independent cases), or the legacy alias for both. They cover clustered deployment, real
 password-authenticated put/get and cross-gateway reads (plus wrong-password denial),
 endpoint refresh/no-op, retirement/rejoin, daemon restart, ordinary VM reboot and
 clustered peer-preserving purge, nonclustered second-owner rejection and verified
@@ -115,15 +161,16 @@ relocation, plus independent logical IDs on disjoint data paths with scoped purg
 or re-enables a placement. A prior failure remains failed even if later, independent
 mode tests can run. Missing deployment prerequisites are reported as skips, not passes.
 
-This suite creates three **real Ubuntu 26.04 VMs**, not nested containers; VM0 also
-runs `smbclient`. Each VM has 2 vCPU, 3 GiB RAM, a 20 GiB root disk and a dedicated
-4 GiB block volume. Before allocation it requires 50 GiB storage/4 GiB memory
-headroom (initially at least 122 GiB free in the LXD pool and 13 GiB available RAM).
+Gateways are **real Ubuntu 26.04 VMs**, not nested containers; VM0 also runs
+`smbclient`. Each has 2 vCPU, 3 GiB RAM, a 20 GiB root and dedicated 4 GiB data disk.
+The coordinator includes the DC and requires 146 GiB free pool/16 GiB available
+RAM initially. Isolated raw non-AD setup requires 122 GiB/13 GiB. Both retain
+50 GiB storage/4 GiB memory headroom.
 Use a sufficiently large pool; CI uses the extra-disk runner with the `dir`
 backend, not the 100 GB xlarge runner or LXD's small default loop pool. `SMB_STORAGE_POOL` selects a pre-existing pool.
 The local LXD remote must use the default project. No existing VM/profile is altered.
 
-Both SMB suites discover each OSD immediately before disk add: the tagged VM's
+The SMB fixture discovers each OSD immediately before disk add: the tagged VM's
 `test-data` attachment must reference the exact tagged block volume in the selected
 pool. Structured guest inventory must contain exactly one `lxd_test--data` serial
 (the LXD-escaped device ID, verified on a real Ubuntu 26.04 VM). It must be a
@@ -258,7 +305,8 @@ multi-node-tests                             upgrade-squid-tests
 multi-node-tests-with-custom-microceph-ip    vaultlocker-test
 nfs-multinode-test                           wal-db-tests
 nfs-test                                    wiping-test
-smb-tests                                   smb-ad-tests
+smb-clustered-tests                          smb-ad-tests
+smb-singleton-tests
 ```
 
 ## Harness conventions

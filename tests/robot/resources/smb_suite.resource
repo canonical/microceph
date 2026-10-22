@@ -81,3 +81,50 @@ Check Retired SMB Member
     Should Be Equal    ${state}[roles][ctdb-nodes][ActiveState]    inactive
     Should Be Equal    ${state}[roles][winbindd][ActiveState]    inactive
 
+SMB Shared Lab Setup
+    [Timeout]    40 minutes
+    Require SMB AD Capacity
+    SMB Suite Setup
+    Provision SMB AD Directory
+    Require SMB Ceph Health
+
+SMB Scenario Setup
+    [Arguments]    ${kind}
+    [Timeout]    40 minutes
+    ${shared}=    SMB Lab Is Shared
+    IF    $shared
+        Use SMB Lab
+        Verify SMB Lab
+    ELSE
+        IF    '${kind}' == 'ad'
+            Require SMB AD Capacity
+        END
+        SMB Suite Setup
+        IF    '${kind}' == 'ad'
+            Provision SMB AD Directory
+        END
+    END
+    Assert SMB Scenario Idle
+    Require SMB Ceph Health
+    IF    '${kind}' == 'ad'
+        Fresh SMB AD Inputs
+        ${prepared}=    Prepare SMB AD Data    0    0
+        Should Be Equal As Integers    ${prepared.rc}    0    msg=${prepared.stderr}
+    END
+
+SMB Scenario Cleanup
+    TRY
+        Collect SMB Diagnostics
+    FINALLY
+        TRY
+            Verify SMB Lab
+            Restore SMB Directory
+            Retire SMB Scenario
+        FINALLY
+            ${shared}=    SMB Lab Is Shared
+            IF    not $shared
+                Destroy SMB Lab
+            END
+        END
+    END
+

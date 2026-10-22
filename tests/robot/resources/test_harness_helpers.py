@@ -4117,11 +4117,13 @@ def test_smb_ad_negative_cluster_does_not_claim_positive_data_paths():
     assert paths('ad-wrong').isdisjoint(paths('ad'))
 
 
-def test_smb_ad_prepares_isolated_paths_before_and_after_identity_mapping(monkeypatch):
+def test_smb_ad_prepares_isolated_paths_before_and_after_identity_mapping(monkeypatch, tmp_path):
     import sys
     from types import SimpleNamespace
     import smb_ad_guest as ad
     created, ownership, modes, shutdowns = set(), [], [], []
+    monkeypatch.setattr(ad, 'BASE', tmp_path)
+    (tmp_path / 'ad-wrong.json').write_text(json.dumps(ad.resource_documents(['192.0.2.1'], '192.0.2.4', 'PRIVATE')['ad-wrong']))
     fs = SimpleNamespace(
         conf_set=lambda *args: None,
         mount=lambda: None,
@@ -4501,9 +4503,9 @@ def test_smb_ceph_health_observation_records_clock_status():
 
 def test_smb_ad_setup_rechecks_ceph_clock_health_after_directory_preparation():
     from robot.api import get_model
-    model = get_model(Path(__file__).parents[1] / 'smb-ad-tests' / 'smb_ad_tests.robot')
+    model = get_model(Path(__file__).parent / 'smb_suite.resource')
     setup = next(block for section in model.sections for block in section.body
-                 if getattr(block, 'name', '') == 'AD Suite Setup' and hasattr(block, 'body'))
+                 if getattr(block, 'name', '') == 'SMB Shared Lab Setup' and hasattr(block, 'body'))
     calls = [statement.keyword for statement in setup.body if hasattr(statement, 'keyword')]
     assert calls.index('Require SMB Ceph Health') > calls.index('Provision SMB AD Directory')
 
@@ -4656,3 +4658,223 @@ def test_smb_ceph_robot_asserts_the_accepted_detailed_observation():
     assert calls[0].assign == ('${health}=',)
     assert all(statement.keyword != 'Observe SMB Ceph Health' for statement in calls)
     assert [statement.keyword for statement in calls[1:]] == ['Should Be Equal', 'Dictionary Should Not Contain Key']
+
+
+# Shared-lab SMB CI: suites are independent, cases within each stay ordered.
+def _smb_runner_module():
+    import importlib.util
+    path = Path(__file__).parents[1] / 'smb_runner.py'
+    assert path.is_file(), 'missing shared-lab SMB coordinator'
+    spec = importlib.util.spec_from_file_location('tested_smb_runner', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_smb_shared_runner_plans_all_orders_and_repeats():
+    import itertools
+    import pytest
+    m = _smb_runner_module()
+    assert m.suite_plan(['ad', 'singleton', 'clustered'], repeat=2) == ['ad', 'singleton', 'clustered'] * 2
+    plan = m.suite_plan(list(m.SUITES), permutations=True)
+    assert [tuple(plan[i:i + 3]) for i in range(0, len(plan), 3)] == list(itertools.permutations(m.SUITES))
+    for order in ([], ['unknown'], ['ad', 'ad']):
+        with pytest.raises(ValueError):
+            m.suite_plan(order)
+    with pytest.raises(ValueError):
+        m.suite_plan(['ad'], repeat=0)
+
+
+def test_smb_shared_runner_failure_never_becomes_success_and_cleanup_always_runs():
+    m = _smb_runner_module()
+    calls = []
+    def execute(name, ordinal):
+        calls.append(('run', name))
+        return {'rc': int(name == 'ad')}
+    def cleanup(name, ordinal):
+        calls.append(('cleanup', name))
+    result = m.run_sequence(['ad', 'clustered'], execute, cleanup)
+    assert result['rc'] != 0
+    assert [r['status'] for r in result['suites']] == ['FAIL', 'PASS']
+    assert calls == [('run', 'ad'), ('cleanup', 'ad'), ('run', 'clustered'), ('cleanup', 'clustered')]
+
+
+def test_smb_shared_runner_uncertain_cleanup_blocks_later_suites():
+    m = _smb_runner_module()
+    calls = []
+    def execute(name, ordinal):
+        calls.append(name)
+        raise RuntimeError('first failure')
+    def cleanup(name, ordinal):
+        raise RuntimeError('stop unconfirmed')
+    result = m.run_sequence(['ad', 'singleton'], execute, cleanup)
+    assert result['rc'] != 0 and calls == ['ad']
+    assert [r['status'] for r in result['suites']] == ['FAIL', 'BLOCKED']
+    assert 'stop unconfirmed' in result['suites'][0]['cleanup_error']
+
+
+def test_smb_singleton_resource_inputs_are_self_contained():
+    import smb_guest
+    docs = smb_guest.resource_documents(['192.0.2.1'], 'PRIVATE')
+    for name in ('nonclustered', 'independent'):
+        assert any(r['resource_type'] == 'ceph.smb.usersgroups' for r in docs[name]['resources']), 'singleton inputs rely on clustered suite'
+
+
+def test_smb_ad_negative_execution_namespace_is_explicit_and_ticket_output_is_safe():
+    import inspect
+    import smb_ad_guest as ad
+    assert 'negative_id' in inspect.signature(ad.resource_documents).parameters, 'negative join IDs cannot be reused across executions'
+    docs = ad.resource_documents(['192.0.2.1'], '192.0.2.4', 'PRIVATE', negative_id='bad-1234')
+    resources = docs['ad-wrong']['resources']
+    assert next(r['cluster_id'] for r in resources if r['resource_type'] == 'ceph.smb.cluster') == 'bad-1234'
+    assert next(r['auth_id'] for r in resources if r['resource_type'] == 'ceph.smb.join.auth') == 'bad-1234-join'
+    assert {r['cephfs']['path'] for r in resources if r['resource_type'] == 'ceph.smb.share'} == {'/ad-wrong-bad-1234'}
+    assert callable(getattr(ad, 'ticket_evidence', None)), 'raw ticket listings must remain inside guest'
+    listing = 'PRIVATE-CACHE-LISTING\n' + 'cifs/' + ad.SERVICE + '@' + ad.REALM
+    assert ad.ticket_evidence(listing) == 'cifs/' + ad.SERVICE + '@' + ad.REALM
+    assert 'PRIVATE' not in ad.ticket_evidence(listing)
+    assert ad.ticket_evidence('unrelated service ticket') == ''
+    assert ad.ticket_evidence('ldap/' + ad.SERVICE + '@' + ad.REALM) == ''
+
+
+def test_smb_shared_manifest_binds_only_owned_names_without_robot_context(tmp_path):
+    import pytest
+    m = _smb_module()
+    lib = m.smb_ops()
+    assert callable(getattr(lib, 'use_smb_lab', None)), 'missing shared manifest binding'
+    owner = 'a' * 32
+    doc = {'owner': owner, 'pool': 'default', 'nodes': [f'smb-ci-{owner[:8]}-n{i}' for i in range(3)] + [f'smb-ci-{owner[:8]}-dc'],
+           'volumes': [f'smb-ci-{owner[:8]}-n{i}-osd' for i in range(3)]}
+    path = tmp_path / 'lab.json';path.write_text(json.dumps(doc))
+    lib.use_smb_lab(str(path))
+    assert len(lib.nodes) == 3 and lib.ad_dc.name.endswith('-dc')
+    doc['nodes'][0] = 'foreign-vm';path.write_text(json.dumps(doc))
+    with pytest.raises(AssertionError):
+        lib.use_smb_lab(str(path))
+
+
+def test_smb_scenario_retirement_refuses_foreign_owners_and_never_purges_AD(monkeypatch):
+    import pytest
+    m = _smb_module();lib = m.smb_ops()
+    assert callable(getattr(lib, 'retire_smb_scenario', None)), 'missing scenario release'
+    calls = []
+    class Node:
+        name = 'node0'
+        def command(self, *args, **kwargs):
+            calls.append(args)
+            return _Res(0, '', '')
+    lib.nodes = [Node()]
+    monkeypatch.setattr(lib, 'smb_snapshot', lambda *args: {'owner': 'foreign'})
+    with pytest.raises(AssertionError):
+        lib.retire_smb_scenario()
+    assert not calls
+    snapshots = iter([{'owner': 'robot-ad'}, {'owner': '', 'roles': {role: {'ActiveState': 'inactive'} for role in (*m.ROLES, 'winbindd')}}])
+    monkeypatch.setattr(lib, 'smb_snapshot', lambda *args: next(snapshots))
+    lib.retire_smb_scenario()
+    assert calls == [('microceph', 'disable', 'smb', '--cluster-id', 'robot-ad')]
+
+
+def test_smb_three_suite_partition_has_no_cross_suite_prerequisite():
+    from robot.api import TestSuiteBuilder
+    root = Path(__file__).parents[1]
+    for folder, count in [('smb-singleton-tests', 3), ('smb-clustered-tests', 6), ('smb-ad-tests', 9)]:
+        assert (root / folder).is_dir(), 'missing independent SMB suite: ' + folder
+        suite = TestSuiteBuilder().build(str(next((root / folder).glob('*.robot'))))
+        assert len(suite.tests) == count
+        if folder == 'smb-singleton-tests':
+            assert all(kw.name != 'Require Clustered Deployment' for test in suite.tests for kw in test.body)
+
+
+def test_smb_ad_repeated_inputs_archive_old_attempt_and_never_reuse_its_id(tmp_path, monkeypatch):
+    import smb_ad_guest as ad
+    monkeypatch.setattr(ad, 'BASE', tmp_path)
+    (tmp_path / 'ad-secrets.json').write_text(json.dumps({'Administrator': 'ADMIN-PRIVATE', 'alice': 'ALICE', 'bob': 'BOB'}))
+    ad.initialize(['192.0.2.1'], '192.0.2.4')
+    (tmp_path / 'ad-wrong.result').write_text('original failed outcome')
+    ad.initialize(['192.0.2.1'], '192.0.2.4', 'bad-12345678')
+    assert (tmp_path / 'history/robot-bad/ad-wrong.result').read_text() == 'original failed outcome'
+    first = json.loads((tmp_path / 'ad-wrong.json').read_text())
+    ad.initialize(['192.0.2.1'], '192.0.2.4', 'bad-87654321')
+    assert json.loads((tmp_path / 'history/bad-12345678/ad-wrong.json').read_text()) == first
+    second = json.loads((tmp_path / 'ad-wrong.json').read_text())
+    assert first != second
+    assert (tmp_path / 'history/robot-bad/ad-wrong.result').read_text() == 'original failed outcome'
+
+
+def test_smb_shared_runner_counts_skips_missing_cases_and_failures_as_non_success(tmp_path):
+    m = _smb_runner_module()
+    for statuses, expected in [(['PASS'], 1), (['PASS', 'SKIP'], 1), (['FAIL'], 1), ([], 1)]:
+        tests = ''.join('<test><status status="' + status + '"/></test>' for status in statuses)
+        (tmp_path / 'output.xml').write_text('<robot><suite>' + tests + '</suite></robot>')
+        result = m._result(tmp_path, expected)
+        assert (result['rc'] == 0) is (statuses == ['PASS'])
+
+
+def test_smb_coordinator_allocates_one_fixture_reuses_manifest_and_tears_down_once(tmp_path, monkeypatch):
+    import robot
+    from types import SimpleNamespace
+    m = _smb_runner_module()
+    calls = []
+    manifests = []
+    def execute(target, directory, variables, options, dryrun=False):
+        manifest = next(v.split(':', 1)[1] for v in variables if v.startswith('SMB_LAB_MANIFEST:'))
+        manifests.append(manifest)
+        name = directory.name
+        calls.append(name)
+        if name == 'setup':
+            Path(manifest).write_text('{}')
+            count = 1
+        else:
+            count = m.SUITES[name.split('-', 1)[1]][1]
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / 'output.xml').write_text('<robot><suite>' + '<test><status status="PASS"/></test>' * count + '</suite></robot>')
+        return 0
+    class Owner:
+        owner = 'owner'
+        ad_dc = SimpleNamespace(name='dc', command=lambda *a, **k: _Res(0, 'active', ''))
+        def use_smb_lab(self, *args, **kwargs): calls.append('bind')
+        def verify_smb_lab(self): calls.append('verify')
+        def assert_smb_scenario_idle(self): calls.append('idle')
+        def wait_for_smb_ceph_health(self): return {'status': 'HEALTH_OK'}
+        def _host(self, *args): return json.dumps([{'name': 'dc', 'config': {'user.microceph-test-owner': 'owner'}}])
+        def destroy_smb_lab(self): calls.append('destroy')
+    monkeypatch.setattr(m, '_robot', execute)
+    monkeypatch.setattr(_smb_module(), 'smb_ops', Owner)
+    monkeypatch.setattr(robot, 'rebot', lambda *args, **kwargs: 0)
+    assert m.main(['--outputdir', str(tmp_path), '--repeat', '2']) == 0
+    assert calls.count('setup') == 1 and calls.count('destroy') == 1
+    assert len(set(manifests)) == 1
+    result = json.loads((tmp_path / 'smb-summary.json').read_text())
+    assert result['shared_lab_setup_executions'] == 1 and len(result['suites']) == 6
+    assert all(row['status'] == 'PASS' for row in result['suites'])
+
+
+def test_smb_fresh_negative_refuses_existing_namespace_before_mutation(monkeypatch):
+    import pytest
+    from types import SimpleNamespace
+    m = _smb_module();lib = m.smb_ops();calls = []
+    def command(*args, **kwargs):
+        calls.append(args)
+        if args[:3] == ('microceph.ceph', 'smb', 'show'):
+            return _Res(0, '{"resources":[{"cluster_id":"already-consumed"}]}', '')
+        return _Res(0, '[{"prefsrc":"192.0.2.1"}]', '')
+    lib.nodes = [SimpleNamespace(command=command)] * 3
+    lib.ad_dc = SimpleNamespace(command=command)
+    monkeypatch.setattr(m, 'BuiltIn', lambda: SimpleNamespace(set_suite_variable=lambda *args: None))
+    with pytest.raises(AssertionError, match='namespace'):
+        lib.fresh_smb_ad_inputs()
+    assert not any(args[0] == 'python3' for args in calls)
+
+
+def test_smb_CI_uses_one_shared_job_and_never_uploads_private_manifest():
+    import yaml
+    workflow = yaml.safe_load((Path(__file__).parents[3] / '.github/workflows/tests.yml').read_text())
+    job = workflow['jobs']['robot-tests']
+    entries = [row for row in job['strategy']['matrix']['include'] if row['id'].startswith('smb-')]
+    assert len(entries) == 1 and entries[0]['suite'] == 'smb-integration'
+    assert entries[0]['runner'] == 'self-hosted-linux-amd64-noble-2xlarge-extra'
+    assert entries[0]['lxd_args'] == '--storage-backend=dir'
+    assert 'SMB_SNAPD_CHANNEL:latest/candidate' in entries[0]['args']
+    paths = next(step['with']['path'] for step in job['steps'] if step.get('name') == 'Upload Robot logs')
+    assert 'smb-summary.json' in paths and 'smb-results/*/output.xml' in paths
+    assert 'private' not in paths and 'smb-results/**' not in paths

@@ -3,8 +3,8 @@ Documentation    External Samba AD authentication, not domain-management qualifi
 ...    Whole ordered suite: three owned gateway VMs (VM0 is client), one owned AD DC.
 ...    Every client invocation is fresh. Mutations run once; polls only observe.
 Resource         ../resources/smb_suite.resource
-Suite Setup      AD Suite Setup
-Suite Teardown   AD Suite Cleanup
+Suite Setup      SMB Scenario Setup    ad
+Suite Teardown   SMB Scenario Cleanup
 Test Teardown    AD Failure Diagnostics
 Test Timeout     15 minutes
 Test Tags        smb    ad    multi-node    lxd    slow    integration
@@ -13,24 +13,9 @@ Test Tags        smb    ad    multi-node    lxd    slow    integration
 ${SMB_VM_IMAGE}          ubuntu:26.04
 ${SMB_SNAPD_CHANNEL}     latest/stable
 ${AD_DEPLOYED}          ${False}
+${SMB_AD_BAD_CLUSTER}   robot-bad
 
 *** Keywords ***
-AD Suite Setup
-    [Timeout]    40 minutes
-    Require SMB AD Capacity
-    SMB Suite Setup
-    Provision SMB AD Directory
-    Require SMB Ceph Health
-    ${prepared}=    Prepare SMB AD Data    0    0
-    Should Be Equal As Integers    ${prepared.rc}    0    msg=${prepared.stderr}
-
-AD Suite Cleanup
-    TRY
-        SMB AD Diagnostics
-    FINALLY
-        SMB Suite Cleanup
-    END
-
 AD Failure Diagnostics
     IF    '${TEST STATUS}' == 'FAIL'
         SMB AD Diagnostics
@@ -89,17 +74,17 @@ AD DC Checked
 *** Test Cases ***
 Wrong Join Credentials Never Produce A Ready Gateway
     Apply AD Checked    ad-wrong
-    ${rejected}=    SMB Node Command    0    microceph    enable    smb    --cluster-id    robot-bad    --wait=true
+    ${rejected}=    SMB Node Command    0    microceph    enable    smb    --cluster-id    ${SMB_AD_BAD_CLUSTER}    --wait=true
     Should Not Be Equal As Integers    ${rejected.rc}    0
-    ${state}=    SMB Snapshot    0    robot-bad
-    ${ready}=    SMB Snapshot Is Ready    ${state}    robot-bad    1445
+    ${state}=    SMB Snapshot    0    ${SMB_AD_BAD_CLUSTER}
+    ${ready}=    SMB Snapshot Is Ready    ${state}    ${SMB_AD_BAD_CLUSTER}    1445
     Should Not Be True    ${ready}
     Should Not Be Equal    ${state}[roles][smbd][ActiveState]    active
     ${failure}=    SMB AD Join Error
     Should Match Regexp    ${failure}    (?i)(NT_STATUS_LOGON_FAILURE|WERR_LOGON_FAILURE|logon failure|NT_STATUS_WRONG_PASSWORD)
     # Retire without purge/reset/retry; ambiguous attempt/state remains for inspection.
-    Run SMB Checked    0    microceph    disable    smb    --cluster-id    robot-bad
-    Check Retired SMB Member    0    robot-bad
+    Run SMB Checked    0    microceph    disable    smb    --cluster-id    ${SMB_AD_BAD_CLUSTER}
+    Check Retired SMB Member    0    ${SMB_AD_BAD_CLUSTER}
 
 Deploy One Logical AD Identity On Two Gateways
     Apply AD Checked    ad

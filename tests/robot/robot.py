@@ -18,6 +18,9 @@ def main():
     parser.add_argument("--snap-path", help="Path to the MicroCeph snap file")
     parser.add_argument("--test-suite", help="Test suite to run (relative to tests/robot/)")
     parser.add_argument("--all", action="store_true", help="Run all tests in tests/robot/")
+    parser.add_argument("--smb-suites", default="singleton,clustered,ad", help="Shared-lab SMB scenario order")
+    parser.add_argument("--smb-repeat", type=int, default=1, help="Repeat the selected SMB scenario order")
+    parser.add_argument("--smb-permutations", action="store_true", help="Validate all six SMB suite orders")
     parser.add_argument("--help", "-h", action="store_true", help="Show this help and exit")
 
     args, remaining = parser.parse_known_args()
@@ -38,8 +41,20 @@ def main():
     # Any extra flags the user passed through (e.g. --console dotted, --loglevel DEBUG).
     robot_flags.extend(remaining)
 
-    # Resolve the target path (always required by robot).
+    # All SMB aliases enter the coordinator; its child Robot invocations use
+    # python -m robot directly, so there is no recursive wrapper dispatch.
     here = os.path.dirname(__file__)
+    smb_aliases = {'smb-singleton-tests': 'singleton', 'smb-clustered-tests': 'clustered',
+                   'smb-ad-tests': 'ad', 'smb-tests': 'singleton,clustered'}
+    if args.test_suite == 'smb-integration' or args.test_suite in smb_aliases:
+        order = smb_aliases.get(args.test_suite, args.smb_suites)
+        command = [sys.executable, '-u', os.path.join(here, 'smb_runner.py'),
+                   '--snap-path', args.snap_path or '', '--suites', order, '--repeat', str(args.smb_repeat)]
+        if args.smb_permutations:
+            command.append('--permutations')
+        return subprocess.run(command + remaining).returncode
+
+    # Resolve the target path (always required by robot).
     if args.test_suite:
         target = os.path.join(here, args.test_suite)
     else:

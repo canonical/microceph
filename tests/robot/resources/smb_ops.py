@@ -322,6 +322,102 @@ class smb_ops:
         self.pool = "default"
         self.ad_dc = None
         self.harness = Harness()
+        self._dc_stop_uncertain = False
+
+    def _persist_smb_lab(self):
+        path = self._variable('SMB_LAB_MANIFEST', '')
+        if not path:
+            return
+        target = Path(path)
+        document = {'owner': self.owner, 'pool': self.pool, 'nodes': [n.name for n in self.nodes],
+                    'volumes': self.volumes, 'dc': self.ad_dc.name if self.ad_dc else None}
+        if target.exists() and json.loads(target.read_text()).get('owner') != self.owner:
+            raise AssertionError('Refusing to overwrite another SMB lab manifest')
+        temporary = target.with_suffix('.tmp')
+        with temporary.open('w') as output:
+            temporary.chmod(0o600)
+            json.dump(document, output)
+        temporary.replace(target)
+
+    def smb_lab_is_shared(self):
+        """Return whether the coordinator supplied an owned shared-lab manifest."""
+        return bool(self._variable('SMB_LAB_MANIFEST', ''))
+
+    def use_smb_lab(self, path='', partial=False):
+        """Bind a suite to explicit owned names; constructors never read Robot state."""
+        path = path or self._variable('SMB_LAB_MANIFEST', '')
+        data = json.loads(Path(path).read_text())
+        owner = data['owner']
+        if not re.fullmatch(r'[0-9a-f]{32}', owner):
+            raise AssertionError('Invalid SMB lab owner')
+        expected = [f'smb-ci-{owner[:8]}-n{i}' for i in range(3)]
+        dc = f'smb-ci-{owner[:8]}-dc'
+        names = data['nodes']
+        if (len(names) != len(set(names)) or any(n not in [*expected, dc] for n in names)
+                or (not partial and set(names) != set([*expected, dc]))
+                or any(v not in [n + '-osd' for n in expected] for v in data['volumes'])
+                or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', data['pool'])):
+            raise AssertionError('Invalid or foreign SMB lab names')
+        self.owner, self.pool, self.volumes = owner, data['pool'], data['volumes']
+        self.nodes = [_VM(n) for n in expected if n in names]
+        self.ad_dc = _VM(dc) if dc in names else None
+
+    def verify_smb_lab(self):
+        """Verify current host ownership before any shared-fixture operation."""
+        rows = json.loads(self._host('lxc', 'query', 'local:/1.0/instances?recursion=1&project=default'))
+        names = [n.name for n in self.nodes] + ([self.ad_dc.name] if self.ad_dc else [])
+        if set(owned_resources(rows, names, self.owner)) != set(names):
+            raise AssertionError('Shared SMB lab is missing an owned VM')
+        if any(r['status'] != 'Running' for r in rows if r['name'] in names):
+            raise AssertionError('Shared SMB lab VM is not running')
+        self._capacity(0)
+
+    def assert_smb_scenario_idle(self):
+        """Require released gateway slots, without resetting databases or identities."""
+        for index in range(min(3, len(self.nodes))):
+            state = self.smb_snapshot(index)
+            if state['owner'] or any(state['roles'][r]['ActiveState'] != 'inactive' for r in (*ROLES, 'winbindd')):
+                raise AssertionError('SMB scenario did not release its gateway roles')
+
+    def retire_smb_scenario(self):
+        """Stop only fixture-owned placements; never purge the last AD identity."""
+        for index, node in enumerate(self.nodes[:3]):
+            owner = self.smb_snapshot(index)['owner']
+            if owner and owner not in ('robot-smb', 'robot-never', 'robot-other', 'robot-ad') and not re.fullmatch(r'bad-[0-9a-f]{8}', owner):
+                raise AssertionError('Refusing to retire a foreign SMB owner')
+            if owner:
+                node.command('microceph', 'disable', 'smb', '--cluster-id', owner, timeout=180, check=True)
+            state = self.smb_snapshot(index)
+            if state['owner'] or any(state['roles'][r]['ActiveState'] != 'inactive' for r in (*ROLES, 'winbindd')):
+                raise AssertionError('SMB scenario stop was not confirmed')
+
+    def fresh_smb_ad_inputs(self):
+        """Create a fresh negative-attempt namespace; retained positive trust is reused."""
+        identifier = 'bad-' + uuid.uuid4().hex[:8]
+        found = self.nodes[0].command('microceph.ceph', 'smb', 'show', 'ceph.smb.cluster.' + identifier,
+                                      '-f', 'json', quiet=True, timeout=30)
+        if found.rc != 0 or json.loads(found.stdout) not in ({}, [], {'resources': []}):
+            raise AssertionError('Negative fixture namespace already exists or absence is unconfirmed')
+        query = "SELECT count(*) AS prior_attempts FROM service_groups WHERE service='smb' AND group_id='" + identifier + "';"
+        prior = self.nodes[0].command('microceph', 'cluster', 'sql', query, quiet=True, timeout=30)
+        if prior.rc != 0 or not re.search(r'\|\s*0\s*\|', prior.stdout):
+            raise AssertionError('Negative fixture namespace has prior SQL history or absence is unconfirmed')
+        address = lambda vm: json.loads(vm.command('ip', '-4', '-j', 'route', 'get', '1.1.1.1', check=True, quiet=True).stdout)[0]['prefsrc']
+        result = self.nodes[0].command('python3', self._base + '/smb_ad_guest.py', 'init',
+                                       json.dumps([address(n) for n in self.nodes[:3]]), address(self.ad_dc), identifier,
+                                       timeout=90, quiet=True)
+        if result.rc != 0:
+            raise AssertionError('AD fixture input generation failed; inspect private first-error')
+        BuiltIn().set_suite_variable('${SMB_AD_BAD_CLUSTER}', identifier)
+        return identifier
+
+    def restore_smb_directory(self):
+        """Restore an intentionally stopped or uncertain DC, preserving any failed verdict."""
+        if self._dc_stop_uncertain and self.ad_dc:
+            result = self.ad_dc.command('systemctl', 'start', 'robot-ad-dc', timeout=90, quiet=True)
+            if result.rc != 0:
+                raise AssertionError('Could not restore the fixture directory')
+            self._dc_stop_uncertain = False
 
     @staticmethod
     def _variable(name, default):
@@ -380,6 +476,7 @@ class smb_ops:
             # Record intent before creation so teardown also sees partial failures.
             self.nodes.append(node)
             self.volumes.append(volume)
+            self._persist_smb_lab()
             logger.info("SMB allocation manifest: " + json.dumps({"owner": self.owner, "pool": self.pool,
                         "nodes": [n.name for n in self.nodes], "volumes": self.volumes, "snap_sha256": expected}))
             self._host("lxc", "storage", "volume", "create", "local:" + self.pool, volume,
@@ -604,6 +701,7 @@ class smb_ops:
         dc = _VM(f"smb-ci-{self.owner[:8]}-dc")
         self.nodes.append(dc)  # Record partial allocation before launch.
         self.ad_dc = dc
+        self._persist_smb_lab()
         logger.info("SMB allocation manifest: " + json.dumps({"owner": self.owner, "pool": self.pool,
                     "nodes": [n.name for n in self.nodes], "volumes": self.volumes}))
         self.harness.launch_owned_test_vm(dc.name, self.owner, image=str(self._variable("SMB_VM_IMAGE", "ubuntu:26.04")), storage_pool=self.pool)
@@ -690,14 +788,22 @@ class smb_ops:
                 node.command("python3", self._base + "/smb_ad_guest.py", "diagnostics", timeout=20)
 
     def smb_ad_dc_command(self, *argv):
-        return self.ad_dc.command(*argv, timeout=90)
+        if argv == ('systemctl', 'stop', 'robot-ad-dc'):
+            self._dc_stop_uncertain = True
+        result = self.ad_dc.command(*argv, timeout=90)
+        if argv == ('systemctl', 'start', 'robot-ad-dc') and result.rc == 0:
+            self._dc_stop_uncertain = False
+        return result
 
     def destroy_smb_lab(self):
         """Delete only this suite's named/tagged VMs and unattached block volumes."""
         if not self.owner:
             return
         rows = json.loads(self._host("lxc", "query", "local:/1.0/instances?recursion=1&project=default"))
-        names = owned_resources(rows, [node.name for node in self.nodes], self.owner)
+        nodes = [node.name for node in self.nodes]
+        if self.ad_dc is not None and self.ad_dc.name not in nodes:
+            nodes.append(self.ad_dc.name)
+        names = owned_resources(rows, nodes, self.owner)
         for name in names:
             self._host("lxc", "delete", "local:" + name, "--project", "default", "--force", timeout=180)
             self.harness._poll_until(
