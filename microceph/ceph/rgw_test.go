@@ -10,12 +10,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,32 +30,25 @@ import (
 	"github.com/canonical/microceph/microceph/interfaces"
 )
 
-// rgwOpsRecorder captures calls to the injectable RGW primitives so tests can
-// assert start vs restart vs stop and keyring creation without a running snap
-// or Ceph cluster.
-//
-// active models the pre-change liveness read; readyErr, when set, is returned
-// by every active check after the first one, i.e. the post-action readiness
-// gate. serves is the certificate the running gateway presents in tests with
-// synthetic service operations; probes counts the attempts.
+// rgwOpsRecorder captures injectable service operations without a running snap.
+// readyFailures targets a particular readiness gate, not the preceding recovery.
 type rgwOpsRecorder struct {
 	starts   int
 	restarts int
 	stops    int
 	keyrings int
-	probes   int
 
-	active   bool
-	readyErr error
-	serves   []byte
+	active        bool
+	readyErr      error
+	readyChecks   int
+	readyFailures map[int]error
 
 	checkAfterAction bool
 
 	startErr   error
 	stopErr    error
 	restartErr error
-	// restartErrOn fails the Nth restart call (1-based, 0 = none), simulating
-	// a restart failure on a specific transition.
+	// restartErrOn fails the Nth restart call (1-based, 0 = none).
 	restartErrOn int
 }
 
@@ -64,16 +60,16 @@ func (r *rgwOpsRecorder) install(t *testing.T) func() {
 	origStart, origRestart, origStop := startRGWFunc, restartRGWFunc, stopRGWFunc
 	origCheck, origKey, origCfg := checkRGWActiveFunc, createRGWKeyringFunc, getConfigDbFunc
 	origFetch, origActive, origBackward := fetchConfigDb, getActiveMonitorMembersFunc, backwardCompatMonitorsFunc
-	origReady, origFrontend, origInterval := checkRGWReadyFunc, checkRGWFrontendFunc, rgwPendingProbeInterval
-	checkRGWReadyFunc = func(rgwFrontendSpec) error { return checkRGWActiveFunc() }
-	checkRGWFrontendFunc = func(spec rgwFrontendSpec) error {
-		r.probes++
-		if r.serves != nil && bytes.Equal(spec.certPEM, r.serves) {
-			return nil
+	origReady := checkRGWReadyFunc
+	checkRGWReadyFunc = func(rgwFrontendSpec) error {
+		r.readyChecks++
+		err := r.readyFailures[r.readyChecks]
+		if err != nil {
+			r.active = false
+			return err
 		}
-		return errors.New("the gateway does not serve the probed certificate")
+		return checkRGWActiveFunc()
 	}
-	rgwPendingProbeInterval = 0
 
 	startRGWFunc = func() error {
 		r.starts++
@@ -133,7 +129,7 @@ func (r *rgwOpsRecorder) install(t *testing.T) func() {
 		startRGWFunc, restartRGWFunc, stopRGWFunc = origStart, origRestart, origStop
 		checkRGWActiveFunc, createRGWKeyringFunc, getConfigDbFunc = origCheck, origKey, origCfg
 		fetchConfigDb, getActiveMonitorMembersFunc, backwardCompatMonitorsFunc = origFetch, origActive, origBackward
-		checkRGWReadyFunc, checkRGWFrontendFunc, rgwPendingProbeInterval = origReady, origFrontend, origInterval
+		checkRGWReadyFunc = origReady
 	}
 }
 
@@ -302,16 +298,13 @@ func TestApplyRGWFrontendPendingMarkerForcesRedrive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, rec.restarts, "the marker must force a restart despite matching files")
 	assert.Equal(t, 1, rec.starts)
-	assert.Zero(t, rec.probes, "a marker naming the same pair as the config has nothing to probe")
 	assert.NoFileExists(t, rgwPendingApplyPath(), "the redrive must clear the marker")
 	assert.Equal(t, before, readTestConf(t))
 }
 
-// deferRGWRotation enables the gateway with old, then publishes rotated without
-// a restart, as "certificate set rgw" without --restart does. The gateway keeps
-// serving old and the marker names old as the rollback target. It returns the
-// config that named old.
-func deferRGWRotation(t *testing.T, rec *rgwOpsRecorder, old, rotated rgwFrontendSpec) string {
+// deferRGWRotation starts the old gateway, then publishes rotated without an
+// automatic restart. The marker names old and the config names rotated.
+func deferRGWRotation(t *testing.T, _ *rgwOpsRecorder, old, rotated rgwFrontendSpec) string {
 	t.Helper()
 	_, err := applyTestRGWFrontend(old, []string{"mon1"}, true)
 	require.NoError(t, err)
@@ -320,14 +313,12 @@ func deferRGWRotation(t *testing.T, rec *rgwOpsRecorder, old, rotated rgwFronten
 	require.NoError(t, err)
 	require.FileExists(t, rgwPendingApplyPath(), "a deferred update leaves the marker")
 	require.Contains(t, readTestConf(t), rotated.tlsGenDir(), "a deferred update publishes the new pair")
-	rec.serves = old.certPEM
 	return before
 }
 
 func testRGWSpec(t *testing.T) rgwFrontendSpec {
 	t.Helper()
-	// Marker completion now parses certificates, so these test pairs must be
-	// genuine PEM rather than the synthetic "certA"/"certB" values.
+	// Recovery reconstructs the on-disk TLS pair and validates it.
 	certB64, keyB64 := genTestTLSPair(t)
 	cert, err := base64.StdEncoding.DecodeString(certB64)
 	require.NoError(t, err)
@@ -336,119 +327,112 @@ func testRGWSpec(t *testing.T) rgwFrontendSpec {
 	return rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: cert, keyPEM: key}
 }
 
-// TestApplyRGWFrontendStaleMarkerAfterManualRestart covers the operator who
-// defers the restart of a certificate update and then restarts the gateway by
-// hand: the marker still names the old pair, but the gateway serves the new
-// one. A later change that fails must go back to the pair that was live, not
-// to the older one the marker names, and must not delete the live pair.
+// A manual activation of B cannot be inferred from a leaf probe. Recovery
+// restarts onto B before applying C, and a failed C rolls back to B, not A.
 func TestApplyRGWFrontendStaleMarkerAfterManualRestart(t *testing.T) {
 	defer setupRGWPaths(t)()
 	rec := &rgwOpsRecorder{}
 	defer rec.install(t)()
-	old := testRGWSpec(t)
-	rotated := testRGWSpec(t)
-	broken := testRGWSpec(t)
-	deferRGWRotation(t, rec, old, rotated)
-	live := readTestConf(t)
-
-	// The operator restarts the gateway by hand; the daemon does not see it.
-	rec.serves = rotated.certPEM
-
-	// A change that does not come up must fall back to what was live.
-	rec.readyErr = errRGWInactive
-	rb, err := applyTestRGWFrontend(broken, []string{"mon1"}, true)
+	a, b, c := testRGWSpec(t), testRGWSpec(t), testRGWSpec(t)
+	deferRGWRotation(t, rec, a, b)
+	bConf := readTestConf(t)
+	// The operator has already activated B; the recovery still verifies it.
+	rec.readyFailures = map[int]error{3: errRGWInactive}
+	rb, err := applyTestRGWFrontend(c, []string{"mon1"}, true)
 	require.Error(t, err)
 	assert.Nil(t, rb)
 	assert.ErrorIs(t, err, ErrPlacementOperationFailed)
-
-	assert.Equal(t, 1, rec.probes, "the gateway must be asked which pair it serves")
-	assert.Equal(t, live, readTestConf(t), "rollback must land on the pair the gateway served")
-	assert.DirExists(t, rotated.tlsGenDir(), "the live pair must survive the rollback")
-	assert.NoDirExists(t, broken.tlsGenDir(), "the unpublished pair must be removed")
-	assert.NoDirExists(t, old.tlsGenDir(), "the pair the stale marker named is pruned")
+	assert.Equal(t, bConf, readTestConf(t))
+	assert.Equal(t, 3, rec.restarts, "recover B, attempt C, restore B")
+	assert.Equal(t, 4, rec.readyChecks, "recovery and rollback have independent readiness gates")
+	assert.DirExists(t, b.tlsGenDir())
+	assert.NoDirExists(t, c.tlsGenDir())
+	assert.NoDirExists(t, a.tlsGenDir(), "confirmed rollback can prune older generations")
 	assert.NoFileExists(t, rgwPendingApplyPath())
-	// 1st restart switched to broken, 2nd is the rollback onto rotated.
-	assert.Equal(t, 2, rec.restarts)
-	assert.Equal(t, 1, rec.starts)
 }
 
-// TestApplyRGWFrontendMarkerKeptWhileRestartPending is the same deferred
-// update without the manual restart: the gateway still serves the old pair,
-// so the marker is right and a failed change goes back to the old pair.
+// A deferred C must not be published if recovery of B fails. Confirmed
+// restoration of A permits cleanup, but the request still fails.
 func TestApplyRGWFrontendMarkerKeptWhileRestartPending(t *testing.T) {
 	defer setupRGWPaths(t)()
 	rec := &rgwOpsRecorder{}
 	defer rec.install(t)()
-	old := testRGWSpec(t)
-	rotated := testRGWSpec(t)
-	broken := testRGWSpec(t)
-	before := deferRGWRotation(t, rec, old, rotated)
-
-	rec.readyErr = errRGWInactive
-	rb, err := applyTestRGWFrontend(broken, []string{"mon1"}, true)
+	a, b, c := testRGWSpec(t), testRGWSpec(t), testRGWSpec(t)
+	aConf := deferRGWRotation(t, rec, a, b)
+	rec.readyFailures = map[int]error{2: errRGWInactive}
+	rb, err := applyRGWFrontend(c, []string{"mon1"}, false)
 	require.Error(t, err)
 	assert.Nil(t, rb)
-
-	assert.Equal(t, 3, rec.probes, "the probe retries before it gives up")
-	assert.Equal(t, before, readTestConf(t), "rollback must land on the pair the marker names")
-	assert.DirExists(t, old.tlsGenDir(), "the pair the gateway serves must survive")
-	assert.NoDirExists(t, rotated.tlsGenDir(), "a pair that never went live is pruned")
-	assert.NoDirExists(t, broken.tlsGenDir())
+	assert.Equal(t, aConf, readTestConf(t), "failed recovery restores A")
+	assert.Equal(t, 2, rec.restarts, "recover B then restore A")
+	assert.Equal(t, 3, rec.readyChecks, "verify restoration before cleanup")
 	assert.NoFileExists(t, rgwPendingApplyPath())
+	assert.DirExists(t, a.tlsGenDir())
+	assert.NoDirExists(t, b.tlsGenDir())
+	assert.NoDirExists(t, c.tlsGenDir())
 }
 
-// TestApplyRGWFrontendStoppedGatewayIsNotProbed verifies the probe follows the
-// liveness reading the rest of the apply uses: a gateway read as stopped is
-// started, and the marker stays the rollback target.
-func TestApplyRGWFrontendStoppedGatewayIsNotProbed(t *testing.T) {
+// Recovery starts a stopped gateway on its published B configuration.
+func TestApplyRGWFrontendStoppedGatewayRecovery(t *testing.T) {
 	defer setupRGWPaths(t)()
 	rec := &rgwOpsRecorder{}
 	defer rec.install(t)()
-	old := testRGWSpec(t)
-	rotated := testRGWSpec(t)
-	deferRGWRotation(t, rec, old, rotated)
+	a, b := testRGWSpec(t), testRGWSpec(t)
+	deferRGWRotation(t, rec, a, b)
 	rec.active = false
-	rec.serves = rotated.certPEM
-
-	rb, err := applyTestRGWFrontend(rotated, []string{"mon1"}, true)
+	rb, err := applyTestRGWFrontend(b, []string{"mon1"}, true)
 	require.NoError(t, err)
-	require.NotNil(t, rb)
-	assert.Zero(t, rec.probes, "a stopped gateway serves nothing to probe")
-	assert.Equal(t, 2, rec.starts, "a stopped gateway is started, not restarted")
+	assert.Nil(t, rb)
+	assert.Equal(t, 2, rec.starts)
 	assert.Zero(t, rec.restarts)
 	assert.NoFileExists(t, rgwPendingApplyPath())
 }
 
-// TestApplyRGWFrontendCompletedMarkerNeedsNoRestart covers a placement apply
-// arriving after the operator restarted the gateway by hand: the gateway
-// already serves the requested pair, so nothing is restarted and the stale
-// marker is dropped.
-func TestApplyRGWFrontendCompletedMarkerNeedsNoRestart(t *testing.T) {
+// An identical request after a manual activation still performs one controlled
+// restart to verify B, then becomes a no-op on subsequent requests.
+func TestApplyRGWFrontendIdenticalDeferredRequestRecoversOnce(t *testing.T) {
 	defer setupRGWPaths(t)()
 	rec := &rgwOpsRecorder{}
 	defer rec.install(t)()
-	old := testRGWSpec(t)
-	rotated := testRGWSpec(t)
-	deferRGWRotation(t, rec, old, rotated)
-	// A non-certificate PEM block before the old leaf must not prevent
-	// recognizing a manually completed rotation.
-	oldCertPath := filepath.Join(old.tlsGenDir(), "server.crt")
-	oldBundle, err := os.ReadFile(oldCertPath)
-	require.NoError(t, err)
-	prefixed := append(pem.EncodeToMemory(&pem.Block{Type: "OTHER", Bytes: []byte("metadata")}), oldBundle...)
-	require.NoError(t, os.WriteFile(oldCertPath, prefixed, 0600))
-	rec.serves = rotated.certPEM
+	a, b := testRGWSpec(t), testRGWSpec(t)
+	deferRGWRotation(t, rec, a, b)
 	live := readTestConf(t)
-
-	rb, err := applyTestRGWFrontend(rotated, []string{"mon1"}, true)
+	rb, err := applyTestRGWFrontend(b, []string{"mon1"}, false)
 	require.NoError(t, err)
-	assert.Nil(t, rb, "nothing was published, so there is nothing to roll back")
-	assert.Equal(t, 1, rec.probes)
-	assert.Zero(t, rec.restarts, "a gateway already serving the requested pair is left alone")
-	assert.Equal(t, 1, rec.starts)
+	assert.Nil(t, rb)
+	assert.Equal(t, 1, rec.restarts)
 	assert.Equal(t, live, readTestConf(t))
-	assert.NoFileExists(t, rgwPendingApplyPath(), "the stale marker is dropped")
-	assert.NoDirExists(t, old.tlsGenDir(), "the superseded pair is pruned")
+	assert.NoFileExists(t, rgwPendingApplyPath())
+	assert.NoDirExists(t, a.tlsGenDir(), "the identical certificate request is complete")
+	rb, err = applyTestRGWFrontend(b, []string{"mon1"}, true)
+	require.NoError(t, err)
+	assert.Nil(t, rb)
+	assert.Equal(t, 1, rec.restarts, "second request has no marker to recover")
+}
+
+// Pre-upgrade journals, with or without obsolete probe_safe, receive the
+// same controlled restart rather than relying on the obsolete hint.
+func TestApplyRGWFrontendLegacyMarkerRequiresRestart(t *testing.T) {
+	for _, hint := range []any{nil, true, false} {
+		t.Run(fmt.Sprint(hint), func(t *testing.T) {
+			defer setupRGWPaths(t)()
+			rec := &rgwOpsRecorder{}
+			defer rec.install(t)()
+			a, b := testRGWSpec(t), testRGWSpec(t)
+			aConf := deferRGWRotation(t, rec, a, b)
+			legacy := map[string]any{"previous_config": aConf, "previously_active": true}
+			if hint != nil {
+				legacy["probe_safe"] = hint
+			}
+			data, err := json.Marshal(legacy)
+			require.NoError(t, err)
+			require.NoError(t, writeRGWFile(rgwPendingApplyPath(), data, 0600))
+			_, err = applyTestRGWFrontend(b, []string{"mon1"}, true)
+			require.NoError(t, err)
+			assert.Equal(t, 1, rec.restarts)
+			assert.NoFileExists(t, rgwPendingApplyPath())
+		})
+	}
 }
 
 // testRGWSameLeafDifferentIssuers returns two bundles with the same server
@@ -517,8 +501,7 @@ func TestApplyRGWFrontendChainRenewal(t *testing.T) {
 	})
 	require.NoError(t, err)
 	defer listener.Close()
-	// Finish each accepted handshake so the production frontend probe can
-	// inspect the certificates actually sent by this listener.
+	// Complete handshakes so the local listener exposes its actual chain.
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -534,10 +517,9 @@ func TestApplyRGWFrontendChainRenewal(t *testing.T) {
 	old.sslPort = listener.Addr().(*net.TCPAddr).Port
 	rotated.sslPort = old.sslPort
 	deferRGWRotation(t, rec, old, rotated)
-	// The production probe accepts the old chain when asked for the new one:
-	// it pins the unchanged leaf, not the intermediate behind it.
-	checkRGWFrontendFunc = checkRGWFrontend
-	require.NoError(t, checkRGWFrontend(rotated), "the leaf-only probe cannot detect the old issuer")
+	// Leaf-only readiness cannot distinguish the renewed intermediate.
+	checkRGWReadyFunc = checkRGWReady
+	require.NoError(t, checkRGWFrontend(rotated))
 	// Reconciliation's restart loads the new chain into our simulated gateway.
 	originalRestart := restartRGWFunc
 	restartRGWFunc = func() error {
@@ -545,13 +527,11 @@ func TestApplyRGWFrontendChainRenewal(t *testing.T) {
 		return originalRestart()
 	}
 
-	// Despite the successful leaf-only probe, the pending marker must force
-	// a restart; then a fresh handshake must show the renewed intermediate.
+	// Recovery restarts even though the old chain passes leaf-only readiness.
 	_, err = applyTestRGWFrontend(rotated, []string{"mon1"}, true)
 	require.NoError(t, err)
 	assert.Equal(t, 1, rec.restarts)
 	assert.NoFileExists(t, rgwPendingApplyPath())
-	assert.NoDirExists(t, old.tlsGenDir())
 	conn, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{InsecureSkipVerify: true})
 	require.NoError(t, err)
 	defer conn.Close()
@@ -559,43 +539,116 @@ func TestApplyRGWFrontendChainRenewal(t *testing.T) {
 	assert.True(t, bytes.Equal(newPair.Certificate[1], conn.ConnectionState().PeerCertificates[1].Raw), "the renewed intermediate must be served")
 }
 
-// TestApplyRGWFrontendUnreadableLeaf retains the marker when either
-// generation cannot be inspected, rather than trusting an ambiguous probe.
-func TestApplyRGWFrontendUnreadableLeaf(t *testing.T) {
+// TestApplyRGWFrontendSupersededDeferredChain constructs a pre-upgrade crash:
+// journal A, on-disk config C, but a manually activated listener still on B.
+// B and C share a leaf but have different issuer certificates.
+func TestApplyRGWFrontendSupersededDeferredChain(t *testing.T) {
+	defer setupRGWPaths(t)()
+	rec := &rgwOpsRecorder{}
+	defer rec.install(t)()
+	a := testRGWSpec(t)
+	b, c := testRGWSameLeafDifferentIssuers(t)
+	// A has a different leaf; B and C keep the same leaf but use different
+	// issuer chains. A leaf-only probe can distinguish A from C, not B from C.
+	bPair, err := tls.X509KeyPair(b.certPEM, b.keyPEM)
+	require.NoError(t, err)
+	cPair, err := tls.X509KeyPair(c.certPEM, c.keyPEM)
+	require.NoError(t, err)
+	// This listener stands in for RGW after the operator has restarted it onto
+	// B. Replacing the served pair later models the reconciliation restart.
+	var served atomic.Pointer[tls.Certificate]
+	served.Store(&bPair)
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return served.Load(), nil },
+	})
+	require.NoError(t, err)
+	defer listener.Close()
+	// Complete real TLS handshakes so leaf-only readiness sees B's chain.
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_ = conn.(*tls.Conn).Handshake()
+				conn.Close()
+			}()
+		}
+	}()
+	// Set up A -> B and reconstruct the legacy C publication directly. A new
+	// request cannot publish C while recovery of B is unresolved.
+	a.sslPort = listener.Addr().(*net.TCPAddr).Port
+	b.sslPort, c.sslPort = a.sslPort, a.sslPort
+	aConf := deferRGWRotation(t, rec, a, b)
+	bConf := readTestConf(t)
+	require.NoError(t, stageRGWTLSGeneration(c.tlsGenDir(), c.certPEM, c.keyPEM))
+	cConf := strings.ReplaceAll(bConf, b.tlsGenDir(), c.tlsGenDir())
+	require.NoError(t, writeRGWFile(rgwConfPath(), []byte(cConf), 0644))
+	legacy, err := json.Marshal(map[string]any{"previous_config": aConf, "previously_active": true, "probe_safe": false})
+	require.NoError(t, err)
+	require.NoError(t, writeRGWFile(rgwPendingApplyPath(), legacy, 0600))
+	checkRGWReadyFunc = checkRGWReady
+	require.NoError(t, checkRGWFrontend(c), "leaf-only readiness accepts B's obsolete issuer")
+	// Make a real reconciliation restart switch the listener from B to C.
+	originalRestart := restartRGWFunc
+	restartRGWFunc = func() error {
+		served.Store(&cPair)
+		return originalRestart()
+	}
+
+	// Recovery must restart onto C despite that matching leaf.
+	rb, err := applyRGWFrontend(c, []string{"mon1"}, true)
+	require.NoError(t, err)
+	assert.Nil(t, rb)
+	assert.Equal(t, 1, rec.restarts)
+	assert.DirExists(t, a.tlsGenDir(), "recovery must not prune A")
+	assert.DirExists(t, b.tlsGenDir(), "recovery must not prune B")
+	conn, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{InsecureSkipVerify: true})
+	require.NoError(t, err)
+	defer conn.Close()
+	require.Len(t, conn.ConnectionState().PeerCertificates, 2)
+	assert.True(t, bytes.Equal(cPair.Certificate[1], conn.ConnectionState().PeerCertificates[1].Raw), "the renewed issuer must be served")
+	require.NoError(t, finishRGWApply())
+	assert.NoFileExists(t, rgwPendingApplyPath())
+	assert.DirExists(t, c.tlsGenDir())
+}
+
+// Damaged recovery material must not be repaired using the incoming request.
+// Restore and verify the original frontend before cleaning the failed update.
+func TestApplyRGWFrontendInvalidRecoveryMaterial(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		current bool
-		damage  func(string) error
+		name   string
+		file   string
+		damage func(string) error
 	}{
-		{"missing previous", false, os.Remove},
-		{"invalid previous DER", false, func(path string) error {
-			return os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("invalid DER")}), 0600)
-		}},
-		{"invalid current", true, func(path string) error {
-			return os.WriteFile(path, []byte("not a certificate"), 0600)
-		}},
+		{"missing certificate", "server.crt", os.Remove},
+		{"invalid certificate", "server.crt", func(path string) error { return os.WriteFile(path, []byte("not a certificate"), 0600) }},
+		{"missing key", "server.key", os.Remove},
+		{"mismatched key", "server.key", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer setupRGWPaths(t)()
 			rec := &rgwOpsRecorder{}
 			defer rec.install(t)()
-			old, rotated := testRGWSpec(t), testRGWSpec(t)
-			deferRGWRotation(t, rec, old, rotated)
-			// Corrupt whichever certificate file the completion decision
-			// needs to compare; the requested new pair itself remains valid.
-			damaged := old
-			if tc.current {
-				damaged = rotated
+			a, b, c := testRGWSpec(t), testRGWSpec(t), testRGWSpec(t)
+			aConf := deferRGWRotation(t, rec, a, b)
+			path := filepath.Join(b.tlsGenDir(), tc.file)
+			var err error
+			if tc.damage == nil {
+				err = os.WriteFile(path, c.keyPEM, 0600)
+			} else {
+				err = tc.damage(path)
 			}
-			require.NoError(t, tc.damage(filepath.Join(damaged.tlsGenDir(), "server.crt")))
-			// Even if a probe would claim the new pair is live, unreadable
-			// evidence means we must retain the marker and restart.
-			rec.serves = rotated.certPEM
-			_, err := applyTestRGWFrontend(rotated, []string{"mon1"}, true)
 			require.NoError(t, err)
-			assert.Zero(t, rec.probes)
-			assert.Equal(t, 1, rec.restarts)
+			_, err = applyRGWFrontend(c, []string{"mon1"}, false)
+			require.Error(t, err)
+			assert.Equal(t, aConf, readTestConf(t))
 			assert.NoFileExists(t, rgwPendingApplyPath())
+			assert.Equal(t, 1, rec.restarts, "only the original frontend is activated")
+			assert.DirExists(t, a.tlsGenDir())
+			assert.NoDirExists(t, b.tlsGenDir())
+			assert.NoDirExists(t, c.tlsGenDir())
 		})
 	}
 }
@@ -704,8 +757,7 @@ func TestApplyRGWFrontendRotationRollbackOnRestartFailure(t *testing.T) {
 	rec := &rgwOpsRecorder{restartErrOn: 1, restartErr: errors.New("snapctl restart failed")}
 	defer rec.install(t)()
 
-	specA := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certA"), keyPEM: []byte("keyA")}
-	specB := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certB"), keyPEM: []byte("keyB")}
+	specA, specB := testRGWSpec(t), testRGWSpec(t)
 	_, err := applyTestRGWFrontend(specA, []string{"mon1"}, true)
 	require.NoError(t, err)
 	before := readTestConf(t)
@@ -786,8 +838,7 @@ func TestApplyRGWFrontendNoRestartMode(t *testing.T) {
 	defer setupRGWPaths(t)()
 	rec := &rgwOpsRecorder{}
 	defer rec.install(t)()
-	old := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certA"), keyPEM: []byte("keyA")}
-	updated := rgwFrontendSpec{sslPort: 443, ssl: true, certPEM: []byte("certB"), keyPEM: []byte("keyB")}
+	old, updated := testRGWSpec(t), testRGWSpec(t)
 	_, err := applyTestRGWFrontend(old, []string{"mon1"}, true)
 	require.NoError(t, err)
 	_, err = applyRGWFrontend(updated, []string{"mon1"}, false)

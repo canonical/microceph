@@ -242,6 +242,7 @@ func TestServiceInitUsesBackwardCompatibleMonitors(t *testing.T) {
 	require.NoError(t, sp.ServiceInit(context.Background(), si))
 	assert.Contains(t, readTestConf(t), "mon host = 10.0.0.2")
 }
+
 // TestServiceInitReuseFailsClosed verifies ssl=true with no supplied material
 // and no valid local pair fails closed (operational error), never silently
 // enabling plaintext.
@@ -417,7 +418,7 @@ func TestPostPlacementCheckFailureRollsBack(t *testing.T) {
 	require.NoError(t, sp.PopulateParams(si, rgwPayload(t, map[string]any{"Port": 8080})))
 	require.NoError(t, sp.ServiceInit(context.Background(), si))
 	assert.Contains(t, readTestConf(t), "port=8080")
-	checkRGWActiveFunc = func() error { return errRGWInactive }
+	rec.active = false
 
 	err = sp.PostPlacementCheck(si)
 	require.Error(t, err)
