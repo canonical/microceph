@@ -421,4 +421,12 @@ msgr
 orchestrator
 multicast
 PNNs
+chown
+idempotently
+idmap
+Kerberos
+keytab
+nonclustered
+smbd
+Winbind
 
