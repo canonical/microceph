@@ -322,6 +322,31 @@ def test_smb_guest_resources_and_redaction_are_explicit():
     assert result["success"] is False and "PRIVATE-PASSWORD" not in json.dumps(result)
 
 
+def test_smb_payload_digest_from_fresh_robot_library_import(tmp_path):
+    import hashlib
+    import os
+    import subprocess
+    import sys
+    import smb_guest
+
+    library = Path(__file__).with_name('smb_ops.py').resolve()
+    expected = hashlib.sha256(smb_guest.PAYLOAD).hexdigest()
+    suite = tmp_path / 'payload.robot'
+    suite.write_text(f'''*** Settings ***
+Library    {library}
+*** Test Cases ***
+Payload Digest Uses Shared Fixture
+    ${{digest}}=    SMB Payload Digest
+    Should Be Equal    ${{digest}}    {expected}
+''')
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+    env.pop('PYTHONPATH', None)
+    result = subprocess.run([sys.executable, '-B', '-m', 'robot', '--output', 'NONE',
+                             '--log', 'NONE', '--report', 'NONE', str(suite)],
+                            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_smb_area_instantiates_without_robot_and_never_retries_mutations():
     m = _smb_module()
     assert callable(getattr(m, "smb_ops", None)), "missing SMB Robot class"

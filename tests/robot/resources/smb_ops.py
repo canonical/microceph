@@ -14,6 +14,7 @@ from pathlib import Path
 from robot.api import logger
 from robot.libraries.BuiltIn import BuiltIn
 from microceph_harness import microceph_harness as Harness, SNAP_DEST_NAME
+from smb_guest import PAYLOAD
 
 ROLES = ("smbd", "smbmetrics", "ctdbd", "ctdb-nodes")
 OWNER_KEY = "user.microceph-test-owner"
@@ -627,7 +628,6 @@ class smb_ops:
                 node.command("microceph", "disable", "smb", "--cluster-id", owner, timeout=180, check=True)
 
     def smb_payload_digest(self):
-        from smb_guest import PAYLOAD
         return hashlib.sha256(PAYLOAD).hexdigest()
 
     def capture_smb_shared_state(self, *clusters):
