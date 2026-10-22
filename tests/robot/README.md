@@ -179,10 +179,14 @@ ancestors/holders, missing identity or ambiguous matches fail closed. No `/dev/s
 letter or size-only fallback is used. A different LXD device identity contract
 requires investigation, not a guessed replacement.
 
-Gateway and DC preparation enables the guest's supported `chrony` service
-(installing it inside that guest if absent), requests one bounded measurement
-burst and permits stepping only during initial preparation. Readiness polls at
-most 60 times, two seconds apart, requiring NTP synchronization and normal chrony
+Gateways and the DC keep the Ubuntu 26.04 image, but use cloud-init's supported
+NTP configuration before first boot: an explicit ordinary IPv4 `ntp.ubuntu.com`
+pool replaces image-default NTS-only sources. This avoids an extra TCP/4460 and
+IPv6-route dependency absent from the other suites' Ubuntu 24.04 guests; it is
+fixture-only time policy, not a production AD or host configuration change.
+Preparation enables guest `chrony` (installing it there if absent), requests one
+bounded measurement burst and permits stepping only during initial preparation.
+Readiness polls at most 60 times, two seconds apart, requiring NTP synchronization and normal chrony
 tracking with at most 10 ms remaining system-clock correction. Automatic stepping
 is disabled before application setup. Tracking, sources and bounded guest time
 journals are recorded on success/failure; there are no host-clock changes or

@@ -1628,11 +1628,12 @@ class microceph_harness:
 
     def launch_owned_test_vm(self, vm_name, owner, image="ubuntu:26.04",
                              disk_size="20GiB", memory="3GiB", cpu=2,
-                             storage_pool="default", data_volume=""):
+                             storage_pool="default", data_volume="", cloud_config=None):
         """Create one tagged VM without deleting/retrying an existing allocation.
 
-        Optional data_volume is an already-created persistent block volume. The
-        caller owns tagged-resource teardown, including a partially failed start.
+        Optional data_volume is an already-created persistent block volume.
+        Optional cloud_config is applied only to this new VM before first boot.
+        The caller owns tagged-resource teardown, including a failed start.
         """
         res = self._exec(["lxc", "list", "local:", vm_name, "--project", "default",
                           "--format", "csv", "-c", "n"], 30)
@@ -1645,6 +1646,8 @@ class microceph_harness:
                      "--storage", storage_pool, "-c", f"limits.cpu={cpu}",
                      "-c", f"limits.memory={memory}", "-d", f"root,size={disk_size}",
                      "-c", f"user.microceph-test-owner={owner}"]]
+        if cloud_config is not None:
+            commands[0].extend(["-c", "cloud-init.user-data=#cloud-config\n" + json.dumps(cloud_config)])
         if data_volume:
             commands.append(["lxc", "config", "device", "add", target, "test-data", "disk",
                              "--project", "default", f"pool={storage_pool}", f"source={data_volume}"])

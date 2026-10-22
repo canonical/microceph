@@ -97,10 +97,26 @@ def test_owned_vm_launch_tags_before_start_and_attaches_persistent_disk(monkeypa
     init = next(argv for argv in calls if argv[:2] == ["lxc", "init"])
     assert "user.microceph-test-owner=owner-token" in init
     assert "--vm" in init and "local:test-vm" in init
+    assert not any(arg.startswith('cloud-init.user-data=') for arg in init)
     attach = next(argv for argv in calls if argv[:4] == ["lxc", "config", "device", "add"])
     assert "source=test-osd" in attach and "pool=default" in attach
     assert calls.index(attach) < next(i for i, argv in enumerate(calls) if argv[:2] == ["lxc", "start"])
     assert not any("delete" in argv for argv in calls)
+
+
+def test_owned_vm_launch_passes_cloud_config_before_first_start(monkeypatch):
+    h = H()
+    calls = []
+    config = {'ntp': {'enabled': True, 'ntp_client': 'chrony', 'pools': ['ntp.ubuntu.com']}}
+    monkeypatch.setattr(h, '_exec', lambda argv, timeout: calls.append(argv) or _Res(0, '', ''))
+    monkeypatch.setattr(h, 'wait_for_vm_agent', lambda name: None)
+    h.launch_owned_test_vm('test-vm', 'owner-token', cloud_config=config)
+    init = next(argv for argv in calls if argv[:2] == ['lxc', 'init'])
+    value = next(arg for arg in init if arg.startswith('cloud-init.user-data='))
+    assert value.startswith('cloud-init.user-data=#cloud-config\n')
+    assert json.loads(value.split('\n', 1)[1]) == config
+    assert calls.index(init) < next(i for i, argv in enumerate(calls) if argv[:2] == ['lxc', 'start'])
+    assert all(argv[0] == 'lxc' for argv in calls)
 
 
 def test_owned_vm_launch_refuses_existing_or_unknown_state(monkeypatch):
@@ -4423,6 +4439,26 @@ def test_smb_guest_time_requires_real_chrony_tracking_not_only_sync_flag():
     assert not m.guest_time_ready('NTP=yes\nNTPSynchronized=no', _chrony_tracking())
 
 
+def test_smb_guest_clock_config_removes_nts_bootstrap_dependency_without_weakening_readiness():
+    m = _smb_module()
+    assert callable(getattr(m, 'smb_guest_cloud_config', None)), 'SMB guests inherit unreachable image NTS sources'
+    config = m.smb_guest_cloud_config()
+    ntp = config['ntp']
+    assert ntp['enabled'] is True and ntp['ntp_client'] == 'chrony'
+    assert ntp['pools'] == ['ntp.ubuntu.com'] and ntp['servers'] == []
+    template = ntp['config']['template']
+    assert template.startswith('## template:jinja\n')
+    assert 'pool {{ pool }} iburst maxsources 4 ipv4' in template
+    assert 'rtcsync' in template and 'driftfile /var/lib/chrony/chrony.drift' in template
+    assert not any(word in template for word in ('nts', 'sourcedir', 'confdir', 'local stratum'))
+    # A new config is not success: real synchronization and <=10ms remain required.
+    flags = 'NTP=yes\nNTPSynchronized=yes\n'
+    assert not m.guest_time_ready(flags, _chrony_tracking(stratum='0', leap='Not synchronised'))
+    assert not m.guest_time_ready(flags, _chrony_tracking(correction='0.011'))
+    config['ntp']['pools'].append('changed.example')
+    assert m.smb_guest_cloud_config()['ntp']['pools'] == ['ntp.ubuntu.com']
+
+
 def test_smb_guest_time_preparation_is_bounded_guest_only_and_keeps_diagnostics(monkeypatch):
     m = _smb_module()
     node = m._VM('owned-node')
@@ -4443,6 +4479,7 @@ def test_smb_guest_time_preparation_is_bounded_guest_only_and_keeps_diagnostics(
     assert calls.count(('chronyc', 'makestep', '0.01', '0')) == 1
     assert calls.count(('chronyc', '-c', 'tracking')) == 2
     assert ('chronyc', 'sources', '-v') in calls
+    assert ('chronyc', '-n', 'sources', '-v') in calls
     assert not any('restart' in c for c in calls)
 
 
@@ -4482,10 +4519,13 @@ def test_smb_gateway_and_dc_prepare_time_before_application_setup(tmp_path, monk
         library = m.smb_ops()
         monkeypatch.setattr(library, '_variable', lambda key, default: str(snap) if key == 'SNAP_PATH' else default)
         monkeypatch.setattr(library, '_capacity', lambda _: None)
-        monkeypatch.setattr(library.harness, 'launch_owned_test_vm', lambda *args, **kwargs: None)
+        launches = []
+        monkeypatch.setattr(library.harness, 'launch_owned_test_vm', lambda *args, **kwargs: launches.append(kwargs))
         monkeypatch.setattr(library, '_host', lambda *args: 'local' if args[1:] == ('remote', 'get-default') else '{"local":{}}')
         with pytest.raises(Prepared):
             (library.provision_smb_ad_directory if ad else library.provision_smb_lab)()
+        assert launches[0].get('cloud_config') == m.smb_guest_cloud_config()
+        assert launches[0]['image'] == 'ubuntu:26.04'
 
 
 def test_smb_ceph_health_observation_records_clock_status():

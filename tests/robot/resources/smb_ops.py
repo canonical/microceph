@@ -58,6 +58,25 @@ def select_owned_osd(instance, volume, inventory, node, volume_name, pool, owner
     return disk["name"]
 
 
+def smb_guest_cloud_config():
+    """Bootstrap fresh fixture clocks without image-default NTS/IPv6 egress.
+
+    Ubuntu 26.04's NTS-only sources require TCP/4460 before any NTP sample.
+    CI uses ordinary IPv4 NTP, like the other suites' older guest images; this
+    is test infrastructure, not production AD or runner-host time policy.
+    """
+    template = """## template:jinja
+{% for pool in pools %}
+pool {{ pool }} iburst maxsources 4 ipv4
+{% endfor %}
+driftfile /var/lib/chrony/chrony.drift
+rtcsync
+makestep 0.01 3
+"""
+    return {"ntp": {"enabled": True, "ntp_client": "chrony", "servers": [],
+                    "pools": ["ntp.ubuntu.com"], "config": {"template": template}}}
+
+
 def guest_time_ready(flags, tracking):
     """Require NTP plus chrony's synchronized, <=10 ms remaining correction.
 
@@ -303,6 +322,7 @@ class _VM(Harness):
         finally:
             # Public, bounded evidence on both success and the first failure.
             for args in (("timedatectl",), ("chronyc", "tracking"), ("chronyc", "sources", "-v"),
+                         ("chronyc", "-n", "sources", "-v"),
                          ("journalctl", "-b", "-u", "chrony", "--no-pager", "-n", "60")):
                 try:
                     self.command(*args, timeout=10)
@@ -481,7 +501,8 @@ class smb_ops:
                         "nodes": [n.name for n in self.nodes], "volumes": self.volumes, "snap_sha256": expected}))
             self._host("lxc", "storage", "volume", "create", "local:" + self.pool, volume,
                        "--project", "default", "--type=block", "size=4GiB", f"{OWNER_KEY}={self.owner}")
-            self.harness.launch_owned_test_vm(name, self.owner, image=image, storage_pool=self.pool, data_volume=volume)
+            self.harness.launch_owned_test_vm(name, self.owner, image=image, storage_pool=self.pool,
+                                              data_volume=volume, cloud_config=smb_guest_cloud_config())
             node.probe_instance_network()
             node.prepare_time()
             node.copy_snap_to_vm(snap)
@@ -704,7 +725,8 @@ class smb_ops:
         self._persist_smb_lab()
         logger.info("SMB allocation manifest: " + json.dumps({"owner": self.owner, "pool": self.pool,
                     "nodes": [n.name for n in self.nodes], "volumes": self.volumes}))
-        self.harness.launch_owned_test_vm(dc.name, self.owner, image=str(self._variable("SMB_VM_IMAGE", "ubuntu:26.04")), storage_pool=self.pool)
+        self.harness.launch_owned_test_vm(dc.name, self.owner, image=str(self._variable("SMB_VM_IMAGE", "ubuntu:26.04")),
+                                          storage_pool=self.pool, cloud_config=smb_guest_cloud_config())
         dc.probe_instance_network()
         dc.prepare_time()
         dc.apt_update()
