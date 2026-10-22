@@ -179,21 +179,24 @@ ancestors/holders, missing identity or ambiguous matches fail closed. No `/dev/s
 letter or size-only fallback is used. A different LXD device identity contract
 requires investigation, not a guessed replacement.
 
-Gateways and the DC keep the Ubuntu 26.04 image, but use cloud-init's supported
-NTP configuration before first boot: an explicit ordinary IPv4 `ntp.ubuntu.com`
-pool replaces image-default NTS-only sources. This avoids an extra TCP/4460 and
-IPv6-route dependency absent from the other suites' Ubuntu 24.04 guests; it is
-fixture-only time policy, not a production AD or host configuration change.
-Preparation enables guest `chrony` (installing it there if absent), requests one
-bounded measurement burst and permits stepping only during initial preparation.
-Readiness polls at most 60 times, two seconds apart, requiring NTP synchronization and normal chrony
-tracking with at most 10 ms remaining system-clock correction. Automatic stepping
-is disabled before application setup. Tracking, sources and bounded guest time
-journals are recorded on success/failure; there are no host-clock changes or
-service-restart loops. This is not proof of inter-monitor accuracy: the shared
-Robot setup separately requires `HEALTH_OK`, no `MON_CLOCK_SKEW`, and records
-Ceph `time-sync-status` before application cases. Neither Ceph tolerance nor
-Kerberos checks are relaxed.
+Gateways and the DC retain the Ubuntu 26.04 image's normal time configuration;
+the harness does not install or configure a time service, step clocks, or require
+public NTP access, PTP devices, or a particular `timedatectl` synchronization flag.
+Guest UTC time, time-service status, and available Chrony diagnostics are recorded
+with bounded, non-fatal reads. Chrony's remaining system-clock correction is not
+an inter-monitor skew measurement or an absolute accuracy bound.
+
+Clock correctness remains an application prerequisite. The shared setup requires
+`HEALTH_OK`, no `MON_CLOCK_SKEW`, and a finished Ceph `time-sync-status` round with
+all monitors healthy. Ceph's default inter-monitor limit is 50 ms; it is not
+changed. AD directory readiness uses a real `kinit`, and the AD cases require
+fresh tickets and Kerberos-required SMB authentication, without NTLM fallback.
+Kerberos clock-skew policy is not changed. Actual monitor skew or authentication
+failure still fails setup/tests; neither triggers clock repair or a rejoin.
+
+References: [Ceph clock health](https://docs.ceph.com/en/tentacle/rados/operations/health-checks/#mon-clock-skew),
+[Chrony tracking fields](https://chrony-project.org/doc/4.8/chronyc.html#tracking),
+and [MIT Kerberos clock-skew policy](https://web.mit.edu/kerberos/krb5-1.22/doc/admin/conf_files/krb5_conf.html#libdefaults).
 
 Exactly one supplied snap is required and its SHA256 is checked in every VM; there
 is no store-snap fallback. The candidate currently needs snapd >= 2.78, hence the

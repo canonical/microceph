@@ -1,5 +1,4 @@
 """SMB integration I/O and observations; scenario assertions stay in Robot."""
-import csv
 import glob
 import hashlib
 import json
@@ -56,42 +55,6 @@ def select_owned_osd(instance, volume, inventory, node, volume_name, pool, owner
             or any(r.get("pkname") == disk["name"] for r in records)):
         raise AssertionError("Refusing OSD: not a dedicated unmounted, childless 4GiB disk with visible root")
     return disk["name"]
-
-
-def smb_guest_cloud_config():
-    """Bootstrap fresh fixture clocks without image-default NTS/IPv6 egress.
-
-    Ubuntu 26.04's NTS-only sources require TCP/4460 before any NTP sample.
-    CI uses ordinary IPv4 NTP, like the other suites' older guest images; this
-    is test infrastructure, not production AD or runner-host time policy.
-    """
-    template = """## template:jinja
-{% for pool in pools %}
-pool {{ pool }} iburst maxsources 4 ipv4
-{% endfor %}
-driftfile /var/lib/chrony/chrony.drift
-rtcsync
-makestep 0.01 3
-"""
-    return {"ntp": {"enabled": True, "ntp_client": "chrony", "servers": [],
-                    "pools": ["ntp.ubuntu.com"], "config": {"template": template}}}
-
-
-def guest_time_ready(flags, tracking):
-    """Require NTP plus chrony's synchronized, <=10 ms remaining correction.
-
-    This is guest preparation, not proof of inter-monitor skew: Ceph HEALTH_OK
-    and its clock health checks remain a separate application prerequisite.
-    """
-    properties = dict(line.split("=", 1) for line in flags.splitlines() if "=" in line)
-    try:
-        fields = next(csv.reader([tracking.strip()]))
-        correction = float(fields[4])
-        return (properties.get("NTP") == "yes" and properties.get("NTPSynchronized") == "yes"
-                and len(fields) == 14 and 0 < int(fields[2]) < 16 and fields[13] == "Normal"
-                and math.isfinite(correction) and abs(correction) <= 0.01)
-    except (ValueError, IndexError, StopIteration):
-        return False
 
 
 def smb_ceph_readiness_signature(health, clock, before, pgs, after):
@@ -300,34 +263,19 @@ class _VM(Harness):
         method = self.run_in_vm_and_check if check else self.run_in_vm
         return method(shlex.join(str(arg) for arg in argv), timeout, quiet)
 
-    def prepare_time(self):
-        """Prepare only this owned guest, once, before Ceph or AD initialization."""
-        try:
-            if self.command("sh", "-ec", "command -v chronyc", timeout=10).rc != 0:
-                self.command("apt-get", "update", check=True, timeout=180)
-                self.command("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "chrony",
-                             check=True, timeout=180)
-            self.command("systemctl", "enable", "--now", "chrony", check=True, timeout=30)
-            # Allow stepping only during initial fixture preparation, not joins,
-            # application failures or subsequent serving-role restarts.
-            self.command("chronyc", "makestep", "0.01", "3", check=True, timeout=10)
-            self.command("chronyc", "burst", "4/4", check=True, timeout=10)
-            def ready():
-                flags = self.command("timedatectl", "show", "--property=NTP", "--property=NTPSynchronized", timeout=10)
-                tracking = self.command("chronyc", "-c", "tracking", timeout=10)
-                return flags.rc == 0 and tracking.rc == 0 and guest_time_ready(flags.stdout, tracking.stdout)
-            self._poll_until(ready, attempts=60, interval=2,
-                             fail_msg=f"{self.name}: guest clock did not synchronize with <=10 ms correction")
-            self.command("chronyc", "makestep", "0.01", "0", check=True, timeout=10)
-        finally:
-            # Public, bounded evidence on both success and the first failure.
-            for args in (("timedatectl",), ("chronyc", "tracking"), ("chronyc", "sources", "-v"),
-                         ("chronyc", "-n", "sources", "-v"),
-                         ("journalctl", "-b", "-u", "chrony", "--no-pager", "-n", "60")):
-                try:
-                    self.command(*args, timeout=10)
-                except Exception as error:
-                    logger.warn(f"{self.name}: guest clock diagnostics unavailable: {error}")
+    def observe_time(self):
+        """Record guest clock diagnostics without imposing a time-service policy.
+
+        Chrony's remaining correction is not inter-monitor skew. Ceph's finished
+        time-check round and actual Kerberos exchanges are the readiness gates.
+        """
+        for args in (("date", "--utc", "--iso-8601=ns"), ("timedatectl",),
+                     ("chronyc", "tracking"), ("chronyc", "-n", "sources", "-v"),
+                     ("journalctl", "-b", "-u", "chrony", "--no-pager", "-n", "60")):
+            try:
+                self.command(*args, timeout=10)
+            except Exception as error:
+                logger.warn(f"{self.name}: guest clock diagnostics unavailable: {error}")
 
 
 class smb_ops:
@@ -502,9 +450,9 @@ class smb_ops:
             self._host("lxc", "storage", "volume", "create", "local:" + self.pool, volume,
                        "--project", "default", "--type=block", "size=4GiB", f"{OWNER_KEY}={self.owner}")
             self.harness.launch_owned_test_vm(name, self.owner, image=image, storage_pool=self.pool,
-                                              data_volume=volume, cloud_config=smb_guest_cloud_config())
+                                              data_volume=volume)
             node.probe_instance_network()
-            node.prepare_time()
+            node.observe_time()
             node.copy_snap_to_vm(snap)
             digest = node.command("sha256sum", "/root/" + SNAP_DEST_NAME, check=True).stdout.split()[0]
             if digest != expected:
@@ -726,9 +674,9 @@ class smb_ops:
         logger.info("SMB allocation manifest: " + json.dumps({"owner": self.owner, "pool": self.pool,
                     "nodes": [n.name for n in self.nodes], "volumes": self.volumes}))
         self.harness.launch_owned_test_vm(dc.name, self.owner, image=str(self._variable("SMB_VM_IMAGE", "ubuntu:26.04")),
-                                          storage_pool=self.pool, cloud_config=smb_guest_cloud_config())
+                                          storage_pool=self.pool)
         dc.probe_instance_network()
-        dc.prepare_time()
+        dc.observe_time()
         dc.apt_update()
         dc.command("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "samba", "samba-ad-dc", "python3-samba", "krb5-user", "bind9-host", check=True, timeout=300)
         self.nodes[0].command("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "krb5-user", "samba-common-bin", check=True, timeout=300)

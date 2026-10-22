@@ -104,21 +104,6 @@ def test_owned_vm_launch_tags_before_start_and_attaches_persistent_disk(monkeypa
     assert not any("delete" in argv for argv in calls)
 
 
-def test_owned_vm_launch_passes_cloud_config_before_first_start(monkeypatch):
-    h = H()
-    calls = []
-    config = {'ntp': {'enabled': True, 'ntp_client': 'chrony', 'pools': ['ntp.ubuntu.com']}}
-    monkeypatch.setattr(h, '_exec', lambda argv, timeout: calls.append(argv) or _Res(0, '', ''))
-    monkeypatch.setattr(h, 'wait_for_vm_agent', lambda name: None)
-    h.launch_owned_test_vm('test-vm', 'owner-token', cloud_config=config)
-    init = next(argv for argv in calls if argv[:2] == ['lxc', 'init'])
-    value = next(arg for arg in init if arg.startswith('cloud-init.user-data='))
-    assert value.startswith('cloud-init.user-data=#cloud-config\n')
-    assert json.loads(value.split('\n', 1)[1]) == config
-    assert calls.index(init) < next(i for i, argv in enumerate(calls) if argv[:2] == ['lxc', 'start'])
-    assert all(argv[0] == 'lxc' for argv in calls)
-
-
 def test_owned_vm_launch_refuses_existing_or_unknown_state(monkeypatch):
     import pytest
     for result in (_Res(0, "test-vm\n", ""), _Res(1, "", "unavailable")):
@@ -179,7 +164,7 @@ def test_smb_private_transfer_call_paths_use_root_owned_mode0600(tmp_path, monke
             self.name = name
         def probe_instance_network(self):
             pass
-        def prepare_time(self):
+        def observe_time(self):
             pass
         def copy_snap_to_vm(self, path):
             pass
@@ -4423,95 +4408,58 @@ def test_smb_osd_path_revalidates_host_attachment_and_guest_inventory():
     assert len(calls) == 2
 
 
-def _chrony_tracking(correction='0.001', leap='Normal', stratum='3'):
-    return f'5BBD5B70,91.189.91.112,{stratum},1792494375.1,{correction},0.001,0.002,1,1,1,0.02,0.003,2,{leap}'
-
-
-def test_smb_guest_time_requires_real_chrony_tracking_not_only_sync_flag():
+def test_smb_guest_clock_diagnostics_are_read_only_without_ntp_readiness(monkeypatch):
     m = _smb_module()
-    assert callable(getattr(m, 'guest_time_ready', None)), 'missing guest clock readiness parser'
-    flags = 'NTP=yes\nNTPSynchronized=yes\n'
-    assert m.guest_time_ready(flags, _chrony_tracking())
-    for tracking in (_chrony_tracking('0.286'), _chrony_tracking('-0.05'), _chrony_tracking('nan'),
-                     _chrony_tracking('inf'), _chrony_tracking(leap='Not synchronised'),
-                     _chrony_tracking(stratum='0'), _chrony_tracking(stratum='16'), '', 'malformed'):
-        assert not m.guest_time_ready(flags, tracking)
-    assert not m.guest_time_ready('NTP=yes\nNTPSynchronized=no', _chrony_tracking())
+    expected = [('date', '--utc', '--iso-8601=ns'), ('timedatectl',),
+                ('chronyc', 'tracking'), ('chronyc', '-n', 'sources', '-v'),
+                ('journalctl', '-b', '-u', 'chrony', '--no-pager', '-n', '60')]
+    # No selected source, a large remaining correction, or no chrony installation
+    # must not replace the actual Ceph clock-health/Kerberos authentication gates.
+    for result in (_Res(0, 'NTPSynchronized=no\nStratum: 0\nLeap status: Not synchronised', ''),
+                   _Res(0, 'System time: 0.286 seconds slow of NTP time', ''),
+                   _Res(127, '', 'chronyc: command not found')):
+        node = m._VM('owned-node')
+        assert callable(getattr(node, 'observe_time', None)), 'missing read-only clock diagnostics'
+        calls = []
+        def command(*args, **kwargs):
+            calls.append(args)
+            assert kwargs == {'timeout': 10}
+            return result
+        monkeypatch.setattr(node, 'command', command)
+        node.observe_time()
+        assert calls == expected
 
 
-def test_smb_guest_clock_config_removes_nts_bootstrap_dependency_without_weakening_readiness():
-    m = _smb_module()
-    assert callable(getattr(m, 'smb_guest_cloud_config', None)), 'SMB guests inherit unreachable image NTS sources'
-    config = m.smb_guest_cloud_config()
-    ntp = config['ntp']
-    assert ntp['enabled'] is True and ntp['ntp_client'] == 'chrony'
-    assert ntp['pools'] == ['ntp.ubuntu.com'] and ntp['servers'] == []
-    template = ntp['config']['template']
-    assert template.startswith('## template:jinja\n')
-    assert 'pool {{ pool }} iburst maxsources 4 ipv4' in template
-    assert 'rtcsync' in template and 'driftfile /var/lib/chrony/chrony.drift' in template
-    assert not any(word in template for word in ('nts', 'sourcedir', 'confdir', 'local stratum'))
-    # A new config is not success: real synchronization and <=10ms remain required.
-    flags = 'NTP=yes\nNTPSynchronized=yes\n'
-    assert not m.guest_time_ready(flags, _chrony_tracking(stratum='0', leap='Not synchronised'))
-    assert not m.guest_time_ready(flags, _chrony_tracking(correction='0.011'))
-    config['ntp']['pools'].append('changed.example')
-    assert m.smb_guest_cloud_config()['ntp']['pools'] == ['ntp.ubuntu.com']
-
-
-def test_smb_guest_time_preparation_is_bounded_guest_only_and_keeps_diagnostics(monkeypatch):
+def test_smb_guest_clock_diagnostic_timeout_keeps_remaining_evidence(monkeypatch):
     m = _smb_module()
     node = m._VM('owned-node')
-    assert callable(getattr(node, 'prepare_time', None)), 'missing guest time preparation'
-    calls = []
+    assert callable(getattr(node, 'observe_time', None)), 'missing read-only clock diagnostics'
+    calls, warnings = [], []
     def command(*args, **kwargs):
         calls.append(args)
-        if args[:2] == ('timedatectl', 'show'):
-            return _Res(0, 'NTP=yes\nNTPSynchronized=yes\n', '')
-        if args == ('chronyc', '-c', 'tracking'):
-            return _Res(0, _chrony_tracking('0.286' if sum(c == args for c in calls) == 1 else '0.001'), '')
+        if args == ('timedatectl',):
+            raise TimeoutError('time service unavailable')
         return _Res(0, '', '')
     monkeypatch.setattr(node, 'command', command)
-    monkeypatch.setattr('microceph_harness.time.sleep', lambda _: None)
-    node.prepare_time()
-    assert calls.count(('chronyc', 'makestep', '0.01', '3')) == 1
-    assert calls.count(('chronyc', 'burst', '4/4')) == 1
-    assert calls.count(('chronyc', 'makestep', '0.01', '0')) == 1
-    assert calls.count(('chronyc', '-c', 'tracking')) == 2
-    assert ('chronyc', 'sources', '-v') in calls
-    assert ('chronyc', '-n', 'sources', '-v') in calls
-    assert not any('restart' in c for c in calls)
+    monkeypatch.setattr(m.logger, 'warn', warnings.append)
+    node.observe_time()
+    assert len(calls) == 5
+    assert calls[-1] == ('journalctl', '-b', '-u', 'chrony', '--no-pager', '-n', '60')
+    assert len(warnings) == 1 and 'time service unavailable' in warnings[0]
 
 
-def test_smb_guest_time_timeout_preserves_failure_diagnostics(monkeypatch):
+def test_smb_gateway_and_dc_observe_clocks_without_clock_configuration(tmp_path, monkeypatch):
     import pytest
     m = _smb_module()
-    node = m._VM('owned-node')
-    assert callable(getattr(node, 'prepare_time', None)), 'missing guest time preparation'
-    calls = []
-    def command(*args, **kwargs):
-        calls.append(args)
-        return _Res(1, '', 'NTP unavailable')
-    monkeypatch.setattr(node, 'command', command)
-    monkeypatch.setattr('microceph_harness.time.sleep', lambda _: None)
-    with pytest.raises(AssertionError, match='clock'):
-        node.prepare_time()
-    assert ('journalctl', '-b', '-u', 'chrony', '--no-pager', '-n', '60') in calls
-    assert len(calls) < 150
-
-
-def test_smb_gateway_and_dc_prepare_time_before_application_setup(tmp_path, monkeypatch):
-    import pytest
-    m = _smb_module()
-    class Prepared(Exception):
+    class Observed(Exception):
         pass
     class Node:
         def __init__(self, name):
             self.name = name
         def probe_instance_network(self):
             pass
-        def prepare_time(self):
-            raise Prepared()
+        def observe_time(self):
+            raise Observed()
     monkeypatch.setattr(m, '_VM', Node)
     snap = tmp_path / 'candidate.snap'
     snap.write_bytes(b'test-only')
@@ -4519,13 +4467,17 @@ def test_smb_gateway_and_dc_prepare_time_before_application_setup(tmp_path, monk
         library = m.smb_ops()
         monkeypatch.setattr(library, '_variable', lambda key, default: str(snap) if key == 'SNAP_PATH' else default)
         monkeypatch.setattr(library, '_capacity', lambda _: None)
-        launches = []
+        launches, host_calls = [], []
+        def host(*args):
+            host_calls.append(args)
+            return 'local' if args[1:] == ('remote', 'get-default') else '{"local":{}}'
         monkeypatch.setattr(library.harness, 'launch_owned_test_vm', lambda *args, **kwargs: launches.append(kwargs))
-        monkeypatch.setattr(library, '_host', lambda *args: 'local' if args[1:] == ('remote', 'get-default') else '{"local":{}}')
-        with pytest.raises(Prepared):
+        monkeypatch.setattr(library, '_host', host)
+        with pytest.raises(Observed):
             (library.provision_smb_ad_directory if ad else library.provision_smb_lab)()
-        assert launches[0].get('cloud_config') == m.smb_guest_cloud_config()
+        assert 'cloud_config' not in launches[0]
         assert launches[0]['image'] == 'ubuntu:26.04'
+        assert all(args[0] == 'lxc' for args in host_calls)
 
 
 def test_smb_ceph_health_observation_records_clock_status():
