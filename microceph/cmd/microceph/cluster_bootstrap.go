@@ -23,6 +23,7 @@ type cmdClusterBootstrap struct {
 	flagPubNet           string
 	flagClusterNet       string
 	flagAvailabilityZone string
+	flagDefaultCipher    string
 	flagV2Only           bool
 }
 
@@ -39,6 +40,7 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).")
 	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).")
 	cmd.Flags().BoolVar(&c.flagV2Only, "v2-only", false, "Whether to support V2 messenger only or both V1 and V2")
+	cmd.Flags().StringVar(&c.flagDefaultCipher, "default-cipher", "", "Default cipher for CephX keys: 'aes' or 'aes256k' (AES-256). Defaults to AES-256 when supported, otherwise Ceph's default is left unchanged.")
 	return cmd
 }
 
@@ -72,6 +74,7 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 		ClusterNet:       c.flagClusterNet,
 		V2Only:           c.flagV2Only,
 		AvailabilityZone: c.flagAvailabilityZone,
+		DefaultCipher:    c.flagDefaultCipher,
 	}
 
 	err = preCheckBootstrapConfig(data)

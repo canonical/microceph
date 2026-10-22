@@ -20,6 +20,7 @@ type BootstrapConfig struct {
 	// ### Common Parameters
 	PublicNet  string // Public Network subnet.
 	ClusterNet string // Cluster Network subnet.
+    DefaultCipher string // Default cipher to use for CephX keys
 
 	// ### Adopt specific Parameters
 	AdoptFSID     string   // fsid of the existing ceph cluster.
@@ -39,6 +40,7 @@ func EncodeBootstrapConfig(data BootstrapConfig) map[string]string {
 		"AdoptMonHosts":    strings.Join(data.AdoptMonHosts, ","),
 		"AdoptAdminKey":    data.AdoptAdminKey,
 		"AvailabilityZone": data.AvailabilityZone,
+        "DefaultCipher":    data.DefaultCipher,
 	}
 }
 
@@ -53,4 +55,5 @@ func DecodeBootstrapConfig(input map[string]string, data *BootstrapConfig) {
 	data.AdoptMonHosts = strings.Split(input["AdoptMonHosts"], ",")
 	data.AdoptAdminKey = input["AdoptAdminKey"]
 	data.AvailabilityZone = input["AvailabilityZone"]
+	data.DefaultCipher = input["DefaultCipher"]
 }
