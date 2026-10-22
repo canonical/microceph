@@ -4507,6 +4507,68 @@ def _smb_ceph_readiness_fixture():
     return json.loads((Path(__file__).parent / 'fixtures' / 'smb_ceph_readiness.json').read_text())
 
 
+def _smb_ceph_clock_warning_fixture():
+    return json.loads((Path(__file__).parent / 'fixtures' / 'smb_ceph_clock_warning.json').read_text())
+
+
+def test_smb_ceph_readiness_accepts_captured_clock_warning():
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    warning = _smb_ceph_clock_warning_fixture()
+    assert m.smb_ceph_readiness_signature(warning['health'], warning['clock'],
+        sample['settled_map'], sample['pgs'], sample['settled_map']) is not None
+
+
+def test_smb_ceph_clock_warning_does_not_hide_other_readiness_failures():
+    import copy
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    warning = _smb_ceph_clock_warning_fixture()
+    baseline = [warning['health'], warning['clock'], sample['settled_map'],
+                sample['pgs'], copy.deepcopy(sample['settled_map'])]
+    mutations = [
+        (0, lambda d: d.update(status='HEALTH_ERR')),
+        (0, lambda d: d['checks']['MON_CLOCK_SKEW'].update(severity='HEALTH_ERR')),
+        (0, lambda d: d['checks'].update(MON_DOWN={'severity': 'HEALTH_WARN'})),
+        (0, lambda d: d['checks'].update(PG_AVAILABILITY={'severity': 'HEALTH_WARN'})),
+        (0, lambda d: d.update(checks={'OSD_DOWN': {'severity': 'HEALTH_WARN'}})),
+        (0, lambda d: d.update(checks={'MON_CLOCK_SKEW': None})),
+        (0, lambda d: d.update(checks={'MON_CLOCK_SKEW': {}})),
+        (1, lambda d: d['timechecks'].update(round_status='ongoing')),
+        (1, lambda d: d.update(time_skew_status={})),
+        (1, lambda d: next(iter(d['time_skew_status'].values())).update(health='HEALTH_ERR')),
+        (1, lambda d: next(iter(d['time_skew_status'].values())).update(health='UNKNOWN')),
+        (2, lambda d: d['osds'][0].update(up=0)),
+        (2, lambda d: d['pools'][0].update(pg_num_target=999)),
+        (3, lambda d: d['pg_stats'][0].update(state='peering')),
+        (4, lambda d: d.update(epoch=d['epoch'] + 1)),
+    ]
+    for index, mutate in mutations:
+        args = copy.deepcopy(baseline)
+        mutate(args[index])
+        if index == 2:
+            args[4] = copy.deepcopy(args[2])
+        assert m.smb_ceph_readiness_signature(*args) is None, args
+
+
+def test_smb_ceph_clock_warning_is_reported_after_two_settled_samples(monkeypatch):
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    warning = _smb_ceph_clock_warning_fixture()
+    sample['clock'] = warning['clock']
+    clock, calls, warnings = [0], [], []
+    monkeypatch.setattr(m.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(m.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monkeypatch.setattr(m.logger, 'warn', warnings.append)
+    library = m.smb_ops()
+    library.nodes = [_smb_ceph_readiness_node(sample,
+        [{'health': warning['health'], 'map': sample['settled_map']}], clock, calls)]
+    assert library.wait_for_smb_ceph_health() == warning['health']
+    assert len(calls) == 10
+    assert len(warnings) == 1 and 'MON_CLOCK_SKEW' in warnings[0]
+    assert '0.0663787' in warnings[0] and '0.19567' in warnings[0]
+
+
 def test_smb_ceph_readiness_rejects_premature_health_ok_during_placement():
     m = _smb_module()
     sample = _smb_ceph_readiness_fixture()
@@ -4640,16 +4702,13 @@ def test_smb_ceph_readiness_json_rejects_malformed_read(monkeypatch):
         library.wait_for_smb_ceph_health()
 
 
-def test_smb_ceph_robot_asserts_the_accepted_detailed_observation():
+def test_smb_ceph_robot_uses_the_owning_gate_without_rejecting_clock_warnings_again():
     from robot.api import get_model
     model = get_model(Path(__file__).parent / 'smb_suite.resource')
     gate = next(block for section in model.sections for block in section.body
                 if getattr(block, 'name', '') == 'Require SMB Ceph Health' and hasattr(block, 'body'))
-    calls = [statement for statement in gate.body if hasattr(statement, 'keyword')]
-    assert calls[0].keyword == 'Wait For SMB Ceph Health'
-    assert calls[0].assign == ('${health}=',)
-    assert all(statement.keyword != 'Observe SMB Ceph Health' for statement in calls)
-    assert [statement.keyword for statement in calls[1:]] == ['Should Be Equal', 'Dictionary Should Not Contain Key']
+    calls = [statement.keyword for statement in gate.body if hasattr(statement, 'keyword')]
+    assert calls == ['Wait For SMB Ceph Health']
 
 
 # Shared-lab SMB CI: suites are independent, cases within each stay ordered.

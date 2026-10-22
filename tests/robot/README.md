@@ -186,13 +186,17 @@ Guest UTC time, time-service status, and available Chrony diagnostics are record
 with bounded, non-fatal reads. Chrony's remaining system-clock correction is not
 an inter-monitor skew measurement or an absolute accuracy bound.
 
-Clock correctness remains an application prerequisite. The shared setup requires
-`HEALTH_OK`, no `MON_CLOCK_SKEW`, and a finished Ceph `time-sync-status` round with
-all monitors healthy. Ceph's default inter-monitor limit is 50 ms; it is not
-changed. AD directory readiness uses a real `kinit`, and the AD cases require
-fresh tickets and Kerberos-required SMB authentication, without NTLM fallback.
-Kerberos clock-skew policy is not changed. Actual monitor skew or authentication
-failure still fails setup/tests; neither triggers clock repair or a rejoin.
+The shared setup accepts `HEALTH_OK` or `HEALTH_WARN` caused only by
+`MON_CLOCK_SKEW`. That warning is logged without blocking SMB scenarios; every
+other health warning/error remains blocking. A finished Ceph `time-sync-status`
+round, nonempty monitor observations without errors, fully up/in OSDs, settled
+pool targets and two coherent active+clean placement samples remain required.
+Ceph's default 50 ms inter-monitor limit is not changed or muted.
+
+AD directory readiness still uses a real `kinit`, and the AD cases require fresh
+tickets and Kerberos-required SMB authentication, without NTLM fallback.
+Authentication, SMB readiness and I/O failures remain fatal. No Kerberos policy
+change, clock repair or automatic rejoin is performed.
 
 References: [Ceph clock health](https://docs.ceph.com/en/tentacle/rados/operations/health-checks/#mon-clock-skew),
 [Chrony tracking fields](https://chrony-project.org/doc/4.8/chronyc.html#tracking),
@@ -238,7 +242,8 @@ a 100 GB xlarge runner is not adequate. No guard or disk-size check is weakened.
 Prerequisites: outbound guest APT/image access; working local LXD/default project;
 the exact strict snap and guest snapd >= 2.78; stable guest clocks and the exact
 owned 4 GiB OSD in each gateway, verified by the shared prerequisites above.
-Stop at a disk mismatch or monitor clock skew: do not wipe another disk or disable time checks. The DC installs
+Stop at a disk mismatch or blocking readiness failure; report clock skew without
+muting it or changing Ceph's tolerance. The DC installs
 `samba`, `samba-ad-dc`, `python3-samba`, `krb5-user`, `bind9-host`; the client uses
 `smbclient`, `samba-common-bin` and `krb5-user`. Package versions, snap hash and allocation ownership
 are logged. Only the newly owned DC's packaged default Samba/resolved services

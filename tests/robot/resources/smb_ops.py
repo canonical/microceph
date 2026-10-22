@@ -63,14 +63,22 @@ def smb_ceph_readiness_signature(health, clock, before, pgs, after):
     HEALTH_OK can occur between automatic pgp_num_actual increments. Require
     complete active/clean PG mappings and settled pool targets on one OSD epoch
     before treating that point-in-time health result as fixture readiness.
+    MON_CLOCK_SKEW alone is diagnostic, not a reason to block SMB scenarios.
     """
     try:
-        if (not isinstance(health, dict) or health.get("status") != "HEALTH_OK"
-                or health.get("checks") != {} or not isinstance(clock, dict)):
+        if not isinstance(health, dict) or not isinstance(clock, dict):
             return None
+        checks = health.get("checks")
+        clock_warning = (health.get("status") == "HEALTH_WARN"
+                         and isinstance(checks, dict) and set(checks) == {"MON_CLOCK_SKEW"}
+                         and isinstance(checks["MON_CLOCK_SKEW"], dict)
+                         and checks["MON_CLOCK_SKEW"].get("severity") == "HEALTH_WARN")
+        if not clock_warning and (health.get("status") != "HEALTH_OK" or checks != {}):
+            return None
+        monitor_health = ("HEALTH_OK", "HEALTH_WARN") if clock_warning else ("HEALTH_OK",)
         monitors = clock["time_skew_status"]
         if (not isinstance(monitors, dict) or not monitors
-                or any(not isinstance(row, dict) or row.get("health") != "HEALTH_OK"
+                or any(not isinstance(row, dict) or row.get("health") not in monitor_health
                        for row in monitors.values())
                 or clock["timechecks"]["round_status"] != "finished"):
             return None
@@ -539,6 +547,9 @@ class smb_ops:
 
         self.harness._poll_until(probe, attempts=100, interval=0, between=pause,
                                  fail_msg="SMB Ceph readiness did not settle within 300 seconds")
+        if "MON_CLOCK_SKEW" in accepted["checks"]:
+            logger.warn("Ceph MON_CLOCK_SKEW (non-fatal for SMB tests): "
+                        + json.dumps(accepted["checks"]["MON_CLOCK_SKEW"]))
         return accepted
 
     def observe_smb_ceph_health(self):

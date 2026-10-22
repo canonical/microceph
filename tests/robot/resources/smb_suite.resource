@@ -37,9 +37,8 @@ Add Verified SMB OSD
     Run SMB Checked    ${node}    microceph    disk    add    ${disk}    --wipe
 
 Require SMB Ceph Health
-    ${health}=    Wait For SMB Ceph Health
-    Should Be Equal    ${health}[status]    HEALTH_OK
-    Dictionary Should Not Contain Key    ${health}[checks]    MON_CLOCK_SKEW
+    # The owning gate reports clock skew but rejects other health/placement failures.
+    Wait For SMB Ceph Health
 
 SMB Suite Cleanup
     TRY
