@@ -1071,10 +1071,16 @@ func TestCreatePlannedAuxPartitionFillsHoleWithoutReset(t *testing.T) {
 	require.NoError(t, mgr.fs.MkdirAll("/dev", 0755))
 	require.NoError(t, afero.WriteFile(mgr.fs, "/dev/sde1", nil, 0644))
 	plan := &plannedAuxPartition{Kind: "wal", ParentPath: "/dev/sde", Partition: 1, SizeBytes: 1024 * 1024 * 1024}
-	expectAuxTable(runner, "/dev/sde", 2, "sibling")
+	// Partition 2 stays at its original offset; only the earlier hole fits 1 GiB.
+	sibling := `{"node":"/dev/sde2","uuid":"sibling","start":2099200,"size":2097152}`
+	table := func(partitions string) string {
+		return fmt.Sprintf(`{"partitiontable":{"label":"gpt","firstlba":2048,"lastlba":4196351,"sectorsize":512,"partitions":[%s]}}`, partitions)
+	}
+	runner.On("RunCommand", "env", "LC_ALL=C", "sfdisk", "--json", "/dev/sde").Return(table(sibling), nil).Once()
 	runner.On("RunCommand", "partx", "-v", "-d", "--nr", "1:1", "/dev/sde").Return("", nil).Once()
 	runner.On("RunCommand", "sh", "-c", "printf ',2097152\n' | sfdisk --lock=no --append --force --no-reread --no-tell-kernel \"/dev/sde\"").Return("", nil).Once()
-	expectAuxTable(runner, "/dev/sde", 1, "new-uuid")
+	replacement := `{"node":"/dev/sde1","uuid":"new-uuid","start":2048,"size":2097152}`
+	runner.On("RunCommand", "env", "LC_ALL=C", "sfdisk", "--json", "/dev/sde").Return(table(replacement+","+sibling), nil).Once()
 	locked := false
 	mgr.lockCarrierFunc = func(path string, operation func(string) error) error {
 		locked = true

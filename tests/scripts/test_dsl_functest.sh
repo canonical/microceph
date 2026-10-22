@@ -2272,16 +2272,43 @@ function collect_waldb_cleanup_diagnostics() {
     done
 }
 
+# Check the actual GPT geometry rather than assuming that a large second
+# partition left no usable space at the end of the carrier.
+function assert_partition_hole_required() {
+    local carrier="$1" removed="$2" surviving="$3" removed_bytes="$4" surviving_bytes="$5" label="$6"
+    local table sector_size last_lba first_start first_size sibling_start sibling_size
+
+    table=$(vm_exec sfdisk --json "$carrier")
+    sector_size=$(jq -er '.partitiontable.sectorsize' <<<"$table")
+    last_lba=$(jq -er '.partitiontable.lastlba' <<<"$table")
+    first_start=$(jq -er '.start' <<<"$removed")
+    first_size=$(jq -er '.size' <<<"$removed")
+    sibling_start=$(jq -er '.start' <<<"$surviving")
+    sibling_size=$(jq -er '.size' <<<"$surviving")
+
+    assert_eq "$((first_size * sector_size))" "$removed_bytes" "$label first partition must have the requested size"
+    assert_eq "$((sibling_size * sector_size))" "$surviving_bytes" "$label sibling partition must have the requested size"
+    (( first_start + first_size <= sibling_start )) || fail "$label removed extent must precede the surviving partition"
+    (( (sibling_start - first_start) * sector_size >= removed_bytes )) || fail "$label earlier extent must fit the replacement"
+    (( (last_lba - sibling_start - sibling_size + 1) * sector_size < removed_bytes )) || fail "$label trailing free space must be too small for the replacement"
+}
+
 function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
-    log "Test: removing one of two OSDs only cleans its generated WAL/DB partitions"
-    local output osd1_path osd2_path osd1_id osd2_id osd1_dir osd2_dir
-    local osd1_wal osd1_db osd2_wal osd2_db
+    log "Test: removing one of two OSDs reuses its WAL/DB holes without changing the survivor"
+    local osd1_path osd2_path osd3_path osd1_id osd2_id osd3_id osd1_dir osd2_dir osd3_dir
+    local osd1_wal osd1_db osd2_wal osd2_db osd3_wal osd3_db
     local osd1_wal_carrier osd1_db_carrier remove_status remove_output
     local wal_table_before db_table_before wal_kernel_before db_kernel_before
+    local wal_removed_before db_removed_before wal_replacement db_replacement
+    local wal_sector_size db_sector_size
 
     osd1_path=$(get_available_disk_path_by_size "10GiB")
     osd2_path=$(get_available_disk_path_by_size "11GiB")
-    output=$(vm_exec_expect_success "two-OSD WAL+DB add should succeed" microceph disk add --osd-match "or(eq(@size, 10GiB), eq(@size, 11GiB))" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB)
+    osd3_path=$(get_available_disk_path_by_size "12GiB")
+    # Add separately so the first OSD occupies the earlier extent. The second
+    # allocation fills the tail of each carrier, leaving less than 2/3 GiB.
+    vm_exec_expect_success "first shared-carrier WAL+DB add should succeed" microceph disk add --osd-match "eq(@size, 10GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 2GiB --db-match "eq(@size, 30GiB)" --db-size 3GiB >/dev/null
+    vm_exec_expect_success "second shared-carrier WAL+DB add should succeed" microceph disk add --osd-match "eq(@size, 11GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 17GiB --db-match "eq(@size, 30GiB)" --db-size 26GiB >/dev/null
     wait_for_configured_disk_count_ge 2 360
 
     osd1_id=$(get_osd_id_for_path "$osd1_path")
@@ -2311,6 +2338,12 @@ function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     wal_kernel_before=$(get_kernel_partition_record "$osd2_wal")
     db_kernel_before=$(get_kernel_partition_record "$osd2_db")
     [[ -n "$wal_table_before" && -n "$db_table_before" && -n "$wal_kernel_before" && -n "$db_kernel_before" ]] || fail "Could not record sibling WAL/DB partition state"
+    wal_removed_before=$(get_partition_table_record "$osd1_wal_carrier" "$osd1_wal")
+    db_removed_before=$(get_partition_table_record "$osd1_db_carrier" "$osd1_db")
+    assert_partition_hole_required "$osd1_wal_carrier" "$wal_removed_before" "$wal_table_before" "$((2 * 1024 * 1024 * 1024))" "$((17 * 1024 * 1024 * 1024))" WAL
+    assert_partition_hole_required "$osd1_db_carrier" "$db_removed_before" "$db_table_before" "$((3 * 1024 * 1024 * 1024))" "$((26 * 1024 * 1024 * 1024))" DB
+    wal_sector_size=$(vm_exec sfdisk --json "$osd1_wal_carrier" | jq -er '.partitiontable.sectorsize')
+    db_sector_size=$(vm_exec sfdisk --json "$osd1_db_carrier" | jq -er '.partitiontable.sectorsize')
 
     run_and_capture remove_status remove_output vm_exec microceph disk remove "$osd1_id" --bypass-safety-checks
     echo "$remove_output" >&2
@@ -2335,14 +2368,67 @@ function test_dsl_remove_one_of_two_osds_only_cleans_its_partitions() {
     assert_eq "$(get_kernel_partition_record "$osd2_wal")" "$wal_kernel_before" "sibling WAL kernel partition must not change"
     assert_eq "$(get_kernel_partition_record "$osd2_db")" "$db_kernel_before" "sibling DB kernel partition must not change"
     wait_for_vm_command "surviving osd.$osd2_id to stay up" 180 surviving_osd_up "$osd2_id"
+
+    vm_exec_expect_success "replacement OSD must reuse freed WAL/DB extents" microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 2GiB --db-match "eq(@size, 30GiB)" --db-size 3GiB >/dev/null
+    wait_for_configured_disk_count_ge 2 360
+    osd3_id=$(get_osd_id_for_path "$osd3_path")
+    [[ -n "$osd3_id" ]] || fail "Could not resolve replacement OSD id for $osd3_path"
+    osd3_dir=$(get_osd_data_dir "$osd3_id")
+    osd3_wal=$(get_symlink_target "$osd3_dir/block.wal")
+    osd3_db=$(get_symlink_target "$osd3_dir/block.db")
+    assert_path_exists_in_vm "$osd3_wal"
+    assert_path_exists_in_vm "$osd3_db"
+    assert_eq "$(get_partition_parent_disk "$osd3_wal")" "$osd1_wal_carrier" "replacement WAL must use the shared carrier"
+    assert_eq "$(get_partition_parent_disk "$osd3_db")" "$osd1_db_carrier" "replacement DB must use the shared carrier"
+    assert_eq "$(partition_number_from_path "$osd3_wal")" "$(partition_number_from_path "$osd1_wal")" "replacement WAL must reuse the removed partition number"
+    assert_eq "$(partition_number_from_path "$osd3_db")" "$(partition_number_from_path "$osd1_db")" "replacement DB must reuse the removed partition number"
+    wal_replacement=$(get_partition_table_record "$osd1_wal_carrier" "$osd3_wal")
+    db_replacement=$(get_partition_table_record "$osd1_db_carrier" "$osd3_db")
+    assert_eq "$(jq -r .start <<<"$wal_replacement")" "$(jq -r .start <<<"$wal_removed_before")" "replacement WAL must occupy the freed earlier extent"
+    assert_eq "$(jq -r .start <<<"$db_replacement")" "$(jq -r .start <<<"$db_removed_before")" "replacement DB must occupy the freed earlier extent"
+    assert_eq "$(( $(jq -r .size <<<"$wal_replacement") * wal_sector_size ))" "$((2 * 1024 * 1024 * 1024))" "replacement WAL GPT size must match the request"
+    assert_eq "$(( $(jq -r .size <<<"$db_replacement") * db_sector_size ))" "$((3 * 1024 * 1024 * 1024))" "replacement DB GPT size must match the request"
+    assert_eq "$(vm_exec lsblk --nodeps --bytes --noheadings --output SIZE "$osd3_wal" | tr -d '[:space:]')" "$((2 * 1024 * 1024 * 1024))" "replacement WAL kernel size must match the request"
+    assert_eq "$(vm_exec lsblk --nodeps --bytes --noheadings --output SIZE "$osd3_db" | tr -d '[:space:]')" "$((3 * 1024 * 1024 * 1024))" "replacement DB kernel size must match the request"
+    assert_eq "$(vm_exec partx --show --noheadings --output NR "$osd1_wal_carrier" | tr -d '[:space:]')" "$(partition_number_from_path "$osd3_wal")$(partition_number_from_path "$osd2_wal")" "WAL GPT must contain the replacement and surviving OSD partitions"
+    assert_eq "$(vm_exec partx --show --noheadings --output NR "$osd1_db_carrier" | tr -d '[:space:]')" "$(partition_number_from_path "$osd3_db")$(partition_number_from_path "$osd2_db")" "DB GPT must contain the replacement and surviving OSD partitions"
+    assert_path_exists_in_vm "$osd2_dir/block.wal"
+    assert_path_exists_in_vm "$osd2_dir/block.db"
+    assert_path_exists_in_vm "$osd2_wal"
+    assert_path_exists_in_vm "$osd2_db"
+    assert_eq "$(get_partition_table_record "$osd1_wal_carrier" "$osd2_wal")" "$wal_table_before" "sibling WAL GPT entry must remain unchanged after replacement"
+    assert_eq "$(get_partition_table_record "$osd1_db_carrier" "$osd2_db")" "$db_table_before" "sibling DB GPT entry must remain unchanged after replacement"
+    assert_eq "$(get_kernel_partition_record "$osd2_wal")" "$wal_kernel_before" "sibling WAL kernel partition must remain unchanged after replacement"
+    assert_eq "$(get_kernel_partition_record "$osd2_db")" "$db_kernel_before" "sibling DB kernel partition must remain unchanged after replacement"
+    wait_for_vm_command "surviving osd.$osd2_id to stay up after replacement" 180 surviving_osd_up "$osd2_id"
+    wait_for_vm_command "replacement osd.$osd3_id to be up" 180 surviving_osd_up "$osd3_id"
 }
 
 function test_dsl_remove_osd_migrates_legacy_aux_manifest() {
     log "Test: removing an OSD migrates its unversioned WAL/DB manifest"
-    local osd_path osd_id osd_dir manifest_path wal_target db_target wal_parent db_parent wal_uuid db_uuid
+    run_dsl_remove_osd_migrates_legacy_aux_manifest false
+}
+
+function test_dsl_remove_osd_migrates_encrypted_legacy_aux_manifest() {
+    log "Test: removing an OSD migrates its encrypted unversioned WAL/DB manifest"
+    if ! ensure_dm_crypt_ready; then
+        return 0
+    fi
+
+    run_dsl_remove_osd_migrates_legacy_aux_manifest true
+}
+
+function run_dsl_remove_osd_migrates_legacy_aux_manifest() {
+    local encrypted="$1"
+    local osd_path osd_id osd_dir manifest_path wal_target db_target wal_raw db_raw wal_parent db_parent wal_uuid db_uuid
+    local wal_mapper db_mapper
 
     osd_path=$(get_available_disk_path_by_size "12GiB")
-    vm_exec_expect_success "dsl WAL+DB add should succeed before migration" microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB >/dev/null
+    if [[ "$encrypted" == true ]]; then
+        vm_exec_expect_success "encrypted DSL WAL+DB add should succeed before migration" microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --wal-encrypt --db-match "eq(@size, 30GiB)" --db-size 2GiB --db-encrypt >/dev/null
+    else
+        vm_exec_expect_success "dsl WAL+DB add should succeed before migration" microceph disk add --osd-match "eq(@size, 12GiB)" --wal-match "eq(@size, 20GiB)" --wal-size 1GiB --db-match "eq(@size, 30GiB)" --db-size 2GiB >/dev/null
+    fi
     wait_for_configured_disk_count_ge 1 360
     osd_id=$(get_osd_id_for_path "$osd_path")
     [[ -n "$osd_id" ]] || fail "Could not resolve OSD id for $osd_path"
@@ -2351,23 +2437,44 @@ function test_dsl_remove_osd_migrates_legacy_aux_manifest() {
     wait_for_path_exists_in_vm "$manifest_path" 240
     wal_target=$(get_symlink_target "$osd_dir/block.wal")
     db_target=$(get_symlink_target "$osd_dir/block.db")
-    wal_parent=$(get_partition_parent_disk "$wal_target")
-    db_parent=$(get_partition_parent_disk "$db_target")
+    wal_raw="$wal_target"
+    db_raw="$db_target"
+    if [[ "$encrypted" == true ]]; then
+        assert_path_exists_in_vm "$osd_dir/unencrypted.wal"
+        assert_path_exists_in_vm "$osd_dir/unencrypted.db"
+        wal_raw=$(get_symlink_target "$osd_dir/unencrypted.wal")
+        db_raw=$(get_symlink_target "$osd_dir/unencrypted.db")
+        wal_mapper="/dev/mapper/luksosd.wal-${osd_id}"
+        db_mapper="/dev/mapper/luksosd.db-${osd_id}"
+        assert_eq "$(get_symlink_value "$osd_dir/block.wal")" "$wal_mapper" "encrypted WAL must use the OSD mapper"
+        assert_eq "$(get_symlink_value "$osd_dir/block.db")" "$db_mapper" "encrypted DB must use the OSD mapper"
+        assert_path_exists_in_vm "$wal_mapper"
+        assert_path_exists_in_vm "$db_mapper"
+        assert_eq "$(vm_exec lsblk --nodeps --noheadings --output TYPE "$wal_target" | tr -d '[:space:]')" "crypt" "WAL label must be read from dm-crypt"
+        assert_eq "$(vm_exec lsblk --nodeps --noheadings --output TYPE "$db_target" | tr -d '[:space:]')" "crypt" "DB label must be read from dm-crypt"
+    fi
+    wal_parent=$(get_partition_parent_disk "$wal_raw")
+    db_parent=$(get_partition_parent_disk "$db_raw")
     [[ -n "$wal_parent" && -n "$db_parent" ]] || fail "Could not resolve legacy WAL/DB carriers"
-    wal_uuid=$(get_partition_table_record "$wal_parent" "$wal_target" | jq -r .uuid)
-    db_uuid=$(get_partition_table_record "$db_parent" "$db_target" | jq -r .uuid)
+    wal_uuid=$(get_partition_table_record "$wal_parent" "$wal_raw" | jq -r .uuid)
+    db_uuid=$(get_partition_table_record "$db_parent" "$db_raw" | jq -r .uuid)
     [[ -n "$wal_uuid" && "$wal_uuid" != "null" && -n "$db_uuid" && "$db_uuid" != "null" ]] || fail "Could not identify the generated WAL/DB partitions"
     vm_exec cat "$manifest_path" | jq -e '.version == 1 and (.wal.part_uuid | length > 0) and (.db.part_uuid | length > 0)' >/dev/null || fail "Newly generated WAL/DB manifest must record partition identities"
+    if [[ "$encrypted" == true ]]; then
+        vm_exec cat "$manifest_path" | jq -e --arg wal "$wal_uuid" --arg db "$db_uuid" '.wal.encrypted == true and .db.encrypted == true and (.wal.part_uuid | ascii_downcase) == ($wal | ascii_downcase) and (.db.part_uuid | ascii_downcase) == ($db | ascii_downcase)' >/dev/null || fail "Encrypted WAL/DB manifest must identify the underlying partitions"
+    fi
 
     # Reproduce the on-disk format written by older MicroCeph versions, not
     # merely a manifest with its version number removed.
-    vm_exec cat "$manifest_path" | jq --arg wal "$wal_target" --arg db "$db_target" 'del(.version, .wal.part_uuid, .db.part_uuid) | .wal.partition_path = $wal | .db.partition_path = $db' | vm_exec tee "${manifest_path}.tmp" >/dev/null
+    vm_exec cat "$manifest_path" | jq --arg wal "$wal_raw" --arg db "$db_raw" 'del(.version, .wal.part_uuid, .db.part_uuid) | .wal.partition_path = $wal | .db.partition_path = $db' | vm_exec tee "${manifest_path}.tmp" >/dev/null
     vm_exec mv "${manifest_path}.tmp" "$manifest_path"
     vm_exec cat "$manifest_path" | jq -e '.version == null and .wal.part_uuid == null and .db.part_uuid == null and (.wal.partition_path | length > 0) and (.db.partition_path | length > 0)' >/dev/null || fail "Legacy WAL/DB manifest was not installed"
 
     # A non-bypass removal migrates the manifest before the minimum-OSD guard
     # rejects removal from this one-OSD cluster. Inspect the persisted upgrade
     # before a second, bypassed removal consumes the manifest.
+    # Migration reads the mapper labels in the daemon's dm-crypt confinement;
+    # the public ceph-bluestore-tool app does not have that interface.
     vm_exec_expect_failure "one-OSD removal should stop after manifest migration" microceph disk remove "$osd_id" --confirm-failure-domain-downgrade >/dev/null
     vm_exec cat "$manifest_path" | jq -e --arg wal "$wal_uuid" --arg db "$db_uuid" '.version == 1 and (.wal.part_uuid | ascii_downcase) == ($wal | ascii_downcase) and (.db.part_uuid | ascii_downcase) == ($db | ascii_downcase)' >/dev/null || fail "Removal did not migrate both legacy WAL/DB partition identities"
     assert_path_exists_in_vm "$wal_target"
@@ -2378,6 +2485,12 @@ function test_dsl_remove_osd_migrates_legacy_aux_manifest() {
     wait_for_path_missing_in_vm "$manifest_path" 240
     wait_for_path_missing_in_vm "$wal_target" 240
     wait_for_path_missing_in_vm "$db_target" 240
+    if [[ "$encrypted" == true ]]; then
+        wait_for_path_missing_in_vm "$wal_mapper" 240
+        wait_for_path_missing_in_vm "$db_mapper" 240
+        wait_for_path_missing_in_vm "$wal_raw" 240
+        wait_for_path_missing_in_vm "$db_raw" 240
+    fi
     assert_eq "$(get_partition_count "$wal_parent")" "0" "migrated WAL partition should be removed"
     assert_eq "$(get_partition_count "$db_parent")" "0" "migrated DB partition should be removed"
 }
@@ -2595,6 +2708,7 @@ rm1 test_dsl_remove_osd_cleans_generated_aux_partitions
 rmr test_dsl_remove_osd_cleanup_survives_daemon_restart
 rm2 test_dsl_remove_one_of_two_osds_only_cleans_its_partitions
 rmm test_dsl_remove_osd_migrates_legacy_aux_manifest
+rme test_dsl_remove_osd_migrates_encrypted_legacy_aux_manifest
 EOF
             ;;
         waldb_consistency)
