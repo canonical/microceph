@@ -69,6 +69,7 @@ Flags:
    --mon-ip            string Public address for bootstrapping ceph mon service.
    --public-network    string Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).
    --cluster-network   string Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).
+   --default-cipher    string Default cipher for CephX keys: 'aes' or 'aes256k' (AES-256). Defaults to AES-256 when supported, otherwise Ceph's default is left unchanged.
 
 ``config``
 ----------

@@ -27,6 +27,15 @@ func (s *simpleBootstrapSuite) SetupTest() {
 	s.BaseSuite.SetupTest()
 	s.CopyCephConfigs()
 
+	// Keep the legacy bootstrap tests deterministic: AES-256 support probing is
+	// exercised separately, by overriding this function.
+	originalSupportsAES256 := common.SupportsAES256Func
+	common.SupportsAES256Func = func() (bool, error) {
+		return false, nil
+	}
+	s.T().Cleanup(func() { common.SupportsAES256Func = originalSupportsAES256 })
+
+
 	s.TestStateInterface = mocks.NewStateInterface(s.T())
 	u := api.NewURL()
 	u.Host("1.1.1.1")
@@ -152,4 +161,42 @@ func (s *simpleBootstrapSuite) TestSimpleBootstrap() {
 
 	err = bootstrapper.Bootstrap(context.Background(), s.TestStateInterface)
 	assert.NoError(s.T(), err)
+}
+
+// TestPrefillDefaultCipher verifies that the bootstrap prefill resolves an
+// omitted cipher to AES-256 when supported and otherwise leaves Ceph's
+// defaults untouched.
+func (s *simpleBootstrapSuite) TestPrefillDefaultCipher() {
+	tests := []struct {
+		name      string
+		supported bool
+		requested string
+		expected  string
+	}{
+		{name: "auto selects AES-256", supported: true, expected: common.CipherAES256},
+		{name: "auto leaves defaults when unsupported", supported: false, expected: ""},
+		{name: "explicit AES", supported: true, requested: "aes", expected: common.CipherAES},
+		{name: "explicit AES-256", supported: true, requested: "aes-256", expected: common.CipherAES256},
+	}
+
+	original := common.SupportsAES256Func
+	defer func() { common.SupportsAES256Func = original }()
+
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			common.SupportsAES256Func = func() (bool, error) {
+				return tc.supported, nil
+			}
+
+			bootstrapper := SimpleBootstrapper{}
+			err := bootstrapper.Prefill(common.BootstrapConfig{
+				MonIp:         "1.1.1.1",
+				PublicNet:     "1.1.1.1/24",
+				ClusterNet:    "1.1.1.1/24",
+				DefaultCipher: tc.requested,
+			}, interfaces.StateInterface(s.TestStateInterface))
+			s.NoError(err)
+			s.Equal(tc.expected, bootstrapper.DefaultCipher)
+		})
+	}
 }

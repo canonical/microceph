@@ -12,9 +12,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func createMonMap(s interfaces.StateInterface, path string, fsid string, address string) error {
+func createMonMap(s interfaces.StateInterface, path string, fsid string, address string, ciphers ...string) error {
 	// Generate initial monitor map.
-	err := genMonmap(filepath.Join(path, "mon.map"), fsid)
+	err := genMonmap(filepath.Join(path, "mon.map"), fsid, ciphers...)
 	if err != nil {
 		return fmt.Errorf("failed to generate monitor map: %w", err)
 	}
@@ -27,14 +27,25 @@ func createMonMap(s interfaces.StateInterface, path string, fsid string, address
 	return nil
 }
 
-func genMonmap(path string, fsid string) error {
+func genMonmap(path string, fsid string, ciphers ...string) error {
 	args := []string{
 		"--create",
-		"--fsid", fsid,
-		path,
 	}
 
+	if len(ciphers) > 0 && ciphers[0] != "" {
+		// Seed the monitor map with the requested default cipher so keys
+		// created after bootstrap (MGR, MDS, OSD and clients) use it too.
+		// Only the requested cipher is allowed: a fresh cluster has no legacy
+		// keys that would need another cipher.
+		args = append(args,
+			"--auth-preferred-cipher", ciphers[0],
+			"--auth-allowed-ciphers", ciphers[0],
+		)
+	}
+
+	args = append(args, "--fsid", fsid, path)
 	_, err := common.ProcessExec.RunCommand("monmaptool", args...)
+
 	if err != nil {
 		return err
 	}
