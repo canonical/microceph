@@ -165,7 +165,7 @@ Test Concurrent Cross Member Applies Return 409
     ...    Require one HTTP 200 and one HTTP 409, in either order: the rejected
     ...    request must have arrived while the winner held the cluster-wide lock.
     ...    The runner joins both workers before returning their responses.
-    ...    Retry once if no 200/409 pair was observed; two 200s can mean the
+    ...    Retry once only when both requests succeed: two 200s can mean the
     ...    requests did not overlap at the daemon despite the shared barrier.
     [Tags]    placement    concurrency
     ${clear}=    Set Variable    {"mode":"reconcile","members":{"${GUEST_VM1}":{"rgw":{"enabled":false}},"${GUEST_VM2}":{"rgw":{"enabled":false}}}}
@@ -187,10 +187,10 @@ Test Concurrent Cross Member Applies Return 409
         IF    sorted([${code_a}, ${code_b}]) == [200, 409]
             ${overlapped}=    Set Variable    ${True}
             Exit For Loop
-        ELSE IF    ${attempt} == 0
+        ELSE IF    ${attempt} == 0 and [${code_a}, ${code_b}] == [200, 200]
             Log To Console    [conflict] attempt ${attempt}: no overlap observed, retrying once
         ELSE
-            Fail    concurrent applies never overlapped after 2 attempts: code_a=${code_a} code_b=${code_b}
+            Fail    expected concurrent responses 200/409: code_a=${code_a} code_b=${code_b}; response_a=${resp_a}; response_b=${resp_b}
         END
     END
     Should Be True    ${overlapped}    msg=concurrent cross-member applies never produced a proven-overlapping 409

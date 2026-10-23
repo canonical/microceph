@@ -138,7 +138,7 @@ Suite setup copies `resources/rgw_scenario.py` to the coordinating guest once. E
 
 `Run RGW Migration In VM` returns a `response` string and an `observation` object containing the sample count, availability verdict, and replacement-readiness verdict. One sampler thread reads old then new while the PUT runs. A `finally` block signals it to stop, including on request failure, and the runner joins it before returning or raising an error.
 
-`Run Concurrent Placement Puts In VM` releases two request workers from a barrier and returns both responses in A, B order. The runner joins both workers before returning. A barrier reduces the submission gap but does not guarantee overlap at the daemon or decide the lock winner; the Robot test still requires one HTTP 200 and one HTTP 409 in either order and retains its bounded retry.
+`Run Concurrent Placement Puts In VM` releases two request workers from a barrier and returns both responses in A, B order. The runner joins both workers before returning. A barrier reduces the submission gap but does not guarantee overlap at the daemon or decide the lock winner; the Robot test still requires one HTTP 200 and one HTTP 409 in either order. It retries once only when both requests succeed; any other response pair fails immediately and reports both responses.
 
 Each PUT has the scenario's request timeout, enforced by `curl` and its owning subprocess call. The host allows five additional seconds for process cleanup and final sampler reads. HTTP error responses are returned for Robot assertions; transport errors and timeouts fail the runner instead of producing a successful-looking result.
 
