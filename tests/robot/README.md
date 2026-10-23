@@ -142,8 +142,9 @@ live repeat/order validation is required, not inferred from dry-run success.
 Standalone CLI selections are `smb-singleton-tests`, `smb-clustered-tests` and
 `smb-ad-tests`. The legacy `smb-tests` alias selects both non-AD suites. All use
 the coordinator. Raw Robot invocations retain isolated scenario setup; shared
-binding requires an explicit manifest. Storage, clock, strict-confinement and
-50 GiB/4 GiB headroom guards are unchanged.
+binding requires an explicit manifest. Clock, strict confinement and the local
+50 GiB/4 GiB headroom defaults are unchanged; the smaller CI disk trial is
+explicitly configured as described below.
 
 ## Native SMB lifecycle
 
@@ -170,12 +171,23 @@ prerequisites are reported as skips, not passes.
 
 Gateways are **real Ubuntu 26.04 VMs**, not nested containers; VM0 also runs
 `smbclient`. Each has 2 vCPU, 3 GiB RAM, a 20 GiB root and dedicated 4 GiB data disk.
-The coordinator includes the DC and requires 146 GiB free pool/16 GiB available
-RAM initially. Isolated raw non-AD setup requires 122 GiB/13 GiB. Both retain
-50 GiB storage/4 GiB memory headroom.
-Use a sufficiently large pool; CI uses the extra-disk runner with the `dir`
-backend, not the 100 GB xlarge runner or LXD's small default loop pool. `SMB_STORAGE_POOL` selects a pre-existing pool.
-The local LXD remote must use the default project. No existing VM/profile is altered.
+Local defaults require 146 GiB free pool/16 GiB available RAM initially for the
+shared lab, or 122 GiB/13 GiB for isolated non-AD setup. They retain 50 GiB
+storage/4 GiB memory headroom and budget 24 GiB per remaining VM.
+
+CI starts on `self-hosted-linux-amd64-noble-xlarge` with its configured 100 GB disk
+and the `dir` backend. It explicitly sets `SMB_DISK_HEADROOM_GIB:10` and
+`SMB_DISK_RESERVE_PER_VM_GIB:0`: check observed free space against a 10 GiB floor
+before allocation and at lab verification boundaries, rather than reserve every
+virtual disk's full limit. The initial 16 GiB available-RAM gate and 4 GiB memory
+headroom remain. This is a starting resource budget, not proof that 100 GB suffices.
+Capacity samples and final disk/RAM/kernel OOM diagnostics are logged; increase
+the runner size only after an observed resource-related failure, not an automatic
+retry. Local defaults do not change unless explicitly overridden.
+
+`SMB_STORAGE_POOL` selects a pre-existing pool; avoid LXD's small default loop
+pool. The local LXD remote must use the default project. No existing VM/profile
+is altered.
 
 The SMB fixture discovers each OSD immediately before disk add: the tagged VM's
 `test-data` attachment must reference the exact tagged block volume in the selected

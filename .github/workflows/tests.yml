@@ -227,11 +227,15 @@ jobs:
             name: SMB singleton, clustered and AD (one shared lab)
             suite: smb-integration
             # One job owns all four VMs; three sequential scenario suites do not
-            # share runners/labs through separate matrix entries. Preserve the
-            # 146 GiB pool / 16 GiB initial RAM gate and guest-only snapd policy.
-            runner: self-hosted-linux-amd64-noble-2xlarge-extra
+            # share runners/labs through separate matrix entries. Start on the
+            # standard 100 GB runner; increase only after observed resource failure.
+            runner: self-hosted-linux-amd64-noble-xlarge
             lxd_args: --storage-backend=dir
-            args: --variable SMB_SNAPD_CHANNEL:latest/candidate ${{ inputs.smb_permutations && '--smb-permutations' || '' }}
+            args: >-
+              --variable SMB_SNAPD_CHANNEL:latest/candidate
+              --variable SMB_DISK_HEADROOM_GIB:10
+              --variable SMB_DISK_RESERVE_PER_VM_GIB:0
+              ${{ inputs.smb_permutations && '--smb-permutations' || '' }}
 
           - id: legacy-placement-tests
             name: Legacy bootstrap placement regression
@@ -287,6 +291,14 @@ jobs:
 
       - name: Run Robot suite
         run: tox -e robot -- --test-suite ${{ matrix.suite }} --snap-path '${{ runner.temp }}/*.snap' ${{ matrix.args }}
+
+      - name: SMB runner resource diagnostics
+        if: ${{ always() && matrix.id == 'smb-integration' }}
+        run: |
+          df -h
+          free -h
+          lxc query local:/1.0/storage-pools/default/resources || true
+          sudo journalctl -k -b --no-pager --grep='Out of memory|oom-kill|Killed process|No space left' -n 100 || true
 
       - name: Upload Robot logs
         if: always()

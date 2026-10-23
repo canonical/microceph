@@ -413,16 +413,27 @@ class smb_ops:
         return self.nodes[index]
 
     def _capacity(self, remaining):
+        # Local defaults retain full-disk budgeting; CI explicitly trials sparse
+        # disks on the smaller runner using observed free-space headroom only.
+        try:
+            headroom = int(self._variable('SMB_DISK_HEADROOM_GIB', 50))
+            reserve = int(self._variable('SMB_DISK_RESERVE_PER_VM_GIB', 24))
+        except (TypeError, ValueError) as error:
+            raise ValueError('SMB disk capacity limits must be integer GiB') from error
+        if headroom <= 0 or reserve < 0:
+            raise ValueError('SMB disk capacity limits require positive headroom and nonnegative reservation')
         space = json.loads(self._host("lxc", "query", f"local:/1.0/storage-pools/{self.pool}/resources"))["space"]
         memory = next(int(line.split()[1]) * 1024 for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:"))
         gib = 1024 ** 3
         disk = space["total"] - space["used"]
-        required_disk, required_memory = (50 + remaining * 24) * gib, (4 + remaining * 3) * gib
+        required_disk, required_memory = (headroom + remaining * reserve) * gib, (4 + remaining * 3) * gib
+        observation = (
+            f"SMB lab capacity: disk free={disk / gib:.1f} GiB, required={required_disk / gib:.1f} GiB; "
+            f"memory available={memory / gib:.1f} GiB, required={required_memory / gib:.1f} GiB "
+            f"(includes {headroom} GiB disk/4 GiB memory headroom; disk reservation per VM={reserve} GiB)")
+        logger.info(observation)
         if disk < required_disk or memory < required_memory:
-            raise AssertionError(
-                f"SMB lab capacity: disk free={disk / gib:.1f} GiB, required={required_disk / gib:.1f} GiB; "
-                f"memory available={memory / gib:.1f} GiB, required={required_memory / gib:.1f} GiB "
-                "(includes 50 GiB disk/4 GiB memory headroom)")
+            raise AssertionError(observation)
 
     def provision_smb_lab(self):
         """Create three tagged real VMs; no existing instance/profile is modified."""

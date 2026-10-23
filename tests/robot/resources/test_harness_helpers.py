@@ -386,12 +386,53 @@ def test_smb_fixture_retirement_never_retries_or_touches_other_owners(monkeypatc
 def test_smb_capacity_failure_reports_observed_and_required_resources(monkeypatch):
     import pytest
     library = _smb_module().smb_ops()
+    monkeypatch.setattr(library, '_variable', lambda name, default: default)
     monkeypatch.setattr(library, "_host", lambda *args: json.dumps({"space": {"total": 100 * 1024 ** 3, "used": 0}}))
     monkeypatch.setattr(Path, "read_text", lambda *args, **kwargs: "MemAvailable: 16777216 kB\n")
     with pytest.raises(AssertionError) as failure:
         library._capacity(3)
     assert "disk free=100.0 GiB, required=122.0 GiB" in str(failure.value)
     assert "memory available=16.0 GiB, required=13.0 GiB" in str(failure.value)
+
+
+def test_smb_ci_capacity_uses_observed_space_not_full_virtual_disks(monkeypatch):
+    m = _smb_module()
+    library = m.smb_ops()
+    limits = {'SMB_DISK_HEADROOM_GIB': '10', 'SMB_DISK_RESERVE_PER_VM_GIB': '0'}
+    monkeypatch.setattr(library, '_variable', lambda name, default: limits.get(name, default))
+    monkeypatch.setattr(library, '_host', lambda *args: json.dumps({'space': {'total': 100 * 10**9, 'used': 30 * 1024**3}}))
+    monkeypatch.setattr(Path, 'read_text', lambda *args, **kwargs: 'MemAvailable: 67108864 kB\n')
+    observations = []
+    monkeypatch.setattr(m.logger, 'info', observations.append)
+    library._capacity(4)
+    assert any('disk free=63.1 GiB, required=10.0 GiB' in line for line in observations)
+    assert any('memory available=64.0 GiB, required=16.0 GiB' in line for line in observations)
+
+
+def test_smb_ci_capacity_still_rejects_actual_disk_and_memory_shortfalls(monkeypatch):
+    import pytest
+    library = _smb_module().smb_ops()
+    limits = {'SMB_DISK_HEADROOM_GIB': '10', 'SMB_DISK_RESERVE_PER_VM_GIB': '0'}
+    monkeypatch.setattr(library, '_variable', lambda name, default: limits.get(name, default))
+    for disk, memory, evidence in [(9, 64, 'disk free=9.0 GiB, required=10.0 GiB'),
+                                   (60, 15, 'memory available=15.0 GiB, required=16.0 GiB')]:
+        monkeypatch.setattr(library, '_host', lambda *args: json.dumps({'space': {'total': 100 * 1024**3, 'used': (100 - disk) * 1024**3}}))
+        monkeypatch.setattr(Path, 'read_text', lambda *args, **kwargs: f'MemAvailable: {memory * 1024**2} kB\n')
+        with pytest.raises(AssertionError) as failure:
+            library._capacity(4)
+        assert evidence in str(failure.value)
+
+
+def test_smb_capacity_disk_overrides_cannot_disable_headroom_or_use_invalid_budgets(monkeypatch):
+    import pytest
+    library = _smb_module().smb_ops()
+    monkeypatch.setattr(library, '_host', lambda *args: json.dumps({'space': {'total': 200 * 1024**3, 'used': 0}}))
+    monkeypatch.setattr(Path, 'read_text', lambda *args, **kwargs: 'MemAvailable: 67108864 kB\n')
+    for limits in [{'SMB_DISK_HEADROOM_GIB': '0'}, {'SMB_DISK_HEADROOM_GIB': '-1'},
+                   {'SMB_DISK_RESERVE_PER_VM_GIB': '-1'}, {'SMB_DISK_RESERVE_PER_VM_GIB': 'invalid'}]:
+        monkeypatch.setattr(library, '_variable', lambda name, default: limits.get(name, default))
+        with pytest.raises(ValueError, match='SMB disk capacity limits'):
+            library._capacity(4)
 
 
 def test_smb_private_shared_state_compares_keys_without_logging_them():
@@ -4980,9 +5021,14 @@ def test_smb_CI_uses_one_shared_job_and_never_uploads_private_manifest():
     job = workflow['jobs']['robot-tests']
     entries = [row for row in job['strategy']['matrix']['include'] if row['id'].startswith('smb-')]
     assert len(entries) == 1 and entries[0]['suite'] == 'smb-integration'
-    assert entries[0]['runner'] == 'self-hosted-linux-amd64-noble-2xlarge-extra'
+    assert entries[0]['runner'] == 'self-hosted-linux-amd64-noble-xlarge'
     assert entries[0]['lxd_args'] == '--storage-backend=dir'
     assert 'SMB_SNAPD_CHANNEL:latest/candidate' in entries[0]['args']
+    assert 'SMB_DISK_HEADROOM_GIB:10' in entries[0]['args']
+    assert 'SMB_DISK_RESERVE_PER_VM_GIB:0' in entries[0]['args']
+    diagnostics = next(step for step in job['steps'] if step.get('name') == 'SMB runner resource diagnostics')
+    assert 'always()' in diagnostics['if'] and "matrix.id == 'smb-integration'" in diagnostics['if']
+    assert all(command in diagnostics['run'] for command in ('df -h', 'free -h', 'journalctl', 'storage-pools/default/resources'))
     paths = next(step['with']['path'] for step in job['steps'] if step.get('name') == 'Upload Robot logs')
     assert 'smb-summary.json' in paths and 'smb-results/*/output.xml' in paths
     assert 'private' not in paths and 'smb-results/**' not in paths
