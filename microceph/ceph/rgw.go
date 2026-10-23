@@ -1,18 +1,27 @@
 package ceph
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
@@ -32,6 +41,10 @@ var (
 )
 
 var errRGWInactive = errors.New("rgw service is not active")
+
+// A first start creates the gateway's pools before it listens, so readiness
+// waits far longer than a restart of an already-initialised gateway needs.
+var rgwReadyTimeout = 2 * time.Minute
 
 func rgwConfPath() string {
 	return filepath.Join(constants.GetPathConst().ConfPath, "radosgw.conf")
@@ -532,11 +545,117 @@ func checkRGWActive() error {
 	return errors.New("cannot determine the RGW service state")
 }
 
-// checkRGWReady only checks the service is active, not what it serves.
-// [[NOTE: intentionally minimal; replaced in "feat(rgw): wait until the
-// gateway really serves the requested frontend".]]
 func checkRGWReady(spec rgwFrontendSpec) error {
-	return checkRGWActiveFunc()
+	deadline := time.Now().Add(rgwReadyTimeout)
+	for {
+		err := checkRGWActiveFunc()
+		if err == nil {
+			err = checkRGWFrontend(spec)
+		}
+		if err == nil || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// checkRGWHTTPFrontend requires an S3 response, not just an open TCP port.
+// A simple snap service is active while its wrapper still waits to exec RGW;
+// another HTTP server on the requested port must not satisfy that window.
+func checkRGWHTTPFrontend(conn net.Conn) error {
+	defer conn.Close()
+	err := conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err != nil {
+		return err
+	}
+	request := &http.Request{
+		Method: http.MethodGet,
+		URL:    &url.URL{Path: "/"},
+		Host:   conn.RemoteAddr().String(),
+		Close:  true,
+	}
+	err = request.Write(conn)
+	if err != nil {
+		return err
+	}
+	// Bound the entire response, including headers, from an unknown listener.
+	response, err := http.ReadResponse(bufio.NewReader(io.LimitReader(conn, 64<<10)), request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	requestID := response.Header.Get("x-amz-request-id")
+	if requestID == "" || (response.StatusCode != http.StatusOK && response.StatusCode != http.StatusForbidden) {
+		return errors.New("RGW HTTP listener did not return a ready S3 response")
+	}
+	var body struct {
+		XMLName   xml.Name
+		Code      string
+		RequestID string `xml:"RequestId"`
+	}
+	err = xml.NewDecoder(response.Body).Decode(&body)
+	if err != nil {
+		return fmt.Errorf("cannot decode RGW HTTP response: %w", err)
+	}
+	// Anonymous requests normally receive AccessDenied. A successful bucket
+	// listing is also usable; neither requires creating a probe user or object.
+	if response.StatusCode == http.StatusForbidden && body.XMLName.Local == "Error" && body.Code == "AccessDenied" && body.RequestID == requestID {
+		return nil
+	}
+	if response.StatusCode == http.StatusOK && body.XMLName.Local == "ListAllMyBucketsResult" && body.XMLName.Space == "http://s3.amazonaws.com/doc/2006-03-01/" {
+		return nil
+	}
+	return errors.New("RGW HTTP listener did not return a ready S3 response")
+}
+
+// Local readiness pins the supplied certificate, not a public DNS name or CA.
+func checkRGWFrontend(spec rgwFrontendSpec) error {
+	dialer := &net.Dialer{Timeout: time.Second}
+	if spec.port != 0 {
+		conn, err := dialer.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(spec.port)))
+		if err != nil {
+			return err
+		}
+		err = checkRGWHTTPFrontend(conn)
+		if err != nil {
+			return err
+		}
+	}
+	if !spec.ssl {
+		return nil
+	}
+	// Match tls.X509KeyPair: skip other PEM types and pin the first certificate.
+	var certificate *pem.Block
+	rest := spec.certPEM
+	for {
+		certificate, rest = pem.Decode(rest)
+		if certificate == nil {
+			return errors.New("expected RGW certificate is unavailable")
+		}
+		if certificate.Type == "CERTIFICATE" {
+			break
+		}
+	}
+	conn, err := dialer.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(spec.sslPort)))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	err = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err != nil {
+		return err
+	}
+	client := tls.Client(conn, &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true,
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 || !bytes.Equal(state.PeerCertificates[0].Raw, certificate.Bytes) {
+				return errors.New("RGW did not load the expected certificate")
+			}
+			return nil
+		},
+	})
+	return client.Handshake()
 }
 
 func removeIgnoreMissing(path string) error {
