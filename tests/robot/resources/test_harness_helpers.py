@@ -4998,6 +4998,189 @@ def test_smb_coordinator_allocates_one_fixture_reuses_manifest_and_tears_down_on
     assert all(row['status'] == 'PASS' for row in result['suites'])
 
 
+def _smb_capacity_snapshot_fixture(tmp_path):
+    library = tmp_path / 'CapacitySnapshot.py'
+    library.write_text('import sys\nsys.path.insert(0, ' + repr(str(Path(__file__).parent)) + ')\n' +
+                       '''from smb_ops import smb_ops, _VM
+
+class CapacitySnapshot(smb_ops):
+    def persist_fixture(self):
+        self.owner = 'a' * 32
+        self.nodes = [_VM(f'smb-ci-{self.owner[:8]}-n{i}') for i in range(3)]
+        self.ad_dc = _VM(f'smb-ci-{self.owner[:8]}-dc')
+        self.nodes.append(self.ad_dc)
+        self._persist_smb_lab()
+
+    def check_context_limits(self, manifest):
+        self.use_smb_lab(manifest)
+        assert self._variable('SMB_DISK_HEADROOM_GIB', 50) == '12'
+        assert self._variable('SMB_DISK_RESERVE_PER_VM_GIB', 24) == '3'
+''')
+    fixture = tmp_path / 'snapshot.robot'
+    fixture.write_text('*** Settings ***\nLibrary    ' + str(library) +
+                       '\n*** Test Cases ***\nSnapshot\n    Persist Fixture\n')
+    return fixture
+
+
+def test_smb_manifest_capacity_snapshot_preserves_resolved_cli_values_and_robot_precedence(tmp_path, monkeypatch):
+    m = _smb_module()
+    runner = _smb_runner_module()
+    fixture = _smb_capacity_snapshot_fixture(tmp_path)
+    manifest = tmp_path / 'lab.json'
+    variable_file = tmp_path / 'limits.yaml'
+    variable_file.write_text('SMB_DISK_HEADROOM_GIB: 80\nSMB_DISK_RESERVE_PER_VM_GIB: 5\n')
+    variables = ['SMB_LAB_MANIFEST:' + str(manifest)]
+    options = ['--variablefile', str(variable_file), '-v', 'smb disk headroom gib:10',
+               '--variable=SMB_DISK_RESERVE_PER_VM_GIB:0']
+    assert runner._robot(fixture, tmp_path / 'snapshot', variables, options) == 0
+    assert json.loads(manifest.read_text())['capacity_limits'] == {
+        'SMB_DISK_HEADROOM_GIB': '10', 'SMB_DISK_RESERVE_PER_VM_GIB': '0'}
+    library = m.smb_ops()
+    library.use_smb_lab(str(manifest))
+    assert library._variable('SMB_DISK_HEADROOM_GIB', 50) == '10'
+    assert library._variable('SMB_DISK_RESERVE_PER_VM_GIB', 24) == '0'
+    monkeypatch.setattr(library, '_host', lambda *a: json.dumps({'space': {'total': 20 * 1024**3, 'used': 0}}))
+    read_text = Path.read_text
+    monkeypatch.setattr(Path, 'read_text', lambda path, *a, **k:
+                        'MemAvailable: 67108864 kB\n' if str(path) == '/proc/meminfo' else read_text(path, *a, **k))
+    library._capacity(4)
+    default_manifest = tmp_path / 'defaults.json'
+    assert runner._robot(fixture, tmp_path / 'defaults', ['SMB_LAB_MANIFEST:' + str(default_manifest)], []) == 0
+    assert json.loads(default_manifest.read_text())['capacity_limits'] == {
+        'SMB_DISK_HEADROOM_GIB': 50, 'SMB_DISK_RESERVE_PER_VM_GIB': 24}
+    fixture.write_text('*** Settings ***\nLibrary    ' + str(tmp_path / 'CapacitySnapshot.py') +
+                       '\n*** Test Cases ***\nContext Wins\n    Check Context Limits    ' + str(manifest) + '\n')
+    assert runner._robot(fixture, tmp_path / 'context', variables,
+                         ['-v', 'SMB_DISK_HEADROOM_GIB:12', '-v', 'SMB_DISK_RESERVE_PER_VM_GIB:3']) == 0
+    document = json.loads(manifest.read_text())
+    del document['capacity_limits']
+    manifest.write_text(json.dumps(document))
+    assert runner._robot(fixture, tmp_path / 'legacy-context', variables,
+                         ['-v', 'SMB_DISK_HEADROOM_GIB:12', '-v', 'SMB_DISK_RESERVE_PER_VM_GIB:3']) == 0
+
+
+def test_smb_manifest_missing_standalone_capacity_snapshot_fails_closed(tmp_path):
+    import pytest
+    from robot.libraries.BuiltIn import RobotNotRunningError
+    owner = 'a' * 32
+    document = {'owner': owner, 'pool': 'default', 'volumes': [],
+                'nodes': [f'smb-ci-{owner[:8]}-n{i}' for i in range(3)] + [f'smb-ci-{owner[:8]}-dc']}
+    manifest = tmp_path / 'lab.json'
+    for limits in (None, {'SMB_DISK_HEADROOM_GIB': '10'}):
+        if limits is not None:
+            document['capacity_limits'] = limits
+        manifest.write_text(json.dumps(document))
+        library = _smb_module().smb_ops()
+        library.use_smb_lab(str(manifest))
+        with pytest.raises(RobotNotRunningError):
+            library._capacity(0)
+
+
+def test_smb_manifest_invalid_standalone_capacity_snapshot_fails_closed(tmp_path):
+    import pytest
+    owner = 'a' * 32
+    document = {'owner': owner, 'pool': 'default', 'volumes': [],
+                'nodes': [f'smb-ci-{owner[:8]}-n{i}' for i in range(3)] + [f'smb-ci-{owner[:8]}-dc']}
+    manifest = tmp_path / 'lab.json'
+    for limits in ([], None, {'SNAP_PATH': '/not-a-capacity-setting'},
+                   {'SMB_DISK_HEADROOM_GIB': 'invalid', 'SMB_DISK_RESERVE_PER_VM_GIB': '0'},
+                   {'SMB_DISK_HEADROOM_GIB': '10', 'SMB_DISK_RESERVE_PER_VM_GIB': -1},
+                   {'SMB_DISK_HEADROOM_GIB': 0, 'SMB_DISK_RESERVE_PER_VM_GIB': '0'},
+                   {'SMB_DISK_HEADROOM_GIB': {}, 'SMB_DISK_RESERVE_PER_VM_GIB': '0'}):
+        document['capacity_limits'] = limits
+        manifest.write_text(json.dumps(document))
+        library = _smb_module().smb_ops()
+        with pytest.raises(ValueError, match='capacity limits'):
+            library.use_smb_lab(str(manifest))
+            library._capacity(0)
+
+
+def test_smb_coordinator_real_standalone_cleanup_preserves_capacity_and_ownership_guards(tmp_path, monkeypatch):
+    import robot
+    m = _smb_module()
+    runner = _smb_runner_module()
+    fixture = _smb_capacity_snapshot_fixture(tmp_path)
+    real_robot = runner._robot
+    sample = _smb_ceph_readiness_fixture()
+    observations = []
+    monkeypatch.setattr(m.logger, 'info', observations.append)
+    monkeypatch.setattr(m.time, 'sleep', lambda seconds: None)
+    monkeypatch.setattr(robot, 'rebot', lambda *a, **k: 0)
+    read_text = Path.read_text
+    monkeypatch.setattr(Path, 'read_text', lambda path, *a, **k:
+                        f'MemAvailable: {memory * 1024**2} kB\n' if str(path) == '/proc/meminfo' else read_text(path, *a, **k))
+
+    def command(vm, *args, **kwargs):
+        if args[:2] == ('python3', m.smb_ops._base + '/smb_guest.py'):
+            services = '\n\n'.join(f'Id=snap.microceph.{role}.service\nActiveState=inactive'
+                                   for role in (*m.ROLES, 'winbindd'))
+            return _Res(0, json.dumps({'owner': '', 'api': '{"metadata":{}}', 'services': services}), '')
+        if args[:2] == ('systemctl', 'is-active'):
+            return _Res(0, 'active', '')
+        if args[:2] == ('test', '-f'):
+            return _Res(0, '', '')
+        if args[:2] == ('systemctl', 'start'):
+            return _Res(0, '', '')
+        if args[0] == 'microceph.ceph':
+            key = {('osd', 'dump'): 'settled_map', ('pg', 'dump'): 'pgs',
+                   ('health', 'detail'): 'health_ok', ('time-sync-status', '-f'): 'clock'}[args[1:3]]
+            return _Res(0, json.dumps(sample[key]), '')
+        raise AssertionError(f'Unexpected guest I/O: {args}')
+
+    def host(library, *args, **kwargs):
+        if args[:2] == ('lxc', 'query'):
+            if args[2] == 'local:/1.0/instances?recursion=1&project=default':
+                return json.dumps(inventory)
+            if args[2].endswith('/resources'):
+                return json.dumps({'space': {'total': disk * 1024**3, 'used': 0}})
+            if '/volumes/custom?' in args[2]:
+                return '[]'
+        if args[:2] == ('lxc', 'delete'):
+            name = args[2].removeprefix('local:')
+            assert next(row for row in inventory if row['name'] == name)['config'][m.OWNER_KEY] == library.owner
+            deleted.append(name)
+            inventory[:] = [row for row in inventory if row['name'] != name]
+            return ''
+        raise AssertionError(f'Unexpected host I/O: {args}')
+
+    def execute(target, directory, variables, options, dryrun=False):
+        if directory.name == 'setup':
+            return real_robot(fixture, directory, variables, options)
+        executed.append(directory.name)
+        directory.mkdir(parents=True)
+        count = runner.SUITES[directory.name.split('-', 1)[1]][1]
+        (directory / 'output.xml').write_text('<robot><suite>' + '<test><status status="PASS"/></test>' * count + '</suite></robot>')
+        return 0
+
+    monkeypatch.setattr(runner, '_robot', execute)
+    monkeypatch.setattr(m.smb_ops, '_host', host)
+    monkeypatch.setattr(m._VM, 'command', command)
+    for case, disk, memory, foreign, evidence in (
+            ('pass', 20, 64, False, ''),
+            ('disk', 9, 64, False, 'disk free=9.0 GiB, required=10.0 GiB'),
+            ('memory', 20, 3, False, 'memory available=3.0 GiB, required=4.0 GiB'),
+            ('foreign', 20, 64, True, 'Refusing foreign resource')):
+        owner = 'a' * 32
+        names = [f'smb-ci-{owner[:8]}-n{i}' for i in range(3)] + [f'smb-ci-{owner[:8]}-dc']
+        inventory = [{'name': name, 'status': 'Running', 'config': {m.OWNER_KEY: owner}} for name in names]
+        if foreign:
+            inventory[0]['config'][m.OWNER_KEY] = 'foreign'
+        executed, deleted = [], []
+        output = tmp_path / case
+        rc = runner.main(['--outputdir', str(output), '-v', 'SMB_DISK_HEADROOM_GIB:10',
+                          '--variable', 'SMB_DISK_RESERVE_PER_VM_GIB:0'])
+        summary = json.loads((output / 'smb-summary.json').read_text())
+        if case == 'pass':
+            assert rc == 0 and [row['status'] for row in summary['suites']] == ['PASS'] * 3
+            assert executed == ['01-singleton', '02-clustered', '03-ad']
+            assert any('disk free=20.0 GiB, required=10.0 GiB' in line for line in observations)
+        else:
+            assert rc == 1 and [row['status'] for row in summary['suites']] == ['FAIL', 'BLOCKED', 'BLOCKED']
+            assert evidence in summary['suites'][0]['cleanup_error']
+            assert executed == ['01-singleton']
+        assert sorted(deleted) == ([] if foreign else sorted(names))
+
+
 def test_smb_fresh_negative_refuses_existing_namespace_before_mutation(monkeypatch):
     import pytest
     from types import SimpleNamespace
@@ -5021,7 +5204,7 @@ def test_smb_CI_uses_one_shared_job_and_never_uploads_private_manifest():
     job = workflow['jobs']['robot-tests']
     entries = [row for row in job['strategy']['matrix']['include'] if row['id'].startswith('smb-')]
     assert len(entries) == 1 and entries[0]['suite'] == 'smb-integration'
-    assert entries[0]['runner'] == 'self-hosted-linux-amd64-noble-xlarge'
+    assert entries[0]['runner'] == 'self-hosted-linux-amd64-noble-large'
     assert entries[0]['lxd_args'] == '--storage-backend=dir'
     assert 'SMB_SNAPD_CHANNEL:latest/candidate' in entries[0]['args']
     assert 'SMB_DISK_HEADROOM_GIB:10' in entries[0]['args']

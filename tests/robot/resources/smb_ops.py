@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from robot.api import logger
-from robot.libraries.BuiltIn import BuiltIn
+from robot.libraries.BuiltIn import BuiltIn, RobotNotRunningError
 from microceph_harness import microceph_harness as Harness, SNAP_DEST_NAME
 from smb_guest import PAYLOAD
 
@@ -300,6 +300,7 @@ class smb_ops:
         self.ad_dc = None
         self.harness = Harness()
         self._dc_stop_uncertain = False
+        self._capacity_limits = {}
 
     def _persist_smb_lab(self):
         path = self._variable('SMB_LAB_MANIFEST', '')
@@ -307,7 +308,10 @@ class smb_ops:
             return
         target = Path(path)
         document = {'owner': self.owner, 'pool': self.pool, 'nodes': [n.name for n in self.nodes],
-                    'volumes': self.volumes, 'dc': self.ad_dc.name if self.ad_dc else None}
+                    'volumes': self.volumes, 'dc': self.ad_dc.name if self.ad_dc else None,
+                    'capacity_limits': {
+                        'SMB_DISK_HEADROOM_GIB': self._variable('SMB_DISK_HEADROOM_GIB', 50),
+                        'SMB_DISK_RESERVE_PER_VM_GIB': self._variable('SMB_DISK_RESERVE_PER_VM_GIB', 24)}}
         if target.exists() and json.loads(target.read_text()).get('owner') != self.owner:
             raise AssertionError('Refusing to overwrite another SMB lab manifest')
         temporary = target.with_suffix('.tmp')
@@ -335,6 +339,11 @@ class smb_ops:
                 or any(v not in [n + '-osd' for n in expected] for v in data['volumes'])
                 or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', data['pool'])):
             raise AssertionError('Invalid or foreign SMB lab names')
+        limits = data.get('capacity_limits', {})
+        if (not isinstance(limits, dict)
+                or not set(limits).issubset({'SMB_DISK_HEADROOM_GIB', 'SMB_DISK_RESERVE_PER_VM_GIB'})):
+            raise ValueError('Invalid SMB lab capacity limits')
+        self._capacity_limits = limits
         self.owner, self.pool, self.volumes = owner, data['pool'], data['volumes']
         self.nodes = [_VM(n) for n in expected if n in names]
         self.ad_dc = _VM(dc) if dc in names else None
@@ -396,9 +405,15 @@ class smb_ops:
                 raise AssertionError('Could not restore the fixture directory')
             self._dc_stop_uncertain = False
 
-    @staticmethod
-    def _variable(name, default):
-        return BuiltIn().get_variable_value("${" + name + "}", default)
+    def _variable(self, name, default):
+        try:
+            return BuiltIn().get_variable_value("${" + name + "}", default)
+        except RobotNotRunningError:
+            # The standalone coordinator must use the setup's resolved budgets,
+            # never silently replace CLI overrides with library defaults.
+            if name not in self._capacity_limits:
+                raise
+            return self._capacity_limits[name]
 
     def _host(self, *argv, timeout=120):
         result = self.harness._exec(list(argv), timeout)
