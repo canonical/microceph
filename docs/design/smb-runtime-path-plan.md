@@ -43,7 +43,7 @@ current startup still refuses unrelated state in runtime mountpoint targets.
 
 | Path | Selected source and scope | Reason / invariant |
 | --- | --- | --- |
-| `/etc/ctdb` | Recipe bind from `L` | Pinned CTDB's production config loader uses its compiled path. Go publishes owner-bound configuration atomically. The directory inode is never replaced; consumers are stopped before owner transitions. |
+| `/etc/ctdb` | Recipe bind from `L` | Pinned CTDB's production config loader uses its compiled path. Go publishes owner-bound configuration and resource aliases (`events`, `functions`, `notify.sh`) atomically. Eventd always reads `/etc/ctdb/events`; the pinned version ignores the unsupported `script directory` option. The directory inode is never replaced; consumers are stopped before owner transitions. |
 | `/var/lib/ctdb` | Existing recipe tmpfs, scratch only | All volatile, persistent and state database directories remain explicit under `R/ctdb`. No owner-local runtime overlay or alternate persistent-state home. |
 | `/usr/share/ctdb` | Existing recipe symlink to the current snap's resources | Prepared `R/ctdb` resource aliases resolve through this layout, not through a revision path that can be garbage-collected. Only `00.ctdb.script` is enabled. |
 | `/etc/passwd` | Private bind from `R/config/passwd` | Owner-local Unix identities, never a global NSS layout or host-account edit. |

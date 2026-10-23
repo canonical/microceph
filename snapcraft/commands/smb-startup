@@ -190,6 +190,10 @@ for path in (fixed, fixed / "owner", fixed / "ctdb.conf", root / "ctdb/ctdb.conf
         sys.exit("Unsafe CTDB compatibility configuration")
 if (fixed / "owner").read_text() != root.name or (fixed / "ctdb.conf").read_bytes() != (root / "ctdb/ctdb.conf").read_bytes():
     sys.exit("CTDB compatibility configuration belongs to another generation")
+for name in ("events", "functions", "notify.sh"):
+    path = fixed / name
+    if not path.is_symlink() or path.readlink() != root / "ctdb" / name:
+        sys.exit("CTDB compatibility resources belong to another generation")
 PY
   smb_runtime_mountpoint /run/ctdb
   smb_bind_private "$SMB_ROOT/ctdb/run" /run/ctdb

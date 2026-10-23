@@ -179,6 +179,10 @@ func publishSMBCTDBLayout(root string, configOnly bool) error {
 			return fmt.Errorf("CTDB database directory is not owner-local")
 		}
 	}
+	// CTDB always finds events and notification resources below /etc/ctdb.
+	// Project the prepared owner tree through the existing directory layout;
+	// an event "script directory" option is not supported by pinned CTDB.
+	resources := []string{"events", "functions", "notify.sh"}
 	if configOnly {
 		current, readErr := os.ReadFile(filepath.Join(directory, "ctdb.conf"))
 		owner, ownerErr := os.ReadFile(filepath.Join(directory, "owner"))
@@ -189,6 +193,12 @@ func publishSMBCTDBLayout(root string, configOnly bool) error {
 			if string(owner) != filepath.Base(root) || !bytes.Equal(current, data) {
 				return fmt.Errorf("CTDB layout changed; explicit maintenance required")
 			}
+			for _, name := range resources {
+				target, err := os.Readlink(filepath.Join(directory, name))
+				if err != nil || target != filepath.Join(root, "ctdb", name) {
+					return fmt.Errorf("CTDB layout resources changed; explicit maintenance required")
+				}
+			}
 			return nil
 		}
 		if (!os.IsNotExist(readErr) && readErr != nil) || (!os.IsNotExist(ownerErr) && ownerErr != nil) {
@@ -197,6 +207,27 @@ func publishSMBCTDBLayout(root string, configOnly bool) error {
 		active, err := activeSMBRoot(filepath.Dir(root))
 		if err != nil || active != root {
 			return fmt.Errorf("CTDB layout owner changed")
+		}
+	}
+	for _, name := range resources {
+		path := filepath.Join(directory, name)
+		target := filepath.Join(root, "ctdb", name)
+		current, err := os.Readlink(path)
+		if err == nil && current == target {
+			continue
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("unsafe CTDB layout resource: %w", err)
+		}
+		tmp := path + ".tmp"
+		err = os.Symlink(target, tmp)
+		if err != nil {
+			return err
+		}
+		err = os.Rename(tmp, path)
+		if err != nil {
+			os.Remove(tmp)
+			return err
 		}
 	}
 	err = writeSMBNativeFile(filepath.Join(directory, "ctdb.conf"), data)

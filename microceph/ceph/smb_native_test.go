@@ -103,6 +103,7 @@ func TestSMBNativeProjectionUsesUpstreamRenderingWithoutPublication(t *testing.T
 			require.Contains(t, conf, "registry shares = no")
 			require.NotContains(t, conf, "include = registry")
 			require.Contains(t, string(plan.Files["ctdb/ctdb.conf"]), "client.smb.cluster.alpha .smb cluster.lock -n alpha -R")
+			require.NotContains(t, string(plan.Files["ctdb/ctdb.conf"]), "script directory", "pinned CTDB ignores this unsupported option")
 			require.Contains(t, string(plan.Files["config/ctdb-rank"]), "3\n")
 		}
 	}

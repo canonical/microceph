@@ -321,6 +321,8 @@ def record(program, args, **extra):
         fixed.mkdir(parents=True, mode=0o700)
         (fixed / "ctdb.conf").write_text(configuration)
         (fixed / "owner").write_text("alpha")
+        for name in ("events", "functions", "notify.sh"):
+            (fixed / name).symlink_to(self.root / "ctdb" / name)
         self.context.update(clustered=True, ctdb_pnn=2,
                             startup={"smbd": {"prepared": True}})
         if ad:
@@ -421,6 +423,24 @@ def record(program, args, **extra):
         _, rc, _, _ = self.launch("ctdbd")
         self.assertNotEqual(rc, 0)
         self.assertEqual([event["program"] for event in self.recorded()], ["unshare"])
+
+    def test_fixed_ctdb_resources_must_match_the_prepared_owner(self):
+        self.prepare_clustered()
+        for name in ("events", "functions", "notify.sh"):
+            alias = self.base / ".conf/ctdb" / name
+            for failure in ("missing", "foreign"):
+                with self.subTest(name=name, failure=failure):
+                    alias.unlink()
+                    if failure == "foreign":
+                        alias.symlink_to(self.directory / "foreign")
+                    self.events.unlink(missing_ok=True)
+                    try:
+                        _, rc, _, _ = self.launch("ctdbd")
+                        self.assertNotEqual(rc, 0)
+                        self.assertEqual([event["program"] for event in self.recorded()], ["unshare"])
+                    finally:
+                        alias.unlink(missing_ok=True)
+                        alias.symlink_to(self.root / "ctdb" / name)
 
     def test_stop_during_record_check_refuses_native_exec(self):
         self.prepare_clustered(ad=True)

@@ -665,7 +665,6 @@ func projectSMBCTDB(candidate smbCandidate, root string, document map[string]any
 	for _, kind := range []string{"volatile", "persistent", "state"} {
 		conf += fmt.Sprintf("%s database directory = %s/ctdb/%s\n", kind, root, kind)
 	}
-	conf += "\n[event]\nscript directory = " + root + "/ctdb/events\n"
 	files["ctdb/ctdb.conf"] = []byte(conf)
 	files["ctdb/nodes"] = nodes
 	files["config/ctdb-rank"] = []byte(strconv.FormatUint(candidate.CTDB.Member.PNN, 10) + "\n")
