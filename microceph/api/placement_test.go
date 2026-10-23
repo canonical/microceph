@@ -440,6 +440,26 @@ func TestCephBootstrapPutUnknownFieldRejected(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "unknown field must be rejected with 400")
 }
 
+// TestPlacementPutRGWBareBoolRejected verifies the clean break: a bare rgw
+// bool no longer decodes and is rejected with BadRequest.
+func TestPlacementPutRGWBareBoolRejected(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(`{"mode":"reconcile","members":{"node-a":{"rgw":true}}}`))
+
+	resp := cmdPlacementPut(nil, req)
+	_ = resp.Render(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a bare rgw bool must be rejected (clean break)")
+}
+
+func TestPlacementPutRejectsTrailingJSON(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(`{"mode":"reconcile","members":{}} {}`))
+	resp := cmdPlacementPut(nil, req)
+	require.NoError(t, resp.Render(rec, req))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 // TestPlacementGetSuccess verifies that cmdPlacementGet returns placement status.
 func TestPlacementGetSuccess(t *testing.T) {
 	origGet := ceph.GetPlacementStatusFunc

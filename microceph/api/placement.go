@@ -53,7 +53,8 @@ const placementPutTimeout = 10 * time.Minute
 func isClientSidePlacementError(err error) bool {
 	return errors.Is(err, ceph.ErrCephNotBootstrapped) ||
 		errors.Is(err, ceph.ErrUnknownPlacementMember) ||
-		errors.Is(err, ceph.ErrKeepOneInvariant)
+		errors.Is(err, ceph.ErrKeepOneInvariant) ||
+		errors.Is(err, ceph.ErrRgwFrontendInvalid)
 }
 
 // inProgressResponse maps an "already in progress" sentinel (placement apply or
@@ -83,6 +84,13 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	if err != nil {
 		logger.Errorf("failed decoding placement policy: %v", err)
 		return mcTypes.BadRequest(err)
+	}
+	// Decode only consumes one JSON value and leaves the rest unread; decoding
+	// again into a throwaway target catches trailing content instead of
+	// silently discarding it. Nothing left is io.EOF, the only accepted case.
+	err = dec.Decode(&struct{}{})
+	if err != io.EOF {
+		return mcTypes.BadRequest(errors.New("placement request must contain exactly one JSON object"))
 	}
 
 	// Require an explicit mode; only "reconcile" is supported. See
