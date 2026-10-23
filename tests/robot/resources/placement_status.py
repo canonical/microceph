@@ -13,6 +13,8 @@ library, so its function names never collide with harness keyword names.
 """
 
 import json
+import re
+import shlex
 
 
 def _parse(raw):
@@ -33,7 +35,9 @@ def response_code(raw):
     data = _parse(raw)
     if not isinstance(data, dict):
         return 0
-    code = data.get("status_code", data.get("error_code", 0))
+    # Error bodies carry both keys, with status_code set to 0, so the first
+    # non-zero code wins rather than the first present key.
+    code = data.get("status_code") or data.get("error_code") or 0
     try:
         return int(code)
     except (ValueError, TypeError):
@@ -45,6 +49,23 @@ def response_metadata(raw):
     data = _parse(raw)
     if not isinstance(data, dict) or not isinstance(data.get("metadata"), dict):
         return {}
+    return data["metadata"]
+
+
+def placement_metadata(raw):
+    """Return the ``metadata`` object of a sync API response, strictly.
+
+    Unlike :func:`response_metadata` (lenient, for poll loops), this raises
+    ValueError when the body is not JSON, not an object, not a successful sync
+    response (``status_code`` 200), or lacks a metadata object. Secret and
+    accepted-state checks use this gate so a malformed body fails the caller
+    instead of reading as "clean" or "empty".
+    """
+    data = _parse(raw)
+    if not isinstance(data, dict):
+        raise ValueError("unparseable API response body")
+    if data.get("status_code") != 200 or not isinstance(data.get("metadata"), dict):
+        raise ValueError("not a successful sync response")
     return data["metadata"]
 
 
@@ -67,6 +88,115 @@ def supported_capabilities(raw):
     if not isinstance(supported, list):
         return []
     return [str(s) for s in supported]
+
+
+def member_rgw_frontend(raw, member):
+    """Return known frontend settings; malformed responses are not absence."""
+    metadata = placement_metadata(raw)
+    if "observed" not in metadata:
+        raise ValueError("placement response lacks observed state")
+    observed = metadata["observed"]
+    if observed is None:
+        return {}
+    if not isinstance(observed, list):
+        raise ValueError("observed placement is not a list")
+    for entry in observed:
+        if not isinstance(entry, dict) or not isinstance(entry.get("member"), str):
+            raise ValueError("observed member is malformed")
+        if entry["member"] != member:
+            continue
+        frontend = entry.get("rgw_frontend")
+        if frontend is None:
+            return {}
+        if not isinstance(frontend, dict) or type(frontend.get("ssl")) is not bool:
+            raise ValueError("observed frontend is malformed")
+        for key in ("port", "ssl_port"):
+            if key in frontend and (type(frontend[key]) is not int or not 0 <= frontend[key] <= 65535):
+                raise ValueError("observed listener port is malformed")
+        return frontend
+    return {}
+
+
+def placement_leaks_rgw_secrets(raw):
+    """Return True when the stored policy carries RGW SSL key material.
+
+    The stored policy must carry only non-secret TLS intent: a non-empty
+    ``ssl_certificate`` or ``ssl_private_key`` under any member's rgw entry
+    is a leak. Raises ValueError when the body is not a successful sync
+    response or the stored policy has an unexpected shape -- a malformed
+    status body must fail the check, never read as "nothing to leak".
+    """
+    policy = placement_metadata(raw).get("policy")
+    if policy is None:
+        return False
+    if not isinstance(policy, dict) or not isinstance(policy.get("members"), dict):
+        raise ValueError("stored policy is not the expected shape")
+    for entry in policy["members"].values():
+        if not isinstance(entry, dict):
+            raise ValueError("stored member intent is not an object")
+        rgw = entry.get("rgw")
+        if rgw is None:
+            continue
+        if not isinstance(rgw, dict):
+            raise ValueError("stored RGW intent is not an object")
+        if rgw.get("ssl_certificate") or rgw.get("ssl_private_key"):
+            return True
+    return False
+
+
+def placement_refusal(raw):
+    """Return the recorded ``placement_refusal`` ('' when none) from a GET body.
+
+    Raises ValueError on malformed bodies: refusal assertions must never
+    inspect a defaulted empty string.
+    """
+    return str(placement_metadata(raw).get("placement_refusal", ""))
+
+
+def stored_policy_rgw(raw, member):
+    """Return the stored policy's rgw intent for *member*.
+
+    Returns {} when no policy is stored or the member/rgw entry is absent.
+    Raises ValueError on malformed bodies or a misshaped stored policy: the
+    "invalid request mutated nothing" assertions compare this before/after, so
+    garbage must fail rather than compare equal to {}.
+    """
+    policy = placement_metadata(raw).get("policy")
+    if policy is None:
+        return {}
+    if not isinstance(policy, dict) or not isinstance(policy.get("members"), dict):
+        raise ValueError("stored policy is not the expected shape")
+    if member not in policy["members"]:
+        return {}
+    entry = policy["members"][member]
+    if not isinstance(entry, dict):
+        raise ValueError("stored member intent is not an object")
+    rgw = entry.get("rgw")
+    if rgw is None:
+        return {}
+    if not isinstance(rgw, dict):
+        raise ValueError("stored RGW intent is not an object")
+    return dict(rgw)
+
+
+def observed_rgw_members(raw):
+    """Return {member: rgw-running flag} from the observed placement list.
+
+    Raises ValueError on malformed bodies or a misshaped ``observed`` entry;
+    the scale-to-zero and down-member assertions must read real parsed state,
+    never a lenient default.
+    """
+    observed = placement_metadata(raw).get("observed")
+    if not isinstance(observed, list):
+        raise ValueError(f"observed placement is not a list: {observed!r}")
+    flags = {}
+    for entry in observed:
+        if not isinstance(entry, dict) or not isinstance(entry.get("member"), str):
+            raise ValueError(f"observed entry is malformed: {entry!r}")
+        if type(entry.get("rgw")) is not bool:
+            raise ValueError("observed RGW state is not a boolean")
+        flags[entry["member"]] = entry["rgw"]
+    return flags
 
 
 def mon_count(raw):
@@ -196,3 +326,33 @@ def member_in_ceph_status(status_text, member):
     check. Control-placement assertions use :func:`control_service_presence`.
     """
     return member in (status_text or "")
+
+
+def rgw_frontend_conf_ports(conf_text):
+    """Return listener settings from the generated Beast frontend line."""
+    fields = _rgw_frontend_fields(conf_text)
+    try:
+        port = int(fields.get("port", 0))
+        ssl_port = int(fields.get("ssl_port", 0))
+    except ValueError as exc:
+        raise ValueError("malformed RGW listener port") from exc
+    return {"port": port, "ssl_port": ssl_port, "ssl": ssl_port != 0}
+
+
+def rgw_frontend_tls_paths(conf_text):
+    """Return the exact referenced pair, not every file named server.key."""
+    fields = _rgw_frontend_fields(conf_text)
+    paths = [fields.get("ssl_certificate"), fields.get("ssl_private_key")]
+    if paths == [None, None]:
+        return []
+    if not all(paths):
+        raise ValueError("incomplete RGW TLS references")
+    return paths
+
+
+def _rgw_frontend_fields(conf_text):
+    for line in (conf_text or "").splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name.strip() == "rgw frontends":
+            return dict(token.split("=", 1) for token in shlex.split(value) if "=" in token)
+    raise ValueError("no rgw frontends line in radosgw.conf")
