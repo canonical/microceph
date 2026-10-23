@@ -1713,10 +1713,29 @@ class microceph_harness:
         image = image or BuiltIn().get_variable_value("${OUTER_VM_IMAGE}", "ubuntu:24.04")
         self._launch_vm_instance(vm_name, disk_size, cpu, memory, image)
 
+    @staticmethod
+    def _named_vm_stopped(raw, vm_name):
+        """Requires the named VM, not a similarly named match, to be stopped."""
+        instances = json.loads(raw)
+        return isinstance(instances, list) and any(
+            isinstance(instance, dict)
+            and instance.get("name") == vm_name
+            and instance.get("status") == "Stopped"
+            for instance in instances
+        )
+
     def stop_named_vm(self, vm_name):
-        """Force-stops a named guest VM (member-unreachable scenarios)."""
+        """Force-stops a named guest VM and verifies the offline precondition."""
         logger.console(f"[vm] Stopping {vm_name}...")
-        self._exec(["lxc", "stop", vm_name, "--force"], 60)
+        res = self._exec(["lxc", "stop", vm_name, "--force"], 60)
+        if res.rc != 0:
+            raise AssertionError(f"failed to stop {vm_name} (rc={res.rc}): {res.stderr}")
+        # LXD stop is synchronous; its completed operation must leave this VM stopped.
+        res = self._exec(["lxc", "list", vm_name, "--format", "json"], 30)
+        if res.rc != 0:
+            raise AssertionError(f"failed to inspect stopped VM {vm_name}: {res.stderr}")
+        if not self._named_vm_stopped(res.stdout, vm_name):
+            raise AssertionError(f"{vm_name} is not stopped after lxc stop")
 
     def start_named_vm(self, vm_name):
         """Starts a previously stopped guest VM and waits for its agent."""

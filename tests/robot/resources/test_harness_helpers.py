@@ -40,6 +40,46 @@ from rbd_replication import (
 from streaming_process import run_streaming_process
 
 
+@pytest.mark.parametrize("instances, expected", [
+    ([{"name": "target", "status": "Stopped"}], True),
+    ([{"name": "target", "status": "Running"}], False),
+    ([{"name": "target-other", "status": "Stopped"}], False),
+    ([{"name": "target", "status": "Error"}], False),
+    ([{"name": "target"}], False),
+    ([], False),
+    ({}, False),
+])
+def test_named_vm_stopped_requires_exact_stopped_member(instances, expected):
+    assert H._named_vm_stopped(json.dumps(instances), "target") is expected
+
+
+def test_named_vm_stopped_rejects_malformed_output():
+    with pytest.raises(ValueError):
+        H._named_vm_stopped("not JSON", "target")
+
+
+@pytest.mark.parametrize("rc", [1, 124])
+def test_stop_named_vm_rejects_failed_stop(monkeypatch, rc):
+    harness = H()
+    monkeypatch.setattr(harness, "_exec", lambda *_: _Res(rc, "", "stop failed"))
+    with pytest.raises(AssertionError, match="failed to stop target"):
+        harness.stop_named_vm("target")
+
+
+@pytest.mark.parametrize("result", [
+    (1, "", "query failed"),
+    (124, "", "query timed out"),
+    (0, '[{"name":"target","status":"Running"}]', ""),
+    (0, "[]", ""),
+])
+def test_stop_named_vm_requires_confirmed_offline_state(monkeypatch, result):
+    harness = H()
+    responses = iter([_Res(0, "", ""), _Res(*result)])
+    monkeypatch.setattr(harness, "_exec", lambda *_: next(responses))
+    with pytest.raises(AssertionError):
+        harness.stop_named_vm("target")
+
+
 # ---------------------------------------------------------------------------
 # _csv_lists_instance
 # ---------------------------------------------------------------------------

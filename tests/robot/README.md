@@ -131,6 +131,7 @@ nfs-test                                    wiping-test
 - `Run In VM`, `Run In VM And Check`, `Run In VM Must Fail` and `Run In Container` run the command under `bash -eo pipefail`. Do not pipe a command whose result is checked into a consumer that exits early (`grep -q`, `head -1`): if the producer is still writing it is killed by SIGPIPE and the pipeline fails with rc=141 although the consumer already had what it needed, and a `&& echo yes || echo no` probe answers "no". Run the command on its own and decide in Robot (`Should Contain`) or in a pure Python helper (see "Purify" in `AGENTS.md`).
 - New harness keywords go under the relevant section comment in the resource file.
 - RGW endpoint-closure probes require connection refusals from every resolved address. Timeouts, DNS or routing failures, guest execution failures, and malformed output fail the check instead of proving closure. The probe requires Python 3.11+ in the guest, provided by the default Ubuntu 24.04 image.
+- `Stop Named VM` fails on a failed or timed-out stop and verifies that LXD reports the exact named VM as stopped before an offline-member scenario continues.
 
 ### Foreground placement scenarios
 
