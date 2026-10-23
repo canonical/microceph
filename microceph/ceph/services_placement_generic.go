@@ -23,6 +23,7 @@ func GetServiceKeyringTable() map[string](func(string, string) error) {
 		"mds":           bootstrapMds,
 		"rbd-mirror":    bootstrapRbdMirror,
 		"cephfs-mirror": bootstrapFsMirror,
+		"ceph-exporter": bootstrapCephExporter,
 		// Add more services here, for using the generic Interface implementation.
 	}
 }
