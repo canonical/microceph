@@ -146,6 +146,10 @@ func cmdPlacementPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	err = ceph.ApplyPlacementPolicyFunc(ctx, interfaces.CephState{State: s}, policy)
 	if err != nil {
 		logger.Errorf("failed to apply placement policy: %v", err)
+		// An operational failure must not be hidden by a simultaneous safety refusal.
+		if errors.Is(err, ceph.ErrPlacementOperationFailed) {
+			return mcTypes.InternalError(err)
+		}
 		if isClientSidePlacementError(err) {
 			return mcTypes.BadRequest(err)
 		}

@@ -4,6 +4,8 @@ package client
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"slices"
 	"time"
 
 	"github.com/canonical/lxd/shared/api"
@@ -75,6 +77,21 @@ func SendServicePlacementReq(ctx context.Context, c mcTypes.Client, data *types.
 		return fmt.Errorf("failed placing service %s: %w", data.Name, err)
 	}
 
+	return nil
+}
+
+// CheckRGWPlacementSupport verifies the target understands explicit TLS intent.
+func CheckRGWPlacementSupport(ctx context.Context, c mcTypes.Client, target string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var capabilities types.Capabilities
+	err := c.UseTarget(target).Query(queryCtx, http.MethodGet, types.ExtendedPathPrefix, &api.NewURL().Path("cluster", "capabilities").URL, nil, &capabilities)
+	if err != nil && !api.StatusErrorCheck(err, http.StatusNotFound) {
+		return fmt.Errorf("failed to query RGW placement support for %s: %w", target, err)
+	}
+	if !slices.Contains(capabilities.Supported, "placement-rgw") {
+		return api.StatusErrorf(http.StatusBadRequest, "placement-rgw capability is unavailable for member %s", target)
+	}
 	return nil
 }
 
