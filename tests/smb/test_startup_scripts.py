@@ -351,8 +351,9 @@ def record(program, args, **extra):
                 expected = {
                     "smbd": ["--foreground", "--no-process-group", "--configfile",
                              str(self.root / "config/smb.conf")],
-                    "ctdbd": ["--interactive", f"--configfile={self.root}/ctdb/ctdb.conf",
-                              f"--pidfile={self.root}/ctdb/run/ctdbd.pid"],
+                    # Pinned CTDB accepts only --interactive; its config and
+                    # PID paths come from the recipe layout/private runtime bind.
+                    "ctdbd": ["--interactive"],
                     "winbindd": ["-F", "--no-process-group", "--configfile",
                                  str(self.root / "config/smb.conf")],
                 }

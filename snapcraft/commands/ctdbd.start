@@ -26,6 +26,7 @@ exec "$SNAP/bin/unshare" --mount --propagation slave -- /bin/bash -euc '
   export CTDB_LOCK_HELPER="$SNAP/libexec/ctdb/ctdb_lock_helper"
   export CTDB_NOSETSCHED=yes
   smb_check_start_intent
-  exec "$SNAP/bin/ctdbd" --interactive --configfile="$SMB_ROOT/ctdb/ctdb.conf" \
-    --pidfile="$SMB_ROOT/ctdb/run/ctdbd.pid"
+  # Native CTDB uses /etc/ctdb and /run/ctdb; the validated layout and
+  # private runtime bind above already select this owner. No CLI path overrides.
+  exec "$SNAP/bin/ctdbd" --interactive
 '
