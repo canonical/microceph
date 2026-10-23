@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -240,6 +241,67 @@ func TestSMBADRecordUsesCTDBHexForNULTerminatedKeys(t *testing.T) {
 			require.Equal(t, []string{"-t", "5", "pfetch", test.database, test.argument}, strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n"))
 		})
 	}
+}
+
+func TestSMBADReadinessBudgetsRespectParentDeadline(t *testing.T) {
+	for _, probe := range []struct {
+		name string
+		run  func(context.Context, string) error
+	}{
+		{"runtime", readySMBADRuntime},
+		{"member", checkSMBADReady},
+	} {
+		t.Run(probe.name, func(t *testing.T) {
+			root, snap := smbADProcessFixture(t)
+			require.NoError(t, setSMBPrepared(root, "winbindd", true))
+			path := filepath.Join(snap, "bin/ctdb")
+			script, err := os.ReadFile(path)
+			require.NoError(t, err)
+			health := "#!/bin/sh\nif [ \"$1\" != -t ]; then\ncase \"$1\" in\npnn) echo 0;;\nnodestatus) exit 0;;\nstatus) printf 'Number of nodes:1\\nRecovery mode:NORMAL (0)\\n';;\n*) exit 1;;\nesac\nexit 0\nfi\n"
+			require.NoError(t, os.WriteFile(path, []byte(strings.Replace(string(script), "#!/bin/sh\n", health, 1)), 0700))
+			old := newSMBPrivateCommandFunc
+			t.Cleanup(func() { newSMBPrivateCommandFunc = old })
+			var remaining time.Duration
+			newSMBPrivateCommandFunc = func(ctx context.Context, root string, args []string) (*exec.Cmd, error) {
+				if args[0] != filepath.Join(snap, "bin/wbinfo") {
+					return old(ctx, root, args)
+				}
+				deadline, bounded := ctx.Deadline()
+				require.True(t, bounded)
+				remaining = time.Until(deadline)
+				return nil, context.Canceled
+			}
+			require.Error(t, probe.run(context.Background(), root))
+			require.Greater(t, remaining, 29*time.Second)
+			require.LessOrEqual(t, remaining, 30*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			require.Error(t, probe.run(ctx, root))
+			require.Positive(t, remaining)
+			require.LessOrEqual(t, remaining, time.Second)
+		})
+	}
+}
+
+func TestSMBADMemberReadsInventoryOncePerObservation(t *testing.T) {
+	root, snap := smbADProcessFixture(t)
+	err := checkSMBADMember(context.Background(), root, false)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(filepath.Join(snap, "ctdb-calls"))
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(raw), "getdbmap"), "each inventory starts an expensive private namespace")
+	require.Equal(t, 3, strings.Count(string(raw), "pfetch"), "both trust records and the retained idmap must still be checked")
+}
+
+func TestSMBADMemberNeverFetchesAnAbsentDatabase(t *testing.T) {
+	root, snap := smbADProcessFixture(t)
+	err := os.WriteFile(filepath.Join(snap, "missing-database"), nil, 0600)
+	require.NoError(t, err)
+	err = checkSMBADMember(context.Background(), root, false)
+	require.ErrorContains(t, err, "database unavailable")
+	raw, err := os.ReadFile(filepath.Join(snap, "ctdb-calls"))
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "pfetch autorid.tdb", "pfetch could attach or create an absent database")
 }
 
 func TestSMBADStateUsesPinnedKeysAndRefusesMissingRecords(t *testing.T) {

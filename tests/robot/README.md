@@ -231,11 +231,13 @@ Teardown deletes only the named/tagged resources; foreign tags or attached volum
 fail closed. Installation/network helpers may retry known infrastructure failures,
 but SMB placement, resource updates, retirement and reboot are issued only once.
 
-Status observations allow 20 seconds for the API response: native AD readiness
-already permits 12 seconds, followed by a 3-second smbd ping. The outer snapshot
-exec allows 35 seconds for that reader, the 10-second systemd query and transport
-margin. An unavailable or malformed API response still fails readiness; active
-processes alone are not enough.
+Status observations allow 60 seconds for the API response: native AD readiness
+permits 30 seconds, followed by a 3-second smbd ping. The outer snapshot exec
+allows 120 seconds for that reader, the 10-second systemd query and transport
+margin. Service readiness allows 60 seconds, or 120 seconds for CTDB membership
+convergence; source refresh allows 120 seconds for its complete sequence of checks.
+Caller deadlines and cancellation still take precedence. An unavailable or
+malformed API response still fails readiness; active processes alone are not enough.
 
 Dry-run checks keyword resolution, not installed behavior:
 

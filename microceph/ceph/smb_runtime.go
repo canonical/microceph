@@ -67,11 +67,11 @@ func confirmSMBInactive(ctx context.Context, role string) error {
 
 // Ready observes functional readiness without changing service intent.
 func (s smbSnapService) Ready(ctx context.Context) error {
-	budget := 30 * time.Second
+	budget := time.Minute
 	if s.name == "ctdbd" {
-		// Preserve the membership-publication/convergence budget. The caller's
-		// deadline still wins; this does not relax the actual health checks.
-		budget += smbUpdateInterval + smbUpdateTimeout
+		// Allow membership publication and convergence without coupling this
+		// budget to the source refresh timeout. The caller's deadline still wins.
+		budget = 2 * time.Minute
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()

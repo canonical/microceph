@@ -596,8 +596,8 @@ class smb_ops:
 
     def smb_snapshot(self, node, cluster="robot-smb"):
         vm = self._node(node)
-        # Cover the 20s API reader, 10s systemctl observation and exec overhead.
-        result = vm.command("python3", self._base + "/smb_guest.py", "snapshot", cluster, timeout=35, quiet=True)
+        # Cover the 60s API reader, 10s systemctl observation and exec overhead.
+        result = vm.command("python3", self._base + "/smb_guest.py", "snapshot", cluster, timeout=120, quiet=True)
         if result.rc != 0:
             raise AssertionError(f"SMB observation failed on {vm.name}: {result.stderr}")
         return parse_snapshot(result.stdout, vm.name)

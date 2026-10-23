@@ -343,7 +343,7 @@ def test_smb_snapshot_reader_covers_native_ad_budget_without_inventing_readiness
     monkeypatch.setattr(smb_guest.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=""))
     response = b'HTTP/1.0 200 OK\r\n\r\n{"metadata":{"cluster_id":"robot-ad","ready":true}}'
     observed = []
-    for required in (6.5, 1000):
+    for required in (33, 1000):
         class Client:
             def __init__(self, *args):
                 self.chunks = [response, b""]
@@ -365,9 +365,9 @@ def test_smb_snapshot_reader_covers_native_ad_budget_without_inventing_readiness
         monkeypatch.setattr(smb_guest.socket, "socket", Client)
         smb_guest.snapshot("robot-ad")
         raw = json.loads(capsys.readouterr().out)
-        if required == 6.5:
-            assert raw["api"] is not None, "five seconds cancels a healthy native AD observation"
-            assert observed[-1] >= 12 + 3, "cover the AD readiness and smbd ping budgets"
+        if required == 33:
+            assert raw["api"] is not None, "cover a healthy 30-second AD observation and smbd ping"
+            assert observed[-1] == 60, "use a standard 60-second API read budget"
             assert json.loads(raw["api"])["metadata"]["ready"] is True
         else:
             assert raw["api"] is None, "timeout must remain unavailable, never ready"
@@ -385,7 +385,8 @@ def test_smb_snapshot_host_budget_covers_reader_and_systemctl():
     library = m.smb_ops()
     library.nodes = [Node()]
     library.smb_snapshot(0)
-    assert calls[0]["timeout"] > 20 + 10, "outer exec must cover API reading and systemctl"
+    assert calls[0]["timeout"] == 120, "use a standard 120-second outer execution budget"
+    assert calls[0]["timeout"] > 60 + 10, "outer exec must cover API reading and systemctl"
 
 
 def test_smb_guest_resources_and_redaction_are_explicit():

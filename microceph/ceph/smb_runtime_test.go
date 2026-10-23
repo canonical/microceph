@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -124,6 +125,32 @@ func TestSMBServiceReadyDelegatesWithoutServiceControl(t *testing.T) {
 	require.NoError(t, newSMBServiceTable(root)["smbd"].Ready(context.Background()))
 	require.Equal(t, 1, calls)
 	require.Empty(t, recorder.calls, "functional observation must not start, restart or stop a service")
+}
+
+func TestSMBServiceReadyUsesStandardBudgets(t *testing.T) {
+	old := smbReadyNativeFunc
+	t.Cleanup(func() { smbReadyNativeFunc = old })
+	for _, test := range []struct {
+		role   string
+		budget time.Duration
+	}{
+		{"smbd", time.Minute},
+		{"winbindd", time.Minute},
+		{"ctdbd", 2 * time.Minute},
+	} {
+		t.Run(test.role, func(t *testing.T) {
+			smbReadyNativeFunc = func(ctx context.Context, _, _ string) error {
+				deadline, bounded := ctx.Deadline()
+				require.True(t, bounded)
+				remaining := time.Until(deadline)
+				require.Greater(t, remaining, test.budget-time.Second)
+				require.LessOrEqual(t, remaining, test.budget)
+				return nil
+			}
+			require.NoError(t, newSMBServiceTable(t.TempDir())[test.role].Ready(context.Background()))
+		})
+	}
+	require.Equal(t, 2*time.Minute, smbUpdateTimeout, "refresh must cover the complete sequence of role probes")
 }
 
 func TestSMBServiceReadyDoesNotReportSuccessAfterCancellation(t *testing.T) {

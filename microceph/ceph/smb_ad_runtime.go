@@ -15,7 +15,10 @@ import (
 	"time"
 )
 
-const smbADJoinTimeout = 60 * time.Second
+const (
+	smbADJoinTimeout      = time.Minute
+	smbADReadinessTimeout = 30 * time.Second
+)
 
 var smbADProbeFunc = probeSMBADRuntime
 var smbADJoinFunc = runSMBADJoin
@@ -67,7 +70,7 @@ func prepareSMBADStart(ctx context.Context, root string, initial bool) error {
 }
 
 func readySMBADRuntime(ctx context.Context, root string) error {
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, smbADReadinessTimeout)
 	defer cancel()
 	err := checkSMBCTDBHealth(ctx, root, false)
 	if err != nil {
@@ -135,7 +138,14 @@ func smbADCTDB(ctx context.Context, root string, args ...string) ([]byte, error)
 
 func smbADRecord(ctx context.Context, root, db, key string) error {
 	inventory, err := smbADCTDB(ctx, root, "getdbmap")
-	if err != nil || !strings.Contains(string(inventory), "name:"+db+" ") {
+	if err != nil {
+		return fmt.Errorf("AD trust/idmap database unavailable; refusing attachment or reconstruction")
+	}
+	return smbADRecordFromInventory(ctx, root, inventory, db, key)
+}
+
+func smbADRecordFromInventory(ctx context.Context, root string, inventory []byte, db, key string) error {
+	if !strings.Contains(string(inventory), "name:"+db+" ") {
 		return fmt.Errorf("AD trust/idmap database unavailable; refusing attachment or reconstruction")
 	}
 	if db == "autorid.tdb" {
@@ -159,8 +169,15 @@ func checkSMBADMember(ctx context.Context, root string, initial bool) error {
 	if launch.AD == nil || !launch.Clustered {
 		return fmt.Errorf("AD member context required")
 	}
+	// Inventory is non-creating. Reuse it only within this observation rather
+	// than starting a fresh private namespace for every required record.
+	// Readiness still takes a fresh observation after the allocating SID lookup.
+	inventory, err := smbADCTDB(ctx, root, "getdbmap")
+	if err != nil {
+		return fmt.Errorf("AD trust/idmap database unavailable; refusing attachment or reconstruction")
+	}
 	for _, key := range []string{"SECRETS/MACHINE_PASSWORD/", "SECRETS/SID/"} {
-		err = smbADRecord(ctx, root, "secrets.tdb", key+launch.AD.Workgroup)
+		err = smbADRecordFromInventory(ctx, root, inventory, "secrets.tdb", key+launch.AD.Workgroup)
 		if err != nil {
 			return err
 		}
@@ -181,7 +198,7 @@ func checkSMBADMember(ctx context.Context, root string, initial bool) error {
 			return readErr
 		}
 	}
-	return smbADRecord(ctx, root, "autorid.tdb", "CONFIG")
+	return smbADRecordFromInventory(ctx, root, inventory, "autorid.tdb", "CONFIG")
 }
 
 func runSMBADJoin(ctx context.Context, root string) (retErr error) {
@@ -291,7 +308,7 @@ func checkSMBADTrust(ctx context.Context, root string) error {
 var smbADSIDPattern = regexp.MustCompile(`(?m)^SID\s*:\s*(S-1-5-21-[0-9]+-[0-9]+-[0-9]+)\s*$`)
 
 func checkSMBADReady(ctx context.Context, root string) error {
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, smbADReadinessTimeout)
 	defer cancel()
 	launch, err := loadSMBLaunch(root)
 	if err != nil {

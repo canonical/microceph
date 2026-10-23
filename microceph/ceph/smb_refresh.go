@@ -19,7 +19,7 @@ import (
 
 const (
 	smbUpdateInterval             = 30 * time.Second
-	smbUpdateTimeout              = 25 * time.Second
+	smbUpdateTimeout              = 2 * time.Minute
 	smbMembershipFallbackInterval = 30 * time.Second
 )
 

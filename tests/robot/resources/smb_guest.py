@@ -106,9 +106,9 @@ def snapshot(cluster):
             return ""
     try:
         with socket.socket(socket.AF_UNIX) as client:
-            # Native AD readiness permits 12s, followed by a 3s smbd ping.
+            # Native AD readiness permits 30s, followed by a 3s smbd ping.
             # Leave transport margin without treating an unavailable API as ready.
-            client.settimeout(20)
+            client.settimeout(60)
             client.connect("/var/snap/microceph/common/state/control.socket")
             client.sendall(b"GET /1.0/services/smb HTTP/1.0\r\nHost: localhost\r\n\r\n")
             chunks = []
