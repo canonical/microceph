@@ -104,6 +104,12 @@ func (rgw *RgwServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 	if err != nil {
 		return err
 	}
+	// A deferred certificate publication must become the running baseline before
+	// TLS reuse reads the local pair or a later apply chooses its rollback target.
+	err = recoverPendingRGWApply()
+	if err != nil {
+		return err
+	}
 
 	spec := rgwFrontendSpec{
 		port:    rgw.effPort,

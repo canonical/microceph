@@ -195,12 +195,12 @@ MicroCeph can place the RADOS Gateway (RGW) on cluster members from the placemen
 
 - **A member with no `rgw` object is not touched.** Nothing reconciles between `PUT`s. An empty policy and `DELETE /1.0/placement` stop no gateway.
 - **The shape is strict.** A bare boolean `rgw`, a missing `enabled` or `ssl`, a certificate without its key, and the same port for both listeners are all rejected before anything changes.
-- **`ssl: true` without a certificate and key means reuse.** The member keeps the pair it already has. If it has no usable pair the request fails. It never falls back to plaintext.
+- **`ssl: true` without a certificate and key means reuse.** The member first recovers any pending RGW update, then reuses the locally configured pair. If it has no usable pair the request fails. It never falls back to plaintext.
 - **Additions come before removals.** Within one request every gateway addition is tried, then the removals. If any addition fails, all removals wait, so a migration never stops the old gateway before the new one serves. Gateways can scale to zero.
 - **`rgw_frontend` in `GET /1.0/placement` is the last applied setting,** read from the `rgw_frontends` table. It is not a health check. If it is absent, the setting is unknown, not plaintext.
 - **One owner per member.** Do not use `microceph enable rgw` or `microceph disable rgw` on a member whose policy entry has an `rgw` object. The next `PUT` applies the policy again without warning. `microceph certificate set rgw` is safe and never changes the policy.
-- **Applying is safe to repeat.** The same settings cause no restart. A failed change puts the previous config and gateway back. A first gateway start can use the whole 2 minute readiness wait, and the call to each member times out after 5 minutes.
-- **Certificate updates have the same 5 minute request budget.** `microceph certificate set rgw --restart` can wait up to 2 minutes for readiness and then roll back on failure; the client timeout leaves time for both.
+- **Applying is safe to repeat after recovery.** An unchanged running configuration needs no restart unless a pending update must first be recovered. See [Defer certificate activation](docs/snap/how-to/rotate-rgw-tls-certificate.rst#defer-certificate-activation) in the certificate rotation guide for the user-visible restart behaviour.
+- **RGW placement and certificate updates have a 7 minute member request budget:** up to 2 minutes each for recovery, requested activation and verified rollback, plus 1 minute for overhead. Other service placement timeouts remain unchanged. This is not a guarantee for an entire multi-member apply: placement PUT execution has a separate ten-minute aggregate server deadline.
 
 ### What a `PUT` returns for RGW
 
@@ -217,8 +217,8 @@ MicroCeph can place the RADOS Gateway (RGW) on cluster members from the placemen
 | File | Role |
 |---|---|
 | `/var/snap/microceph/current/conf/radosgw.conf` | Once the file exists, only the `rgw frontends` line is rewritten, so a monitor list refresh made at the same time survives. The first enable writes the whole file. |
-| `/var/snap/microceph/current/conf/radosgw.conf.pending` | Holds the previous config while a change is in flight. If it is present at the next apply, the gateway is restarted rather than trusted. |
-| `/var/snap/microceph/common/rgw-tls/<hash>/server.crt`, `server.key` | One directory per certificate and key pair, named by a hash of both. The config switches to a directory only once both files are complete. Old directories are removed once the apply commits: after the database row on a `PUT`, or right after `certificate set rgw --restart`. |
+| `/var/snap/microceph/current/conf/radosgw.conf.pending` | Holds the previous config and service-active state while a change is in flight, including a deferred certificate update. Successful recovery rebases the rollback target to the activated config before clearing the marker. Manual restarts do not clear it. |
+| `/var/snap/microceph/common/rgw-tls/<hash>/server.crt`, `server.key` | One directory per certificate and key pair, named by a hash of both. The config switches to a directory only once both files are complete. Recovery alone does not prune. Old directories are removed after a successful placement database commit, a confirmed rollback, or a completed certificate request, including an identical deferred request satisfied by recovery. A different deferred certificate request retains its rollback generation. |
 
 ### Upgrades
 

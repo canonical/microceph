@@ -26,10 +26,11 @@ func (c *cmdCertificateSetRGW) Command() *cobra.Command {
 		Short: "Set the SSL certificate for the RGW service",
 		Long: `Set or rotate SSL certificates for the RGW service.
 
-The new certificate and key are written to disk. Use --restart to restart
-the RGW service and pick up the new certificate immediately. Without
---restart, the certificate is stored but the service must be restarted
-manually for the change to take effect.`,
+The new certificate and key are written to disk. With --restart, RGW picks up
+the requested pair immediately. Without --restart, a new pair waits for a manual
+restart or the next RGW apply or certificate update. If an earlier update is
+pending, it is recovered first and may restart RGW even without --restart.
+A manual restart does not clear pending state.`,
 		RunE: c.Run,
 	}
 
@@ -88,8 +89,8 @@ func (c *cmdCertificateSetRGW) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	if !c.flagRestart {
-		fmt.Println("Warning: certificate has been written to disk but is not yet active.")
-		fmt.Println("Restart the RGW service with --restart or manually to pick up the new certificate.")
+		fmt.Println("Warning: the certificate is stored, but activation may still be pending.")
+		fmt.Println("A manual restart activates it; the next RGW apply or certificate update will still recover pending state and may restart RGW again.")
 	}
 
 	return nil

@@ -46,14 +46,15 @@ Available commands:
 ``set rgw``
 -----------
 
-Set or rotate SSL certificates for the RGW service. The new certificate and
-key are written to disk. Use ``--restart`` to restart the RGW service and pick
-up the new certificate immediately. Without ``--restart``, the certificate is
-stored but the service must be restarted manually for the change to take effect.
+Set or rotate SSL certificates for the RGW service. Provide a base64-encoded PEM
+certificate and private key. If the certificate includes a chain, place the
+server's leaf certificate first.
 
-With ``--restart``, readiness is checked against the first ``CERTIFICATE`` block
-in the decoded PEM bundle, skipping blocks of other types. Place the server's
-leaf certificate before any chain certificates.
+Use ``--restart`` to activate the certificate immediately. Without it, a new
+certificate is stored for later activation. An earlier pending update may still
+cause RGW to restart, even after a manual restart, interrupting client connections.
+
+See :ref:`rotate-rgw-tls-certificates` for examples and activation instructions.
 
 Usage:
 
