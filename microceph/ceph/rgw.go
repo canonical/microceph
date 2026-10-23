@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -8,9 +9,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -554,6 +559,55 @@ func checkRGWReady(spec rgwFrontendSpec) error {
 	}
 }
 
+// checkRGWHTTPFrontend requires an S3 response, not just an open TCP port.
+// A simple snap service is active while its wrapper still waits to exec RGW;
+// another HTTP server on the requested port must not satisfy that window.
+func checkRGWHTTPFrontend(conn net.Conn) error {
+	defer conn.Close()
+	err := conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err != nil {
+		return err
+	}
+	request := &http.Request{
+		Method: http.MethodGet,
+		URL:    &url.URL{Path: "/"},
+		Host:   conn.RemoteAddr().String(),
+		Close:  true,
+	}
+	err = request.Write(conn)
+	if err != nil {
+		return err
+	}
+	// Bound the entire response, including headers, from an unknown listener.
+	response, err := http.ReadResponse(bufio.NewReader(io.LimitReader(conn, 64<<10)), request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	requestID := response.Header.Get("x-amz-request-id")
+	if requestID == "" || (response.StatusCode != http.StatusOK && response.StatusCode != http.StatusForbidden) {
+		return errors.New("RGW HTTP listener did not return a ready S3 response")
+	}
+	var body struct {
+		XMLName   xml.Name
+		Code      string
+		RequestID string `xml:"RequestId"`
+	}
+	err = xml.NewDecoder(response.Body).Decode(&body)
+	if err != nil {
+		return fmt.Errorf("cannot decode RGW HTTP response: %w", err)
+	}
+	// Anonymous requests normally receive AccessDenied. A successful bucket
+	// listing is also usable; neither requires creating a probe user or object.
+	if response.StatusCode == http.StatusForbidden && body.XMLName.Local == "Error" && body.Code == "AccessDenied" && body.RequestID == requestID {
+		return nil
+	}
+	if response.StatusCode == http.StatusOK && body.XMLName.Local == "ListAllMyBucketsResult" && body.XMLName.Space == "http://s3.amazonaws.com/doc/2006-03-01/" {
+		return nil
+	}
+	return errors.New("RGW HTTP listener did not return a ready S3 response")
+}
+
 // Local readiness pins the supplied certificate, not a public DNS name or CA.
 func checkRGWFrontend(spec rgwFrontendSpec) error {
 	dialer := &net.Dialer{Timeout: time.Second}
@@ -562,7 +616,10 @@ func checkRGWFrontend(spec rgwFrontendSpec) error {
 		if err != nil {
 			return err
 		}
-		conn.Close()
+		err = checkRGWHTTPFrontend(conn)
+		if err != nil {
+			return err
+		}
 	}
 	if !spec.ssl {
 		return nil
