@@ -1,8 +1,12 @@
+---
+orphan: true
+---
+
 # Native SMB service and path boundaries
 
-Status: source cutover implemented in `refactor/smb-runtime-component`, based on
+Status: source transition implemented in `refactor/smb-runtime-component`, based on
 AD baseline `955ef872823d3f6699ace619036dec86482a482c`. This is **not target
-strict-snap qualification**. The isolated worktree is
+strict-snap qualification**. The isolated working tree is
 `../microceph-smb-runtime-refactor`; Robot/CI belongs to another owner.
 
 ## Already done
@@ -23,7 +27,7 @@ strict-snap qualification**. The isolated worktree is
 
 The five-service table is an internal Start/Ready/Stop dispatch table, not a
 supervisor. Start enables the selected service; Stop disables it and confirms
-inactivity. Configuration refresh preserves enablement and stop intent. User
+inactivity. Configuration refresh preserves enabled state and stop intent. User
 SAM preparation runs with smbd stopped before requesting its restart. Unknown
 service names are rejected before execution.
 
@@ -36,15 +40,15 @@ patch upstream packages or use their self-test path overrides in production.
 The user chose to retain the current owner-private CTDB, Winbind and NSS views
 after reviewing direct host-runtime alternatives. No host-endpoint migration
 or prototype is selected. This does not establish coexistence with host Samba:
-current startup still refuses unrelated state in runtime mountpoint targets.
+current startup still refuses unrelated state in runtime mount point targets.
 
 `R` means `$SNAP_COMMON/smb/<validated-cluster-id>`.
 `L` means the stable `$SNAP_COMMON/smb/.conf/ctdb` directory.
 
 | Path | Selected source and scope | Reason / invariant |
 | --- | --- | --- |
-| `/etc/ctdb` | Recipe bind from `L` | Pinned CTDB's production config loader uses its compiled path. Go publishes owner-bound configuration and resource aliases (`events`, `functions`, `notify.sh`) atomically. Eventd always reads `/etc/ctdb/events`; the pinned version ignores the unsupported `script directory` option. The directory inode is never replaced; consumers are stopped before owner transitions. |
-| `/var/lib/ctdb` | Existing recipe tmpfs, scratch only | All volatile, persistent and state database directories remain explicit under `R/ctdb`. No owner-local runtime overlay or alternate persistent-state home. |
+| `/etc/ctdb` | Recipe bind from `L` | The pinned CTDB production config loader uses its compiled path. Go publishes owner-bound configuration and resource aliases (`events`, `functions`, `notify.sh`) atomically. `eventd` always reads `/etc/ctdb/events`; the pinned version ignores the unsupported `script directory` option. The directory inode is never replaced; consumers are stopped before owner transitions. |
+| `/var/lib/ctdb` | Existing recipe `tmpfs`, scratch only | All volatile, persistent and state database directories remain explicit under `R/ctdb`. No owner-local runtime overlay or alternate persistent-state home. |
 | `/usr/share/ctdb` | Existing recipe symlink to the current snap's resources | Prepared `R/ctdb` resource aliases resolve through this layout, not through a revision path that can be garbage-collected. Only `00.ctdb.script` is enabled. |
 | `/etc/passwd` | Private bind from `R/config/passwd` | Owner-local Unix identities, never a global NSS layout or host-account edit. |
 | `/etc/group` | Private bind from `R/config/group` | Published atomically with the identity projection; fresh service contexts see the new inode. |
@@ -66,7 +70,7 @@ query does not justify a CTDB runtime bind.
 Snapd starts each service under that application's existing profile. Services
 needing private mounts use stock `unshare --mount --propagation slave`, a fixed
 literal setup body and native exec. Inherited-DNS proxy/exporter startup needs
-no namespace. Startup validates prepared inputs and safe mountpoints; it does
+no namespace. Startup validates prepared inputs and safe mount points; it does
 not render configuration, import accounts, join AD, query SQL, control services,
 repair data or monitor a running process.
 
@@ -74,7 +78,7 @@ Transient daemon clients use `SysProcAttr.Cloneflags = CLONE_NEWNS`, a bounded
 process group and the same mechanical setup library. They never change daemon
 environment, CWD or namespace and never fall back to its ordinary namespace.
 Source/destination ancestry is checked for shared propagation before each bind.
-The daemon consumes existing runtime mountpoint stubs; it cannot create them.
+The daemon consumes existing runtime mount point stubs; it cannot create them.
 
 Mounts use `--no-mtab --internal-only --bind` and
 `LIBMOUNT_FORCE_MOUNT2=always`. Neither mount-table writes nor new mount-API
@@ -98,7 +102,7 @@ protocol, private command family or live control socket.
   an automatic rejoin.
 - Only authorized first Winbind initialization can receive trust-only startup
   requirements. Smbd and retained Winbind starts require the trust records and
-  NUL-terminated autorid `CONFIG` record selected by Go.
+  NUL-terminated `autorid` `CONFIG` record selected by Go.
 - Native database inventory uses non-creating `getdbmap` before `pfetch`, which
   otherwise could attach/create a missing database.
 - Go tightens the durable initialization fence before its allocating SID-to-GID
@@ -128,7 +132,7 @@ require the target qualification below.
 - Run the two exact-native-package Python cases; fixture-level tests do not
   establish Samba/CTDB I/O or confinement compatibility.
 - Coordinate Robot/CI's removal of `ctdb-nodes` unit expectations. Those files
-  were inspected for compatibility but are not edited in this worktree.
+  were inspected for compatibility but are not edited in this working tree.
 - Repository-wide race testing exposes `logger.TestLogConcurrent`; logger
   sources are unchanged and the failure reproduces in isolation. Keep that
   unrelated correction separate.
