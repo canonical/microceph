@@ -4850,6 +4850,38 @@ def test_smb_scenario_retirement_refuses_foreign_owners_and_never_purges_AD(monk
     assert calls == [('microceph', 'disable', 'smb', '--cluster-id', 'robot-ad')]
 
 
+def test_smb_singleton_relocation_does_not_require_portable_local_identity():
+    from robot.api import TestSuiteBuilder
+    path = Path(__file__).parents[1] / 'smb-singleton-tests/smb_singleton_tests.robot'
+    scenario = TestSuiteBuilder().build(str(path)).tests[0]
+    original = owner = sentinel = None
+    moved = retained_read = False
+    # Model the real suite's placement/I/O sequence, not Samba authorization.
+    for step in scenario.body:
+        if step.name == 'Enable And Check SMB Member':
+            node = step.args[0]
+            assert step.args[1:] == ('robot-never', '3445', '${False}')
+            assert owner in (None, node), 'old owner must be retired before relocation'
+            if original is None:
+                original = node
+            moved |= node != original
+            owner = node
+        elif step.name == 'Run SMB Checked' and step.args[1:4] == ('microceph', 'disable', 'smb'):
+            assert step.args[0] == owner
+            owner = None
+        elif step.name == 'Check Retired SMB Member':
+            assert step.args[0] != owner
+        elif step.name == 'SMB Exact Transfer':
+            assert step.args[0] == owner == original, 'local-user ACL access must not be required on another gateway'
+            if sentinel is None:
+                sentinel = step.args[1]
+            elif moved and step.args[1] == sentinel:
+                assert step.args[2:] == ('${False}', 'robot-never'), 'read the existing sentinel without overwriting it'
+                retained_read = True
+    assert moved, 'singleton coverage must still exercise sequential placement'
+    assert owner == original and retained_read, 'return to the retained gateway and verify existing-file access'
+
+
 def test_smb_three_suite_partition_has_no_cross_suite_prerequisite():
     from robot.api import TestSuiteBuilder
     root = Path(__file__).parents[1]

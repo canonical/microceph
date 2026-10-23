@@ -157,9 +157,16 @@ independent cases), or the legacy alias for both. They cover clustered deploymen
 password-authenticated put/get and cross-gateway reads (plus wrong-password denial),
 endpoint refresh/no-op, retirement/rejoin, daemon restart, ordinary VM reboot and
 clustered peer-preserving purge, nonclustered second-owner rejection and verified
-relocation, plus independent logical IDs on disjoint data paths with scoped purge. Reboot recovery never starts a role
-or re-enables a placement. A prior failure remains failed even if later, independent
-mode tests can run. Missing deployment prerequisites are reported as skips, not passes.
+sequential placement, plus independent logical IDs on disjoint data paths with
+scoped purge. The singleton scenario checks existing-file access after returning
+to the original gateway with retained Samba state; it does not require local-user
+identities or file ACL access to follow placement to another gateway. Purging a
+standalone service also loses its local identities; repeat runs cannot assume
+access to files protected by those discarded identities. Clustered SMB or external
+AD is recommended for identity continuity; native AD also requires clustered mode.
+Reboot recovery never starts a role or re-enables a placement. A prior failure
+remains failed even if later, independent mode tests can run. Missing deployment
+prerequisites are reported as skips, not passes.
 
 Gateways are **real Ubuntu 26.04 VMs**, not nested containers; VM0 also runs
 `smbclient`. Each has 2 vCPU, 3 GiB RAM, a 20 GiB root and dedicated 4 GiB data disk.

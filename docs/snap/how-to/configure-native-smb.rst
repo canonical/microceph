@@ -117,6 +117,21 @@ startup failed. Independent nonclustered services need **different cluster IDs**
 on different members and disjoint data paths. CephFS sharing alone does not
 coordinate Samba share modes or leases across independent services.
 
+.. warning::
+
+   Without clustering, ``auth_mode: user`` accounts have gateway-local Samba
+   identities. Restarting or rebooting the same gateway preserves them while
+   its local Samba state is retained. Moving the service to another gateway,
+   or purging that state, does not automatically preserve those identities.
+   Matching usernames and Unix UID/GID values do not guarantee that existing
+   file ACLs recognize the new identity. CephFS data is retained, but file
+   access may be denied.
+
+   For identity continuity across gateways, the recommended approach is
+   **clustered SMB**, or **external Active Directory** for centrally managed
+   identities. Native external-AD configurations also require clustered mode;
+   this is not an unclustered-AD workaround.
+
 Use explicit ``always`` or ``never`` in operator configurations. Omitted/default
 clustering keeps upstream semantics: placement count 1 disables CTDB; other counts
 or omitted placement enable it. Native gateway count never selects the mode.
@@ -368,6 +383,8 @@ Stop and retire a member without deleting logical resources or CephFS data:
 
 For a nonclustered relocation, first stop and retire the old owner with this
 command, then enable the **same logical cluster ID** on the replacement member.
+This transfers placement only: local-user identities and access to existing
+protected files do not automatically follow the service to another gateway.
 An exact retained owner can retry enable idempotently. Deleting a core member or
 withdrawing its successful service row does not retire an uncertain reservation;
 verify stop/fencing rather than force-removing SQL rows to bypass admission.
