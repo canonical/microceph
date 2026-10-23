@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 BASE = Path("/var/snap/microceph/common/robot-smb")
-ROLES = ("smbd", "smbmetrics", "ctdbd", "ctdb-nodes", "daemon", "winbindd")
+ROLES = ("smbd", "smbmetrics", "ctdbd", "daemon", "winbindd")
 DATA_PATHS = {"robot-smb": "/clustered", "robot-never": "/independent", "robot-other": "/independent-other"}
 PAYLOAD = b"MicroCeph Robot SMB sentinel\n" + bytes(range(256)) * 16
 

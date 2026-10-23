@@ -77,7 +77,6 @@ Check Retired SMB Member
     Should Be Equal    ${state}[roles][smbd][ActiveState]    inactive
     Should Be Equal    ${state}[roles][smbmetrics][ActiveState]    inactive
     Should Be Equal    ${state}[roles][ctdbd][ActiveState]    inactive
-    Should Be Equal    ${state}[roles][ctdb-nodes][ActiveState]    inactive
     Should Be Equal    ${state}[roles][winbindd][ActiveState]    inactive
 
 SMB Shared Lab Setup

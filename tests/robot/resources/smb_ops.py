@@ -16,7 +16,7 @@ from robot.libraries.BuiltIn import BuiltIn, RobotNotRunningError
 from microceph_harness import microceph_harness as Harness, SNAP_DEST_NAME
 from smb_guest import PAYLOAD
 
-ROLES = ("smbd", "smbmetrics", "ctdbd", "ctdb-nodes")
+ROLES = ("smbd", "smbmetrics", "ctdbd")
 OWNER_KEY = "user.microceph-test-owner"
 # LXD's test-data disk device ID escapes '-' as '--'. Verified on a real VM;
 # bind this serial to the tagged host attachment before considering guest size.
@@ -170,7 +170,7 @@ def snapshot_ready(snapshot, cluster, port=None, clustered=True):
         state = roles.get(role, {})
         pid = state.get("MainPID", "")
         active = state.get("ActiveState") == "active" and pid.isdigit() and int(pid) > 0
-        if role in ("ctdbd", "ctdb-nodes") and not clustered:
+        if role == "ctdbd" and not clustered:
             if state.get("ActiveState") != "inactive":
                 return False
         elif not active:
@@ -493,7 +493,8 @@ class smb_ops:
             if digest != expected:
                 raise AssertionError("Guest candidate snap differs from the supplied artifact")
             node.install_microceph_from_local_snap(snap, snapd_channel=channel)
-            for plug in ("network", "network-control", "dm-crypt", "smb-identity", "smb-mounts", "ctdb-run", "ctdb-socket", "winbind-run"):
+            for plug in ("network", "network-control", "dm-crypt", "smb-identity", "smb-mounts", "ctdb-run", "ctdb-socket", "winbind-run",
+                         "smb-control-mounts", "smb-control-access"):
                 node.command("snap", "connect", "microceph:" + plug, check=True)
             node.command("snap", "restart", "microceph.daemon", check=True)
             node.wait_for_microceph_control_socket()

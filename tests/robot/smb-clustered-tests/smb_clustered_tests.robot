@@ -29,14 +29,14 @@ Deploy Clustered SMB And Authenticate Through Every Gateway
 Refresh Endpoints And Prove Stable Unchanged Enable
     Require Clustered Deployment
     ${before}=    SMB Snapshots    robot-smb    0    1    2
-    ${ctdb_before}=    SMB Role Tokens    ${before}    ctdbd    ctdb-nodes
+    ${ctdb_before}=    SMB Role Tokens    ${before}    ctdbd
     ${applied}=    Apply SMB Resource    refresh
     Should Be Equal As Integers    ${applied.rc}    0    msg=${applied.stdout}\n${applied.stderr}
     Wait For SMB Ready    0    port=2445
     Wait For SMB Ready    1    port=2445
     Wait For SMB Ready    2    port=2445
     ${after}=    SMB Snapshots    robot-smb    0    1    2
-    ${ctdb_after}=    SMB Role Tokens    ${after}    ctdbd    ctdb-nodes
+    ${ctdb_after}=    SMB Role Tokens    ${after}    ctdbd
     Should Be Equal    ${ctdb_after}    ${ctdb_before}    msg=Endpoint refresh restarted CTDB
     SMB Exact Transfer    0    refreshed.bin
     SMB Exact Transfer    2    refreshed.bin    ${False}

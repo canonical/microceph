@@ -207,6 +207,10 @@ def test_smb_private_transfer_call_paths_use_root_owned_mode0600(tmp_path, monke
         monkeypatch.setattr(library, '_host', host)
         if phase == 'gateway':
             library.provision_smb_lab()
+            for node in library.nodes:
+                connected = {args[2] for name, args in commands
+                             if name == node.name and args[:2] == ('snap', 'connect')}
+                assert {'microceph:smb-control-mounts', 'microceph:smb-control-access'} <= connected
             expected = ['smb_guest.py'] * 3
         else:
             library.owner = 'test-owner'
@@ -239,11 +243,10 @@ def _smb_module():
 def _smb_snapshot(node="node0", clustered=True):
     roles = {r: {"ActiveState": "active", "MainPID": str(i + 10),
                  "ExecMainStartTimestampMonotonic": str(i + 100)}
-             for i, r in enumerate(("smbd", "smbmetrics", "ctdbd", "ctdb-nodes", "daemon"))}
+             for i, r in enumerate(("smbd", "smbmetrics", "ctdbd", "daemon"))}
     if not clustered:
-        for role in ("ctdbd", "ctdb-nodes"):
-            roles[role]["ActiveState"] = "inactive"
-            roles[role]["MainPID"] = "0"
+        roles["ctdbd"]["ActiveState"] = "inactive"
+        roles["ctdbd"]["MainPID"] = "0"
     return {"node": node, "owner": "robot-smb", "status": {"cluster_id": "robot-smb", "ready": True, "stop_requested": False},
             "context": {"clustered": clustered, "smb_port": 1445, "metrics_port": 19922},
             "applied": True, "pending": False, "applied_mtime": 123, "boot_id": "boot-a", "roles": roles}
@@ -307,6 +310,7 @@ def test_smb_snapshot_parser_preserves_real_control_observations():
 
 def test_smb_guest_resources_and_redaction_are_explicit():
     import smb_guest
+    assert "ctdb-nodes" not in smb_guest.ROLES
     docs = smb_guest.resource_documents(["192.0.2.1", "192.0.2.2", "192.0.2.3"], "PRIVATE-PASSWORD")
     assert docs["clustered"]["resources"][1]["custom_ports"] == {"smb": 1445, "smbmetrics": 19922}
     assert docs["refresh"]["custom_ports"] == {"smb": 2445, "smbmetrics": 29922}

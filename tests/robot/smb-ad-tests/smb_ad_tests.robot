@@ -147,10 +147,10 @@ Role Restart And Ordinary Gateway Reboot Preserve Fresh Authentication And Mappi
 Bootstrap Input Change Does Not Rejoin Or Restart Serving Roles
     Require AD Deployment
     ${before}=    SMB Snapshots    robot-ad    0    1
-    ${tokens}=    SMB Role Tokens    ${before}    ctdbd    ctdb-nodes    winbindd    smbd    smbmetrics
+    ${tokens}=    SMB Role Tokens    ${before}    ctdbd    winbindd    smbd    smbmetrics
     Apply AD Checked    ad-refresh
     ${after}=    Wait For SMB AD Refresh    ${before}
-    ${after_tokens}=    SMB Role Tokens    ${after}    ctdbd    ctdb-nodes    winbindd    smbd    smbmetrics
+    ${after_tokens}=    SMB Role Tokens    ${after}    ctdbd    winbindd    smbd    smbmetrics
     Should Be Equal    ${after_tokens}    ${tokens}
     Check AD Persistence
 
@@ -168,7 +168,7 @@ Serving Peer Survives Initial Joiner Stop And Retained State Reenable
 Short Directory Outage Is Bounded And Recovers Without Rejoin
     Require AD Deployment
     ${before}=    SMB Snapshots    robot-ad    0    1
-    ${tokens}=    SMB Role Tokens    ${before}    ctdbd    ctdb-nodes    winbindd    smbd    smbmetrics
+    ${tokens}=    SMB Role Tokens    ${before}    ctdbd    winbindd    smbd    smbmetrics
     AD DC Checked    systemctl    stop    robot-ad-dc
     TRY
         # Sustain unavailability across an ordinary 30-second updater tick.
@@ -187,7 +187,7 @@ Short Directory Outage Is Bounded And Recovers Without Rejoin
     Wait For SMB Ready    0    robot-ad    1445
     Wait For SMB Ready    1    robot-ad    1445
     ${after}=    SMB Snapshots    robot-ad    0    1
-    ${after_tokens}=    SMB Role Tokens    ${after}    ctdbd    ctdb-nodes    winbindd    smbd    smbmetrics
+    ${after_tokens}=    SMB Role Tokens    ${after}    ctdbd    winbindd    smbd    smbmetrics
     Should Be Equal    ${after_tokens}    ${tokens}    msg=Directory outage restarted serving/identity processes
     Check AD Persistence
 
@@ -195,7 +195,7 @@ Local Peer Purge Preserves Identity Shared Resources And Serving Peer
     Require AD Deployment
     ${shared}=    Capture SMB Shared State    robot-ad
     ${peer}=    SMB Snapshots    robot-ad    1
-    ${tokens}=    SMB Role Tokens    ${peer}    ctdbd    ctdb-nodes    winbindd    smbd    smbmetrics
+    ${tokens}=    SMB Role Tokens    ${peer}    ctdbd    winbindd    smbd    smbmetrics
     Run SMB Checked    0    microceph    disable    smb    --cluster-id    robot-ad    --purge
     Check Retired SMB Member    0    robot-ad
     ${retained}=    SMB Snapshot    0    robot-ad
@@ -211,7 +211,7 @@ Local Peer Purge Preserves Identity Shared Resources And Serving Peer
     ${after}=    Capture SMB Shared State    robot-ad
     Should Be Equal    ${after}    ${shared}
     ${peer_after}=    SMB Snapshots    robot-ad    1
-    ${after_tokens}=    SMB Role Tokens    ${peer_after}    ctdbd    ctdb-nodes    winbindd    smbd    smbmetrics
+    ${after_tokens}=    SMB Role Tokens    ${peer_after}    ctdbd    winbindd    smbd    smbmetrics
     Should Be Equal    ${after_tokens}    ${tokens}
     ${stat}=    SMB AD Backing Stat    survivor.bin
     ${expected}=    SMB Payload Digest
