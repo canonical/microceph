@@ -159,15 +159,15 @@ password-authenticated put/get and cross-gateway reads (plus wrong-password deni
 endpoint refresh/no-op, retirement/rejoin, daemon restart, ordinary VM reboot and
 clustered peer-preserving purge, nonclustered second-owner rejection and verified
 sequential placement, plus independent logical IDs on disjoint data paths with
-scoped purge. The singleton scenario checks existing-file access after returning
-to the original gateway with retained Samba state; it does not require local-user
-identities or file ACL access to follow placement to another gateway. Purging a
-standalone service also loses its local identities; repeat runs cannot assume
-access to files protected by those discarded identities. Clustered SMB or external
-AD is recommended for identity continuity; native AD also requires clustered mode.
-Reboot recovery never starts a role or re-enables a placement. A prior failure
-remains failed even if later, independent mode tests can run. Missing deployment
-prerequisites are reported as skips, not passes.
+scoped purge. The singleton scenario checks preserved data bytes during the move
+and existing-file access after returning to the original gateway with retained
+Samba state; it does not require local-user identities or file ACL access to follow
+placement to another gateway. Purging a standalone service also loses its local
+identities; repeat runs cannot assume access to files protected by those discarded
+identities. Clustered SMB or external AD is recommended for identity continuity;
+native AD also requires clustered mode. Reboot recovery never starts a role or
+re-enables a placement. A prior failure remains failed even if later, independent
+mode tests can run. Missing deployment prerequisites are reported as skips, not passes.
 
 Gateways are **real Ubuntu 26.04 VMs**, not nested containers; VM0 also runs
 `smbclient`. Each has 2 vCPU, 3 GiB RAM, a 20 GiB root and dedicated 4 GiB data disk.
@@ -175,7 +175,7 @@ Local defaults require 146 GiB free pool/16 GiB available RAM initially for the
 shared lab, or 122 GiB/13 GiB for isolated non-AD setup. They retain 50 GiB
 storage/4 GiB memory headroom and budget 24 GiB per remaining VM.
 
-CI starts on `self-hosted-linux-amd64-noble-xlarge` with its configured 100 GB disk
+CI starts on `self-hosted-linux-amd64-noble-large` with its configured 100 GB disk
 and the `dir` backend. It explicitly sets `SMB_DISK_HEADROOM_GIB:10` and
 `SMB_DISK_RESERVE_PER_VM_GIB:0`: check observed free space against a 10 GiB floor
 before allocation and at lab verification boundaries, rather than reserve every
@@ -230,6 +230,12 @@ normal Robot artifacts. Allocation names, owner tags and the snap hash are logge
 Teardown deletes only the named/tagged resources; foreign tags or attached volumes
 fail closed. Installation/network helpers may retry known infrastructure failures,
 but SMB placement, resource updates, retirement and reboot are issued only once.
+
+Status observations allow 20 seconds for the API response: native AD readiness
+already permits 12 seconds, followed by a 3-second smbd ping. The outer snapshot
+exec allows 35 seconds for that reader, the 10-second systemd query and transport
+margin. An unavailable or malformed API response still fails readiness; active
+processes alone are not enough.
 
 Dry-run checks keyword resolution, not installed behavior:
 

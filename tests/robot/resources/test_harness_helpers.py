@@ -308,6 +308,86 @@ def test_smb_snapshot_parser_preserves_real_control_observations():
     assert m.parse_snapshot(json.dumps(raw), "node0")["status"] is None
 
 
+def test_smb_payload_digest_survives_robot_library_path_cleanup(tmp_path):
+    import hashlib
+    import os
+    import subprocess
+    import sys
+    from smb_guest import PAYLOAD
+
+    library = Path(__file__).with_name("smb_ops.py")
+    suite = tmp_path / "payload_digest.robot"
+    suite.write_text(
+        "*** Settings ***\n"
+        f"Library    {library}\n"
+        "*** Test Cases ***\n"
+        "Payload Digest After Library Import\n"
+        "    ${digest}=    SMB Payload Digest\n"
+        f"    Should Be Equal    ${{digest}}    {hashlib.sha256(PAYLOAD).hexdigest()}\n")
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, "-m", "robot", "--outputdir", str(tmp_path / "results"), str(suite)],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_smb_snapshot_reader_covers_native_ad_budget_without_inventing_readiness(monkeypatch, tmp_path, capsys):
+    from types import SimpleNamespace
+    import smb_guest
+
+    base = tmp_path / "smb"
+    base.mkdir()
+    monkeypatch.setattr(smb_guest, "Path", lambda value: base if str(value) ==
+                        "/var/snap/microceph/common/smb" else tmp_path / "unused")
+    monkeypatch.setattr(smb_guest.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=""))
+    response = b'HTTP/1.0 200 OK\r\n\r\n{"metadata":{"cluster_id":"robot-ad","ready":true}}'
+    observed = []
+    for required in (6.5, 1000):
+        class Client:
+            def __init__(self, *args):
+                self.chunks = [response, b""]
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def settimeout(self, value):
+                self.timeout = value
+                observed.append(value)
+            def connect(self, path):
+                assert path == "/var/snap/microceph/common/state/control.socket"
+            def sendall(self, request):
+                assert request.startswith(b"GET /1.0/services/smb ")
+            def recv(self, size):
+                if self.timeout < required:
+                    raise TimeoutError("simulated native readiness duration")
+                return self.chunks.pop(0)
+        monkeypatch.setattr(smb_guest.socket, "socket", Client)
+        smb_guest.snapshot("robot-ad")
+        raw = json.loads(capsys.readouterr().out)
+        if required == 6.5:
+            assert raw["api"] is not None, "five seconds cancels a healthy native AD observation"
+            assert observed[-1] >= 12 + 3, "cover the AD readiness and smbd ping budgets"
+            assert json.loads(raw["api"])["metadata"]["ready"] is True
+        else:
+            assert raw["api"] is None, "timeout must remain unavailable, never ready"
+
+
+def test_smb_snapshot_host_budget_covers_reader_and_systemctl():
+    from types import SimpleNamespace
+    m = _smb_module()
+    calls = []
+    class Node:
+        name = "node0"
+        def command(self, *args, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(rc=0, stdout=json.dumps({"api": None, "services": ""}), stderr="")
+    library = m.smb_ops()
+    library.nodes = [Node()]
+    library.smb_snapshot(0)
+    assert calls[0]["timeout"] > 20 + 10, "outer exec must cover API reading and systemctl"
+
+
 def test_smb_guest_resources_and_redaction_are_explicit():
     import smb_guest
     assert "ctdb-nodes" not in smb_guest.ROLES
