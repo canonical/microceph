@@ -263,8 +263,8 @@ class _VM(Harness):
     def _outer_vm(self):
         return "local:" + self.name
 
-    def _vm_argv(self, *rest):
-        return ["lxc", "exec", "-n", self._outer_vm(), "--project", "default",
+    def _vm_argv(self, *rest, vm=None):
+        return ["lxc", "exec", "-n", vm or self._outer_vm(), "--project", "default",
                 "--mode=non-interactive", "--", "env",
                 "PATH=/snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", *rest]
 

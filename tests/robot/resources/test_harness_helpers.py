@@ -4559,6 +4559,27 @@ def test_smb_osd_path_revalidates_host_attachment_and_guest_inventory():
     assert len(calls) == 2
 
 
+@pytest.mark.parametrize("method", ["run_in_vm", "run_in_vm_and_check", "run_in_vm_with_snap_retry"])
+@pytest.mark.parametrize("vm_name", [None, "local:requested-node"])
+def test_smb_vm_exec_accepts_harness_target_keyword(monkeypatch, method, vm_name):
+    node = _smb_module()._VM("owned-node")
+    calls = []
+
+    def execute(argv, timeout):
+        calls.append((argv, timeout))
+        return _Res(0, "ready", "")
+
+    monkeypatch.setattr(node, "_exec", execute)
+    result = getattr(node, method)("printf ready", timeout=30, vm_name=vm_name)
+    assert result.rc == 0
+    assert calls == [([
+        "lxc", "exec", "-n", vm_name or "local:owned-node", "--project", "default",
+        "--mode=non-interactive", "--", "env",
+        "PATH=/snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "bash", "-eo", "pipefail", "-c", "printf ready",
+    ], 30)]
+
+
 def test_smb_guest_clock_diagnostics_are_read_only_without_ntp_readiness(monkeypatch):
     m = _smb_module()
     expected = [('date', '--utc', '--iso-8601=ns'), ('timedatectl',),
