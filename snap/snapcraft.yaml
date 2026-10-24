@@ -465,10 +465,35 @@ parts:
 
   nfs-ganesha:
     plugin: nil
+    # Build only the grace helper from pinned V6.5 sources; keep the archive
+    # daemon and FSAL. Upstream fix:
+    # https://review.gerrithub.io/c/ffilz/nfs-ganesha/+/1256299
+    source: https://github.com/nfs-ganesha/nfs-ganesha.git
+    source-type: git
+    source-commit: 952fb93373a6f9f9e187bf9bc35c41a9fc25efa6
+    source-submodules: []
+    build-packages:
+      - gcc
+      - libc6-dev
+      - librados-dev
+      - patch
+    override-pull: |
+      craftctl default
+      patch --batch --forward --fuzz=0 -d "$CRAFT_PART_SRC" -p1 < \
+        "$CRAFT_PROJECT_DIR/patches/nfs-ganesha/0001-rados-grace-shutdown-client.patch"
+    override-build: |
+      set -eux
+      craftctl default
+      # These two standalone sources only need string declarations from config.h.
+      printf '#include <string.h>\n' > "$CRAFT_PART_BUILD/config.h"
+      install -d "$CRAFT_PART_INSTALL/usr/bin"
+      gcc -O2 -I"$CRAFT_PART_BUILD" -I"$CRAFT_PART_BUILD/src/include" \
+        "$CRAFT_PART_BUILD/src/tools/ganesha-rados-grace.c" \
+        "$CRAFT_PART_BUILD/src/support/rados_grace.c" \
+        -o "$CRAFT_PART_INSTALL/usr/bin/ganesha-rados-grace" -lrados
     stage-packages:
       - nfs-ganesha
       - nfs-ganesha-ceph
-      - nfs-ganesha-rados-grace
     organize:
       sbin/: bin/
       usr/bin/: bin/
