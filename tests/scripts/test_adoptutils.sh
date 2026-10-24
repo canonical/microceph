@@ -237,6 +237,25 @@ test_adoption_traces_non_secret_steps() (
   fi
 )
 
+test_adoption_prepares_guest_snapd() (
+  trap cleanup EXIT
+  local action=$1
+  local missing=""
+  [[ "$action" != install ]] || missing="snap list snapd"
+  setup_test_environment '3' 'HEALTH_OK' "$missing"
+
+  if ! output=$(MICROCEPH_TEST_SNAPD_CHANNEL=latest/candidate PATH="$test_dir/bin:$PATH" \
+      bash "$adoptutils" adopt_cephadm test /tmp/microceph.snap 2>&1); then
+    fail 'adoption failed while preparing guest snapd'
+  fi
+  local prepare_line install_line
+  prepare_line=$(grep -nF -- "exec test -- snap $action snapd --channel=latest/candidate" "$ADOPTUTILS_TEST_LXC_LOG" | cut -d: -f1 || true)
+  install_line=$(grep -nF -- 'snap install --dangerous' "$ADOPTUTILS_TEST_LXC_LOG" | cut -d: -f1 || true)
+  if [[ -z "$prepare_line" || -z "$install_line" || "$prepare_line" -ge "$install_line" ]]; then
+    fail 'adoption did not prepare guest snapd before the local artifact'
+  fi
+)
+
 test_bootstrap_pins_compatible_ceph_image() (
   trap cleanup EXIT
   setup_test_environment '3'
@@ -256,6 +275,8 @@ case "${1:-all}" in
     test_health_timeout_dumps_diagnostics
     test_adoption_does_not_log_admin_key
     test_adoption_traces_non_secret_steps
+    test_adoption_prepares_guest_snapd refresh
+    test_adoption_prepares_guest_snapd install
     test_bootstrap_pins_compatible_ceph_image
     ;;
   waits-for-osds)
@@ -278,6 +299,10 @@ case "${1:-all}" in
     ;;
   traces-non-secret-steps)
     test_adoption_traces_non_secret_steps
+    ;;
+  prepares-snapd)
+    test_adoption_prepares_guest_snapd refresh
+    test_adoption_prepares_guest_snapd install
     ;;
   pins-ceph-image)
     test_bootstrap_pins_compatible_ceph_image

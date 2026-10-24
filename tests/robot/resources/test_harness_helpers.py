@@ -81,6 +81,458 @@ def test_stop_named_vm_requires_confirmed_offline_state(monkeypatch, result):
 
 
 # ---------------------------------------------------------------------------
+# Owned VM launch (no pre-existing deletion or application retries).
+# ---------------------------------------------------------------------------
+
+def test_owned_vm_launch_tags_before_start_and_attaches_persistent_disk(monkeypatch):
+    h = H()
+    assert callable(getattr(h, "launch_owned_test_vm", None)), "missing owned VM lifecycle primitive"
+    calls = []
+    def execute(argv, timeout):
+        calls.append(argv)
+        return _Res(0, "", "")
+    monkeypatch.setattr(h, "_exec", execute)
+    monkeypatch.setattr(h, "wait_for_vm_agent", lambda name: None)
+    h.launch_owned_test_vm("test-vm", "owner-token", data_volume="test-osd")
+    init = next(argv for argv in calls if argv[:2] == ["lxc", "init"])
+    assert "user.microceph-test-owner=owner-token" in init
+    assert "--vm" in init and "local:test-vm" in init
+    assert not any(arg.startswith('cloud-init.user-data=') for arg in init)
+    attach = next(argv for argv in calls if argv[:4] == ["lxc", "config", "device", "add"])
+    assert "source=test-osd" in attach and "pool=default" in attach
+    assert calls.index(attach) < next(i for i, argv in enumerate(calls) if argv[:2] == ["lxc", "start"])
+    assert not any("delete" in argv for argv in calls)
+
+
+def test_owned_vm_launch_refuses_existing_or_unknown_state(monkeypatch):
+    import pytest
+    for result in (_Res(0, "test-vm\n", ""), _Res(1, "", "unavailable")):
+        h = H()
+        assert callable(getattr(h, "launch_owned_test_vm", None)), "missing owned VM lifecycle primitive"
+        calls = []
+        def execute(argv, timeout):
+            calls.append(argv)
+            return result
+        monkeypatch.setattr(h, "_exec", execute)
+        with pytest.raises(AssertionError):
+            h.launch_owned_test_vm("test-vm", "owner-token")
+        assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Private uploads: confined root cannot bypass a foreign-owned mode0600 file.
+# ---------------------------------------------------------------------------
+
+def test_lxc_file_push_preserves_default_transfer_arguments(monkeypatch):
+    h = H()
+    calls = []
+    result = _Res(0, '', '')
+    monkeypatch.setattr(h, '_exec', lambda argv, timeout: calls.append((argv, timeout)) or result)
+    assert h._lxc_file_push('source', 'local:node/destination', 60, 'copy file') is result
+    assert calls == [(['lxc', 'file', 'push', 'source', 'local:node/destination'], 60)]
+
+
+def test_lxc_file_push_private_sets_root_owner_and_restrictive_mode(monkeypatch):
+    h = H()
+    calls = []
+    result = _Res(0, '', '')
+    monkeypatch.setattr(h, '_exec', lambda argv, timeout: calls.append((argv, timeout)) or result)
+    assert h._lxc_file_push('source', 'local:node/private', 60, 'copy private file', private=True) is result
+    assert calls == [(['lxc', 'file', 'push', '--uid=0', '--gid=0', '--mode=0600',
+                      'source', 'local:node/private'], 60)]
+
+
+def test_lxc_file_push_private_propagates_transfer_failure(monkeypatch):
+    import pytest
+    h = H()
+    monkeypatch.setattr(h, '_exec', lambda argv, timeout: _Res(1, '', 'push denied'))
+    with pytest.raises(AssertionError, match='Failed to copy private file: push denied'):
+        h._lxc_file_push('source', 'local:node/private', 60, 'copy private file', private=True)
+
+
+def test_smb_private_transfer_call_paths_use_root_owned_mode0600(tmp_path, monkeypatch):
+    """Exercise gateway, AD/DC, secret and join-token transfers, not just one script."""
+    import hashlib
+    m = _smb_module()
+    snap = tmp_path / 'candidate.snap'
+    snap.write_bytes(b'test-only candidate')
+    digest = hashlib.sha256(snap.read_bytes()).hexdigest()
+    commands = []
+
+    class Node:
+        def __init__(self, name):
+            self.name = name
+        def probe_instance_network(self):
+            pass
+        def observe_time(self):
+            pass
+        def copy_snap_to_vm(self, path):
+            pass
+        def install_microceph_from_local_snap(self, *args, **kwargs):
+            pass
+        def wait_for_microceph_control_socket(self):
+            pass
+        def apt_update(self):
+            pass
+        def apt_install(self, packages):
+            pass
+        def command(self, *args, **kwargs):
+            commands.append((self.name, args))
+            stdout = ''
+            if args[0] == 'sha256sum':
+                stdout = digest
+            elif args == ('snap', 'debug', 'confinement'):
+                stdout = 'strict'
+            elif args[:2] == ('ip', '-4'):
+                stdout = '[{"prefsrc":"192.0.2.1"}]'
+            return _Res(0, stdout, '')
+
+    monkeypatch.setattr(m, '_VM', Node)
+    transfers = {}
+    for phase in ('gateway', 'ad', 'join'):
+        library = m.smb_ops()
+        pushes = []
+        monkeypatch.setattr(library, '_capacity', lambda _: None)
+        monkeypatch.setattr(library, '_variable', lambda key, default: str(snap) if key == 'SNAP_PATH' else default)
+        monkeypatch.setattr(library.harness, 'launch_owned_test_vm', lambda *args, **kwargs: None)
+        monkeypatch.setattr(library.harness, '_exec', lambda argv, timeout: pushes.append(argv) or _Res(0, '', ''))
+        def host(*args):
+            if args[1:] == ('remote', 'get-default'):
+                return 'local'
+            if args[1:3] == ('remote', 'list'):
+                return '{"local":{}}'
+            if args[1:3] == ('file', 'pull'):
+                Path(args[4]).write_text('test-only private input')
+            return ''
+        monkeypatch.setattr(library, '_host', host)
+        if phase == 'gateway':
+            library.provision_smb_lab()
+            for node in library.nodes:
+                connected = {args[2] for name, args in commands
+                             if name == node.name and args[:2] == ('snap', 'connect')}
+                assert {'microceph:smb-control-mounts', 'microceph:smb-control-access'} <= connected
+            expected = ['smb_guest.py'] * 3
+        else:
+            library.owner = 'test-owner'
+            library.nodes = [Node(f'node{i}') for i in range(3)]
+            if phase == 'ad':
+                library.provision_smb_ad_directory()
+                expected = ['smb_ad_guest.py'] * 3 + ['smb_guest.py', 'smb_ad_guest.py', 'ad-secrets.json']
+            else:
+                library.join_smb_member(1)
+                expected = ['join.token']
+        assert [Path(argv[-1]).name for argv in pushes] == expected
+        transfers[phase] = pushes
+    for phase, pushes in transfers.items():
+        assert all(argv[:6] == ['lxc', 'file', 'push', '--uid=0', '--gid=0', '--mode=0600'] for argv in pushes), transfers
+    assert any(args == ('chmod', '0700', library._base) for _, args in commands)
+    assert not any('0644' in args or '0777' in args for _, args in commands)
+
+
+# ---------------------------------------------------------------------------
+# SMB integration observations and ownership (no Robot run context required).
+# ---------------------------------------------------------------------------
+
+def _smb_module():
+    import importlib
+    spec = importlib.util.find_spec("smb_ops")
+    assert spec is not None, "missing SMB area library"
+    return importlib.import_module("smb_ops")
+
+
+def _smb_snapshot(node="node0", clustered=True):
+    roles = {r: {"ActiveState": "active", "MainPID": str(i + 10),
+                 "ExecMainStartTimestampMonotonic": str(i + 100)}
+             for i, r in enumerate(("smbd", "smbmetrics", "ctdbd", "daemon"))}
+    if not clustered:
+        roles["ctdbd"]["ActiveState"] = "inactive"
+        roles["ctdbd"]["MainPID"] = "0"
+    return {"node": node, "owner": "robot-smb", "status": {"cluster_id": "robot-smb", "ready": True, "stop_requested": False},
+            "context": {"clustered": clustered, "smb_port": 1445, "metrics_port": 19922},
+            "applied": True, "pending": False, "applied_mtime": 123, "boot_id": "boot-a", "roles": roles}
+
+
+def test_smb_readiness_requires_owner_applied_error_free_roles():
+    import copy
+    m = _smb_module()
+    s = _smb_snapshot()
+    assert m.snapshot_ready(s, "robot-smb", 1445, True)
+    for field, value in (("owner", "other"), ("applied", False), ("pending", True), ("status", None)):
+        bad = copy.deepcopy(s); bad[field] = value
+        assert not m.snapshot_ready(bad, "robot-smb", 1445, True)
+    bad = copy.deepcopy(s); bad["status"]["error"] = "local update failed"
+    assert not m.snapshot_ready(bad, "robot-smb", 1445, True)
+    bad = copy.deepcopy(s); bad["roles"]["ctdbd"]["ActiveState"] = "failed"
+    assert not m.snapshot_ready(bad, "robot-smb", 1445, True)
+    bad = copy.deepcopy(s); bad["roles"]["smbmetrics"]["MainPID"] = ""
+    assert not m.snapshot_ready(bad, "robot-smb", 1445, True)
+    assert not m.snapshot_ready(s, "robot-smb", 2445, True)
+    assert m.snapshot_ready(_smb_snapshot(clustered=False), "robot-smb", 1445, False)
+    assert not m.snapshot_ready(s, "robot-smb", 1445, False)
+
+
+def test_smb_stability_never_hides_a_transient_error_or_restart():
+    import copy
+    m = _smb_module()
+    before = [_smb_snapshot("a"), _smb_snapshot("b")]
+    assert m.observations_stable(before, [copy.deepcopy(before)])
+    assert not m.observations_stable(before, [])
+    assert not m.observations_stable(before, [[before[0]]])
+    for mutate in (lambda s: s[0]["status"].update(error="failed"),
+                   lambda s: s[0]["roles"]["smbd"].update(MainPID="999"),
+                   lambda s: s[0].update(applied_mtime=456)):
+        bad = copy.deepcopy(before); mutate(bad)
+        assert not m.observations_stable(before, [bad, copy.deepcopy(before)])
+
+
+def test_smb_owned_resources_refuse_foreign_tags_and_ignore_unlisted_names():
+    import pytest
+    m = _smb_module()
+    rows = [{"name": "mine", "config": {"user.microceph-test-owner": "token"}},
+            {"name": "unrelated", "config": {}}]
+    assert m.owned_resources(rows, ["mine", "absent"], "token") == ["mine"]
+    with pytest.raises(AssertionError):
+        m.owned_resources(rows, ["unrelated"], "token")
+
+
+def test_smb_snapshot_parser_preserves_real_control_observations():
+    m = _smb_module()
+    assert callable(getattr(m, "parse_snapshot", None)), "missing raw SMB snapshot parser"
+    raw = {"api": json.dumps({"metadata": {"cluster_id": "robot-smb", "ready": True}}),
+           "services": "Id=snap.microceph.smbd.service\nMainPID=12\nActiveState=active\nExecMainStartTimestampMonotonic=99\n",
+           "owner": "robot-smb"}
+    parsed = m.parse_snapshot(json.dumps(raw), "node0")
+    assert parsed["node"] == "node0" and parsed["status"]["ready"]
+    assert parsed["roles"]["smbd"]["MainPID"] == "12"
+    raw["api"] = "interrupted response"
+    assert m.parse_snapshot(json.dumps(raw), "node0")["status"] is None
+
+
+def test_smb_payload_digest_survives_robot_library_path_cleanup(tmp_path):
+    import hashlib
+    import os
+    import subprocess
+    import sys
+    from smb_guest import PAYLOAD
+
+    library = Path(__file__).with_name("smb_ops.py")
+    suite = tmp_path / "payload_digest.robot"
+    suite.write_text(
+        "*** Settings ***\n"
+        f"Library    {library}\n"
+        "*** Test Cases ***\n"
+        "Payload Digest After Library Import\n"
+        "    ${digest}=    SMB Payload Digest\n"
+        f"    Should Be Equal    ${{digest}}    {hashlib.sha256(PAYLOAD).hexdigest()}\n")
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, "-m", "robot", "--outputdir", str(tmp_path / "results"), str(suite)],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_smb_snapshot_reader_covers_native_ad_budget_without_inventing_readiness(monkeypatch, tmp_path, capsys):
+    from types import SimpleNamespace
+    import smb_guest
+
+    base = tmp_path / "smb"
+    base.mkdir()
+    monkeypatch.setattr(smb_guest, "Path", lambda value: base if str(value) ==
+                        "/var/snap/microceph/common/smb" else tmp_path / "unused")
+    monkeypatch.setattr(smb_guest.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=""))
+    response = b'HTTP/1.0 200 OK\r\n\r\n{"metadata":{"cluster_id":"robot-ad","ready":true}}'
+    observed = []
+    for required in (33, 1000):
+        class Client:
+            def __init__(self, *args):
+                self.chunks = [response, b""]
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def settimeout(self, value):
+                self.timeout = value
+                observed.append(value)
+            def connect(self, path):
+                assert path == "/var/snap/microceph/common/state/control.socket"
+            def sendall(self, request):
+                assert request.startswith(b"GET /1.0/services/smb ")
+            def recv(self, size):
+                if self.timeout < required:
+                    raise TimeoutError("simulated native readiness duration")
+                return self.chunks.pop(0)
+        monkeypatch.setattr(smb_guest.socket, "socket", Client)
+        smb_guest.snapshot("robot-ad")
+        raw = json.loads(capsys.readouterr().out)
+        if required == 33:
+            assert raw["api"] is not None, "cover a healthy 30-second AD observation and smbd ping"
+            assert observed[-1] == 60, "use a standard 60-second API read budget"
+            assert json.loads(raw["api"])["metadata"]["ready"] is True
+        else:
+            assert raw["api"] is None, "timeout must remain unavailable, never ready"
+
+
+def test_smb_snapshot_host_budget_covers_reader_and_systemctl():
+    from types import SimpleNamespace
+    m = _smb_module()
+    calls = []
+    class Node:
+        name = "node0"
+        def command(self, *args, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(rc=0, stdout=json.dumps({"api": None, "services": ""}), stderr="")
+    library = m.smb_ops()
+    library.nodes = [Node()]
+    library.smb_snapshot(0)
+    assert calls[0]["timeout"] == 120, "use a standard 120-second outer execution budget"
+    assert calls[0]["timeout"] > 60 + 10, "outer exec must cover API reading and systemctl"
+
+
+def test_smb_guest_resources_and_redaction_are_explicit():
+    import smb_guest
+    assert "ctdb-nodes" not in smb_guest.ROLES
+    docs = smb_guest.resource_documents(["192.0.2.1", "192.0.2.2", "192.0.2.3"], "PRIVATE-PASSWORD")
+    assert docs["clustered"]["resources"][1]["custom_ports"] == {"smb": 1445, "smbmetrics": 19922}
+    assert docs["refresh"]["custom_ports"] == {"smb": 2445, "smbmetrics": 29922}
+    assert docs["nonclustered"]["resources"][0]["custom_ports"] == {"smb": 3445, "smbmetrics": 39922}
+    assert docs["nonclustered"]["resources"][0]["clustering"] == "never"
+    independent = docs["independent"]["resources"]
+    assert independent[0]["cluster_id"] != docs["nonclustered"]["resources"][0]["cluster_id"]
+    assert independent[0]["clustering"] == "never"
+    assert independent[1]["cephfs"]["path"] != docs["nonclustered"]["resources"][1]["cephfs"]["path"]
+    assert set(smb_guest.DATA_PATHS.values()) == {"/clustered", "/independent", "/independent-other"}
+    raw = json.dumps({"success": False, "results": [{"resource": {"password": "PRIVATE-PASSWORD"}, "msg": "rejected PRIVATE-PASSWORD"}]})
+    result = smb_guest.safe_apply_result(0, raw, "PRIVATE-PASSWORD", ["PRIVATE-PASSWORD"])
+    assert result["success"] is False and "PRIVATE-PASSWORD" not in json.dumps(result)
+
+
+def test_smb_payload_digest_from_fresh_robot_library_import(tmp_path):
+    import hashlib
+    import os
+    import subprocess
+    import sys
+    import smb_guest
+
+    library = Path(__file__).with_name('smb_ops.py').resolve()
+    expected = hashlib.sha256(smb_guest.PAYLOAD).hexdigest()
+    suite = tmp_path / 'payload.robot'
+    suite.write_text(f'''*** Settings ***
+Library    {library}
+*** Test Cases ***
+Payload Digest Uses Shared Fixture
+    ${{digest}}=    SMB Payload Digest
+    Should Be Equal    ${{digest}}    {expected}
+''')
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+    env.pop('PYTHONPATH', None)
+    result = subprocess.run([sys.executable, '-B', '-m', 'robot', '--output', 'NONE',
+                             '--log', 'NONE', '--report', 'NONE', str(suite)],
+                            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_smb_area_instantiates_without_robot_and_never_retries_mutations():
+    m = _smb_module()
+    assert callable(getattr(m, "smb_ops", None)), "missing SMB Robot class"
+    library = m.smb_ops()
+    calls = []
+    class Node:
+        name = "node0"
+        def command(self, *args, **kwargs):
+            calls.append(args)
+            return _Res(1, "", "first failure")
+    library.nodes = [Node()]
+    result = library.smb_node_command(0, "microceph", "enable", "smb", "--cluster-id", "robot-smb")
+    assert result.rc == 1 and len(calls) == 1
+
+
+def test_smb_fixture_retirement_never_retries_or_touches_other_owners(monkeypatch):
+    import pytest
+    m = _smb_module()
+    library = m.smb_ops()
+    assert callable(getattr(library, "retire_smb_fixture_placements", None)), "missing explicit fixture retirement"
+    calls = []
+    class Node:
+        name = "node0"
+        def command(self, *args, **kwargs):
+            calls.append(args)
+            return _Res(0, "", "")
+    library.nodes = [Node()]
+    monkeypatch.setattr(library, "smb_snapshot", lambda *args: {"owner": "other-cluster"})
+    with pytest.raises(AssertionError):
+        library.retire_smb_fixture_placements()
+    assert calls == []
+    monkeypatch.setattr(library, "smb_snapshot", lambda *args: {"owner": "robot-smb"})
+    library.retire_smb_fixture_placements()
+    assert len(calls) == 1 and calls[0] == ("microceph", "disable", "smb", "--cluster-id", "robot-smb")
+
+
+def test_smb_capacity_failure_reports_observed_and_required_resources(monkeypatch):
+    import pytest
+    library = _smb_module().smb_ops()
+    monkeypatch.setattr(library, '_variable', lambda name, default: default)
+    monkeypatch.setattr(library, "_host", lambda *args: json.dumps({"space": {"total": 100 * 1024 ** 3, "used": 0}}))
+    monkeypatch.setattr(Path, "read_text", lambda *args, **kwargs: "MemAvailable: 16777216 kB\n")
+    with pytest.raises(AssertionError) as failure:
+        library._capacity(3)
+    assert "disk free=100.0 GiB, required=122.0 GiB" in str(failure.value)
+    assert "memory available=16.0 GiB, required=13.0 GiB" in str(failure.value)
+
+
+def test_smb_ci_capacity_uses_observed_space_not_full_virtual_disks(monkeypatch):
+    m = _smb_module()
+    library = m.smb_ops()
+    limits = {'SMB_DISK_HEADROOM_GIB': '10', 'SMB_DISK_RESERVE_PER_VM_GIB': '0'}
+    monkeypatch.setattr(library, '_variable', lambda name, default: limits.get(name, default))
+    monkeypatch.setattr(library, '_host', lambda *args: json.dumps({'space': {'total': 100 * 10**9, 'used': 30 * 1024**3}}))
+    monkeypatch.setattr(Path, 'read_text', lambda *args, **kwargs: 'MemAvailable: 67108864 kB\n')
+    observations = []
+    monkeypatch.setattr(m.logger, 'info', observations.append)
+    library._capacity(4)
+    assert any('disk free=63.1 GiB, required=10.0 GiB' in line for line in observations)
+    assert any('memory available=64.0 GiB, required=16.0 GiB' in line for line in observations)
+
+
+def test_smb_ci_capacity_still_rejects_actual_disk_and_memory_shortfalls(monkeypatch):
+    import pytest
+    library = _smb_module().smb_ops()
+    limits = {'SMB_DISK_HEADROOM_GIB': '10', 'SMB_DISK_RESERVE_PER_VM_GIB': '0'}
+    monkeypatch.setattr(library, '_variable', lambda name, default: limits.get(name, default))
+    for disk, memory, evidence in [(9, 64, 'disk free=9.0 GiB, required=10.0 GiB'),
+                                   (60, 15, 'memory available=15.0 GiB, required=16.0 GiB')]:
+        monkeypatch.setattr(library, '_host', lambda *args: json.dumps({'space': {'total': 100 * 1024**3, 'used': (100 - disk) * 1024**3}}))
+        monkeypatch.setattr(Path, 'read_text', lambda *args, **kwargs: f'MemAvailable: {memory * 1024**2} kB\n')
+        with pytest.raises(AssertionError) as failure:
+            library._capacity(4)
+        assert evidence in str(failure.value)
+
+
+def test_smb_capacity_disk_overrides_cannot_disable_headroom_or_use_invalid_budgets(monkeypatch):
+    import pytest
+    library = _smb_module().smb_ops()
+    monkeypatch.setattr(library, '_host', lambda *args: json.dumps({'space': {'total': 200 * 1024**3, 'used': 0}}))
+    monkeypatch.setattr(Path, 'read_text', lambda *args, **kwargs: 'MemAvailable: 67108864 kB\n')
+    for limits in [{'SMB_DISK_HEADROOM_GIB': '0'}, {'SMB_DISK_HEADROOM_GIB': '-1'},
+                   {'SMB_DISK_RESERVE_PER_VM_GIB': '-1'}, {'SMB_DISK_RESERVE_PER_VM_GIB': 'invalid'}]:
+        monkeypatch.setattr(library, '_variable', lambda name, default: limits.get(name, default))
+        with pytest.raises(ValueError, match='SMB disk capacity limits'):
+            library._capacity(4)
+
+
+def test_smb_private_shared_state_compares_keys_without_logging_them():
+    m = _smb_module()
+    resources = '{"resources":[{"resource_type":"ceph.smb.cluster","cluster_id":"robot-never"}]}'
+    a = m.shared_state(resources, '{"auth_dump":[{"entity":"client.smb","key":"PRIVATE-KEY","caps":{"mon":"allow r"}}]}')
+    b = m.shared_state(resources, '{"auth_dump":[{"entity":"client.smb","key":"OTHER-KEY","caps":{"mon":"allow r"}}]}')
+    assert a != b and a == m.shared_state(resources, '{"auth_dump":[{"caps":{"mon":"allow r"},"key":"PRIVATE-KEY","entity":"client.smb"}]}')
+    assert "PRIVATE-KEY" not in repr(a) and "PRIVATE-KEY" not in str(a)
+    import pytest
+    with pytest.raises(AssertionError):
+        m.shared_state('{"resources":[]}', '{"auth_dump":[{"entity":"client.smb","key":"PRIVATE","caps":{}}]}')
+
+
+# ---------------------------------------------------------------------------
 # _csv_lists_instance
 # ---------------------------------------------------------------------------
 
@@ -2096,6 +2548,12 @@ def test_member_in_ceph_status_substring():
     assert placement_status.member_in_ceph_status(None, "node-wrk0") is False
 
 
+@pytest.fixture(autouse=True)
+def isolated_guest_snapd_channel(monkeypatch):
+    # Unit tests opt in explicitly, even when invoked by a configured CI run.
+    monkeypatch.delenv("MICROCEPH_TEST_SNAPD_CHANNEL", raising=False)
+
+
 # ---------------------------------------------------------------------------
 # _poll_until failure semantics
 # ---------------------------------------------------------------------------
@@ -3166,6 +3624,98 @@ def test_no_public_apt_wrapper_takes_a_hand_built_command():
 # snap retry call sites
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("container,installed", [("", True), ("node-wrk0", False)])
+def test_local_artifact_snapd_channel_is_prepared_in_the_guest(monkeypatch, container, installed):
+    h, events = _recording_harness(monkeypatch)
+    assert callable(getattr(h, "prepare_snapd_for_local_snap", None)), "missing guest snapd preparation"
+    monkeypatch.setenv("MICROCEPH_TEST_SNAPD_CHANNEL", "latest/candidate")
+    def execute(command, timeout, quiet=False):
+        events.append(("query", container, command))
+        return _Res(0 if installed or "wait" in command else 1, "", "")
+    monkeypatch.setattr(h, "run_in_vm", execute)
+    monkeypatch.setattr(h, "run_in_container_unchecked", lambda node, command, timeout, quiet=False: execute(command, timeout, quiet))
+    h.prepare_snapd_for_local_snap(container)
+    action = "refresh" if installed else "install"
+    expected = ("ct-snap-retry", container) if container else ("vm-snap-retry",)
+    assert events[-1] == (*expected, f"sudo snap {action} snapd --channel=latest/candidate", 300)
+    assert events[0] == ("query", container, "sudo snap wait system seed.loaded")
+
+
+def test_local_artifact_snapd_preparation_targets_explicit_vm(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+    monkeypatch.setenv("MICROCEPH_TEST_SNAPD_CHANNEL", "latest/candidate")
+
+    def query(command, timeout, quiet=False, vm_name=None):
+        events.append(("query", vm_name, command))
+        return _Res(0, "", "")
+
+    def install(command, timeout, vm_name=None):
+        events.append(("install", vm_name, command))
+        return _Res(0, "", "")
+
+    monkeypatch.setattr(h, "run_in_vm", query)
+    monkeypatch.setattr(h, "run_in_vm_with_snap_retry", install)
+    monkeypatch.setattr(h, "run_in_vm_and_check", install)
+    h.install_microceph_from_local_snap("candidate.snap", vm_name="rgw-node")
+    assert events
+    assert all(event[1] == "rgw-node" for event in events)
+    snapd = next(i for i, event in enumerate(events) if "snap refresh snapd" in event[2])
+    artifact = next(i for i, event in enumerate(events) if "snap install --dangerous" in event[2])
+    assert snapd < artifact
+
+
+def test_local_artifact_snapd_preparation_is_opt_in(monkeypatch):
+    h, events = _recording_harness(monkeypatch)
+    assert callable(getattr(h, "prepare_snapd_for_local_snap", None)), "missing guest snapd preparation"
+    monkeypatch.delenv("MICROCEPH_TEST_SNAPD_CHANNEL", raising=False)
+    h.prepare_snapd_for_local_snap()
+    assert events == []
+
+
+@pytest.mark.parametrize("path", ["vm", "builder", "upgrade"])
+def test_local_snap_install_paths_prepare_snapd_before_artifact(monkeypatch, path):
+    h, events = _recording_harness(monkeypatch)
+    assert callable(getattr(h, "prepare_snapd_for_local_snap", None)), "missing guest snapd preparation"
+    monkeypatch.setattr(h, "prepare_snapd_for_local_snap", lambda container="", channel=None: events.append(("snapd", container)))
+    monkeypatch.setattr(h, "_poll_until", lambda *args, **kwargs: None)
+    if path == "vm":
+        h.install_microceph_from_local_snap("candidate.snap")
+    elif path == "builder":
+        h.build_base_lxd_image("/root")
+    else:
+        h.upgrade_multi_node()
+    installs = [(i, e) for i, e in enumerate(events) if e[0] in ("vm-snap-retry", "ct-snap-retry") and "snap install --dangerous" in e[-2]]
+    assert installs
+    assert sum(e[0] == "snapd" for e in events) == len(installs)
+    for index, event in installs:
+        target = event[1] if event[0] == "ct-snap-retry" else ""
+        assert ("snapd", target) in events[:index]
+
+
+@pytest.mark.parametrize("channel,installed", [("", True), ("latest/candidate", True), ("latest/candidate", False)])
+def test_dsl_snapd_preparation_stays_in_the_vm(monkeypatch, tmp_path, channel, installed):
+    import subprocess
+    monkeypatch.setenv("MICROCEPH_TEST_SNAPD_CHANNEL", channel)
+    script = Path(__file__).resolve().parents[2] / "scripts/test_dsl_functest.sh"
+    trace = tmp_path / "calls"
+    result = subprocess.run(["bash", "-c", '''
+source "$1"
+TRACE_FILE="$2"
+INSTALLED="$3"
+log() { :; }
+vm_exec() {
+    printf '%s\\n' "$*" >> "$TRACE_FILE"
+    if [[ "$*" == "snap list snapd" && "$INSTALLED" == "false" ]]; then return 1; fi
+}
+declare -F prepare_snapd_for_local_snap >/dev/null || { echo 'missing DSL snapd preparation'; exit 1; }
+prepare_snapd_for_local_snap
+''', "test", str(script), str(trace), str(installed).lower()], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = trace.read_text().splitlines() if trace.exists() else []
+    expected = ["snap wait system seed.loaded", "snap list snapd", f"snap {'refresh' if installed else 'install'} snapd --channel={channel}"] if channel else []
+    assert calls == expected
+
+
 def test_build_base_lxd_image_retries_the_builder_snap_install(monkeypatch):
     h, events = _recording_harness(monkeypatch)
 
@@ -3684,3 +4234,1090 @@ def test_rgw_scenario_stops_sampler_when_request_fails(failure, tmp_path, rgw_sc
         assert result.stdout == ""
     finally:
         release.set()
+
+
+# External directory fixtures: assertions remain in the Robot suite.
+def test_smb_ad_resource_allowlist_and_wrong_join_are_separate():
+    import smb_ad_guest as ad
+    docs = ad.resource_documents(['192.0.2.1', '192.0.2.2'], '192.0.2.4', 'PRIVATE')
+    good = docs['ad']['resources']
+    cluster = next(r for r in good if r['resource_type'] == 'ceph.smb.cluster')
+    assert cluster['auth_mode'] == 'active-directory' and cluster['clustering'] == 'always'
+    assert cluster['domain_settings']['realm'] == ad.REALM
+    assert cluster['custom_dns'] == ['192.0.2.4']
+    shares = [r for r in good if r['resource_type'] == 'ceph.smb.share']
+    assert {s['share_id'] for s in shares} == {'data', 'read', 'auth'}
+    assert all(s['restrict_access'] for s in shares)
+    assert shares[0]['login_control'] == [{'name': 'ROBOT\\writers', 'category': 'group', 'access': 'read-write'}]
+    assert next(s for s in shares if s['share_id'] == 'read')['readonly'] is True
+    wrong = docs['ad-wrong']['resources']
+    assert next(r for r in wrong if r['resource_type'] == 'ceph.smb.cluster')['cluster_id'] != cluster['cluster_id']
+    assert next(r for r in wrong if r['resource_type'] == 'ceph.smb.join.auth')['auth']['password'] != 'PRIVATE'
+    refresh = docs['ad-refresh']
+    assert refresh['resource_type'] == 'ceph.smb.join.auth' and refresh['auth']['username'] == 'bob'
+
+
+def test_smb_ad_negative_cluster_does_not_claim_positive_data_paths():
+    import smb_ad_guest as ad
+    docs = ad.resource_documents(['192.0.2.1', '192.0.2.2'], '192.0.2.4', 'PRIVATE')
+    def paths(kind):
+        return {(r['cephfs']['volume'], r['cephfs']['path'])
+                for r in docs[kind]['resources'] if r['resource_type'] == 'ceph.smb.share'}
+    # Retirement retains mgr resources/earmarks; both logical clusters coexist.
+    assert paths('ad') == {('robotsmb', '/ad')}
+    assert paths('ad-wrong')
+    assert paths('ad-wrong').isdisjoint(paths('ad'))
+
+
+def test_smb_ad_prepares_isolated_paths_before_and_after_identity_mapping(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+    import smb_ad_guest as ad
+    created, ownership, modes, shutdowns = set(), [], [], []
+    monkeypatch.setattr(ad, 'BASE', tmp_path)
+    (tmp_path / 'ad-wrong.json').write_text(json.dumps(ad.resource_documents(['192.0.2.1'], '192.0.2.4', 'PRIVATE')['ad-wrong']))
+    fs = SimpleNamespace(
+        conf_set=lambda *args: None,
+        mount=lambda: None,
+        mkdirs=lambda path, mode: created.add(path),
+        chown=lambda *args: ownership.append(args),
+        chmod=lambda *args: modes.append(args),
+        shutdown=lambda: shutdowns.append(True),
+    )
+    monkeypatch.setitem(sys.modules, 'cephfs', SimpleNamespace(LibCephFS=lambda **kwargs: fs))
+    monkeypatch.setenv('SNAP_DATA', '/fixture/snap-data')
+    for uid, gid in ((0, 0), (2201, 2203)):
+        ad.prepare_data(uid, gid)
+        assert created == {'/ad', '/ad-wrong'}
+        assert ('/ad', uid, gid) in ownership
+        assert ('/ad', 0o755) in modes
+    assert len(shutdowns) == 2
+
+
+def test_smb_ad_backing_stat_uses_namedtuple_fields(monkeypatch, capsys):
+    import hashlib
+    import sys
+    from collections import namedtuple
+    from types import SimpleNamespace
+    import smb_ad_guest as ad
+    # Match the independently observed packaged LibCephFS.stat return contract.
+    fields = ('st_dev st_ino st_mode st_nlink st_uid st_gid st_rdev st_size '
+              'st_blksize st_blocks st_atime st_mtime st_ctime').split()
+    StatResult = namedtuple('StatResult', fields, defaults=[0] * len(fields))
+    closed, shutdowns, reads = [], [], []
+    fs = SimpleNamespace(
+        conf_set=lambda *args: None,
+        mount=lambda: None,
+        stat=lambda path: StatResult(st_uid=103103, st_gid=102513, st_mode=0o100640),
+        open=lambda path, mode: 17,
+        read=lambda *args: reads.append(args) or ad.PAYLOAD,
+        close=lambda fd: closed.append(fd),
+        shutdown=lambda: shutdowns.append(True),
+    )
+    monkeypatch.setitem(sys.modules, 'cephfs', SimpleNamespace(LibCephFS=lambda **kwargs: fs))
+    monkeypatch.setenv('SNAP_DATA', '/fixture/snap-data')
+    ad.data_stat('kerberos.bin')
+    assert json.loads(capsys.readouterr().out) == {
+        'uid': 103103, 'gid': 102513, 'mode': 0o640,
+        'digest': hashlib.sha256(ad.PAYLOAD).hexdigest(),
+    }
+    assert reads == [(17, 0, len(ad.PAYLOAD) + 1)]
+    assert closed == [17] and shutdowns == [True]
+
+
+def test_smb_ad_protocols_cannot_fallback_or_leak_passwords():
+    import smb_ad_guest as ad
+    kerberos = ad.client_argv('192.0.2.2', 'data', 'alice', 'kerberos', 'get sentinel.bin /tmp/read')
+    assert '//robot-ad.robot.test/data' in kerberos and '--use-kerberos=required' in kerberos
+    assert '-I' in kerberos and '192.0.2.2' in kerberos and '-A' not in kerberos
+    # Samba's -N marks a NULL password as specified, invalidating the cache in POST.
+    assert '-N' not in kerberos and '--no-pass' not in kerberos
+    assert '--use-krb5-ccache=FILE:' + str(ad.BASE / 'client.ccache') in kerberos
+    assert '-U' not in kerberos and '--password' not in kerberos
+    ntlm = ad.client_argv('192.0.2.2', 'auth', 'bob', 'ntlm', 'ls')
+    assert '--use-kerberos=off' in ntlm and '--option=client ntlmv2 auth=yes' in ntlm
+    assert '-A' in ntlm and '-U' not in ntlm
+    import pytest
+    with pytest.raises(ValueError):
+        ad.client_argv('192.0.2.2', 'data', 'alice', 'desired', 'ls')
+    with pytest.raises(ValueError):
+        ad.client_argv('192.0.2.2', 'data', 'alice%secret', 'ntlm', 'ls')
+
+
+def test_smb_ad_mapping_parser_requires_actual_sid_uid_gid_and_group():
+    import smb_ad_guest as ad
+    import pytest
+    raw = {'alice': ['S-1-5-21-1-2-3-1101 SID_USER (1)', 'ROBOT\\alice:*:2201:2200::/:/bin/false'],
+           'bob': ['S-1-5-21-1-2-3-1102 SID_USER (1)', 'ROBOT\\bob:*:2202:2200::/:/bin/false'],
+           'writers': ['S-1-5-21-1-2-3-1103 SID_DOM_GROUP (2)', 'ROBOT\\writers:x:2203:']}
+    value = ad.parse_mappings(raw)
+    assert value['alice'] == {'sid': 'S-1-5-21-1-2-3-1101', 'uid': 2201, 'gid': 2200}
+    assert value['writers']['gid'] == 2203
+    raw['alice'][1] = ''
+    with pytest.raises(ValueError):
+        ad.parse_mappings(raw)
+
+
+def test_smb_ad_readiness_includes_winbind():
+    import copy
+    m = _smb_module()
+    state = _smb_snapshot()
+    state['context']['ad_member'] = {'realm': 'ROBOT.TEST'}
+    assert not m.snapshot_ready(state, 'robot-smb')
+    state['roles']['winbindd'] = copy.deepcopy(state['roles']['smbd'])
+    assert m.snapshot_ready(state, 'robot-smb')
+
+
+def test_smb_ad_client_uses_fresh_cache_and_single_io_process(tmp_path, monkeypatch, capsys):
+    import smb_ad_guest as ad
+    monkeypatch.setattr(ad, 'BASE', tmp_path)
+    (tmp_path / 'ad-secrets.json').write_text(json.dumps({'alice': 'PRIVATE', 'bob': 'BOB'}))
+    (tmp_path / 'payload.bin').write_bytes(b'payload')
+    (tmp_path / 'client.ccache').write_text('stale')
+    bin_dir = tmp_path / 'bin'; bin_dir.mkdir()
+    (bin_dir / 'kinit').write_text('#!/bin/sh\n[ ! -f "${KRB5CCNAME#FILE:}" ] || exit 9\nread -r pw\n[ "$pw" = PRIVATE ] || exit 8\nprintf fresh > "${KRB5CCNAME#FILE:}"\n')
+    (bin_dir / 'smbclient').write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "' + str(tmp_path / 'calls') + '"\necho PRIVATE\nexit 1\n')
+    (bin_dir / 'klist').write_text('#!/bin/sh\necho cifs/robot-ad.robot.test@ROBOT.TEST\n')
+    for f in bin_dir.iterdir():
+        f.chmod(0o700)
+    import os
+    monkeypatch.setenv('PATH', str(bin_dir) + ':' + os.environ['PATH'])
+    ad.client('192.0.2.1', 'data', 'alice', 'kerberos', 'get', 'sentinel.bin')
+    value = json.loads(capsys.readouterr().out)
+    assert value['rc'] == 1 and 'PRIVATE' not in value['message'] and 'cifs/' in value['ticket']
+    assert len((tmp_path / 'calls').read_text().splitlines()) == 1
+    assert (tmp_path / 'client.ccache').read_text() == 'fresh'
+
+
+def test_smb_ad_dc_observes_account_identity_not_trust_secrets():
+    import smb_ad_guest as ad
+    value = ad.account_values({'objectSid': ['S-1-5-21-1-2-3-1101'], 'pwdLastSet': ['123'], 'msDS-KeyVersionNumber': ['2'], 'unicodePwd': ['SECRET']})
+    assert value == {'objectSid': 'S-1-5-21-1-2-3-1101', 'pwdLastSet': '123', 'msDS-KeyVersionNumber': '2'}
+    import pytest
+    with pytest.raises(ValueError):
+        ad.account_values({})
+
+
+def test_smb_ad_capacity_counts_four_guests(monkeypatch):
+    library = _smb_module().smb_ops()
+    monkeypatch.setattr(library, '_variable', lambda name, default: default)
+    monkeypatch.setattr(library, '_host', lambda *args: json.dumps({'space': {'total': 140 * 1024 ** 3, 'used': 0}}))
+    monkeypatch.setattr(Path, 'read_text', lambda *args, **kwargs: 'MemAvailable: 20000000 kB\n')
+    import pytest
+    with pytest.raises(AssertionError, match='required=146.0 GiB'):
+        library.require_smb_ad_capacity()
+
+
+def test_smb_ad_client_reports_bounded_directory_timeout_without_raw_output(tmp_path, monkeypatch, capsys):
+    import smb_ad_guest as ad
+    import subprocess
+    monkeypatch.setattr(ad, 'BASE', tmp_path)
+    (tmp_path / 'ad-secrets.json').write_text('{"alice":"PRIVATE"}')
+    def expired(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 65, output='PRIVATE')
+    monkeypatch.setattr(ad, 'run', expired)
+    ad.client('192.0.2.1', 'data', 'alice', 'ntlm', 'get', 'sentinel.bin')
+    result = json.loads(capsys.readouterr().out)
+    assert result['rc'] == 124 and result['digest'] == ''
+    assert 'PRIVATE' not in repr(result)
+
+
+def test_smb_ad_resources_use_actual_pinned_mgr_allowlist():
+    import os
+    import pytest
+    import subprocess
+    source = os.environ.get('MICROCEPH_SMB_TEST_CEPH_SRC')
+    if not source:
+        pytest.skip('requires pinned Ceph source via MICROCEPH_SMB_TEST_CEPH_SRC')
+    # A package/type alias bypasses only mgr daemon imports in the sparse source;
+    # actual load/validation and login-control generation execute unmodified.
+    code = '''
+import sys, types, typing
+from pathlib import Path
+src=Path(sys.argv[1])
+sys.path[:0]=[str(src/'pybind/mgr'),str(src/'python-common'),sys.argv[2]]
+pkg=types.ModuleType('smb');pkg.__path__=[str(src/'pybind/mgr/smb')];sys.modules['smb']=pkg
+mgr=types.ModuleType('mgr_module');mgr.HandlerFuncType=typing.Callable;sys.modules['mgr_module']=mgr
+from smb.resources import load, Share
+from smb.handler import _generate_share_login_control
+from smb_ad_guest import resource_documents
+for name, doc in resource_documents(['192.0.2.1','192.0.2.2'],'192.0.2.4','private').items():
+    for resource in load(doc):
+        if isinstance(resource, Share):
+            config={'options':{}}
+            _generate_share_login_control(resource, config)
+            assert config['options']['valid users'] in ('@ROBOT\\\\writers','@ROBOT\\\\readers')
+            key='write list' if resource.share_id == 'data' else 'read list'
+            assert config['options'][key] == config['options']['valid users']
+# Exercise the unmodified manager's ownership check in actual suite order.
+# Only filesystem I/O is replaced; retirement deliberately retains earmarks.
+from smb.config_store import MemConfigStore
+from smb.staging import Staging, cross_check_resource
+staging = Staging(MemConfigStore())
+earmarks = {}
+def set_earmark(path, volume, value):
+    earmarks[(volume, path)] = value
+resolver = types.SimpleNamespace(
+    get_earmark=lambda path, volume: earmarks.get((volume, path)),
+    set_earmark=set_earmark,
+    check_earmark=lambda value, scope: value.startswith(scope.value + '.'),
+)
+paths = types.SimpleNamespace(resolve_exists=lambda volume, group, subvolume, path: path)
+docs = resource_documents(['192.0.2.1','192.0.2.2'],'192.0.2.4','private')
+for kind in ('ad-wrong', 'ad'):
+    loaded = list(load(docs[kind]))
+    for resource in loaded:
+        staging.stage(resource)
+    for resource in loaded:
+        if isinstance(resource, Share):
+            cross_check_resource(resource, staging=staging,
+                                 path_resolver=paths, earmark_resolver=resolver)
+assert set(earmarks.values()) == {'smb.cluster.robot-bad', 'smb.cluster.robot-ad'}
+'''
+    result = subprocess.run([os.environ.get('MICROCEPH_SMB_TEST_PYTHON', '/usr/bin/python3'), '-B', '-c', code,
+                             source, str(Path(__file__).parent)], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+
+
+def test_smb_ad_partial_setup_diagnostics_do_not_hide_the_original_failure():
+    _smb_module().smb_ops().smb_ad_diagnostics()
+
+# Shared SMB fixture prerequisites: exact owned device identity and guest clocks.
+def _owned_osd_inventory():
+    m = _smb_module()
+    instance = {'name': 'node', 'expanded_config': {m.OWNER_KEY: 'owner'},
+                'expanded_devices': {'root': {'type': 'disk', 'path': '/', 'pool': 'default'},
+                                     'test-data': {'type': 'disk', 'pool': 'default', 'source': 'node-osd'}}}
+    volume = {'name': 'node-osd', 'content_type': 'block', 'config': {m.OWNER_KEY: 'owner'}}
+    blocks = {'blockdevices': [
+        {'name': '/dev/sdb', 'type': 'disk', 'size': 20 * 1024**3, 'serial': 'lxd_root',
+         'pkname': None, 'mountpoints': [], 'children': [
+             {'name': '/dev/sdb1', 'type': 'part', 'pkname': '/dev/sdb', 'serial': None, 'mountpoints': ['/']}]},
+        {'name': '/dev/sdc', 'type': 'disk', 'size': 4 * 1024**3, 'serial': 'lxd_test--data',
+         'pkname': None, 'mountpoints': []}]}
+    return instance, volume, blocks
+
+
+def test_smb_osd_selector_uses_owned_attachment_serial_not_letter_or_size():
+    m = _smb_module()
+    assert callable(getattr(m, 'select_owned_osd', None)), 'missing exact owned OSD selector'
+    instance, volume, blocks = _owned_osd_inventory()
+    blocks['blockdevices'].append({'name': '/dev/sda', 'type': 'disk', 'size': 4 * 1024**3,
+                                   'serial': 'unrelated', 'pkname': None, 'mountpoints': []})
+    assert m.select_owned_osd(instance, volume, blocks, 'node', 'node-osd', 'default', 'owner') == '/dev/sdc'
+
+
+def test_smb_osd_selector_refuses_unsafe_or_unproven_identity():
+    import copy
+    import pytest
+    m = _smb_module()
+    assert callable(getattr(m, 'select_owned_osd', None)), 'missing exact owned OSD selector'
+    mutations = [
+        lambda i, v, b: i['expanded_config'].update({m.OWNER_KEY: 'foreign'}),
+        lambda i, v, b: v['config'].update({m.OWNER_KEY: 'foreign'}),
+        lambda i, v, b: i['expanded_devices']['test-data'].update(source='other-volume'),
+        lambda i, v, b: i['expanded_devices']['test-data'].update(pool='other-pool'),
+        lambda i, v, b: i['expanded_devices']['test-data'].update(path='/'),
+        lambda i, v, b: v.update(content_type='filesystem'),
+        lambda i, v, b: b['blockdevices'][1].update(serial=None),
+        lambda i, v, b: b['blockdevices'][1].update(size=20 * 1024**3),
+        lambda i, v, b: b['blockdevices'][1].update(type='part', pkname='/dev/sdb'),
+        lambda i, v, b: b['blockdevices'][1].update(mountpoints=['/mnt']),
+        lambda i, v, b: b['blockdevices'][1].update(children=[{'name': '/dev/sdc1', 'mountpoints': ['/']}]),
+        lambda i, v, b: b['blockdevices'].append(copy.deepcopy(b['blockdevices'][1])),
+        lambda i, v, b: b['blockdevices'][0]['children'][0].update(mountpoints=[]),
+        lambda i, v, b: b['blockdevices'][1].pop('mountpoints'),
+        lambda i, v, b: b['blockdevices'][1].pop('pkname'),
+        lambda i, v, b: b['blockdevices'][0]['children'].append(b['blockdevices'].pop()),
+        lambda i, v, b: b['blockdevices'][1].update(name='/dev/../sdc'),
+    ]
+    for mutation in mutations:
+        instance, volume, blocks = copy.deepcopy(_owned_osd_inventory())
+        mutation(instance, volume, blocks)
+        with pytest.raises(AssertionError):
+            m.select_owned_osd(instance, volume, blocks, 'node', 'node-osd', 'default', 'owner')
+
+
+def test_smb_osd_path_revalidates_host_attachment_and_guest_inventory():
+    from types import SimpleNamespace
+    library = _smb_module().smb_ops()
+    assert callable(getattr(library, 'smb_osd_path', None)), 'missing per-node OSD discovery'
+    instance, volume, blocks = _owned_osd_inventory()
+    calls = []
+    def command(*args, **kwargs):
+        calls.append(args)
+        return _Res(0, json.dumps(blocks), '')
+    library.owner, library.volumes = 'owner', ['node-osd']
+    library.nodes = [SimpleNamespace(name='node', command=command)]
+    library._host = lambda *args: json.dumps(instance if '/instances/' in args[-1] else volume)
+    assert library.smb_osd_path(0) == '/dev/sdc'
+    assert calls[0][0] == 'lsblk' and '--json' in calls[0] and 'SERIAL' in calls[0][-1]
+    blocks['blockdevices'][1]['mountpoints'] = ['/mounted-since-first-probe']
+    import pytest
+    with pytest.raises(AssertionError):
+        library.smb_osd_path(0)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("method", ["run_in_vm", "run_in_vm_and_check", "run_in_vm_with_snap_retry"])
+@pytest.mark.parametrize("vm_name", [None, "local:requested-node"])
+def test_smb_vm_exec_accepts_harness_target_keyword(monkeypatch, method, vm_name):
+    node = _smb_module()._VM("owned-node")
+    calls = []
+
+    def execute(argv, timeout):
+        calls.append((argv, timeout))
+        return _Res(0, "ready", "")
+
+    monkeypatch.setattr(node, "_exec", execute)
+    result = getattr(node, method)("printf ready", timeout=30, vm_name=vm_name)
+    assert result.rc == 0
+    assert calls == [([
+        "lxc", "exec", "-n", vm_name or "local:owned-node", "--project", "default",
+        "--mode=non-interactive", "--", "env",
+        "PATH=/snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "bash", "-eo", "pipefail", "-c", "printf ready",
+    ], 30)]
+
+
+def test_smb_guest_clock_diagnostics_are_read_only_without_ntp_readiness(monkeypatch):
+    m = _smb_module()
+    expected = [('date', '--utc', '--iso-8601=ns'), ('timedatectl',),
+                ('chronyc', 'tracking'), ('chronyc', '-n', 'sources', '-v'),
+                ('journalctl', '-b', '-u', 'chrony', '--no-pager', '-n', '60')]
+    # No selected source, a large remaining correction, or no chrony installation
+    # must not replace the actual Ceph clock-health/Kerberos authentication gates.
+    for result in (_Res(0, 'NTPSynchronized=no\nStratum: 0\nLeap status: Not synchronised', ''),
+                   _Res(0, 'System time: 0.286 seconds slow of NTP time', ''),
+                   _Res(127, '', 'chronyc: command not found')):
+        node = m._VM('owned-node')
+        assert callable(getattr(node, 'observe_time', None)), 'missing read-only clock diagnostics'
+        calls = []
+        def command(*args, **kwargs):
+            calls.append(args)
+            assert kwargs == {'timeout': 10}
+            return result
+        monkeypatch.setattr(node, 'command', command)
+        node.observe_time()
+        assert calls == expected
+
+
+def test_smb_guest_clock_diagnostic_timeout_keeps_remaining_evidence(monkeypatch):
+    m = _smb_module()
+    node = m._VM('owned-node')
+    assert callable(getattr(node, 'observe_time', None)), 'missing read-only clock diagnostics'
+    calls, warnings = [], []
+    def command(*args, **kwargs):
+        calls.append(args)
+        if args == ('timedatectl',):
+            raise TimeoutError('time service unavailable')
+        return _Res(0, '', '')
+    monkeypatch.setattr(node, 'command', command)
+    monkeypatch.setattr(m.logger, 'warn', warnings.append)
+    node.observe_time()
+    assert len(calls) == 5
+    assert calls[-1] == ('journalctl', '-b', '-u', 'chrony', '--no-pager', '-n', '60')
+    assert len(warnings) == 1 and 'time service unavailable' in warnings[0]
+
+
+def test_smb_gateway_and_dc_observe_clocks_without_clock_configuration(tmp_path, monkeypatch):
+    import pytest
+    m = _smb_module()
+    class Observed(Exception):
+        pass
+    class Node:
+        def __init__(self, name):
+            self.name = name
+        def probe_instance_network(self):
+            pass
+        def observe_time(self):
+            raise Observed()
+    monkeypatch.setattr(m, '_VM', Node)
+    snap = tmp_path / 'candidate.snap'
+    snap.write_bytes(b'test-only')
+    for ad in (False, True):
+        library = m.smb_ops()
+        monkeypatch.setattr(library, '_variable', lambda key, default: str(snap) if key == 'SNAP_PATH' else default)
+        monkeypatch.setattr(library, '_capacity', lambda _: None)
+        launches, host_calls = [], []
+        def host(*args):
+            host_calls.append(args)
+            return 'local' if args[1:] == ('remote', 'get-default') else '{"local":{}}'
+        monkeypatch.setattr(library.harness, 'launch_owned_test_vm', lambda *args, **kwargs: launches.append(kwargs))
+        monkeypatch.setattr(library, '_host', host)
+        with pytest.raises(Observed):
+            (library.provision_smb_ad_directory if ad else library.provision_smb_lab)()
+        assert 'cloud_config' not in launches[0]
+        assert launches[0]['image'] == 'ubuntu:26.04'
+        assert all(args[0] == 'lxc' for args in host_calls)
+
+
+def test_smb_ceph_health_observation_records_clock_status():
+    from types import SimpleNamespace
+    library = _smb_module().smb_ops()
+    assert callable(getattr(library, 'observe_smb_ceph_health', None)), 'missing Ceph clock gate observation'
+    calls = []
+    def command(*args, **kwargs):
+        calls.append(args)
+        return _Res(0, '{"status":"HEALTH_WARN","checks":{"MON_CLOCK_SKEW":{}}}', '')
+    library.nodes = [SimpleNamespace(command=command)]
+    assert 'MON_CLOCK_SKEW' in library.observe_smb_ceph_health()['checks']
+    assert ('microceph.ceph', 'time-sync-status', '-f', 'json') in calls
+
+
+def test_smb_ad_setup_rechecks_ceph_clock_health_after_directory_preparation():
+    from robot.api import get_model
+    model = get_model(Path(__file__).parent / 'smb_suite.resource')
+    setup = next(block for section in model.sections for block in section.body
+                 if getattr(block, 'name', '') == 'SMB Shared Lab Setup' and hasattr(block, 'body'))
+    calls = [statement.keyword for statement in setup.body if hasattr(statement, 'keyword')]
+    assert calls.index('Require SMB Ceph Health') > calls.index('Provision SMB AD Directory')
+
+
+# Captured Ceph startup placement transition: phase06, not an AD acceptance pass.
+def _smb_ceph_readiness_fixture():
+    return json.loads((Path(__file__).parent / 'fixtures' / 'smb_ceph_readiness.json').read_text())
+
+
+def _smb_ceph_clock_warning_fixture():
+    return json.loads((Path(__file__).parent / 'fixtures' / 'smb_ceph_clock_warning.json').read_text())
+
+
+def test_smb_ceph_readiness_accepts_captured_clock_warning():
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    warning = _smb_ceph_clock_warning_fixture()
+    assert m.smb_ceph_readiness_signature(warning['health'], warning['clock'],
+        sample['settled_map'], sample['pgs'], sample['settled_map']) is not None
+
+
+def test_smb_ceph_clock_warning_does_not_hide_other_readiness_failures():
+    import copy
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    warning = _smb_ceph_clock_warning_fixture()
+    baseline = [warning['health'], warning['clock'], sample['settled_map'],
+                sample['pgs'], copy.deepcopy(sample['settled_map'])]
+    mutations = [
+        (0, lambda d: d.update(status='HEALTH_ERR')),
+        (0, lambda d: d['checks']['MON_CLOCK_SKEW'].update(severity='HEALTH_ERR')),
+        (0, lambda d: d['checks'].update(MON_DOWN={'severity': 'HEALTH_WARN'})),
+        (0, lambda d: d['checks'].update(PG_AVAILABILITY={'severity': 'HEALTH_WARN'})),
+        (0, lambda d: d.update(checks={'OSD_DOWN': {'severity': 'HEALTH_WARN'}})),
+        (0, lambda d: d.update(checks={'MON_CLOCK_SKEW': None})),
+        (0, lambda d: d.update(checks={'MON_CLOCK_SKEW': {}})),
+        (1, lambda d: d['timechecks'].update(round_status='ongoing')),
+        (1, lambda d: d.update(time_skew_status={})),
+        (1, lambda d: next(iter(d['time_skew_status'].values())).update(health='HEALTH_ERR')),
+        (1, lambda d: next(iter(d['time_skew_status'].values())).update(health='UNKNOWN')),
+        (2, lambda d: d['osds'][0].update(up=0)),
+        (2, lambda d: d['pools'][0].update(pg_num_target=999)),
+        (3, lambda d: d['pg_stats'][0].update(state='peering')),
+        (4, lambda d: d.update(epoch=d['epoch'] + 1)),
+    ]
+    for index, mutate in mutations:
+        args = copy.deepcopy(baseline)
+        mutate(args[index])
+        if index == 2:
+            args[4] = copy.deepcopy(args[2])
+        assert m.smb_ceph_readiness_signature(*args) is None, args
+
+
+def test_smb_ceph_clock_warning_is_reported_after_two_settled_samples(monkeypatch):
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    warning = _smb_ceph_clock_warning_fixture()
+    sample['clock'] = warning['clock']
+    clock, calls, warnings = [0], [], []
+    monkeypatch.setattr(m.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(m.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monkeypatch.setattr(m.logger, 'warn', warnings.append)
+    library = m.smb_ops()
+    library.nodes = [_smb_ceph_readiness_node(sample,
+        [{'health': warning['health'], 'map': sample['settled_map']}], clock, calls)]
+    assert library.wait_for_smb_ceph_health() == warning['health']
+    assert len(calls) == 10
+    assert len(warnings) == 1 and 'MON_CLOCK_SKEW' in warnings[0]
+    assert '0.0663787' in warnings[0] and '0.19567' in warnings[0]
+
+
+def test_smb_ceph_readiness_rejects_premature_health_ok_during_placement():
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    ready = m.smb_ceph_readiness_signature
+    assert ready(sample['health_ok'], sample['clock'], sample['unsettled_map'],
+                 sample['pgs'], sample['unsettled_map']) is None
+    assert ready(sample['health_warn'], sample['clock'], sample['settled_map'],
+                 sample['pgs'], sample['settled_map']) is None
+    assert ready(sample['health_ok'], sample['clock'], sample['settled_map'],
+                 sample['pgs'], sample['settled_map']) is not None
+
+
+def test_smb_ceph_readiness_fails_closed_for_incomplete_or_inconsistent_data():
+    import copy
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    baseline = [sample['health_ok'], sample['clock'], sample['settled_map'],
+                sample['pgs'], copy.deepcopy(sample['settled_map'])]
+    cases = []
+    for index in range(len(baseline)):
+        for value in (None, [], {}, 'invalid'):
+            args = copy.deepcopy(baseline)
+            args[index] = value
+            cases.append(args)
+    mutations = [
+        (0, lambda d: d.update(checks={'MON_CLOCK_SKEW': {}})),
+        (1, lambda d: d.update(time_skew_status={})),
+        (1, lambda d: d.pop('timechecks')),
+        (1, lambda d: next(iter(d['time_skew_status'].values())).pop('health')),
+        (1, lambda d: next(iter(d['time_skew_status'].values())).update(health='HEALTH_WARN')),
+        (2, lambda d: d.update(pools=[])),
+        (2, lambda d: d.update(osds=[])),
+        (2, lambda d: d['osds'][0].update(up=0)),
+        (2, lambda d: d['pools'][0].pop('pg_placement_num_target')),
+        (2, lambda d: d['pools'][0].update(pg_num_target=2)),
+        (2, lambda d: d['pools'][0].update(pg_num_pending=2)),
+        (2, lambda d: d['pools'][0].update(pg_num=True)),
+        (2, lambda d: d['pools'].append(d['pools'][0])),
+        (3, lambda d: d.update(pg_ready=False)),
+        (3, lambda d: d.update(pg_stats=[])),
+        (3, lambda d: d['pg_stats'].pop()),
+        (3, lambda d: d['pg_stats'].append(d['pg_stats'][0])),
+        (3, lambda d: d['pg_stats'][0].update(state='peering')),
+        (3, lambda d: d['pg_stats'][0].update(pgid='99.0')),
+        (3, lambda d: d['pg_stats'][0].update(acting=[])),
+        (3, lambda d: d['pg_stats'][0].update(up=[999, 2, 3])),
+        (4, lambda d: d.update(epoch=d['epoch'] + 1)),
+        (4, lambda d: d.update(fsid='different-cluster')),
+    ]
+    for index, mutate in mutations:
+        args = copy.deepcopy(baseline)
+        mutate(args[index])
+        if index == 2:
+            args[4] = copy.deepcopy(args[2])
+        cases.append(args)
+    for args in cases:
+        assert m.smb_ceph_readiness_signature(*args) is None, args
+
+
+def _smb_ceph_readiness_node(sample, observations, clock, calls, seconds_per_read=1):
+    from types import SimpleNamespace
+    state = {'index': 0, 'maps': 0}
+    def command(*argv, timeout, **kwargs):
+        assert 0 < timeout <= min(30, 300 - clock[0])
+        calls.append((argv, timeout))
+        clock[0] += min(seconds_per_read, timeout)
+        observation = observations[min(state['index'], len(observations) - 1)]
+        if argv[1:] == ('osd', 'dump', '-f', 'json'):
+            value = observation['map']
+            state['maps'] += 1
+            if state['maps'] % 2 == 0:
+                state['index'] += 1
+        elif argv[1:] == ('pg', 'dump', 'pgs_brief', '-f', 'json'):
+            value = observation.get('pgs', sample['pgs'])
+        elif argv[1:] == ('health', 'detail', '-f', 'json'):
+            value = observation['health']
+        elif argv[1:] == ('time-sync-status', '-f', 'json'):
+            value = sample['clock']
+        else:
+            raise AssertionError(f'Unexpected readiness command: {argv}')
+        return _Res(0, json.dumps(value), '')
+    return SimpleNamespace(command=command, wait_for_cluster_health_ok=lambda: None)
+
+
+def test_smb_ceph_wait_requires_two_coherent_settled_observations(monkeypatch):
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    settled = {'health': sample['health_ok'], 'map': sample['settled_map']}
+    observations = [
+        {'health': sample['health_ok'], 'map': sample['unsettled_map']},
+        {'health': sample['health_warn'], 'map': sample['settled_map']},
+        settled,
+        dict(settled, pgs={'pg_ready': True, 'pg_stats': []}),
+        settled,
+        settled,
+    ]
+    clock, calls = [0], []
+    monkeypatch.setattr(m.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(m.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    library = m.smb_ops()
+    library.nodes = [_smb_ceph_readiness_node(sample, observations, clock, calls)]
+    assert library.wait_for_smb_ceph_health() == sample['health_ok']
+    assert len(calls) == 5 * len(observations)
+    assert not any(argv == ('microceph.ceph', 'health') for argv, _ in calls)
+
+
+def test_smb_ceph_wait_bounds_all_reads_and_sleeps_by_original_budget(monkeypatch):
+    import pytest
+    m = _smb_module()
+    sample = _smb_ceph_readiness_fixture()
+    clock, calls = [0], []
+    monkeypatch.setattr(m.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(m.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    library = m.smb_ops()
+    library.nodes = [_smb_ceph_readiness_node(sample,
+        [{'health': sample['health_ok'], 'map': sample['settled_map']}], clock, calls, seconds_per_read=30)]
+    with pytest.raises(AssertionError, match='SMB Ceph readiness'):
+        library.wait_for_smb_ceph_health()
+    assert clock[0] <= 300
+    assert calls[-1][1] < 30
+
+
+def test_smb_ceph_readiness_json_rejects_malformed_read(monkeypatch):
+    import pytest
+    from types import SimpleNamespace
+    m = _smb_module()
+    monkeypatch.setattr(m.time, 'monotonic', lambda: 0)
+    library = m.smb_ops()
+    library.nodes = [SimpleNamespace(command=lambda *args, **kwargs: _Res(0, '{invalid', ''))]
+    with pytest.raises(AssertionError, match='SMB Ceph readiness received malformed JSON'):
+        library.wait_for_smb_ceph_health()
+
+
+def test_smb_ceph_robot_uses_the_owning_gate_without_rejecting_clock_warnings_again():
+    from robot.api import get_model
+    model = get_model(Path(__file__).parent / 'smb_suite.resource')
+    gate = next(block for section in model.sections for block in section.body
+                if getattr(block, 'name', '') == 'Require SMB Ceph Health' and hasattr(block, 'body'))
+    calls = [statement.keyword for statement in gate.body if hasattr(statement, 'keyword')]
+    assert calls == ['Wait For SMB Ceph Health']
+
+
+# Shared-lab SMB CI: suites are independent, cases within each stay ordered.
+def _smb_runner_module():
+    import importlib.util
+    path = Path(__file__).parents[1] / 'smb_runner.py'
+    assert path.is_file(), 'missing shared-lab SMB coordinator'
+    spec = importlib.util.spec_from_file_location('tested_smb_runner', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_smb_shared_runner_plans_all_orders_and_repeats():
+    import itertools
+    import pytest
+    m = _smb_runner_module()
+    assert m.suite_plan(['ad', 'singleton', 'clustered'], repeat=2) == ['ad', 'singleton', 'clustered'] * 2
+    plan = m.suite_plan(list(m.SUITES), permutations=True)
+    assert [tuple(plan[i:i + 3]) for i in range(0, len(plan), 3)] == list(itertools.permutations(m.SUITES))
+    for order in ([], ['unknown'], ['ad', 'ad']):
+        with pytest.raises(ValueError):
+            m.suite_plan(order)
+    with pytest.raises(ValueError):
+        m.suite_plan(['ad'], repeat=0)
+
+
+def test_smb_shared_runner_failure_never_becomes_success_and_cleanup_always_runs():
+    m = _smb_runner_module()
+    calls = []
+    def execute(name, ordinal):
+        calls.append(('run', name))
+        return {'rc': int(name == 'ad')}
+    def cleanup(name, ordinal):
+        calls.append(('cleanup', name))
+    result = m.run_sequence(['ad', 'clustered'], execute, cleanup)
+    assert result['rc'] != 0
+    assert [r['status'] for r in result['suites']] == ['FAIL', 'PASS']
+    assert calls == [('run', 'ad'), ('cleanup', 'ad'), ('run', 'clustered'), ('cleanup', 'clustered')]
+
+
+def test_smb_shared_runner_uncertain_cleanup_blocks_later_suites():
+    m = _smb_runner_module()
+    calls = []
+    def execute(name, ordinal):
+        calls.append(name)
+        raise RuntimeError('first failure')
+    def cleanup(name, ordinal):
+        raise RuntimeError('stop unconfirmed')
+    result = m.run_sequence(['ad', 'singleton'], execute, cleanup)
+    assert result['rc'] != 0 and calls == ['ad']
+    assert [r['status'] for r in result['suites']] == ['FAIL', 'BLOCKED']
+    assert 'stop unconfirmed' in result['suites'][0]['cleanup_error']
+
+
+def test_smb_singleton_resource_inputs_are_self_contained():
+    import smb_guest
+    docs = smb_guest.resource_documents(['192.0.2.1'], 'PRIVATE')
+    for name in ('nonclustered', 'independent'):
+        assert any(r['resource_type'] == 'ceph.smb.usersgroups' for r in docs[name]['resources']), 'singleton inputs rely on clustered suite'
+
+
+def test_smb_ad_negative_execution_namespace_is_explicit_and_ticket_output_is_safe():
+    import inspect
+    import smb_ad_guest as ad
+    assert 'negative_id' in inspect.signature(ad.resource_documents).parameters, 'negative join IDs cannot be reused across executions'
+    docs = ad.resource_documents(['192.0.2.1'], '192.0.2.4', 'PRIVATE', negative_id='bad-1234')
+    resources = docs['ad-wrong']['resources']
+    assert next(r['cluster_id'] for r in resources if r['resource_type'] == 'ceph.smb.cluster') == 'bad-1234'
+    assert next(r['auth_id'] for r in resources if r['resource_type'] == 'ceph.smb.join.auth') == 'bad-1234-join'
+    assert {r['cephfs']['path'] for r in resources if r['resource_type'] == 'ceph.smb.share'} == {'/ad-wrong-bad-1234'}
+    assert callable(getattr(ad, 'ticket_evidence', None)), 'raw ticket listings must remain inside guest'
+    listing = 'PRIVATE-CACHE-LISTING\n' + 'cifs/' + ad.SERVICE + '@' + ad.REALM
+    assert ad.ticket_evidence(listing) == 'cifs/' + ad.SERVICE + '@' + ad.REALM
+    assert 'PRIVATE' not in ad.ticket_evidence(listing)
+    assert ad.ticket_evidence('unrelated service ticket') == ''
+    assert ad.ticket_evidence('ldap/' + ad.SERVICE + '@' + ad.REALM) == ''
+
+
+def test_smb_shared_manifest_binds_only_owned_names_without_robot_context(tmp_path):
+    import pytest
+    m = _smb_module()
+    lib = m.smb_ops()
+    assert callable(getattr(lib, 'use_smb_lab', None)), 'missing shared manifest binding'
+    owner = 'a' * 32
+    doc = {'owner': owner, 'pool': 'default', 'nodes': [f'smb-ci-{owner[:8]}-n{i}' for i in range(3)] + [f'smb-ci-{owner[:8]}-dc'],
+           'volumes': [f'smb-ci-{owner[:8]}-n{i}-osd' for i in range(3)]}
+    path = tmp_path / 'lab.json';path.write_text(json.dumps(doc))
+    lib.use_smb_lab(str(path))
+    assert len(lib.nodes) == 3 and lib.ad_dc.name.endswith('-dc')
+    doc['nodes'][0] = 'foreign-vm';path.write_text(json.dumps(doc))
+    with pytest.raises(AssertionError):
+        lib.use_smb_lab(str(path))
+
+
+def test_smb_scenario_retirement_refuses_foreign_owners_and_never_purges_AD(monkeypatch):
+    import pytest
+    m = _smb_module();lib = m.smb_ops()
+    assert callable(getattr(lib, 'retire_smb_scenario', None)), 'missing scenario release'
+    calls = []
+    class Node:
+        name = 'node0'
+        def command(self, *args, **kwargs):
+            calls.append(args)
+            return _Res(0, '', '')
+    lib.nodes = [Node()]
+    monkeypatch.setattr(lib, 'smb_snapshot', lambda *args: {'owner': 'foreign'})
+    with pytest.raises(AssertionError):
+        lib.retire_smb_scenario()
+    assert not calls
+    snapshots = iter([{'owner': 'robot-ad'}, {'owner': '', 'roles': {role: {'ActiveState': 'inactive'} for role in (*m.ROLES, 'winbindd')}}])
+    monkeypatch.setattr(lib, 'smb_snapshot', lambda *args: next(snapshots))
+    lib.retire_smb_scenario()
+    assert calls == [('microceph', 'disable', 'smb', '--cluster-id', 'robot-ad')]
+
+
+def test_smb_singleton_relocation_does_not_require_portable_local_identity():
+    from robot.api import TestSuiteBuilder
+    path = Path(__file__).parents[1] / 'smb-singleton-tests/smb_singleton_tests.robot'
+    scenario = TestSuiteBuilder().build(str(path)).tests[0]
+    original = owner = sentinel = None
+    moved = retained_read = False
+    # Model the real suite's placement/I/O sequence, not Samba authorization.
+    for step in scenario.body:
+        if step.name == 'Enable And Check SMB Member':
+            node = step.args[0]
+            assert step.args[1:] == ('robot-never', '3445', '${False}')
+            assert owner in (None, node), 'old owner must be retired before relocation'
+            if original is None:
+                original = node
+            moved |= node != original
+            owner = node
+        elif step.name == 'Run SMB Checked' and step.args[1:4] == ('microceph', 'disable', 'smb'):
+            assert step.args[0] == owner
+            owner = None
+        elif step.name == 'Check Retired SMB Member':
+            assert step.args[0] != owner
+        elif step.name == 'SMB Exact Transfer':
+            assert step.args[0] == owner == original, 'local-user ACL access must not be required on another gateway'
+            if sentinel is None:
+                sentinel = step.args[1]
+            elif moved and step.args[1] == sentinel:
+                assert step.args[2:] == ('${False}', 'robot-never'), 'read the existing sentinel without overwriting it'
+                retained_read = True
+    assert moved, 'singleton coverage must still exercise sequential placement'
+    assert owner == original and retained_read, 'return to the retained gateway and verify existing-file access'
+
+
+def test_smb_three_suite_partition_has_no_cross_suite_prerequisite():
+    from robot.api import TestSuiteBuilder
+    root = Path(__file__).parents[1]
+    for folder, count in [('smb-singleton-tests', 3), ('smb-clustered-tests', 6), ('smb-ad-tests', 9)]:
+        assert (root / folder).is_dir(), 'missing independent SMB suite: ' + folder
+        suite = TestSuiteBuilder().build(str(next((root / folder).glob('*.robot'))))
+        assert len(suite.tests) == count
+        if folder == 'smb-singleton-tests':
+            assert all(kw.name != 'Require Clustered Deployment' for test in suite.tests for kw in test.body)
+
+
+def test_smb_ad_repeated_inputs_archive_old_attempt_and_never_reuse_its_id(tmp_path, monkeypatch):
+    import smb_ad_guest as ad
+    monkeypatch.setattr(ad, 'BASE', tmp_path)
+    (tmp_path / 'ad-secrets.json').write_text(json.dumps({'Administrator': 'ADMIN-PRIVATE', 'alice': 'ALICE', 'bob': 'BOB'}))
+    ad.initialize(['192.0.2.1'], '192.0.2.4')
+    (tmp_path / 'ad-wrong.result').write_text('original failed outcome')
+    ad.initialize(['192.0.2.1'], '192.0.2.4', 'bad-12345678')
+    assert (tmp_path / 'history/robot-bad/ad-wrong.result').read_text() == 'original failed outcome'
+    first = json.loads((tmp_path / 'ad-wrong.json').read_text())
+    ad.initialize(['192.0.2.1'], '192.0.2.4', 'bad-87654321')
+    assert json.loads((tmp_path / 'history/bad-12345678/ad-wrong.json').read_text()) == first
+    second = json.loads((tmp_path / 'ad-wrong.json').read_text())
+    assert first != second
+    assert (tmp_path / 'history/robot-bad/ad-wrong.result').read_text() == 'original failed outcome'
+
+
+def test_smb_shared_runner_counts_skips_missing_cases_and_failures_as_non_success(tmp_path):
+    m = _smb_runner_module()
+    for statuses, expected in [(['PASS'], 1), (['PASS', 'SKIP'], 1), (['FAIL'], 1), ([], 1)]:
+        tests = ''.join('<test><status status="' + status + '"/></test>' for status in statuses)
+        (tmp_path / 'output.xml').write_text('<robot><suite>' + tests + '</suite></robot>')
+        result = m._result(tmp_path, expected)
+        assert (result['rc'] == 0) is (statuses == ['PASS'])
+
+
+def test_smb_coordinator_allocates_one_fixture_reuses_manifest_and_tears_down_once(tmp_path, monkeypatch):
+    import robot
+    from types import SimpleNamespace
+    m = _smb_runner_module()
+    calls = []
+    manifests = []
+    def execute(target, directory, variables, options, dryrun=False):
+        manifest = next(v.split(':', 1)[1] for v in variables if v.startswith('SMB_LAB_MANIFEST:'))
+        manifests.append(manifest)
+        name = directory.name
+        calls.append(name)
+        if name == 'setup':
+            Path(manifest).write_text('{}')
+            count = 1
+        else:
+            count = m.SUITES[name.split('-', 1)[1]][1]
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / 'output.xml').write_text('<robot><suite>' + '<test><status status="PASS"/></test>' * count + '</suite></robot>')
+        return 0
+    class Owner:
+        owner = 'owner'
+        ad_dc = SimpleNamespace(name='dc', command=lambda *a, **k: _Res(0, 'active', ''))
+        def use_smb_lab(self, *args, **kwargs): calls.append('bind')
+        def verify_smb_lab(self): calls.append('verify')
+        def assert_smb_scenario_idle(self): calls.append('idle')
+        def wait_for_smb_ceph_health(self): return {'status': 'HEALTH_OK'}
+        def _host(self, *args): return json.dumps([{'name': 'dc', 'config': {'user.microceph-test-owner': 'owner'}}])
+        def destroy_smb_lab(self): calls.append('destroy')
+    monkeypatch.setattr(m, '_robot', execute)
+    monkeypatch.setattr(_smb_module(), 'smb_ops', Owner)
+    monkeypatch.setattr(robot, 'rebot', lambda *args, **kwargs: 0)
+    assert m.main(['--outputdir', str(tmp_path), '--repeat', '2']) == 0
+    assert calls.count('setup') == 1 and calls.count('destroy') == 1
+    assert len(set(manifests)) == 1
+    result = json.loads((tmp_path / 'smb-summary.json').read_text())
+    assert result['shared_lab_setup_executions'] == 1 and len(result['suites']) == 6
+    assert all(row['status'] == 'PASS' for row in result['suites'])
+
+
+def _smb_capacity_snapshot_fixture(tmp_path):
+    library = tmp_path / 'CapacitySnapshot.py'
+    library.write_text('import sys\nsys.path.insert(0, ' + repr(str(Path(__file__).parent)) + ')\n' +
+                       '''from smb_ops import smb_ops, _VM
+
+class CapacitySnapshot(smb_ops):
+    def persist_fixture(self):
+        self.owner = 'a' * 32
+        self.nodes = [_VM(f'smb-ci-{self.owner[:8]}-n{i}') for i in range(3)]
+        self.ad_dc = _VM(f'smb-ci-{self.owner[:8]}-dc')
+        self.nodes.append(self.ad_dc)
+        self._persist_smb_lab()
+
+    def check_context_limits(self, manifest):
+        self.use_smb_lab(manifest)
+        assert self._variable('SMB_DISK_HEADROOM_GIB', 50) == '12'
+        assert self._variable('SMB_DISK_RESERVE_PER_VM_GIB', 24) == '3'
+''')
+    fixture = tmp_path / 'snapshot.robot'
+    fixture.write_text('*** Settings ***\nLibrary    ' + str(library) +
+                       '\n*** Test Cases ***\nSnapshot\n    Persist Fixture\n')
+    return fixture
+
+
+def test_smb_manifest_capacity_snapshot_preserves_resolved_cli_values_and_robot_precedence(tmp_path, monkeypatch):
+    m = _smb_module()
+    runner = _smb_runner_module()
+    fixture = _smb_capacity_snapshot_fixture(tmp_path)
+    manifest = tmp_path / 'lab.json'
+    variable_file = tmp_path / 'limits.yaml'
+    variable_file.write_text('SMB_DISK_HEADROOM_GIB: 80\nSMB_DISK_RESERVE_PER_VM_GIB: 5\n')
+    variables = ['SMB_LAB_MANIFEST:' + str(manifest)]
+    options = ['--variablefile', str(variable_file), '-v', 'smb disk headroom gib:10',
+               '--variable=SMB_DISK_RESERVE_PER_VM_GIB:0']
+    assert runner._robot(fixture, tmp_path / 'snapshot', variables, options) == 0
+    assert json.loads(manifest.read_text())['capacity_limits'] == {
+        'SMB_DISK_HEADROOM_GIB': '10', 'SMB_DISK_RESERVE_PER_VM_GIB': '0'}
+    library = m.smb_ops()
+    library.use_smb_lab(str(manifest))
+    assert library._variable('SMB_DISK_HEADROOM_GIB', 50) == '10'
+    assert library._variable('SMB_DISK_RESERVE_PER_VM_GIB', 24) == '0'
+    monkeypatch.setattr(library, '_host', lambda *a: json.dumps({'space': {'total': 20 * 1024**3, 'used': 0}}))
+    read_text = Path.read_text
+    monkeypatch.setattr(Path, 'read_text', lambda path, *a, **k:
+                        'MemAvailable: 67108864 kB\n' if str(path) == '/proc/meminfo' else read_text(path, *a, **k))
+    library._capacity(4)
+    default_manifest = tmp_path / 'defaults.json'
+    assert runner._robot(fixture, tmp_path / 'defaults', ['SMB_LAB_MANIFEST:' + str(default_manifest)], []) == 0
+    assert json.loads(default_manifest.read_text())['capacity_limits'] == {
+        'SMB_DISK_HEADROOM_GIB': 50, 'SMB_DISK_RESERVE_PER_VM_GIB': 24}
+    fixture.write_text('*** Settings ***\nLibrary    ' + str(tmp_path / 'CapacitySnapshot.py') +
+                       '\n*** Test Cases ***\nContext Wins\n    Check Context Limits    ' + str(manifest) + '\n')
+    assert runner._robot(fixture, tmp_path / 'context', variables,
+                         ['-v', 'SMB_DISK_HEADROOM_GIB:12', '-v', 'SMB_DISK_RESERVE_PER_VM_GIB:3']) == 0
+    document = json.loads(manifest.read_text())
+    del document['capacity_limits']
+    manifest.write_text(json.dumps(document))
+    assert runner._robot(fixture, tmp_path / 'legacy-context', variables,
+                         ['-v', 'SMB_DISK_HEADROOM_GIB:12', '-v', 'SMB_DISK_RESERVE_PER_VM_GIB:3']) == 0
+
+
+def test_smb_manifest_missing_standalone_capacity_snapshot_fails_closed(tmp_path):
+    import pytest
+    from robot.libraries.BuiltIn import RobotNotRunningError
+    owner = 'a' * 32
+    document = {'owner': owner, 'pool': 'default', 'volumes': [],
+                'nodes': [f'smb-ci-{owner[:8]}-n{i}' for i in range(3)] + [f'smb-ci-{owner[:8]}-dc']}
+    manifest = tmp_path / 'lab.json'
+    for limits in (None, {'SMB_DISK_HEADROOM_GIB': '10'}):
+        if limits is not None:
+            document['capacity_limits'] = limits
+        manifest.write_text(json.dumps(document))
+        library = _smb_module().smb_ops()
+        library.use_smb_lab(str(manifest))
+        with pytest.raises(RobotNotRunningError):
+            library._capacity(0)
+
+
+def test_smb_manifest_invalid_standalone_capacity_snapshot_fails_closed(tmp_path):
+    import pytest
+    owner = 'a' * 32
+    document = {'owner': owner, 'pool': 'default', 'volumes': [],
+                'nodes': [f'smb-ci-{owner[:8]}-n{i}' for i in range(3)] + [f'smb-ci-{owner[:8]}-dc']}
+    manifest = tmp_path / 'lab.json'
+    for limits in ([], None, {'SNAP_PATH': '/not-a-capacity-setting'},
+                   {'SMB_DISK_HEADROOM_GIB': 'invalid', 'SMB_DISK_RESERVE_PER_VM_GIB': '0'},
+                   {'SMB_DISK_HEADROOM_GIB': '10', 'SMB_DISK_RESERVE_PER_VM_GIB': -1},
+                   {'SMB_DISK_HEADROOM_GIB': 0, 'SMB_DISK_RESERVE_PER_VM_GIB': '0'},
+                   {'SMB_DISK_HEADROOM_GIB': {}, 'SMB_DISK_RESERVE_PER_VM_GIB': '0'}):
+        document['capacity_limits'] = limits
+        manifest.write_text(json.dumps(document))
+        library = _smb_module().smb_ops()
+        with pytest.raises(ValueError, match='capacity limits'):
+            library.use_smb_lab(str(manifest))
+            library._capacity(0)
+
+
+def test_smb_coordinator_real_standalone_cleanup_preserves_capacity_and_ownership_guards(tmp_path, monkeypatch):
+    import robot
+    m = _smb_module()
+    runner = _smb_runner_module()
+    fixture = _smb_capacity_snapshot_fixture(tmp_path)
+    real_robot = runner._robot
+    sample = _smb_ceph_readiness_fixture()
+    observations = []
+    monkeypatch.setattr(m.logger, 'info', observations.append)
+    monkeypatch.setattr(m.time, 'sleep', lambda seconds: None)
+    monkeypatch.setattr(robot, 'rebot', lambda *a, **k: 0)
+    read_text = Path.read_text
+    monkeypatch.setattr(Path, 'read_text', lambda path, *a, **k:
+                        f'MemAvailable: {memory * 1024**2} kB\n' if str(path) == '/proc/meminfo' else read_text(path, *a, **k))
+
+    def command(vm, *args, **kwargs):
+        if args[:2] == ('python3', m.smb_ops._base + '/smb_guest.py'):
+            services = '\n\n'.join(f'Id=snap.microceph.{role}.service\nActiveState=inactive'
+                                   for role in (*m.ROLES, 'winbindd'))
+            return _Res(0, json.dumps({'owner': '', 'api': '{"metadata":{}}', 'services': services}), '')
+        if args[:2] == ('systemctl', 'is-active'):
+            return _Res(0, 'active', '')
+        if args[:2] == ('test', '-f'):
+            return _Res(0, '', '')
+        if args[:2] == ('systemctl', 'start'):
+            return _Res(0, '', '')
+        if args[0] == 'microceph.ceph':
+            key = {('osd', 'dump'): 'settled_map', ('pg', 'dump'): 'pgs',
+                   ('health', 'detail'): 'health_ok', ('time-sync-status', '-f'): 'clock'}[args[1:3]]
+            return _Res(0, json.dumps(sample[key]), '')
+        raise AssertionError(f'Unexpected guest I/O: {args}')
+
+    def host(library, *args, **kwargs):
+        if args[:2] == ('lxc', 'query'):
+            if args[2] == 'local:/1.0/instances?recursion=1&project=default':
+                return json.dumps(inventory)
+            if args[2].endswith('/resources'):
+                return json.dumps({'space': {'total': disk * 1024**3, 'used': 0}})
+            if '/volumes/custom?' in args[2]:
+                return '[]'
+        if args[:2] == ('lxc', 'delete'):
+            name = args[2].removeprefix('local:')
+            assert next(row for row in inventory if row['name'] == name)['config'][m.OWNER_KEY] == library.owner
+            deleted.append(name)
+            inventory[:] = [row for row in inventory if row['name'] != name]
+            return ''
+        raise AssertionError(f'Unexpected host I/O: {args}')
+
+    def execute(target, directory, variables, options, dryrun=False):
+        if directory.name == 'setup':
+            return real_robot(fixture, directory, variables, options)
+        executed.append(directory.name)
+        directory.mkdir(parents=True)
+        count = runner.SUITES[directory.name.split('-', 1)[1]][1]
+        (directory / 'output.xml').write_text('<robot><suite>' + '<test><status status="PASS"/></test>' * count + '</suite></robot>')
+        return 0
+
+    monkeypatch.setattr(runner, '_robot', execute)
+    monkeypatch.setattr(m.smb_ops, '_host', host)
+    monkeypatch.setattr(m._VM, 'command', command)
+    for case, disk, memory, foreign, evidence in (
+            ('pass', 20, 64, False, ''),
+            ('disk', 9, 64, False, 'disk free=9.0 GiB, required=10.0 GiB'),
+            ('memory', 20, 3, False, 'memory available=3.0 GiB, required=4.0 GiB'),
+            ('foreign', 20, 64, True, 'Refusing foreign resource')):
+        owner = 'a' * 32
+        names = [f'smb-ci-{owner[:8]}-n{i}' for i in range(3)] + [f'smb-ci-{owner[:8]}-dc']
+        inventory = [{'name': name, 'status': 'Running', 'config': {m.OWNER_KEY: owner}} for name in names]
+        if foreign:
+            inventory[0]['config'][m.OWNER_KEY] = 'foreign'
+        executed, deleted = [], []
+        output = tmp_path / case
+        rc = runner.main(['--outputdir', str(output), '-v', 'SMB_DISK_HEADROOM_GIB:10',
+                          '--variable', 'SMB_DISK_RESERVE_PER_VM_GIB:0'])
+        summary = json.loads((output / 'smb-summary.json').read_text())
+        if case == 'pass':
+            assert rc == 0 and [row['status'] for row in summary['suites']] == ['PASS'] * 3
+            assert executed == ['01-singleton', '02-clustered', '03-ad']
+            assert any('disk free=20.0 GiB, required=10.0 GiB' in line for line in observations)
+        else:
+            assert rc == 1 and [row['status'] for row in summary['suites']] == ['FAIL', 'BLOCKED', 'BLOCKED']
+            assert evidence in summary['suites'][0]['cleanup_error']
+            assert executed == ['01-singleton']
+        assert sorted(deleted) == ([] if foreign else sorted(names))
+
+
+def test_smb_fresh_negative_refuses_existing_namespace_before_mutation(monkeypatch):
+    import pytest
+    from types import SimpleNamespace
+    m = _smb_module();lib = m.smb_ops();calls = []
+    def command(*args, **kwargs):
+        calls.append(args)
+        if args[:3] == ('microceph.ceph', 'smb', 'show'):
+            return _Res(0, '{"resources":[{"cluster_id":"already-consumed"}]}', '')
+        return _Res(0, '[{"prefsrc":"192.0.2.1"}]', '')
+    lib.nodes = [SimpleNamespace(command=command)] * 3
+    lib.ad_dc = SimpleNamespace(command=command)
+    monkeypatch.setattr(m, 'BuiltIn', lambda: SimpleNamespace(set_suite_variable=lambda *args: None))
+    with pytest.raises(AssertionError, match='namespace'):
+        lib.fresh_smb_ad_inputs()
+    assert not any(args[0] == 'python3' for args in calls)
+
+
+def test_smb_CI_uses_one_shared_job_and_never_uploads_private_manifest():
+    import yaml
+    workflow = yaml.safe_load((Path(__file__).parents[3] / '.github/workflows/tests.yml').read_text())
+    job = workflow['jobs']['robot-tests']
+    entries = [row for row in job['strategy']['matrix']['include'] if row['id'].startswith('smb-')]
+    assert len(entries) == 1 and entries[0]['suite'] == 'smb-integration'
+    assert entries[0]['runner'] == 'self-hosted-linux-amd64-noble-large'
+    assert entries[0]['lxd_args'] == '--storage-backend=dir'
+    assert 'SMB_SNAPD_CHANNEL:latest/candidate' in entries[0]['args']
+    assert 'SMB_DISK_HEADROOM_GIB:10' in entries[0]['args']
+    assert 'SMB_DISK_RESERVE_PER_VM_GIB:0' in entries[0]['args']
+    diagnostics = next(step for step in job['steps'] if step.get('name') == 'SMB runner resource diagnostics')
+    assert 'always()' in diagnostics['if'] and "matrix.id == 'smb-integration'" in diagnostics['if']
+    assert all(command in diagnostics['run'] for command in ('df -h', 'free -h', 'journalctl', 'storage-pools/default/resources'))
+    paths = next(step['with']['path'] for step in job['steps'] if step.get('name') == 'Upload Robot logs')
+    assert 'smb-summary.json' in paths and 'smb-results/*/output.xml' in paths
+    assert 'private' not in paths and 'smb-results/**' not in paths

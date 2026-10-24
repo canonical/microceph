@@ -1,0 +1,235 @@
+--- a/internal/metrics/exporter.go
++++ b/internal/metrics/exporter.go
+@@ -6,6 +6,7 @@
+ 	"fmt"
+ 	"net"
+ 	"net/http"
++	"strconv"
+ 
+ 	"github.com/go-logr/logr"
+ 	"github.com/prometheus/client_golang/prometheus"
+@@ -46,14 +47,9 @@
+ }
+ 
+ func (sme *smbMetricsExporter) serve() error {
+-	var addr string
+-	switch len(sme.bindAddresses) {
+-	case 0:
+-		addr = fmt.Sprintf(":%d", sme.port)
+-	case 1:
+-		addr = fmt.Sprintf("%s:%d", sme.bindAddresses[0], sme.port)
+-	default:
+-		return fmt.Errorf("too many listen addresses")
++	addr, err := nativeListenAddress(sme.bindAddresses, sme.port)
++	if err != nil {
++		return err
+ 	}
+ 	sme.log.Info("serve metrics", "addr", addr)
+ 
+@@ -74,6 +70,17 @@
+ 	return nil
+ }
+ 
++func nativeListenAddress(addresses []net.IP, port int) (string, error) {
++	switch len(addresses) {
++	case 0:
++		return net.JoinHostPort("", strconv.Itoa(port)), nil
++	case 1:
++		return net.JoinHostPort(addresses[0].String(), strconv.Itoa(port)), nil
++	default:
++		return "", fmt.Errorf("too many listen addresses")
++	}
++}
++
+ // RunSmbMetricsExporter executes an HTTP server and exports SMB metrics to
+ // Prometheus.
+ func RunSmbMetricsExporter(
+--- a/internal/metrics/smbstatus.go
++++ b/internal/metrics/smbstatus.go
+@@ -276,8 +276,10 @@
+ 
+ // LocateSMBStatus finds the local executable of 'smbstatus' on host.
+ func LocateSMBStatus() (string, error) {
+-	knowns := []string{
+-		"/usr/bin/smbstatus",
++	knowns := []string{"/usr/bin/smbstatus"}
++	explicit := os.Getenv("SMBMETRICS_SMBSTATUS")
++	if explicit != "" {
++		knowns = []string{explicit}
+ 	}
+ 	for _, loc := range knowns {
+ 		fi, err := os.Stat(loc)
+@@ -375,6 +377,10 @@
+ 	if err != nil {
+ 		return "", err
+ 	}
++	config := os.Getenv("SMBMETRICS_SMBCONF")
++	if config != "" {
++		args = append([]string{"--configfile", config}, args...)
++	}
+ 	return executeCommand(loc, args...)
+ }
+ 
+--- a/internal/metrics/smbstatus_test.go
++++ b/internal/metrics/smbstatus_test.go
+@@ -5,6 +5,7 @@
+ import (
+ 	"io"
+ 	"os"
++	"sort"
+ 	"strings"
+ 	"testing"
+ 
+@@ -64,6 +65,10 @@
+ 	locks, err := parseSMBStatusLockedFiles(testdata)
+ 	assert.NoError(t, err)
+ 	assert.Equal(t, len(locks), 2)
++	// Map iteration does not guarantee the order of returned locks.
++	sort.Slice(locks, func(i, j int) bool {
++		return locks[i].FileID.Inode > locks[j].FileID.Inode
++	})
+ 	lock1 := locks[0]
+ 	assert.Equal(t, lock1.FileID.Inode, int64(61))
+ 	assert.Equal(t, lock1.NumPendingDeletes, 0)
+--- a/internal/metrics/versions.go
++++ b/internal/metrics/versions.go
+@@ -5,6 +5,7 @@
+ import (
+ 	"context"
+ 	"errors"
++	"os"
+ 	"strings"
+ )
+ 
+@@ -57,10 +58,24 @@
+ }
+ 
+ func resolveSambaVersion() (string, error) {
++	if os.Getenv("SMBMETRICS_SMBCONF") != "" {
++		if os.Getenv("SMBMETRICS_SMBSTATUS") == "" {
++			return "", errors.New("native smbstatus executable is not configured")
++		}
++		version, err := RunSMBStatusVersion()
++		return strings.TrimPrefix(version, "Version "), err
++	}
+ 	return executeRpmQCommand("samba")
+ }
+ 
+ func resolveCtdbVersion() (string, error) {
++	if os.Getenv("SMBMETRICS_SMBCONF") != "" {
++		binary := os.Getenv("SMBMETRICS_CTDB")
++		if binary == "" {
++			return "", errors.New("native CTDB executable is not configured")
++		}
++		return executeCommand(binary, "version")
++	}
+ 	return executeRpmQCommand("ctdb")
+ }
+ 
+@@ -69,5 +84,15 @@
+ }
+ 
+ func resolveNetbiosName() (string, error) {
++	config := os.Getenv("SMBMETRICS_SMBCONF")
++	if config != "" {
++		binary := os.Getenv("SMBMETRICS_TESTPARM")
++		if binary == "" {
++			return "", errors.New("native testparm executable is not configured")
++		}
++		// This is an optional label, not a NetBIOS networking requirement.
++		// Native configuration is text, not the registry queried by net conf.
++		return executeCommand(binary, "--suppress-prompt", "--parameter-name", "netbios name", config)
++	}
+ 	return executeCommand("net", "conf", "getparm", "global", "netbios name")
+ }
+--- /dev/null
++++ b/internal/metrics/native_metadata_test.go
+@@ -0,0 +1,88 @@
++package metrics
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func nativeMetadataTools(t *testing.T) string {
++	t.Helper()
++	directory := t.TempDir()
++	write := func(name, body string) string {
++		path := filepath.Join(directory, name)
++		require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\nset -eu\n"+body), 0700))
++		return path
++	}
++	config := filepath.Join(directory, "native smb.conf")
++	require.NoError(t, os.WriteFile(config, []byte("[global]\n"), 0600))
++	t.Setenv("PATH", directory)
++	t.Setenv("SMBMETRICS_SMBCONF", config)
++	t.Setenv("SMBMETRICS_TESTPARM", write("testparm", `test "$1" = --suppress-prompt
++test "$2" = --parameter-name
++test "$3" = 'netbios name'
++test "$4" = "$SMBMETRICS_SMBCONF"
++printf '  NATIVE-GW\n'
++`))
++	t.Setenv("SMBMETRICS_SMBSTATUS", write("smbstatus", `test "$1" = --configfile
++test "$2" = "$SMBMETRICS_SMBCONF"
++test "$3" = --version
++printf 'Version 4.23-native\n'
++`))
++	t.Setenv("SMBMETRICS_CTDB", write("ctdb", `test "$1" = version
++printf '4.23-native\n'
++`))
++	return directory
++}
++
++func TestNativeMetadataUsesTextConfigAndOfflinePackagedVersions(t *testing.T) {
++	nativeMetadataTools(t)
++	name, err := resolveNetbiosName()
++	require.NoError(t, err)
++	require.Equal(t, "NATIVE-GW", name)
++	versions, err := ResolveVersions(nil)
++	require.NoError(t, err)
++	require.Equal(t, "4.23-native", versions.SambaVersion)
++	require.Equal(t, "4.23-native", versions.CtdbVersion)
++	// The label is optional; failed name discovery must not turn into a serving
++	// or version dependency. Its failure is separate from the versions gauge.
++	t.Setenv("SMBMETRICS_TESTPARM", "/not-present")
++	_, err = resolveNetbiosName()
++	require.Error(t, err)
++	_, err = ResolveVersions(nil)
++	require.NoError(t, err)
++}
++
++func TestNativeMetadataNeverFallsBackToRegistryOrRPM(t *testing.T) {
++	dir := nativeMetadataTools(t)
++	trap := filepath.Join(dir, "unexpected-tool")
++	t.Setenv("NATIVE_METADATA_TRAP", trap)
++	for _, tool := range []string{"net", "rpm"} {
++		require.NoError(t, os.WriteFile(filepath.Join(dir, tool), []byte("#!/bin/sh\nprintf invoked >\"$NATIVE_METADATA_TRAP\"\nexit 1\n"), 0700))
++	}
++	t.Setenv("SMBMETRICS_TESTPARM", "")
++	_, err := resolveNetbiosName()
++	require.Error(t, err)
++	t.Setenv("SMBMETRICS_CTDB", "")
++	_, err = resolveCtdbVersion()
++	require.Error(t, err)
++	_, err = os.Stat(trap)
++	require.True(t, os.IsNotExist(err), "explicit native configuration must not use registry/RPM fallback")
++}
++
++func TestMetadataLegacyDiscoveryIsUnchanged(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("PATH", dir)
++	t.Setenv("SMBMETRICS_SMBCONF", "")
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "net"), []byte("#!/bin/sh\nprintf 'LEGACY\\n'\n"), 0700))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "rpm"), []byte("#!/bin/sh\nprintf '%s-pkg\\n' \"$2\"\n"), 0700))
++	name, err := resolveNetbiosName()
++	require.NoError(t, err)
++	require.Equal(t, "LEGACY", name)
++	versions, err := ResolveVersions(nil)
++	require.NoError(t, err)
++	require.Equal(t, "samba-pkg", versions.SambaVersion)
++	require.Equal(t, "ctdb-pkg", versions.CtdbVersion)
++}

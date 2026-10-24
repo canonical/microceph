@@ -2,12 +2,14 @@ package ceph
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/stretchr/testify/assert"
@@ -146,9 +148,10 @@ func (s *configSuite) TestGetMonitorsFromConfigIgnoresOrphanedMemberEntry() {
 		"node-a": {},
 	}
 
-	monitorAddresses := getMonitorsFromConfig(configs, activeMembers)
-
-	assert.ElementsMatch(s.T(), []string{"10.0.0.1", "192.0.2.1"}, monitorAddresses)
+	for range 64 {
+		monitorAddresses := getMonitorsFromConfig(configs, activeMembers)
+		assert.Equal(s.T(), []string{"10.0.0.1", "192.0.2.1"}, monitorAddresses)
+	}
 }
 
 func (s *configSuite) TestGetMonitorsFromConfigRetainsLargeNumericAdoptedEntry() {
@@ -183,6 +186,50 @@ func (s *configSuite) TestGetMonitorAddressesFailsWhenNoMonitorCanBeFound() {
 	monitorAddresses, err := GetMonitorAddresses(context.Background(), nil)
 	assert.Nil(s.T(), monitorAddresses)
 	assert.ErrorContains(s.T(), err, "no monitor addresses found")
+}
+
+// TestSMBExplicitEnableStableMonitorRendering crosses the real config producer,
+// placement, SQL ownership and native compiler/publication path.
+func (s *configSuite) TestSMBExplicitEnableStableMonitorRendering() {
+	python := os.Getenv("MICROCEPH_SMB_TEST_PYTHON")
+	if python == "" {
+		s.T().Skip("requires pinned real compiler bridge")
+	}
+	t := s.T()
+	runSMBStartup(t, "", true, python, func(state interfaces.StateInterface, r *smbStartupRunner) {
+		config := map[string]string{
+			"fsid": "test-fsid", "public_network": "10.0.0.0/24",
+			"mon.host.1": "192.0.2.1", "mon.host.2": "192.0.2.2", "mon.host.3": "192.0.2.3",
+		}
+		s.setupUpdateConfigMocks(config)
+		oldUpdate := updateConfigFunc
+		defer func() { updateConfigFunc = oldUpdate }()
+		updateConfigFunc = UpdateConfig
+		payload := types.EnableService{Name: "smb", Wait: true, Payload: `{"cluster_id":"alpha"}`}
+		enable := func() {
+			err := ServicePlacementHandler(context.Background(), state, payload)
+			s.Require().NoError(err)
+		}
+		// Replace the fixture's minimal ceph.conf with the actual producer output.
+		enable()
+		// One full-path no-op is enough here; the cheap 64-iteration monitor
+		// test owns repeated canonical-order coverage without compiler calls.
+		r.events = nil
+		enable()
+		for _, event := range r.events {
+			s.NotEqual("publish", event, "unchanged ready enable must not publish")
+			s.False(strings.HasPrefix(event, "stop ") || strings.HasPrefix(event, "start "), "unchanged ready enable must not control roles")
+		}
+		config["mon.host.2"] = "192.0.2.22"
+		r.events = nil
+		enable()
+		s.Contains(r.events, "publish", "a real monitor change remains an effective input change")
+		s.Contains(r.events, "start ctdbd")
+		r.active["ctdbd"] = false
+		r.events = nil
+		enable()
+		s.Contains(r.events, "start ctdbd", "unchanged but unhealthy explicit enable still recovers")
+	})
 }
 
 // --- UpdateConfig / radosgw.conf mon host refresh tests (issue #766) ---
@@ -322,6 +369,109 @@ func (s *configSuite) TestUpdateConfigNoRGWConfIsNoOp() {
 	// radosgw.conf must not have been created.
 	_, statErr := os.Stat(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "radosgw.conf"))
 	assert.True(s.T(), os.IsNotExist(statErr))
+}
+
+func (s *configSuite) TestUpdateConfigRegeneratesScopedSMBRecoveryClients() {
+	s.CopyCephConfigs()
+	ctx := context.Background()
+	db, err := sql.Open("sqlite3", filepath.Join(s.Tmp, "recovery.db"))
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.NoError(db.Close()) })
+	_, err = db.Exec(`CREATE TABLE core_cluster_members(id INTEGER PRIMARY KEY, name TEXT UNIQUE, address TEXT);
+INSERT INTO core_cluster_members VALUES(1,'a','192.0.2.1:7443'),(2,'b','192.0.2.2:7443');`)
+	s.Require().NoError(err)
+	type staleRenderKey struct{}
+	oldSnapshot, releaseOld := make(chan struct{}), make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseOld:
+		default:
+			close(releaseOld)
+		}
+	}()
+	mockDB := &mocks.MockDB{TxFn: func(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		err = fn(ctx, tx)
+		if err != nil {
+			return err
+		}
+		err = tx.Commit()
+		if err == nil && ctx.Value(staleRenderKey{}) == true {
+			close(oldSnapshot)
+			<-releaseOld
+		}
+		return err
+	}}
+	s.Require().NoError(mockDB.Transaction(ctx, database.SchemaExtensions[5]))
+	config := map[string]string{"fsid": "test-fsid", "public_network": "10.0.0.0/24", "keyring.client.admin": "test-admin-key", "mon.host.1": "192.0.2.1"}
+	s.setupUpdateConfigMocks(config)
+	state := interfaces.CephState{State: &mocks.MockState{ClusterName: "a", DBObj: mockDB}}
+	oldDone := make(chan error, 1)
+	go func() { oldDone <- UpdateConfig(context.WithValue(ctx, staleRenderKey{}, true), state) }()
+	select {
+	case <-oldSnapshot:
+	case err := <-oldDone:
+		s.Require().NoError(err)
+		s.T().Fatal("old render did not capture its ownership snapshot")
+	case <-time.After(time.Second):
+		s.T().Fatal("old render did not reach ownership lookup")
+	}
+	s.Require().NoError(mockDB.Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := database.ReserveSMBOwner(ctx, tx, "alpha", "a", true)
+		if err != nil {
+			return err
+		}
+		_, err = database.ReserveSMBOwner(ctx, tx, "foreign", "b", true)
+		return err
+	}))
+	newDone := make(chan error, 1)
+	go func() { newDone <- UpdateConfig(ctx, state) }()
+	// An older pre-reservation render must not overwrite the newer client
+	// section. Give an unguarded second writer time to expose that ordering.
+	var newErr error
+	newFinished := false
+	select {
+	case newErr = <-newDone:
+		newFinished = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseOld)
+	s.Require().NoError(<-oldDone)
+	if !newFinished {
+		newErr = <-newDone
+	}
+	s.Require().NoError(newErr)
+	stanza := "[client.smb.cluster.alpha]\nkeyring = " + filepath.Join(smbRoot("alpha"), "identity/recovery.keyring") + "\n"
+	s.Require().Contains(s.ReadCephConfig("ceph.conf"), stanza, "stale pre-reservation rendering must not erase the new recovery client")
+	for _, monitor := range []string{"192.0.2.1", "192.0.2.22"} {
+		config["mon.host.1"] = monitor
+		s.Require().NoError(UpdateConfig(ctx, state))
+		rendered := s.ReadCephConfig("ceph.conf")
+		s.Contains(rendered, "mon host = "+monitor)
+		s.Contains(rendered, stanza, "pending reservation must render before successful service publication")
+		s.NotContains(rendered, "client.smb.cluster.foreign")
+		s.NotContains(rendered, "test-admin-key", "configuration contains references, never key material")
+		s.Equal(1, strings.Count(rendered, "[client.smb.cluster.alpha]"))
+	}
+	s.Require().NoError(mockDB.Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		err := database.RetireSMBOwner(ctx, tx, "alpha", "a")
+		if err != nil {
+			return err
+		}
+		_, err = database.ReserveSMBOwner(ctx, tx, "standalone", "a", false)
+		return err
+	}))
+	s.Require().NoError(UpdateConfig(ctx, state))
+	s.NotContains(s.ReadCephConfig("ceph.conf"), "client.smb.cluster.", "retired, foreign and nonclustered owners are irrelevant")
+	previous := s.ReadCephConfig("ceph.conf")
+	_, err = db.Exec(`UPDATE service_groups SET config='{}' WHERE group_id='standalone'`)
+	s.Require().NoError(err)
+	s.Error(UpdateConfig(ctx, state), "uncertain ownership must fail, not invent a client")
+	s.Equal(previous, s.ReadCephConfig("ceph.conf"), "failed lookup must preserve the last complete canonical file")
 }
 
 // --- backwardCompatPubnet gate tests ---

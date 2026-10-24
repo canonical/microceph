@@ -1,0 +1,22 @@
+#!/bin/bash
+set -eu
+case "${1:-}" in
+  pnn|status|reloadnodes) [[ $# == 1 ]] || exit 1 ;;
+  nodestatus) [[ $# == 1 || ( $# == 2 && "$2" =~ ^[0-9]+$ ) ]] || exit 1 ;;
+  ready) [[ $# == 2 && "$2" == ctdbd ]] || exit 1 ;;
+  *) echo 'Unsupported CTDB control command' >&2; exit 1 ;;
+esac
+# shellcheck disable=SC2016
+exec "$SNAP/bin/unshare" --mount --propagation slave -- /bin/bash -euc '
+  . "$SNAP/commands/smb-startup"
+  smb_load_context
+  SMB_CREATE_MOUNTPOINTS=0
+  smb_setup_ctdb
+  smb_bind_custom_dns
+  smb_check_start_intent
+  if [[ "$1" == ready ]]; then
+    smb_ctdb_health
+    exit
+  fi
+  exec "$SNAP/bin/ctdb" -t 5 "$@"
+' smb-startup "$@"

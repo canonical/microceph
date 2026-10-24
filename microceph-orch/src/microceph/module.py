@@ -16,6 +16,7 @@ from ceph.deployment.service_spec import (
     MONSpec,
     MDSSpec,
     NFSServiceSpec,
+    SMBSpec,
 )
 
 from mgr_module import MgrModule
@@ -143,7 +144,10 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             service_name = record['service'] if not record['group_id'] else f"{record['service']}.{record['group_id']}"
             service_host = record['location']
             service_hostlist[service_name].append(service_host)
-            logger.info(f"microcephs record service({service_name}) at ({service_host}) configured({record['info']})")
+            if record['service'] == 'smb':
+                logger.info(f"microcephs record service({service_name}) at ({service_host})")
+            else:
+                logger.info(f"microcephs record service({service_name}) at ({service_host}) configured({record['info']})")
         return service_hostlist
 
     def _elaborate_service(self, service: str):
@@ -153,6 +157,30 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             return segments[0], segments[1]
         else:
             return service, ""
+
+    def _get_smb_config_uri(self, recorded_services: list, cluster_id: str) -> Optional[str]:
+        """Return only an agreed applied source reference, never source contents."""
+        uris = set()
+        prefixes = (f'rados://.smb/{cluster_id}/',
+                    f'rados:mon-config-key:smb/config/{cluster_id}/')
+        for record in recorded_services:
+            if record['service'] != 'smb' or record['group_id'] != cluster_id:
+                continue
+            try:
+                info = json.loads(record.get('info') or '{}')
+            except (TypeError, ValueError):
+                return None
+            uri = info.get('config_uri') if isinstance(info, dict) else None
+            if not isinstance(uri, str):
+                return None
+            # Match the native source-store boundary; do not forward arbitrary
+            # legacy strings (which could contain credentials) into inventory.
+            object_name = next((uri[len(p):] for p in prefixes if uri.startswith(p)), '')
+            if (object_name in ('', '.', '..')
+                    or any(c in object_name for c in '/\\\x00\r\n?#%')):
+                return None
+            uris.add(uri)
+        return next(iter(uris)) if len(uris) == 1 else None
 
     @handle_orch_error
     def describe_service(self,
@@ -177,7 +205,21 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             if service_type and svc_type != service_type:
                 continue
 
-            if svc_type in daemon_spec_map:
+            if svc_type == 'smb':
+                config_uri = self._get_smb_config_uri(recorded_services, svc_id)
+                if config_uri is None:
+                    logger.warning(f"Omitting SMB group {svc_id} from service inventory: "
+                                   "missing, invalid or conflicting applied config_uri; "
+                                   "daemon observations remain available via orch ps")
+                    continue
+                # YAML inventory reconstructs SMBSpec via ServiceSpec.from_json.
+                # Supply only its required identity/source fields from applied
+                # observations, not a deployable resource or inferred settings.
+                spec = SMBSpec(
+                    service_id=svc_id, cluster_id=svc_id, config_uri=config_uri,
+                    unmanaged=True,
+                    placement=PlacementSpec(hosts=hostlist, count=len(hostlist)))
+            elif svc_type in daemon_spec_map:
                 spec = daemon_spec_map[svc_type](
                     service_id=svc_id, service_type=svc_type, placement=PlacementSpec(hosts=hostlist, count=len(hostlist))
                 )
@@ -213,6 +255,7 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             svc_group_ip = svc['group_id']
             svc_ip = None
             svc_ports = None
+            svc_status_desc = None
             svc_name = f"{svc_daemon_type}.{svc_group_ip}" if svc_group_ip else svc_daemon_type
             if daemon_type:
                 if svc_daemon_type != daemon_type:
@@ -222,14 +265,34 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
                 info = json.loads(svc['info'])
                 svc_ip = None if "0.0.0.0" in info['bind_address'] else info['bind_address']
                 svc_ports = [info['bind_port']]
-            
+            elif svc_daemon_type == 'smb':
+                try:
+                    info = json.loads(svc.get('info') or '{}')
+                except (TypeError, ValueError):
+                    info = {}
+                if not isinstance(info, dict):
+                    info = {}
+                # Legacy rows may contain only smb_port, or no observation.
+                # Do not invent a frontend or metrics endpoint from defaults.
+                svc_ip = info.get('frontend_address') or None
+                port = info.get('smb_port')
+                if type(port) is int and 0 < port <= 65535:
+                    svc_ports = [port]
+                metrics_port = info.get('metrics_port')
+                if (info.get('metrics_address') == '0.0.0.0'
+                        and type(metrics_port) is int and 0 < metrics_port <= 65535):
+                    # DaemonDescription has one IP for all ports. Metrics is an
+                    # IPv4 wildcard, NOT a listener on the SMB (possibly IPv6) IP.
+                    svc_status_desc = f"smbmetrics listens on 0.0.0.0:{metrics_port}"
+
             descriptions.append(DaemonDescription(
                 service_name=svc_name,
                 daemon_type=svc_daemon_type,
                 daemon_id=svc_hostname,
                 hostname=svc_hostname,
                 ip=svc_ip,
-                ports=svc_ports
+                ports=svc_ports,
+                status_desc=svc_status_desc
             ))
 
         logger.info(descriptions)

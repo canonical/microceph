@@ -104,7 +104,10 @@ bluestore_elastic_shared_blobs = false
 {{if .isCacheWritethrough}}rbd_cache_writethrough_until_flush = {{.isCacheWritethrough}}{{end}}
 {{if .cacheMaxDirty}}rbd_cache_max_dirty = {{.cacheMaxDirty}}{{end}}
 {{if .cacheTargetDirty}}rbd_cache_target_dirty = {{.cacheTargetDirty}}{{end}}
-`)),
+{{range .smbRecoveryClients}}
+[{{.Name}}]
+keyring = {{.Keyring}}
+{{end}}`)),
 		configFile: configFile,
 		configDir:  constants.GetPathConst().ConfPath,
 	}

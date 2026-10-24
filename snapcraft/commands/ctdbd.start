@@ -1,0 +1,32 @@
+#!/bin/bash
+set -eu
+# shellcheck disable=SC2016
+exec "$SNAP/bin/unshare" --mount --propagation slave -- /bin/bash -euc '
+  . "$SNAP/commands/smb-startup"
+  smb_load_context
+  SMB_CREATE_MOUNTPOINTS=1
+  smb_setup_ctdb
+  smb_bind_custom_dns
+  # Validate prepared resource closure; never render or repair it here.
+  for helper in ctdb-eventd ctdb_mutex_ceph_rados_helper ctdb_recovery_helper ctdb_takeover_helper ctdb_lock_helper; do
+    [[ -f "$SNAP/libexec/ctdb/$helper" && -x "$SNAP/libexec/ctdb/$helper" ]]
+  done
+  for resource in functions notify.sh events/legacy/00.ctdb.script; do
+    [[ -f "$SMB_ROOT/ctdb/$resource" ]]
+  done
+  shopt -s dotglob nullglob
+  for event in "$SMB_ROOT/ctdb/events/legacy/"*; do
+    [[ "${event##*/}" == 00.ctdb.script ]]
+  done
+  export CTDB_NODES="$SMB_ROOT/ctdb/nodes"
+  export CTDB_SCRIPTS_DIR="$SMB_ROOT/ctdb/scripts"
+  export CTDB_EVENTD="$SNAP/libexec/ctdb/ctdb-eventd"
+  export CTDB_RECOVERY_HELPER="$SNAP/libexec/ctdb/ctdb_recovery_helper"
+  export CTDB_TAKEOVER_HELPER="$SNAP/libexec/ctdb/ctdb_takeover_helper"
+  export CTDB_LOCK_HELPER="$SNAP/libexec/ctdb/ctdb_lock_helper"
+  export CTDB_NOSETSCHED=yes
+  smb_check_start_intent
+  # Native CTDB uses /etc/ctdb and /run/ctdb; the validated layout and
+  # private runtime bind above already select this owner. No CLI path overrides.
+  exec "$SNAP/bin/ctdbd" --interactive
+'

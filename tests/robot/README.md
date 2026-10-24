@@ -54,6 +54,13 @@ Run all suites sequentially (omitting `--test-suite` defaults to the full tree):
 tox -e robot -- --snap-path /path/to/microceph_*.snap
 ```
 
+The current native-SMB artifact requires snapd >= 2.78. CI sets
+`MICROCEPH_TEST_SNAPD_CHANNEL=latest/candidate` to prepare snapd in every VM or
+nested container before installing/upgrading the **local artifact**, including
+DSL, adoption and wiping guests. Set the same variable for local runs when needed. The
+runner host snapd and MicroCeph store-channel selection are unchanged; this does
+not qualify installation on stable snapd. Without the variable, existing guest snapd is kept.
+
 Results land in `output.xml`, `log.html`, and `report.html` in the working directory.
 Each suite creates and destroys its own LXD VM; a failed suite teardown also cleans up.
 
@@ -93,6 +100,221 @@ state in `/var/snap/vaultlocker/common/microceph-ci/reboot-state.json` inside th
 VM. Delete the VM when finished. This is not a Juju/charm, HA or cross-model test;
 the test Vault shares the VM and starts sealed after reboot.
 
+## Shared-lab SMB CI
+
+The `smb-integration` matrix entry is **one CI job** with one verified snap and
+one owned four-VM lab (three gateways plus the Samba AD DC). Three ordered
+scenario suites run sequentially on the same Ceph cluster: singleton/independent
+non-AD (3 cases), clustered non-AD (6), and external AD (9).
+
+```bash
+tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-integration \
+    --variable SMB_SNAPD_CHANNEL:latest/candidate
+# Another complete-suite order, repeated without reallocating the lab:
+tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-integration \
+    --smb-suites ad,clustered,singleton --smb-repeat 2 \
+    --variable SMB_SNAPD_CHANNEL:latest/candidate
+# All six orders: long-running acceptance, not the default PR job:
+tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-integration \
+    --smb-permutations --variable SMB_SNAPD_CHANNEL:latest/candidate
+```
+
+`tests/robot/smb_runner.py` provisions once, passes a private owner/name manifest
+to each suite and tears down once in finalization, including partial setup failure.
+It emits separate `smb-results/<execution>-<suite>/` reports, a combined Robot
+report and `smb-summary.json`. An earlier failure never becomes success; an
+unconfirmed stop or unhealthy boundary blocks later suites. Lifecycle errors are
+infrastructure failures in the combined report, not hidden skips. Private manifests,
+inputs and credential caches are not uploaded. `--dryrun` allocates no VMs.
+The existing GitHub workflow's optional `smb_permutations` dispatch input enables
+all six orders in its single SMB job; default PR runs execute each suite once.
+
+Each scenario supplies its own inputs and starts with idle, owned gateway slots
+and coherent Ceph health. Singleton no longer depends on clustered deployment.
+Cleanup retires only known fixture owners using the native API and confirms stop.
+Logical resources/data and local AD identity remain in the owned lab for repeats
+until final VM teardown: no last-identity purge, trust reset or automatic rejoin.
+Each AD execution uses a new negative-join ID/path, retaining earlier private
+inputs/outcomes. The positive AD identity stays stable. An issued/uncertain DC
+stop is restored in finalization. Cases within each scenario remain ordered;
+live repeat/order validation is required, not inferred from dry-run success.
+
+Standalone CLI selections are `smb-singleton-tests`, `smb-clustered-tests` and
+`smb-ad-tests`. The legacy `smb-tests` alias selects both non-AD suites. All use
+the coordinator. Raw Robot invocations retain isolated scenario setup; shared
+binding requires an explicit manifest. Clock, strict confinement and the local
+50 GiB/4 GiB headroom defaults are unchanged; the smaller CI disk trial is
+explicitly configured as described below.
+
+## Native SMB lifecycle
+
+```bash
+tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-tests \
+    --variable SMB_SNAPD_CHANNEL:latest/candidate
+```
+
+Run the **whole ordered scenario** (six clustered cases or three singleton/
+independent cases), or the legacy alias for both. They cover clustered deployment, real
+password-authenticated put/get and cross-gateway reads (plus wrong-password denial),
+endpoint refresh/no-op, retirement/rejoin, daemon restart, ordinary VM reboot and
+clustered peer-preserving purge, nonclustered second-owner rejection and verified
+sequential placement, plus independent logical IDs on disjoint data paths with
+scoped purge. The singleton scenario checks preserved data bytes during the move
+and existing-file access after returning to the original gateway with retained
+Samba state; it does not require local-user identities or file ACL access to follow
+placement to another gateway. Purging a standalone service also loses its local
+identities; repeat runs cannot assume access to files protected by those discarded
+identities. Clustered SMB or external AD is recommended for identity continuity;
+native AD also requires clustered mode. Reboot recovery never starts a role or
+re-enables a placement. A prior failure remains failed even if later, independent
+mode tests can run. Missing deployment prerequisites are reported as skips, not passes.
+
+Gateways are **real Ubuntu 26.04 VMs**, not nested containers; VM0 also runs
+`smbclient`. Each has 2 vCPU, 3 GiB RAM, a 20 GiB root and dedicated 4 GiB data disk.
+Local defaults require 146 GiB free pool/16 GiB available RAM initially for the
+shared lab, or 122 GiB/13 GiB for isolated non-AD setup. They retain 50 GiB
+storage/4 GiB memory headroom and budget 24 GiB per remaining VM.
+
+CI starts on `self-hosted-linux-amd64-noble-large` with its configured 100 GB disk
+and the `dir` backend. It explicitly sets `SMB_DISK_HEADROOM_GIB:10` and
+`SMB_DISK_RESERVE_PER_VM_GIB:0`: check observed free space against a 10 GiB floor
+before allocation and at lab verification boundaries, rather than reserve every
+virtual disk's full limit. The initial 16 GiB available-RAM gate and 4 GiB memory
+headroom remain. This is a starting resource budget, not proof that 100 GB suffices.
+Capacity samples and final disk/RAM/kernel OOM diagnostics are logged; increase
+the runner size only after an observed resource-related failure, not an automatic
+retry. Local defaults do not change unless explicitly overridden.
+
+`SMB_STORAGE_POOL` selects a pre-existing pool; avoid LXD's small default loop
+pool. The local LXD remote must use the default project. No existing VM/profile
+is altered.
+
+The SMB fixture discovers each OSD immediately before disk add: the tagged VM's
+`test-data` attachment must reference the exact tagged block volume in the selected
+pool. Structured guest inventory must contain exactly one `lxd_test--data` serial
+(the LXD-escaped device ID, verified on a real Ubuntu 26.04 VM). It must be a
+childless, unmounted 4 GiB disk, with a distinct visible root filesystem; mounted
+ancestors/holders, missing identity or ambiguous matches fail closed. No `/dev/sdX`
+letter or size-only fallback is used. A different LXD device identity contract
+requires investigation, not a guessed replacement.
+
+Gateways and the DC retain the Ubuntu 26.04 image's normal time configuration;
+the harness does not install or configure a time service, step clocks, or require
+public NTP access, PTP devices, or a particular `timedatectl` synchronization flag.
+Guest UTC time, time-service status, and available Chrony diagnostics are recorded
+with bounded, non-fatal reads. Chrony's remaining system-clock correction is not
+an inter-monitor skew measurement or an absolute accuracy bound.
+
+The shared setup accepts `HEALTH_OK` or `HEALTH_WARN` caused only by
+`MON_CLOCK_SKEW`. That warning is logged without blocking SMB scenarios; every
+other health warning/error remains blocking. A finished Ceph `time-sync-status`
+round, nonempty monitor observations without errors, fully up/in OSDs, settled
+pool targets and two coherent active+clean placement samples remain required.
+Ceph's default 50 ms inter-monitor limit is not changed or muted.
+
+AD directory readiness still uses a real `kinit`, and the AD cases require fresh
+tickets and Kerberos-required SMB authentication, without NTLM fallback.
+Authentication, SMB readiness and I/O failures remain fatal. No Kerberos policy
+change, clock repair or automatic rejoin is performed.
+
+References: [Ceph clock health](https://docs.ceph.com/en/tentacle/rados/operations/health-checks/#mon-clock-skew),
+[Chrony tracking fields](https://chrony-project.org/doc/4.8/chronyc.html#tracking),
+and [MIT Kerberos clock-skew policy](https://web.mit.edu/kerberos/krb5-1.22/doc/admin/conf_files/krb5_conf.html#libdefaults).
+
+Exactly one supplied snap is required and its SHA256 is checked in every VM; there
+is no store-snap fallback. The candidate currently needs snapd >= 2.78, hence the
+**guest-only** candidate channel override above. No host MicroCeph installation or
+AppArmor profile is changed. Credentials remain in private guest files (a temporary
+cluster-join token copy is also private); status and failure diagnostics go into the
+normal Robot artifacts. Allocation names, owner tags and the snap hash are logged.
+Teardown deletes only the named/tagged resources; foreign tags or attached volumes
+fail closed. Installation/network helpers may retry known infrastructure failures,
+but SMB placement, resource updates, retirement and reboot are issued only once.
+
+Status observations allow 60 seconds for the API response: native AD readiness
+permits 30 seconds, followed by a 3-second smbd ping. The outer snapshot exec
+allows 120 seconds for that reader, the 10-second systemd query and transport
+margin. Service readiness allows 60 seconds, or 120 seconds for CTDB membership
+convergence; source refresh allows 120 seconds for its complete sequence of checks.
+Caller deadlines and cancellation still take precedence. An unavailable or
+malformed API response still fails readiness; active processes alone are not enough.
+
+Dry-run checks keyword resolution, not installed behavior:
+
+```bash
+tox -e robot -- --dryrun --test-suite smb-tests
+```
+
+## Native SMB external AD authentication
+
+```bash
+tox -e robot -- --snap-path /path/to/candidate.snap --test-suite smb-ad-tests \
+    --variable SMB_SNAPD_CHANNEL:latest/candidate
+```
+
+Run the whole ordered suite on an **accepted, human-signed source artifact**.
+This is executable qualification code, not a record of an installed AD pass.
+It reuses `smb_suite.resource`, the owned-VM/exec/polling/artifact/hash machinery
+and tagged cleanup from `smb-tests`; it does not join the host or use enterprise
+credentials. The native placement/user-mode suite remains a separate CI job.
+
+The additional, dedicated Ubuntu Samba AD DC is **test infrastructure**, not a
+MicroCeph domain-controller feature. VM0 remains the client. The four guests need
+8 vCPU / 12 GiB allocated RAM, 92 GiB disks (three 24 GiB gateways, one 20 GiB DC).
+The conservative capacity guard budgets **146 GiB free pool / 16 GiB available
+RAM initially**, retaining 50 GiB disk/4 GiB RAM headroom and rounding the DC to
+24 GiB. CI retains the extra-disk runner and `dir` backend measured for #931;
+a 100 GB xlarge runner is not adequate. No guard or disk-size check is weakened.
+
+Prerequisites: outbound guest APT/image access; working local LXD/default project;
+the exact strict snap and guest snapd >= 2.78; stable guest clocks and the exact
+owned 4 GiB OSD in each gateway, verified by the shared prerequisites above.
+Stop at a disk mismatch or blocking readiness failure; report clock skew without
+muting it or changing Ceph's tolerance. The DC installs
+`samba`, `samba-ad-dc`, `python3-samba`, `krb5-user`, `bind9-host`; the client uses
+`smbclient`, `samba-common-bin` and `krb5-user`. Package versions, snap hash and allocation ownership
+are logged. Only the newly owned DC's packaged default Samba/resolved services
+are disabled; its Samba provision and private client Kerberos config are scoped
+to the fixture. Gateways consume the DC through upstream app-private `custom_dns`.
+No runner-host DNS/time/account changes are needed.
+
+Nine compact cases cover wrong join credentials with a retained uncertain
+attempt, two-gateway SID/UID/GID equality, fresh valid/invalid/unknown domain
+logins, authenticated group nonmember denial and read/write versus read-only
+shares, cross-gateway exact contents, role restart, ordinary reboot, join-input
+refresh, retained-state re-enable/initial-joiner stop, short DC outage and
+peer-safe purge. **Kerberos-required** name-based I/O and CIFS ticket checks run
+separately from **Kerberos-disabled domain NTLMv2**. Every operation starts a
+fresh client; Kerberos obtains a fresh cache/ticket, never `desired` fallback.
+Bob first reads through the authenticated reader share before writers-share
+denial, distinguishing authorization from bad credentials. The CephFS backing
+UID/GID and exact content are checked. App-namespace `wbinfo`/`getent` observations
+are real installed data, not a synthetic UID allocator; the root observation is
+not proof of unprivileged NSS permissions outside that profile.
+
+Credential refresh waits for applied-file metadata to advance on both gateways,
+then checks serving PID/start identities and DC computer SID/password-generation
+metadata. Persistence checks reauthenticate and compare mappings. The short
+outage spans at least one ordinary updater interval and accepts either bounded failure or exact cached success, not a promise of
+offline login. It restores only the intentionally stopped DC in `FINALLY`;
+there is no automatic join retry, leave or trust/idmap reset. SQL/process source
+regressions separately gate exclusion/ambiguous outcomes; ordered live admission
+alone is not a distributed-join-race proof.
+
+Secrets are generated inside the DC and transferred via mode-0600 private files,
+never password argv, Robot variables or public artifacts. Provision/operation
+first errors stay private in the guest; bounded redacted diagnostics and normal
+public observations enter Robot logs before tagged teardown. Do not upload
+`ad-secrets.json`, `.ad-auth`, credential caches, resource inputs, CTDB databases
+or raw private native diagnostics. A qualification failure remains failed; no
+control mutation is retried to green. Missing prerequisites skip dependent cases,
+not the original failure. The disposable fixture's VM teardown is not production
+AD cleanup or a supported last-replica recovery operation.
+
+Samba-DC evidence qualifies only the tested protocols/policy. No Windows release,
+GPO, cross-forest, forced rotation, broad backup/replacement or cache-revocation
+matrix is implied. Windows-specific claims need separate Windows infrastructure.
+
 ## Host resource guide
 
 Each suite runs sequentially. Peak resource usage per suite (not concurrent):
@@ -102,6 +324,8 @@ Each suite runs sequentially. Peak resource usage per suite (not concurrent):
 | Single-node               | 4    | 6 GB | 50 GB | ~10 min         |
 | Multi-node (4 containers) | 4    | 6 GB | 50 GB | ~20 min         |
 | Replication (8 containers)| 4    | 6 GB | 50 GB | ~30 min         |
+| Native SMB (3 VMs)        | 6    | 9 GiB | 72 GiB + headroom | Not yet measured |
+| Native SMB AD (4 VMs)     | 8    | 12 GiB | 92 GiB + headroom | Not yet measured |
 
 ## Suite names
 
@@ -120,6 +344,8 @@ multi-node-tests                             upgrade-squid-tests
 multi-node-tests-with-custom-microceph-ip    vaultlocker-test
 nfs-multinode-test                           wal-db-tests
 nfs-test                                    wiping-test
+smb-clustered-tests                          smb-ad-tests
+smb-singleton-tests
 ```
 
 ## Harness conventions

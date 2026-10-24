@@ -366,6 +366,15 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 	// De-duplicate by service name since there may be multiple groups.
 	seen := map[string]bool{}
 	for _, gs := range groupedServices {
+		if gs.Service == "smb" {
+			// Native fixed apps retain snapd intent. Daemon restart observes or
+			// refreshes configured ownership; rejoin/enable remains explicit.
+			err := refreshSMBLocked(ctx, s)
+			if err != nil {
+				logger.Warn("start: native SMB application not confirmed; inspect service status")
+			}
+			continue
+		}
 		if seen[gs.Service] {
 			continue
 		}
@@ -388,6 +397,7 @@ func shouldSkipMonitorRefresh(first bool, oldMonitors, monitors []string) bool {
 
 // Start is run on daemon startup.
 func Start(ctx context.Context, s interfaces.StateInterface) error {
+	startSMBUpdater(ctx, s)
 	// flag: are we on the first run?
 	first := true
 	// Start background loop to refresh the config every minute if needed.

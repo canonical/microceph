@@ -1,0 +1,25 @@
+#!/bin/bash
+# Snapd owns the native service lifetime; Go prepares its existing context.
+set -eu
+# shellcheck source=smb-startup
+. "$SNAP/commands/smb-startup"
+smb_load_context
+
+if [[ "$SMB_CUSTOM_DNS" == 1 ]]; then
+  # Expand only in the isolated child, after re-reading its prepared context.
+  # shellcheck disable=SC2016
+  exec "$SNAP/bin/unshare" --mount --propagation slave -- /bin/bash -euc '
+    . "$SNAP/commands/smb-startup"
+    smb_load_context
+    smb_bind_custom_dns
+    smb_check_start_intent
+    [[ -d "$SMB_ROOT/proxy-work" && ! -L "$SMB_ROOT/proxy-work" ]]
+    cd "$SMB_ROOT/proxy-work"
+    exec "$SNAP/bin/libcephfsd" --socket "$SMB_ROOT/proxy-work/libcephfsd.sock"
+  '
+fi
+
+smb_check_start_intent
+[[ -d "$SMB_ROOT/proxy-work" && ! -L "$SMB_ROOT/proxy-work" ]]
+cd "$SMB_ROOT/proxy-work"
+exec "$SNAP/bin/libcephfsd" --socket "$SMB_ROOT/proxy-work/libcephfsd.sock"
