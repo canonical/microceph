@@ -30,6 +30,7 @@ func GetServicePlacementTable() map[string](PlacementIntf) {
 		"mgr":           &GenericServicePlacement{"mgr"},
 		"mds":           &GenericServicePlacement{"mds"},
 		"nfs":           &NFSServicePlacement{},
+		"smb":           &SMBServicePlacement{},
 		"rgw":           &RgwServicePlacement{},
 		"rbd-mirror":    &ClientServicePlacement{"rbd-mirror"},
 		"cephfs-mirror": &ClientServicePlacement{"cephfs-mirror"},
@@ -59,8 +60,9 @@ func ServicePlacementHandler(ctx context.Context, s interfaces.StateInterface, p
 		}
 	} else {
 		go func() {
-			// Async call to Enable service.
-			err := EnableService(context.Background(), s, payload, sp)
+			// Detach from the request's lifetime, but retain its values (including
+			// the logger required by microcluster database transactions).
+			err := EnableService(context.WithoutCancel(ctx), s, payload, sp)
 			if err != nil {
 				logger.Errorf("failed %s service enablement request: %v", payload.Name, err)
 			}
