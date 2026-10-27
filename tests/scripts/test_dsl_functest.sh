@@ -1131,6 +1131,19 @@ function resolve_snap_path() {
     return 1
 }
 
+# Match the Robot local-artifact setup without changing runner-host snapd.
+function prepare_snapd_for_local_snap() {
+    local channel="${MICROCEPH_TEST_SNAPD_CHANNEL:-}"
+    [[ -n "$channel" ]] || return 0
+    log "Preparing guest snapd from $channel for the local artifact"
+    vm_exec snap wait system seed.loaded
+    local action=install
+    if vm_exec snap list snapd >/dev/null 2>&1; then
+        action=refresh
+    fi
+    vm_exec snap "$action" snapd --channel="$channel"
+}
+
 # Install MicroCeph snap in VM
 function install_microceph_in_vm() {
     log "Installing MicroCeph snap..."
@@ -1142,6 +1155,7 @@ function install_microceph_in_vm() {
 
     if [[ -n "$snap_file" && -f "$snap_file" ]]; then
         log "Installing from local snap: $snap_file"
+        prepare_snapd_for_local_snap
         lxc --quiet file push "$snap_file" "$VM_NAME/tmp/microceph.snap"
 
         local attempt=1

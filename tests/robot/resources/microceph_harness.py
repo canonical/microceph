@@ -1554,9 +1554,16 @@ class microceph_harness:
         """Returns the configured snap path from ${SNAP_PATH}, or "" when unset."""
         return BuiltIn().get_variable_value("${SNAP_PATH}", "") or ""
 
-    def _lxc_file_push(self, src, dest, timeout, errlabel):
-        """Pushes *src* to *dest* via lxc file push, failing on non-zero rc."""
-        res = self._exec(["lxc", "file", "push", src, dest], timeout)
+    def _lxc_file_push(self, src, dest, timeout, errlabel, *, private=False):
+        """Push a file, optionally root-owned mode0600 for private guest inputs.
+
+        Confined root cannot use DAC bypass to read a foreign-owned private file.
+        Unrelated uploads retain LXD's default ownership and mode behavior.
+        """
+        argv = ["lxc", "file", "push"]
+        if private:
+            argv.extend(["--uid=0", "--gid=0", "--mode=0600"])
+        res = self._exec(argv + [src, dest], timeout)
         if res.rc != 0:
             raise AssertionError(f"Failed to {errlabel}: {res.stderr}")
         return res
@@ -1618,6 +1625,39 @@ class microceph_harness:
             on_fail=on_fail,
             between=delete,
         )
+
+    def launch_owned_test_vm(self, vm_name, owner, image="ubuntu:26.04",
+                             disk_size="20GiB", memory="3GiB", cpu=2,
+                             storage_pool="default", data_volume=""):
+        """Create one tagged VM without deleting/retrying an existing allocation.
+
+        Optional data_volume is an already-created persistent block volume.
+        The caller owns tagged-resource teardown, including a failed start.
+        """
+        res = self._exec(["lxc", "list", "local:", vm_name, "--project", "default",
+                          "--format", "csv", "-c", "n"], 30)
+        if res.rc != 0 or self._csv_lists_instance(res.stdout, vm_name):
+            raise AssertionError(f"Refusing VM launch: {vm_name} exists or its state is unknown")
+        if not owner:
+            raise AssertionError("An explicit test owner is required")
+        target = f"local:{vm_name}"
+        commands = [["lxc", "init", image, target, "--vm", "--project", "default",
+                     "--storage", storage_pool, "-c", f"limits.cpu={cpu}",
+                     "-c", f"limits.memory={memory}", "-d", f"root,size={disk_size}",
+                     "-c", f"user.microceph-test-owner={owner}"]]
+        if data_volume:
+            commands.append(["lxc", "config", "device", "add", target, "test-data", "disk",
+                             "--project", "default", f"pool={storage_pool}", f"source={data_volume}"])
+        commands.append(["lxc", "start", target, "--project", "default"])
+        for argv in commands:
+            res = self._exec(argv, 300)
+            if res.rc != 0:
+                raise AssertionError(f"Owned VM setup failed for {vm_name}: {res.stderr}")
+        self.wait_for_vm_agent(target)
+        res = self._exec(["lxc", "exec", "-n", target, "--project", "default", "--",
+                          "cloud-init", "status", "--wait"], 300)
+        if res.rc != 0:
+            raise AssertionError(f"cloud-init failed in {vm_name}: {res.stderr}")
 
     def launch_outer_test_vm(self, vm_name=None, disk_size=None, enable_nesting=False):
         """Launches the LXD VM used as the test boundary, deleting any pre-existing instance."""
@@ -1915,7 +1955,35 @@ class microceph_harness:
         self.apt_update(vm_name=vm_name)
         self.apt_install(VM_APT_TOOLS, vm_name=vm_name)
 
-    def install_microceph_from_local_snap(self, snap_path=None, vm_name=None):
+    def prepare_snapd_for_local_snap(self, container="", channel=None, vm_name=None):
+        """Opt in to a snapd channel inside the test guest, never on the host.
+
+        CI sets MICROCEPH_TEST_SNAPD_CHANNEL for artifacts whose minimum snapd
+        version is not stable yet. Store-snap baseline installs are unchanged.
+        """
+        if channel is None:
+            channel = os.environ.get("MICROCEPH_TEST_SNAPD_CHANNEL", "")
+        if not channel:
+            return
+        if container:
+            execute = lambda cmd, timeout: self.run_in_container_unchecked(container, cmd, timeout, quiet=True)
+            install = lambda cmd: self.run_in_container_with_snap_retry(container, cmd, 300)
+        elif vm_name is not None:
+            execute = lambda cmd, timeout: self.run_in_vm(cmd, timeout, quiet=True, vm_name=vm_name)
+            install = lambda cmd: self.run_in_vm_with_snap_retry(cmd, 300, vm_name=vm_name)
+        else:
+            execute = lambda cmd, timeout: self.run_in_vm(cmd, timeout, quiet=True)
+            install = lambda cmd: self.run_in_vm_with_snap_retry(cmd, 300)
+        ready = execute("sudo snap wait system seed.loaded", 300)
+        if ready.rc != 0:
+            raise AssertionError(f"Guest snapd seeding failed: {ready.stderr}")
+        present = execute("sudo snap list snapd", 30)
+        if present.rc not in (0, 1):
+            raise AssertionError(f"Cannot inspect guest snapd: {present.stderr}")
+        action = "refresh" if present.rc == 0 else "install"
+        install(f"sudo snap {action} snapd --channel={shlex.quote(channel)}")
+
+    def install_microceph_from_local_snap(self, snap_path=None, vm_name=None, snapd_channel=None):
         """Installs the locally-built snap and connects all interfaces (except dm-crypt)."""
         snap_path = snap_path or self._snap_path()
         if not snap_path:
@@ -1924,6 +1992,10 @@ class microceph_harness:
         # snap_path only gates the skip above; the install uses the ~/microceph_*.snap
         # glob below, so the argument value is otherwise unused.
         logger.console("[install] Installing MicroCeph snap...")
+        if vm_name is None:
+            self.prepare_snapd_for_local_snap(channel=snapd_channel)
+        else:
+            self.prepare_snapd_for_local_snap(channel=snapd_channel, vm_name=vm_name)
         self.run_in_vm_and_check("sudo snap install core26 || true", 120, vm_name=vm_name)
         # The core26 prefetch above tolerates failure, so a transient store error
         # resurfaces here as 'cannot install snap base "core26": ...' and is retried.
@@ -2071,6 +2143,7 @@ class microceph_harness:
         # without repeating the update, and each gets its own attempt budget.
         self.apt_update(builder)
         self.apt_install(VM_APT_TOOLS, builder)
+        self.prepare_snapd_for_local_snap(builder)
         self.run_in_container_with_snap_retry(
             builder, f"snap install --dangerous {MNT_SNAP_GLOB}", 600
         )
@@ -2368,6 +2441,7 @@ class microceph_harness:
         connects = " && ".join(f"snap connect microceph:{iface}" for iface in SNAP_INTERFACES_MINIMAL)
         for container in NODES:
             logger.console(f"[upgrade] Upgrading {container}...")
+            self.prepare_snapd_for_local_snap(container)
             self.run_in_container_with_snap_retry(
                 container, f"sudo snap install --dangerous {MNT_SNAP_GLOB}", 600
             )

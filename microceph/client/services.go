@@ -140,3 +140,21 @@ func SendRestartRequestToClusterMembers(ctx context.Context, s mcTypes.State, se
 
 	return nil
 }
+
+// DeleteSMBService requests confirmed group-aware retirement on one member.
+func DeleteSMBService(ctx context.Context, c mcTypes.Client, target string, svc *types.SMBService) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	c = c.UseTarget(target)
+	return c.Query(queryCtx, "DELETE", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb").URL, svc, nil)
+}
+
+// GetSMBService returns the nonsecret native member diagnostic, including failed owners.
+func GetSMBService(ctx context.Context, c mcTypes.Client, target string) (types.SMBStatus, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	c = c.UseTarget(target)
+	var status types.SMBStatus
+	err := c.Query(queryCtx, "GET", types.ExtendedPathPrefix, &api.NewURL().Path("services", "smb").URL, nil, &status)
+	return status, err
+}
