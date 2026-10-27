@@ -85,6 +85,9 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner || 'ubuntu-22.04' }}
     needs: [preflight, build-microceph]
+    env:
+      # Local artifacts require snapd >= 2.78 in every consuming guest.
+      MICROCEPH_TEST_SNAPD_CHANNEL: latest/candidate
     strategy:
       fail-fast: false
       matrix:
@@ -214,6 +217,18 @@ jobs:
             suite: deferred-ceph-multinode-tests
             runner: self-hosted-linux-amd64-jammy-xlarge
 
+          - id: smb-integration
+            name: SMB local-user singleton
+            suite: smb-integration
+            # Three backing-Ceph VMs preserve quorum/replicas during reboot;
+            # no clustered SMB gateways or directory fixture are allocated.
+            runner: self-hosted-linux-amd64-noble-large
+            lxd_args: --storage-backend=dir
+            args: >-
+              --variable SMB_SNAPD_CHANNEL:latest/candidate
+              --variable SMB_DISK_HEADROOM_GIB:10
+              --variable SMB_DISK_RESERVE_PER_VM_GIB:0
+
           - id: legacy-placement-tests
             name: Legacy bootstrap placement regression
             suite: legacy-placement-tests
@@ -255,7 +270,7 @@ jobs:
         run: |
           sudo snap list lxd 2>/dev/null || sudo snap install lxd --channel=latest/stable
           sudo snap set lxd daemon.group=adm
-          sudo lxd init --auto
+          sudo lxd init --auto ${{ matrix.lxd_args }}
 
       - name: Install tox
         run: |
@@ -278,4 +293,8 @@ jobs:
             output.xml
             log.html
             report.html
+            smb-summary.json
+            smb-results/singleton/output.xml
+            smb-results/singleton/log.html
+            smb-results/singleton/report.html
           retention-days: 5

@@ -40,11 +40,17 @@ def main():
 
     # Resolve the target path (always required by robot).
     here = os.path.dirname(__file__)
+    if args.test_suite in ("smb-integration", "smb-singleton-tests"):
+        command = [sys.executable, "-u", os.path.join(here, "smb_runner.py"),
+                   "--snap-path", args.snap_path or ""]
+        return subprocess.run(command + remaining).returncode
     if args.test_suite:
         target = os.path.join(here, args.test_suite)
     else:
-        # Default to the full suite so an unqualified run exercises everything.
-        target = here
+        # Full-tree selection stays intact, but SMB setup belongs to its coordinator.
+        command = [sys.executable, "-u", os.path.join(here, "full_runner.py"),
+                   "--snap-path", args.snap_path or ""]
+        return subprocess.run(command + robot_flags).returncode
 
     robot_args = robot_flags + [target]
     cmd = [sys.executable, "-u", "-m", "robot"] + robot_args
