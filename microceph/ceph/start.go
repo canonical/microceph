@@ -368,7 +368,7 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 	for _, gs := range groupedServices {
 		if gs.Service == "smb" {
 			// snapd owns smbd's retained enable/disable intent and lifetime.
-			// Daemon restart observes only; configuration maintenance is explicit.
+			// Daemon restart observes only; the SMB updater handles source changes.
 			status, err := SMBLocalStatus(ctx, s)
 			if err != nil || !status.Ready {
 				logger.Warn("start: native SMB readiness is not confirmed; inspect service status")
@@ -397,6 +397,7 @@ func shouldSkipMonitorRefresh(first bool, oldMonitors, monitors []string) bool {
 
 // Start is run on daemon startup.
 func Start(ctx context.Context, s interfaces.StateInterface) error {
+	startSMBUpdater(ctx, s)
 	// flag: are we on the first run?
 	first := true
 	// Start background loop to refresh the config every minute if needed.
