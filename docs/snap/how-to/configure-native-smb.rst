@@ -132,9 +132,11 @@ once the placement lock is acquired, each update has a two-minute budget.
 Allow for manager propagation, validation and restart time as well as this
 interval. This is not zero-downtime configuration: changed inputs stop ``smbd``,
 publish validated files, import users into its retained SAM and restart it.
-Existing sessions may disconnect. Unchanged effective source documents do not
-import accounts, restart or re-enable the service. Ordinary unhealthy-process
-recovery remains snapd's responsibility, not permission for configuration repair.
+Existing sessions may disconnect. Unchanged inputs do not import accounts,
+restart or re-enable the service. Changes to ordinary JSON key order are ignored;
+Samba option order is retained because aliases can change which value wins.
+Ordinary unhealthy-process recovery remains snapd's responsibility, not
+permission for configuration repair.
 
 The updater reads manager policy, the managed RADOS config/user sources, the
 local endpoint and Ceph configuration. It does not provision identities/keys,
