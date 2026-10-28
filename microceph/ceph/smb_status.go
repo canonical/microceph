@@ -62,9 +62,18 @@ func SMBLocalStatus(ctx context.Context, s interfaces.StateInterface) (types.SMB
 		return status, err
 	}
 	status.PolicyWarning = string(warning)
-	_, err = os.Stat(filepath.Join(root, "diagnostics", "last-error"))
+	diagnostic, err := os.ReadFile(filepath.Join(root, "diagnostics", "last-error"))
 	if err == nil {
 		status.Error = "local application failed; configuration is not confirmed applied"
+		if string(diagnostic) == smbUnreadyDiagnostic {
+			status.Error = "local SMB gateway is not ready; previously applied configuration is unchanged"
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return status, err
+	}
+	_, err = os.Lstat(filepath.Join(root, "config-update-pending"))
+	if err == nil {
+		status.Error = "local configuration update is not confirmed applied"
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return status, err
 	}

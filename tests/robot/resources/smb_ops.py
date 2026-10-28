@@ -115,6 +115,28 @@ def role_tokens(snapshots):
     return result
 
 
+def observations_unchanged(samples, tokens, cluster, port):
+    """Every collected sample must remain ready with the same process identity."""
+    return bool(samples) and all(snapshot_ready(sample, cluster, port) and role_tokens([sample]) == tokens
+                                 for sample in samples)
+
+
+def observations_disabled(samples, cluster, port):
+    """No background publication/start while snapd startup intent is disabled."""
+    return bool(samples) and all(sample.get("owner") == cluster
+                                 and sample.get("context", {}).get("smb_port") == int(port)
+                                 and sample.get("roles", {}).get("smbd", {}).get("ActiveState") == "inactive"
+                                 for sample in samples)
+
+
+def parse_user_sid(raw):
+    """Accept exactly one native local user SID, never diagnostic output."""
+    value = raw.strip()
+    if not re.fullmatch(r"S-1-5-21-\d+-\d+-\d+-\d+", value):
+        raise AssertionError("Native SMB user SID is unavailable")
+    return value
+
+
 @dataclass(repr=False)
 class _SharedState:
     resources: object
@@ -362,8 +384,32 @@ class smb_ops:
     def smb_role_tokens(self, snapshot):
         return role_tokens([snapshot])
 
+    def observe_smb_interval(self, node, cluster="robot-never"):
+        samples = []
+        deadline = time.monotonic() + 65  # More than two production updater periods.
+        def collect():
+            samples.append(self.smb_snapshot(node, cluster))
+            return time.monotonic() >= deadline
+        self.harness._poll_until(collect, attempts=30, interval=3, fail_msg="SMB observation window did not finish")
+        return samples
+
+    def smb_observations_unchanged(self, samples, tokens, cluster="robot-never", port=3445):
+        return observations_unchanged(samples, tokens, cluster, port)
+
+    def smb_observations_disabled(self, samples, cluster="robot-never", port=3445):
+        return observations_disabled(samples, cluster, port)
+
+    def smb_user_sid(self, node):
+        body = ('exec "$SNAP/bin/unshare" --mount --propagation slave -- /bin/bash -euc '
+                + shlex.quote('. "$SNAP/commands/smb-startup"; smb_load_context; smb_setup_nss; '
+                              'smb_assert_prepared smbd; smb_check_start_intent; export SMB_ROOT; '
+                              'exec "$SNAP/bin/python3" "$SNAP_COMMON/robot-smb/smb_guest.py" identity'))
+        result = self._node(node).command("snap", "run", "--shell", "microceph.smbd", "-c", body,
+                                          timeout=120, check=True, quiet=True)
+        return parse_user_sid(result.stdout)
+
     def smb_client_transfer(self, node, filename, upload=True, auth="alice", cluster="robot-never"):
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", filename) or auth not in ("alice", "wrong"):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", filename) or auth not in ("alice", "wrong", "refreshed"):
             raise AssertionError("Invalid SMB test filename/auth selector")
         endpoint = self.smb_snapshot(node, cluster)["context"]
         commands = (f"put {self._base}/payload.bin {filename}; " if upload else "") + f"get {filename} {self._base}/readback.bin"

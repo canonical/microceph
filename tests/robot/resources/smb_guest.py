@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Guest-only local-user fixture; no placement, restart or polling policy."""
+import copy
 import hashlib
 import json
 import os
@@ -15,7 +16,7 @@ DATA_PATHS = {"robot-never": "/independent", "robot-other": "/independent-other"
 PAYLOAD = b"MicroCeph Robot SMB sentinel\n" + bytes(range(256)) * 16
 
 
-def resource_documents(addresses, password):
+def resource_documents(addresses, password, refresh_password):
     """Direct, explicitly nonclustered resources; no future feature inputs."""
     users = {"resource_type": "ceph.smb.usersgroups", "users_groups_id": "robot-users",
              "values": {"users": [{"name": "alice", "password": password, "uid": 2201, "gid": 2200}],
@@ -27,7 +28,11 @@ def resource_documents(addresses, password):
              "bind_addrs": [{"address": address} for address in addresses], "custom_ports": {"smb": port}},
             {"resource_type": "ceph.smb.share", "cluster_id": name, "share_id": "data",
              "cephfs": {"volume": "robotsmb", "path": DATA_PATHS[name], "provider": "samba-vfs/new"}}]}
-    return {"nonclustered": resources("robot-never", 3445), "independent": resources("robot-other", 4445)}
+    refreshed = copy.deepcopy(resources("robot-never", 3446))
+    refreshed["resources"][0]["values"]["users"][0]["password"] = refresh_password
+    refreshed["resources"][2]["readonly"] = True
+    return {"nonclustered": resources("robot-never", 3445), "independent": resources("robot-other", 4445),
+            "refresh": refreshed}
 
 
 def safe_apply_result(rc, stdout, stderr, passwords):
@@ -46,20 +51,20 @@ def safe_apply_result(rc, stdout, stderr, passwords):
 
 def initialize(addresses):
     BASE.mkdir(mode=0o700, parents=True, exist_ok=True)
-    password, wrong = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
-    for name, value in (("alice", password), ("wrong", wrong)):
+    password, wrong, refreshed = (secrets.token_urlsafe(24) for _ in range(3))
+    for name, value in (("alice", password), ("wrong", wrong), ("refreshed", refreshed)):
         (BASE / f"{name}.auth").write_text(f"username = alice\npassword = {value}\ndomain = WORKGROUP\n")
-    for kind, document in resource_documents(addresses, password).items():
+    for kind, document in resource_documents(addresses, password, refreshed).items():
         (BASE / f"{kind}.json").write_text(json.dumps(document))
     (BASE / "payload.bin").write_bytes(PAYLOAD)
 
 
 def apply_resource(kind):
-    if kind not in ("nonclustered", "independent"):
+    if kind not in ("nonclustered", "independent", "refresh"):
         raise ValueError("unknown test resource")
     result = subprocess.run(["/snap/bin/microceph.ceph", "smb", "apply", "-i", str(BASE / f"{kind}.json"), "-f", "json"], capture_output=True, text=True, timeout=120)
     (BASE / f"{kind}.result").write_text(result.stdout + "\n" + result.stderr)
-    passwords = [(BASE / f"{name}.auth").read_text().split("password = ", 1)[1].splitlines()[0] for name in ("alice", "wrong")]
+    passwords = [(BASE / f"{name}.auth").read_text().split("password = ", 1)[1].splitlines()[0] for name in ("alice", "wrong", "refreshed")]
     safe = safe_apply_result(result.returncode, result.stdout, result.stderr, passwords)
     print(json.dumps(safe))
     return 0 if safe["success"] else 1
@@ -88,6 +93,15 @@ def cephfs_operation(action, filename=None, cluster="robot-never"):
             print(hashlib.sha256(content).hexdigest())
     finally:
         fs.shutdown()
+
+
+def retained_user_sid():
+    # The caller established private NSS and checked prepared retained databases
+    # before any Samba import: even SID queries must never reconstruct state.
+    from sambacc.passdb_loader import PassDBLoader
+    root = Path(os.environ["SMB_ROOT"])
+    loader = PassDBLoader(str(root / "config/smb.conf"))
+    print(str(loader._pdb.getsampwnam("alice").user_sid))
 
 
 def snapshot(cluster):
@@ -125,6 +139,8 @@ if __name__ == "__main__":
         initialize(json.loads(sys.argv[2]))
     elif operation == "apply":
         sys.exit(apply_resource(sys.argv[2]))
+    elif operation == "identity":
+        retained_user_sid()
     elif operation == "snapshot":
         snapshot(sys.argv[2])
     elif operation == "prepare-fs":
