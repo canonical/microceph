@@ -19,6 +19,22 @@ NFS Tests Suite Setup
     Install And Bootstrap MicroCeph
     Run In VM And Check    sudo microceph disk add loop,1G,3    120
     Wait For OSD Count    3
+    Prepare Grace Cleanup Audit
+
+Prepare Grace Cleanup Audit
+    [Documentation]    Builds an observer that forwards every call to the real librados.
+    Run In VM And Check    sudo apt-get update    120
+    Run In VM And Check    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y gcc libc6-dev librados-dev    300
+    ${copy}=    Run Process    lxc    file    push    ${REPO_ROOT}/tests/scripts/grace_cleanup_audit.c    ${OUTER_VM}/root/grace_cleanup_audit.c    timeout=60
+    Should Be Equal As Integers    ${copy.rc}    0    msg=${copy.stderr}
+    Run In VM And Check    sudo gcc -shared -fPIC -Wall -Wextra -Werror /root/grace_cleanup_audit.c -o /var/snap/microceph/common/grace-cleanup-audit.so -ldl    60
+
+Run Audited Grace Helper
+    [Documentation]    Checks real resource release before exit, not whether a timing-dependent crash occurs.
+    [Arguments]    ${arguments}    ${expected_rc}=0    ${cephconf}=/var/snap/microceph/current/conf/ceph.conf
+    ${result}=    Run In VM    sudo snap run --shell microceph.daemon -c 'LD_PRELOAD=/var/snap/microceph/common/grace-cleanup-audit.so exec "$SNAP/bin/ganesha-rados-grace" --cephconf ${cephconf} --userid admin --pool .nfs --ns microceph-ci-grace-cleanup ${arguments}'    60
+    Should Be Equal As Integers    ${result.rc}    ${expected_rc}    msg=${result.stderr}
+    Should Contain    ${result.stderr}    grace cleanup: OK
 
 Skip If Log Rotate App Not Available
     [Documentation]    Skips the test if the microceph.log-rotate snap app is absent.
@@ -105,6 +121,19 @@ Test Enable NFS
     [Documentation]    Enables NFS with cluster-id "foo" and waits for the daemon to start.
     [Tags]    nfs
     Enable NFS    foo
+
+Test Grace Helper Cleanup
+    [Documentation]    Add and remove must destroy the I/O context before shutting down the client.
+    Run Audited Grace Helper    add cleanup-node
+    Run Audited Grace Helper    remove cleanup-node
+
+Test Grace Helper Cleanup On Command Failure
+    [Documentation]    A failed grace operation must still release both handles and retain exit status 1.
+    Run Audited Grace Helper    remove absent-node    expected_rc=1
+
+Test Grace Helper Cleanup On Setup Failure
+    [Documentation]    A configuration failure after client creation must release the partial connection.
+    Run Audited Grace Helper    dump    expected_rc=1    cephconf=/var/snap/microceph/common/no-such-grace.conf
 
 Test Create NFS FS Volume
     [Documentation]    Creates a CephFS volume named "testfs" for the NFS export.

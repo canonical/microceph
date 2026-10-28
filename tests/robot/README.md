@@ -93,6 +93,17 @@ state in `/var/snap/vaultlocker/common/microceph-ci/reboot-state.json` inside th
 VM. Delete the VM when finished. This is not a Juju/charm, HA or cross-model test;
 the test Vault shares the VM and starts sealed after reboot.
 
+### NFS grace-helper cleanup regression
+
+The `nfs-test` suite checks the installed `ganesha-rados-grace` helper against the VM's real Ceph cluster. A test-only `LD_PRELOAD` observer forwards calls to librados and fails with exit status 99 if the helper exits with live handles or shuts down the client before destroying its I/O context. This deterministically catches the lifetime bug behind https://github.com/canonical/microceph/issues/899 without waiting for a segmentation fault. The observer is compiled inside the VM and is never included in the snap.
+
+```bash
+tox -e robot -- --snap-path /path/to/microceph.snap \
+    --test-suite nfs-test --test 'Test Grace Helper Cleanup*'
+```
+
+The three cases cover successful add/remove, a failed grace operation, and configuration failure after client creation; failures must retain exit status 1 after cleanup. They use a separate `microceph-ci-grace-cleanup` namespace. The same tests fail against the archive helper and pass with the V6.5 backport of https://review.gerrithub.io/c/ffilz/nfs-ganesha/+/1256299; no expectations change between the test-only and fix commits.
+
 ## Host resource guide
 
 Each suite runs sequentially. Peak resource usage per suite (not concurrent):
