@@ -41,14 +41,16 @@ silently take over a cephadm-managed deployment. On a new deployment::
     sudo microceph.ceph mgr module enable smb
 
 Define users and a direct share
-------------------------------
+-------------------------------
 
 Create the CephFS directory first and grant the selected numeric UID/GID access
 through its existing ownership/ACLs. MicroCeph does not change data permissions.
 Local user IDs below are examples; choose IDs suitable for your filesystem.
 
 Create a root-private resource file (``umask 077`` before creating it). Replace
-``CHANGE-ME``, ``192.0.2.10``, ``cephfs`` and ``/team`` before applying::
+``CHANGE-ME``, ``192.0.2.10``, ``cephfs`` and ``/team`` before applying:
+
+.. code-block:: yaml
 
     resource_type: ceph.smb.usersgroups
     users_groups_id: team-users
@@ -102,7 +104,7 @@ is rejected. Omitted bind addresses select a local address on Ceph's
 ``public_network``; explicit address/network selectors must match a local
 interface. Only the SMB service port is configurable here.
 
-Configuration must be direct and inspectable. Samba ``include``, ``copy`` and
+Configuration must be direct and explicit. Samba ``include``, ``copy`` and
 ``config file`` indirection, registry configuration backends and registry shares
 are unsupported in global options, share defaults and individual shares. These
 could change effective policy after admission. Put supported options directly in
@@ -119,7 +121,7 @@ share. Do not expose the private resource file or gateway state in support logs.
 Service inventory reports only applied source references and endpoints.
 
 Maintenance, restart and disable
--------------------------------
+--------------------------------
 
 To change shares, users or endpoints, explicitly stop the gateway, modify and
 apply the Ceph SMB resources, then enable it again::
