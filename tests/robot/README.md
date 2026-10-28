@@ -61,6 +61,11 @@ through `smb_runner.py`, which owns its lab manifest, exact case accounting and 
 The explicit `--test-suite smb-integration` and `--test-suite smb-singleton-tests`
 routes use that same coordinator. Its private evidence remains in `smb-results/`
 and its verdict in `smb-summary.json`; do not publish the private lab manifest.
+The first singleton case also applies changed user credentials, a read-only share
+and a new port without placement commands, checks retained user SID/data, and
+observes disabled/no-op behavior over more than two production update periods.
+It restores the original inputs before the independent-ID/purge cases. Accounting
+remains exactly three dependent cases; no extra suite or lab is introduced.
 
 Full-tree runs apply Robot's normal selection flags before execution, without
 running suite setup. Selecting no SMB cases skips its coordinator; selecting all

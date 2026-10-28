@@ -8,7 +8,8 @@ are not supported. Ceph itself may be a multi-node cluster.
 
 Configuration is maintained by Ceph's SMB manager module. MicroCeph explicitly
 places and stops the gateway; the manager must not schedule containers. No
-configuration polling or membership updater runs in this version.
+membership updater runs in this version. An SMB-specific configuration updater
+propagates supported changes to existing placements; it never places gateways.
 
 Prerequisites
 -------------
@@ -120,21 +121,74 @@ Verify a real upload/download and wrong-password refusal before relying on the
 share. Do not expose the private resource file or gateway state in support logs.
 Service inventory reports only applied source references and endpoints.
 
+Automatic configuration updates
+-------------------------------
+
+Apply supported share, local-user/password/group and endpoint changes through
+Ceph's SMB manager as above. While the MicroCeph daemon is running, its
+SMB-specific updater checks existing local placements every 30 seconds,
+independently of monitor-address changes. A queued placement can delay a check;
+once the placement lock is acquired, each update has a two-minute budget.
+Allow for manager propagation, validation and restart time as well as this
+interval. This is not zero-downtime configuration: changed inputs stop ``smbd``,
+publish validated files, import users into its retained SAM and restart it.
+Existing sessions may disconnect. Unchanged effective source documents do not
+import accounts, restart or re-enable the service. Ordinary unhealthy-process
+recovery remains snapd's responsibility, not permission for configuration repair.
+
+The updater reads manager policy, the managed RADOS config/user sources, the
+local endpoint and Ceph configuration. It does not provision identities/keys,
+create placements, enable the manager module or reconstruct missing SAM/SID
+state. It refuses unsupported authentication/mode/runtime-role changes and
+mutable configuration indirection before publication. AD, clustered mode,
+proxy and ownership/relocation changes remain unsupported; use explicit
+maintenance for placement changes. CephFS permissions still require separate
+administration.
+
+Explicit ``microceph disable smb`` retirement/stop intent and snapd disabled
+startup intent are preserved. Changes are not published to a disabled gateway
+and the updater never uses ``--enable``. Explicit re-enable consumes supported
+current inputs while retaining the original gateway identity. Confirmed logical
+cluster deletion stops serving and withdraws its success row, but retains owner
+uncertainty until explicit retirement; unknown source/transport errors do not
+authorize that containment.
+
+Status reports a pending or failed local update without publishing source
+fingerprints, raw configuration or passwords. Validation/source-recheck failure
+leaves the live configuration unchanged. Once publication starts, it can be
+partial: preparation is invalidated before candidate/files advance and the
+service cannot independently start unprepared state. Failed/interrupted work
+is retried on a later check, including when upstream inputs revert. Successful
+account-import/restart controls are recorded separately from health readiness;
+waiting for health does not repeat those controls. A crash before that completion
+record is durable can require another controlled import/restart. There is no
+atomic rollback guarantee. Persistent failure, lost identity or uncertain first
+initialization requires explicit maintenance/recovery, never automatic identity
+reconstruction.
+
+An upgrade from the local-user parent adopts the actual already-published
+candidate only with an exact SQL owner/success row, known SAM-started history,
+prepared context and retained identity files. It does not mark newly fetched
+upstream changes as previously applied. Missing/incomplete parent state is not
+permission to bootstrap. Installed parent-artifact upgrade qualification remains
+a release gate.
+
 Maintenance, restart and disable
 --------------------------------
 
-To change shares, users or endpoints, explicitly stop the gateway, modify and
-apply the Ceph SMB resources, then enable it again::
+To avoid automatic propagation during planned maintenance, stop the gateway
+before changing and applying resources, then explicitly enable it again::
 
     sudo microceph disable smb --cluster-id files
     sudo microceph.ceph smb apply -i /root/smb-resources.yaml
     sudo microceph enable smb --cluster-id files --wait=true
 
-Ordinary daemon restart does not reconfigure or enable SMB. snapd independently
+Ordinary daemon restart does not itself reconfigure or enable SMB; subsequent
+updater checks propagate changed inputs on existing enabled placements. snapd independently
 supervises the prepared native ``smbd`` service; a same-gateway service restart or
 host reboot consumes retained configuration and SAM/SID state without the Go
 daemon running. A partially published or unprepared projection cannot start.
-Configuration changes do not propagate automatically in this version.
+With the daemon stopped, configuration changes wait until its updater resumes.
 
 Disable retains the gateway's local SAM/SID and configuration for re-enable.
 These identities are gateway-local, not portable across moves to another gateway.
@@ -192,8 +246,10 @@ history, not permission to bootstrap a new SID. Such state requires explicit
 administrative recovery or a new logical cluster; no automatic migration or
 identity-reset compatibility is promised.
 
-There is no SMB deployment state in the parent MicroCeph version. Before rolling
-back to it, explicitly disable SMB and preserve a backup of retained gateway
-state. Parent binaries cannot manage this feature. Do not purge or reconstruct
-identity state as part of a package rollback. Installed upgrade/rollback and
-exact-package qualification remain required release gates.
+The local-user parent has no automatic updater; rolling back to it stops automatic
+propagation and requires its explicit stop/apply/enable maintenance procedure.
+Do not roll back a pending/failed publication: first complete it or restore a
+coherent backup during maintenance. A version predating local-user SMB cannot
+manage the deployment; explicitly disable SMB before that rollback and preserve
+retained state. Never purge or reconstruct identity as part of package rollback.
+Installed upgrade/rollback and exact-package qualification remain release gates.
