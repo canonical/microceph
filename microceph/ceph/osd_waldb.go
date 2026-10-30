@@ -193,7 +193,7 @@ func (m *OSDManager) buildDSLProvisionPlan(ctx context.Context, req types.DisksP
 		return nil, err
 	}
 	if osdResult.ValidationError != "" {
-		return nil, fmt.Errorf(osdResult.ValidationError)
+		return nil, fmt.Errorf("%s", osdResult.ValidationError)
 	}
 
 	plan := &dslProvisionPlan{}

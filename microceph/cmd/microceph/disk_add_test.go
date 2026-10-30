@@ -239,3 +239,23 @@ func TestPrintDryRunOutputJSONValidationErrorReturnsError(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(output), &decoded))
 	assert.Equal(t, resp, decoded)
 }
+
+func TestDiskAddValidationErrorsPreservePercent(t *testing.T) {
+	response := types.DiskAddResponse{ValidationError: "invalid device /dev/disk/by-id/member%data"}
+	tests := []struct {
+		name string
+		run  func(types.DiskAddResponse) error
+	}{
+		{name: "dry run table", run: (&cmdDiskAdd{}).printDryRunOutput},
+		{name: "dry run JSON", run: (&cmdDiskAdd{flagJSON: true}).printDryRunOutput},
+		{name: "add failures", run: printAddDiskFailures},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			captureStdout(t, func() {
+				assert.EqualError(t, tt.run(response), response.ValidationError)
+			})
+		})
+	}
+}
