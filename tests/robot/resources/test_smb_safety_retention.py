@@ -294,7 +294,7 @@ def test_smb_scenario_retirement_refuses_foreign_owners_and_never_purges(monkeyp
     with pytest.raises(AssertionError, match="foreign"):
         library.retire_smb_scenario()
     assert not calls
-    snapshots = iter([{"owner": owner}, {"owner": "", "roles": {"smbd": {"ActiveState": "inactive"}}}])
+    snapshots = iter([{"owner": owner}, {"owner": "", "roles": {"smbd": {"ActiveState": "inactive"}, "ctdbd": {"ActiveState": "inactive"}}}])
     monkeypatch.setattr(library, "smb_snapshot", lambda *args: next(snapshots))
     library.retire_smb_scenario()
     assert calls == [("microceph", "disable", "smb", "--cluster-id", owner)]
@@ -447,7 +447,7 @@ def test_smb_coordinator_real_setup_and_standalone_owned_cleanup(tmp_path, monke
             return _result('[{"prefsrc":"192.0.2.1"}]')
         if args[:3] == ("python3", library._base + "/smb_guest.py", "snapshot"):
             return _result(json.dumps({"owner": "alpha" if mode == "uncertain-idle" else "", "api": '{"metadata":{}}',
-                "services": "Id=snap.microceph.smbd.service\nActiveState=inactive"}))
+                "services": "Id=snap.microceph.smbd.service\nActiveState=inactive\n\nId=snap.microceph.ctdbd.service\nActiveState=inactive"}))
         return _result()
 
     monkeypatch.setattr(m.smb_ops, "_host", host)

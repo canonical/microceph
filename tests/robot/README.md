@@ -56,20 +56,27 @@ tox -e robot -- --snap-path /path/to/microceph_*.snap
 
 Results land in `output.xml`, `log.html`, and `report.html` in the working directory.
 Integration suites own their disposable LXD resources; host-only suites allocate none.
-Default/full runs (including `--all`) route the three dependent SMB singleton cases
-through `smb_runner.py`, which owns its lab manifest, exact case accounting and cleanup.
-The explicit `--test-suite smb-integration` and `--test-suite smb-singleton-tests`
-routes use that same coordinator. Its private evidence remains in `smb-results/`
+Default/full runs (including `--all`) route the complete SMB scenarios through
+`smb_runner.py`, which owns serial labs, private manifests, exact case accounting
+and cleanup: six clustered cases and three singleton cases. Explicit
+`--test-suite smb-integration` runs both; `--test-suite smb-singleton-tests` and
+`--test-suite smb-clustered-tests` select one complete scenario. The coordinator's
+`--suites clustered,singleton` option can also reverse their order. No AD fixture
+or future runtime is allocated. Its private evidence remains in `smb-results/`
 and its verdict in `smb-summary.json`; do not publish the private lab manifest.
 The first singleton case also applies changed user credentials, a read-only share
 and a new port without placement commands, checks retained user SID/data, and
 observes disabled/no-op behavior over more than two production update periods.
 It restores the original inputs before the independent-ID/purge cases. Accounting
-remains exactly three dependent cases; no extra suite or lab is introduced.
+remains exactly three dependent singleton cases. The six clustered cases cover
+cross-gateway I/O/wrong-password refusal, endpoint refresh without CTDB restart,
+unchanged-enable tokens, retained-rank retirement/rejoin, daemon restart, actual
+reboot and peer/shared-resource/data-preserving local purge.
 
 Full-tree runs apply Robot's normal selection flags before execution, without
-running suite setup. Selecting no SMB cases skips its coordinator; selecting all
-three runs it once; a partial SMB scenario fails before allocating a lab. Ordinary
+running suite setup. Selecting no SMB cases skips its coordinator; each selected
+scenario must include all three singleton or all six clustered cases. Partial
+scenarios fail before allocating a lab. Ordinary
 filtered non-SMB runs remain supported, including qualified suite/test names.
 Full output/log/report options apply to the aggregated result; coordinator or
 cleanup failure cannot become success merely because its test XML contains PASS.

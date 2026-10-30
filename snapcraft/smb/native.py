@@ -47,6 +47,8 @@ def bridge(command, request):
     if command == "inspect":
         return {
             "clustered": instance.with_ctdb,
+            "ctdb": instance.ctdb_config() if instance.with_ctdb else {},
+            "ctdb_globals": list(instance.ctdb_smb_config().global_options()) if instance.with_ctdb else [],
             "domain_controller": instance.with_addc,
             "globals": [(key, str(value)) for key, value in instance.global_options()],
             "shares": [{"name": share.name, "options": [(key, str(value)) for key, value in share.share_options()]}

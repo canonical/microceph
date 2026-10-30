@@ -1,15 +1,16 @@
 Configure a local-user SMB gateway
 ==================================
 
-MicroCeph can serve CephFS through one native Samba gateway per logical SMB
-cluster. The gateway supports local users and direct CephFS access only.
-Clustered SMB, Active Directory, metrics, CephFS proxy and floating-IP failover
-are not supported. Ceph itself may be a multi-node cluster.
+MicroCeph can serve CephFS through a single local-user Samba gateway or a
+CTDB-backed group of explicitly placed gateways. Both use direct CephFS access.
+Active Directory, metrics, CephFS proxy and floating-IP failover are not
+supported. A multi-node backing Ceph cluster alone does not enable clustered SMB.
 
 Configuration is maintained by Ceph's SMB manager module. MicroCeph explicitly
-places and stops the gateway; the manager must not schedule containers. No
-membership updater runs in this version. An SMB-specific configuration updater
-propagates supported changes to existing placements; it never places gateways.
+places and stops gateways; the manager must not schedule containers. Separate
+SMB-specific workers propagate supported configuration changes and reconcile
+published CTDB membership. Neither worker creates placements or repairs lost
+identity/rank history.
 
 Prerequisites
 -------------
@@ -25,12 +26,15 @@ connect the normal MicroCeph interfaces, plus these gateway interfaces::
     sudo snap connect microceph:smb-identity
     sudo snap connect microceph:smb-mounts
     sudo snap connect microceph:smb-control-mounts
+    sudo snap connect microceph:ctdb-run
+    sudo snap connect microceph:smb-control-access
     sudo snap restart microceph.daemon
 
 ``smb-identity`` permits Samba to switch to authenticated users. The mount grants
-permit only private passwd, group and nsswitch files in child namespaces; they
-do not replace the host's identity files. No additional SMB runtime directory or
-resolver access is needed. The ``smbd`` service is disabled at installation.
+permit private identity-file and CTDB runtime binds only in child namespaces;
+they do not replace the host's identity files. CTDB receives its runtime-directory
+grant, not Samba's identity-switching grant. No resolver access is added.
+Both ``smbd`` and ``ctdbd`` are disabled at installation.
 Open your chosen SMB TCP port in any external firewall; MicroCeph does not add
 firewall rules.
 
@@ -121,6 +125,53 @@ Verify a real upload/download and wrong-password refusal before relying on the
 share. Do not expose the private resource file or gateway state in support logs.
 Service inventory reports only applied source references and endpoints.
 
+Clustered local-user gateways
+-----------------------------
+
+For multiple gateways, use a new logical cluster ID, such as ``team``, and
+``clustering: always``. Adapt the resource example above: change both cluster ID
+references, preserve the local users and direct CephFS share, and list each
+chosen gateway's reachable SMB address under ``bind_addrs``. Apply the resource
+file once, then explicitly enable the cluster on each selected MicroCeph member::
+
+    sudo microceph enable smb --cluster-id team --wait=true
+    microceph status smb
+    microceph status smb --target another-member
+
+Check authenticated read/write and wrong-password rejection through every
+gateway. Clients select the gateway address; no floating IP or transparent
+endpoint failover is provided. CTDB uses MicroCluster's private member addresses,
+not the SMB frontend selectors. Permit the necessary private-member CTDB traffic
+and client SMB traffic in external network policy.
+
+Each reservation receives a stable CTDB rank tied to the member's database
+identity. Pending/failed reservations remain authoritative. Retirement leaves
+rank holes; exact-member rejoin keeps its rank, while a replacement identity
+receives a new rank. A reused member name or IP cannot take over uncertain
+ownership. Lost/malformed rank or endpoint history requires explicit recovery,
+not automatic reconstruction.
+
+The independent membership worker consumes the latest published owner view,
+coalesces change notifications and checks every 30 seconds as a fallback. It
+verifies native CTDB convergence; an unhealthy or changed surviving member, or a
+still-connected retired member, is not permission to force a reload. Explicit
+stop intent precedes draining that worker. Daemon shutdown does not stop serving
+roles; snapd supervises them independently.
+
+To retire one member, disable the logical cluster on that member. After confirmed
+stop of ``smbd`` and CTDB, its success row and active owner are withdrawn. ``--purge``
+removes only its stopped local state: shared users, recovery/data keys, manager
+resources and CephFS files remain. Peers continue serving. Ordinary daemon
+restart/reboot needs no operator enable. Targeted JSON status includes
+``clustered`` and the assigned ``ctdb_pnn``, including rank zero, without secrets.
+
+Upgrading binaries preserves existing single-gateway deployments; it does not
+promote gateway-local SAM/SIDs into shared clustered identity. Changing mode or
+CTDB recovery sources requires explicit maintenance and a new logical identity
+where necessary. Older local-only binaries cannot manage clustered group state;
+stop/retire safely and preserve backups before any rollback. Installed
+parent-artifact upgrade/rollback remains a qualification gate.
+
 Automatic configuration updates
 -------------------------------
 
@@ -132,7 +183,9 @@ once the placement lock is acquired, each update has a two-minute budget.
 Allow for manager propagation, validation and restart time as well as this
 interval. This is not zero-downtime configuration: changed inputs stop ``smbd``,
 publish validated files, import users into its retained SAM and restart it.
-Existing sessions may disconnect. Unchanged inputs do not import accounts,
+Existing sessions may disconnect. Clustered configuration updates preserve the
+running CTDB service and its startup configuration; changing that configuration
+requires explicit maintenance. Unchanged inputs do not import accounts,
 restart or re-enable the service. Changes to ordinary JSON key order are ignored;
 Samba option order is retained because aliases can change which value wins.
 Ordinary unhealthy-process recovery remains snapd's responsibility, not
@@ -142,8 +195,8 @@ The updater reads manager policy, the managed RADOS config/user sources, the
 local endpoint and Ceph configuration. It does not provision identities/keys,
 create placements, enable the manager module or reconstruct missing SAM/SID
 state. It refuses unsupported authentication/mode/runtime-role changes and
-mutable configuration indirection before publication. AD, clustered mode,
-proxy and ownership/relocation changes remain unsupported; use explicit
+mutable configuration indirection before publication. AD, proxy, mode
+conversion and ownership/relocation changes remain unsupported; use explicit
 maintenance for placement changes. CephFS permissions still require separate
 administration.
 

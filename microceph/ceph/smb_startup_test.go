@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,18 +26,20 @@ import (
 )
 
 type smbLocalStartupRunner struct {
-	t         *testing.T
-	db        *sql.DB
-	failure   string
-	active    bool
-	commands  []string
-	spec      string
-	config    string
-	users     string
-	disabled  bool
-	unready   bool
-	logical   string
-	onControl func(context.Context, string) error
+	t          *testing.T
+	db         *sql.DB
+	failure    string
+	active     bool
+	clustered  bool
+	ctdbActive bool
+	commands   []string
+	spec       string
+	config     string
+	users      string
+	disabled   bool
+	unready    bool
+	logical    string
+	onControl  func(context.Context, string) error
 }
 
 func (r *smbLocalStartupRunner) RunCommand(name string, args ...string) (string, error) {
@@ -126,8 +129,52 @@ func (r *smbLocalStartupRunner) RunCommandContext(ctx context.Context, name stri
 		out, err := exec.CommandContext(ctx, os.Getenv("MICROCEPH_SMB_TEST_PYTHON"), "-B", path, args[2], args[3]).Output()
 		return string(out), err
 	}
+	if name == "/test-snap/bin/ctdb" && r.clustered {
+		launch, err := loadSMBLaunch(smbRoot("alpha"))
+		if err != nil {
+			return "", err
+		}
+		switch args[0] {
+		case "pnn":
+			return strconv.FormatUint(*launch.CTDBPNN, 10), nil
+		case "nodestatus", "reloadnodes":
+			return "", nil
+		case "status":
+			var candidate smbCandidate
+			raw, err := os.ReadFile(filepath.Join(smbRoot("alpha"), "config/candidate.json"))
+			if err != nil {
+				return "", err
+			}
+			err = json.Unmarshal(raw, &candidate)
+			if err != nil {
+				return "", err
+			}
+			out := fmt.Sprintf("Number of nodes:%d\n", candidate.CTDB.SlotCount)
+			for _, m := range append([]database.SMBCTDBMember{candidate.CTDB.Member}, candidate.CTDB.Peers...) {
+				out += fmt.Sprintf("pnn:%d %s OK\n", m.PNN, m.Node)
+			}
+			return out + "Recovery mode:NORMAL (0)\n", nil
+		}
+	}
 	if name == "snapctl" {
-		require.Equal(r.t, "microceph.smbd", args[1], "only installed smbd can be controlled")
+		require.Contains(r.t, []string{"microceph.smbd", "microceph.ctdbd"}, args[1], "only installed roles can be controlled")
+		if args[1] == "microceph.ctdbd" {
+			if !r.clustered {
+				require.Contains(r.t, []string{"stop", "services"}, args[0], "local-only fixture must never start CTDB")
+				return "microceph.ctdbd disabled inactive", nil
+			}
+			switch args[0] {
+			case "start", "restart":
+				r.ctdbActive = true
+			case "stop":
+				r.ctdbActive = false
+			}
+			activity := "inactive"
+			if r.ctdbActive {
+				activity = "active"
+			}
+			return "microceph.ctdbd enabled " + activity, nil
+		}
 		if r.onControl != nil {
 			err := r.onControl(ctx, args[0])
 			if err != nil {

@@ -3732,10 +3732,10 @@ def test_smb_singleton_coordinator_refuses_future_suite_selection(tmp_path):
 def test_smb_local_guest_documents_and_redaction():
     from smb_guest import resource_documents, safe_apply_result
     documents = resource_documents(["192.0.2.1"], "private-password", "refreshed-private")
-    assert set(documents) == {"nonclustered", "independent", "refresh"}
+    assert set(documents) == {"nonclustered", "independent", "refresh", "clustered", "clustered-refresh"}
     for document in documents.values():
         cluster = document["resources"][1]
-        assert cluster["clustering"] == "never"
+        assert cluster["clustering"] == ("always" if cluster['cluster_id'] == 'robot-smb' else "never")
         assert set(cluster["custom_ports"]) == {"smb"}
         assert document["resources"][2]["cephfs"]["provider"] == "samba-vfs/new"
     result = safe_apply_result(1, '{"success":false,"results":[{"msg":"private-password"}]}', "private-password", ["private-password"])

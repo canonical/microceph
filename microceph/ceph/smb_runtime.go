@@ -28,7 +28,8 @@ type smbSnapService struct {
 // Dependency ordering belongs to the lifecycle plan, not map iteration.
 func newSMBServiceTable(root string) map[string]smbService {
 	return map[string]smbService{
-		"smbd": smbSnapService{name: "smbd", root: root},
+		"smbd":  smbSnapService{name: "smbd", root: root},
+		"ctdbd": smbSnapService{name: "ctdbd", root: root},
 	}
 }
 
