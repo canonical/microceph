@@ -16,6 +16,12 @@ package-repositories:
     ppa: lmlogiudice/ceph-lp2166817-updates
 
 plugs:
+  ctdb-run:
+    interface: system-files
+    write: [/run/ctdb]
+  smb-control-access:
+    interface: system-files
+    read: [/run/ctdb]
   smb-identity:
     interface: microceph-support
     user-identity-switching: true
@@ -32,6 +38,9 @@ plugs:
       - what: /var/snap/microceph/common/smb/*/config/nsswitch.conf
         where: /etc/nsswitch.conf
         options: [bind]
+      - what: /var/snap/microceph/common/smb/*/ctdb/run{,/}
+        where: /run/ctdb
+        options: [bind]
   smb-mounts:
     interface: mount-control
     mount:
@@ -43,6 +52,9 @@ plugs:
         options: [bind]
       - what: /var/snap/microceph/common/smb/*/config/nsswitch.conf
         where: /etc/nsswitch.conf
+        options: [bind]
+      - what: /var/snap/microceph/common/smb/*/ctdb/run{,/}
+        where: /run/ctdb
         options: [bind]
   load-rbd:
     interface: kernel-module-load
@@ -71,6 +83,14 @@ environment:
   PYTHONPATH: $SNAP/lib/python3/dist-packages:$SNAP/lib/python3.14/site-packages
 
 layout:
+  /etc/ctdb:
+    bind: $SNAP_COMMON/smb/.conf/ctdb
+  /var/lib/ctdb:
+    type: tmpfs
+  /usr/libexec/ctdb:
+    symlink: $SNAP/libexec/ctdb
+  /usr/share/ctdb:
+    symlink: $SNAP/share/ctdb
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba:
     symlink: $SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba
   /usr/libexec/samba:
@@ -103,13 +123,24 @@ apps:
     restart-delay: 10s
     install-mode: disable
     stop-mode: sigterm-all
-    plugs: [network, network-bind, network-control, smb-mounts, process-control, smb-identity]
+    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control, smb-identity]
+  ctdbd:
+    command: commands/ctdbd.start
+    daemon: simple
+    restart-delay: 10s
+    install-mode: disable
+    stop-mode: sigterm-all
+    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control]
+  ctdb:
+    command: commands/ctdb.start
+    plugs: [network, network-bind, network-control, smb-mounts, ctdb-run, process-control]
   # Service
   daemon:
     command: commands/daemon.start
     daemon: simple
     plugs:
       - smb-control-mounts
+      - smb-control-access
       - block-devices
       - dm-crypt
       - hardware-observe
@@ -275,6 +306,7 @@ parts:
       - samba=2:4.23.6+dfsg-1ubuntu2.2
       - samba-vfs-ceph=2:4.23.6+dfsg-1ubuntu2.2
       - samba-vfs-modules=2:4.23.6+dfsg-1ubuntu2.2
+      - ctdb=2:4.23.6+dfsg-1ubuntu2.2
       - python3-samba=2:4.23.6+dfsg-1ubuntu2.2
       - python3-cephfs=20.2.4+ds-0ubuntu1~bpo26.04.1~ppa202609282139
       - python3-rados=20.2.4+ds-0ubuntu1~bpo26.04.1~ppa202609282139
@@ -286,8 +318,13 @@ parts:
       usr/lib/: lib/
       usr/libexec/: libexec/
       usr/share/: share/
+      etc/ctdb/functions: share/ctdb/functions
+      etc/ctdb/notify.sh: share/ctdb/notify.sh
     prime:
       - bin/smbd
+      - bin/ctdb*
+      - libexec/ctdb/**
+      - share/ctdb/**
       - bin/smbcontrol
       - bin/testparm
       - lib/**

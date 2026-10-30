@@ -1,4 +1,4 @@
-"""PR1's direct-only package/startup contract (not an installed-snap proof)."""
+"""Local/clustered package/startup contract (not an installed-snap proof)."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,13 +14,23 @@ class PackagingTests(unittest.TestCase):
     def setUp(self):
         self.recipe = yaml.safe_load((ROOT / "snap/snapcraft.yaml").read_text())
 
-    def test_only_smbd_is_declared(self):
+    def test_clustered_runtime_is_installed_without_future_roles(self):
+        apps = self.recipe['apps']
+        self.assertIn('ctdbd', apps)
+        self.assertEqual(apps['ctdbd']['command'], 'commands/ctdbd.start')
+        self.assertEqual(apps['ctdbd']['install-mode'], 'disable')
+        self.assertNotIn('smb-identity', apps['ctdbd']['plugs'])
+        self.assertEqual(apps['ctdb']['command'], 'commands/ctdb.start')
+        self.assertIn('ctdb=2:4.23.6+dfsg-1ubuntu2.2', self.recipe['parts']['native-smb']['stage-packages'])
+        self.assertEqual(self.recipe['layout']['/etc/ctdb']['bind'], '$SNAP_COMMON/smb/.conf/ctdb')
+
+    def test_no_future_runtime_is_declared(self):
         apps = self.recipe["apps"]
         self.assertEqual(apps["smbd"]["command"], "commands/smbd.start")
         self.assertEqual(apps["smbd"]["install-mode"], "disable")
         self.assertEqual(apps["smbd"]["stop-mode"], "sigterm-all")
         self.assertNotIn("after", apps["smbd"], "prepared smbd must survive daemon restart independently")
-        for role in ("ctdbd", "ctdb", "winbindd", "smbmetrics", "cephfs-proxy"):
+        for role in ("winbindd", "smbmetrics", "cephfs-proxy"):
             self.assertNotIn(role, apps)
             self.assertFalse((ROOT / "snapcraft/commands" / (role + ".start")).exists())
 
@@ -31,7 +41,7 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("samba-vfs-ceph=2:4.23.6+dfsg-1ubuntu2.2", packages)
         self.assertTrue(any(package.startswith("python3-cephfs=") for package in packages))
         for package in packages:
-            self.assertFalse(package.split("=")[0] in ("ctdb", "winbind", "libnss-winbind", "libcephfs-daemon", "libcephfs-proxy2"))
+            self.assertFalse(package.split("=")[0] in ("winbind", "libnss-winbind", "libcephfs-daemon", "libcephfs-proxy2"))
         for executable in ("smbd", "smbcontrol", "testparm"):
             self.assertIn("bin/" + executable, native["prime"])
         self.assertIn("--require-hashes", self.recipe["parts"]["sambacc"]["override-build"])
@@ -41,10 +51,10 @@ class PackagingTests(unittest.TestCase):
     def test_mount_grants_are_only_private_nss(self):
         for name in ("smb-mounts", "smb-control-mounts"):
             mounts = self.recipe["plugs"][name]["mount"]
-            self.assertEqual({mount["where"] for mount in mounts}, {"/etc/passwd", "/etc/group", "/etc/nsswitch.conf"})
+            self.assertEqual({mount["where"] for mount in mounts}, {"/etc/passwd", "/etc/group", "/etc/nsswitch.conf", "/run/ctdb"})
             self.assertTrue(all(mount["options"] == ["bind"] for mount in mounts))
         self.assertTrue(self.recipe["plugs"]["smb-identity"]["user-identity-switching"])
-        for name in ("ctdb-run", "winbind-run", "ctdb-socket", "smb-control-access"):
+        for name in ("winbind-run", "ctdb-socket"):
             self.assertNotIn(name, self.recipe["plugs"])
 
 

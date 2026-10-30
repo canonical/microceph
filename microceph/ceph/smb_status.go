@@ -77,8 +77,24 @@ func SMBLocalStatus(ctx context.Context, s interfaces.StateInterface) (types.SMB
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return status, err
 	}
+	launch, launchErr := loadSMBLaunchForPublication(root)
+	if launchErr == nil {
+		status.Clustered = launch.Clustered
+		status.CTDBPNN = launch.CTDBPNN
+	}
+	for _, path := range []string{"membership-update-pending", "diagnostics/nodes-error"} {
+		_, err = os.Lstat(filepath.Join(root, path))
+		if err == nil {
+			status.Error = "local CTDB membership is not confirmed applied"
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return status, err
+		}
+	}
 	if !status.StopRequested {
 		status.Ready = smbReadyNativeFunc(ctx, root, "smbd") == nil
+		if status.Clustered {
+			status.Ready = status.Ready && smbReadyNativeFunc(ctx, root, "ctdbd") == nil
+		}
 	}
 	return status, nil
 }

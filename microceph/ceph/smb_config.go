@@ -20,6 +20,23 @@ func validateSMBClusterID(clusterID string) error {
 	return nil
 }
 
+func ensureSMBRecoveryKey(ctx context.Context, clusterID, root string) error {
+	err := validateSMBClusterID(clusterID)
+	if err != nil {
+		return err
+	}
+	name := "smb.cluster." + clusterID
+	key, err := CreateClientKey(ctx, name)
+	if err != nil {
+		return fmt.Errorf("retrieve SMB recovery identity failed")
+	}
+	_, err = cephRunContext(ctx, "auth", "caps", "client."+name, "mon", "allow r", "osd", "allow rwx pool=.smb namespace="+clusterID)
+	if err != nil {
+		return fmt.Errorf("set SMB recovery identity capabilities failed")
+	}
+	return smbAtomicWrite(filepath.Join(root, "identity/recovery.keyring"), []byte("[client."+name+"]\n\tkey = "+key+"\n"))
+}
+
 // validateSMBSourceURI limits reads to the selected cluster's upstream stores.
 func validateSMBSourceURI(clusterID, uri string) error {
 	err := validateSMBClusterID(clusterID)

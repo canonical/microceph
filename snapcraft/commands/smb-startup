@@ -37,8 +37,12 @@ try:
     checked_path(root / "config", directory=True)
     checked_path(root / "config/context.json")
     context = json.loads((root / "config/context.json").read_text())
-    if not isinstance(context, dict) or set(context) - {"startup", "frontend_address", "smb_port", "data_checks"}:
+    if not isinstance(context, dict) or set(context) - {"startup", "frontend_address", "smb_port", "data_checks", "clustered", "ctdb_pnn"}:
         raise ValueError("unsupported context")
+    clustered = context.get("clustered", False)
+    pnn = context.get("ctdb_pnn")
+    if type(clustered) is not bool or (clustered and (type(pnn) is not int or not 0 <= pnn <= 65535)) or (not clustered and pnn is not None):
+        raise ValueError("invalid assigned CTDB context")
     startup = context.get("startup", {})
     if not isinstance(startup, dict) or set(startup) - {"smbd"}:
         raise ValueError("unsupported startup role")
@@ -52,7 +56,7 @@ try:
         raise ValueError("command owner changed")
 except (OSError, ValueError, TypeError, KeyError):
     sys.exit("Native SMB prepared context is unsafe or unavailable")
-for value in (owner, str(root)):
+for value in (owner, str(root), str(int(clustered)), str(pnn) if pnn is not None else "-"):
     sys.stdout.write(value + "\0")
 PY
 }
@@ -60,9 +64,14 @@ PY
 smb_load_context() {
   local -a context
   mapfile -d '' -t context < <(smb_startup_context)
-  [[ ${#context[@]} == 2 ]] || return 1
+  [[ ${#context[@]} == 4 ]] || return 1
   SMB_OWNER="${context[0]}"
   SMB_ROOT="${context[1]}"
+  SMB_CLUSTERED="${context[2]}"
+  SMB_PNN="${context[3]}"
+  if [[ "$SMB_CLUSTERED" == 1 ]]; then
+    export CTDB_BASE="$SMB_ROOT/ctdb" CTDB="$SNAP/bin/ctdb"
+  fi
 }
 
 smb_check_start_intent() {
@@ -84,7 +93,8 @@ for path in (source, *source.parents):
     if path.is_symlink():
         sys.exit("Unsafe SMB bind source")
 info = source.lstat()
-if info.st_uid != os.geteuid() or info.st_mode & 0o022 or not stat.S_ISREG(info.st_mode):
+expected = stat.S_ISDIR if target == Path('/run/ctdb') else stat.S_ISREG
+if info.st_uid != os.geteuid() or info.st_mode & 0o022 or not expected(info.st_mode):
     sys.exit("Unsafe SMB bind source")
 paths = [str(source.resolve(strict=True)), str(target.resolve(strict=True))]
 with open("/proc/self/mountinfo") as stream:
@@ -124,14 +134,14 @@ if context.get("startup", {}).get("smbd", {}).get("prepared") is not True:
 import os
 import stat
 root = Path(sys.argv[1])
-for relative in ("identity/local-sam", "samba/private/passdb.tdb", "samba/private/secrets.tdb"):
+for relative in (() if context.get("clustered") else ("identity/local-sam", "samba/private/passdb.tdb", "samba/private/secrets.tdb")):
     path = root / relative
     if any(parent.is_symlink() for parent in (path, *path.parents)):
         sys.exit("Unsafe retained SMB local SAM")
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_size == 0 or info.st_uid != os.geteuid() or info.st_mode & 0o022:
         sys.exit("Unsafe retained SMB local SAM")
-if (root / "identity/local-sam").read_text() != "local-sam-v1\n":
+if not context.get("clustered") and (root / "identity/local-sam").read_text() != "local-sam-v1\n":
     sys.exit("Unknown retained SMB local SAM fence")
 PY
     then
@@ -144,4 +154,57 @@ PY
     sleep 1
   done
   return 1
+}
+
+smb_runtime_mountpoint() {
+  "$SNAP/bin/python3" -B - "$1" "${SMB_CREATE_MOUNTPOINTS:-0}" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+path, create = Path(sys.argv[1]), sys.argv[2] == "1"
+if create and not os.path.lexists(path):
+    path.mkdir(mode=0o755)
+info = path.lstat()
+if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022 or any(path.iterdir()):
+    sys.exit("Unsafe or occupied SMB runtime mountpoint")
+PY
+}
+
+smb_setup_ctdb() {
+  [[ "$SMB_CLUSTERED" == 1 ]] || return 1
+  export CTDB_BASE="$SMB_ROOT/ctdb"
+  "$SNAP/bin/python3" -B - "$SMB_ROOT" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+fixed = root.parent / ".conf/ctdb"
+for path in (fixed, fixed / "owner", fixed / "ctdb.conf", root / "ctdb/ctdb.conf"):
+    if path.is_symlink():
+        sys.exit("Unsafe CTDB compatibility configuration")
+if (fixed / "owner").read_text() != root.name or (fixed / "ctdb.conf").read_bytes() != (root / "ctdb/ctdb.conf").read_bytes():
+    sys.exit("CTDB compatibility configuration belongs to another generation")
+for name in ("events", "functions", "notify.sh"):
+    path = fixed / name
+    if not path.is_symlink() or path.readlink() != root / "ctdb" / name:
+        sys.exit("CTDB compatibility resources belong to another generation")
+PY
+  smb_runtime_mountpoint /run/ctdb
+  smb_bind_private "$SMB_ROOT/ctdb/run" /run/ctdb
+}
+
+smb_ctdb_health() {
+  local pnn status line normal=false count=0
+  pnn=$("$SNAP/bin/ctdb" -t 5 pnn 2>/dev/null) || return 1
+  [[ "$pnn" == "$SMB_PNN" ]] || return 1
+  "$SNAP/bin/ctdb" -t 5 nodestatus "$SMB_PNN" >/dev/null 2>&1 || return 1
+  status=$("$SNAP/bin/ctdb" -t 5 status 2>/dev/null) || return 1
+  while IFS= read -r line; do
+    [[ "$line" != 'Recovery mode:NORMAL (0)' ]] || normal=true
+    if [[ "$line" =~ ^Number\ of\ nodes:([0-9]+)(\ \(including\ [0-9]+\ deleted\ nodes\))?$ ]]; then
+      ((10#${BASH_REMATCH[1]} > 0 && 10#${BASH_REMATCH[1]} <= 65536)) || return 1
+      count=$((count + 1))
+    fi
+  done <<< "$status"
+  [[ "$normal" == true && "$count" == 1 ]]
 }
