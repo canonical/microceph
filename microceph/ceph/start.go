@@ -366,6 +366,15 @@ func reEnableServices(ctx context.Context, s interfaces.StateInterface) {
 	// De-duplicate by service name since there may be multiple groups.
 	seen := map[string]bool{}
 	for _, gs := range groupedServices {
+		if gs.Service == "smb" {
+			// snapd owns smbd's retained enable/disable intent and lifetime.
+			// Daemon restart observes only; configuration maintenance is explicit.
+			status, err := SMBLocalStatus(ctx, s)
+			if err != nil || !status.Ready {
+				logger.Warn("start: native SMB readiness is not confirmed; inspect service status")
+			}
+			continue
+		}
 		if seen[gs.Service] {
 			continue
 		}

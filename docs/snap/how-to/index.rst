@@ -40,6 +40,7 @@ and adjust client settings for optimal performance.
    enable-metrics
    enable-alerts
    rbd-client-cfg
+   configure-native-smb
 
 Consume cluster storage
 -----------------------

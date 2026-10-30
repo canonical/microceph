@@ -1,0 +1,54 @@
+{
+  "provenance": {
+    "job_id": 119853719721,
+    "head": "55bd6ac1dde93c3df7b73f1eb14781fe3a879bca"
+  },
+  "health": {
+    "status": "HEALTH_WARN",
+    "checks": {
+      "MON_CLOCK_SKEW": {
+        "severity": "HEALTH_WARN",
+        "summary": {
+          "message": "clock skew detected on mon.smb-ci-70ffa62b-n1, mon.smb-ci-70ffa62b-n2",
+          "count": 2
+        },
+        "detail": [
+          {
+            "message": "mon.smb-ci-70ffa62b-n1 clock skew 0.0663787s > max 0.05s (latency 0.00465764s)"
+          },
+          {
+            "message": "mon.smb-ci-70ffa62b-n2 clock skew 0.19567s > max 0.05s (latency 0.0114259s)"
+          }
+        ],
+        "muted": false
+      }
+    },
+    "mutes": []
+  },
+  "clock": {
+    "time_skew_status": {
+      "smb-ci-70ffa62b-n0": {
+        "skew": 0,
+        "latency": 0,
+        "health": "HEALTH_OK"
+      },
+      "smb-ci-70ffa62b-n1": {
+        "skew": -0.06637866958398438,
+        "latency": 0.004657642772800001,
+        "health": "HEALTH_WARN",
+        "details": "clock skew 0.0663787s > max 0.05s"
+      },
+      "smb-ci-70ffa62b-n2": {
+        "skew": 0.19567037586242675,
+        "latency": 0.0114258695776,
+        "health": "HEALTH_WARN",
+        "details": "clock skew 0.19567s > max 0.05s"
+      }
+    },
+    "timechecks": {
+      "epoch": 12,
+      "round": 10,
+      "round_status": "finished"
+    }
+  }
+}

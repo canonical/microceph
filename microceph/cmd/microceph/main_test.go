@@ -197,7 +197,9 @@ func commandGroups(cmd *cobra.Command) [][]string {
 	var groups [][]string
 
 	for _, sub := range cmd.Commands() {
-		if sub.HasSubCommands() {
+		// Group-only commands use Run to print usage; a functional parent
+		// such as status keeps its RunE behavior when called without a child.
+		if sub.HasSubCommands() && sub.RunE == nil {
 			groups = append(groups, strings.Fields(sub.CommandPath())[1:])
 		}
 		groups = append(groups, commandGroups(sub)...)

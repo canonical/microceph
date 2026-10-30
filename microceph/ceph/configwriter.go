@@ -3,6 +3,7 @@ package ceph
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"text/template"
@@ -61,6 +62,21 @@ func (c *Config) RenderConfig(data map[string]any) ([]byte, error) {
 // writes"). A failed write cannot leave partial state on disk: the temp file is
 // removed on every error path.
 func (c *Config) WriteConfig(data map[string]any, mode int) error {
+	return c.writeAtomic(func(out io.Writer) error {
+		return c.configTemplate.Execute(out, data)
+	}, mode)
+}
+
+// WriteRendered publishes upstream-rendered bytes without interpreting them as
+// a Go template. It shares WriteConfig's path, permission and atomicity guards.
+func (c *Config) WriteRendered(data []byte, mode int) error {
+	return c.writeAtomic(func(out io.Writer) error {
+		_, err := out.Write(data)
+		return err
+	}, mode)
+}
+
+func (c *Config) writeAtomic(render func(io.Writer) error, mode int) error {
 	err := c.validateConfigFile()
 	if err != nil {
 		return err
@@ -86,7 +102,7 @@ func (c *Config) WriteConfig(data map[string]any, mode int) error {
 		return fmt.Errorf("Couldn't write %s: %w", c.configFile, err)
 	}
 
-	err = c.configTemplate.Execute(fd, data)
+	err = render(fd)
 	closeErr := fd.Close()
 	if err != nil {
 		os.Remove(tmpPath)

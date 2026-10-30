@@ -50,6 +50,7 @@ func (c *cmdDaemon) Command() *cobra.Command {
 		Use:     "microcephd",
 		Short:   "Daemon for MicroCeph",
 		Version: version.Version(),
+		Args:    cobra.NoArgs,
 	}
 
 	cmd.RunE = c.Run
