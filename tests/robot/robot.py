@@ -40,9 +40,13 @@ def main():
 
     # Resolve the target path (always required by robot).
     here = os.path.dirname(__file__)
-    if args.test_suite in ("smb-integration", "smb-singleton-tests"):
+    if args.test_suite in ("smb-integration", "smb-singleton-tests", "smb-clustered-tests"):
         command = [sys.executable, "-u", os.path.join(here, "smb_runner.py"),
                    "--snap-path", args.snap_path or ""]
+        if args.test_suite == "smb-integration":
+            command += ["--suites", "clustered,singleton"]
+        elif args.test_suite == "smb-clustered-tests":
+            command += ["--suites", "clustered"]
         return subprocess.run(command + remaining).returncode
     if args.test_suite:
         target = os.path.join(here, args.test_suite)

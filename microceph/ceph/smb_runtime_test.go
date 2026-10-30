@@ -50,7 +50,7 @@ func useSMBServiceCommands(t *testing.T) *smbServiceCommandRecorder {
 func TestSMBServiceDispatchRejectsUnknownRolesBeforeCommands(t *testing.T) {
 	recorder := useSMBServiceCommands(t)
 	ops := smbSnapOps(t.TempDir())
-	for _, role := range []string{"", "/bin/sh", "ctdb-control", "unknown", "ctdbd", "winbindd", "cephfs-proxy", "smbmetrics"} {
+	for _, role := range []string{"", "/bin/sh", "ctdb-control", "unknown", "winbindd", "cephfs-proxy", "smbmetrics"} {
 		t.Run(role, func(t *testing.T) {
 			require.ErrorContains(t, ops.start(context.Background(), role), "unsupported SMB service")
 			require.ErrorContains(t, ops.stop(role), "unsupported SMB service")
@@ -88,8 +88,8 @@ func TestSMBServiceDispatchPreservesCommandFailures(t *testing.T) {
 func TestSMBServiceTableContainsOnlyIndependentUpstreamServices(t *testing.T) {
 	recorder := useSMBServiceCommands(t)
 	table := newSMBServiceTable(t.TempDir())
-	require.Len(t, table, 1)
-	for _, role := range []string{"smbd"} {
+	require.Len(t, table, 2)
+	for _, role := range []string{"smbd", "ctdbd"} {
 		require.Contains(t, table, role)
 	}
 	delete(table, "smbd")

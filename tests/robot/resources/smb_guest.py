@@ -11,8 +11,8 @@ import subprocess
 import sys
 
 BASE = Path("/var/snap/microceph/common/robot-smb")
-ROLES = ("smbd", "daemon")
-DATA_PATHS = {"robot-never": "/independent", "robot-other": "/independent-other"}
+ROLES = ("smbd", "ctdbd", "daemon")
+DATA_PATHS = {"robot-never": "/independent", "robot-other": "/independent-other", "robot-smb": "/clustered"}
 PAYLOAD = b"MicroCeph Robot SMB sentinel\n" + bytes(range(256)) * 16
 
 
@@ -24,7 +24,7 @@ def resource_documents(addresses, password, refresh_password):
     def resources(name, port):
         return {"resources": [users,
             {"resource_type": "ceph.smb.cluster", "cluster_id": name, "auth_mode": "user",
-             "clustering": "never", "user_group_settings": [{"source_type": "resource", "ref": "robot-users"}],
+             "clustering": "always" if name == "robot-smb" else "never", "user_group_settings": [{"source_type": "resource", "ref": "robot-users"}],
              "bind_addrs": [{"address": address} for address in addresses], "custom_ports": {"smb": port}},
             {"resource_type": "ceph.smb.share", "cluster_id": name, "share_id": "data",
              "cephfs": {"volume": "robotsmb", "path": DATA_PATHS[name], "provider": "samba-vfs/new"}}]}
@@ -32,7 +32,8 @@ def resource_documents(addresses, password, refresh_password):
     refreshed["resources"][0]["values"]["users"][0]["password"] = refresh_password
     refreshed["resources"][2]["readonly"] = True
     return {"nonclustered": resources("robot-never", 3445), "independent": resources("robot-other", 4445),
-            "refresh": refreshed}
+            "refresh": refreshed, "clustered": resources("robot-smb", 1445),
+            "clustered-refresh": resources("robot-smb", 2445)}
 
 
 def safe_apply_result(rc, stdout, stderr, passwords):
@@ -60,7 +61,7 @@ def initialize(addresses):
 
 
 def apply_resource(kind):
-    if kind not in ("nonclustered", "independent", "refresh"):
+    if kind not in ("nonclustered", "independent", "refresh", "clustered", "clustered-refresh"):
         raise ValueError("unknown test resource")
     result = subprocess.run(["/snap/bin/microceph.ceph", "smb", "apply", "-i", str(BASE / f"{kind}.json"), "-f", "json"], capture_output=True, text=True, timeout=120)
     (BASE / f"{kind}.result").write_text(result.stdout + "\n" + result.stderr)
@@ -127,8 +128,13 @@ def snapshot(cluster):
         api = None
     context = json.loads(text(root / "config/context.json") or "{}")
     services = subprocess.run(["systemctl", "show", *[f"snap.microceph.{r}.service" for r in ROLES], "-p", "Id", "-p", "ActiveState", "-p", "MainPID", "-p", "ExecMainStartTimestampMonotonic"], capture_output=True, text=True, timeout=10)
-    print(json.dumps({"api": api, "owner": text(root.parent / "owner.json"), "local_exists": root.exists(),
-                      "context": {key: context.get(key) for key in ("frontend_address", "smb_port", "startup")},
+    try:
+        generation = (root / 'applied.json').stat().st_mtime_ns
+    except FileNotFoundError:
+        generation = None
+    print(json.dumps({"applied_generation": generation, "api": api, "owner": text(root.parent / "owner.json"), "local_exists": root.exists(),
+                      "context": {key: context.get(key) for key in ("frontend_address", "smb_port", "startup", "clustered", "ctdb_pnn")},
+                      "member": text(root / "config/ctdb-identity"), "rank": text(root / "config/ctdb-rank"),
                       "services": services.stdout, "boot_id": text(Path("/proc/sys/kernel/random/boot_id"))}))
 
 

@@ -84,7 +84,7 @@ func TestSMBLocalSpecRejectsUnsupportedSources(t *testing.T) {
 }
 
 func TestSMBStartupPlanRejectsFutureRoleBeforeAnyEffects(t *testing.T) {
-	for _, role := range []string{"ctdbd", "winbindd", "smbmetrics", "cephfs-proxy", "future"} {
+	for _, role := range []string{"winbindd", "smbmetrics", "cephfs-proxy", "future"} {
 		calls := 0
 		ops := smbAppOps{
 			prepare: func(_ context.Context, _ string) error { calls++; return nil },

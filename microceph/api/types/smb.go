@@ -9,9 +9,13 @@ type SMBService struct {
 
 // SMBStatus is a credential-free local application diagnostic.
 type SMBStatus struct {
-	ClusterID     string `json:"cluster_id"`
-	Ready         bool   `json:"ready"`
-	StopRequested bool   `json:"stop_requested"`
-	Error         string `json:"error,omitempty"`
-	PolicyWarning string `json:"policy_warning,omitempty"`
+	// Clustered identifies a prepared CTDB-backed gateway.
+	Clustered bool `json:"clustered,omitempty"`
+	// CTDBPNN is the assigned stable member rank, including zero.
+	CTDBPNN       *uint64 `json:"ctdb_pnn,omitempty"`
+	ClusterID     string  `json:"cluster_id"`
+	Ready         bool    `json:"ready"`
+	StopRequested bool    `json:"stop_requested"`
+	Error         string  `json:"error,omitempty"`
+	PolicyWarning string  `json:"policy_warning,omitempty"`
 }

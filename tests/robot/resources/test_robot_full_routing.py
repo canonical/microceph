@@ -62,6 +62,28 @@ SMB Three
     return full, calls, control, root
 
 
+@pytest.mark.parametrize('partial', [False, True])
+def test_clustered_full_routing_and_partial_refusal(full_fixture, tmp_path, partial):
+    full, calls, _, root = full_fixture
+    directory = root / 'smb-clustered-tests'
+    directory.mkdir()
+    (directory / 'scenario.robot').write_text('*** Test Cases ***\n' + ''.join(f'Cluster {i}\n    No Operation\n' for i in range(6)))
+    output = tmp_path / 'clustered-results'
+    selection = ['--test', 'Cluster 0'] if partial else []
+    rc = full.main(['--snap-path', '/candidate.snap', '-v', 'BUDGET:10', *selection,
+                    '-d', str(output), '--console', 'quiet'])
+    if partial:
+        assert rc == 252
+        assert not calls
+    else:
+        assert rc == 0
+        assert ExecutionResult(output / 'output.xml').suite.test_count == 11
+        summary = json.loads((output / 'smb-summary.json').read_text())
+        assert summary['passed'] == summary['cases'] == 9
+        assert summary['failed'] == summary['skipped'] == 0
+        assert len([c for c in calls if c[2].endswith('smb_runner.py')]) == 1
+
+
 @pytest.mark.parametrize("selection,count,smb", [
     ([], 5, True), (["-i", "ordinary"], 2, False),
     (["-s", "Robot.Smb-Singleton-Tests"], 3, True),
@@ -176,6 +198,7 @@ def test_explicit_routes_preserve_arguments(monkeypatch, selection):
     monkeypatch.setattr(wrapper.subprocess, "run", lambda command, **kwargs: commands.append(command) or SimpleNamespace(returncode=3))
     assert wrapper.main() == 3
     if selection.startswith("smb"):
-        assert commands == [[sys.executable, "-u", str(HERE / "smb_runner.py"), "--snap-path", "/candidate.snap", "--dryrun", "--console", "quiet"]]
+        extra = ["--suites", "clustered,singleton"] if selection == "smb-integration" else []
+        assert commands == [[sys.executable, "-u", str(HERE / "smb_runner.py"), "--snap-path", "/candidate.snap", *extra, "--dryrun", "--console", "quiet"]]
     else:
         assert commands == [[sys.executable, "-u", "-m", "robot", "--variable", "SNAP_PATH:/candidate.snap", "--dryrun", "--console", "quiet", str(HERE / selection)]]
