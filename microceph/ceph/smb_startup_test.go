@@ -25,13 +25,18 @@ import (
 )
 
 type smbLocalStartupRunner struct {
-	t        *testing.T
-	db       *sql.DB
-	failure  string
-	active   bool
-	commands []string
-	spec     string
-	config   string
+	t         *testing.T
+	db        *sql.DB
+	failure   string
+	active    bool
+	commands  []string
+	spec      string
+	config    string
+	users     string
+	disabled  bool
+	unready   bool
+	logical   string
+	onControl func(context.Context, string) error
 }
 
 func (r *smbLocalStartupRunner) RunCommand(name string, args ...string) (string, error) {
@@ -47,6 +52,9 @@ func (r *smbLocalStartupRunner) RunCommandContext(ctx context.Context, name stri
 		case "config":
 			return "false", nil
 		case "smb":
+			if r.logical != "" {
+				return r.logical, nil
+			}
 			return `{"resource_type":"ceph.smb.cluster","cluster_id":"alpha","auth_mode":"user","clustering":"never"}`, nil
 		case "auth":
 			if args[2] != "client.smb.config.cluster.alpha" {
@@ -58,12 +66,17 @@ func (r *smbLocalStartupRunner) RunCommandContext(ctx context.Context, name stri
 		}
 	}
 	if name == "rados" {
+		if r.failure == "source-failure" {
+			return "", errors.New("source transport failed")
+		}
 		var data string
 		switch args[len(args)-2] {
 		case "spec.smb":
 			data = r.spec
 		case "config.smb":
 			data = r.config
+		case "users.json":
+			data = r.users
 		default:
 			return "", errors.New("Error ENOENT")
 		}
@@ -75,6 +88,7 @@ func (r *smbLocalStartupRunner) RunCommandContext(ctx context.Context, name stri
 	if name == "/test-snap/bin/testparm" {
 		if r.failure == "source-change" {
 			r.config = strings.Replace(r.config, `"globals":{}`, `"globals":{"changed":{"options":{}}}`, 1)
+			r.config = strings.Replace(r.config, `"server string":"updated"`, `"server string":"torn"`, 1)
 		}
 		if r.failure == "compile" {
 			return "", errors.New("source-password-private")
@@ -84,6 +98,10 @@ func (r *smbLocalStartupRunner) RunCommandContext(ctx context.Context, name stri
 	if name == "/test-snap/bin/python3" {
 		if args[2] == "render" && r.failure == "binding" {
 			return "", errors.New("source-password-private")
+		}
+		if args[2] == "check-data" {
+			// CephFS transport is modeled here; projection/rendering is real.
+			return "{}", nil
 		}
 		if args[2] == "accounts" {
 			require.False(r.t, r.active, "SAM import requires confirmed stopped smbd")
@@ -110,7 +128,18 @@ func (r *smbLocalStartupRunner) RunCommandContext(ctx context.Context, name stri
 	}
 	if name == "snapctl" {
 		require.Equal(r.t, "microceph.smbd", args[1], "only installed smbd can be controlled")
+		if r.onControl != nil {
+			err := r.onControl(ctx, args[0])
+			if err != nil {
+				return "", err
+			}
+		}
 		switch args[0] {
+		case "restart":
+			if r.failure == "restart" {
+				return "", errors.New("uncertain restart")
+			}
+			r.active = true
 		case "start":
 			r.active = true
 			if r.failure == "start" {
@@ -126,7 +155,11 @@ func (r *smbLocalStartupRunner) RunCommandContext(ctx context.Context, name stri
 			if r.active {
 				activity = "active"
 			}
-			return args[1] + " disabled " + activity, nil
+			startup := "enabled"
+			if r.disabled {
+				startup = "disabled"
+			}
+			return args[1] + " " + startup + " " + activity, nil
 		}
 		return "", nil
 	}
@@ -161,7 +194,7 @@ func smbLocalStartupFixture(t *testing.T, failure string) (interfaces.StateInter
 	constants.GetPathConst = func() constants.PathConst { return constants.PathConst{ConfPath: root} }
 	require.NoError(t, os.WriteFile(filepath.Join(root, "ceph.conf"), []byte("[global]\n"), 0600))
 	smbReadyNativeFunc = func(context.Context, string, string) error {
-		if !runner.active || failure == "ready" {
+		if !runner.active || runner.unready || failure == "ready" {
 			return errors.New("not ready")
 		}
 		return nil
