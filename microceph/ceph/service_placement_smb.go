@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
@@ -173,7 +174,7 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
-	for _, dir := range []string{"config", "identity", "samba/private", "samba/state", "samba/cache", "samba/lock", "samba/run", "samba/ncalrpc", "diagnostics"} {
+	for _, dir := range []string{"config", "identity", "samba/private", "samba/state", "samba/cache", "samba/lock", "samba/run", "samba/ncalrpc", "ctdb", "diagnostics"} {
 		err = smbPrivateDir(filepath.Join(root, dir))
 		if err != nil {
 			return err
@@ -188,7 +189,7 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
-	candidate, err := readSMBPreparedCandidate(ctx, s, clusterID, root, []byte(logical))
+	candidate, err := readSMBPreparedCandidateUnreserved(ctx, s, clusterID, root, []byte(logical))
 	if err != nil {
 		return err
 	}
@@ -207,7 +208,15 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	var policyWarning string
 	var samStarted bool
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		err := database.ReserveSMBOwner(ctx, tx, clusterID, s.ClusterState().Name())
+		var err error
+		if candidate.Spec.hasFeature("clustered") {
+			_, err = database.ReserveSMBClusteredOwner(ctx, tx, clusterID, s.ClusterState().Name())
+			if err == nil {
+				candidate.CTDB, err = database.GetSMBCTDBView(ctx, tx, clusterID, s.ClusterState().Name())
+			}
+		} else {
+			err = database.ReserveSMBOwner(ctx, tx, clusterID, s.ClusterState().Name())
+		}
 		if err != nil {
 			return err
 		}
@@ -215,7 +224,9 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 		if err != nil {
 			return err
 		}
-		samStarted, err = database.GetSMBLocalSAMStarted(ctx, tx, clusterID, s.ClusterState().Name())
+		if !candidate.Spec.hasFeature("clustered") {
+			samStarted, err = database.GetSMBLocalSAMStarted(ctx, tx, clusterID, s.ClusterState().Name())
+		}
 		return err
 	})
 	if err != nil {
@@ -229,10 +240,12 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
-	if samStarted {
-		err = checkSMBLocalSAM(root)
-	} else {
-		err = checkSMBFreshLocalSAM(root, true)
+	if !candidate.Spec.hasFeature("clustered") {
+		if samStarted {
+			err = checkSMBLocalSAM(root)
+		} else {
+			err = checkSMBFreshLocalSAM(root, true)
+		}
 	}
 	if err != nil {
 		return err
@@ -240,6 +253,41 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	err = ensureSMBDataKey(ctx, clusterID, filepath.Join(root, "identity", "data.keyring"))
 	if err != nil {
 		return err
+	}
+	if candidate.CTDB != nil {
+		if candidate.Endpoint.FrontendAddress == "" {
+			candidate.Endpoint.FrontendAddress = candidate.CTDB.Member.Node
+		}
+		err = ensureSMBRecoveryKey(ctx, clusterID, root)
+		if err != nil {
+			return err
+		}
+		err = updateConfigFunc(ctx, s)
+		if err != nil {
+			return fmt.Errorf("render SMB recovery client: %w", err)
+		}
+		data, readErr := os.ReadFile(filepath.Join(constants.GetPathConst().ConfPath, constants.CephConfFileName))
+		if readErr != nil {
+			return readErr
+		}
+		candidate.CephConfig = string(data)
+	}
+	applied, appliedErr := os.ReadFile(filepath.Join(root, "applied.json"))
+	_, pendingErr := os.Lstat(filepath.Join(root, "config-update-pending"))
+	if appliedErr == nil && string(applied) == candidate.configurationFingerprint() && errors.Is(pendingErr, os.ErrNotExist) {
+		roles, roleErr := smbCoreRoles(candidate.Spec)
+		ready := roleErr == nil
+		for _, role := range roles {
+			if smbReadyNativeFunc(ctx, root, role) != nil {
+				ready = false
+			}
+		}
+		if ready {
+			if candidate.CTDB != nil {
+				err = publishSMBMembership(ctx, root, candidate)
+			}
+			return err
+		}
 	}
 	launch, roles, err := prepareSMBProjection(ctx, s, candidate, root)
 	if err != nil {
@@ -261,16 +309,27 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
+	if launch.Clustered {
+		err = prepareSMBCTDBFilesFunc(ctx, root, os.Getenv("SNAP"))
+		if err != nil {
+			return err
+		}
+	}
 	err = os.Remove(filepath.Join(root, "stop-requested"))
 	if err != nil {
 		return err
 	}
 	ops.prepare = func(ctx context.Context, role string) error {
-		err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			return database.StartSMBLocalSAM(ctx, tx, clusterID, s.ClusterState().Name())
-		})
-		if err != nil {
-			return err
+		if role != "smbd" {
+			return nil
+		}
+		if !launch.Clustered {
+			err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				return database.StartSMBLocalSAM(ctx, tx, clusterID, s.ClusterState().Name())
+			})
+			if err != nil {
+				return err
+			}
 		}
 		return prepareSMBAccounts(ctx, root, !samStarted)
 	}
@@ -312,13 +371,22 @@ func disableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterI
 	}
 	var groups []string
 	var samStarted bool
+	var clustered bool
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		groups, err = database.GetSMBOwnerGroups(ctx, tx, s.ClusterState().Name())
 		if err != nil || !purge {
 			return err
 		}
-		samStarted, err = database.GetSMBLocalSAMStarted(ctx, tx, clusterID, s.ClusterState().Name())
+		clustered, err = database.IsSMBClusteredGroup(ctx, tx, clusterID)
+		if err != nil {
+			return err
+		}
+		if clustered {
+			samStarted, err = database.HasSMBClusteredHistory(ctx, tx, clusterID, s.ClusterState().Name())
+		} else {
+			samStarted, err = database.GetSMBLocalSAMStarted(ctx, tx, clusterID, s.ClusterState().Name())
+		}
 		return err
 	})
 	if err != nil {
@@ -337,7 +405,12 @@ func disableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterI
 		// history permits destruction only after read-only inactive confirmation.
 		err = smbAtomicWrite(filepath.Join(root, "stop-requested"), []byte("stop requested\n"))
 		if err == nil {
-			err = confirmSMBInactive(ctx, "smbd")
+			for _, role := range smbStopOrder {
+				err = confirmSMBInactive(ctx, role)
+				if err != nil {
+					break
+				}
+			}
 		}
 	} else {
 		err = stopSMBApps(root, smbSnapOps(root))
@@ -359,6 +432,9 @@ func disableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterI
 		err = removeSMBLocalStateFunc(root)
 		if err != nil {
 			return err
+		}
+		if clustered {
+			return nil
 		}
 		return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 			return database.ClearSMBLocalSAMStarted(ctx, tx, clusterID, s.ClusterState().Name())

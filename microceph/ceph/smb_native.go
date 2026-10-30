@@ -30,9 +30,11 @@ type smbBindingIdentity struct {
 }
 
 type smbBindingDescription struct {
-	Clustered        bool        `json:"clustered"`
-	DomainController bool        `json:"domain_controller"`
-	Globals          [][2]string `json:"globals"`
+	CTDB             map[string]any `json:"ctdb"`
+	CTDBGlobals      [][2]string    `json:"ctdb_globals"`
+	Clustered        bool           `json:"clustered"`
+	DomainController bool           `json:"domain_controller"`
+	Globals          [][2]string    `json:"globals"`
 	Shares           []struct {
 		Name    string      `json:"name"`
 		Options [][2]string `json:"options"`
@@ -317,8 +319,30 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 	if candidate.Endpoint != nil {
 		endpoint = *candidate.Endpoint
 	}
-	plan.Launch = smbLaunch{FrontendAddress: endpoint.FrontendAddress, SMBPort: endpoint.SMBPort}
+	clustered := candidate.Spec.hasFeature("clustered")
+	if clustered != (candidate.CTDB != nil) {
+		return plan, fmt.Errorf("effective CTDB mode does not match native reservation")
+	}
+	plan.Launch = smbLaunch{Clustered: clustered, FrontendAddress: endpoint.FrontendAddress, SMBPort: endpoint.SMBPort}
 	required := map[string]any{"config backend": "file", "private dir": root + "/samba/private", "state directory": root + "/samba/state", "cache directory": root + "/samba/cache", "lock directory": root + "/samba/lock", "pid directory": root + "/samba/run", "ncalrpc dir": root + "/samba/ncalrpc", "log file": root + "/diagnostics/log.%m", "smb ports": strconv.Itoa(endpoint.SMBPort)}
+	if clustered {
+		if plan.Launch.FrontendAddress == "" {
+			plan.Launch.FrontendAddress = candidate.CTDB.Member.Node
+		}
+		for _, option := range description.CTDBGlobals {
+			if option[0] != "include" {
+				required[option[0]] = option[1]
+			}
+		}
+		required["registry shares"] = "no"
+		required["ctdbd socket"] = root + "/ctdb/run/ctdbd.socket"
+		pnn := candidate.CTDB.Member.PNN
+		plan.Launch.CTDBPNN = &pnn
+		err = projectSMBCTDB(candidate, root, document, description.CTDB, plan.Files)
+		if err != nil {
+			return plan, err
+		}
+	}
 	if plan.Launch.FrontendAddress != "" {
 		required["interfaces"] = plan.Launch.FrontendAddress
 		required["bind interfaces only"] = "yes"
@@ -604,7 +628,7 @@ func publishSMBNative(ctx context.Context, root string) (retErr error) {
 		if err != nil {
 			return err
 		}
-		if !filepath.IsLocal(relative) || filepath.Dir(relative) != "config" {
+		if !filepath.IsLocal(relative) || (filepath.Dir(relative) != "config" && relative != "ctdb/nodes" && relative != "ctdb/ctdb.conf") {
 			return fmt.Errorf("invalid native candidate path")
 		}
 		data, err := os.ReadFile(path)
@@ -644,5 +668,13 @@ func publishSMBNative(ctx context.Context, root string) (retErr error) {
 			return err
 		}
 	}
-	return nil
+	err = publishSMBCTDBLayout(root, false)
+	if err != nil {
+		return err
+	}
+	launch, err := loadSMBLaunchForPublication(root)
+	if err == nil && launch.Clustered {
+		notifySMBMembershipChangeFunc()
+	}
+	return err
 }

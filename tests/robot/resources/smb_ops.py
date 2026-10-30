@@ -93,6 +93,14 @@ def snapshot_ready(snapshot, cluster, port=None):
     context = snapshot.get("context") or {}
     state = snapshot.get("roles", {}).get("smbd", {})
     pid = state.get("MainPID", "")
+    if context.get("clustered"):
+        ctdb = snapshot.get("roles", {}).get("ctdbd", {})
+        pnn = context.get("ctdb_pnn")
+        if (type(pnn) is not int or pnn < 0 or snapshot.get("rank") != str(pnn)
+                or status.get("clustered") is not True or status.get("ctdb_pnn") != pnn
+                or ctdb.get("ActiveState") != "active" or not ctdb.get("MainPID", "").isdigit()
+                or int(ctdb["MainPID"]) <= 0):
+            return False
     return (snapshot.get("owner") == cluster and status.get("cluster_id") == cluster
             and status.get("ready") is True and not status.get("error") and not status.get("stop_requested")
             and context.get("startup", {}).get("smbd", {}).get("prepared") is True
@@ -100,19 +108,35 @@ def snapshot_ready(snapshot, cluster, port=None):
             and state.get("ActiveState") == "active" and pid.isdigit() and int(pid) > 0)
 
 
-def role_tokens(snapshots):
+def role_tokens(snapshots, role="smbd"):
     """Process identities for the installed serving role, never inferred defaults."""
     if not snapshots:
         raise AssertionError("No SMB observations supplied")
     result = {}
     for snapshot in snapshots:
         node = snapshot["node"]
-        state = snapshot["roles"]["smbd"]
+        state = snapshot["roles"][role]
         pid, start = state["MainPID"], state["ExecMainStartTimestampMonotonic"]
         if node in result or state["ActiveState"] != "active" or not pid.isdigit() or int(pid) <= 0 or not start or start == "0":
             raise AssertionError("Invalid or duplicate SMB process observation")
         result[node] = (pid, start)
     return result
+
+
+def observations_stable(before, samples):
+    """Every member stays ready with unchanged serving tokens and applied generation."""
+    if not before or not samples:
+        return False
+    for group in samples:
+        if len(group) != len(before):
+            return False
+        for initial, current in zip(before, group):
+            if (not snapshot_ready(current, initial['owner'], initial['context']['smb_port'])
+                    or current.get('applied_generation') != initial.get('applied_generation')
+                    or any(role_tokens([current], role) != role_tokens([initial], role)
+                           for role in ('smbd', 'ctdbd'))):
+                return False
+    return True
 
 
 def observations_unchanged(samples, tokens, cluster, port):
@@ -282,7 +306,7 @@ class smb_ops:
             if node.command("sha256sum", "/root/" + SNAP_DEST_NAME, check=True).stdout.split()[0] != expected:
                 raise AssertionError("Guest candidate snap differs from the supplied artifact")
             node.install_microceph_from_local_snap(snap, snapd_channel=channel)
-            for plug in ("network", "network-control", "dm-crypt", "smb-identity", "smb-mounts", "smb-control-mounts"):
+            for plug in ("network", "network-control", "dm-crypt", "smb-identity", "smb-mounts", "smb-control-mounts", "ctdb-run", "smb-control-access"):
                 node.command("snap", "connect", "microceph:" + plug, check=True)
             node.command("snap", "restart", "microceph.daemon", check=True)
             node.wait_for_microceph_control_socket()
@@ -381,8 +405,30 @@ class smb_ops:
         self.harness._poll_until(lambda: snapshot_ready(self.smb_snapshot(node, cluster), cluster, port), attempts=40, interval=3, fail_msg="SMB did not become ready without intervention")
         return self.smb_snapshot(node, cluster)
 
-    def smb_role_tokens(self, snapshot):
-        return role_tokens([snapshot])
+    def smb_role_tokens(self, snapshot, *roles):
+        if isinstance(snapshot, dict) and not roles:
+            return role_tokens([snapshot])
+        snapshots = [snapshot] if isinstance(snapshot, dict) else snapshot
+        roles = roles or ("smbd", "ctdbd")
+        if any(role not in ("smbd", "ctdbd", "daemon") for role in roles):
+            raise AssertionError("Unknown installed SMB role")
+        return {role: role_tokens(snapshots, role) for role in roles}
+
+    def smb_snapshots(self, cluster, *nodes):
+        return [self.smb_snapshot(node, cluster) for node in nodes]
+
+    def collect_smb_observations(self, seconds=35, cluster="robot-smb"):
+        samples = []
+        until = time.monotonic() + int(seconds)
+        def sample():
+            samples.append(self.smb_snapshots(cluster, 0, 1, 2))
+            return time.monotonic() >= until
+        self.harness._poll_until(sample, attempts=int(seconds)+2, interval=3,
+                                 fail_msg="SMB observation window did not complete")
+        return samples
+
+    def smb_observations_are_stable(self, before, samples):
+        return observations_stable(before, samples)
 
     def observe_smb_interval(self, node, cluster="robot-never"):
         samples = []
@@ -425,7 +471,7 @@ class smb_ops:
         self.harness.wait_for_vm_agent("local:" + vm.name)
 
     def capture_smb_shared_state(self, *clusters):
-        if not clusters or any(cluster not in ("robot-never", "robot-other") for cluster in clusters):
+        if not clusters or any(cluster not in ("robot-never", "robot-other", "robot-smb") for cluster in clusters):
             raise AssertionError("Unknown logical SMB fixture")
         vm = self.nodes[0]
         names = [name for cluster in clusters for name in ("ceph.smb.cluster." + cluster, "ceph.smb.share." + cluster + ".data")]
@@ -436,7 +482,7 @@ class smb_ops:
         return shared_state(resources.stdout, auth.stdout)
 
     def smb_backing_file_digest(self, filename, cluster="robot-never"):
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", filename) or cluster not in ("robot-never", "robot-other"):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", filename) or cluster not in ("robot-never", "robot-other", "robot-smb"):
             raise AssertionError("Invalid SMB fixture file/cluster")
         result = self.nodes[0].command("timeout", "--kill-after=5", "60", "snap", "run", "--shell", "microceph.ceph", "-c", 'exec "$SNAP/bin/python3" "$SNAP_COMMON/robot-smb/smb_guest.py" read-data "$1" "$2"', "fixture", cluster, filename, timeout=80, check=True)
         digest = result.stdout.strip()
@@ -450,7 +496,7 @@ class smb_ops:
     def retire_smb_scenario(self):
         for index, node in enumerate(self.nodes):
             owner = self.smb_snapshot(index)["owner"]
-            if owner and owner not in ("robot-never", "robot-other"):
+            if owner and owner not in ("robot-never", "robot-other", "robot-smb"):
                 raise AssertionError("Refusing to retire a foreign SMB owner")
             if owner:
                 node.command("microceph", "disable", "smb", "--cluster-id", owner, timeout=180, check=True)
@@ -459,7 +505,7 @@ class smb_ops:
     def assert_smb_scenario_idle(self):
         for index in range(len(self.nodes)):
             state = self.smb_snapshot(index)
-            if state["owner"] or state["roles"]["smbd"]["ActiveState"] != "inactive":
+            if state["owner"] or any(state["roles"][role]["ActiveState"] != "inactive" for role in ("smbd", "ctdbd")):
                 raise AssertionError("SMB scenario did not release its gateway roles")
 
     def collect_smb_diagnostics(self):

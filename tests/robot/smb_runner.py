@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Own one singleton-only lab, private output and exact installed-case accounting."""
+"""Own serial singleton/clustered labs and exact installed-case accounting."""
 import argparse
 import json
 import os
@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 HERE = Path(__file__).resolve().parent
 EXPECTED_CASES = 3
+SCENARIOS = {"singleton": 3, "clustered": 6}
 
 
 def _result(directory, expected=EXPECTED_CASES):
@@ -27,8 +28,20 @@ def _robot(directory, variables, options, dryrun):
         command.append("--dryrun")
     for variable in variables:
         command += ["--variable", variable]
-    command.append(str(HERE / "smb-singleton-tests"))
+    kind = directory.name
+    command.append(str(HERE / ("smb-" + kind + "-tests")))
     return subprocess.run(command, cwd=HERE.parents[1], env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONUNBUFFERED="1")).returncode
+
+
+def _cleanup(manifest):
+    sys.path.insert(0, str(HERE / "resources"))
+    from smb_ops import smb_ops
+    owner = smb_ops()
+    owner.use_smb_lab(str(manifest))
+    try:
+        owner.assert_smb_scenario_idle()
+    finally:
+        owner.destroy_smb_lab()
 
 
 def main(argv=None):
@@ -36,10 +49,13 @@ def main(argv=None):
     parser.add_argument("--snap-path", default="")
     parser.add_argument("--dryrun", action="store_true")
     parser.add_argument("--outputdir", default=".")
+    parser.add_argument("--suites", default="singleton")
     args, options = parser.parse_known_args(argv)
-    if any(option.split("=", 1)[0] in ("--test", "--suite", "--suites", "--repeat", "--permutations") for option in options):
-        parser.error("Only the complete singleton scenario is supported")
-    # Do not let the adjacent CLI wrapper robot.py shadow Robot Framework.
+    kinds = args.suites.split(',')
+    if not kinds or len(set(kinds)) != len(kinds) or any(kind not in SCENARIOS for kind in kinds):
+        parser.error("Select complete singleton/clustered scenarios without duplicates")
+    if any(option.split("=", 1)[0] in ("--test", "--suite", "--repeat", "--permutations") for option in options):
+        parser.error("Only complete installed SMB scenarios are supported")
     sys.path[:] = [path for path in sys.path if Path(path or os.getcwd()).resolve() != HERE]
     os.umask(0o077)
     root = Path(args.outputdir).resolve()
@@ -48,33 +64,32 @@ def main(argv=None):
     results.mkdir(exist_ok=False)
     private = results / "private"
     private.mkdir(mode=0o700)
-    manifest = private / "lab.json"
-    variables = ["SNAP_PATH:" + args.snap_path, "SMB_LAB_MANIFEST:" + str(manifest)]
-    summary = {"rc": 1, "suite": "singleton", "dryrun": args.dryrun, "errors": []}
-    try:
-        rc = _robot(results / "singleton", variables, options, args.dryrun)
-        summary.update(_result(results / "singleton"))
-        summary["rc"] = int(rc != 0 or summary["rc"] != 0)
-    except Exception as error:
-        summary["errors"].append(str(error))
-    finally:
-        if not args.dryrun and manifest.exists():
-            try:
-                sys.path.insert(0, str(HERE / "resources"))
-                from smb_ops import smb_ops
-                owner = smb_ops()
-                owner.use_smb_lab(str(manifest))
-                # Suite teardown attempted retirement once. Never retry an
-                # uncertain stop; fail the verdict, then destroy only owned VMs.
+    summary = {"rc": 0, "suite": args.suites, "dryrun": args.dryrun, "errors": [], "results": []}
+    for kind in kinds:
+        manifest = private / ("lab.json" if len(kinds) == 1 else kind + ".json")
+        variables = ["SNAP_PATH:" + args.snap_path, "SMB_LAB_MANIFEST:" + str(manifest)]
+        try:
+            rc = _robot(results / kind, variables, options, args.dryrun)
+            result = _result(results / kind, SCENARIOS[kind])
+            result['suite'] = kind
+            summary['results'].append(result)
+            summary['rc'] = int(summary['rc'] != 0 or rc != 0 or result['rc'] != 0)
+        except Exception as error:
+            summary['rc'] = 1
+            summary['errors'].append(str(error))
+        finally:
+            if not args.dryrun and manifest.exists():
                 try:
-                    owner.assert_smb_scenario_idle()
-                finally:
-                    owner.destroy_smb_lab()
-            except Exception as error:
-                summary["errors"].append("Owned lab teardown failed: " + str(error))
-        summary["rc"] = int(summary["rc"] != 0 or bool(summary["errors"]))
-        (root / "smb-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    return summary["rc"]
+                    _cleanup(manifest)
+                except Exception as error:
+                    summary['errors'].append("Owned lab teardown failed: " + str(error))
+            summary['rc'] = int(summary['rc'] != 0 or bool(summary['errors']))
+            for key in ('passed', 'failed', 'skipped', 'cases'):
+                summary[key] = sum(result[key] for result in summary['results'])
+            (root / "smb-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+        if summary['rc']:
+            break
+    return summary['rc']
 
 
 if __name__ == "__main__":
