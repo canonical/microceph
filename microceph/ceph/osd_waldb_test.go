@@ -857,3 +857,15 @@ func TestResolvePartitionStablePathFallsBackToRawDeviceWhenStorageUnavailable(t 
 	require.NoError(t, err)
 	assert.Equal(t, "/dev/sde1", path)
 }
+
+func TestBuildDSLProvisionPlanValidationErrorPreservesPercent(t *testing.T) {
+	expression := "eq(@size, 100%)"
+	_, validationErr := validateDSLExpression(expression)
+	require.Error(t, validationErr)
+	require.Contains(t, validationErr.Error(), "%")
+
+	manager := &OSDManager{}
+	plan, err := manager.buildDSLProvisionPlan(context.Background(), types.DisksPost{OSDMatch: expression})
+	require.Nil(t, plan)
+	require.EqualError(t, err, validationErr.Error())
+}
