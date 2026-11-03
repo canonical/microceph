@@ -162,9 +162,46 @@ class NativeBridgeTests(unittest.TestCase):
             finally:
                 handle.shutdown()
 
+    def test_join_uses_only_first_ordered_source_and_private_stdin(self):
+        request = dict(self.request(), config_path="/native/alpha/config/smb.conf", joins=[
+            {"username": "joiner-a", "password": "first-private"},
+            {"username": "joiner-b", "password": "second-private"}])
+        process = Mock()
+        process.wait.return_value = 0
+        process.communicate.return_value = (b"joined", b"")
+        with patch("subprocess.Popen", return_value=process) as popen, patch.dict(os.environ, {"SNAP": "/test-snap"}):
+            try:
+                result = self.call("join", request)
+            except ValueError as error:
+                self.fail(str(error))
+            self.assertEqual(result, {})
+        self.assertEqual(popen.call_count, 1)
+        argv = popen.call_args.args[0]
+        self.assertEqual(argv[:5], ["/test-snap/bin/net", "--configfile", request["config_path"], "ads", "join"])
+        self.assertIn("--no-dns-updates", argv)
+        self.assertNotIn("first-private", repr(argv))
+        self.assertIn("joiner-a", argv)
+        self.assertNotIn("joiner-b", argv)
+        self.assertEqual([call.args[0] for call in process.stdin.write.call_args_list], [b"first-private", b"\n"])
+
+    def test_join_without_snap_context_never_falls_back_to_host_net(self):
+        request = dict(self.request(), config_path="/native/alpha/config/smb.conf",
+                       joins=[{"username": "joiner", "password": "synthetic-private"}])
+        process = Mock()
+        process.wait.return_value = 0
+        env = {key: value for key, value in os.environ.items() if key != "SNAP"}
+        with patch.dict(os.environ, env, clear=True), patch("subprocess.Popen", return_value=process) as popen:
+            try:
+                self.call("join", request)
+            except (KeyError, ValueError):
+                pass
+            else:
+                self.fail("join without exact snap context must refuse host net fallback")
+            popen.assert_not_called()
+
     def test_bridge_has_no_runtime_or_publication_commands(self):
         self.assertTrue(callable(getattr(self.native, "bridge", None)), "missing thin upstream-binding entry point")
-        for command in ("join", "launch", "publish", "ready", "nodes", "control", "arbitrary"):
+        for command in ("launch", "publish", "ready", "nodes", "control", "arbitrary"):
             with self.subTest(command=command), self.assertRaises(ValueError):
                 self.native.bridge(command, self.request())
 

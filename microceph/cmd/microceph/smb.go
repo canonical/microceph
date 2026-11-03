@@ -23,7 +23,7 @@ type cmdSMB struct {
 }
 
 func (c *cmdSMB) Command() *cobra.Command {
-	cmd := &cobra.Command{Use: "smb --cluster-id <id> [--target <member>]", Short: "Enable this member's local-user SMB gateway after maintenance", Args: cobra.NoArgs, RunE: c.Run}
+	cmd := &cobra.Command{Use: "smb --cluster-id <id> [--target <member>]", Short: "Enable this member's local-user or clustered external-AD SMB gateway after maintenance", Args: cobra.NoArgs, RunE: c.Run}
 	cmd.Flags().StringVar(&c.clusterID, "cluster-id", "", "Upstream logical SMB cluster ID")
 	cmd.Flags().StringVar(&c.target, "target", "", "Member hostname (default: local)")
 	if c.disable {

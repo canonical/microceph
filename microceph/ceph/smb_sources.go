@@ -63,6 +63,7 @@ type smbCandidate struct {
 	SpecBytes  json.RawMessage       `json:"spec_document"`
 	Config     json.RawMessage       `json:"config"`
 	Users      []json.RawMessage     `json:"users"`
+	Joins      []json.RawMessage     `json:"joins,omitempty"`
 }
 
 // configurationFingerprint normalizes structural JSON ordering but preserves
@@ -70,6 +71,12 @@ type smbCandidate struct {
 // It is private: source documents contain credentials and never enter status.
 func (c smbCandidate) configurationFingerprint() string {
 	c.CTDB = nil
+	if c.Spec.hasFeature("domain") {
+		c.Joins = nil
+		c.Spec.JoinSources = nil
+		c.SpecBytes = smbWithoutJoinReferences(c.SpecBytes, "spec")
+		c.Logical = smbWithoutJoinReferences(c.Logical, "domain_settings")
+	}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return c.fingerprint()
@@ -117,6 +124,7 @@ func readSMBCandidate(clusterID string, read func(string) ([]byte, error)) (smbC
 	}
 	c.SpecBytes = data
 	uris := append([]string{c.Spec.ConfigURI}, c.Spec.UserSources...)
+	uris = append(uris, c.Spec.JoinSources...)
 	for _, uri := range uris {
 		err = validateSMBSourceURI(clusterID, uri)
 		if err != nil {
@@ -149,6 +157,16 @@ func readSMBCandidate(clusterID string, read func(string) ([]byte, error)) (smbC
 			return c, fmt.Errorf("invalid SMB identity source")
 		}
 		c.Users = append(c.Users, json.RawMessage(data))
+	}
+	for _, uri := range c.Spec.JoinSources {
+		data, err = read(uri)
+		if err != nil {
+			return c, err
+		}
+		if !json.Valid(data) {
+			return c, fmt.Errorf("invalid AD join source")
+		}
+		c.Joins = append(c.Joins, json.RawMessage(data))
 	}
 	return c, nil
 }
@@ -304,6 +322,8 @@ func (s smbSpec) resolveEndpoint(ctx context.Context, state interfaces.StateInte
 }
 
 type smbLaunch struct {
+	CustomDNS       bool                        `json:"custom_dns,omitempty"`
+	AD              *smbADMember                `json:"ad_member,omitempty"`
 	Clustered       bool                        `json:"clustered,omitempty"`
 	CTDBPNN         *uint64                     `json:"ctdb_pnn,omitempty"`
 	Startup         map[string]smbStartupChecks `json:"startup,omitempty"`
@@ -377,4 +397,22 @@ func prepareSMBProjection(ctx context.Context, s interfaces.StateInterface, cand
 	}
 	roles, err := smbCoreRoles(candidate.Spec)
 	return launch, roles, err
+}
+
+// Remove only bootstrap references, retaining all other generated/logical inputs.
+func smbWithoutJoinReferences(raw json.RawMessage, section string) json.RawMessage {
+	var document map[string]any
+	err := json.Unmarshal(raw, &document)
+	if err != nil {
+		return raw
+	}
+	nested, ok := document[section].(map[string]any)
+	if ok {
+		delete(nested, "join_sources")
+	}
+	updated, err := json.Marshal(document)
+	if err != nil {
+		return raw
+	}
+	return updated
 }

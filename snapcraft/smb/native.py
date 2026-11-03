@@ -6,6 +6,7 @@ Requests and stderr are private subprocess data captured by the Go caller.
 """
 import io
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -25,6 +26,20 @@ def bridge(command, request):
                 handle.stat(check["path"])
             finally:
                 handle.shutdown()
+        return {}
+    if command == "join":
+        from sambacc import samba_cmds
+        from sambacc.join import Joiner, UserPass
+        # JoinError does not classify a definite no-effect credential rejection.
+        # Never fall through to another external attempt after an ambiguous exit.
+        snap = Path(os.environ["SNAP"])
+        if not snap.is_absolute():
+            raise ValueError("join requires exact snap context")
+        credential = request["joins"][0]
+        joiner = Joiner()  # No joined marker, retry waiter or DNS administration.
+        joiner._net_ads_join = samba_cmds.SambaCommand(str(snap / "bin/net"))["--configfile", request["config_path"], "ads", "join"]
+        joiner.add_pw_source(UserPass(credential["username"], credential["password"]))
+        joiner.join()
         return {}
     instance = GlobalConfig(initial_data=request["config"]).get(request["cluster_id"])
     if command == "accounts":

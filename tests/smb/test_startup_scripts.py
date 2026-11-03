@@ -47,7 +47,7 @@ class NativeStartupTests(unittest.TestCase):
         for name in ("smb-startup", "smbd.start"):
             shutil.copy2(ROOT / "snapcraft/commands" / name, self.snap / "commands" / name)
         self.tool("python3", '''
-if sys.argv[1:3] == ["-B", "-"] and len(sys.argv) == 5:
+if sys.argv[1:3] == ["-B", "-"] and len(sys.argv) == 5 and sys.argv[3].startswith("/"):
     # Only the mount propagation check is substituted, never context parsing.
     assert os.environ["PRIVATE_NAMESPACE"] == "1"
     source = Path(sys.argv[3])
@@ -135,11 +135,117 @@ def record(program, args):
         command = ['bash', '-euc', '. "$SNAP/commands/smb-startup"; smb_startup_context']
         result = subprocess.run(command, env=self.env, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.split(b'\0')[-3:-1], [b'1', b'2'])
+        self.assertEqual(result.stdout.split(b'\0')[2:4], [b'1', b'2'])
         del self.context['ctdb_pnn']
         self.publish_context()
         result = subprocess.run(command, env=self.env, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
+
+    def test_complete_ad_context_is_consumed_without_reconstruction(self):
+        self.context.update(clustered=True, ctdb_pnn=0, ad_member={
+            "realm": "EXAMPLE.TEST", "workgroup": "EXAMPLE", "netbios_name": "ALPHA",
+            "fqdn": "alpha.example.test"})
+        self.context["startup"] = {role: {"prepared": False} for role in ("winbindd", "smbd")}
+        self.publish_context()
+        result = subprocess.run(["bash", "-euc", '. "$SNAP/commands/smb-startup"; smb_startup_context'],
+                                env=self.env, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b"EXAMPLE", result.stdout.split(b"\0"))
+        self.assertEqual(sorted((self.root / "samba/private").iterdir()),
+                         [self.root / "samba/private/passdb.tdb", self.root / "samba/private/secrets.tdb"])
+
+    def ad_prepared_context(self, strict=True):
+        member = {"realm": "EXAMPLE.TEST", "workgroup": "EXAMPLE", "netbios_name": "ALPHA", "fqdn": "alpha.example.test"}
+        trust = [{"database": "secrets.tdb", "key": prefix + "EXAMPLE"}
+                 for prefix in ("SECRETS/MACHINE_PASSWORD/", "SECRETS/SID/")]
+        records = trust + ([{"database": "autorid.tdb", "key": "0x434f4e46494700"}] if strict else [])
+        self.context.update(clustered=True, ctdb_pnn=0, ad_member=member,
+                            startup={"winbindd": {"prepared": True, "initialized": strict, "records": records}})
+        self.publish_context()
+        marker = self.root / "ad-initializing"
+        marker.write_text(json.dumps(member))
+        marker.chmod(0o600)
+        self.tool("ctdb", r'''
+record("ctdb", sys.argv[1:])
+assert sys.argv[1:3] == ["-t", "5"]
+if sys.argv[3] == "getdbmap":
+    print("name:secrets.tdb path:retained PERSISTENT")
+    if not os.environ.get("MISSING_AD_DATABASE"):
+        print("name:autorid.tdb path:retained PERSISTENT")
+elif sys.argv[3] == "pfetch":
+    if not (sys.argv[4] == "autorid.tdb" and os.environ.get("MISSING_AD_RECORD")):
+        print("retained")
+else:
+    sys.exit(1)
+''')
+
+    def ad_assert(self):
+        return subprocess.run(["bash", "-euc", '. "$SNAP/commands/smb-startup"; smb_load_context; smb_assert_prepared winbindd'],
+                              env=self.env, capture_output=True, text=True, timeout=10)
+
+    def test_independent_ad_start_never_fetches_missing_database_or_rebuilds_records(self):
+        self.ad_prepared_context()
+        result = self.ad_assert()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.events.unlink()
+        self.env["MISSING_AD_DATABASE"] = "1"
+        self.assertNotEqual(self.ad_assert().returncode, 0)
+        self.assertFalse(any(event["args"][2:4] == ["pfetch", "autorid.tdb"] for event in self.recorded()))
+        self.env.pop("MISSING_AD_DATABASE")
+        self.env["MISSING_AD_RECORD"] = "1"
+        self.assertNotEqual(self.ad_assert().returncode, 0)
+        self.assertNotIn("smbd", [event["program"] for event in self.recorded()])
+
+    def test_initial_ad_exception_is_identity_bound_and_not_serving_readiness(self):
+        self.ad_prepared_context(strict=False)
+        self.env["MISSING_AD_DATABASE"] = "1"
+        self.assertEqual(self.ad_assert().returncode, 0)
+        (self.root / "ad-initializing").write_text("{}")
+        self.assertNotEqual(self.ad_assert().returncode, 0)
+        (self.root / "ad-initializing").unlink()
+        self.assertNotEqual(self.ad_assert().returncode, 0)
+
+    def test_ad_socket_paths_must_be_private_before_any_native_start(self):
+        self.ad_prepared_context()
+        for relative, mode in ((".", 0o700), ("samba", 0o700), ("samba/state", 0o700),
+                               ("samba/winbindd", 0o755), ("samba/state/winbindd_privileged", 0o750)):
+            path = self.root / relative
+            path.mkdir(parents=True, exist_ok=True)
+            path.chmod(mode)
+        command = ["bash", "-euc", '. "$SNAP/commands/smb-startup"; smb_load_context; '
+                   'smb_runtime_mountpoint() { :; }; smb_bind_private() { :; }; smb_setup_winbind']
+        good = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertEqual(good.returncode, 0, good.stderr)
+        for relative, bad, good in (("samba/state", 0o755, 0o700), ("samba/winbindd", 0o700, 0o755),
+                                    ("samba/state/winbindd_privileged", 0o700, 0o750)):
+            path = self.root / relative
+            path.chmod(bad)
+            result = subprocess.run(command, env=self.env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, relative)
+            path.chmod(good)
+
+    def test_winbind_wrapper_final_exec_keeps_independent_pid(self):
+        self.ad_prepared_context()
+        shutil.copy2(ROOT / "snapcraft/commands/winbindd.start", self.snap / "commands/winbindd.start")
+        (self.root / "diagnostics").mkdir(mode=0o700)
+        # This fixture cannot mount. Runtime setup/health are covered separately;
+        # retain the real context, record assertions, private log and final exec.
+        with (self.snap / "commands/smb-startup").open("a") as stream:
+            stream.write("\nsmb_setup_ctdb() { :; }\nsmb_setup_winbind() { :; }\nsmb_ctdb_health() { :; }\n")
+        self.tool("winbindd", '''
+record("winbindd", sys.argv[1:])
+print(json.dumps({"pid": os.getpid(), "args": sys.argv[1:]}))
+''')
+        process = subprocess.Popen([str(self.snap / "commands/winbindd.start")], env=self.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        _, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0, stderr)
+        log = self.root / "diagnostics/winbindd-startup.log"
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(log.read_text()), {"pid": process.pid,
+                         "args": ["-F", "--no-process-group", "--configfile", str(self.root / "config/smb.conf")]})
+        self.assertEqual(self.recorded()[0]["program"], "unshare")
+        self.assertEqual(self.recorded()[-1]["program"], "winbindd")
 
     def test_future_context_rejects_before_binds(self):
         for field in ("clustered", "ad_member", "proxy", "metrics_port"):

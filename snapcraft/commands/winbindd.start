@@ -1,0 +1,20 @@
+#!/bin/bash
+set -eu
+# shellcheck disable=SC2016
+exec "$SNAP/bin/unshare" --mount --propagation slave -- /bin/bash -euc '
+  . "$SNAP/commands/smb-startup"
+  smb_load_context
+  SMB_CREATE_MOUNTPOINTS=1
+  smb_setup_nss
+  smb_setup_ctdb
+  smb_setup_winbind
+  smb_bind_custom_dns
+  # Go alone publishes trust-only first initialization or strict retained data.
+  smb_assert_prepared winbindd
+  smb_ctdb_health
+  smb_private_log "$SMB_ROOT/diagnostics/winbindd-startup.log"
+  smb_check_start_intent
+  exec "$SNAP/bin/winbindd" -F --no-process-group \
+    --configfile "$SMB_ROOT/config/smb.conf" \
+    >>"$SMB_ROOT/diagnostics/winbindd-startup.log" 2>&1
+'

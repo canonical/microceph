@@ -218,11 +218,11 @@ jobs:
             runner: self-hosted-linux-amd64-jammy-xlarge
 
           - id: smb-integration
-            name: SMB clustered and singleton lifecycle
+            name: SMB local and external AD lifecycle
             suite: smb-integration
-            # Serial owned labs: six clustered and three singleton cases.
-            # Three VMs preserve backing-Ceph quorum during reboot; no AD fixture.
-            # Both complete scenarios retain exact case and teardown accounting.
+            # Serial owned labs: clustered6, singleton3 and actual-DC AD9.
+            # AD checks capacity for three gateway/client VMs plus a dedicated DC.
+            # All 18 cases and owned teardown must pass; skips are non-green.
             runner: self-hosted-linux-amd64-noble-large
             lxd_args: --storage-backend=dir
             args: >-
@@ -301,4 +301,7 @@ jobs:
             smb-results/singleton/output.xml
             smb-results/singleton/log.html
             smb-results/singleton/report.html
+            smb-results/ad/output.xml
+            smb-results/ad/log.html
+            smb-results/ad/report.html
           retention-days: 5

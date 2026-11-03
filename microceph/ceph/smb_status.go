@@ -79,6 +79,11 @@ func SMBLocalStatus(ctx context.Context, s interfaces.StateInterface) (types.SMB
 	}
 	launch, launchErr := loadSMBLaunchForPublication(root)
 	if launchErr == nil {
+		status.AuthMode = "user"
+		if launch.AD != nil {
+			status.AuthMode = "active-directory"
+			status.Realm = launch.AD.Realm
+		}
 		status.Clustered = launch.Clustered
 		status.CTDBPNN = launch.CTDBPNN
 	}
@@ -95,6 +100,9 @@ func SMBLocalStatus(ctx context.Context, s interfaces.StateInterface) (types.SMB
 		if status.Clustered {
 			status.Ready = status.Ready && smbReadyNativeFunc(ctx, root, "ctdbd") == nil
 		}
+	}
+	if ctx.Err() != nil {
+		return status, ctx.Err()
 	}
 	return status, nil
 }
