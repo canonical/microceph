@@ -22,6 +22,8 @@ plugs:
   smb-control-access:
     interface: system-files
     read: [/run/ctdb]
+    # AF_UNIX connect requires write permission on this socket, not its directory.
+    write: [/run/ctdb/ctdbd.socket]
   smb-identity:
     interface: microceph-support
     user-identity-switching: true

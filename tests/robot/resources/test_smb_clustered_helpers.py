@@ -1,5 +1,8 @@
 """Pure clustered fixture/readiness controls, with no LXD or installed snap."""
 import copy
+from types import SimpleNamespace
+
+from smb_ops import smb_ops
 
 from smb_guest import resource_documents
 from smb_ops import observations_stable, role_tokens, snapshot_ready
@@ -11,6 +14,17 @@ def snapshot():
             'context': {'clustered': True, 'ctdb_pnn': 0, 'smb_port': 1445, 'startup': {'smbd': {'prepared': True}}},
             'roles': {role: {'ActiveState': 'active', 'MainPID': str(pid), 'ExecMainStartTimestampMonotonic': '99'}
                       for role, pid in [('smbd', 40), ('ctdbd', 41)]}}
+
+
+def test_failure_diagnostics_include_ctdb_and_existing_roles():
+    calls = []
+    library = smb_ops()
+    library.nodes = [SimpleNamespace(name='owned-node', command=lambda *args, **kwargs: calls.append(args))]
+    library.collect_smb_diagnostics()
+    journals = [args for args in calls if args[0] == 'journalctl' and '-u' in args]
+    assert journals
+    for role in ('snap.microceph.ctdbd', 'snap.microceph.smbd', 'snap.microceph.daemon'):
+        assert any(role in args for args in journals)
 
 
 def test_clustered_resources_keep_singleton_and_direct_modes():

@@ -512,7 +512,7 @@ class smb_ops:
         for node in self.nodes:
             try:
                 node.command("snap", "services", "microceph", timeout=20)
-                node.command("journalctl", "-b", "-u", "snap.microceph.smbd", "-u", "snap.microceph.daemon", "--no-pager", "-n", "100", timeout=20)
+                node.command("journalctl", "-b", "-u", "snap.microceph.ctdbd", "-u", "snap.microceph.smbd", "-u", "snap.microceph.daemon", "--no-pager", "-n", "100", timeout=20)
                 node.command("journalctl", "-k", "-b", "-g", 'apparmor="DENIED"', "--no-pager", "-n", "100", timeout=20)
             except Exception as error:
                 logger.warn(f"SMB diagnostics unavailable for {node.name}: {error}")
