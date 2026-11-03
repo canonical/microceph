@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 )
 
-var smbStopOrder = []string{"smbd", "ctdbd"}
+var smbStopOrder = []string{"smbd", "winbindd", "ctdbd"}
 
 type smbAppOps struct {
 	prepare func(context.Context, string) error
+	started func(context.Context, string) error
 	start   func(context.Context, string) error
 	stop    func(string) error
 	ready   func(context.Context, string) error
@@ -79,11 +81,13 @@ func stopSMBApps(root string, ops smbAppOps) error {
 }
 
 func startSMBApps(ctx context.Context, root string, roles []string, ops smbAppOps) error {
-	// Reject the complete plan before any preparation or service effect.
-	for _, role := range roles {
-		if role != "smbd" && role != "ctdbd" {
-			return fmt.Errorf("unsupported SMB service %q", role)
-		}
+	// Validate dependency order and completeness before any service effects.
+	valid := false
+	for _, plan := range [][]string{{"smbd"}, {"ctdbd", "smbd"}, {"ctdbd", "winbindd", "smbd"}} {
+		valid = valid || reflect.DeepEqual(roles, plan)
+	}
+	if !valid {
+		return fmt.Errorf("unsupported or incomplete SMB service plan")
 	}
 	err := checkSMBStartIntent(root)
 	if err != nil {
@@ -99,6 +103,9 @@ func startSMBApps(ctx context.Context, root string, roles []string, ops smbAppOp
 		}
 		if err == nil {
 			err = ops.start(ctx, role)
+		}
+		if err == nil && ops.started != nil {
+			err = ops.started(ctx, role)
 		}
 		if err == nil {
 			err = ops.ready(ctx, role)
@@ -117,14 +124,20 @@ func startSMBApps(ctx context.Context, root string, roles []string, ops smbAppOp
 }
 
 func smbCoreRoles(spec smbSpec) ([]string, error) {
-	clustered := false
+	seen := map[string]bool{}
 	for _, feature := range spec.Features {
-		if feature != "clustered" || clustered {
+		if (feature != "clustered" && feature != "domain") || seen[feature] {
 			return nil, fmt.Errorf("unsupported or duplicate SMB feature %q", feature)
 		}
-		clustered = true
+		seen[feature] = true
 	}
-	if clustered {
+	if seen["domain"] {
+		if !seen["clustered"] {
+			return nil, fmt.Errorf("AD requires clustered CTDB mode")
+		}
+		return []string{"ctdbd", "winbindd", "smbd"}, nil
+	}
+	if seen["clustered"] {
 		return []string{"ctdbd", "smbd"}, nil
 	}
 	return []string{"smbd"}, nil

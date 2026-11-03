@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 BASE = Path("/var/snap/microceph/common/robot-smb")
-ROLES = ("smbd", "ctdbd", "daemon")
+ROLES = ("smbd", "ctdbd", "winbindd", "daemon")
 DATA_PATHS = {"robot-never": "/independent", "robot-other": "/independent-other", "robot-smb": "/clustered"}
 PAYLOAD = b"MicroCeph Robot SMB sentinel\n" + bytes(range(256)) * 16
 
@@ -132,8 +132,12 @@ def snapshot(cluster):
         generation = (root / 'applied.json').stat().st_mtime_ns
     except FileNotFoundError:
         generation = None
-    print(json.dumps({"applied_generation": generation, "api": api, "owner": text(root.parent / "owner.json"), "local_exists": root.exists(),
-                      "context": {key: context.get(key) for key in ("frontend_address", "smb_port", "startup", "clustered", "ctdb_pnn")},
+    try:
+        candidate_generation = (root / "config/candidate.json").stat().st_mtime_ns
+    except FileNotFoundError:
+        candidate_generation = None
+    print(json.dumps({"candidate_generation": candidate_generation, "applied_generation": generation, "api": api, "owner": text(root.parent / "owner.json"), "local_exists": root.exists(),
+                      "context": {key: context.get(key) for key in ("frontend_address", "smb_port", "startup", "clustered", "ctdb_pnn", "ad_member")},
                       "member": text(root / "config/ctdb-identity"), "rank": text(root / "config/ctdb-rank"),
                       "services": services.stdout, "boot_id": text(Path("/proc/sys/kernel/random/boot_id"))}))
 

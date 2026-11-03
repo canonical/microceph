@@ -205,12 +205,49 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	var adMember *smbADMember
+	if candidate.Spec.hasFeature("domain") {
+		adMember, err = inspectSMBADMember(ctx, root, candidate)
+		if err != nil {
+			return err
+		}
+	}
 	var policyWarning string
 	var samStarted bool
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		if candidate.Spec.hasFeature("clustered") {
-			_, err = database.ReserveSMBClusteredOwner(ctx, tx, clusterID, s.ClusterState().Name())
+			if adMember != nil {
+				identity, _ := json.Marshal(adMember)
+				retained, evidenceErr := smbADRetainedEvidence(root)
+				if evidenceErr != nil {
+					return evidenceErr
+				}
+				if retained {
+					err = database.VerifySMBADRetainedIdentity(ctx, tx, clusterID, s.ClusterState().Name(), string(identity))
+					if err != nil {
+						return fmt.Errorf("retained AD evidence lacks matching SQL authority; manual maintenance required: %w", err)
+					}
+				}
+				_, err = database.ReserveSMBADOwner(ctx, tx, clusterID, s.ClusterState().Name(), string(identity))
+				if err == nil {
+					state, stateErr := database.GetSMBADState(ctx, tx, clusterID, s.ClusterState().Name())
+					if stateErr != nil {
+						return stateErr
+					}
+					if state.Joined && !state.Initialized {
+						// SQL completion is not proof that the allocating request
+						// was unused. Preserve the local consumed-allocation fence,
+						// including when the tuple marker has also disappeared.
+						_, contextErr := loadSMBLaunchForPublication(root)
+						if contextErr != nil {
+							return fmt.Errorf("incomplete AD initialization has lost startup/allocation history; manual maintenance required: %w", contextErr)
+						}
+					}
+				}
+			} else {
+				_, err = database.ReserveSMBClusteredOwner(ctx, tx, clusterID, s.ClusterState().Name())
+			}
 			if err == nil {
 				candidate.CTDB, err = database.GetSMBCTDBView(ctx, tx, clusterID, s.ClusterState().Name())
 			}
@@ -274,7 +311,27 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	}
 	applied, appliedErr := os.ReadFile(filepath.Join(root, "applied.json"))
 	_, pendingErr := os.Lstat(filepath.Join(root, "config-update-pending"))
-	if appliedErr == nil && string(applied) == candidate.configurationFingerprint() && errors.Is(pendingErr, os.ErrNotExist) {
+	noOp := appliedErr == nil && string(applied) == candidate.configurationFingerprint() && errors.Is(pendingErr, os.ErrNotExist)
+	if noOp && adMember != nil {
+		err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			state, err := database.GetSMBADState(ctx, tx, clusterID, s.ClusterState().Name())
+			if err != nil {
+				return err
+			}
+			if !state.Joined || !state.Initialized {
+				return fmt.Errorf("applied AD configuration lacks confirmed initialization history; manual maintenance required")
+			}
+			return database.GetSMBConfiguredService(ctx, tx, clusterID, s.ClusterState().Name())
+		})
+		if errors.Is(err, sql.ErrNoRows) && len(previous) == 0 {
+			// Explicit reattachment of a retired owner must run the complete
+			// preparation/start/record path, not the applied shortcut.
+			noOp = false
+		} else if err != nil {
+			return err
+		}
+	}
+	if noOp {
 		roles, roleErr := smbCoreRoles(candidate.Spec)
 		ready := roleErr == nil
 		for _, role := range roles {
@@ -285,6 +342,9 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 		if ready {
 			if candidate.CTDB != nil {
 				err = publishSMBMembership(ctx, root, candidate)
+			}
+			if err == nil {
+				err = updateSMBBootstrapCandidate(ctx, s, root, candidate)
 			}
 			return err
 		}
@@ -319,9 +379,37 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
+	if launch.AD != nil {
+		err = prepareSMBADPaths(root)
+		if err != nil {
+			return err
+		}
+	}
+	ops.started = func(ctx context.Context, role string) error {
+		if role == "winbindd" {
+			return prepareSMBADRuntime(ctx, s, root, clusterID)
+		}
+		return nil
+	}
+	originalReady := ops.ready
+	ops.ready = func(ctx context.Context, role string) error {
+		err := originalReady(ctx, role)
+		if err != nil {
+			return err
+		}
+		if role == "winbindd" {
+			return s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				return database.InitializeSMBAD(ctx, tx, clusterID, s.ClusterState().Name())
+			})
+		}
+		return nil
+	}
 	ops.prepare = func(ctx context.Context, role string) error {
 		if role != "smbd" {
 			return nil
+		}
+		if launch.AD != nil {
+			return setSMBPrepared(root, "smbd", false)
 		}
 		if !launch.Clustered {
 			err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -372,10 +460,15 @@ func disableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterI
 	var groups []string
 	var samStarted bool
 	var clustered bool
+	var adIdentity bool
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		groups, err = database.GetSMBOwnerGroups(ctx, tx, s.ClusterState().Name())
 		if err != nil || !purge {
+			return err
+		}
+		adIdentity, err = database.HasSMBADIdentity(ctx, tx, clusterID)
+		if err != nil {
 			return err
 		}
 		clustered, err = database.IsSMBClusteredGroup(ctx, tx, clusterID)
@@ -419,6 +512,12 @@ func disableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterI
 		return err
 	}
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if purge {
+			err := database.CheckSMBADPurge(ctx, tx, clusterID, s.ClusterState().Name())
+			if err != nil {
+				return err
+			}
+		}
 		return database.RetireSMBOwner(ctx, tx, clusterID, s.ClusterState().Name())
 	})
 	if err != nil {
@@ -427,6 +526,9 @@ func disableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterI
 	err = os.Remove(ownerPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	if purge && adIdentity {
+		return smbAtomicWrite(filepath.Join(root, "diagnostics/identity-retained"), []byte("AD trust/idmap replicas retained after exact-owner peer retirement; not a backup guarantee.\n"))
 	}
 	if purge {
 		err = removeSMBLocalStateFunc(root)
