@@ -35,11 +35,11 @@ Ceph daemons and potentially microcephd listen on TCP ports. Use host-level fire
      - RGW (HTTPS)
      - RADOS Gateway secure traffic (HTTPS)
      - Object storage access. Requires TLS certificate management (see Encryption section). Only enable if needed.
-   * - 9283
+   * - 8443 (8080 when TLS is disabled)
      - MGR (Dashboard)
-     - Ceph Dashboard HTTPS access
+     - Ceph Dashboard HTTPS access (HTTP when TLS is disabled)
      - Access should be restricted via firewall. Authentication is required.
-   * - 9128
+   * - 9283
      - MGR (Prometheus)
      - Prometheus metrics endpoint
      - Restrict access to monitoring servers via firewall.
