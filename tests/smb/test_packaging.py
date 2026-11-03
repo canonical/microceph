@@ -24,6 +24,14 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('ctdb=2:4.23.6+dfsg-1ubuntu2.2', self.recipe['parts']['native-smb']['stage-packages'])
         self.assertEqual(self.recipe['layout']['/etc/ctdb']['bind'], '$SNAP_COMMON/smb/.conf/ctdb')
 
+    def test_daemon_can_connect_only_to_the_private_ctdb_control_socket(self):
+        grant = self.recipe['plugs']['smb-control-access']
+        self.assertEqual(grant['read'], ['/run/ctdb'])
+        self.assertEqual(grant.get('write'), ['/run/ctdb/ctdbd.socket'])
+        daemon = self.recipe['apps']['daemon']['plugs']
+        self.assertIn('smb-control-access', daemon)
+        self.assertNotIn('ctdb-run', daemon, 'the daemon does not need broad runtime directory writes')
+
     def test_no_future_runtime_is_declared(self):
         apps = self.recipe["apps"]
         self.assertEqual(apps["smbd"]["command"], "commands/smbd.start")

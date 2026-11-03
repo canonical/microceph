@@ -52,7 +52,7 @@ func prepareSMBCTDBFiles(ctx context.Context, root, snap string) (retErr error) 
 			return fmt.Errorf("required CTDB event resource is absent")
 		}
 	}
-	for _, name := range []string{"ctdb/events/legacy", "ctdb/run", "ctdb/scripts"} {
+	for _, name := range []string{"ctdb/events/legacy", "ctdb/run", "ctdb/scripts", "ctdb/volatile", "ctdb/persistent", "ctdb/state"} {
 		err = smbPrivateDir(filepath.Join(root, name))
 		if err != nil {
 			return err

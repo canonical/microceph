@@ -82,6 +82,38 @@ esac
 	return root, snap
 }
 
+func TestSMBCTDBPreparationCreatesPrivateDatabaseDirectories(t *testing.T) {
+	root, snap := nativeCTDBFixture(t)
+	for _, name := range []string{"ctdb-eventd", "ctdb_mutex_ceph_rados_helper", "ctdb_recovery_helper", "ctdb_takeover_helper", "ctdb_lock_helper"} {
+		path := filepath.Join(snap, "libexec/ctdb", name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+		require.NoError(t, os.WriteFile(path, []byte("helper"), 0700))
+	}
+	for _, name := range []string{"functions", "notify.sh", "events/legacy/00.ctdb.script"} {
+		path := filepath.Join(snap, "share/ctdb", name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+		require.NoError(t, os.WriteFile(path, []byte("resource"), 0600))
+	}
+	require.NoError(t, prepareSMBCTDBFiles(context.Background(), root, snap))
+	for _, kind := range []string{"volatile", "persistent", "state"} {
+		path := filepath.Join(root, "ctdb", kind)
+		info, err := os.Lstat(path)
+		require.NoError(t, err, "native CTDB validates these directories before it can start")
+		require.True(t, info.IsDir())
+		require.Equal(t, os.FileMode(0700), info.Mode().Perm())
+	}
+	retained := filepath.Join(root, "ctdb/persistent", "retained.tdb")
+	require.NoError(t, os.WriteFile(retained, []byte("retained identity"), 0600))
+	require.NoError(t, prepareSMBCTDBFiles(context.Background(), root, snap))
+	data, err := os.ReadFile(retained)
+	require.NoError(t, err)
+	require.Equal(t, "retained identity", string(data))
+	outside := t.TempDir()
+	require.NoError(t, os.Remove(filepath.Join(root, "ctdb/state")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "ctdb/state")))
+	require.Error(t, prepareSMBCTDBFiles(context.Background(), root, snap), "never adopt linked database directories")
+}
+
 func TestSMBMembershipReconciliationDoesNotSweepHealth(t *testing.T) {
 	root, snap := nativeCTDBFixture(t)
 	require.NoError(t, reconcileSMBCTDB(context.Background(), filepath.Dir(root)))
