@@ -782,11 +782,6 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 		return fmt.Errorf("failed to bootstrap OSD: %w", err)
 	}
 
-	// Write the stamp file.
-	err = afero.WriteFile(m.fs, filepath.Join(osdDataPath, "ready"), []byte(""), 0600)
-	if err != nil {
-		return fmt.Errorf("failed to write stamp file: %w", err)
-	}
 	logger.Infof("OSD %s bootstrapped successfully", osdDataPath)
 	return nil
 }
@@ -1179,6 +1174,24 @@ func (m *OSDManager) generateOSDFiles(osdDataPath string, nr int64) error {
 	return nil
 }
 
+// registerOSD creates the OSD id in the osdmap before first start. ceph-osd's
+// boot-time "osd crush set-device-class" is a silent no-op for ids absent from
+// the osdmap, so without this a new OSD comes up with no device class.
+func (m *OSDManager) registerOSD(osdDataPath string, nr int64) error {
+	fsid, err := afero.ReadFile(m.fs, filepath.Join(osdDataPath, "fsid"))
+	if err != nil {
+		return fmt.Errorf("failed to read OSD fsid: %w", err)
+	}
+
+	_, err = m.runner.RunCommand("ceph", "osd", "new", strings.TrimSpace(string(fsid)), fmt.Sprintf("%d", nr))
+	if err != nil {
+		return fmt.Errorf("failed to register osd.%d in osdmap: %w", nr, err)
+	}
+
+	logger.Infof("Registered osd.%d in osdmap", nr)
+	return nil
+}
+
 func (m *OSDManager) spawnOSD(nr int64) error {
 	logger.Infof("Spawning OSD %d", nr)
 	err := snapRestart("osd", true)
@@ -1284,6 +1297,21 @@ func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskPar
 	if err != nil {
 		logger.Errorf("failed to bootstrap OSD %d: %v", nr, err)
 		return err
+	}
+
+	err = m.registerOSD(osdDataPath, nr)
+	if err != nil {
+		logger.Errorf("failed to register OSD %d: %v", nr, err)
+		return err
+	}
+	revert.Add(func() {
+		_ = m.doPurge(nr)
+	})
+
+	// Only mark ready once registered, else osd.start may boot it without a device class.
+	err = afero.WriteFile(m.fs, osdReadyMarkerPath(osdDataPath), []byte(""), 0600)
+	if err != nil {
+		return fmt.Errorf("failed to write stamp file: %w", err)
 	}
 
 	err = m.spawnOSD(nr)
