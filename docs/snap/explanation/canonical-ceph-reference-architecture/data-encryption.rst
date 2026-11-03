@@ -7,7 +7,7 @@ Data encryption
 ================
 
 Data encryption in Canonical Ceph is provided via integration with
-`Vault <https://canonical-vault-charms.readthedocs-hosted.com/en/latest/>`_.
+`Vault <https://canonical-vault-charms.readthedocs-hosted.com/>`_.
 This encryption takes two forms:
 
 * Encryption in transit
