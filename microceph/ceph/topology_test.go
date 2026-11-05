@@ -213,9 +213,37 @@ func (s *topologySuite) TestUpdateTopologyAZ3NoOSDs() {
 	r.AssertExpectations(s.T())
 }
 
-// TestUpdateFailureDomainSkipsWithAZs verifies that updateFailureDomain
-// returns early when AZs are configured.
-func (s *topologySuite) TestUpdateFailureDomainSkipsWithAZs() {
+// TestUpdateFailureDomainSkipsOnRackRule verifies that updateFailureDomain
+// returns early when the cluster is governed by the rack failure domain rule.
+func (s *topologySuite) TestUpdateFailureDomainSkipsOnRackRule() {
+	u := api.NewURL()
+	state := &mocks.MockState{URL: u, ClusterName: "node1"}
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(state).Maybe()
+
+	r := mocks.NewRunner(s.T())
+	// IsOnRackRule reports the rack rule as active.
+	addIsOnRackRuleExpectations(r, "99", "99")
+	common.ProcessExec = r
+
+	mgr := NewOSDManager(si.ClusterState())
+	mgr.fs = afero.NewMemMapFs()
+
+	c := mocks.NewMemberCounterInterface(s.T())
+	database.MemberCounter = c
+	// Count should NOT be called since we return early.
+
+	err := mgr.updateFailureDomain(context.Background(), si.ClusterState())
+	assert.NoError(s.T(), err)
+	r.AssertExpectations(s.T())
+}
+
+// TestUpdateFailureDomainFewerAZsSwitchesToHost is the regression test for
+// having availability zones configured but fewer than three active ones: the
+// rack switch never fires for such clusters, so the host switch must still
+// run once 3 nodes have OSDs instead of leaving the cluster stuck at osd
+// level (canonical/microceph#927).
+func (s *topologySuite) TestUpdateFailureDomainFewerAZsSwitchesToHost() {
 	defer withMockAZData(azData{
 		hostAZ: "az-1",
 		uniqueAZs: map[string]bool{
@@ -228,16 +256,27 @@ func (s *topologySuite) TestUpdateFailureDomainSkipsWithAZs() {
 	si := mocks.NewStateInterface(s.T())
 	si.On("ClusterState").Return(state).Maybe()
 
-	// No runner expectations — switchFailureDomain should NOT be called.
 	r := mocks.NewRunner(s.T())
+
+	// IsOnRackRule lookups, not on rack, then switchFailureDomain("osd",
+	// "host") expectations — all in call order, see TestSwitchHostFailureDomain.
+	addIsOnRackRuleExpectations(r, "77", "99")
+	addCrushRuleLsExpectations(r)
+	addCrushRuleDumpExpectations(r)
+	addSetDefaultRuleExpectations(r)
+	addCrushRuleLsExpectations(r)
+	addCrushRuleDumpExpectations(r)
+	addCrushRuleLsJsonExpectations(r)
+	addOsdPoolSetExpectations(r)
+
 	common.ProcessExec = r
+
+	c := mocks.NewMemberCounterInterface(s.T())
+	c.On("Count", mock.Anything, mock.Anything).Return(3, nil).Once()
+	database.MemberCounter = c
 
 	mgr := NewOSDManager(si.ClusterState())
 	mgr.fs = afero.NewMemMapFs()
-
-	c := mocks.NewMemberCounterInterface(s.T())
-	database.MemberCounter = c
-	// Count should NOT be called since we return early.
 
 	err := mgr.updateFailureDomain(context.Background(), si.ClusterState())
 	assert.NoError(s.T(), err)
@@ -255,7 +294,10 @@ func (s *topologySuite) TestUpdateFailureDomainNoAZs() {
 
 	r := mocks.NewRunner(s.T())
 
-	// switchFailureDomain("osd", "host") expectations.
+	// IsOnRackRule lookups, not on rack, then switchFailureDomain("osd",
+	// "host") expectations — all in call order, see TestSwitchHostFailureDomain.
+	addIsOnRackRuleExpectations(r, "77", "99")
+	addCrushRuleLsExpectations(r)
 	addCrushRuleDumpExpectations(r)
 	addSetDefaultRuleExpectations(r)
 	addCrushRuleLsExpectations(r)
