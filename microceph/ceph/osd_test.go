@@ -1384,6 +1384,25 @@ func (s *osdSuite) TestDoRemoveOSDFailsWhenOSDMapCannotBeRead() {
 	assert.NoFileExists(s.T(), osdSuppressedReadyMarkerPath(osdDataPath))
 }
 
+// TestRegisterOSD tests that the OSD is created in the osdmap with its on-disk fsid
+func (s *osdSuite) TestRegisterOSD() {
+	osdmgr := NewOSDManager(nil)
+	r := mocks.NewRunner(s.T())
+	osdmgr.runner = r
+	osdmgr.fs = afero.NewMemMapFs()
+
+	fsid := "6f1c4a8e-2b1d-4c3e-9a7f-1d2e3f4a5b6c"
+	assert.NoError(s.T(), afero.WriteFile(osdmgr.fs, "/osd/ceph-3/fsid", []byte(fsid), 0600))
+
+	r.On("RunCommand", "ceph", "osd", "new", fsid, "3").Return("3", nil).Once()
+	assert.NoError(s.T(), osdmgr.registerOSD("/osd/ceph-3", 3))
+
+	r.On("RunCommand", "ceph", "osd", "new", fsid, "3").Return("", fmt.Errorf("EEXIST")).Once()
+	assert.Error(s.T(), osdmgr.registerOSD("/osd/ceph-3", 3))
+
+	assert.Error(s.T(), osdmgr.registerOSD("/osd/missing", 4))
+}
+
 // TestTestSafeStop tests OSD safe stop check
 func (s *osdSuite) TestTestSafeStop() {
 	osdmgr := NewOSDManager(nil)

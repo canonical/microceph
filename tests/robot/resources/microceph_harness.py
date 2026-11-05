@@ -1134,22 +1134,33 @@ class microceph_harness:
             fail_msg=f"VM agent for {vm_name} did not become ready within 5 minutes",
         )
 
-    def wait_for_cluster_health_ok(self, node="", tries=100, interval="3s"):
+    def wait_for_cluster_health_ok(self, node="", tries=100, interval="3s", ignore_checks=None):
         """Polls microceph.ceph health until HEALTH_OK (tries x interval).
 
         Pass node= (e.g. node-wrk0) to poll inside that LXD container; omit to run
-        directly on the outer VM with sudo.
+        directly on the outer VM with sudo. *ignore_checks* names health checks (a
+        comma-separated string from Robot, or any iterable) allowed to remain at
+        HEALTH_WARN.
         """
         label = "outer VM" if node == "" else node
         logger.console(f"[health] Waiting for HEALTH_OK ({label})...")
         last_health = [""]
+        if ignore_checks is None:
+            ignored = frozenset()
+        elif isinstance(ignore_checks, str):
+            ignored = frozenset(name.strip() for name in ignore_checks.split(",") if name.strip())
+        else:
+            ignored = frozenset(ignore_checks)
+        fmt = ["-f", "json"] if ignored else []
 
         def predicate():
             if node == "":
-                out = self.run_in_vm("sudo microceph.ceph health", 30, quiet=True).stdout
+                out = self.run_in_vm(" ".join(["sudo microceph.ceph health"] + fmt), 30, quiet=True).stdout
             else:
-                out = self.exec_in_container(node, "microceph.ceph", "health", timeout=30, quiet=True).stdout
+                out = self.exec_in_container(node, "microceph.ceph", "health", *fmt, timeout=30, quiet=True).stdout
             last_health[0] = out.strip()
+            if ignored:
+                return self._health_is_ok_ignoring(last_health[0], ignored)
             return last_health[0] == "HEALTH_OK"
 
         def on_fail():
