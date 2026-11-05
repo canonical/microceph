@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -70,7 +70,7 @@ dependencies = [
 requires-dist = [
     { name = "requests", specifier = ">=2.32.3" },
     { name = "requests-unixsocket", specifier = ">=0.4.1" },
-    { name = "snap-helpers", git = "https://github.com/albertodonato/snap-helpers" },
+    { name = "snap-helpers", git = "https://github.com/albertodonato/snap-helpers?rev=76f8166b640163c0f20887829e31b2cafbfdec11" },
     { name = "urllib3", specifier = ">=2.4.0" },
 ]
 
@@ -130,7 +130,7 @@ wheels = [
 [[package]]
 name = "snap-helpers"
 version = "0.4.2"
-source = { git = "https://github.com/albertodonato/snap-helpers#46803aa9d52cc0bb24f76df878dd1010fc08e6a0" }
+source = { git = "https://github.com/albertodonato/snap-helpers?rev=76f8166b640163c0f20887829e31b2cafbfdec11#76f8166b640163c0f20887829e31b2cafbfdec11" }
 dependencies = [
     { name = "pyyaml" },
 ]

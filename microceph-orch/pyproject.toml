@@ -11,4 +11,4 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-snap-helpers = { git = "https://github.com/albertodonato/snap-helpers" }
+snap-helpers = { git = "https://github.com/albertodonato/snap-helpers", rev = "76f8166b640163c0f20887829e31b2cafbfdec11" }
