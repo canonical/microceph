@@ -9,13 +9,14 @@ import (
 
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/lxd/shared/logger"
+
+	"github.com/canonical/microceph/microceph/api/rest"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
 	"github.com/canonical/microceph/microceph/client"
+	state "github.com/canonical/microceph/microceph/clusterstate"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
-	"github.com/canonical/microcluster/rest"
-	"github.com/canonical/microcluster/state"
 )
 
 // Top level client API

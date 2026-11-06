@@ -31,7 +31,7 @@ func (c *cmdClusterJoin) Run(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return fmt.Errorf("Unable to configure MicroCluster: %w", err)
 	}
@@ -47,5 +47,7 @@ func (c *cmdClusterJoin) Run(cmd *cobra.Command, args []string) error {
 	address = util.CanonicalNetworkAddress(address, 7443)
 
 	token := args[0]
-	return m.JoinCluster(hostname, address, token, nil, time.Minute*5)
+	queryCtx, cancel := context.WithTimeout(cmd.Context(), time.Minute*5)
+	defer cancel()
+	return m.JoinCluster(queryCtx, hostname, address, token, nil)
 }

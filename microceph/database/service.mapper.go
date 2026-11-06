@@ -18,65 +18,65 @@ import (
 var _ = api.ServerEnvironment{}
 
 var serviceObjects = cluster.RegisterStmt(`
-SELECT services.id, internal_cluster_members.name AS member, services.service
+SELECT services.id, core_cluster_members.name AS member, services.service
   FROM services
-  JOIN internal_cluster_members ON services.member_id = internal_cluster_members.id
-  ORDER BY internal_cluster_members.id, services.service
+  JOIN core_cluster_members ON services.member_id = core_cluster_members.id
+  ORDER BY core_cluster_members.id, services.service
 `)
 
 var serviceObjectsByMember = cluster.RegisterStmt(`
-SELECT services.id, internal_cluster_members.name AS member, services.service
+SELECT services.id, core_cluster_members.name AS member, services.service
   FROM services
-  JOIN internal_cluster_members ON services.member_id = internal_cluster_members.id
+  JOIN core_cluster_members ON services.member_id = core_cluster_members.id
   WHERE ( member = ? )
-  ORDER BY internal_cluster_members.id, services.service
+  ORDER BY core_cluster_members.id, services.service
 `)
 
 var serviceObjectsByService = cluster.RegisterStmt(`
-SELECT services.id, internal_cluster_members.name AS member, services.service
+SELECT services.id, core_cluster_members.name AS member, services.service
   FROM services
-  JOIN internal_cluster_members ON services.member_id = internal_cluster_members.id
+  JOIN core_cluster_members ON services.member_id = core_cluster_members.id
   WHERE ( services.service = ? )
-  ORDER BY internal_cluster_members.id, services.service
+  ORDER BY core_cluster_members.id, services.service
 `)
 
 var serviceObjectsByMemberAndService = cluster.RegisterStmt(`
-SELECT services.id, internal_cluster_members.name AS member, services.service
+SELECT services.id, core_cluster_members.name AS member, services.service
   FROM services
-  JOIN internal_cluster_members ON services.member_id = internal_cluster_members.id
+  JOIN core_cluster_members ON services.member_id = core_cluster_members.id
   WHERE ( member = ? AND services.service = ? )
-  ORDER BY internal_cluster_members.id, services.service
+  ORDER BY core_cluster_members.id, services.service
 `)
 
 var serviceID = cluster.RegisterStmt(`
 SELECT services.id FROM services
-  JOIN internal_cluster_members ON services.member_id = internal_cluster_members.id
-  WHERE internal_cluster_members.name = ? AND services.service = ?
+  JOIN core_cluster_members ON services.member_id = core_cluster_members.id
+  WHERE core_cluster_members.name = ? AND services.service = ?
 `)
 
 var serviceCreate = cluster.RegisterStmt(`
 INSERT INTO services (member_id, service)
-  VALUES ((SELECT internal_cluster_members.id FROM internal_cluster_members WHERE internal_cluster_members.name = ?), ?)
+  VALUES ((SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), ?)
 `)
 
 var serviceDeleteByMember = cluster.RegisterStmt(`
-DELETE FROM services WHERE member_id = (SELECT internal_cluster_members.id FROM internal_cluster_members WHERE internal_cluster_members.name = ?)
+DELETE FROM services WHERE member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?)
 `)
 
 var serviceDeleteByMemberAndService = cluster.RegisterStmt(`
-DELETE FROM services WHERE member_id = (SELECT internal_cluster_members.id FROM internal_cluster_members WHERE internal_cluster_members.name = ?) AND service = ?
+DELETE FROM services WHERE member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?) AND service = ?
 `)
 
 var serviceUpdate = cluster.RegisterStmt(`
 UPDATE services
-  SET member_id = (SELECT internal_cluster_members.id FROM internal_cluster_members WHERE internal_cluster_members.name = ?), service = ?
+  SET member_id = (SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), service = ?
  WHERE id = ?
 `)
 
 // serviceColumns returns a string of column names to be used with a SELECT statement for the entity.
 // Use this function when building statements to retrieve database entries matching the Service entity.
 func serviceColumns() string {
-	return "services.id, internal_cluster_members.name AS member, services.service"
+	return "services.id, core_cluster_members.name AS member, services.service"
 }
 
 // getServices can be used to run handwritten sql.Stmts to return a slice of objects.
