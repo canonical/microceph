@@ -53,6 +53,33 @@ type smbCandidate struct {
 	Users      []json.RawMessage `json:"users"`
 }
 
+// configurationFingerprint normalizes structural JSON ordering but preserves
+// Samba option order: aliases may select different values when reordered.
+// It is private: source documents contain credentials and never enter status.
+func (c smbCandidate) configurationFingerprint() string {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return c.fingerprint()
+	}
+	var value map[string]any
+	err = json.Unmarshal(raw, &value)
+	if err != nil {
+		return c.fingerprint()
+	}
+	document, err := smbDecodeObject(c.Config)
+	if err != nil {
+		return c.fingerprint()
+	}
+	ordered, err := smbOrderedBindingDocument(c.Config, document, nil)
+	if err != nil {
+		return c.fingerprint()
+	}
+	value["config"] = ordered
+	data, _ := json.Marshal(value)
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
 func (c smbCandidate) fingerprint() string {
 	// Raw secret bytes are included privately, never in status/inventory.
 	data, _ := json.Marshal(c)
