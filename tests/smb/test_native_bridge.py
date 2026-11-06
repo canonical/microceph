@@ -67,13 +67,15 @@ class NativeBridgeTests(unittest.TestCase):
             self.assertIn("literal {{.value}}", result["smb_conf"])
             self.assertEqual(list(Path(directory).iterdir()), [])
 
-    def test_inspection_retains_clustered_rejection_metadata_only(self):
+    def test_inspection_exposes_pinned_ctdb_defaults(self):
         request = self.request()
         request["config"]["configs"]["alpha"]["instance_features"] = ["ctdb"]
         result = self.call("inspect", request)
         self.assertTrue(result["clustered"])
-        self.assertNotIn("ctdb", result)
-        self.assertNotIn("ctdb_globals", result)
+        self.assertEqual(result["ctdb"]["ctdb_port"], 0)
+        self.assertEqual(result["ctdb"]["public_addresses"], [])
+        self.assertIn(("clustering", "yes"), result["ctdb_globals"])
+        self.assertIn(("ctdb:registry.tdb", "yes"), result["ctdb_globals"])
 
     def test_account_binding_uses_prepared_config_and_upstream_users(self):
         request = self.request()

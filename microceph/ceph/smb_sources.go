@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 )
 
@@ -43,20 +45,31 @@ type smbEndpoint struct {
 	SMBPort         int    `json:"smb_port"`
 }
 
+func (s smbSpec) hasFeature(feature string) bool {
+	for _, value := range s.Features {
+		if value == feature {
+			return true
+		}
+	}
+	return false
+}
+
 type smbCandidate struct {
-	Endpoint   *smbEndpoint      `json:"endpoint,omitempty"`
-	Logical    json.RawMessage   `json:"logical"`
-	CephConfig string            `json:"ceph_config"`
-	Spec       smbSpec           `json:"spec"`
-	SpecBytes  json.RawMessage   `json:"spec_document"`
-	Config     json.RawMessage   `json:"config"`
-	Users      []json.RawMessage `json:"users"`
+	CTDB       *database.SMBCTDBView `json:"ctdb,omitempty"`
+	Endpoint   *smbEndpoint          `json:"endpoint,omitempty"`
+	Logical    json.RawMessage       `json:"logical"`
+	CephConfig string                `json:"ceph_config"`
+	Spec       smbSpec               `json:"spec"`
+	SpecBytes  json.RawMessage       `json:"spec_document"`
+	Config     json.RawMessage       `json:"config"`
+	Users      []json.RawMessage     `json:"users"`
 }
 
 // configurationFingerprint normalizes structural JSON ordering but preserves
 // Samba option order: aliases may select different values when reordered.
 // It is private: source documents contain credentials and never enter status.
 func (c smbCandidate) configurationFingerprint() string {
+	c.CTDB = nil
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return c.fingerprint()
@@ -164,7 +177,7 @@ func smbLogicalPresent(clusterID string, data []byte) (bool, error) {
 }
 
 // readSMBPreparedCandidate never creates identities or reserves ownership.
-func readSMBPreparedCandidate(ctx context.Context, s interfaces.StateInterface, clusterID, root string, logical []byte) (smbCandidate, error) {
+func readSMBPreparedCandidateUnreserved(ctx context.Context, s interfaces.StateInterface, clusterID, root string, logical []byte) (smbCandidate, error) {
 	read := func(uri string) ([]byte, error) { return smbReadSource(ctx, clusterID, root, uri) }
 	candidate, err := readSMBCandidate(clusterID, read)
 	if err != nil {
@@ -186,6 +199,23 @@ func readSMBPreparedCandidate(ctx context.Context, s interfaces.StateInterface, 
 	}
 	candidate.Endpoint = &endpoint
 	return candidate, nil
+}
+
+func readSMBPreparedCandidate(ctx context.Context, s interfaces.StateInterface, clusterID, root string, logical []byte) (smbCandidate, error) {
+	candidate, err := readSMBPreparedCandidateUnreserved(ctx, s, clusterID, root, logical)
+	if err != nil {
+		return candidate, err
+	}
+	if candidate.Spec.hasFeature("clustered") {
+		err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			candidate.CTDB, err = database.GetSMBCTDBView(ctx, tx, clusterID, s.ClusterState().Name())
+			return err
+		})
+	}
+	if err == nil && candidate.CTDB != nil && candidate.Endpoint.FrontendAddress == "" {
+		candidate.Endpoint.FrontendAddress = candidate.CTDB.Member.Node
+	}
+	return candidate, err
 }
 
 func (s smbSpec) endpointPorts() (smbEndpoint, error) {
@@ -274,6 +304,8 @@ func (s smbSpec) resolveEndpoint(ctx context.Context, state interfaces.StateInte
 }
 
 type smbLaunch struct {
+	Clustered       bool                        `json:"clustered,omitempty"`
+	CTDBPNN         *uint64                     `json:"ctdb_pnn,omitempty"`
 	Startup         map[string]smbStartupChecks `json:"startup,omitempty"`
 	FrontendAddress string                      `json:"frontend_address"`
 	SMBPort         int                         `json:"smb_port"`
@@ -282,10 +314,12 @@ type smbLaunch struct {
 
 func (l smbLaunch) serviceInfo(configURI string) string {
 	info, _ := json.Marshal(struct {
-		ConfigURI       string `json:"config_uri,omitempty"`
-		FrontendAddress string `json:"frontend_address,omitempty"`
-		SMBPort         int    `json:"smb_port,omitempty"`
-	}{configURI, l.FrontendAddress, l.SMBPort})
+		Clustered       bool    `json:"clustered,omitempty"`
+		CTDBPNN         *uint64 `json:"ctdb_pnn,omitempty"`
+		ConfigURI       string  `json:"config_uri,omitempty"`
+		FrontendAddress string  `json:"frontend_address,omitempty"`
+		SMBPort         int     `json:"smb_port,omitempty"`
+	}{l.Clustered, l.CTDBPNN, configURI, l.FrontendAddress, l.SMBPort})
 	return string(info)
 }
 
@@ -320,6 +354,26 @@ func prepareSMBProjection(ctx context.Context, s interfaces.StateInterface, cand
 	}
 	if candidate.Endpoint == nil || launch.FrontendAddress != candidate.Endpoint.FrontendAddress || launch.SMBPort != candidate.Endpoint.SMBPort {
 		return launch, nil, fmt.Errorf("native SMB launch endpoint does not match preparation")
+	}
+	if launch.Clustered {
+		previous, readErr := loadSMBLaunchForPublication(root)
+		if readErr == nil && previous.Clustered {
+			for _, name := range []string{"ctdb/ctdb.conf", "config/ctdb.json", "config/ctdb-rank", "config/ctdb-identity", "config/ctdb-address"} {
+				before, err := os.ReadFile(filepath.Join(root, name))
+				if err != nil {
+					return launch, nil, err
+				}
+				after, err := os.ReadFile(filepath.Join(root, "config/next", name))
+				if err != nil {
+					return launch, nil, err
+				}
+				if !bytes.Equal(before, after) {
+					return launch, nil, fmt.Errorf("CTDB startup configuration changed; explicit maintenance required")
+				}
+			}
+		} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return launch, nil, readErr
+		}
 	}
 	roles, err := smbCoreRoles(candidate.Spec)
 	return launch, roles, err
