@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microcluster/config"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/canonical/microcluster/state"
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/api"
+	"github.com/canonical/microceph/microceph/api/rest"
 	"github.com/canonical/microceph/microceph/ceph"
+	"github.com/canonical/microceph/microceph/clusterstate"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/version"
@@ -62,30 +63,44 @@ func (c *cmdDaemon) Command() *cobra.Command {
 }
 
 func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.flagStateDir, Verbose: c.global.flagLogVerbose, Debug: c.global.flagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.flagStateDir})
 	if err != nil {
 		return err
 	}
 
-	h := &config.Hooks{}
-	h.OnBootstrap = func(s *state.State, initConfig map[string]string) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	bridge := clusterstate.NewBridge(ctx)
+
+	// Ceph helpers can launch background work. Keep their context tied to the
+	// daemon lifecycle, as before, rather than a bootstrap or API request.
+	h := &state.Hooks{}
+	h.PostBootstrap = func(_ context.Context, s state.State, initConfig map[string]string) error {
 		data := common.BootstrapConfig{}
-		interf := common.CephState{State: s}
+		interf := common.CephState{State: bridge.State(s)}
 		common.DecodeBootstrapConfig(initConfig, &data)
 		return ceph.Bootstrap(interf, data)
 	}
 
-	h.PostJoin = func(s *state.State, initConfig map[string]string) error {
-		interf := common.CephState{State: s}
+	h.PostJoin = func(_ context.Context, s state.State, initConfig map[string]string) error {
+		interf := common.CephState{State: bridge.State(s)}
 		return ceph.Join(interf)
 	}
 
-	h.OnStart = func(s *state.State) error {
-		interf := common.CephState{State: s}
+	h.OnStart = func(ctx context.Context, s state.State) error {
+		bridge.SetContext(ctx)
+		interf := common.CephState{State: bridge.State(s)}
 		return ceph.Start(interf)
 	}
 
-	return m.Start(api.Endpoints, database.SchemaExtensions, h)
+	return m.Start(ctx, microcluster.DaemonArgs{
+		Version:          version.Version,
+		Verbose:          c.global.flagLogVerbose,
+		Debug:            c.global.flagLogDebug,
+		ExtensionsSchema: database.SchemaExtensions,
+		Hooks:            h,
+		ExtensionServers: rest.Servers(bridge, api.Endpoints),
+	})
 }
 
 func init() {

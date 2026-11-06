@@ -7,9 +7,10 @@ import (
 	"time"
 
 	"github.com/canonical/lxd/lxd/util"
-	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microcluster/microcluster"
 	"github.com/spf13/cobra"
+
+	"github.com/canonical/microceph/microceph/common"
 )
 
 type cmdClusterBootstrap struct {
@@ -39,7 +40,7 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return fmt.Errorf("unable to configure MicroCeph: %w", err)
 	}
@@ -67,7 +68,9 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Bootstrap microcluster.
-	err = m.NewCluster(hostname, address, common.EncodeBootstrapConfig(data), time.Second*30)
+	queryCtx, cancel := context.WithTimeout(cmd.Context(), time.Second*30)
+	defer cancel()
+	err = m.NewCluster(queryCtx, hostname, address, common.EncodeBootstrapConfig(data))
 	if err != nil {
 		return err
 	}

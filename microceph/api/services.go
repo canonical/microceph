@@ -11,8 +11,9 @@ import (
 
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microcluster/rest"
-	"github.com/canonical/microcluster/state"
+
+	"github.com/canonical/microceph/microceph/api/rest"
+	state "github.com/canonical/microceph/microceph/clusterstate"
 
 	"github.com/canonical/microceph/microceph/ceph"
 )
