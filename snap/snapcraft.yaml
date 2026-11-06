@@ -221,6 +221,7 @@ parts:
       - raft
     source: https://github.com/canonical/dqlite
     source-type: git
+    source-tag: v1.17.4
     source-depth: 1
     plugin: autotools
     autotools-configure-parameters:
@@ -242,6 +243,7 @@ parts:
     build-attributes: [core22-step-dependencies]
     source: https://github.com/canonical/raft
     source-type: git
+    source-tag: v0.18.1
     source-depth: 1
     plugin: autotools
     autotools-configure-parameters:
@@ -265,7 +267,7 @@ parts:
     after:
       - dqlite
     build-snaps:
-      - go
+      - go/1.22/stable
     plugin: nil
     override-pull: |
       snapcraftctl pull
