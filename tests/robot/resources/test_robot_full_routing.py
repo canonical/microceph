@@ -190,7 +190,7 @@ def test_default_and_all_use_owned_full_runner(monkeypatch, selection):
     assert commands == [[sys.executable, "-u", str(HERE / "full_runner.py"), "--snap-path", "/candidate.snap", "--console", "verbose", "--variable", "SNAP_PATH:/candidate.snap", "--dryrun", "--outputdir", "/results"]]
 
 
-@pytest.mark.parametrize("selection", ["smb-integration", "smb-singleton-tests", "unit-tests"])
+@pytest.mark.parametrize("selection", ["smb-integration", "smb-singleton-tests", "smb-ad-tests", "unit-tests"])
 def test_explicit_routes_preserve_arguments(monkeypatch, selection):
     wrapper = load("microceph_wrapper", HERE / "robot.py")
     commands = []
@@ -198,7 +198,120 @@ def test_explicit_routes_preserve_arguments(monkeypatch, selection):
     monkeypatch.setattr(wrapper.subprocess, "run", lambda command, **kwargs: commands.append(command) or SimpleNamespace(returncode=3))
     assert wrapper.main() == 3
     if selection.startswith("smb"):
-        extra = ["--suites", "clustered,singleton"] if selection == "smb-integration" else []
+        extra = ["--suites", "clustered,singleton,ad"] if selection == "smb-integration" else (["--suites", "ad"] if selection == "smb-ad-tests" else [])
         assert commands == [[sys.executable, "-u", str(HERE / "smb_runner.py"), "--snap-path", "/candidate.snap", *extra, "--dryrun", "--console", "quiet"]]
     else:
         assert commands == [[sys.executable, "-u", "-m", "robot", "--variable", "SNAP_PATH:/candidate.snap", "--dryrun", "--console", "quiet", str(HERE / selection)]]
+
+@pytest.mark.parametrize('partial', [False, True])
+def test_ad_full_routing_preserves_nine_case_ownership(full_fixture, tmp_path, partial):
+    full, calls, _, root = full_fixture
+    for kind, count in (("clustered", 6), ("ad", 9)):
+        directory = root / ("smb-" + kind + "-tests")
+        directory.mkdir()
+        (directory / "scenario.robot").write_text("*** Test Cases ***\n" + "".join(
+            f"{kind} {i}\n    No Operation\n" for i in range(count)))
+    output = tmp_path / "ad-results"
+    selection = ["--test", "ad 0"] if partial else []
+    rc = full.main(["--snap-path", "/candidate.snap", "-v", "BUDGET:10", *selection,
+                    "-d", str(output), "--console", "quiet"])
+    if partial:
+        assert rc == 252
+        assert not calls
+    else:
+        assert rc == 0
+        summary = json.loads((output / "smb-summary.json").read_text())
+        assert summary["passed"] == summary["cases"] == 18
+        assert summary["failed"] == summary["skipped"] == 0
+        assert ExecutionResult(output / "output.xml").suite.test_count == 20
+
+@pytest.mark.parametrize("selector", ["short", "argument-file", "environment"])
+@pytest.mark.parametrize("kinds", ["ad", "clustered,singleton,ad"])
+def test_standalone_partial_selection_refuses_before_any_setup(monkeypatch, tmp_path, selector, kinds):
+    coordinator = load("microceph_standalone_selection", HERE / "smb_runner.py")
+    monkeypatch.delenv("ROBOT_OPTIONS", raising=False)
+    options = ["-t", "Wrong Join Credentials*"]
+    if selector == "argument-file":
+        arguments = tmp_path / "partial.args"
+        arguments.write_text("--test Wrong Join Credentials*\n")
+        options = ["-A", str(arguments)]
+    elif selector == "environment":
+        monkeypatch.setenv("ROBOT_OPTIONS", '--test "Wrong Join Credentials*"')
+        options = []
+    execution, allocation = [], []
+    monkeypatch.setattr(coordinator, "_robot", lambda *args: execution.append(args) or 0)
+    monkeypatch.setattr(coordinator, "_cleanup", lambda *args: allocation.append(args))
+    output = tmp_path / "selection-output"
+    rc = coordinator.main(["--suites", kinds, "--outputdir", str(output), *options])
+    assert execution == [], "partial selection must refuse before Robot can execute setup/allocation"
+    assert allocation == []
+    assert rc == 252
+    assert not (output / "smb-results").exists(), "preflight must precede lab/result ownership creation"
+
+
+@pytest.mark.parametrize("kind,count", [("singleton", 3), ("clustered", 6), ("ad", 9)])
+@pytest.mark.parametrize("selector", ["short", "argument-file", "environment"])
+def test_standalone_complete_selection_keeps_canonical_options(monkeypatch, tmp_path, kind, count, selector):
+    coordinator = load("microceph_standalone_complete", HERE / "smb_runner.py")
+    monkeypatch.delenv("ROBOT_OPTIONS", raising=False)
+    root = tmp_path / "robot"
+    suite = root / ("smb-" + kind + "-tests")
+    suite.mkdir(parents=True)
+    setup = tmp_path / "setup-called"
+    (suite / "scenario.robot").write_text(
+        "*** Settings ***\nSuite Setup    Evaluate    open($SETUP, 'w').close()\n"
+        "*** Test Cases ***\n" + "".join(f"{kind} {i}\n    No Operation\n" for i in range(count)))
+    monkeypatch.setattr(coordinator, "HERE", root)
+    options = ["-t", kind + " *"]
+    if selector == "argument-file":
+        arguments = tmp_path / "complete.args"
+        arguments.write_text("--test " + kind + " *\n--dryrun\n")
+        options = ["-A", str(arguments)]
+    elif selector == "environment":
+        monkeypatch.setenv("ROBOT_OPTIONS", f'--test "{kind} *" --dryrun')
+        options = []
+    else:
+        options.append("--dryrun")
+    output = tmp_path / "complete-output"
+    previous = os.umask(0o077)
+    try:
+        assert coordinator.main(["--suites", kind, "--outputdir", str(output),
+                                 "-v", "SETUP:" + str(setup), "--console", "quiet", *options]) == 0
+    finally:
+        os.umask(previous)
+    summary = json.loads((output / "smb-summary.json").read_text())
+    assert summary["dryrun"] is True
+    assert summary["passed"] == summary["cases"] == count
+    assert summary["failed"] == summary["skipped"] == summary["rc"] == 0
+    assert not setup.exists(), "canonical dry-run in argument files/environment must not execute setup"
+
+@pytest.mark.parametrize("selector", ["short", "argument-file", "environment"])
+def test_standalone_partial_real_robot_never_executes_setup(monkeypatch, tmp_path, selector):
+    coordinator = load("microceph_standalone_real_preflight", HERE / "smb_runner.py")
+    monkeypatch.delenv("ROBOT_OPTIONS", raising=False)
+    root = tmp_path / "robot"
+    suite = root / "smb-ad-tests"
+    suite.mkdir(parents=True)
+    allocated = tmp_path / "setup-allocation-counter"
+    (suite / "scenario.robot").write_text(
+        "*** Settings ***\nSuite Setup    Evaluate    open($ALLOCATION, 'w').write('allocated')\n"
+        "*** Test Cases ***\n" + "".join(f"AD {i}\n    No Operation\n" for i in range(9)))
+    monkeypatch.setattr(coordinator, "HERE", root)
+    options = ["-t", "AD 0"]
+    if selector == "argument-file":
+        arguments = tmp_path / "partial.args"
+        arguments.write_text("--test AD 0\n")
+        options = ["-A", str(arguments)]
+    elif selector == "environment":
+        monkeypatch.setenv("ROBOT_OPTIONS", '--test "AD 0"')
+        options = []
+    output = tmp_path / "partial-real-output"
+    previous = os.umask(0o077)
+    try:
+        rc = coordinator.main(["--suites", "ad", "--outputdir", str(output),
+                               "-v", "ALLOCATION:" + str(allocated), "--console", "quiet", *options])
+    finally:
+        os.umask(previous)
+    assert not allocated.exists(), "no dry-run or execution mock: partial selection cannot reach suite setup"
+    assert rc == 252
+    assert not (output / "smb-results").exists()

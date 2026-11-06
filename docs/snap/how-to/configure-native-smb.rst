@@ -1,10 +1,10 @@
-Configure a local-user SMB gateway
-==================================
+Configure native SMB gateways
+=============================
 
 MicroCeph can serve CephFS through a single local-user Samba gateway or a
 CTDB-backed group of explicitly placed gateways. Both use direct CephFS access.
-Active Directory, metrics, CephFS proxy and floating-IP failover are not
-supported. A multi-node backing Ceph cluster alone does not enable clustered SMB.
+Clustered gateways can instead join an existing Active Directory domain.
+Metrics, CephFS proxy and floating-IP failover are not supported. A multi-node backing Ceph cluster alone does not enable clustered SMB.
 
 Configuration is maintained by Ceph's SMB manager module. MicroCeph explicitly
 places and stops gateways; the manager must not schedule containers. Separate
@@ -26,15 +26,21 @@ connect the normal MicroCeph interfaces, plus these gateway interfaces::
     sudo snap connect microceph:smb-identity
     sudo snap connect microceph:smb-mounts
     sudo snap connect microceph:smb-control-mounts
+    sudo snap connect microceph:winbind-run
     sudo snap connect microceph:ctdb-run
     sudo snap connect microceph:smb-control-access
     sudo snap restart microceph.daemon
 
 ``smb-identity`` permits Samba to switch to authenticated users. The mount grants
-permit private identity-file and CTDB runtime binds only in child namespaces;
-they do not replace the host's identity files. CTDB receives its runtime-directory
-grant, not Samba's identity-switching grant. No resolver access is added.
-Both ``smbd`` and ``ctdbd`` are disabled at installation.
+permit private identity-file, CTDB and public Winbind socket binds only in child
+namespaces; they do not replace the host's identity files. For AD, a configured
+private resolver can be bound to ``/etc/resolv.conf`` or its canonical
+``/run/systemd/resolve/stub-resolv.conf`` target, never an arbitrary target.
+CTDB receives its runtime-directory grant, not Samba's identity-switching grant.
+``winbind-run`` permits the native services to prepare runtime mountpoints; the
+daemon can connect only to the exact CTDB and public Winbind sockets, not create
+runtime directories. The privileged Winbind pipe stays under root-private state.
+``smbd``, ``ctdbd`` and ``winbindd`` are disabled at installation.
 Open your chosen SMB TCP port in any external firewall; MicroCeph does not add
 firewall rules.
 
@@ -172,16 +178,162 @@ where necessary. Older local-only binaries cannot manage clustered group state;
 stop/retire safely and preserve backups before any rollback. Installed
 parent-artifact upgrade/rollback remains a qualification gate.
 
+External Active Directory members
+---------------------------------
+
+AD is supported only with ``clustering: always`` and direct CephFS access. This
+joins an existing domain; MicroCeph does not provision a domain controller.
+Use a **new** logical cluster ID of at most 15 characters. There is no automatic
+local-SAM-to-AD conversion, even after all owners are retired. The realm,
+short domain name, machine name and service FQDN are retained identity, not
+mutable configuration. The default short domain name is the realm's first
+label; a different legitimate short domain name must be supplied through Ceph's
+``custom_smb_global_options`` workgroup option before first admission, not a
+``domain_settings.workgroup`` field.
+
+Before enabling, arrange working directory DNS, reachable domain controllers,
+Kerberos clock synchronization and DNS records for the logical service FQDN
+(for example ``files-ad.example.test``). Clients must request the corresponding
+CIFS service principal, not an IP-address principal. Joining registers the
+machine trust without DNS updates: operators own service DNS/SPN prerequisites.
+The domain account must be authorized to join that machine. Do not prepopulate
+or copy Samba trust or identity databases onto a fresh member.
+
+Create the CephFS path first. Keep the resource file root-private (``umask 077``)
+and replace the example credentials, domain, addresses and filesystem path:
+
+.. code-block:: yaml
+
+    resource_type: ceph.smb.join.auth
+    auth_id: files-join
+    auth:
+      username: join-account
+      password: CHANGE-ME
+    ---
+    resource_type: ceph.smb.cluster
+    cluster_id: files-ad
+    auth_mode: active-directory
+    clustering: always
+    domain_settings:
+      realm: EXAMPLE.TEST
+      join_sources:
+        - source_type: resource
+          ref: files-join
+    custom_dns:
+      - 192.0.2.53
+    bind_addrs:
+      - address: 192.0.2.10
+      - address: 192.0.2.11
+    custom_ports:
+      smb: 445
+    ---
+    resource_type: ceph.smb.share
+    cluster_id: files-ad
+    share_id: data
+    cephfs:
+      volume: cephfs
+      path: /team-ad
+      provider: samba-vfs/new
+    restrict_access: true
+    login_control:
+      - name: 'EXAMPLE\writers'
+        category: group
+        access: read-write
+
+Do not specify local user/group sources for AD. Share authorization and CephFS
+ownership/ACLs are separate: grant access using the domain's observed numeric
+mappings, not guessed user IDs. The supported idmap backend is Samba autorid
+with range ``2000-9999999`` and CTDB-backed trust/mapping records. Arbitrary idmap
+providers/ranges, node-local trust stores, machine aliases, controller roles,
+legacy domain security and system-keytab verification are rejected.
+
+Apply once, complete the first gateway before admitting peers, and query each
+explicit target using the existing public commands::
+
+    sudo microceph.ceph smb apply -i /root/smb-ad-resources.yaml
+    sudo microceph enable smb --cluster-id files-ad --wait=true
+    microceph status smb
+    sudo microceph enable smb --cluster-id files-ad --target another-member --wait=true
+    microceph status smb --target another-member
+
+Status includes the non-secret ``auth_mode`` and ``realm`` for prepared members,
+plus existing CTDB rank/readiness and stop intent. It never exposes join
+credentials or repairs trust. Native dependencies start in order CTDB, Winbind,
+then Samba; stop and compensation run in reverse order. The Go daemon does not
+own serving process lifetimes. Independent snap service restarts and reboot
+consume retained configuration, trust and mapping records, never join or import
+local SAM accounts.
+
+``custom_dns`` contains only DNS server IPs and is optional. Without it, the
+native member inherits the resolver. With it, only the private service/join
+namespace uses the generated resolver; host DNS is unchanged. Unsupported
+resolver symlink targets fail closed. Kerberos configuration is inherited;
+MicroCeph does not generate keytabs or a member ``krb5.conf``. Do not make the
+privileged Winbind pipe public to work around startup failures.
+
+Verify a fresh ticket for the intended FQDN and require Kerberos explicitly::
+
+    kinit alice@EXAMPLE.TEST
+    smbclient //files-ad.example.test/data --use-kerberos=required -c 'ls'
+
+Also check that missing/invalid tickets cannot fall back to password/NTLM. Test
+explicit NTLM separately, with a protected client authentication file::
+
+    smbclient //files-ad.example.test/data --use-kerberos=off -A /path/to/private.auth -c 'ls'
+
+Through every gateway, test exact upload/download, wrong-password rejection,
+authenticated domain-group allow/deny and read-only share enforcement. Compare
+actual domain SIDs and user/group numeric mappings before and after peer
+attachment, source refresh, native restart and reboot. Passing local contracts
+or Robot discovery is not installed authentication/confinement qualification.
+
+A join attempt is durably recorded in SQL **before** the external join. Failed
+credentials, timeout, cancellation or a lost response consume that attempt;
+there is no automatic second credential, rejoin, account reset or takeover.
+A peer cannot initialize mappings while the initial actor's setup is incomplete.
+Missing SQL attempt history, trust records, autorid configuration or private
+initialization evidence is a recovery refusal, not permission to reconstruct.
+Restore coherent identity/state backups and reconcile the original authority in
+manual maintenance. Do not delete files/SQL markers to make enable succeed.
+
+A directory/DNS outage is health observation, not permission to restart, rejoin
+or recreate mappings. Requests are bounded; offline authentication is not
+promised. Restore the directory/network and observe retained trust/readiness.
+The first join diagnostic remains root-private under the cluster diagnostics
+directory. Review it locally; it can contain sensitive native output.
+
+Changing join credential values or references updates the private bootstrap
+candidate without restarting serving roles or rejoining. It is not a machine
+password rotation mechanism. Supported share, endpoint and private-DNS changes
+quiesce Samba then Winbind, retain CTDB and identity, and prepare/start Winbind
+before Samba. Disabled intent and source-recheck/pending-publication fences
+apply to all consumers. Domain/machine/idmap identity changes are refused.
+
+Normal disable retains AD identity and supports retained re-enable. An
+initialized peer's ``--purge`` retires that exact stopped owner but **retains** its
+local AD persistent replicas and records ``diagnostics/identity-retained``. It
+does not delete the directory machine account, manager resources, shared keys
+or CephFS data. Purging the final retained owner or uncertain identity is refused;
+owner counts are not a backup guarantee. A post-retirement purge retry can also
+refuse conservatively rather than relax final-authority protection.
+
+Existing local-user groups retain their SAM/rank fences when upgrading. Older
+binaries cannot manage the new AD SQL/startup state. There is no automatic
+conversion, relocation, reconstruction or rollback of AD identity. Preserve
+coherent backups and stop all relevant roles before unsupported rollback;
+never purge identity as part of rollback. Exact-package, installed AD9 and
+retained-state parent-to-candidate upgrade qualification remain release gates.
+
 Automatic configuration updates
 -------------------------------
 
-Apply supported share, local-user/password/group and endpoint changes through
+Apply supported share, authentication-source and endpoint changes through
 Ceph's SMB manager as above. While the MicroCeph daemon is running, its
 SMB-specific updater checks existing local placements every 30 seconds,
 independently of monitor-address changes. A queued placement can delay a check;
 once the placement lock is acquired, each update has a two-minute budget.
 Allow for manager propagation, validation and restart time as well as this
-interval. This is not zero-downtime configuration: changed inputs stop ``smbd``,
+interval. For local users this is not zero-downtime configuration: changed inputs stop ``smbd``,
 publish validated files, import users into its retained SAM and restart it.
 Existing sessions may disconnect. Clustered configuration updates preserve the
 running CTDB service and its startup configuration; changing that configuration
@@ -195,8 +347,8 @@ The updater reads manager policy, the managed RADOS config/user sources, the
 local endpoint and Ceph configuration. It does not provision identities/keys,
 create placements, enable the manager module or reconstruct missing SAM/SID
 state. It refuses unsupported authentication/mode/runtime-role changes and
-mutable configuration indirection before publication. AD, proxy, mode
-conversion and ownership/relocation changes remain unsupported; use explicit
+mutable configuration indirection before publication. Proxy, mode conversion
+and ownership/relocation changes remain unsupported; use explicit
 maintenance for placement changes. CephFS permissions still require separate
 administration.
 

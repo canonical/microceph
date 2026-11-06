@@ -101,6 +101,14 @@ def snapshot_ready(snapshot, cluster, port=None):
                 or ctdb.get("ActiveState") != "active" or not ctdb.get("MainPID", "").isdigit()
                 or int(ctdb["MainPID"]) <= 0):
             return False
+    if context.get("ad_member"):
+        winbind = snapshot.get("roles", {}).get("winbindd", {})
+        checks = context.get("startup", {}).get("winbindd", {})
+        if (not context.get("clustered") or winbind.get("ActiveState") != "active"
+                or not winbind.get("MainPID", "").isdigit() or int(winbind["MainPID"]) <= 0
+                or checks.get("prepared") is not True or checks.get("initialized") is not True
+                or status.get("auth_mode") != "active-directory"):
+            return False
     return (snapshot.get("owner") == cluster and status.get("cluster_id") == cluster
             and status.get("ready") is True and not status.get("error") and not status.get("stop_requested")
             and context.get("startup", {}).get("smbd", {}).get("prepared") is True
@@ -207,6 +215,8 @@ class smb_ops:
         self.nodes, self.volumes = [], []
         self.owner, self.pool, self.manifest = "", "default", ""
         self.harness = Harness()
+        self.ad_dc = None
+        self._dc_stop_uncertain = False
 
     def _variable(self, name, default):
         return BuiltIn().get_variable_value("${" + name + "}", default)
@@ -219,7 +229,7 @@ class smb_ops:
 
     def _persist_smb_lab(self):
         target = Path(self.manifest)
-        document = {"owner": self.owner, "pool": self.pool, "nodes": [node.name for node in self.nodes], "volumes": self.volumes}
+        document = {"owner": self.owner, "pool": self.pool, "nodes": [node.name for node in self.nodes], "volumes": self.volumes, "dc": self.ad_dc.name if self.ad_dc else None}
         if target.exists() and json.loads(target.read_text()).get("owner") != self.owner:
             raise AssertionError("Refusing to overwrite another SMB lab manifest")
         temporary = target.with_suffix(".tmp")
@@ -239,13 +249,17 @@ class smb_ops:
                 or any(volume not in [name + "-osd" for name in expected] for volume in data["volumes"])
                 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", data["pool"])):
             raise AssertionError("Invalid or foreign SMB lab names")
+        dc = data.get("dc")
+        if dc is not None and dc != f"smb-ci-{owner[:8]}-dc":
+            raise AssertionError("Invalid or foreign SMB directory name")
+        self.ad_dc = _VM(dc) if dc else None
         self.owner, self.pool, self.volumes = owner, data["pool"], data["volumes"]
         self.nodes = [_VM(name) for name in data["nodes"]]
 
     def verify_smb_lab(self):
         """Recheck host tags before a scenario may retire gateway state."""
         rows = json.loads(self._host("lxc", "query", "local:/1.0/instances?recursion=1&project=default"))
-        names = [node.name for node in self.nodes]
+        names = [node.name for node in self.nodes] + ([self.ad_dc.name] if self.ad_dc else [])
         if set(owned_resources(rows, names, self.owner)) != set(names):
             raise AssertionError("SMB lab is missing an owned VM")
         if any(row["status"] != "Running" for row in rows if row["name"] in names):
@@ -306,7 +320,7 @@ class smb_ops:
             if node.command("sha256sum", "/root/" + SNAP_DEST_NAME, check=True).stdout.split()[0] != expected:
                 raise AssertionError("Guest candidate snap differs from the supplied artifact")
             node.install_microceph_from_local_snap(snap, snapd_channel=channel)
-            for plug in ("network", "network-control", "dm-crypt", "smb-identity", "smb-mounts", "smb-control-mounts", "ctdb-run", "smb-control-access"):
+            for plug in ("network", "network-control", "dm-crypt", "smb-identity", "smb-mounts", "smb-control-mounts", "ctdb-run", "winbind-run", "smb-control-access"):
                 node.command("snap", "connect", "microceph:" + plug, check=True)
             node.command("snap", "restart", "microceph.daemon", check=True)
             node.wait_for_microceph_control_socket()
@@ -410,18 +424,18 @@ class smb_ops:
             return role_tokens([snapshot])
         snapshots = [snapshot] if isinstance(snapshot, dict) else snapshot
         roles = roles or ("smbd", "ctdbd")
-        if any(role not in ("smbd", "ctdbd", "daemon") for role in roles):
+        if any(role not in ("smbd", "ctdbd", "winbindd", "daemon") for role in roles):
             raise AssertionError("Unknown installed SMB role")
         return {role: role_tokens(snapshots, role) for role in roles}
 
     def smb_snapshots(self, cluster, *nodes):
         return [self.smb_snapshot(node, cluster) for node in nodes]
 
-    def collect_smb_observations(self, seconds=35, cluster="robot-smb"):
+    def collect_smb_observations(self, seconds=35, cluster="robot-smb", *nodes):
         samples = []
         until = time.monotonic() + int(seconds)
         def sample():
-            samples.append(self.smb_snapshots(cluster, 0, 1, 2))
+            samples.append(self.smb_snapshots(cluster, *(nodes or (0, 1, 2))))
             return time.monotonic() >= until
         self.harness._poll_until(sample, attempts=int(seconds)+2, interval=3,
                                  fail_msg="SMB observation window did not complete")
@@ -471,10 +485,11 @@ class smb_ops:
         self.harness.wait_for_vm_agent("local:" + vm.name)
 
     def capture_smb_shared_state(self, *clusters):
-        if not clusters or any(cluster not in ("robot-never", "robot-other", "robot-smb") for cluster in clusters):
+        if not clusters or any(cluster not in ("robot-never", "robot-other", "robot-smb", "robot-ad") for cluster in clusters):
             raise AssertionError("Unknown logical SMB fixture")
         vm = self.nodes[0]
-        names = [name for cluster in clusters for name in ("ceph.smb.cluster." + cluster, "ceph.smb.share." + cluster + ".data")]
+        names = [name for cluster in clusters for name in ["ceph.smb.cluster." + cluster] +
+                 ["ceph.smb.share." + cluster + "." + share for share in (("data", "read", "auth") if cluster == "robot-ad" else ("data",))]]
         resources = vm._exec(vm._vm_argv("microceph.ceph", "smb", "show", *names, "-f", "json"), 30)
         auth = vm._exec(vm._vm_argv("microceph.ceph", "auth", "ls", "-f", "json"), 30)
         if resources.rc != 0 or auth.rc != 0:
@@ -496,7 +511,7 @@ class smb_ops:
     def retire_smb_scenario(self):
         for index, node in enumerate(self.nodes):
             owner = self.smb_snapshot(index)["owner"]
-            if owner and owner not in ("robot-never", "robot-other", "robot-smb"):
+            if owner and owner not in ("robot-never", "robot-other", "robot-smb", "robot-ad") and not re.fullmatch(r"bad-[0-9a-f]{8}", owner):
                 raise AssertionError("Refusing to retire a foreign SMB owner")
             if owner:
                 node.command("microceph", "disable", "smb", "--cluster-id", owner, timeout=180, check=True)
@@ -505,14 +520,14 @@ class smb_ops:
     def assert_smb_scenario_idle(self):
         for index in range(len(self.nodes)):
             state = self.smb_snapshot(index)
-            if state["owner"] or any(state["roles"][role]["ActiveState"] != "inactive" for role in ("smbd", "ctdbd")):
+            if state["owner"] or any(state["roles"][role]["ActiveState"] != "inactive" for role in ("smbd", "winbindd", "ctdbd")):
                 raise AssertionError("SMB scenario did not release its gateway roles")
 
     def collect_smb_diagnostics(self):
         for node in self.nodes:
             try:
                 node.command("snap", "services", "microceph", timeout=20)
-                node.command("journalctl", "-b", "-u", "snap.microceph.ctdbd", "-u", "snap.microceph.smbd", "-u", "snap.microceph.daemon", "--no-pager", "-n", "100", timeout=20)
+                node.command("journalctl", "-b", "-u", "snap.microceph.ctdbd", "-u", "snap.microceph.smbd", "-u", "snap.microceph.winbindd", "-u", "snap.microceph.daemon", "--no-pager", "-n", "100", timeout=20)
                 node.command("journalctl", "-k", "-b", "-g", 'apparmor="DENIED"', "--no-pager", "-n", "100", timeout=20)
             except Exception as error:
                 logger.warn(f"SMB diagnostics unavailable for {node.name}: {error}")
@@ -522,7 +537,7 @@ class smb_ops:
         if not self.owner:
             return
         rows = json.loads(self._host("lxc", "query", "local:/1.0/instances?recursion=1&project=default"))
-        for name in owned_resources(rows, [node.name for node in self.nodes], self.owner):
+        for name in owned_resources(rows, [node.name for node in self.nodes] + ([self.ad_dc.name] if self.ad_dc else []), self.owner):
             self._host("lxc", "delete", "local:" + name, "--project", "default", "--force", timeout=180)
             self.harness._poll_until(lambda: name not in [row["name"] for row in json.loads(self._host("lxc", "query", "local:/1.0/instances?recursion=1&project=default"))], attempts=10, interval=3, fail_msg=f"Deletion of {name} was not confirmed")
         rows = json.loads(self._host("lxc", "query", f"local:/1.0/storage-pools/{self.pool}/volumes/custom?recursion=1&project=default"))
@@ -532,6 +547,155 @@ class smb_ops:
                 if row.get("used_by"):
                     raise AssertionError("Refusing to delete an attached SMB test volume")
                 self._host("lxc", "storage", "volume", "delete", "local:" + self.pool, row["name"], "--project", "default")
+
+
+    def fresh_smb_ad_inputs(self):
+        """Create a fresh negative-attempt namespace; retained positive trust is reused."""
+        identifier = 'bad-' + uuid.uuid4().hex[:8]
+        found = self.nodes[0].command('microceph.ceph', 'smb', 'show', 'ceph.smb.cluster.' + identifier,
+                                      '-f', 'json', quiet=True, timeout=30)
+        if found.rc != 0 or json.loads(found.stdout) not in ({}, [], {'resources': []}):
+            raise AssertionError('Negative fixture namespace already exists or absence is unconfirmed')
+        query = "SELECT count(*) AS prior_attempts FROM service_groups WHERE service='smb' AND group_id='" + identifier + "';"
+        prior = self.nodes[0].command('microceph', 'cluster', 'sql', query, quiet=True, timeout=30)
+        if prior.rc != 0 or not re.search(r'\|\s*0\s*\|', prior.stdout):
+            raise AssertionError('Negative fixture namespace has prior SQL history or absence is unconfirmed')
+        address = lambda vm: json.loads(vm.command('ip', '-4', '-j', 'route', 'get', '1.1.1.1', check=True, quiet=True).stdout)[0]['prefsrc']
+        result = self.nodes[0].command('python3', self._base + '/smb_ad_guest.py', 'init',
+                                       json.dumps([address(n) for n in self.nodes[:3]]), address(self.ad_dc), identifier,
+                                       timeout=90, quiet=True)
+        if result.rc != 0:
+            raise AssertionError('AD fixture input generation failed; inspect private first-error')
+        BuiltIn().set_suite_variable('${SMB_AD_BAD_CLUSTER}', identifier)
+        return identifier
+
+
+    def restore_smb_directory(self):
+        """Restore an intentionally stopped or uncertain DC, preserving any failed verdict."""
+        if self._dc_stop_uncertain and self.ad_dc:
+            result = self.ad_dc.command('systemctl', 'start', 'robot-ad-dc', timeout=90, quiet=True)
+            if result.rc != 0:
+                raise AssertionError('Could not restore the fixture directory')
+            self._dc_stop_uncertain = False
+
+
+    def require_smb_ad_capacity(self):
+        """Account for three gateways/client plus one dedicated directory VM."""
+        self.pool = str(self._variable("SMB_STORAGE_POOL", "default"))
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.pool):
+            raise AssertionError("Invalid test storage pool")
+        self._capacity(4)
+
+
+    def provision_smb_ad_directory(self):
+        """Extend the owned lab, reusing its manifest, exec and cleanup machinery."""
+        self._capacity(1)
+        dc = _VM(f"smb-ci-{self.owner[:8]}-dc")
+        # Record the dedicated DC separately; gateway indices remain unchanged.
+        self.ad_dc = dc
+        self._persist_smb_lab()
+        logger.info("SMB allocation manifest: " + json.dumps({"owner": self.owner, "pool": self.pool,
+                    "nodes": [n.name for n in self.nodes], "volumes": self.volumes}))
+        self.harness.launch_owned_test_vm(dc.name, self.owner, image=str(self._variable("SMB_VM_IMAGE", "ubuntu:26.04")),
+                                          storage_pool=self.pool)
+        dc.probe_instance_network()
+        dc.apt_update()
+        dc.command("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "samba", "samba-ad-dc", "python3-samba", "krb5-user", "bind9-host", check=True, timeout=300)
+        self.nodes[0].command("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "krb5-user", "samba-common-bin", check=True, timeout=300)
+        for node in [*self.nodes, dc]:
+            node.command("mkdir", "-p", self._base, check=True)
+            node.command("chmod", "0700", self._base, check=True)
+            for script in (("smb_guest.py", "smb_ad_guest.py") if node is dc else ("smb_ad_guest.py",)):
+                self.harness._lxc_file_push(str(Path(__file__).with_name(script)), f"local:{node.name}{self._base}/{script}", 60, "copy AD fixture", private=True)
+        address = lambda n: json.loads(n.command("ip", "-4", "-j", "route", "get", "1.1.1.1", check=True).stdout)[0]["prefsrc"]
+        addresses, dc_address = [address(n) for n in self.nodes[:3]], address(dc)
+        # Stop packaged default roles/resolved only inside this disposable DC.
+        dc.command("systemctl", "disable", "--now", "smbd", "nmbd", "winbind", "samba-ad-dc", "systemd-resolved", check=True)
+        dc.command("sh", "-ec", 'umask 077; python3 "$1/smb_ad_guest.py" dc "$2" "$3" > "$1/dc-provision.log" 2>&1',
+                   "fixture", self._base, dc_address, addresses[0], check=True, timeout=300)
+        dc.command("systemctl", "daemon-reload", check=True)
+        dc.command("systemctl", "enable", "--now", "robot-ad-dc", check=True)
+        # Credentials never cross Robot variables, argv, public logs or artifacts.
+        with tempfile.TemporaryDirectory(prefix="smb-ad-secret-") as directory:
+            local = str(Path(directory) / "secrets")
+            self._host("lxc", "file", "pull", f"local:{dc.name}{self._base}/ad-secrets.json", local, "--project", "default")
+            Path(local).chmod(0o600)
+            self.harness._lxc_file_push(local, f"local:{self.nodes[0].name}{self._base}/ad-secrets.json", 60, "copy private AD inputs", private=True)
+        self.nodes[0].command("python3", self._base + "/smb_ad_guest.py", "init", json.dumps(addresses), dc_address, check=True)
+        for node in (dc, self.nodes[0]):
+            node.command("dpkg-query", "-W", "samba-common-bin", "krb5-user", check=True)
+        self.nodes[0].command("smbclient", "--version", check=True)
+        self.nodes[0].command("testparm", "-s", "--parameter-name=client ntlmv2 auth", check=True)
+        dc.command("testparm", "-s", "--parameter-name=ntlm auth", "/root/robot-ad-dc/etc/smb.conf", check=True)
+        # Observation polling only; provisioning/start are never retried.
+        self.harness._poll_until(lambda: dc.command("host", "-t", "SRV", "_kerberos._udp.robot.test", dc_address).rc == 0,
+                                 attempts=10, interval=2, fail_msg="DC Kerberos DNS discovery unavailable")
+        self.harness._poll_until(lambda: self.nodes[0].command("python3", self._base + "/smb_ad_guest.py", "probe-directory", timeout=75).rc == 0,
+                                 attempts=5, interval=2, fail_msg="Fixture KDC is not ready for fresh client tickets")
+
+
+    def smb_ad_apply(self, kind):
+        return self.nodes[0].command("python3", self._base + "/smb_ad_guest.py", "apply", kind, timeout=90)
+
+
+    def smb_ad_identity(self, node):
+        result = self._node(node).command("python3", self._base + "/smb_ad_guest.py", "mappings", timeout=90, check=True)
+        return json.loads(result.stdout)
+
+
+    def prepare_smb_ad_data(self, uid, gid):
+        return self.nodes[0].command("timeout", "--kill-after=5", "60", "snap", "run", "--shell", "microceph.ceph", "-c",
+                                    'exec "$SNAP/bin/python3" "$SNAP_COMMON/robot-smb/smb_ad_guest.py" prepare-data "$1" "$2"',
+                                    "fixture", uid, gid, timeout=80)
+
+
+    def smb_ad_backing_stat(self, filename):
+        result = self.nodes[0].command("timeout", "--kill-after=5", "60", "snap", "run", "--shell", "microceph.ceph", "-c",
+                                      'exec "$SNAP/bin/python3" "$SNAP_COMMON/robot-smb/smb_ad_guest.py" stat "$1"',
+                                      "fixture", filename, timeout=80, check=True)
+        return json.loads(result.stdout)
+
+
+    def smb_ad_client(self, node, share, user, protocol, action, filename):
+        address = self.smb_snapshot(node, "robot-ad")["context"]["frontend_address"]
+        start = time.monotonic()
+        result = self.nodes[0].command("python3", self._base + "/smb_ad_guest.py", "client", address, share, user, protocol, action, filename, timeout=150, check=True)
+        value = json.loads(result.stdout)
+        value["elapsed"] = time.monotonic() - start
+        return value
+
+
+    def wait_for_smb_ad_refresh(self, before):
+        def refreshed():
+            states = self.smb_snapshots("robot-ad", 0, 1)
+            return all(snapshot_ready(state, "robot-ad", 1445) and
+                       state["candidate_generation"] != old["candidate_generation"] for state, old in zip(states, before))
+        self.harness._poll_until(refreshed, attempts=30, interval=3, fail_msg="AD join-input refresh was not confirmed applied")
+        return self.smb_snapshots("robot-ad", 0, 1)
+
+
+    def smb_ad_join_error(self):
+        return self.nodes[0].command("python3", self._base + "/smb_ad_guest.py", "join-error", check=True).stdout
+
+
+    def smb_ad_account(self):
+        result = self.ad_dc.command("python3", self._base + "/smb_ad_guest.py", "account", check=True)
+        return json.loads(result.stdout)
+
+
+    def smb_ad_diagnostics(self):
+        for node in self.nodes[:1] + ([self.ad_dc] if self.ad_dc is not None else []):
+            if node is not None:
+                node.command("python3", self._base + "/smb_ad_guest.py", "diagnostics", timeout=20)
+
+
+    def smb_ad_dc_command(self, *argv):
+        if argv == ('systemctl', 'stop', 'robot-ad-dc'):
+            self._dc_stop_uncertain = True
+        result = self.ad_dc.command(*argv, timeout=90)
+        if argv == ('systemctl', 'start', 'robot-ad-dc') and result.rc == 0:
+            self._dc_stop_uncertain = False
+        return result
 
 
 def smb_ceph_readiness_signature(health, clock, before, pgs, after):

@@ -71,3 +71,18 @@ func TestSMBStatusCommandPreservesTransportFailureWithoutOutput(t *testing.T) {
 	require.ErrorIs(t, cmd.ExecuteContext(context.Background()), failure)
 	require.Empty(t, output.String())
 }
+
+func TestSMBStatusCommandConsumesADWithoutCredentialFlags(t *testing.T) {
+	old := getSMBServiceFunc
+	t.Cleanup(func() { getSMBServiceFunc = old })
+	getSMBServiceFunc = func(context.Context, mcTypes.Client, string) (types.SMBStatus, error) {
+		return types.SMBStatus{ClusterID: "alpha", AuthMode: "active-directory", Realm: "EXAMPLE.TEST", Ready: true}, nil
+	}
+	cmd := (&cmdStatus{common: &CmdControl{FlagStateDir: t.TempDir()}}).Command()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"smb", "--target", "gateway-a"})
+	require.NoError(t, cmd.Execute())
+	require.JSONEq(t, `{"cluster_id":"alpha","auth_mode":"active-directory","realm":"EXAMPLE.TEST","ready":true,"stop_requested":false}`, output.String())
+	require.NotContains(t, output.String(), "password")
+}

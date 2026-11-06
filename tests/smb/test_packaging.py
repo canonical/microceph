@@ -26,8 +26,8 @@ class PackagingTests(unittest.TestCase):
 
     def test_daemon_can_connect_only_to_the_private_ctdb_control_socket(self):
         grant = self.recipe['plugs']['smb-control-access']
-        self.assertEqual(grant['read'], ['/run/ctdb'])
-        self.assertEqual(grant.get('write'), ['/run/ctdb/ctdbd.socket'])
+        self.assertEqual(grant['read'], ['/run/ctdb', '/run/samba'])
+        self.assertEqual(grant.get('write'), ['/run/ctdb/ctdbd.socket', '/run/samba/winbindd/pipe'])
         daemon = self.recipe['apps']['daemon']['plugs']
         self.assertIn('smb-control-access', daemon)
         self.assertNotIn('ctdb-run', daemon, 'the daemon does not need broad runtime directory writes')
@@ -38,9 +38,25 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(apps["smbd"]["install-mode"], "disable")
         self.assertEqual(apps["smbd"]["stop-mode"], "sigterm-all")
         self.assertNotIn("after", apps["smbd"], "prepared smbd must survive daemon restart independently")
-        for role in ("winbindd", "smbmetrics", "cephfs-proxy"):
+        for role in ("smbmetrics", "cephfs-proxy"):
             self.assertNotIn(role, apps)
             self.assertFalse((ROOT / "snapcraft/commands" / (role + ".start")).exists())
+
+    def test_ad_role_is_complete_and_minimally_privileged(self):
+        app = self.recipe["apps"].get("winbindd", {})
+        self.assertEqual(app.get("command"), "commands/winbindd.start")
+        for key, value in (("daemon", "simple"), ("install-mode", "disable"),
+                           ("restart-delay", "10s"), ("stop-mode", "sigterm-all")):
+            self.assertEqual(app.get(key), value)
+        self.assertNotIn("after", app)
+        self.assertIn("winbind-run", app["plugs"])
+        self.assertIn("smb-identity", app["plugs"])
+        self.assertNotIn("winbind-run", self.recipe["apps"]["daemon"]["plugs"])
+        self.assertNotIn("smb-identity", self.recipe["apps"]["daemon"]["plugs"])
+        self.assertNotIn("/run/samba", self.recipe["layout"])
+        packages = self.recipe["parts"]["native-smb"]["stage-packages"]
+        for name in ("winbind", "libnss-winbind"):
+            self.assertIn(name + "=2:4.23.6+dfsg-1ubuntu2.2", packages)
 
     def test_direct_dependency_closure(self):
         native = self.recipe["parts"]["native-smb"]
@@ -49,8 +65,8 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("samba-vfs-ceph=2:4.23.6+dfsg-1ubuntu2.2", packages)
         self.assertTrue(any(package.startswith("python3-cephfs=") for package in packages))
         for package in packages:
-            self.assertFalse(package.split("=")[0] in ("winbind", "libnss-winbind", "libcephfs-daemon", "libcephfs-proxy2"))
-        for executable in ("smbd", "smbcontrol", "testparm"):
+            self.assertFalse(package.split("=")[0] in ("libcephfs-daemon", "libcephfs-proxy2"))
+        for executable in ("smbd", "winbindd", "net", "wbinfo", "getent", "smbcontrol", "testparm"):
             self.assertIn("bin/" + executable, native["prime"])
         self.assertIn("--require-hashes", self.recipe["parts"]["sambacc"]["override-build"])
         self.assertIn("sambacc==0.9", (ROOT / "snapcraft/smb/requirements.txt").read_text())
@@ -59,10 +75,10 @@ class PackagingTests(unittest.TestCase):
     def test_mount_grants_are_only_private_nss(self):
         for name in ("smb-mounts", "smb-control-mounts"):
             mounts = self.recipe["plugs"][name]["mount"]
-            self.assertEqual({mount["where"] for mount in mounts}, {"/etc/passwd", "/etc/group", "/etc/nsswitch.conf", "/run/ctdb"})
+            self.assertEqual({mount["where"] for mount in mounts}, {"/etc/passwd", "/etc/group", "/etc/nsswitch.conf", "/run/ctdb", "/run/samba/winbindd", "/etc/resolv.conf", "/run/systemd/resolve/stub-resolv.conf"})
             self.assertTrue(all(mount["options"] == ["bind"] for mount in mounts))
         self.assertTrue(self.recipe["plugs"]["smb-identity"]["user-identity-switching"])
-        for name in ("winbind-run", "ctdb-socket"):
+        for name in ("ctdb-socket",):
             self.assertNotIn(name, self.recipe["plugs"])
 
 
