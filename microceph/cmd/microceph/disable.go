@@ -17,6 +17,7 @@ func (c *cmdDisable) Command() *cobra.Command {
 	// Disable NFS
 	disableNFSCmd := cmdDisableNFS{common: c.common}
 	cmd.AddCommand(disableNFSCmd.Command())
+	cmd.AddCommand((&cmdSMB{common: c.common, disable: true}).Command())
 
 	// Disable RGW
 	disableRGWCmd := cmdDisableRGW{common: c.common}

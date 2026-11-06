@@ -1,0 +1,147 @@
+# shellcheck shell=bash
+# Mechanical support for the snap-managed smbd. Only Go prepares configuration
+# and SAM. Independent starts consume retained preparation without changing it.
+
+smb_startup_context() {
+  "$SNAP/bin/python3" -B - <<'PY'
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+
+def checked_path(path, directory=False):
+    for parent in (path, *path.parents):
+        if parent.is_symlink():
+            raise ValueError("symlink in prepared path")
+    info = path.lstat()
+    if info.st_uid != os.geteuid() or info.st_mode & 0o022:
+        raise ValueError("unsafe prepared path ownership or mode")
+    expected = stat.S_ISDIR if directory else stat.S_ISREG
+    if not expected(info.st_mode):
+        raise ValueError("unexpected prepared path type")
+
+
+try:
+    base = Path(os.environ["SNAP_COMMON"]) / "smb"
+    checked_path(base / "owner.json")
+    owner = (base / "owner.json").read_text()
+    if re.fullmatch(r"[a-zA-Z0-9]([a-zA-Z0-9-]{0,16}[a-zA-Z0-9])?", owner) is None:
+        raise ValueError("invalid owner")
+    root = base / owner
+    if re.fullmatch(r"(/[a-zA-Z0-9_.-]+)+", str(root)) is None:
+        raise ValueError("invalid root")
+    checked_path(root, directory=True)
+    checked_path(root / "config", directory=True)
+    checked_path(root / "config/context.json")
+    context = json.loads((root / "config/context.json").read_text())
+    if not isinstance(context, dict) or set(context) - {"startup", "frontend_address", "smb_port", "data_checks"}:
+        raise ValueError("unsupported context")
+    startup = context.get("startup", {})
+    if not isinstance(startup, dict) or set(startup) - {"smbd"}:
+        raise ValueError("unsupported startup role")
+    checks = startup.get("smbd", {})
+    if not isinstance(checks, dict) or set(checks) - {"prepared"}:
+        raise ValueError("unsupported startup checks")
+    stop = root / "stop-requested"
+    if stop.exists() or stop.is_symlink() or (base / "owner.json").read_text() != owner:
+        raise ValueError("stop requested or owner changed")
+    if os.environ.get("SMB_EXPECTED_OWNER", owner) != owner or os.environ.get("SMB_EXPECTED_ROOT", str(root)) != str(root):
+        raise ValueError("command owner changed")
+except (OSError, ValueError, TypeError, KeyError):
+    sys.exit("Native SMB prepared context is unsafe or unavailable")
+for value in (owner, str(root)):
+    sys.stdout.write(value + "\0")
+PY
+}
+
+smb_load_context() {
+  local -a context
+  mapfile -d '' -t context < <(smb_startup_context)
+  [[ ${#context[@]} == 2 ]] || return 1
+  SMB_OWNER="${context[0]}"
+  SMB_ROOT="${context[1]}"
+}
+
+smb_check_start_intent() {
+  local owner
+  IFS= read -r -d '' owner < "$SNAP_COMMON/smb/owner.json" || [[ $? == 1 ]]
+  [[ "$owner" == "$SMB_OWNER" && ! -e "$SMB_ROOT/stop-requested" && ! -L "$SMB_ROOT/stop-requested" ]]
+}
+
+smb_bind_private() {
+  # Clone alone does not isolate shared propagation. Check both source and
+  # destination before every bind; no root-wide propagation grant is needed.
+  "$SNAP/bin/python3" -B - "$1" "$2" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+source, target = map(Path, sys.argv[1:])
+for path in (source, *source.parents):
+    if path.is_symlink():
+        sys.exit("Unsafe SMB bind source")
+info = source.lstat()
+if info.st_uid != os.geteuid() or info.st_mode & 0o022 or not stat.S_ISREG(info.st_mode):
+    sys.exit("Unsafe SMB bind source")
+paths = [str(source.resolve(strict=True)), str(target.resolve(strict=True))]
+with open("/proc/self/mountinfo") as stream:
+    for line in stream:
+        fields = line.split()
+        point = fields[4]
+        for escaped, decoded in ((r"\040", " "), (r"\011", "\t"), (r"\012", "\n"), (r"\134", "\\")):
+            point = point.replace(escaped, decoded)
+        if any(point == "/" or path == point or path.startswith(point + "/") for path in paths):
+            optional = fields[6:fields.index("-")]
+            if any(field.startswith("shared:") for field in optional):
+                sys.exit("SMB bind has shared propagation")
+PY
+  LIBMOUNT_FORCE_MOUNT2=always "$SNAP/bin/mount" --no-mtab --internal-only --bind "$1" "$2"
+}
+
+smb_setup_nss() {
+  local name
+  for name in passwd group nsswitch.conf; do
+    smb_bind_private "$SMB_ROOT/config/$name" "/etc/$name"
+  done
+}
+
+smb_assert_prepared() {
+  [[ "$1" == smbd ]] || return 1
+  local attempt rc
+  for ((attempt=0; attempt<90; attempt++)); do
+    smb_check_start_intent || return 1
+    if "$SNAP/bin/python3" -B - "$SMB_ROOT" <<'PY'
+import json
+from pathlib import Path
+import sys
+context = json.loads((Path(sys.argv[1]) / "config/context.json").read_text())
+if context.get("startup", {}).get("smbd", {}).get("prepared") is not True:
+    sys.exit(75)
+# No Samba bindings here: even a SID query can create missing databases.
+import os
+import stat
+root = Path(sys.argv[1])
+for relative in ("identity/local-sam", "samba/private/passdb.tdb", "samba/private/secrets.tdb"):
+    path = root / relative
+    if any(parent.is_symlink() for parent in (path, *path.parents)):
+        sys.exit("Unsafe retained SMB local SAM")
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_size == 0 or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+        sys.exit("Unsafe retained SMB local SAM")
+if (root / "identity/local-sam").read_text() != "local-sam-v1\n":
+    sys.exit("Unknown retained SMB local SAM fence")
+PY
+    then
+      smb_check_start_intent
+      return
+    else
+      rc=$?
+      [[ "$rc" == 75 ]] || return "$rc"
+    fi
+    sleep 1
+  done
+  return 1
+}
