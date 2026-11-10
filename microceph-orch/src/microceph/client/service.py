@@ -120,13 +120,16 @@ class BaseService(ABC):
         netloc = self._endpoint
         url = f"{netloc}/{path}"
         redact_response = kwargs.pop("redact_response", False)
+        redact_request = kwargs.pop("redact_request", False)
+        timeout = kwargs.pop("timeout", self._timeout)
         try:
-            logger.debug("[%s] %s, args=%s", method, url, kwargs)
+            logger.debug("[%s] %s, args=%s", method, url,
+                         "/* REDACTED */" if redact_request else kwargs)
             response = self.__session.request(
                 method=method,
                 url=url,
                 cert=self._certs,
-                timeout=self._timeout,
+                timeout=timeout,
                 **kwargs,
             )
             output = response.text

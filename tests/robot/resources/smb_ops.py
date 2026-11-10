@@ -407,6 +407,9 @@ class smb_ops:
     def apply_smb_resource(self, kind):
         return self.nodes[0].command("python3", self._base + "/smb_guest.py", "apply", kind, timeout=150)
 
+    def prepare_smb_orch_spec(self, *targets):
+        return self.nodes[0].command("python3", self._base + "/smb_guest.py", "orch-spec", *map(str, targets), timeout=60)
+
     def smb_snapshot(self, node, cluster="robot-never"):
         vm = self._node(node)
         result = vm.command("python3", self._base + "/smb_guest.py", "snapshot", cluster, timeout=120, check=True, quiet=True)

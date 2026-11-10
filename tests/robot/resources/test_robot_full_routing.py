@@ -67,7 +67,7 @@ def test_clustered_full_routing_and_partial_refusal(full_fixture, tmp_path, part
     full, calls, _, root = full_fixture
     directory = root / 'smb-clustered-tests'
     directory.mkdir()
-    (directory / 'scenario.robot').write_text('*** Test Cases ***\n' + ''.join(f'Cluster {i}\n    No Operation\n' for i in range(6)))
+    (directory / 'scenario.robot').write_text('*** Test Cases ***\n' + ''.join(f'Cluster {i}\n    No Operation\n' for i in range(7)))
     output = tmp_path / 'clustered-results'
     selection = ['--test', 'Cluster 0'] if partial else []
     rc = full.main(['--snap-path', '/candidate.snap', '-v', 'BUDGET:10', *selection,
@@ -77,9 +77,9 @@ def test_clustered_full_routing_and_partial_refusal(full_fixture, tmp_path, part
         assert not calls
     else:
         assert rc == 0
-        assert ExecutionResult(output / 'output.xml').suite.test_count == 11
+        assert ExecutionResult(output / 'output.xml').suite.test_count == 12
         summary = json.loads((output / 'smb-summary.json').read_text())
-        assert summary['passed'] == summary['cases'] == 9
+        assert summary['passed'] == summary['cases'] == 10
         assert summary['failed'] == summary['skipped'] == 0
         assert len([c for c in calls if c[2].endswith('smb_runner.py')]) == 1
 
@@ -206,7 +206,7 @@ def test_explicit_routes_preserve_arguments(monkeypatch, selection):
 @pytest.mark.parametrize('partial', [False, True])
 def test_ad_full_routing_preserves_nine_case_ownership(full_fixture, tmp_path, partial):
     full, calls, _, root = full_fixture
-    for kind, count in (("clustered", 6), ("ad", 9)):
+    for kind, count in (("clustered", 7), ("ad", 9)):
         directory = root / ("smb-" + kind + "-tests")
         directory.mkdir()
         (directory / "scenario.robot").write_text("*** Test Cases ***\n" + "".join(
@@ -221,9 +221,9 @@ def test_ad_full_routing_preserves_nine_case_ownership(full_fixture, tmp_path, p
     else:
         assert rc == 0
         summary = json.loads((output / "smb-summary.json").read_text())
-        assert summary["passed"] == summary["cases"] == 18
+        assert summary["passed"] == summary["cases"] == 19
         assert summary["failed"] == summary["skipped"] == 0
-        assert ExecutionResult(output / "output.xml").suite.test_count == 20
+        assert ExecutionResult(output / "output.xml").suite.test_count == 21
 
 @pytest.mark.parametrize("selector", ["short", "argument-file", "environment"])
 @pytest.mark.parametrize("kinds", ["ad", "clustered,singleton,ad"])
@@ -249,7 +249,7 @@ def test_standalone_partial_selection_refuses_before_any_setup(monkeypatch, tmp_
     assert not (output / "smb-results").exists(), "preflight must precede lab/result ownership creation"
 
 
-@pytest.mark.parametrize("kind,count", [("singleton", 3), ("clustered", 6), ("ad", 9)])
+@pytest.mark.parametrize("kind,count", [("singleton", 3), ("clustered", 7), ("ad", 9)])
 @pytest.mark.parametrize("selector", ["short", "argument-file", "environment"])
 def test_standalone_complete_selection_keeps_canonical_options(monkeypatch, tmp_path, kind, count, selector):
     coordinator = load("microceph_standalone_complete", HERE / "smb_runner.py")
