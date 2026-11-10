@@ -267,7 +267,9 @@ func checkForZeros(devicePath string, fs afero.Fs) (bool, error) {
 		logger.Errorf("failed to open device %s: %v", devicePath, err)
 		return false, err
 	}
-	defer file.Close()
+	defer func() {
+        _ = file.Close()
+    }()
 
 	deviceSize, err := getBlockDeviceSize(devicePath)
 	if err != nil {

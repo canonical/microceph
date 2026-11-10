@@ -517,7 +517,9 @@ func (m *mockLifecycleDB) Transaction(ctx context.Context, fn func(ctx context.C
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+        _ = db.Close()
+    }()
 	_, err = db.Exec(`
 CREATE TABLE cluster_lifecycle (
   id                    INTEGER PRIMARY KEY NOT NULL DEFAULT 1,

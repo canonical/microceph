@@ -23,6 +23,8 @@ var clientCmd = mcTypes.Endpoint{
 	Path: "client",
 }
 
+var updateConfigFunc = ceph.UpdateConfig
+
 // client configs API
 var clientConfigsCmd = mcTypes.Endpoint{
 	Path: "client/configs",
@@ -70,10 +72,10 @@ func cmdClientConfigsPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 		return mcTypes.BadRequest(err)
 	}
 
-	err = ceph.UpdateConfig(r.Context(), interfaces.CephState{State: s})
+	err = updateConfigFunc(r.Context(), interfaces.CephState{State: s})
 	if err != nil {
 		logger.Error(err.Error())
-		mcTypes.InternalError(err)
+		return mcTypes.InternalError(err)
 	}
 
 	return mcTypes.EmptySyncResponse

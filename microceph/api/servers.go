@@ -52,6 +52,12 @@ var Servers = map[string]mcTypes.Server{
 					placementCmd,
 					cephBootstrapCmd,
 					capabilitiesCmd,
+					// Auth rotation APIs
+					authCmd,
+					authRotateCmd,
+					authRotateMemberCmd,
+					authRotateClientsCmd,
+					authStatusCmd,
 				},
 			},
 		},
