@@ -43,6 +43,7 @@ apps:
       - block-devices
       - dm-crypt
       - hardware-observe
+      - mount-observe
       - network
       - network-bind
     slots:

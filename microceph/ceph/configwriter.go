@@ -47,7 +47,7 @@ func newCephConfig(configDir string) *Config {
 run dir = {{.runDir}}
 fsid = {{.fsid}}
 mon host = {{.monitors}}
-public_network = {{.pubNet}}
+{{if .pubNet}}public_network = {{.pubNet}}{{else}}public addr = {{.addr}}{{end}}
 auth allow insecure global id reclaim = false
 ms bind ipv4 = {{.ipv4}}
 ms bind ipv6 = {{.ipv6}}

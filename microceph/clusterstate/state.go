@@ -34,6 +34,8 @@ type State struct {
 	Leader func() (*client.Client, error)
 	// Cluster returns notification clients for the other members.
 	Cluster func(*http.Request) (client.Cluster, error)
+	// RemoteAddresses resolves member names to their trusted cluster IPs.
+	RemoteAddresses func() map[string]string
 }
 
 // Bridge binds application handlers to the daemon's lifecycle, not a request's lifetime.
@@ -64,7 +66,15 @@ func (b *Bridge) Context() context.Context {
 // State adapts native member state without exposing Microcluster's internal types.
 func (b *Bridge) State(s mcstate.State) *State {
 	ctx := b.Context()
-	return newState(ctx, s.Address, s.Name, adaptDatabase(ctx, s.Database()), s.Leader, notificationCluster(s.Cluster))
+	app := newState(ctx, s.Address, s.Name, adaptDatabase(ctx, s.Database()), s.Leader, notificationCluster(s.Cluster))
+	app.RemoteAddresses = func() map[string]string {
+		addresses := make(map[string]string)
+		for name, remote := range s.Remotes().RemotesByName() {
+			addresses[name] = remote.Address.Addr().String()
+		}
+		return addresses
+	}
+	return app
 }
 
 func newState(ctx context.Context, address func() *api.URL, name func() string, db Database, leader func() (*client.Client, error), cluster func(*http.Request) (client.Cluster, error)) *State {

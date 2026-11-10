@@ -190,13 +190,26 @@ func UpdateConfig(s common.StateInterface) error {
 	// REF: https://docs.ceph.com/en/quincy/rados/configuration/network-config-ref/#ceph-daemons
 	// The mon host configuration option only needs to be sufficiently up to date such that a
 	// client can reach one monitor that is currently online.
-	monitorAddresses := getMonitorAddresses(config)
+	monitorAddresses, err := resolveMonitorAddresses(s, config)
+	if err != nil {
+		return err
+	}
 	conf := newCephConfig(confPath)
 
-	// Check if host has IP address on the configured public network.
-	_, err = common.Network.FindIpOnSubnet(config["public_network"])
-	if err != nil {
-		return fmt.Errorf("failed to locate IP on public network %s: %w", config["public_network"], err)
+	publicNetwork := config["public_network"]
+	bindAddress := publicNetwork
+	legacyAddress := ""
+	if publicNetwork != "" {
+		// Explicit subnet settings must still match an interface on this host.
+		_, err = common.Network.FindIpOnSubnet(publicNetwork)
+		if err != nil {
+			return fmt.Errorf("failed to locate IP on public network %s: %w", publicNetwork, err)
+		}
+	} else {
+		// Older published Quincy snaps bind to the member address directly.
+		// Do not invent a new subnet restriction when upgrading those clusters.
+		legacyAddress = s.ClusterState().Address().Hostname()
+		bindAddress = legacyAddress
 	}
 	clientConfig, err := GetClientConfigForHost(s, s.ClusterState().Name())
 	if err != nil {
@@ -210,9 +223,10 @@ func UpdateConfig(s common.StateInterface) error {
 			"fsid":                config["fsid"],
 			"runDir":              runPath,
 			"monitors":            strings.Join(monitorAddresses, ","),
-			"pubNet":              config["public_network"],
-			"ipv4":                strings.Contains(config["public_network"], "."),
-			"ipv6":                strings.Contains(config["public_network"], ":"),
+			"pubNet":              publicNetwork,
+			"addr":                legacyAddress,
+			"ipv4":                strings.Contains(bindAddress, "."),
+			"ipv6":                strings.Contains(bindAddress, ":"),
 			"isCache":             clientConfig.IsCache,
 			"cacheSize":           clientConfig.CacheSize,
 			"isCacheWritethrough": clientConfig.IsCacheWritethrough,
