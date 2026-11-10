@@ -57,6 +57,39 @@ func TestCmdAuthRotatePostSuccess(t *testing.T) {
 	assert.Equal(t, "client.rgw", raw.Metadata.ClientName)
 }
 
+func TestCmdAuthRotatePostSubStepClientName(t *testing.T) {
+	origExec := executeAuthRotationFunc
+	defer func() { executeAuthRotationFunc = origExec }()
+
+	// An admin sub-step of a paused full run rotates client.admin while the
+	// shared record keeps the full run's empty filter: the response must
+	// still name the requested entity so the CLI's success message is correct.
+	executeAuthRotationFunc = func(ctx context.Context, s interfaces.StateInterface, targetKeyType string, clientName string) (*database.AuthRotationRecord, error) {
+		return &database.AuthRotationRecord{
+			TargetKeyType: "aes256k",
+			State:         database.AuthRotationStateInProgress,
+			Stage:         database.AuthRotationStageFinishSafely,
+			ClientName:    "",
+		}, nil
+	}
+
+	body := strings.NewReader(`{"key_type": "aes256k", "client": "client.admin"}`)
+	req := httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate", body)
+	rec := httptest.NewRecorder()
+
+	resp := cmdAuthRotatePost(nil, req)
+	err := resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var raw struct {
+		Metadata types.AuthRotateResponse `json:"metadata"`
+	}
+	err = json.NewDecoder(rec.Body).Decode(&raw)
+	require.NoError(t, err)
+	assert.Equal(t, "client.admin", raw.Metadata.ClientName, "the response must name the requested client, not the full run's empty filter")
+}
+
 func TestCmdAuthRotatePostError(t *testing.T) {
 	origExec := executeAuthRotationFunc
 	defer func() { executeAuthRotationFunc = origExec }()
@@ -254,4 +287,70 @@ func TestCmdAuthRotatePostAbort(t *testing.T) {
 	err = resp.Render(rec, req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestCmdAuthRotateClientsPost(t *testing.T) {
+	origDeploy := deployClientKeyringsFunc
+	defer func() { deployClientKeyringsFunc = origDeploy }()
+
+	// 1. Deployment on a consumer member: the response reports the hostname
+	//    and the entities deployed.
+	deployClientKeyringsFunc = func(ctx context.Context, s interfaces.StateInterface, localMember string, pending map[string]string, finalize map[string]string) ([]string, error) {
+		assert.Equal(t, "node-a", localMember)
+		assert.Equal(t, map[string]string{"client.radosgw.gateway": "pending-secret"}, pending)
+		assert.Empty(t, finalize)
+		return []string{"client.radosgw.gateway"}, nil
+	}
+
+	body := strings.NewReader(`{"pending_keys": {"client.radosgw.gateway": "pending-secret"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate/clients", body)
+	rec := httptest.NewRecorder()
+	resp := cmdAuthRotateClientsPost(&mocks.MockState{ClusterName: "node-a"}, req)
+	err := resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var raw struct {
+		Metadata types.MemberClientRotateResponse `json:"metadata"`
+	}
+	err = json.NewDecoder(rec.Body).Decode(&raw)
+	require.NoError(t, err)
+	assert.Equal(t, "node-a", raw.Metadata.Hostname)
+	assert.Equal(t, []string{"client.radosgw.gateway"}, raw.Metadata.DeployedClients)
+
+	// 2. Finalization-only request (no restart): passed through.
+	deployClientKeyringsFunc = func(ctx context.Context, s interfaces.StateInterface, localMember string, pending map[string]string, finalize map[string]string) ([]string, error) {
+		assert.Empty(t, pending)
+		assert.Equal(t, map[string]string{"client.radosgw.gateway": "[client.radosgw.gateway]\n\tkey = x\n"}, finalize)
+		return []string{"client.radosgw.gateway"}, nil
+	}
+	body = strings.NewReader(`{"finalize": {"client.radosgw.gateway": "[client.radosgw.gateway]\n\tkey = x\n"}}`)
+	req = httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate/clients", body)
+	rec = httptest.NewRecorder()
+	resp = cmdAuthRotateClientsPost(&mocks.MockState{ClusterName: "node-a"}, req)
+	err = resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// 3. Neither pending_keys nor finalize: rejected.
+	body = strings.NewReader(`{}`)
+	req = httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate/clients", body)
+	rec = httptest.NewRecorder()
+	resp = cmdAuthRotateClientsPost(&mocks.MockState{ClusterName: "node-a"}, req)
+	err = resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// 4. Deployment failure surfaces as an internal error: the coordinator
+	//    must not commit when a consumer fails to receive the keyring.
+	deployClientKeyringsFunc = func(ctx context.Context, s interfaces.StateInterface, localMember string, pending map[string]string, finalize map[string]string) ([]string, error) {
+		return nil, fmt.Errorf("keyring write failed")
+	}
+	body = strings.NewReader(`{"pending_keys": {"client.radosgw.gateway": "pending-secret"}}`)
+	req = httptest.NewRequest(http.MethodPost, "/1.0/auth/rotate/clients", body)
+	rec = httptest.NewRecorder()
+	resp = cmdAuthRotateClientsPost(&mocks.MockState{ClusterName: "node-a"}, req)
+	err = resp.Render(rec, req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }

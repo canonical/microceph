@@ -68,19 +68,18 @@ Test Resume Rotation To Completion
     ...    run pauses before disallowing insecure ciphers until client.admin is
     ...    rotated explicitly: the admin key is shared beyond the cluster (e.g.
     ...    MicroCloud's LXD via the ceph-conf interface) and is never rotated
-    ...    automatically.
+    ...    automatically. The admin command itself resumes the paused run and
+    ...    finishes the rotation.
     [Tags]    auth    rotate    resume
     # The pipeline pauses at the finish step because client.admin is still on aes
     ${res}=    Run In VM    sudo microceph auth rotate --key-type aes256k    300
     Should Be Equal As Integers    ${res.rc}    3
     Should Contain    ${res.stdout}    client.admin still uses cipher
     Should Contain    ${res.stdout}    microceph auth rotate --client client.admin
-    # Rotate the admin key explicitly through the protected admin rotation
+    # Rotate the admin key explicitly: the protected admin rotation runs and
+    # the paused pipeline resumes, disallowing insecure ciphers and completing
     ${admin_res}=    Run In VM And Check    sudo microceph auth rotate --client client.admin    300
     Should Contain    ${admin_res.stdout}    Successfully rotated key for client.admin
-    # Re-run: resumes past the completed stages and disallows insecure ciphers
-    ${res2}=    Run In VM And Check    sudo microceph auth rotate --key-type aes256k    300
-    Should Contain    ${res2.stdout}    Successfully completed auth key rotation to aes256k
     # Verify auth status reports all clients on aes256k
     ${status_res}=    Run In VM And Check    sudo microceph auth status    30
     Should Contain    ${status_res.stdout}    Status: All client aes256k

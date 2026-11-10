@@ -2,12 +2,15 @@ package ceph
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -415,7 +418,7 @@ func TestCheckCipherCompatibilityAndQuorum(t *testing.T) {
 	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "feature", "ls", "-f", "json").
 		Return(`{"persistent": [{"features": "0x...", "names": ["cephx_auth_aes256k"]}]}`, nil).Once()
 	r.On("RunCommandContext", mock.Anything, "ceph", "versions", "-f", "json").
-		Return(`{"mon": {"19.2.6": 1}, "osd": {"19.2.6": 3}}`, nil).Once()
+		Return(`{"mon": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 1}, "osd": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 3}}`, nil).Once()
 	err = checkCipherCompatibility(context.Background(), "aes256k")
 	require.NoError(t, err)
 
@@ -718,6 +721,28 @@ func TestRotateLocalMGRKey(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to rotate mgr.node-a key")
 	assert.Equal(t, 1, startCalls)
+
+	// Failure case: a failed stop must abort before the key is rotated. The
+	// still-running daemon keeps the old (still active) key, so nothing is
+	// rotated underneath it and it keeps working; the best-effort deferred
+	// start is a no-op on a live daemon.
+	keyRotated := false
+	snapStopFunc = func(service string, disable bool) error {
+		return fmt.Errorf("snapctl stop failed")
+	}
+	rotateEntityKeyFunc = func(ctx context.Context, entity string, keyType string) (string, error) {
+		keyRotated = true
+		return "[mgr.node-a]\n\tkey = MGRKEY==\n", nil
+	}
+	snapStartFunc = func(service string, enable bool) error {
+		started = true
+		return nil
+	}
+	err = RotateLocalMGRKey(context.Background(), "aes256k", "node-a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to stop mgr.node-a before rotating its key")
+	assert.False(t, keyRotated, "the key must not be rotated when the daemon could not be stopped")
+	assert.True(t, started, "the best-effort deferred start must still run on the failure path")
 }
 
 func TestRotateLocalMDSKey(t *testing.T) {
@@ -786,6 +811,26 @@ func TestRotateLocalMDSKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to rotate mds.node-a key")
 	assert.True(t, started, "daemon must be restarted on failure")
 	assert.Equal(t, 1, startCalls)
+
+	// Failure case: a failed stop must abort before the key is rotated, so
+	// nothing is rotated underneath the still-running daemon.
+	keyRotated := false
+	snapStopFunc = func(service string, disable bool) error {
+		return fmt.Errorf("snapctl stop failed")
+	}
+	rotateEntityKeyFunc = func(ctx context.Context, entity string, keyType string) (string, error) {
+		keyRotated = true
+		return "[mds.node-a]\n\tkey = MDSKEY==\n", nil
+	}
+	snapStartFunc = func(service string, enable bool) error {
+		started = true
+		return nil
+	}
+	err = RotateLocalMDSKey(context.Background(), "aes256k", "node-a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to stop mds.node-a before rotating its key")
+	assert.False(t, keyRotated, "the key must not be rotated when the daemon could not be stopped")
+	assert.True(t, started, "the best-effort deferred start must still run on the failure path")
 }
 
 func TestGetLocalOSDIDs(t *testing.T) {
@@ -1575,6 +1620,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 	origCommit := commitPendingKeyFunc
 	origGetKeyring := getEntityKeyringFunc
 	origRestart := snapRestartFunc
+	origCheckActive := snapCheckActiveFunc
 	origDumpKeys := dumpAuthKeysFunc
 	origClear := clearPendingKeyFunc
 	defer func() {
@@ -1583,6 +1629,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 		commitPendingKeyFunc = origCommit
 		getEntityKeyringFunc = origGetKeyring
 		snapRestartFunc = origRestart
+		snapCheckActiveFunc = origCheckActive
 		dumpAuthKeysFunc = origDumpKeys
 		clearPendingKeyFunc = origClear
 	}()
@@ -1643,6 +1690,10 @@ func TestRotateSingleClientKey(t *testing.T) {
 	restarts := 0
 	restartTimeContent := ""
 	restartTimeReadErr := error(nil)
+	snapCheckActiveFunc = func(service string) error {
+		assert.Equal(t, "rgw", service)
+		return nil
+	}
 	snapRestartFunc = func(service string, isReload bool) error {
 		restarts++
 		assert.Equal(t, "rgw", service)
@@ -1658,7 +1709,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 	}
 
 	// 1. Success case
-	err := RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
+	err := RotateSingleClientKey(context.Background(), nil, "radosgw.gateway", "aes256k")
 	require.NoError(t, err)
 	assert.Equal(t, 1, pendingCalls)
 	assert.True(t, committed)
@@ -1695,7 +1746,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 	getEntityKeyringFunc = func(ctx context.Context, entity string) (string, error) {
 		return "", fmt.Errorf("auth get failed")
 	}
-	err = RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
+	err = RotateSingleClientKey(context.Background(), nil, "radosgw.gateway", "aes256k")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to fetch committed keyring")
 
@@ -1714,7 +1765,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 	t.Setenv("SNAP_COMMON", filepath.Join(tmpDir, "not-a-dir"))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "not-a-dir"), []byte("x"), 0400))
 
-	err = RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
+	err = RotateSingleClientKey(context.Background(), nil, "radosgw.gateway", "aes256k")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to write client keyring")
 	assert.Equal(t, 0, commitCalls, "commit must not run when distribution fails")
@@ -1742,7 +1793,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 		assert.True(t, committed, "keyring finalization must run after the commit")
 		return fmt.Sprintf("[client.radosgw.gateway]\n\tkey = %s\n", newKey), nil
 	}
-	err = RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
+	err = RotateSingleClientKey(context.Background(), nil, "radosgw.gateway", "aes256k")
 	require.NoError(t, err)
 	assert.Equal(t, 1, pendingCalls)
 	assert.True(t, committed)
@@ -1774,7 +1825,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 		assert.True(t, committed, "keyring finalization must run after the commit")
 		return fmt.Sprintf("[client.radosgw.gateway]\n\tkey = %s\n", remintKey), nil
 	}
-	err = RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
+	err = RotateSingleClientKey(context.Background(), nil, "radosgw.gateway", "aes256k")
 	require.NoError(t, err)
 	assert.Equal(t, 1, clearCalls)
 	assert.Equal(t, 2, pendingCalls)
@@ -1795,7 +1846,7 @@ func TestRotateSingleClientKey(t *testing.T) {
 	pendingCalls = 0
 	clearCalls = 0
 	dumpPendingTypes = []string{"aes", "aes"}
-	err = RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
+	err = RotateSingleClientKey(context.Background(), nil, "radosgw.gateway", "aes256k")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "auth_preferred_cipher")
 	assert.Equal(t, 1, clearCalls)
@@ -1806,10 +1857,59 @@ func TestRotateSingleClientKey(t *testing.T) {
 	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
 		return nil, fmt.Errorf("mon unreachable")
 	}
-	err = RotateSingleClientKey(context.Background(), "radosgw.gateway", "aes256k")
+	err = RotateSingleClientKey(context.Background(), nil, "radosgw.gateway", "aes256k")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to verify pending key cipher")
 	assert.Equal(t, 0, commitCalls, "commit must not run when verification fails")
+
+	// 8. Service reload failure: the live daemon still holds the old secret,
+	//    so the deployment fails and the commit must not retire the old key.
+	pendingCalls = 0
+	clearCalls = 0
+	commitCalls = 0
+	dumpPendingTypes = nil
+	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
+		pendingType := "aes256k"
+		if len(dumpPendingTypes) > 0 {
+			pendingType = dumpPendingTypes[0]
+			dumpPendingTypes = dumpPendingTypes[1:]
+		}
+		return []AuthKeyEntry{
+			{EntityName: "client.radosgw.gateway", EntityType: "client", KeyType: "aes", PendingKeyType: pendingType},
+		}, nil
+	}
+	getOrCreatePendingKeyFunc = func(ctx context.Context, entity string) (string, error) {
+		pendingCalls++
+		return newKey, nil
+	}
+	commitPendingKeyFunc = func(ctx context.Context, entity string) error {
+		commitCalls++
+		return nil
+	}
+	getEntityKeyringFunc = func(ctx context.Context, entity string) (string, error) {
+		return fmt.Sprintf("[client.radosgw.gateway]\n\tkey = %s\n", newKey), nil
+	}
+	snapRestartFunc = func(service string, isReload bool) error {
+		return fmt.Errorf("snapctl restart failed")
+	}
+	err = RotateSingleClientKey(context.Background(), nil, "radosgw.gateway", "aes256k")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to reload service rgw")
+	assert.Equal(t, 0, commitCalls, "commit must not run when the consumer did not reload")
+
+	// 9. Uptake check failure: the reload succeeded but the service is not
+	//    running afterwards, so the consumer has not loaded the new
+	//    credential and the commit must not run.
+	snapRestartFunc = func(service string, isReload bool) error {
+		return nil
+	}
+	snapCheckActiveFunc = func(service string) error {
+		return fmt.Errorf("rgw service is not active")
+	}
+	err = RotateSingleClientKey(context.Background(), nil, "radosgw.gateway", "aes256k")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has not loaded the new credential")
+	assert.Equal(t, 0, commitCalls, "commit must not run when the consumer did not load the credential")
 }
 
 func TestRotateManagedClientsPipeline(t *testing.T) {
@@ -1823,7 +1923,7 @@ func TestRotateManagedClientsPipeline(t *testing.T) {
 	}()
 
 	rotated := []string{}
-	rotateSingleClientKeyFunc = func(ctx context.Context, clientName string, targetKeyType string) error {
+	rotateSingleClientKeyFunc = func(ctx context.Context, s interfaces.StateInterface, clientName string, targetKeyType string) error {
 		rotated = append(rotated, clientName)
 		return nil
 	}
@@ -1840,7 +1940,7 @@ func TestRotateManagedClientsPipeline(t *testing.T) {
 		return nil, nil
 	}
 
-	res, err := RotateManagedClients(context.Background(), "aes256k", nil)
+	res, err := RotateManagedClients(context.Background(), nil, "aes256k", nil)
 	require.NoError(t, err)
 	assert.False(t, res.HasBlockers)
 	assert.Len(t, res.RotatedClients, 2)
@@ -1854,7 +1954,7 @@ func TestRotateManagedClientsPipeline(t *testing.T) {
 			{EntityName: "client.cinder", EntityType: "client", KeyType: "aes"},
 		}, nil
 	}
-	res, err = RotateManagedClients(context.Background(), "aes256k", nil)
+	res, err = RotateManagedClients(context.Background(), nil, "aes256k", nil)
 	require.NoError(t, err)
 	assert.True(t, res.HasBlockers)
 	assert.Equal(t, []string{"client.cinder"}, res.UnmanagedClients)
@@ -1867,7 +1967,7 @@ func TestRotateManagedClientsPipeline(t *testing.T) {
 			{EntityName: "client.cinder", EntityType: "client", KeyType: "aes256k"},
 		}, nil
 	}
-	res, err = RotateManagedClients(context.Background(), "aes256k", nil)
+	res, err = RotateManagedClients(context.Background(), nil, "aes256k", nil)
 	require.NoError(t, err)
 	assert.False(t, res.HasBlockers)
 	assert.Empty(t, res.UnmanagedClients)
@@ -1885,7 +1985,7 @@ func TestRotateManagedClientsPipeline(t *testing.T) {
 			{EntityName: "client.radosgw.gateway", EntityType: "client", KeyType: "aes"},
 		}, nil
 	}
-	res, err = RotateManagedClients(context.Background(), "aes256k", nil)
+	res, err = RotateManagedClients(context.Background(), nil, "aes256k", nil)
 	require.NoError(t, err)
 	assert.False(t, res.HasBlockers, "session compatibility must not gate rotation")
 	assert.Equal(t, []string{"client.radosgw.gateway"}, res.RotatedClients)
@@ -1902,7 +2002,7 @@ func TestRotateManagedClientsPipeline(t *testing.T) {
 		}, nil
 	}
 	progress := &AuthRotationProgress{RotatedClients: []string{"client.radosgw.gateway"}}
-	res, err = RotateManagedClients(context.Background(), "aes256k", progress)
+	res, err = RotateManagedClients(context.Background(), nil, "aes256k", progress)
 	require.NoError(t, err)
 	assert.False(t, res.HasBlockers)
 	assert.Equal(t, []string{"client.rbd-mirror.node1"}, res.RotatedClients)
@@ -2114,7 +2214,7 @@ func TestExecuteAuthRotationFullPipeline(t *testing.T) {
 	}
 
 	// 1. Success case without blockers
-	rotateManagedClientsFunc = func(ctx context.Context, targetKeyType string, progress *AuthRotationProgress) (ClientRotationResult, error) {
+	rotateManagedClientsFunc = func(ctx context.Context, s interfaces.StateInterface, targetKeyType string, progress *AuthRotationProgress) (ClientRotationResult, error) {
 		stages = append(stages, "rotate_clients")
 		return ClientRotationResult{HasBlockers: false, RotatedClients: []string{"client.rgw"}}, nil
 	}
@@ -2130,7 +2230,7 @@ func TestExecuteAuthRotationFullPipeline(t *testing.T) {
 
 	// 2. Blocked case (unmanaged client present)
 	stages = nil
-	rotateManagedClientsFunc = func(ctx context.Context, targetKeyType string, progress *AuthRotationProgress) (ClientRotationResult, error) {
+	rotateManagedClientsFunc = func(ctx context.Context, s interfaces.StateInterface, targetKeyType string, progress *AuthRotationProgress) (ClientRotationResult, error) {
 		stages = append(stages, "rotate_clients")
 		return ClientRotationResult{
 			HasBlockers:    true,
@@ -2161,7 +2261,7 @@ func TestExecuteAuthRotationFullPipeline(t *testing.T) {
 		}, nil
 	}
 	singleClientRotated := false
-	rotateSingleClientKeyFunc = func(ctx context.Context, clientName string, targetKeyType string) error {
+	rotateSingleClientKeyFunc = func(ctx context.Context, s interfaces.StateInterface, clientName string, targetKeyType string) error {
 		singleClientRotated = true
 		assert.Equal(t, "client.radosgw.gateway", clientName)
 		return nil
@@ -2207,7 +2307,7 @@ func TestExecuteAuthRotationSingleClientValidation(t *testing.T) {
 		return nil
 	}
 	singleClientRotated := false
-	rotateSingleClientKeyFunc = func(ctx context.Context, clientName string, targetKeyType string) error {
+	rotateSingleClientKeyFunc = func(ctx context.Context, s interfaces.StateInterface, clientName string, targetKeyType string) error {
 		singleClientRotated = true
 		return nil
 	}
@@ -2327,7 +2427,7 @@ func TestRunAuthRotationPipelineResume(t *testing.T) {
 			{EntityName: "client.rbd-mirror.node1", EntityType: "client", KeyType: "aes"},
 		}, nil
 	}
-	rotateManagedClientsFunc = func(ctx context.Context, targetKeyType string, progress *AuthRotationProgress) (ClientRotationResult, error) {
+	rotateManagedClientsFunc = func(ctx context.Context, s interfaces.StateInterface, targetKeyType string, progress *AuthRotationProgress) (ClientRotationResult, error) {
 		stages = append(stages, "rotate_clients")
 		assert.NotNil(t, progress)
 		assert.True(t, progress.MonRotated)
@@ -2345,7 +2445,7 @@ func TestRunAuthRotationPipelineResume(t *testing.T) {
 		StepProgress:  `{"mon_rotated":true,"rotated_members":["node-b","node-a"],"rotated_clients":["client.radosgw.gateway"]}`,
 	}
 
-	rec, err := runAuthRotationPipeline(context.Background(), nil, rec, "aes256k")
+	rec, err := runAuthRotationPipeline(context.Background(), nil, rec, "aes256k", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "completed", rec.State)
 	assert.Equal(t, []string{
@@ -2384,7 +2484,7 @@ func TestRunAuthRotationPipelineFailedState(t *testing.T) {
 		State:         database.AuthRotationStateInProgress,
 		Stage:         database.AuthRotationStageReadiness,
 	}
-	rec, err := runAuthRotationPipeline(context.Background(), nil, rec, "aes256k")
+	rec, err := runAuthRotationPipeline(context.Background(), nil, rec, "aes256k", nil)
 	require.Error(t, err)
 	assert.Equal(t, database.AuthRotationStateFailed, rec.State)
 	assert.Contains(t, rec.Detail, "auth preparation failed")
@@ -2402,7 +2502,7 @@ func TestRunAuthRotationPipelineFailedState(t *testing.T) {
 	inspectClientSessionAdvisoriesFunc = func(ctx context.Context, targetKeyType string) (map[string]string, error) {
 		return nil, nil
 	}
-	rotateSingleClientKeyFunc = func(ctx context.Context, clientName string, targetKeyType string) error {
+	rotateSingleClientKeyFunc = func(ctx context.Context, s interfaces.StateInterface, clientName string, targetKeyType string) error {
 		if clientName == "client.rbd-mirror.node1" {
 			return fmt.Errorf("keyring write failed")
 		}
@@ -2415,7 +2515,7 @@ func TestRunAuthRotationPipelineFailedState(t *testing.T) {
 		Stage:         database.AuthRotationStageRotateClients,
 		StepProgress:  `{"mon_rotated":true,"rotated_members":["node-a"]}`,
 	}
-	rec, err = runAuthRotationPipeline(context.Background(), nil, rec, "aes256k")
+	rec, err = runAuthRotationPipeline(context.Background(), nil, rec, "aes256k", nil)
 	require.Error(t, err)
 	assert.Equal(t, database.AuthRotationStateFailed, rec.State)
 	assert.Contains(t, rec.Detail, "client key rotation failed")
@@ -2472,7 +2572,7 @@ func TestRunAuthRotationPipelineAdminOptIn(t *testing.T) {
 		State:         database.AuthRotationStateInProgress,
 		Stage:         database.AuthRotationStageFinishSafely,
 	}
-	rec, err := runAuthRotationPipeline(context.Background(), nil, rec, "aes256k")
+	rec, err := runAuthRotationPipeline(context.Background(), nil, rec, "aes256k", nil)
 	require.NoError(t, err)
 	assert.Equal(t, database.AuthRotationStateBlocked, rec.State)
 	assert.Contains(t, rec.Blocker, "client.admin still uses cipher")
@@ -2493,7 +2593,7 @@ func TestRunAuthRotationPipelineAdminOptIn(t *testing.T) {
 		State:         database.AuthRotationStateInProgress,
 		Stage:         database.AuthRotationStageFinishSafely,
 	}
-	rec, err = runAuthRotationPipeline(context.Background(), nil, rec, "aes256k")
+	rec, err = runAuthRotationPipeline(context.Background(), nil, rec, "aes256k", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "completed", rec.State)
 	assert.True(t, finalized)
@@ -2512,7 +2612,7 @@ func TestRunSingleClientRotationAdminSubStep(t *testing.T) {
 		adminRotated = true
 		return nil
 	}
-	rotateSingleClientKeyFunc = func(ctx context.Context, clientName string, targetKeyType string) error {
+	rotateSingleClientKeyFunc = func(ctx context.Context, s interfaces.StateInterface, clientName string, targetKeyType string) error {
 		t.Error("admin rotation must route to the protected admin rotation")
 		return fmt.Errorf("must not be called")
 	}
@@ -2524,26 +2624,37 @@ func TestRunSingleClientRotationAdminSubStep(t *testing.T) {
 		Stage:         database.AuthRotationStageReadiness,
 		ClientName:    "client.admin",
 	}
-	rec, err := runSingleClientRotation(context.Background(), nil, rec, "client.admin", "aes256k")
+	rec, err := runSingleClientRotation(context.Background(), nil, rec, "client.admin", "aes256k", nil)
 	require.NoError(t, err)
 	assert.True(t, adminRotated)
 	assert.Equal(t, database.AuthRotationStateCompleted, rec.State)
 
 	// 2. Sub-step of an incomplete full run (record filter empty because the
-	//    pipeline no longer rotates client.admin itself): the record is handed
-	//    back to the full pipeline in_progress at its own stage, not completed.
+	//    pipeline no longer rotates client.admin itself): the admin rotation
+	//    completes and the paused pipeline resumes from its own stage, so the
+	//    triggering command (which tracks the record until it leaves
+	//    in_progress) can observe completion instead of waiting forever.
 	rec = &database.AuthRotationRecord{
 		TargetKeyType: "aes256k",
 		State:         database.AuthRotationStateBlocked,
 		Stage:         database.AuthRotationStageFinishSafely,
 		Blocker:       "client.admin still uses cipher",
 	}
-	rec, err = runSingleClientRotation(context.Background(), nil, rec, "client.admin", "aes256k")
+	pipelineResumed := false
+	origPipeline := runAuthRotationPipelineFunc
+	defer func() { runAuthRotationPipelineFunc = origPipeline }()
+	runAuthRotationPipelineFunc = func(ctx context.Context, s interfaces.StateInterface, rec *database.AuthRotationRecord, resolvedKeyType string, lockToken func() int64) (*database.AuthRotationRecord, error) {
+		pipelineResumed = true
+		assert.Equal(t, database.AuthRotationStageFinishSafely, rec.Stage, "the resume must start from the paused stage")
+		assert.Empty(t, rec.Blocker, "the admin blocker must be cleared before resuming")
+		rec.State = database.AuthRotationStateCompleted
+		return rec, nil
+	}
+	rec, err = runSingleClientRotation(context.Background(), nil, rec, "client.admin", "aes256k", nil)
 	require.NoError(t, err)
 	assert.True(t, adminRotated)
-	assert.Equal(t, database.AuthRotationStateInProgress, rec.State)
-	assert.Equal(t, database.AuthRotationStageFinishSafely, rec.Stage, "the full run's stage must not be clobbered")
-	assert.Empty(t, rec.Blocker)
+	assert.True(t, pipelineResumed, "the sub-step must resume the paused pipeline so its completion is observable")
+	assert.Equal(t, database.AuthRotationStateCompleted, rec.State)
 }
 
 func TestUpdateAdminKeyringFiles(t *testing.T) {
@@ -2583,6 +2694,7 @@ func TestUpdateAdminKeyringFiles(t *testing.T) {
 
 func TestVersionSupportsAES256K(t *testing.T) {
 	cases := map[string]bool{
+		// Bare release numbers.
 		"18.2.4":  false,
 		"19.2.0":  false,
 		"19.2.5":  false,
@@ -2598,6 +2710,17 @@ func TestVersionSupportsAES256K(t *testing.T) {
 		"19.2":    false, // incomplete version string
 		"garbage": false,
 		"":        false,
+
+		// The actual 'ceph versions -f json' key format: full ceph_version
+		// metadata strings, not bare releases.
+		"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)":    true,
+		"ceph version 19.2.5 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) squid (stable)":    false,
+		"ceph version 20.2.3 (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) tentacle (stable)": false,
+		"ceph version 20.2.4 (cccccccccccccccccccccccccccccccccccccccc) tentacle (stable)": true,
+		"ceph version 18.2.4 (dddddddddddddddddddddddddddddddddddddddd) reef (stable)":     false,
+		// Distro build suffixes ride on the patch number and must not break parsing.
+		"ceph version 19.2.6-0ubuntu0.24.04 (eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee) squid (stable)": true,
+		"ceph version squid (stable)": false,
 	}
 
 	for version, expected := range cases {
@@ -2606,19 +2729,20 @@ func TestVersionSupportsAES256K(t *testing.T) {
 }
 
 func TestCheckDaemonVersionsSupportAES256K(t *testing.T) {
-	// Every daemon on a supporting release: passes.
+	// Every daemon on a supporting release: passes. Keys use the actual
+	// 'ceph versions -f json' format, full ceph_version metadata strings.
 	err := checkDaemonVersionsSupportAES256K(`{
-		"mon": {"19.2.6": 1},
-		"mgr": {"19.2.6": 1},
-		"osd": {"19.2.6": 3, "20.2.4": 1},
-		"overall": {"19.2.6": 5, "20.2.4": 1}
+		"mon": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 1},
+		"mgr": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 1},
+		"osd": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 3, "ceph version 20.2.4 (cccccccccccccccccccccccccccccccccccccccc) tentacle (stable)": 1},
+		"overall": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 5, "ceph version 20.2.4 (cccccccccccccccccccccccccccccccccccccccc) tentacle (stable)": 1}
 	}`)
 	require.NoError(t, err)
 
 	// One daemon type on a release that predates the cipher: named in the error.
 	err = checkDaemonVersionsSupportAES256K(`{
-		"mon": {"19.2.6": 1},
-		"osd": {"19.2.6": 2, "19.2.5": 1}
+		"mon": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 1},
+		"osd": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 2, "ceph version 19.2.5 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) squid (stable)": 1}
 	}`)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "osd")
@@ -2629,12 +2753,14 @@ func TestCheckDaemonVersionsSupportAES256K(t *testing.T) {
 func TestCheckCipherCompatibilityAES256K(t *testing.T) {
 	r := mocks.NewRunner(t)
 	common.ProcessExec = r
+	origProcessExec := common.ProcessExec
+	t.Cleanup(func() { common.ProcessExec = origProcessExec })
 
 	featureOutput := `{
 		"persistent": [{"features": "0x...", "names": ["cephx_auth_aes256k"]}]
 	}`
-	versionsSupported := `{"mon": {"19.2.6": 1}, "osd": {"19.2.6": 3}}`
-	versionsMixed := `{"mon": {"19.2.6": 1}, "osd": {"19.2.6": 2, "19.2.5": 1}}`
+	versionsSupported := `{"mon": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 1}, "osd": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 3}}`
+	versionsMixed := `{"mon": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 1}, "osd": {"ceph version 19.2.6 (7c92624ce5e2f7e1e5e1a1b2c3d4e5f6a7b8c9d0) squid (stable)": 2, "ceph version 19.2.5 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) squid (stable)": 1}}`
 
 	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "feature", "ls", "-f", "json").
 		Return(featureOutput, nil).Maybe()
@@ -2654,7 +2780,7 @@ func TestCheckCipherCompatibilityAES256K(t *testing.T) {
 		Return(versionsMixed, nil).Once()
 	err = checkCipherCompatibility(context.Background(), "aes256k")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "osd daemons on release 19.2.5")
+	assert.Contains(t, err.Error(), "osd daemons on release ceph version 19.2.5")
 
 	// Monitors without the cephx_auth_aes256k feature (e.g. 19.2.0-19.2.5 or
 	// 20.2.0-20.2.3 share their major with supporting point releases):
@@ -2726,4 +2852,612 @@ func TestResolveRotationTargetKeyType(t *testing.T) {
 
 	// Resolution must only have run for the non-inherit cases.
 	assert.Equal(t, []string{"aes256k", "", ""}, resolveCalls)
+}
+
+func TestRotateSingleClientKeyDistributesToConsumers(t *testing.T) {
+	origPending := getOrCreatePendingKeyFunc
+	origDump := dumpAuthKeysFunc
+	origConsumers := clientConsumerMembersFunc
+	origDistribute := distributeClientKeyringsFunc
+	origCommit := commitPendingKeyFunc
+	origGetKeyring := getEntityKeyringFunc
+	defer func() {
+		getOrCreatePendingKeyFunc = origPending
+		dumpAuthKeysFunc = origDump
+		clientConsumerMembersFunc = origConsumers
+		distributeClientKeyringsFunc = origDistribute
+		commitPendingKeyFunc = origCommit
+		getEntityKeyringFunc = origGetKeyring
+	}()
+
+	newKey := "AQB0ZXN0bmV3a2V5AQIDBAUGBwgJCgsMDQ4PAA=="
+	committedKeyring := "[client.radosgw.gateway]\n\tkey = " + newKey + "\n"
+
+	getOrCreatePendingKeyFunc = func(ctx context.Context, entity string) (string, error) {
+		assert.Equal(t, "client.radosgw.gateway", entity)
+		return newKey, nil
+	}
+	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
+		return []AuthKeyEntry{
+			{EntityName: "client.radosgw.gateway", EntityType: "client", KeyType: "aes", PendingKeyType: "aes256k"},
+		}, nil
+	}
+	// Shared credential: consumed by the coordinator (node-a) and node-b.
+	clientConsumerMembersFunc = func(ctx context.Context, s interfaces.StateInterface, entity string) ([]string, error) {
+		assert.Equal(t, "client.radosgw.gateway", entity)
+		return []string{"node-a", "node-b"}, nil
+	}
+
+	log := []string{}
+	commitPendingKeyFunc = func(ctx context.Context, entity string) error {
+		log = append(log, "commit")
+		assert.Equal(t, "client.radosgw.gateway", entity)
+		return nil
+	}
+	getEntityKeyringFunc = func(ctx context.Context, entity string) (string, error) {
+		log = append(log, "fetch-committed")
+		return committedKeyring, nil
+	}
+	distributeClientKeyringsFunc = func(ctx context.Context, s interfaces.StateInterface, localMember string, entity string, pendingSecret string, finalKeyring string, activate bool) (map[string]bool, error) {
+		if pendingSecret != "" {
+			// Pre-commit deployment: must happen before the commit.
+			assert.NotContains(t, log, "commit", "pending keyring must be deployed before the commit retires the old key")
+			assert.Equal(t, newKey, pendingSecret)
+			assert.True(t, activate)
+		} else {
+			assert.Equal(t, committedKeyring, finalKeyring)
+			assert.False(t, activate)
+		}
+		log = append(log, "deploy-pending")
+		return map[string]bool{"node-a": true, "node-b": true}, nil
+	}
+
+	err := RotateSingleClientKey(context.Background(), nil, "client.radosgw.gateway", "aes256k")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"deploy-pending", "commit", "fetch-committed", "deploy-pending"}, log)
+}
+
+func TestRotateSingleClientKeyConsumerNotConfirmed(t *testing.T) {
+	origPending := getOrCreatePendingKeyFunc
+	origDump := dumpAuthKeysFunc
+	origConsumers := clientConsumerMembersFunc
+	origDistribute := distributeClientKeyringsFunc
+	origCommit := commitPendingKeyFunc
+	defer func() {
+		getOrCreatePendingKeyFunc = origPending
+		dumpAuthKeysFunc = origDump
+		clientConsumerMembersFunc = origConsumers
+		distributeClientKeyringsFunc = origDistribute
+		commitPendingKeyFunc = origCommit
+	}()
+
+	newKey := "AQB0ZXN0bmV3a2V5AQIDBAUGBwgJCgsMDQ4PAA=="
+	getOrCreatePendingKeyFunc = func(ctx context.Context, entity string) (string, error) {
+		return newKey, nil
+	}
+	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
+		return []AuthKeyEntry{
+			{EntityName: "client.radosgw.gateway", EntityType: "client", KeyType: "aes", PendingKeyType: "aes256k"},
+		}, nil
+	}
+	clientConsumerMembersFunc = func(ctx context.Context, s interfaces.StateInterface, entity string) ([]string, error) {
+		return []string{"node-a", "node-b", "node-c"}, nil
+	}
+	// node-c never confirms deployment (e.g. unreachable or stale service
+	// record): the rotation must refuse to commit, leaving the old key active.
+	distributeClientKeyringsFunc = func(ctx context.Context, s interfaces.StateInterface, localMember string, entity string, pendingSecret string, finalKeyring string, activate bool) (map[string]bool, error) {
+		return map[string]bool{"node-a": true, "node-b": true}, nil
+	}
+	commitCalled := false
+	commitPendingKeyFunc = func(ctx context.Context, entity string) error {
+		commitCalled = true
+		return nil
+	}
+
+	err := RotateSingleClientKey(context.Background(), nil, "client.radosgw.gateway", "aes256k")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "node-c did not confirm deployment")
+	assert.Contains(t, err.Error(), "not committing")
+	assert.False(t, commitCalled, "commit must not run when a consumer has not received the key")
+}
+
+func TestClientConsumerMembers(t *testing.T) {
+	origGetServices := getServicesFunc
+	defer func() { getServicesFunc = origGetServices }()
+
+	// RGW: shared credential, consumers from the services table.
+	getServicesFunc = func(ctx context.Context, tx *sql.Tx, filters ...database.ServiceFilter) ([]database.Service, error) {
+		return []database.Service{
+			{Member: "node-a", Service: "rgw"},
+			{Member: "node-b", Service: "rgw"},
+		}, nil
+	}
+	state := &mocks.StateInterface{}
+	mockDB := &mocks.MockDB{TxFn: func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+		return f(ctx, &sql.Tx{})
+	}}
+	state.On("ClusterState").Return(&mocks.MockState{ClusterName: "node-a", DBObj: mockDB}).Maybe()
+
+	consumers, err := clientConsumerMembers(context.Background(), state, "client.radosgw.gateway")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node-a", "node-b"}, consumers)
+
+	// Member-specific credentials: the consumer is named in the entity.
+	consumers, err = clientConsumerMembers(context.Background(), nil, "client.nfs.abc-123.node-b")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node-b"}, consumers)
+
+	consumers, err = clientConsumerMembers(context.Background(), nil, "client.rbd-mirror.node-b")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node-b"}, consumers)
+
+	consumers, err = clientConsumerMembers(context.Background(), nil, "client.cephfs-mirror.node-c")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node-c"}, consumers)
+
+	// Bootstrap keys have no persistent consumers.
+	consumers, err = clientConsumerMembers(context.Background(), nil, "client.bootstrap-osd")
+	require.NoError(t, err)
+	assert.Empty(t, consumers)
+}
+
+func TestMemberConsumesEntity(t *testing.T) {
+	origGetServices := getServicesFunc
+	defer func() { getServicesFunc = origGetServices }()
+
+	// Hostname-suffixed entities only match the member they name.
+	assert.True(t, memberConsumesEntity(context.Background(), nil, "node-b", "client.nfs.abc-123.node-b"))
+	assert.False(t, memberConsumesEntity(context.Background(), nil, "node-a", "client.nfs.abc-123.node-b"))
+	assert.True(t, memberConsumesEntity(context.Background(), nil, "node-b", "client.rbd-mirror.node-b"))
+	assert.False(t, memberConsumesEntity(context.Background(), nil, "node-a", "client.rbd-mirror.node-b"))
+	assert.True(t, memberConsumesEntity(context.Background(), nil, "node-c", "client.cephfs-mirror.node-c"))
+	assert.False(t, memberConsumesEntity(context.Background(), nil, "node-a", "client.cephfs-mirror.node-c"))
+
+	// The shared rgw gateway requires the rgw service record.
+	state := &mocks.StateInterface{}
+	mockDB := &mocks.MockDB{TxFn: func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+		return f(ctx, &sql.Tx{})
+	}}
+	state.On("ClusterState").Return(&mocks.MockState{ClusterName: "node-a", DBObj: mockDB}).Maybe()
+
+	getServicesFunc = func(ctx context.Context, tx *sql.Tx, filters ...database.ServiceFilter) ([]database.Service, error) {
+		for _, f := range filters {
+			if f.Member != nil && *f.Member == "node-a" && f.Service != nil && *f.Service == "rgw" {
+				return []database.Service{{Member: "node-a", Service: "rgw"}}, nil
+			}
+		}
+		return nil, nil
+	}
+	assert.True(t, memberConsumesEntity(context.Background(), state, "node-a", "client.radosgw.gateway"))
+	assert.False(t, memberConsumesEntity(context.Background(), state, "node-b", "client.radosgw.gateway"))
+
+	// Without cluster state the service check answers yes (unit-test path).
+	assert.True(t, memberConsumesEntity(context.Background(), nil, "node-x", "client.radosgw.gateway"))
+}
+
+func TestDeployClientKeyringsOwnership(t *testing.T) {
+	// Sandbox the snap paths.
+	tmpDir := t.TempDir()
+	t.Setenv("SNAP_COMMON", tmpDir)
+	t.Setenv("SNAP_DATA", filepath.Join(tmpDir, "current"))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "current", "conf", "ganesha"), 0755))
+
+	origConsumes := memberConsumesEntityFunc
+	origRestart := snapRestartFunc
+	origCheckActive := snapCheckActiveFunc
+	defer func() {
+		memberConsumesEntityFunc = origConsumes
+		snapRestartFunc = origRestart
+		snapCheckActiveFunc = origCheckActive
+	}()
+
+	// memberConsumesEntity real logic drives the gating; use the real function.
+	memberConsumesEntityFunc = memberConsumesEntity
+	snapRestartFunc = func(service string, isReload bool) error {
+		return nil
+	}
+	snapCheckActiveFunc = func(service string) error {
+		return nil
+	}
+
+	secret := "AQB0ZXN0c2VjcmV0AQIDBAUGBwgJCgsMDQ4PAA=="
+	ganeshaKeyring := filepath.Join(tmpDir, "current", "conf", "ganesha", "keyring")
+	// Node A already holds its own NFS keyring (the reported reproduction:
+	// rotating node B's identity must not replace it with a section for
+	// node B).
+	nodeAKeyring := "[client.nfs.abc-123.node-a]\n\tkey = AQBub2RlYWtleQIDBAUGBwgJCgsMDQ4PAA==\n"
+	require.NoError(t, os.WriteFile(ganeshaKeyring, []byte(nodeAKeyring), 0600))
+
+	// Rotating node B's identity on node A must not touch node A's ganesha
+	// keyring (the reported NFS ownership bug).
+	deployed, err := DeployClientKeyrings(context.Background(), nil, "node-a",
+		map[string]string{"client.nfs.abc-123.node-b": secret}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, deployed)
+	content, err := os.ReadFile(ganeshaKeyring)
+	require.NoError(t, err)
+	assert.Equal(t, nodeAKeyring, string(content), "node A's ganesha keyring must be untouched by node B's entity")
+
+	// Node B deploys its own identity.
+	deployed, err = DeployClientKeyrings(context.Background(), nil, "node-b",
+		map[string]string{"client.nfs.abc-123.node-b": secret}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"client.nfs.abc-123.node-b"}, deployed)
+	content, err = os.ReadFile(ganeshaKeyring)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), secret)
+}
+
+func TestWaitLoopsBoundedOnHungSubprocess(t *testing.T) {
+	origBound := cephCallTimeout
+	origQuorum := getMonQuorumNamesFunc
+	origMGR := mgrActiveOrStandbyFunc
+	origMDS := mdsUpFunc
+	origOSD := isOSDUpFunc
+	defer func() {
+		cephCallTimeout = origBound
+		getMonQuorumNamesFunc = origQuorum
+		mgrActiveOrStandbyFunc = origMGR
+		mdsUpFunc = origMDS
+		isOSDUpFunc = origOSD
+	}()
+
+	// Shrink the per-call bound so the test stays fast; the reported hang was
+	// an unbounded subprocess under the rotation's background context.
+	cephCallTimeout = 50 * time.Millisecond
+
+	// Simulate a hung ceph CLI (e.g. 'mon stat' blocked on lost quorum): the
+	// check only returns when its context is cancelled.
+	hung := func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	getMonQuorumNamesFunc = func(ctx context.Context) ([]string, error) {
+		return nil, hung(ctx)
+	}
+	mgrActiveOrStandbyFunc = func(ctx context.Context, member string) (bool, error) {
+		return false, hung(ctx)
+	}
+	mdsUpFunc = func(ctx context.Context, mdsName string) (bool, error) {
+		return false, hung(ctx)
+	}
+	isOSDUpFunc = func(ctx context.Context, osdID int64) (bool, error) {
+		return false, hung(ctx)
+	}
+
+	// Each wait must return after its (tiny) readiness budget instead of
+	// blocking forever inside the hung subprocess call.
+	start := time.Now()
+	err := waitForMonQuorum(context.Background(), "node-a", 10*time.Millisecond)
+	elapsed := time.Since(start)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not rejoin quorum within")
+	assert.Less(t, elapsed, 5*time.Second, "the wait must not block on a hung subprocess")
+
+	start = time.Now()
+	err = waitForMGRReady(context.Background(), "node-a", 10*time.Millisecond)
+	elapsed = time.Since(start)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not become ready within")
+	assert.Less(t, elapsed, 5*time.Second, "the wait must not block on a hung subprocess")
+
+	start = time.Now()
+	err = waitForMDSReady(context.Background(), "node-a", 10*time.Millisecond)
+	elapsed = time.Since(start)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not become ready within")
+	assert.Less(t, elapsed, 5*time.Second, "the wait must not block on a hung subprocess")
+
+	start = time.Now()
+	err = waitForOSDUp(context.Background(), 0, 10*time.Millisecond)
+	elapsed = time.Since(start)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not come up within")
+	assert.Less(t, elapsed, 5*time.Second, "the wait must not block on a hung subprocess")
+}
+
+func TestWaitLoopsAbortOnCancelledRotation(t *testing.T) {
+	origBound := cephCallTimeout
+	origQuorum := getMonQuorumNamesFunc
+	defer func() {
+		cephCallTimeout = origBound
+		getMonQuorumNamesFunc = origQuorum
+	}()
+
+	cephCallTimeout = 50 * time.Millisecond
+	getMonQuorumNamesFunc = func(ctx context.Context) ([]string, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	// A cancelled rotation context (--abort, or the lock heartbeat lost) must
+	// unblock the wait immediately instead of waiting out the budget.
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	err := waitForMonQuorum(ctx, "node-a", time.Minute)
+	elapsed := time.Since(start)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, elapsed, 5*time.Second, "cancellation must unblock the wait")
+}
+
+// blockingRunner simulates a ceph CLI invocation that hangs (e.g. 'mon stat'
+// blocked on lost quorum) and only unblocks when its context is cancelled.
+type blockingRunner struct{}
+
+func (b *blockingRunner) RunCommand(name string, arg ...string) (string, error) {
+	return "", fmt.Errorf("not used")
+}
+
+func (b *blockingRunner) RunCommandContext(ctx context.Context, name string, arg ...string) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+func TestReadinessStageBoundedOnHungSubprocess(t *testing.T) {
+	origBound := cephCallTimeout
+	origMonmap := getMonmapNamesFunc
+	origQuorum := getMonQuorumNamesFunc
+	origExec := common.ProcessExec
+	defer func() {
+		cephCallTimeout = origBound
+		getMonmapNamesFunc = origMonmap
+		getMonQuorumNamesFunc = origQuorum
+		common.ProcessExec = origExec
+	}()
+
+	// The report's smoke: a tiny readiness budget with a hung subprocess must
+	// return at the per-call bound, not block until some outside deadline.
+	cephCallTimeout = 50 * time.Millisecond
+
+	// checkMonQuorumReady: both mon queries hang.
+	hung := func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	getMonmapNamesFunc = func(ctx context.Context) ([]string, error) {
+		return nil, hung(ctx)
+	}
+	getMonQuorumNamesFunc = func(ctx context.Context) ([]string, error) {
+		return nil, hung(ctx)
+	}
+
+	start := time.Now()
+	err := checkMonQuorumReady(context.Background())
+	elapsed := time.Since(start)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get monitor map")
+	assert.Less(t, elapsed, 5*time.Second, "the readiness check must not block on a hung subprocess")
+
+	// checkCipherCompatibility: the mon feature query hangs via the real
+	// subprocess runner path.
+	common.ProcessExec = &blockingRunner{}
+	err = checkCipherCompatibility(context.Background(), "aes256k")
+	elapsed = time.Since(start)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch monitor features")
+	assert.Less(t, elapsed, 5*time.Second, "the readiness check must not block on a hung subprocess")
+}
+
+func TestRunAuthRotationPipelineFailurePersistSurvivesCancellation(t *testing.T) {
+	origReadiness := checkAuthRotationReadinessFunc
+	defer func() { checkAuthRotationReadinessFunc = origReadiness }()
+
+	// The report's scenario: the lock heartbeat failed and cancelled the
+	// rotation context; the interrupted stage returns and the outcome must
+	// still be persisted — on a fresh bounded context, not the cancelled one,
+	// or the record would stay in_progress with status describing a live run.
+	checkAuthRotationReadinessFunc = func(ctx context.Context, s interfaces.StateInterface, targetKeyType string) error {
+		return fmt.Errorf("mon unreachable")
+	}
+
+	// Capture every database transaction's context error at call time: stage
+	// writes run on the (cancelled) rotation context, the outcome persist
+	// must run on a context that is still live when the transaction starts.
+	var txErrs []error
+	mockDB := &mocks.MockDB{TxFn: func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+		txErrs = append(txErrs, ctx.Err())
+		// Do not run f: it would execute SQL against a fake tx. The invocation
+		// itself is what this wiring test asserts.
+		return nil
+	}}
+	state := &mocks.StateInterface{}
+	state.On("ClusterState").Return(&mocks.MockState{ClusterName: "node-a", DBObj: mockDB}).Maybe()
+
+	rec := &database.AuthRotationRecord{
+		TargetKeyType: "aes256k",
+		State:         database.AuthRotationStateInProgress,
+		Stage:         database.AuthRotationStageReadiness,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	rec, err := runAuthRotationPipeline(ctx, state, rec, "aes256k", func() int64 { return 1234 })
+	require.Error(t, err)
+	assert.Equal(t, database.AuthRotationStateFailed, rec.State)
+	assert.Contains(t, rec.Detail, "readiness check failed")
+
+	// The outcome persist must have run on a fresh, bounded, uncancelled
+	// context — at least one transaction after the cancelled stage writes.
+	// The last transaction is the outcome persist: its context must still be
+	// live when it starts (persistRotationRecord's own cancel happens after
+	// the transaction, so the error is captured inside the callback).
+	require.NotEmpty(t, txErrs)
+	assert.Nil(t, txErrs[len(txErrs)-1],
+		"the failure outcome must be persisted on a fresh context, not the cancelled rotation context")
+}
+
+func TestRunSingleClientRotationFailurePersistSurvivesCancellation(t *testing.T) {
+	origAdmin := rotateAdminKeyFunc
+	defer func() { rotateAdminKeyFunc = origAdmin }()
+
+	// Single-client failure branch with the rotation context already
+	// cancelled (heartbeat lost): the blocked outcome must still be recorded.
+	rotateAdminKeyFunc = func(ctx context.Context, s interfaces.StateInterface, targetKeyType string) error {
+		return fmt.Errorf("mon unreachable")
+	}
+
+	var txErrs []error
+	mockDB := &mocks.MockDB{TxFn: func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+		txErrs = append(txErrs, ctx.Err())
+		return nil
+	}}
+	state := &mocks.StateInterface{}
+	state.On("ClusterState").Return(&mocks.MockState{ClusterName: "node-a", DBObj: mockDB}).Maybe()
+
+	rec := &database.AuthRotationRecord{
+		TargetKeyType: "aes256k",
+		State:         database.AuthRotationStateInProgress,
+		Stage:         database.AuthRotationStageProtectAdmin,
+		ClientName:    "client.admin",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := runSingleClientRotation(ctx, state, rec, "client.admin", "aes256k", func() int64 { return 1234 })
+	require.Error(t, err)
+	assert.Equal(t, database.AuthRotationStateBlocked, rec.State)
+	assert.Contains(t, rec.Blocker, "mon unreachable")
+
+	require.NotEmpty(t, txErrs)
+	assert.Nil(t, txErrs[len(txErrs)-1],
+		"the failure outcome must be persisted on a fresh context, not the cancelled rotation context")
+}
+
+func TestBuildAuthStatusRecordErrors(t *testing.T) {
+	origDump := dumpAuthKeysFunc
+	defer func() { dumpAuthKeysFunc = origDump }()
+	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
+		return []AuthKeyEntry{}, nil
+	}
+
+	// 1. A database read failure must surface as an error: a stateless
+	//    response would be treated as terminal by the CLI's poll and reported
+	//    as a completed rotation while the rotation may still be running.
+	readFailed := &mocks.MockDB{TxFn: func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+		return fmt.Errorf("database unavailable")
+	}}
+	state := &mocks.StateInterface{}
+	state.On("ClusterState").Return(&mocks.MockState{ClusterName: "node-a", DBObj: readFailed}).Maybe()
+
+	_, err := BuildAuthStatus(context.Background(), state)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read auth rotation record")
+
+	// 2. A transaction that succeeds without yielding a state must not pass
+	//    as a usable status either.
+	emptyRead := &mocks.MockDB{TxFn: func(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+		// Simulate a read that "succeeded" without populating the state.
+		return nil
+	}}
+	state2 := &mocks.StateInterface{}
+	state2.On("ClusterState").Return(&mocks.MockState{ClusterName: "node-a", DBObj: emptyRead}).Maybe()
+
+	_, err = BuildAuthStatus(context.Background(), state2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "returned no state")
+}
+
+// sqliteTxAdapter adapts a *sql.DB to the microcluster DB interface, running
+// each Transaction on its own sql.Tx. Used to exercise the detached rotation
+// path (which requires a working database) against in-memory SQLite.
+type sqliteTxAdapter struct {
+	mcTypes.DB
+	db *sql.DB
+}
+
+func (a *sqliteTxAdapter) Transaction(ctx context.Context, f func(context.Context, *sql.Tx) error) error {
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := f(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// newAuthRotationSQLiteDB opens an in-memory SQLite database with the
+// auth_rotation schema applied, for tests that exercise the detached
+// rotation path.
+func newAuthRotationSQLiteDB(t *testing.T) *sql.DB {
+	t.Helper()
+
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	// A single connection keeps the :memory: database shared across handles.
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(t, db.Ping())
+
+	// The last schema extension creates the auth_rotation table.
+	applyAuthRotation := database.SchemaExtensions[len(database.SchemaExtensions)-1]
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	require.NoError(t, applyAuthRotation(context.Background(), tx))
+	require.NoError(t, tx.Commit())
+
+	return db
+}
+
+func TestExecuteAuthRotationReturnsIndependentSnapshot(t *testing.T) {
+	db := newAuthRotationSQLiteDB(t)
+
+	origResolve := resolveTargetKeyTypeFunc
+	origDump := dumpAuthKeysFunc
+	origAdmin := rotateAdminKeyFunc
+	defer func() {
+		resolveTargetKeyTypeFunc = origResolve
+		dumpAuthKeysFunc = origDump
+		rotateAdminKeyFunc = origAdmin
+	}()
+
+	resolveTargetKeyTypeFunc = func(ctx context.Context, requestedType string) (string, error) {
+		return "aes256k", nil
+	}
+	dumpAuthKeysFunc = func(ctx context.Context) ([]AuthKeyEntry, error) {
+		return []AuthKeyEntry{
+			{EntityName: "client.admin", EntityType: "client", KeyType: "aes"},
+		}, nil
+	}
+
+	// The worker rotates the admin key while the test holds the returned
+	// snapshot; releasing it lets the worker finish.
+	workerRotating := make(chan struct{})
+	release := make(chan struct{})
+	rotateAdminKeyFunc = func(ctx context.Context, s interfaces.StateInterface, targetKeyType string) error {
+		close(workerRotating)
+		<-release
+		return nil
+	}
+
+	state := interfaces.CephState{State: &mocks.MockState{ClusterName: "node-a", DBObj: &sqliteTxAdapter{db: db}}}
+
+	rec, err := ExecuteAuthRotation(context.Background(), state, "aes256k", "client.admin")
+	require.NoError(t, err)
+
+	// The worker is mid-rotation and has already advanced the original
+	// record's stage (setStage persisted protect_admin); the returned record
+	// must still carry the initialized values, proving it is an independent
+	// snapshot rather than the worker's mutated record.
+	<-workerRotating
+	assert.Equal(t, database.AuthRotationStateInProgress, rec.State)
+	assert.Equal(t, database.AuthRotationStageReadiness, rec.Stage,
+		"the response must be the initialized snapshot, not the worker's mutated record")
+	assert.Equal(t, "client.admin", rec.ClientName)
+	assert.Equal(t, "aes256k", rec.TargetKeyType)
+
+	// Let the worker finish and confirm its outcome landed in the database.
+	close(release)
+	require.Eventually(t, func() bool {
+		var stateStr string
+		err := db.QueryRow(`SELECT state FROM auth_rotation WHERE id = 1`).Scan(&stateStr)
+		return err == nil && stateStr == database.AuthRotationStateCompleted
+	}, 5*time.Second, 10*time.Millisecond)
 }

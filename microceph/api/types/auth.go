@@ -44,6 +44,30 @@ type MemberAuthRotateRequest struct {
 	Skip []string `json:"skip,omitempty" yaml:"skip,omitempty"`
 }
 
+// MemberClientRotateRequest is the per-member client keyring deployment request:
+// the coordinator sends pending keyrings to consumer members before committing a
+// client credential rotation, and committed keyrings afterwards for finalization.
+// Members that do not consume a given entity skip it.
+type MemberClientRotateRequest struct {
+	// PendingKeys maps client entity names to the pending secret each member
+	// must render into a loadable keyring, write to its local consumer paths,
+	// and activate by restarting the associated service. Sent before the
+	// coordinator commits the rotation.
+	PendingKeys map[string]string `json:"pending_keys,omitempty" yaml:"pending_keys,omitempty"`
+	// Finalize maps client entity names to the committed keyring content
+	// written after the coordinator committed the rotation (no restart: the
+	// service already authenticated with the pending key).
+	Finalize map[string]string `json:"finalize,omitempty" yaml:"finalize,omitempty"`
+}
+
+// MemberClientRotateResponse reports which client entities a member deployed
+// locally, so the coordinator can verify that every consumer received the new
+// keyring before committing the rotation.
+type MemberClientRotateResponse struct {
+	Hostname        string   `json:"hostname" yaml:"hostname"`
+	DeployedClients []string `json:"deployed_clients,omitempty" yaml:"deployed_clients,omitempty"`
+}
+
 // MemberAuthRotateResponse reports which of a member's own daemons were rotated.
 type MemberAuthRotateResponse struct {
 	Hostname     string   `json:"hostname" yaml:"hostname"`

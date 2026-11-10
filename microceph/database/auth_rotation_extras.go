@@ -316,6 +316,27 @@ UPDATE auth_rotation SET apply_lock_token = 0 WHERE id = 1 AND apply_lock_token 
 	return rows == 1, nil
 }
 
+// PersistRotationRecordIfLocked atomically verifies that the rotation lock is
+// still held by the given token and writes the record in the same
+// transaction. A worker that lost the lock to a newer attempt (stale-lease
+// reclaim) must not overwrite the new attempt's record, so the check and the
+// write cannot be separated. Returns whether the write happened.
+func PersistRotationRecordIfLocked(ctx context.Context, tx *sql.Tx, token int64, rec AuthRotationRecord) (bool, error) {
+	var current int64
+	if err := tx.QueryRowContext(ctx, `SELECT apply_lock_token FROM auth_rotation WHERE id = 1`).Scan(&current); err != nil {
+		return false, fmt.Errorf("failed to read the rotation lock token: %w", err)
+	}
+	if current != token {
+		return false, nil
+	}
+
+	if err := SetAuthRotation(ctx, tx, rec); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 // RenewAuthRotationLock renews the rotation lock lease held by the given
 // token, moving the holder's timestamp forward so long-running rotations are
 // not treated as stale. It returns false when the lock is no longer held by

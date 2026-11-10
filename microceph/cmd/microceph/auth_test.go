@@ -300,3 +300,34 @@ func TestWatchAuthRotation(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "keeps running in the background")
 }
+
+func TestAuthRotationTerminalError(t *testing.T) {
+	// 1. Completed is the only success.
+	err := authRotationTerminalError("completed", "", "")
+	require.NoError(t, err)
+
+	// 2. Blocked prints the pause message and exits with the distinct code.
+	var blocked *exitCodeError
+	output := captureStdout(t, func() {
+		blocked, _ = authRotationTerminalError("blocked", "Unmanaged credentials", "").(*exitCodeError)
+	})
+	require.NotNil(t, blocked, "blocked must surface the exit-code error")
+	assert.Equal(t, authRotationBlockedExitCode, blocked.code)
+	assert.Contains(t, output, "Rotation paused: Unmanaged credentials")
+
+	// 3. Failed carries the detail.
+	failed := authRotationTerminalError("failed", "", "safe finalization failed")
+	require.Error(t, failed)
+	assert.Contains(t, failed.Error(), "auth rotation failed")
+	assert.Contains(t, failed.Error(), "safe finalization failed")
+
+	// 4. Any other terminal value (idle, empty) must NOT be reported as
+	//    success: a transient status failure during the poll would otherwise
+	//    pass as a completed rotation while it is still unfinished.
+	for _, state := range []string{"", "idle", "in_progress", "something-new"} {
+		err := authRotationTerminalError(state, "", "")
+		require.Error(t, err, state)
+		assert.Contains(t, err.Error(), "instead of completing", state)
+		assert.Contains(t, err.Error(), "check 'microceph auth status'", state)
+	}
+}

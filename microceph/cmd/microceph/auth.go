@@ -74,9 +74,8 @@ client.admin is NOT rotated automatically: its key is shared beyond this
 cluster — it is distributed through the ceph-conf content interface (e.g. to
 MicroCloud's LXD) and often copied to other nodes — and holders that already
 loaded it into memory cannot re-authenticate once their ticket expires.
-Rotate it explicitly with --client client.admin when you are ready; a full
-run pauses before disallowing insecure ciphers until then, and re-running
-this command afterwards resumes and finishes.
+Rotate it explicitly with --client client.admin when you are ready; the
+paused full run then resumes and finishes automatically.
 
 Use --abort to clear an incomplete rotation (blocked or failed, e.g. a
 --client filter whose rotation cannot succeed, or a key type you no longer
@@ -124,6 +123,29 @@ func watchAuthRotation(ctx context.Context, poll func() (*types.AuthStatusRespon
 		if status.State != "in_progress" {
 			return status, nil
 		}
+	}
+}
+
+// authRotationTerminalError validates the terminal rotation state and returns
+// the CLI outcome for it (nil for completed). Only an explicit completion is
+// success: the status poll treats every non-in_progress value as terminal, so
+// a status read that lost its authoritative state (e.g. a transient database
+// error surfacing as an empty state, or an aborted record reporting idle)
+// must not be reported as a completed rotation.
+func authRotationTerminalError(state string, blocker string, detail string) error {
+	switch state {
+	case "completed":
+		return nil
+	case "blocked":
+		fmt.Printf("Rotation paused: %s\n", blocker)
+		return &exitCodeError{
+			code: authRotationBlockedExitCode,
+			err:  fmt.Errorf("auth rotation is blocked: %s", blocker),
+		}
+	case "failed":
+		return fmt.Errorf("auth rotation failed: %s", detail)
+	default:
+		return fmt.Errorf("auth rotation ended in state %q instead of completing; check 'microceph auth status'", state)
 	}
 }
 
@@ -180,16 +202,10 @@ func (c *cmdAuthRotate) Run(cmd *cobra.Command, args []string) error {
 		resp.Detail = status.Detail
 	}
 
-	if resp.State == "blocked" {
-		fmt.Printf("Rotation paused: %s\n", resp.Blocker)
-		return &exitCodeError{
-			code: authRotationBlockedExitCode,
-			err:  fmt.Errorf("auth rotation is blocked: %s", resp.Blocker),
-		}
-	}
-
-	if resp.State == "failed" {
-		return fmt.Errorf("auth rotation failed: %s", resp.Detail)
+	// Only an explicit completion is success: any other terminal value must
+	// not be reported as a completed rotation.
+	if err := authRotationTerminalError(resp.State, resp.Blocker, resp.Detail); err != nil {
+		return err
 	}
 
 	if c.flagClient != "" {

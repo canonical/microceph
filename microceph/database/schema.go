@@ -24,6 +24,7 @@ var SchemaExtensions = []cluster.Update{
 	schemaUpdate9,
 	schemaUpdate10,
 	schemaUpdate11,
+	schemaUpdate12,
 }
 
 // getClusterTableName returns the name of the table that holds the record of cluster members from sqlite_master.
@@ -300,7 +301,6 @@ INSERT INTO placement_policy (id) VALUES (1);
 	return err
 }
 
-<<<<<<< HEAD
 // schemaUpdate10 removes stale member-named monitor-host config during
 // upgrade and ensures a member's monitor-host config is removed atomically
 // when MicroCluster removes that member. Numeric config suffixes are retained
@@ -334,10 +334,35 @@ END;
 	return err
 }
 
-// schemaUpdate10 adds the auth_rotation table. It is a single-row
+// schemaUpdate11 records each member's last successfully applied RGW frontend.
+// TLS material stays on the member and is never replicated in this table.
+func schemaUpdate11(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE rgw_frontends (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  member_id  INTEGER NOT NULL,
+  port       INTEGER NOT NULL DEFAULT 0,
+  ssl_port   INTEGER NOT NULL DEFAULT 0,
+  ssl        INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE,
+  UNIQUE(member_id)
+);
+`
+	_, err := tx.ExecContext(ctx, stmt)
+
+	return err
+}
+
+// schemaUpdate12 adds the auth_rotation table. It is a single-row
 // table tracking CephX authentication key rotation state, stage progress,
 // blockers, and concurrency lock tokens.
-func schemaUpdate10(ctx context.Context, tx *sql.Tx) error {
+//
+// The auth_rotation table is version 12 — not 10 — because main's
+// pre-existing schemaUpdate10 (mon.host member cleanup) and schemaUpdate11
+// (rgw_frontends) were already merged into this branch before the auth
+// rotation feature landed; renumbering them would break the schema version
+// counter for clusters that already applied those versions.
+func schemaUpdate12(ctx context.Context, tx *sql.Tx) error {
 	stmt := `
 CREATE TABLE auth_rotation (
   id               INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
@@ -356,23 +381,4 @@ INSERT INTO auth_rotation (id) VALUES (1);
 	_, err := tx.ExecContext(ctx, stmt)
 
 	return err
-}
-
-// schemaUpdate11 records each member's last successfully applied RGW frontend.
-// TLS material stays on the member and is never replicated in this table.
-func schemaUpdate11(ctx context.Context, tx *sql.Tx) error {
-    stmt := `
-CREATE TABLE rgw_frontends (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-  member_id  INTEGER NOT NULL,
-  port       INTEGER NOT NULL DEFAULT 0,
-  ssl_port   INTEGER NOT NULL DEFAULT 0,
-  ssl        INTEGER NOT NULL DEFAULT 0,
-  FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE,
-  UNIQUE(member_id)
-);
-`
-    _, err := tx.ExecContext(ctx, stmt)
-
-    return err
 }

@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"os"
 
 	cli "github.com/canonical/lxd/shared/cmd"
@@ -30,8 +31,44 @@ func main() {
 
 	err := app.Execute()
 	if err != nil {
-		os.Exit(1)
+		os.Exit(processExitCode(err))
 	}
+}
+
+// exitCodeError carries a specific process exit code through cobra's error
+// path, so commands can return failure codes other than the generic 1 (e.g.
+// the distinct code used when an auth rotation is blocked).
+type exitCodeError struct {
+	code int
+	err  error
+}
+
+func (e *exitCodeError) Error() string {
+	if e.err == nil {
+		return fmt.Sprintf("exit code %d", e.code)
+	}
+
+	return e.err.Error()
+}
+
+func (e *exitCodeError) Unwrap() error {
+	return e.err
+}
+
+// processExitCode maps an error returned by the command tree to the process
+// exit code: 0 for success, the code of an exitCodeError found in the wrap
+// chain, or 1 for any other failure.
+func processExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+
+	var codeErr *exitCodeError
+	if errors.As(err, &codeErr) {
+		return codeErr.code
+	}
+
+	return 1
 }
 
 // newRootCommand builds the microceph command tree.
@@ -115,4 +152,3 @@ func newRootCommand() *cobra.Command {
 
 	return app
 }
-

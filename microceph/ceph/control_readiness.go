@@ -124,14 +124,16 @@ func mdsUp(ctx context.Context, member string) (bool, error) {
 	return false, nil
 }
 
-// controlReadinessCheckTimeout bounds each individual ceph CLI invocation
-// during readiness polling. Ceph mon-side commands (mon stat, mgr metadata,
-// mds stat) can block indefinitely when MON quorum is lost; without a per-call
-// timeout a single hung subprocess would consume the entire request budget
-// (placementPutTimeout, 10 min) instead of the 2-minute readiness budget.
-// 30 seconds is generous for a healthy command to return while ensuring a
-// hung invocation does not starve the poll loop.
-const controlReadinessCheckTimeout = 30 * time.Second
+// cephCallTimeout bounds each individual ceph CLI invocation made during
+// readiness polling and by the auth-rotation path's single ceph calls
+// (boundedCephRun). Ceph mon-side commands (mon stat, mgr metadata, mds stat)
+// can block indefinitely when MON quorum is lost; without a per-call timeout
+// a single hung subprocess would consume the entire wait budget — and, under
+// a detached background context, keep a lock heartbeat renewing forever,
+// wedging out retries and aborts. 30 seconds is generous for a healthy
+// command to return while ensuring a hung invocation does not starve the poll
+// loop. A var so tests can shrink it.
+var cephCallTimeout = 30 * time.Second
 
 // waitForControlServiceReady polls Ceph readiness for a single control service
 // on a member until it is viable or the deadline is reached. Returns true if
@@ -148,7 +150,7 @@ func waitForControlServiceReady(ctx context.Context, service, member string, dea
 		// the full request budget. The parent ctx (placementPutTimeout) is the
 		// outer lifetime; this per-call timeout ensures a blocked 'ceph mon
 		// stat' is killed well within the 2-minute readiness budget.
-		checkCtx, cancel := context.WithTimeout(ctx, controlReadinessCheckTimeout)
+		checkCtx, cancel := context.WithTimeout(ctx, cephCallTimeout)
 		ready, err := controlServiceReadyFunc(checkCtx, service, member)
 		cancel()
 		if err != nil {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -93,10 +94,16 @@ var (
 	prepareAuthRotationFunc            = PrepareAuthRotation
 	snapStartFunc                      = snapStart
 	snapRestartFunc                    = snapRestart
+	snapCheckActiveFunc                = snapCheckActive
 	waitForMonQuorumFunc               = waitForMonQuorum
 	waitForMGRReadyFunc                = waitForMGRReady
 	waitForMDSReadyFunc                = waitForMDSReady
 	waitForOSDUpFunc                   = waitForOSDUp
+	getMonQuorumNamesFunc              = getMonQuorumNames
+	getMonmapNamesFunc                 = getMonmapNames
+	mgrActiveOrStandbyFunc             = mgrActiveOrStandby
+	mdsUpFunc                          = mdsUp
+	isOSDUpFunc                        = isOSDUp
 	rotateMonKeyAuthFunc               = RotateMonKeyAuth
 	deployMonKeyringAndRestartFunc     = deployMonKeyringAndRestart
 	rotateLocalMGRKeyFunc              = RotateLocalMGRKey
@@ -106,6 +113,12 @@ var (
 	rotateMemberDaemonsFunc            = RotateMemberDaemons
 	sendMemberAuthRotateFunc           = client.SendMemberAuthRotateToClusterMembers
 	sendUpdateClientConfFunc           = client.SendUpdateClientConfRequestToClusterMembers
+	sendClientDeployFunc               = client.SendClientDeployToClusterMembers
+	clientConsumerMembersFunc          = clientConsumerMembers
+	memberConsumesEntityFunc           = memberConsumesEntity
+	getServicesFunc                    = database.GetServices
+	deployClientKeyringsLocallyFunc    = deployClientKeyringsLocally
+	distributeClientKeyringsFunc       = distributeClientKeyrings
 	rotateDaemonsFunc                  = RotateDaemons
 	activateAndCheckFunc               = ActivateAndCheck
 	switchServiceAuthenticationFunc    = SwitchServiceAuthentication
@@ -121,12 +134,13 @@ var (
 	inspectClientSessionAdvisoriesFunc = InspectClientSessionAdvisories
 	disallowInsecureLegacyCiphersFunc  = DisallowInsecureLegacyCiphers
 	finalizeAuthRotationFunc           = FinalizeAuthRotation
+	runAuthRotationPipelineFunc        = runAuthRotationPipeline
 	buildAuthStatusFunc                = BuildAuthStatus
 )
 
 // Query the monitor map and return the current cipher config.
 func GetMonCiphers(ctx context.Context) (MonCiphers, error) {
-	output, err := cephRunContext(ctx, "mon", "dump", "-f", "json")
+	output, err := boundedCephRun(ctx, "mon", "dump", "-f", "json")
 	if err != nil {
 		return MonCiphers{}, fmt.Errorf("failed to fetch monitor dump: %w", err)
 	}
@@ -181,7 +195,7 @@ func parseMonCiphers(output string) MonCiphers {
 
 func SetMonAllowedCiphers(ctx context.Context, ciphers []string) error {
 	cipherArg := strings.Join(ciphers, ",")
-	_, err := cephRunContext(ctx, "mon", "set", "auth_allowed_ciphers", cipherArg)
+	_, err := boundedCephRun(ctx, "mon", "set", "auth_allowed_ciphers", cipherArg)
 	if err != nil {
 		return fmt.Errorf("failed to set auth_allowed_ciphers to %q: %w", cipherArg, err)
 	}
@@ -190,7 +204,7 @@ func SetMonAllowedCiphers(ctx context.Context, ciphers []string) error {
 }
 
 func SetMonPreferredCipher(ctx context.Context, cipher string) error {
-	_, err := cephRunContext(ctx, "mon", "set", "auth_preferred_cipher", cipher)
+	_, err := boundedCephRun(ctx, "mon", "set", "auth_preferred_cipher", cipher)
 	if err != nil {
 		return fmt.Errorf("failed to set auth_preferred_cipher to %q: %w", cipher, err)
 	}
@@ -199,7 +213,7 @@ func SetMonPreferredCipher(ctx context.Context, cipher string) error {
 }
 
 func SetMonServiceCipher(ctx context.Context, cipher string) error {
-	_, err := cephRunContext(ctx, "mon", "set", "auth_service_cipher", cipher)
+	_, err := boundedCephRun(ctx, "mon", "set", "auth_service_cipher", cipher)
 	if err != nil {
 		return fmt.Errorf("failed to set auth_service_cipher to %q: %w", cipher, err)
 	}
@@ -210,7 +224,7 @@ func SetMonServiceCipher(ctx context.Context, cipher string) error {
 // Configure whether new keys with insecure ciphers are allowed.
 func SetMonAllowInsecureKey(ctx context.Context, allow bool) error {
 	val := strconv.FormatBool(allow)
-	_, err := cephRunContext(ctx, "config", "set", "mon", "mon_auth_allow_insecure_key", val)
+	_, err := boundedCephRun(ctx, "config", "set", "mon", "mon_auth_allow_insecure_key", val)
 	if err != nil {
 		return fmt.Errorf("failed to set mon_auth_allow_insecure_key to %s: %w", val, err)
 	}
@@ -222,7 +236,7 @@ func SetMonAllowInsecureKey(ctx context.Context, allow bool) error {
 // insecure ciphers (the mon_auth_allow_insecure_key option, effective value
 // including defaults).
 func GetMonAllowInsecureKey(ctx context.Context) (bool, error) {
-	output, err := cephRunContext(ctx, "config", "get", "mon", "mon_auth_allow_insecure_key", "-f", "json")
+	output, err := boundedCephRun(ctx, "config", "get", "mon", "mon_auth_allow_insecure_key", "-f", "json")
 	if err != nil {
 		return false, fmt.Errorf("failed to read mon_auth_allow_insecure_key: %w", err)
 	}
@@ -300,7 +314,7 @@ func checkCipherCompatibility(ctx context.Context, targetKeyType string) error {
 		// cephx_auth_aes256k mon feature. min_mon_release cannot tell support
 		// apart: the cipher arrived in point releases (19.2.6, 20.2.4) that
 		// share their major version with releases lacking it.
-		output, err := cephRunContext(ctx, "mon", "feature", "ls", "-f", "json")
+		output, err := boundedCephRun(ctx, "mon", "feature", "ls", "-f", "json")
 		if err != nil {
 			return fmt.Errorf("failed to fetch monitor features for compatibility check: %w", err)
 		}
@@ -312,7 +326,7 @@ func checkCipherCompatibility(ctx context.Context, targetKeyType string) error {
 		// daemons whose binaries cannot use aes256k would be locked out the
 		// next time those daemons re-authenticate with their new keys. Refuse
 		// until every daemon the cluster knows about runs a supporting release.
-		output, err = cephRunContext(ctx, "versions", "-f", "json")
+		output, err = boundedCephRun(ctx, "versions", "-f", "json")
 		if err != nil {
 			return fmt.Errorf("failed to fetch daemon versions for compatibility check: %w", err)
 		}
@@ -347,24 +361,30 @@ func checkDaemonVersionsSupportAES256K(output string) error {
 	return nil
 }
 
+// cephReleaseNums extracts the first numeric major.minor.patch triple from a
+// version string: 'ceph versions' keys use the full form ("ceph version
+// 19.2.6 (hash) squid (stable)", optionally with a build suffix), not the
+// bare release.
+var cephReleaseNums = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
+
 // versionSupportsAES256K reports whether a Ceph release supports aes256k: the
 // cipher arrived in squid 19.2.6 and tentacle 20.2.4, and is present in any
 // later release series.
 func versionSupportsAES256K(version string) bool {
-	parts := strings.SplitN(version, ".", 3)
-	if len(parts) < 3 {
+	nums := cephReleaseNums.FindStringSubmatch(version)
+	if nums == nil {
 		return false
 	}
 
-	major, err := strconv.Atoi(parts[0])
+	major, err := strconv.Atoi(nums[1])
 	if err != nil {
 		return false
 	}
-	minor, err := strconv.Atoi(parts[1])
+	minor, err := strconv.Atoi(nums[2])
 	if err != nil {
 		return false
 	}
-	patch, err := strconv.Atoi(parts[2])
+	patch, err := strconv.Atoi(nums[3])
 	if err != nil {
 		return false
 	}
@@ -382,12 +402,20 @@ func versionSupportsAES256K(version string) bool {
 }
 
 func checkMonQuorumReady(ctx context.Context) error {
-	monmap, err := getMonmapNames(ctx)
+	// Each mon query gets the shared per-call ceiling: mon-side commands can
+	// block indefinitely when quorum is lost, and under the rotation's
+	// detached context a hung call would wedge the rotation while the lock
+	// heartbeat keeps renewing.
+	monmapCtx, cancel := context.WithTimeout(ctx, cephCallTimeout)
+	monmap, err := getMonmapNamesFunc(monmapCtx)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("failed to get monitor map: %w", err)
 	}
 
-	quorum, err := getMonQuorumNames(ctx)
+	quorumCtx, cancel := context.WithTimeout(ctx, cephCallTimeout)
+	quorum, err := getMonQuorumNamesFunc(quorumCtx)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("failed to get monitor quorum: %w", err)
 	}
@@ -712,7 +740,7 @@ func createAdminBackupKey(ctx context.Context, backupName string, backupKeyringP
 		return fmt.Errorf("failed to create directory for admin backup keyring: %w", err)
 	}
 
-	_, err = cephRunContext(ctx, "auth", "get-or-create", backupName,
+	_, err = boundedCephRun(ctx, "auth", "get-or-create", backupName,
 		"mon", "allow *",
 		"osd", "allow *",
 		"mds", "allow *",
@@ -734,7 +762,7 @@ func createAdminBackupKey(ctx context.Context, backupName string, backupKeyringP
 }
 
 func verifyAdminAccess(ctx context.Context, entityName string, keyringPath string) error {
-	_, err := cephRunContext(ctx, "-n", entityName, "-k", keyringPath, "auth", "ls")
+	_, err := boundedCephRun(ctx, "-n", entityName, "-k", keyringPath, "auth", "ls")
 	if err != nil {
 		return fmt.Errorf("failed to verify access for %s using %s: %w", entityName, keyringPath, err)
 	}
@@ -742,7 +770,7 @@ func verifyAdminAccess(ctx context.Context, entityName string, keyringPath strin
 }
 
 func deleteAdminBackupKey(ctx context.Context, backupName string) error {
-	_, err := cephRunContext(ctx, "auth", "del", backupName)
+	_, err := boundedCephRun(ctx, "auth", "del", backupName)
 	if err != nil {
 		logger.Warnf("failed to delete temporary backup credential %s: %v", backupName, err)
 		return err
@@ -899,6 +927,241 @@ func getClientKeyringPaths(clientName string) ([]string, string) {
 	return nil, ""
 }
 
+// clientConsumerMembers returns the cluster members that consume the client
+// credential and must receive the new keyring before it is committed
+// cluster-wide: every member running the service for shared credentials
+// (radosgw gateway), or the member named in the entity for member-specific
+// credentials (nfs ganesha, rbd-mirror, cephfs-mirror). Credentials without
+// persistent consumers (bootstrap keys, used only by joining daemons) return
+// no members.
+func clientConsumerMembers(ctx context.Context, s interfaces.StateInterface, entity string) ([]string, error) {
+	norm := NormalizeClientName(entity)
+	switch {
+	case norm == "client.radosgw.gateway":
+		// Shared credential: every member running the rgw service consumes it.
+		return membersRunningService(ctx, s, "rgw")
+	case strings.HasPrefix(norm, "client.rbd-mirror."):
+		return []string{strings.TrimPrefix(norm, "client.rbd-mirror.")}, nil
+	case strings.HasPrefix(norm, "client.cephfs-mirror."):
+		return []string{strings.TrimPrefix(norm, "client.cephfs-mirror.")}, nil
+	case strings.HasPrefix(norm, "client.nfs."):
+		// client.nfs.<cluster-id>.<hostname>: the consumer is the member named
+		// by the hostname, the last dot-separated component (cluster IDs are
+		// UUIDs without dots, and member names are short hostnames).
+		remainder := strings.TrimPrefix(norm, "client.nfs.")
+		parts := strings.Split(remainder, ".")
+		return []string{parts[len(parts)-1]}, nil
+	default:
+		return nil, nil
+	}
+}
+
+// memberConsumesEntity reports whether this member consumes the client
+// credential and must deploy its keyring locally: hostname-suffixed entities
+// (nfs ganesha, rbd/cephfs mirrors) only match when they name this member, and
+// the shared radosgw gateway only when this member runs the rgw service.
+// Without cluster state (unit tests) the service check answers yes, deferring
+// the decision to local path existence.
+func memberConsumesEntity(ctx context.Context, s interfaces.StateInterface, localMember string, entity string) bool {
+	norm := NormalizeClientName(entity)
+	switch {
+	case norm == "client.radosgw.gateway":
+		if s == nil || s.ClusterState() == nil || s.ClusterState().Database() == nil {
+			return true
+		}
+		return localMemberRunsService(ctx, s, localMember, "rgw")
+	case strings.HasPrefix(norm, "client.rbd-mirror."):
+		return strings.TrimPrefix(norm, "client.rbd-mirror.") == localMember
+	case strings.HasPrefix(norm, "client.cephfs-mirror."):
+		return strings.TrimPrefix(norm, "client.cephfs-mirror.") == localMember
+	case strings.HasPrefix(norm, "client.nfs."):
+		remainder := strings.TrimPrefix(norm, "client.nfs.")
+		parts := strings.Split(remainder, ".")
+		return parts[len(parts)-1] == localMember
+	}
+
+	return false
+}
+
+// membersRunningService returns the members that have the given service
+// enabled, from the cluster database.
+func membersRunningService(ctx context.Context, s interfaces.StateInterface, service string) ([]string, error) {
+	if s == nil || s.ClusterState() == nil || s.ClusterState().Database() == nil {
+		return nil, nil
+	}
+
+	var members []string
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		services, err := getServicesFunc(ctx, tx, database.ServiceFilter{Service: &service})
+		if err != nil {
+			return err
+		}
+		for _, svc := range services {
+			members = append(members, svc.Member)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to query members running service %q: %w", service, err)
+	}
+
+	return members, nil
+}
+
+// localMemberRunsService reports whether the given member has the service
+// enabled. Without cluster state (unit tests) it answers yes.
+func localMemberRunsService(ctx context.Context, s interfaces.StateInterface, member string, service string) bool {
+	if s == nil || s.ClusterState() == nil || s.ClusterState().Database() == nil {
+		return true
+	}
+
+	runs := false
+	err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		services, err := getServicesFunc(ctx, tx, database.ServiceFilter{Member: &member, Service: &service})
+		if err != nil {
+			return err
+		}
+		runs = len(services) > 0
+		return nil
+	})
+	if err != nil {
+		logger.Warnf("failed to query service %q on member %q: %v", service, member, err)
+		return false
+	}
+
+	return runs
+}
+
+// deployClientKeyringsLocally writes client keyrings to this member's local
+// consumer paths, restarting the associated service when activate is set.
+// Entities this member does not consume are skipped, so a foreign entity's
+// keyring never replaces the local one (e.g. node B's NFS identity must not
+// overwrite node A's ganesha keyring). Returns whether the entity was
+// deployed.
+func deployClientKeyringsLocally(ctx context.Context, s interfaces.StateInterface, localMember string, entity string, pendingSecret string, finalKeyring string, activate bool) (bool, error) {
+	if !memberConsumesEntityFunc(ctx, s, localMember, entity) {
+		return false, nil
+	}
+
+	paths, service := getClientKeyringPaths(entity)
+	if len(paths) == 0 {
+		return false, nil
+	}
+
+	if pendingSecret != "" {
+		for _, p := range paths {
+			err := writeClientKeyring(p, entity, pendingSecret)
+			if err != nil {
+				return false, fmt.Errorf("failed to write client keyring %s: %w", p, err)
+			}
+		}
+	}
+
+	if finalKeyring != "" {
+		for _, p := range paths {
+			err := writeKeyringAtomically(p, finalKeyring, 0600)
+			if err != nil {
+				return false, fmt.Errorf("failed to finalize client keyring %s: %w", p, err)
+			}
+		}
+	}
+
+	if activate && service != "" {
+		// A live daemon holds the old secret in memory: it must reload so it
+		// picks up the keyring carrying the pending key, or it loses access
+		// when the commit retires the old key. A failed reload therefore
+		// fails the deployment, and the caller must not commit.
+		err := snapRestartFunc(service, true)
+		if err != nil {
+			return false, fmt.Errorf("failed to reload service %s after deploying the %s keyring: %w", service, entity, err)
+		}
+
+		// Verify the consumer actually came back up: a daemon (re)loads its
+		// keyring file at startup, so a service that is active after the
+		// reload is a consumer holding the new credential. An inactive one
+		// proves nothing about uptake and must fail the deployment.
+		if err := snapCheckActiveFunc(service); err != nil {
+			return false, fmt.Errorf("service %s is not running after reload; consumer of %s has not loaded the new credential: %w", service, entity, err)
+		}
+	}
+
+	return true, nil
+}
+
+// DeployClientKeyrings writes the given client keyrings to this member's local
+// consumer paths (exported for the per-member client deployment endpoint).
+// Entities this member does not consume are skipped. Returns the entities
+// deployed.
+func DeployClientKeyrings(ctx context.Context, s interfaces.StateInterface, localMember string, pending map[string]string, finalize map[string]string) ([]string, error) {
+	entities := make([]string, 0, len(pending)+len(finalize))
+	seen := map[string]bool{}
+	for entity := range pending {
+		if !seen[entity] {
+			entities = append(entities, entity)
+			seen[entity] = true
+		}
+	}
+	for entity := range finalize {
+		if !seen[entity] {
+			entities = append(entities, entity)
+			seen[entity] = true
+		}
+	}
+	slices.Sort(entities)
+
+	deployed := []string{}
+	for _, entity := range entities {
+		ok, err := deployClientKeyringsLocally(ctx, s, localMember, entity, pending[entity], finalize[entity], pending[entity] != "")
+		if err != nil {
+			return deployed, err
+		}
+		if ok {
+			deployed = append(deployed, entity)
+		}
+	}
+
+	return deployed, nil
+}
+
+// distributeClientKeyrings deploys a client keyring to every consumer member:
+// remote members through the per-member client deployment endpoint (members
+// that do not consume the entity skip it), and the coordinator itself through
+// the local deploy path. Returns the members that confirmed deployment of the
+// entity.
+func distributeClientKeyrings(ctx context.Context, s interfaces.StateInterface, localMember string, entity string, pendingSecret string, finalKeyring string, activate bool) (map[string]bool, error) {
+	confirmed := map[string]bool{}
+
+	if s != nil && s.ClusterState() != nil {
+		req := types.MemberClientRotateRequest{}
+		if pendingSecret != "" {
+			req.PendingKeys = map[string]string{entity: pendingSecret}
+		}
+		if finalKeyring != "" {
+			req.Finalize = map[string]string{entity: finalKeyring}
+		}
+
+		deployedBy, err := sendClientDeployFunc(ctx, s.ClusterState(), req)
+		if err != nil {
+			return confirmed, fmt.Errorf("client keyring deployment to remote members failed: %w", err)
+		}
+		for member, entities := range deployedBy {
+			if slices.Contains(entities, entity) {
+				confirmed[member] = true
+			}
+		}
+	}
+
+	deployed, err := deployClientKeyringsLocallyFunc(ctx, s, localMember, entity, pendingSecret, finalKeyring, activate)
+	if err != nil {
+		return confirmed, err
+	}
+	if deployed {
+		confirmed[localMember] = true
+	}
+
+	return confirmed, nil
+}
+
 // InspectClientSessionAdvisories reports connected clients whose reported
 // release is known to predate aes256k. ADVISORY ONLY — the result must not
 // gate rotation: con_features_release is derived from connection feature
@@ -928,10 +1191,18 @@ func InspectClientSessionAdvisories(ctx context.Context, targetKeyType string) (
 	return advisories, nil
 }
 
-// RotateSingleClientKey issues a pending key alongside the old key, distributes it to
-// local keyring paths, reloads associated daemons, and commits the pending key.
-func RotateSingleClientKey(ctx context.Context, clientName string, targetKeyType string) error {
+// RotateSingleClientKey issues a pending key alongside the old key, deploys the
+// pending keyring to EVERY consumer of the credential — remote consumer members
+// through the per-member client deployment endpoint, the coordinator itself
+// through its local consumer paths — and only commits the pending key once
+// every consumer confirmed deployment, so the commit never retires a key that
+// consumers are still using.
+func RotateSingleClientKey(ctx context.Context, s interfaces.StateInterface, clientName string, targetKeyType string) error {
 	norm := NormalizeClientName(clientName)
+	localMember := ""
+	if s != nil && s.ClusterState() != nil {
+		localMember = s.ClusterState().Name()
+	}
 	logger.Infof("Rotating client credential for %s to %s", norm, targetKeyType)
 
 	// 1. Issue a pending key alongside the old key.
@@ -952,47 +1223,49 @@ func RotateSingleClientKey(ctx context.Context, clientName string, targetKeyType
 		return err
 	}
 
-	// 3. Distribute a loadable keyring carrying the PENDING key as the active key
-	//    to the persistent copies. get-or-create-pending's raw plaintext output
-	//    must never be written: KeyRing::decode has no notion of a pending key and
-	//    rejects the file with malformed_input, and its "key" field is the secret
-	//    the commit below retires anyway. A write failure is fatal: committing
-	//    (and thereby retiring the old key) without the new key distributed would
-	//    leave the consumer unable to re-authenticate.
-	paths, service := getClientKeyringPaths(norm)
-	for _, p := range paths {
-		err = writeClientKeyring(p, norm, pendingKey)
-		if err != nil {
-			return fmt.Errorf("failed to write client keyring %s: %w", p, err)
+	// 2. Determine the consumer members: every member running the service for
+	//    shared credentials (radosgw gateway), or the member named in the
+	//    entity for member-specific credentials (nfs, mirrors).
+	consumers, err := clientConsumerMembersFunc(ctx, s, norm)
+	if err != nil {
+		return fmt.Errorf("failed to determine consumers of %s: %w", norm, err)
+	}
+
+	// 3. Deploy the pending keyring to every consumer BEFORE committing.
+	//    The deployed file carries the PENDING key as the active key:
+	//    get-or-create-pending's raw plaintext output must never be written,
+	//    because KeyRing::decode has no notion of a pending key and rejects
+	//    the file with malformed_input. A deployment failure is fatal: the
+	//    commit below retires the old key, and a consumer left on it would be
+	//    unable to re-authenticate.
+	confirmed, err := distributeClientKeyringsFunc(ctx, s, localMember, norm, pendingKey, "", true)
+	if err != nil {
+		return fmt.Errorf("failed to deploy pending keyring for %s: %w", norm, err)
+	}
+	for _, member := range consumers {
+		if !confirmed[member] {
+			return fmt.Errorf("consumer member %s did not confirm deployment of %s; not committing", member, norm)
 		}
 	}
 
-	// 4. Reload or restart service if associated so it picks up the pending key.
-	//    The daemon authenticates with it; the monitor commits the pending key on
-	//    first use, and the explicit commit below covers the case where it has
-	//    not re-authenticated yet.
-	if service != "" {
-		_ = snapRestartFunc(service, true)
-	}
-
-	// 5. Commit pending key into active position, retiring the old key
+	// 4. Commit pending key into active position, retiring the old key. Safe:
+	//    every consumer now holds the pending keyring.
 	err = commitPendingKeyFunc(ctx, norm)
 	if err != nil {
 		return fmt.Errorf("failed to commit pending key for %s: %w", norm, err)
 	}
 
-	// 6. Finalize the on-disk keyring with the canonical 'auth get' output (the
-	//    committed pending key is now the active key), so the file also carries
-	//    the entity caps and matches the auth DB state exactly.
+	// 5. Finalize the on-disk keyrings on every consumer with the canonical
+	//    'auth get' output (the committed pending key is now the active key),
+	//    so the files also carry the entity caps and match the auth DB state.
 	committedKeyring, err := getEntityKeyringFunc(ctx, norm)
 	if err != nil {
 		return fmt.Errorf("failed to fetch committed keyring for %s: %w", norm, err)
 	}
-	for _, p := range paths {
-		err = writeKeyringAtomically(p, committedKeyring, 0600)
-		if err != nil {
-			return fmt.Errorf("failed to finalize client keyring %s: %w", p, err)
-		}
+	if _, err := distributeClientKeyringsFunc(ctx, s, localMember, norm, "", committedKeyring, false); err != nil {
+		// Non-fatal: consumers already hold a working keyring (the pending
+		// key is now the committed key); the canonical refresh is cosmetic.
+		logger.Warnf("client keyring finalization for %s incomplete: %v", norm, err)
 	}
 
 	return nil
@@ -1084,7 +1357,7 @@ func writeClientKeyring(destPath string, entity string, secret string) error {
 //   - Skips clients already rotated on a previous attempt (recorded in
 //     progress) and appends each completed client to it as it goes, so a
 //     resumed rotation does not re-rotate finished credentials.
-func RotateManagedClients(ctx context.Context, targetKeyType string, progress *AuthRotationProgress) (ClientRotationResult, error) {
+func RotateManagedClients(ctx context.Context, s interfaces.StateInterface, targetKeyType string, progress *AuthRotationProgress) (ClientRotationResult, error) {
 	if progress == nil {
 		progress = &AuthRotationProgress{}
 	}
@@ -1136,7 +1409,7 @@ func RotateManagedClients(ctx context.Context, targetKeyType string, progress *A
 		}
 
 		// Rotate managed client
-		err = rotateSingleClientKeyFunc(ctx, norm, targetKeyType)
+		err = rotateSingleClientKeyFunc(ctx, s, norm, targetKeyType)
 		if err != nil {
 			return result, fmt.Errorf("failed to rotate managed client %s: %w", norm, err)
 		}
@@ -1341,7 +1614,7 @@ func authStageIndex(stage string) int {
 // rec.Stage already completed and is skipped; per-entity progress recorded in
 // the record's step_progress column keeps partially completed stages from
 // re-rotating finished entities.
-func runAuthRotationPipeline(ctx context.Context, s interfaces.StateInterface, rec *database.AuthRotationRecord, resolvedKeyType string) (*database.AuthRotationRecord, error) {
+func runAuthRotationPipeline(ctx context.Context, s interfaces.StateInterface, rec *database.AuthRotationRecord, resolvedKeyType string, lockToken func() int64) (*database.AuthRotationRecord, error) {
 	progress := parseAuthRotationProgress(rec.StepProgress)
 
 	// Helper to update database stage (carrying the current progress payload).
@@ -1372,11 +1645,11 @@ func runAuthRotationPipeline(ctx context.Context, s interfaces.StateInterface, r
 		rec.State = database.AuthRotationStateFailed
 		rec.Detail = fmt.Sprintf("%s: %v", msg, err)
 		rec.StepProgress = progress.String()
-		if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-			_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-				return database.SetAuthRotation(ctx, tx, *rec)
-			})
-		}
+		// The rotation context may already be cancelled here (e.g. the lock
+		// heartbeat failed); the outcome must still be recorded, so the
+		// persist runs on a fresh bounded context and only while this worker
+		// still holds the lock.
+		persistRotationRecord(s, lockToken, rec)
 		return rec, fmt.Errorf("%s: %w", msg, err)
 	}
 
@@ -1445,7 +1718,7 @@ func runAuthRotationPipeline(ctx context.Context, s interfaces.StateInterface, r
 	// Stage 7: Rotate client credentials (Upstream step 9)
 	if shouldRun(database.AuthRotationStageRotateClients) {
 		_ = setStage(database.AuthRotationStageRotateClients)
-		clientResult, err := rotateManagedClientsFunc(ctx, resolvedKeyType, progress)
+		clientResult, err := rotateManagedClientsFunc(ctx, s, resolvedKeyType, progress)
 		if err != nil {
 			return failRun("client key rotation failed", err)
 		}
@@ -1454,12 +1727,8 @@ func runAuthRotationPipeline(ctx context.Context, s interfaces.StateInterface, r
 		if clientResult.HasBlockers {
 			rec.State = database.AuthRotationStateBlocked
 			rec.Blocker = clientResult.BlockerMessage
-			saveProgress()
-			if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-				_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-					return database.SetAuthRotationBlocker(ctx, tx, clientResult.BlockerMessage, "")
-				})
-			}
+			rec.StepProgress = progress.String()
+			persistRotationRecord(s, lockToken, rec)
 			return rec, nil
 		}
 	}
@@ -1476,12 +1745,8 @@ func runAuthRotationPipeline(ctx context.Context, s interfaces.StateInterface, r
 		if err != nil {
 			rec.State = database.AuthRotationStateBlocked
 			rec.Blocker = err.Error()
-			saveProgress()
-			if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-				_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-					return database.SetAuthRotationBlocker(ctx, tx, err.Error(), "")
-				})
-			}
+			rec.StepProgress = progress.String()
+			persistRotationRecord(s, lockToken, rec)
 			return rec, nil
 		}
 
@@ -1497,11 +1762,7 @@ func runAuthRotationPipeline(ctx context.Context, s interfaces.StateInterface, r
 	rec.State = database.AuthRotationStateCompleted
 	rec.Blocker = ""
 	rec.Detail = ""
-	if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-		_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			return database.SetAuthRotation(ctx, tx, *rec)
-		})
-	}
+	persistRotationRecord(s, lockToken, rec)
 
 	return rec, nil
 }
@@ -1556,7 +1817,7 @@ func AbortAuthRotation(ctx context.Context, s interfaces.StateInterface) (*datab
 // admin is rotated explicitly — in which case the record is handed back to
 // the full pipeline (state back to in_progress, blocker cleared, stage
 // untouched) instead of being completed.
-func runSingleClientRotation(ctx context.Context, s interfaces.StateInterface, rec *database.AuthRotationRecord, requestedClient string, resolvedKeyType string) (*database.AuthRotationRecord, error) {
+func runSingleClientRotation(ctx context.Context, s interfaces.StateInterface, rec *database.AuthRotationRecord, requestedClient string, resolvedKeyType string, lockToken func() int64) (*database.AuthRotationRecord, error) {
 	dedicated := rec.ClientName == requestedClient
 
 	// Helper to update database stage
@@ -1578,16 +1839,15 @@ func runSingleClientRotation(ctx context.Context, s interfaces.StateInterface, r
 		rotateErr = rotateAdminKeyFunc(ctx, s, resolvedKeyType)
 	} else {
 		_ = setStage(database.AuthRotationStageRotateClients)
-		rotateErr = rotateSingleClientKeyFunc(ctx, requestedClient, resolvedKeyType)
+		rotateErr = rotateSingleClientKeyFunc(ctx, s, requestedClient, resolvedKeyType)
 	}
 	if rotateErr != nil {
-		if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-			_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-				return database.SetAuthRotationBlocker(ctx, tx, rotateErr.Error(), "")
-			})
-		}
 		rec.State = database.AuthRotationStateBlocked
 		rec.Blocker = rotateErr.Error()
+		// The rotation context may already be cancelled here; the outcome
+		// must still be recorded, so the persist runs on a fresh bounded
+		// context and only while this worker still holds the lock.
+		persistRotationRecord(s, lockToken, rec)
 		return rec, rotateErr
 	}
 
@@ -1596,25 +1856,23 @@ func runSingleClientRotation(ctx context.Context, s interfaces.StateInterface, r
 		rec.State = database.AuthRotationStateCompleted
 		rec.Stage = database.AuthRotationStageFinishSafely
 		rec.Blocker = ""
-		if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-			_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-				return database.SetAuthRotation(ctx, tx, *rec)
-			})
-		}
+		persistRotationRecord(s, lockToken, rec)
 		return rec, nil
 	}
 
-	// Sub-step of an incomplete full run: leave the record to the full
-	// pipeline, which resumes and finishes on the next plain run.
+	// Sub-step of an incomplete full run: the credential is rotated; resume
+	// the paused pipeline so its completion is observable. The triggering
+	// command tracks the shared record until it leaves in_progress — handing
+	// the record back without resuming would leave the sub-step command
+	// waiting forever. For the documented admin flow the paused stage is
+	// finish_safely, which proceeds straight to disallowing insecure ciphers
+	// and completing; a full run paused elsewhere (e.g. rotate_clients)
+	// re-blocks on its original blocker, which the command then reports.
 	rec.State = database.AuthRotationStateInProgress
 	rec.Blocker = ""
 	rec.Detail = ""
-	if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
-		_ = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			return database.SetAuthRotation(ctx, tx, *rec)
-		})
-	}
-	return rec, nil
+	persistRotationRecord(s, lockToken, rec)
+	return runAuthRotationPipelineFunc(ctx, s, rec, resolvedKeyType, lockToken)
 }
 
 // ensureAdminReadyForFinish verifies client.admin is on the target cipher
@@ -1633,7 +1891,7 @@ func ensureAdminReadyForFinish(ctx context.Context, targetKeyType string) error 
 	for _, entry := range entries {
 		if entry.EntityName == "client.admin" && entry.KeyType != targetKeyType {
 			return fmt.Errorf(
-				"client.admin still uses cipher %q: the admin key is shared beyond this cluster (ceph-conf content interface, e.g. MicroCloud's LXD, and copies on other nodes) and is not rotated automatically; rotate it explicitly with 'microceph auth rotate --client client.admin', then re-run this command to disallow insecure ciphers",
+				"client.admin still uses cipher %q: the admin key is shared beyond this cluster (ceph-conf content interface, e.g. MicroCloud's LXD, and copies on other nodes) and is not rotated automatically; rotate it explicitly with 'microceph auth rotate --client client.admin' — that command resumes and finishes this rotation",
 				entry.KeyType)
 		}
 	}
@@ -1757,11 +2015,12 @@ func ExecuteAuthRotation(ctx context.Context, s interfaces.StateInterface, targe
 
 	if !hasDB {
 		// No cluster database (unit tests): run inline so the result is
-		// deterministic.
+		// deterministic. No lock is held, so record persistence skips the
+		// ownership check.
 		if clientName != "" {
-			return runSingleClientRotation(ctx, s, rec, clientName, resolvedKeyType)
+			return runSingleClientRotation(ctx, s, rec, clientName, resolvedKeyType, nil)
 		}
-		return runAuthRotationPipeline(ctx, s, rec, resolvedKeyType)
+		return runAuthRotationPipeline(ctx, s, rec, resolvedKeyType, nil)
 	}
 
 	// Detach the rotation. runCtx is deliberately not derived from the
@@ -1802,6 +2061,14 @@ func ExecuteAuthRotation(ctx context.Context, s interfaces.StateInterface, targe
 		}
 	}()
 
+	// Snapshot the initialized record for the caller BEFORE the worker
+	// launches: the goroutine mutates the original record in place as it
+	// progresses, and the response must neither race against those writes nor
+	// mix fields from different state transitions. The copy happens while no
+	// concurrent writer exists; afterwards the original record is exclusively
+	// owned by the goroutine.
+	snapshot := *rec
+
 	go func() {
 		defer func() {
 			// Wait for the heartbeat so release uses the latest renewed
@@ -1814,18 +2081,23 @@ func ExecuteAuthRotation(ctx context.Context, s interfaces.StateInterface, targe
 			})
 		}()
 
+		// Record persistence verifies lock ownership against the heartbeat-
+		// renewed token, so a worker whose lock was taken over cannot
+		// overwrite the new attempt's record.
+		tokenGetter := func() int64 { return currentToken.Load() }
+
 		var runErr error
 		if clientName != "" {
-			_, runErr = runSingleClientRotation(runCtx, s, rec, clientName, resolvedKeyType)
+			_, runErr = runSingleClientRotation(runCtx, s, rec, clientName, resolvedKeyType, tokenGetter)
 		} else {
-			_, runErr = runAuthRotationPipeline(runCtx, s, rec, resolvedKeyType)
+			_, runErr = runAuthRotationPipeline(runCtx, s, rec, resolvedKeyType, tokenGetter)
 		}
 		if runErr != nil {
 			logger.Errorf("auth rotation ended with error: %v", runErr)
 		}
 	}()
 
-	return rec, nil
+	return &snapshot, nil
 }
 
 // RotateEntityKey rotates the key of a Ceph authentication entity and returns the new keyring output.
@@ -1835,7 +2107,7 @@ func RotateEntityKey(ctx context.Context, entity string, keyType string) (string
 		args = append(args, "--key-type", keyType)
 	}
 
-	out, err := cephRunContext(ctx, args...)
+	out, err := boundedCephRun(ctx, args...)
 	if err != nil {
 		return "", fmt.Errorf("failed to rotate key for %s: %w", entity, err)
 	}
@@ -2015,8 +2287,14 @@ func RotateLocalMGRKey(ctx context.Context, keyType string, hostname string) (re
 	logger.Infof("Rotating key for %s", entity)
 
 	// Stop first so the running daemon cannot attempt re-authentication with its
-	// stale in-memory key once the auth-DB entry is rotated.
-	_ = snapStopFunc("mgr", false)
+	// stale in-memory key once the auth-DB entry is rotated. A failed stop must
+	// abort the rotation: with the old process still alive, a later readiness
+	// check would find its existing name in the map and prove nothing, and the
+	// rotation would retire the key that process still holds.
+	err := snapStopFunc("mgr", false)
+	if err != nil {
+		return fmt.Errorf("failed to stop mgr.%s before rotating its key: %w", hostname, err)
+	}
 
 	// On failure, bring the daemon back up rather than leaving it stopped. Best
 	// effort: a failed restart is logged but must not mask the original error.
@@ -2048,6 +2326,9 @@ func RotateLocalMGRKey(ctx context.Context, keyType string, hostname string) (re
 		return fmt.Errorf("failed to start mgr.%s: %w", hostname, err)
 	}
 
+	// With the stop verified above, whatever registers next is a new process;
+	// joining the map requires authenticating with the keyring written above,
+	// so readiness here is proof the consumer loaded the new credential.
 	err = waitForMGRReadyFunc(ctx, hostname, 2*time.Minute)
 	if err != nil {
 		return fmt.Errorf("mgr.%s did not recover: %w", hostname, err)
@@ -2056,10 +2337,77 @@ func RotateLocalMGRKey(ctx context.Context, keyType string, hostname string) (re
 	return nil
 }
 
+// authRotationPersistTimeout bounds the outcome-persist transactions. They
+// deliberately run on a fresh context: the rotation's own context may be
+// cancelled exactly when the outcome must be recorded (lock heartbeat lost,
+// takeover, abort), and a persist that inherits the cancellation would fail
+// and leave the record in_progress — describing a running operation that no
+// longer exists, with status reporting a live run and the CLI polling
+// forever.
+const authRotationPersistTimeout = 30 * time.Second
+
+// persistRotationRecord writes the rotation record on a fresh bounded context
+// (never the rotation's own, which may already be cancelled) and only while
+// the rotation lock is still held by the worker's current token, so a worker
+// that lost the lock to a newer attempt cannot overwrite the new attempt's
+// record. Best effort: a failed persist is logged; the stale-lease reclaim
+// remains the recovery path for a record stuck in_progress.
+func persistRotationRecord(s interfaces.StateInterface, lockToken func() int64, rec *database.AuthRotationRecord) {
+	if s == nil || s.ClusterState() == nil || s.ClusterState().Database() == nil {
+		return
+	}
+
+	persistCtx, cancel := context.WithTimeout(context.Background(), authRotationPersistTimeout)
+	defer cancel()
+
+	err := s.ClusterState().Database().Transaction(persistCtx, func(ctx context.Context, tx *sql.Tx) error {
+		if lockToken == nil {
+			return database.SetAuthRotation(ctx, tx, *rec)
+		}
+
+		written, err := database.PersistRotationRecordIfLocked(ctx, tx, lockToken(), *rec)
+		if err != nil {
+			return err
+		}
+		if !written {
+			return fmt.Errorf("rotation lock no longer held by this worker; not overwriting the record")
+		}
+		return nil
+	})
+	if err != nil {
+		logger.Warnf("failed to persist auth rotation record (state %q, stage %q, blocker %q): %v", rec.State, rec.Stage, rec.Blocker, err)
+	}
+}
+
+// boundedCephRun runs a single ceph CLI command with the shared per-call
+// ceiling. The rotation runs on a detached background context that carries no
+// deadline, so without a per-call bound a hung ceph command — mon-side
+// commands block indefinitely when quorum is lost — would wedge the rotation
+// forever while the lock heartbeat keeps renewing, locking out both retries
+// and --abort even after the nominal stage budget has expired. Bounding each
+// call keeps the wedge bounded and lets the stage fail recoverably.
+func boundedCephRun(ctx context.Context, args ...string) (string, error) {
+	callCtx, cancel := context.WithTimeout(ctx, cephCallTimeout)
+	defer cancel()
+	return cephRunContext(callCtx, args...)
+}
+
+// The readiness poll loops below each bound their individual ceph exec with
+// cephCallTimeout, following the waitForControlServiceReady
+// pattern: mon-side commands (mon stat, mgr metadata, mds stat, osd dump) can
+// block indefinitely when MON quorum is lost, and under the rotation's
+// detached (background) context a single hung subprocess would otherwise
+// block the poll forever while the lock heartbeat keeps renewing — wedging
+// out both retries and --abort even after the nominal readiness budget has
+// expired. With a per-call timeout a hung invocation is killed well within
+// the budget, the deadline check fires, and the rotation fails recoverably.
+
 func waitForMonQuorum(ctx context.Context, monName string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		quorum, err := getMonQuorumNames(ctx)
+		checkCtx, cancel := context.WithTimeout(ctx, cephCallTimeout)
+		quorum, err := getMonQuorumNamesFunc(checkCtx)
+		cancel()
 		if err == nil && slices.Contains(quorum, monName) {
 			return nil
 		}
@@ -2077,7 +2425,9 @@ func waitForMonQuorum(ctx context.Context, monName string, timeout time.Duration
 func waitForMGRReady(ctx context.Context, mgrName string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		ready, err := mgrActiveOrStandby(ctx, mgrName)
+		checkCtx, cancel := context.WithTimeout(ctx, cephCallTimeout)
+		ready, err := mgrActiveOrStandbyFunc(checkCtx, mgrName)
+		cancel()
 		if err == nil && ready {
 			return nil
 		}
@@ -2102,7 +2452,13 @@ func RotateLocalMDSKey(ctx context.Context, keyType string, hostname string) (re
 
 	logger.Infof("Rotating key for %s", entity)
 
-	_ = snapStopFunc("mds", false)
+	// A failed stop must abort the rotation, for the same reason as the mgr
+	// path above: readiness output cannot prove uptake for a process that was
+	// never stopped.
+	err := snapStopFunc("mds", false)
+	if err != nil {
+		return fmt.Errorf("failed to stop mds.%s before rotating its key: %w", hostname, err)
+	}
 
 	// On failure, bring the daemon back up rather than leaving it stopped. Best
 	// effort: a failed restart is logged but must not mask the original error.
@@ -2134,6 +2490,9 @@ func RotateLocalMDSKey(ctx context.Context, keyType string, hostname string) (re
 		return fmt.Errorf("failed to start mds.%s: %w", hostname, err)
 	}
 
+	// With the stop verified above, whatever registers next is a new process;
+	// becoming ready requires authenticating with the keyring written above,
+	// so readiness here is proof the consumer loaded the new credential.
 	err = waitForMDSReadyFunc(ctx, hostname, 2*time.Minute)
 	if err != nil {
 		return fmt.Errorf("mds.%s did not recover: %w", hostname, err)
@@ -2145,7 +2504,9 @@ func RotateLocalMDSKey(ctx context.Context, keyType string, hostname string) (re
 func waitForMDSReady(ctx context.Context, mdsName string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		ready, err := mdsUp(ctx, mdsName)
+		checkCtx, cancel := context.WithTimeout(ctx, cephCallTimeout)
+		ready, err := mdsUpFunc(checkCtx, mdsName)
+		cancel()
 		if err == nil && ready {
 			return nil
 		}
@@ -2211,7 +2572,7 @@ func RotateLocalOSDKeys(ctx context.Context, keyType string, osdIDs []int64) (re
 		idArgs = append(idArgs, strconv.FormatInt(id, 10))
 	}
 	downArgs := append([]string{"osd", "down"}, idArgs...)
-	_, err := cephRunContext(ctx, downArgs...)
+	_, err := boundedCephRun(ctx, downArgs...)
 	if err != nil {
 		logger.Warnf("failed to mark local OSDs %v down: %v", osdIDs, err)
 	}
@@ -2270,7 +2631,7 @@ func RotateLocalOSDKeys(ctx context.Context, keyType string, osdIDs []int64) (re
 }
 
 func isOSDUp(ctx context.Context, osdID int64) (bool, error) {
-	output, err := cephRunContext(ctx, "osd", "dump", "-f", "json")
+	output, err := boundedCephRun(ctx, "osd", "dump", "-f", "json")
 	if err != nil {
 		return false, fmt.Errorf("failed to fetch osd dump: %w", err)
 	}
@@ -2286,7 +2647,9 @@ func isOSDUp(ctx context.Context, osdID int64) (bool, error) {
 func waitForOSDUp(ctx context.Context, osdID int64, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		up, err := isOSDUp(ctx, osdID)
+		checkCtx, cancel := context.WithTimeout(ctx, cephCallTimeout)
+		up, err := isOSDUpFunc(checkCtx, osdID)
+		cancel()
 		if err == nil && up {
 			return nil
 		}
@@ -2385,7 +2748,7 @@ func RotateDaemons(ctx context.Context, s interfaces.StateInterface, targetKeyTy
 
 // GetEntityKeyring fetches the current keyring for an entity in loadable keyring format.
 func GetEntityKeyring(ctx context.Context, entity string) (string, error) {
-	out, err := cephRunContext(ctx, "auth", "get", entity)
+	out, err := boundedCephRun(ctx, "auth", "get", entity)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch keyring for %s: %w", entity, err)
 	}
@@ -2399,7 +2762,7 @@ func GetEntityKeyring(ctx context.Context, entity string) (string, error) {
 // not be written to keyring files because KeyRing::decode has no notion of a
 // pending key and rejects the file.
 func GetOrCreatePendingKey(ctx context.Context, entity string) (string, error) {
-	out, err := cephRunContext(ctx, "auth", "get-or-create-pending", entity, "-f", "json")
+	out, err := boundedCephRun(ctx, "auth", "get-or-create-pending", entity, "-f", "json")
 	if err != nil {
 		return "", fmt.Errorf("failed to get or create pending key for %s: %w", entity, err)
 	}
@@ -2445,7 +2808,7 @@ func findJSONString(v any, key string) (string, bool) {
 
 // CommitPendingKey rotates the pending key into the active position for the given entity.
 func CommitPendingKey(ctx context.Context, entity string) error {
-	_, err := cephRunContext(ctx, "auth", "commit-pending", entity)
+	_, err := boundedCephRun(ctx, "auth", "commit-pending", entity)
 	if err != nil {
 		return fmt.Errorf("failed to commit pending key for %s: %w", entity, err)
 	}
@@ -2455,7 +2818,7 @@ func CommitPendingKey(ctx context.Context, entity string) error {
 
 // ClearPendingKey removes the pending key for the given entity.
 func ClearPendingKey(ctx context.Context, entity string) error {
-	_, err := cephRunContext(ctx, "auth", "clear-pending", entity)
+	_, err := boundedCephRun(ctx, "auth", "clear-pending", entity)
 	if err != nil {
 		return fmt.Errorf("failed to clear pending key for %s: %w", entity, err)
 	}
@@ -2465,7 +2828,7 @@ func ClearPendingKey(ctx context.Context, entity string) error {
 
 // WipeRotatingServiceKeys wipes rotating service keys on the monitors.
 func WipeRotatingServiceKeys(ctx context.Context) error {
-	_, err := cephRunContext(ctx, "auth", "wipe-rotating-service-keys")
+	_, err := boundedCephRun(ctx, "auth", "wipe-rotating-service-keys")
 	if err != nil {
 		return fmt.Errorf("failed to wipe rotating service keys: %w", err)
 	}
@@ -2475,7 +2838,7 @@ func WipeRotatingServiceKeys(ctx context.Context) error {
 
 // DumpAuthKeys queries all authentication credentials and keys from Ceph.
 func DumpAuthKeys(ctx context.Context) ([]AuthKeyEntry, error) {
-	output, err := cephRunContext(ctx, "auth", "dump-keys", "-f", "json")
+	output, err := boundedCephRun(ctx, "auth", "dump-keys", "-f", "json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to dump auth keys: %w", err)
 	}
@@ -2520,7 +2883,7 @@ func parseAuthDumpKeys(output string) []AuthKeyEntry {
 
 // GetAuthHealthWarnings inspects Ceph health detail for CephX-related security warnings.
 func GetAuthHealthWarnings(ctx context.Context) (AuthHealthWarnings, error) {
-	output, err := cephRunContext(ctx, "health", "detail", "-f", "json")
+	output, err := boundedCephRun(ctx, "health", "detail", "-f", "json")
 	if err != nil {
 		return AuthHealthWarnings{}, fmt.Errorf("failed to fetch health detail: %w", err)
 	}
@@ -2572,10 +2935,10 @@ func parseAuthHealthWarnings(output string) AuthHealthWarnings {
 
 // GetClientSessions queries active client sessions across monitors.
 func GetClientSessions(ctx context.Context) ([]ClientSessionInfo, error) {
-	output, err := cephRunContext(ctx, "tell", "mon.*", "sessions", "-f", "json")
+	output, err := boundedCephRun(ctx, "tell", "mon.*", "sessions", "-f", "json")
 	if err != nil {
 		logger.Debugf("tell mon.* sessions failed (%v); falling back to active monitor session list", err)
-		output, err = cephRunContext(ctx, "sessions", "-f", "json")
+		output, err = boundedCephRun(ctx, "sessions", "-f", "json")
 		if err != nil {
 			return nil, fmt.Errorf("failed to query monitor sessions: %w", err)
 		}
@@ -2711,8 +3074,13 @@ func BuildAuthStatus(ctx context.Context, s interfaces.StateInterface) (types.Au
 	resp.ClientDistribution = make(map[string][]string)
 	resp.ServiceDistribution = make(map[string][]string)
 
-	// 1. Read persistent record from database if available
-	if s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil {
+	// 1. Read persistent record from database if available. The record's
+	//    state is the authoritative rotation status: if the read fails, the
+	//    response would carry an empty state, which the CLI's poll treats as
+	//    terminal and reports as success while the rotation may still be
+	//    running — fail instead of returning a stateless response.
+	hasRecordDB := s != nil && s.ClusterState() != nil && s.ClusterState().Database() != nil
+	if hasRecordDB {
 		err := s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 			rec, err := database.GetAuthRotation(ctx, tx)
 			if err != nil {
@@ -2726,7 +3094,12 @@ func BuildAuthStatus(ctx context.Context, s interfaces.StateInterface) (types.Au
 			return nil
 		})
 		if err != nil {
-			logger.Warnf("failed to read auth rotation record from database: %v", err)
+			return resp, fmt.Errorf("failed to read auth rotation record: %w", err)
+		}
+		// A successful read always yields a state (NOT NULL, defaulting to
+		// idle); an empty one must not be reported as a usable status.
+		if resp.State == "" {
+			return resp, fmt.Errorf("auth rotation record read returned no state")
 		}
 	}
 

@@ -68,6 +68,47 @@ func RotateAuthMember(ctx context.Context, c mcTypes.Client, req *types.MemberAu
 	return &resp, nil
 }
 
+// DeployClientKeys asks a single member to deploy the given client keyrings to
+// its local consumer paths. Members that do not consume an entity skip it.
+func DeployClientKeys(ctx context.Context, c mcTypes.Client, req *types.MemberClientRotateRequest) (*types.MemberClientRotateResponse, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	var resp types.MemberClientRotateResponse
+
+	err := c.Query(queryCtx, "POST", types.ExtendedPathPrefix, &api.NewURL().Path("auth", "rotate", "clients").URL, req, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("failed member client keyring deployment: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// SendClientDeployToClusterMembers fans the client keyring deployment request out
+// to every OTHER cluster member, one member at a time. Members that do not consume
+// a given entity skip it and deploy nothing. Returns the entities each member
+// deployed, keyed by member name, also on error.
+func SendClientDeployToClusterMembers(ctx context.Context, s mcTypes.State, req types.MemberClientRotateRequest) (map[string][]string, error) {
+	// Get a collection of clients to every other cluster member, with the notification user-agent set.
+	cluster, err := s.Connect().Cluster(false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get a client for every cluster member: %w", err)
+	}
+
+	deployed := map[string][]string{}
+	for _, remoteClient := range cluster {
+		resp, err := DeployClientKeys(ctx, remoteClient, &req)
+		if err != nil {
+			return deployed, err
+		}
+		if resp.Hostname != "" {
+			deployed[resp.Hostname] = resp.DeployedClients
+		}
+	}
+
+	return deployed, nil
+}
+
 // SendMemberAuthRotateToClusterMembers fans the per-member daemon rotation request
 // out to every OTHER cluster member, one member at a time (sequential, mirroring
 // SendRestartRequestToClusterMembers), so monitor restarts are interleaved with

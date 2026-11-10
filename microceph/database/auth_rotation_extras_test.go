@@ -12,14 +12,14 @@ import (
 )
 
 // setupAuthRotationDB creates an in-memory SQLite database with the auth_rotation
-// table by running the real schemaUpdate10 migration.
+// table by running the real schemaUpdate12 migration.
 func setupAuthRotationDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db := setupPlacementDB(t)
 
 	tx, err := db.BeginTx(context.Background(), nil)
 	require.NoError(t, err)
-	err = schemaUpdate10(context.Background(), tx)
+	err = schemaUpdate12(context.Background(), tx)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
@@ -458,5 +458,74 @@ func TestAbortAuthRotation(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, aborted)
 		assert.Equal(t, AuthRotationStateInProgress, rec.State)
+	})
+}
+
+func TestPersistRotationRecordIfLocked(t *testing.T) {
+	db := setupAuthRotationDB(t)
+
+	// Seed an in-progress record and take the lock as token1.
+	now := time.Now().UnixNano()
+	lockTx(t, db, func(tx *sql.Tx) {
+		err := SetAuthRotation(context.Background(), tx, AuthRotationRecord{
+			TargetKeyType: "aes256k",
+			State:         AuthRotationStateInProgress,
+			Stage:         AuthRotationStageRotateDaemons,
+		})
+		require.NoError(t, err)
+		acquired, err := TryAcquireAuthRotationLock(context.Background(), tx, now, now-int64(time.Minute))
+		require.NoError(t, err)
+		assert.True(t, acquired)
+	})
+
+	// 1. Lock held by our token: the failed-outcome write happens.
+	lockTx(t, db, func(tx *sql.Tx) {
+		written, err := PersistRotationRecordIfLocked(context.Background(), tx, now, AuthRotationRecord{
+			TargetKeyType: "aes256k",
+			State:         AuthRotationStateFailed,
+			Stage:         AuthRotationStageRotateDaemons,
+			Detail:        "daemon key rotation failed: mon unreachable",
+			StepProgress:  `{"mon_rotated":true}`,
+		})
+		require.NoError(t, err)
+		assert.True(t, written)
+	})
+	lockTx(t, db, func(tx *sql.Tx) {
+		rec, err := GetAuthRotation(context.Background(), tx)
+		require.NoError(t, err)
+		assert.Equal(t, AuthRotationStateFailed, rec.State)
+		assert.Contains(t, rec.Detail, "mon unreachable")
+	})
+
+	// 2. Lock taken over by another token: the defeated worker must not
+	//    overwrite the new attempt's record.
+	lockTx(t, db, func(tx *sql.Tx) {
+		written, err := PersistRotationRecordIfLocked(context.Background(), tx, now+int64(time.Hour), AuthRotationRecord{
+			TargetKeyType: "aes256k",
+			State:         AuthRotationStateInProgress,
+			Stage:         AuthRotationStageReadiness,
+		})
+		require.NoError(t, err)
+		assert.False(t, written)
+	})
+	lockTx(t, db, func(tx *sql.Tx) {
+		rec, err := GetAuthRotation(context.Background(), tx)
+		require.NoError(t, err)
+		assert.Equal(t, AuthRotationStateFailed, rec.State, "the takeover victim's write must not land")
+	})
+
+	// 3. Lock released (token 0): nothing matches, no write.
+	lockTx(t, db, func(tx *sql.Tx) {
+		released, err := ReleaseAuthRotationLock(context.Background(), tx, now)
+		require.NoError(t, err)
+		assert.True(t, released)
+	})
+	lockTx(t, db, func(tx *sql.Tx) {
+		written, err := PersistRotationRecordIfLocked(context.Background(), tx, now, AuthRotationRecord{
+			TargetKeyType: "aes256k",
+			State:         AuthRotationStateCompleted,
+		})
+		require.NoError(t, err)
+		assert.False(t, written)
 	})
 }

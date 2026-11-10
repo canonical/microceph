@@ -39,11 +39,21 @@ var authRotateMemberCmd = mcTypes.Endpoint{
 	Post: mcTypes.EndpointAction{Handler: cmdAuthRotateMemberPost, ProxyTarget: true},
 }
 
+// /1.0/auth/rotate/clients endpoint: the per-member client keyring deployment
+// step. The coordinator sends pending keyrings to consumer members before
+// committing a client credential rotation, and committed keyrings afterwards
+// for finalization; members that do not consume an entity skip it.
+var authRotateClientsCmd = mcTypes.Endpoint{
+	Path: "auth/rotate/clients",
+	Post: mcTypes.EndpointAction{Handler: cmdAuthRotateClientsPost, ProxyTarget: true},
+}
+
 var (
-	executeAuthRotationFunc = ceph.ExecuteAuthRotation
-	abortAuthRotationFunc   = ceph.AbortAuthRotation
-	buildAuthStatusFunc     = ceph.BuildAuthStatus
-	rotateMemberDaemonsFunc = ceph.RotateMemberDaemons
+	executeAuthRotationFunc  = ceph.ExecuteAuthRotation
+	abortAuthRotationFunc    = ceph.AbortAuthRotation
+	buildAuthStatusFunc      = ceph.BuildAuthStatus
+	rotateMemberDaemonsFunc  = ceph.RotateMemberDaemons
+	deployClientKeyringsFunc = ceph.DeployClientKeyrings
 )
 
 // cmdAuthRotatePost handles auth rotation initiation or resumption. The
@@ -91,11 +101,19 @@ func cmdAuthRotatePost(s mcTypes.State, r *http.Request) mcTypes.Response {
 		return mcTypes.InternalError(err)
 	}
 
+	// A --client request reports the requested entity: an admin sub-step of a
+	// paused full run rotates client.admin while the shared record keeps the
+	// full run's (empty) client filter.
+	clientName := record.ClientName
+	if req.Client != "" {
+		clientName = req.Client
+	}
+
 	resp := types.AuthRotateResponse{
 		TargetKeyType: record.TargetKeyType,
 		State:         record.State,
 		Stage:         record.Stage,
-		ClientName:    record.ClientName,
+		ClientName:    clientName,
 		Blocker:       record.Blocker,
 		Detail:        record.Detail,
 	}
@@ -157,4 +175,39 @@ func cmdAuthRotateMemberPost(s mcTypes.State, r *http.Request) mcTypes.Response 
 	}
 
 	return mcTypes.SyncResponse(true, resp)
+}
+
+// cmdAuthRotateClientsPost handles the per-member client keyring deployment
+// step: this member writes the given client keyrings to its local consumer
+// paths (entities it does not consume are skipped) and restarts the
+// associated services for pending-key deployment, so the coordinator can
+// verify that every consumer received the new key before committing.
+func cmdAuthRotateClientsPost(s mcTypes.State, r *http.Request) mcTypes.Response {
+	var req types.MemberClientRotateRequest
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		return mcTypes.BadRequest(fmt.Errorf("failed to decode request body: %w", err))
+	}
+
+	if len(req.PendingKeys) == 0 && len(req.Finalize) == 0 {
+		return mcTypes.BadRequest(fmt.Errorf("pending_keys or finalize is required for client keyring deployment"))
+	}
+
+	cephState := interfaces.CephState{State: s}
+	localMember := ""
+	if cephState.ClusterState() != nil {
+		localMember = cephState.ClusterState().Name()
+	}
+
+	deployed, err := deployClientKeyringsFunc(r.Context(), cephState, localMember, req.PendingKeys, req.Finalize)
+	if err != nil {
+		logger.Errorf("Failed member client keyring deployment: %v", err)
+		return mcTypes.InternalError(err)
+	}
+
+	return mcTypes.SyncResponse(true, types.MemberClientRotateResponse{
+		Hostname:        localMember,
+		DeployedClients: deployed,
+	})
 }
