@@ -61,6 +61,7 @@ jobs:
 
       - name: Run unit-tests
         run: |
+          python3 -m unittest discover -s tests/scripts -p test_actionutils.py
           cd microceph
           make check-unit
 
