@@ -2,7 +2,7 @@
 package api
 
 import (
-	"github.com/canonical/microcluster/rest"
+	"github.com/canonical/microceph/microceph/api/rest"
 )
 
 // Endpoints is a global list of all API endpoints on the /1.0 endpoint of microceph.
@@ -17,7 +17,6 @@ var Endpoints = []rest.Endpoint{
 	mdsServiceCmd,
 	mgrServiceCmd,
 	monServiceCmd,
-	rgwServiceCmd,
 	clientCmd,
 	clientConfigsCmd,
 	clientConfigsKeyCmd,

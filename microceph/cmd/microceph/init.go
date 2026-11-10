@@ -30,7 +30,7 @@ func (c *cmdInit) Command() *cobra.Command {
 
 func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	// Connect to the daemon.
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
 	}
@@ -79,7 +79,9 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 			}
 
 			// Bootstrap the cluster.
-			err = m.NewCluster(hostName, address, nil, time.Minute*2)
+			queryCtx, cancel := context.WithTimeout(cmd.Context(), time.Minute*2)
+			defer cancel()
+			err = m.NewCluster(queryCtx, hostName, address, nil)
 			if err != nil {
 				return err
 			}
@@ -91,7 +93,9 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			err = m.JoinCluster(hostName, address, token, nil, time.Minute*2)
+			queryCtx, cancel := context.WithTimeout(cmd.Context(), time.Minute*2)
+			defer cancel()
+			err = m.JoinCluster(queryCtx, hostName, address, token, nil)
 			if err != nil {
 				return err
 			}
@@ -119,7 +123,8 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 				}
 
 				// Issue the token.
-				token, err := m.NewJoinToken(tokenName)
+				// Preserve Quincy's non-expiring, single-use join-token policy.
+				token, err := m.NewJoinToken(cmd.Context(), tokenName, 0)
 				if err != nil {
 					return err
 				}

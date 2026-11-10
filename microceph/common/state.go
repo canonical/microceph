@@ -2,7 +2,7 @@
 package common
 
 import (
-	"github.com/canonical/microcluster/state"
+	state "github.com/canonical/microceph/microceph/clusterstate"
 )
 
 // StateInterface for retrieving cluster state

@@ -24,7 +24,7 @@ package database
 // Disk is used to track the Ceph disks on a particular server.
 type Disk struct {
 	ID     int
-	Member string `db:"primary=yes&join=internal_cluster_members.name&joinon=Disks.member_id"`
+	Member string `db:"primary=yes&join=core_cluster_members.name&joinon=Disks.member_id"`
 	Path   string `db:"primary=yes"`
 }
 

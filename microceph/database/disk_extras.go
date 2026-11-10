@@ -10,7 +10,8 @@ import (
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/microcluster/cluster"
-	"github.com/canonical/microcluster/state"
+
+	state "github.com/canonical/microceph/microceph/clusterstate"
 )
 
 // MemberCounterInterface is for counting member nodes. Introduced for mocking.
@@ -31,18 +32,18 @@ type MemberDisk struct {
 var _ = api.ServerEnvironment{}
 
 var membersDiskCnt = cluster.RegisterStmt(`
-SELECT internal_cluster_members.name AS member, count(disks.id) AS num_disks 
+SELECT core_cluster_members.name AS member, count(disks.id) AS num_disks
   FROM disks
-  JOIN internal_cluster_members ON disks.member_id = internal_cluster_members.id 
-  GROUP BY internal_cluster_members.id 
+  JOIN core_cluster_members ON disks.member_id = core_cluster_members.id
+  GROUP BY core_cluster_members.id
 `)
 
 var membersDiskCntExclude = cluster.RegisterStmt(`
-SELECT internal_cluster_members.name AS member, count(disks.id) AS num_disks
+SELECT core_cluster_members.name AS member, count(disks.id) AS num_disks
 FROM disks
-JOIN internal_cluster_members ON disks.member_id = internal_cluster_members.id
+JOIN core_cluster_members ON disks.member_id = core_cluster_members.id
 WHERE disks.id != ?
-GROUP BY internal_cluster_members.id
+GROUP BY core_cluster_members.id
 `)
 
 // MembersDiskCnt returns the number of disks per member for all members that have at least one disk excluding the given OSD

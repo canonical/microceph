@@ -10,10 +10,11 @@ import (
 
 // SchemaExtensions is a list of schema extensions that can be passed to the MicroCluster daemon.
 // Each entry will increase the database schema version by one, and will be applied after internal schema updates.
-var SchemaExtensions = map[int]schema.Update{
-	1: schemaUpdate1,
-	2: schemaUpdate2,
-	3: schemaUpdate3,
+var SchemaExtensions = []schema.Update{
+	schemaUpdate1,
+	schemaUpdate2,
+	schemaUpdate3,
+	schemaUpdate4,
 }
 
 func schemaUpdate1(ctx context.Context, tx *sql.Tx) error {
@@ -30,7 +31,7 @@ CREATE TABLE disks (
   member_id                     INTEGER  NOT  NULL,
   path                          TEXT     NOT  NULL,
   osd                           INTEGER  NOT  NULL,
-  FOREIGN KEY (member_id) REFERENCES "internal_cluster_members" (id) ON DELETE CASCADE,
+  FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE,
   UNIQUE(member_id, path),
   UNIQUE(osd)
 );
@@ -39,7 +40,7 @@ CREATE TABLE services (
   id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
   member_id                     INTEGER  NOT  NULL,
   service                       TEXT     NOT  NULL,
-  FOREIGN KEY (member_id) REFERENCES "internal_cluster_members" (id) ON DELETE CASCADE,
+  FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE,
   UNIQUE(member_id, service)
 );
   `
@@ -57,7 +58,7 @@ CREATE TABLE client_config (
   member_id                     INTEGER,
   key                           TEXT     NOT  NULL,
   value                         TEXT     NOT  NULL,
-  FOREIGN KEY (member_id) REFERENCES "internal_cluster_members" (id) ON DELETE CASCADE
+  FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX cc_index ON client_config(coalesce(member_id, 0), key);
@@ -75,7 +76,7 @@ CREATE TABLE disks2 (
   id                            INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL,
   member_id                     INTEGER  NOT  NULL,
   path                          TEXT     NOT  NULL,
-  FOREIGN KEY (member_id) REFERENCES "internal_cluster_members" (id) ON DELETE CASCADE,
+  FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE,
   UNIQUE(member_id, path)
 );
 INSERT INTO disks2 (id, member_id, path)

@@ -7,16 +7,18 @@ import (
 
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microcluster/client"
+
+	mcTypes "github.com/canonical/microceph/microceph/api/endpoint"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/common"
-	"github.com/canonical/microcluster/client"
 )
 
 func SetClientConfig(ctx context.Context, c *client.Client, data *types.ClientConfig) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("client", "configs", data.Key), data, nil)
+	err := c.Query(queryCtx, "PUT", mcTypes.PublicEndpoint, api.NewURL().Path("client", "configs", data.Key), data, nil)
 	if err != nil {
 		return fmt.Errorf("failed setting client config: %w, Key: %s, Value: %s", err, data.Key, data.Value)
 	}
@@ -28,7 +30,7 @@ func ResetClientConfig(ctx context.Context, c *client.Client, data *types.Client
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*200)
 	defer cancel()
 
-	err := c.Query(queryCtx, "DELETE", api.NewURL().Path("client", "configs", data.Key), data, nil)
+	err := c.Query(queryCtx, "DELETE", mcTypes.PublicEndpoint, api.NewURL().Path("client", "configs", data.Key), data, nil)
 	if err != nil {
 		return fmt.Errorf("failed clearing client config: %w, Key: %s", err, data.Key)
 	}
@@ -42,7 +44,7 @@ func GetClientConfig(ctx context.Context, c *client.Client, data *types.ClientCo
 
 	configs := types.ClientConfigs{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("client", "configs", data.Key), data, &configs)
+	err := c.Query(queryCtx, "GET", mcTypes.PublicEndpoint, api.NewURL().Path("client", "configs", data.Key), data, &configs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch client config: %w, Key: %s", err, data.Key)
 	}
@@ -56,7 +58,7 @@ func ListClientConfig(ctx context.Context, c *client.Client, data *types.ClientC
 
 	configs := types.ClientConfigs{}
 
-	err := c.Query(queryCtx, "GET", api.NewURL().Path("client", "configs"), data, &configs)
+	err := c.Query(queryCtx, "GET", mcTypes.PublicEndpoint, api.NewURL().Path("client", "configs"), data, &configs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch client config: %w, Key: %s", err, data.Key)
 	}
@@ -69,7 +71,7 @@ func UpdateClientConf(ctx context.Context, c *client.Client) error {
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second*20)
 	defer cancel()
 
-	err := c.Query(queryCtx, "PUT", api.NewURL().Path("client", "configs"), nil, nil)
+	err := c.Query(queryCtx, "PUT", mcTypes.PublicEndpoint, api.NewURL().Path("client", "configs"), nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to update the configuration file: %w", err)
 	}
