@@ -11,6 +11,44 @@ Test Tags        smb    multi-node    lxd    slow    integration
 ${SMB_SINGLETON}      ${False}
 ${SMB_INDEPENDENT}    ${False}
 
+*** Keywords ***
+Check Automatic SMB Configuration Refresh
+    ${sid}=    SMB User SID    1
+    Run SMB Checked    1    snap    stop    --disable    microceph.smbd
+    ${applied}=    Apply SMB Resource    refresh
+    Should Be Equal As Integers    ${applied.rc}    0    msg=${applied.stdout}\n${applied.stderr}
+    ${disabled}=    Observe SMB Interval    1
+    ${preserved}=    SMB Observations Disabled    ${disabled}
+    Should Be True    ${preserved}    msg=Refresh changed a disabled gateway or its published endpoint
+    Run SMB Checked    1    snap    start    --enable    microceph.smbd
+    ${updated}=    Wait For SMB Ready    1    robot-never    3446
+    ${updated_sid}=    SMB User SID    1
+    Should Be Equal    ${updated_sid}    ${sid}
+    ${old_password}=    SMB Client Transfer    1    never-1.bin    ${False}    alice
+    Should Not Be Equal As Integers    ${old_password.rc}    0
+    ${read}=    SMB Client Transfer    1    never-1.bin    ${False}    refreshed
+    Should Be Equal As Integers    ${read.rc}    0    msg=${read.stdout}\n${read.stderr}
+    ${compare}=    Compare SMB Payload
+    Should Be Equal As Integers    ${compare.rc}    0
+    ${write}=    SMB Client Transfer    1    readonly-refused.bin    ${True}    refreshed
+    Should Not Be Equal As Integers    ${write.rc}    0
+    ${tokens}=    SMB Role Tokens    ${updated}
+    ${reapplied}=    Apply SMB Resource    refresh
+    Should Be Equal As Integers    ${reapplied.rc}    0    msg=${reapplied.stdout}\n${reapplied.stderr}
+    ${samples}=    Observe SMB Interval    1
+    ${unchanged}=    SMB Observations Unchanged    ${samples}    ${tokens}    robot-never    3446
+    Should Be True    ${unchanged}    msg=Equivalent sources caused a restart or lost confirmed readiness
+    ${restored}=    Apply SMB Resource    nonclustered
+    Should Be Equal As Integers    ${restored.rc}    0    msg=${restored.stdout}\n${restored.stderr}
+    Wait For SMB Ready    1    robot-never    3445
+    ${restored_sid}=    SMB User SID    1
+    Should Be Equal    ${restored_sid}    ${sid}
+    SMB Exact Transfer    1    never-1.bin    ${False}
+    SMB Exact Transfer    1    refresh-restored.bin
+    ${data}=    SMB Backing File Digest    never-1.bin
+    ${expected}=    SMB Payload Digest
+    Should Be Equal    ${data}    ${expected}
+
 *** Test Cases ***
 Singleton Enforces Ownership And Retains Gateway Local Access
     ${applied}=    Apply SMB Resource    nonclustered
@@ -51,6 +89,7 @@ Singleton Enforces Ownership And Retains Gateway Local Access
     Should Not Be Equal    ${rebooted}[boot_id]    ${before}[boot_id]
     SMB Exact Transfer    1    never-0.bin    ${False}
     SMB Exact Transfer    1    never-1.bin
+    Check Automatic SMB Configuration Refresh
     Set Suite Variable    ${SMB_SINGLETON}    ${True}
 
 Deploy Independent Logical IDs On Disjoint Data Paths
