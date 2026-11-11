@@ -118,6 +118,70 @@ test('a delayed older run cannot cancel the newer run that superseded it', async
   assert.equal(runs.find((run) => run.id === 21).status, 'in_progress');
 });
 
+test('cancellation lists only nonterminal statuses and preserves run boundaries', async () => {
+  const statuses = ['queued', 'requested', 'waiting', 'pending', 'in_progress'];
+  const currentRun = workflowRun(20, 17);
+  const runs = [
+    ...statuses.map((status, index) => workflowRun(10 + index, 17, status)),
+    workflowRun(15, 17, 'completed'),
+    workflowRun(16, 18, 'queued'),
+    currentRun,
+    workflowRun(21, 17, 'pending'),
+    { ...workflowRun(9, 17, 'requested'), workflow_id: 99 },
+  ];
+  const listed = [];
+  const cancelled = [];
+  const actions = {
+    listWorkflowRuns: () => {},
+    getWorkflowRun: async ({ run_id }) => {
+      assert.equal(run_id, currentRun.id);
+      return { data: currentRun };
+    },
+    cancelWorkflowRun: async ({ run_id }) => { cancelled.push(run_id); },
+  };
+  await cancelSupersededReviews({
+    number: 17,
+    context: { repo, runId: currentRun.id },
+    core: { info: () => {} },
+    github: {
+      rest: { actions },
+      paginate: async (method, params) => {
+        assert.equal(method, actions.listWorkflowRuns);
+        assert.ok(statuses.includes(params.status), 'completed history must not be queried');
+        assert.deepEqual(params, { ...repo, workflow_id: 8, status: params.status, per_page: 100 });
+        listed.push(params.status);
+        return runs.filter((run) => run.workflow_id === params.workflow_id && run.status === params.status);
+      },
+    },
+  });
+  assert.deepEqual(listed, statuses);
+  assert.deepEqual(cancelled, [10, 11, 12, 13, 14]);
+});
+
+test('a run moving between status listings is cancelled only once', async () => {
+  const olderRun = workflowRun(10, 17, 'queued');
+  const currentRun = workflowRun(20, 17);
+  const cancelled = [];
+  await cancelSupersededReviews({
+    number: 17,
+    context: { repo, runId: currentRun.id },
+    core: { info: () => {} },
+    github: {
+      paginate: async (_method, { status }) => {
+        if (status === 'queued') return [{ ...olderRun }];
+        if (status === 'in_progress') return [{ ...olderRun, status: 'in_progress' }];
+        return [];
+      },
+      rest: { actions: {
+        listWorkflowRuns: () => {},
+        getWorkflowRun: async () => ({ data: currentRun }),
+        cancelWorkflowRun: async ({ run_id }) => { cancelled.push(run_id); },
+      } },
+    },
+  });
+  assert.deepEqual(cancelled, [olderRun.id]);
+});
+
 for (const [name, status, completed] of [
   ['a run completing during cancellation', 409, true],
   ['a conflict on a still-active run', 409, false],

@@ -69,26 +69,31 @@ async function cancelSupersededReviews({ github, context, core, number }) {
     ...context.repo, run_id: context.runId,
   });
   const title = `AI advisory review PR #${number}`;
-  const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-    ...context.repo, workflow_id: currentRun.workflow_id, per_page: 100,
-  });
+  const seen = new Set();
+  for (const status of ['queued', 'requested', 'waiting', 'pending', 'in_progress']) {
+    const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+      ...context.repo, workflow_id: currentRun.workflow_id, status, per_page: 100,
+    });
 
-  for (const run of runs) {
-    if (run.display_title !== title || run.run_number >= currentRun.run_number
-        || run.status === 'completed') continue;
+    for (const run of runs) {
+      if (run.display_title !== title || run.run_number >= currentRun.run_number
+          || run.status === 'completed' || seen.has(run.id)) continue;
+      // A run may move to another status between the filtered listings.
+      seen.add(run.id);
 
-    try {
-      await github.rest.actions.cancelWorkflowRun({
-        ...context.repo, run_id: run.id,
-      });
-      core.info(`Cancelled superseded review run ${run.id}.`);
-    } catch (error) {
-      if (error.status !== 409) throw error;
-      // A run can finish after listing it but before the cancellation request.
-      const { data: latest } = await github.rest.actions.getWorkflowRun({
-        ...context.repo, run_id: run.id,
-      });
-      if (latest.status !== 'completed') throw error;
+      try {
+        await github.rest.actions.cancelWorkflowRun({
+          ...context.repo, run_id: run.id,
+        });
+        core.info(`Cancelled superseded review run ${run.id}.`);
+      } catch (error) {
+        if (error.status !== 409) throw error;
+        // A run can finish after listing it but before the cancellation request.
+        const { data: latest } = await github.rest.actions.getWorkflowRun({
+          ...context.repo, run_id: run.id,
+        });
+        if (latest.status !== 'completed') throw error;
+      }
     }
   }
 }

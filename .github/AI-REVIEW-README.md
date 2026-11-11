@@ -5,7 +5,7 @@
 - Otherwise: maintainer posts `/ai-review`; current revision selected when the job runs.
 - Head/base and open/non-draft checks run before inference and publication; both review outputs are pinned to the authorized head.
 - A push after the publication check can still leave a review on the older commit, but findings are never attributed to the newer, unreviewed commit.
-- Current PR transitions and authorized commands cancel only lower-run-number runs of this workflow for the same PR, including pending activation and publication jobs; only the trusted cancellation job receives `actions: write`.
+- Current PR transitions and authorized commands cancel only lower-run-number runs of this workflow for the same PR, including pending activation and publication jobs; only the trusted cancellation job receives `actions: write`. Cancellation lists `queued`, `requested`, `waiting`, `pending`, and `in_progress` runs separately, not completed history, and deduplicates runs that move between listings.
 
 ## Edit
 
