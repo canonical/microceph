@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/canonical/microceph/microceph/clilogger"
 	"sort"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/canonical/microceph/microceph/client"
+	"github.com/canonical/microceph/microceph/clilogger"
 )
 
 type cmdStatus struct {
@@ -21,9 +21,11 @@ func (c *cmdStatus) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Checks the cluster status",
+		Args:  cobra.NoArgs,
 		RunE:  c.Run,
 	}
 
+	cmd.AddCommand((&cmdStatusSMB{common: c.common}).Command())
 	return cmd
 }
 
