@@ -15,12 +15,21 @@
 | [workflows/ai-review.md](workflows/ai-review.md) | Prompt, triggers, `on.roles`, run name, provider, tools, limits, revision checks and pins. |
 | [scripts/ai-review.cjs](scripts/ai-review.cjs) | `hasWriteAccess()`, event checks, `/ai-review`, cancellation, approval-request text. |
 | [workflows/ai-review-request.yml](workflows/ai-review-request.yml) | Approval-request triggers and permissions. |
+| [ai-review/rubrics/](ai-review/rubrics/) | Vendored checklists included in the trusted review prompt. |
 
 Keep `on.roles` and `hasWriteAccess()` aligned. The `run-name` format must match the title used by `cancelSupersededReviews()`, including for comment-triggered runs.
 
 Generated; do not edit: `workflows/ai-review.lock.yml`, `aw/actions-lock.json`.
 
 Pi exposes only `get_file_contents`, `pull_request_read`, and `issue_read` from GitHub. Keep `tools.github.allowed` and `engine.config.mcp.toolExposure.github` in sync: the pinned converter drops the former, so Pi's native exposure policy hides tools by default and makes only these three callable. Safe-output tools remain directly callable. Keep the backend toolsets intact: the repository guard internally needs tools such as `search_repositories` to classify private data. Removing those tools from the server can break secrecy enforcement even though the agent never needs to call them. Read-only mode and repository guards remain enabled.
+
+## Vendored review rubrics
+
+The nine files in `ai-review/rubrics/` come from https://github.com/canonical/openstack-agentic-skills/tree/26736988a8c244e97f4e6e5c965766fbe7077f6d/reviewskill/rubrics. Their text is unchanged except for joining one hard-wrapped paragraph in `review-wiring.md`. Upstream `review-style.md` supplies the conventions dimension; `review-elegance.md` supplies maintainability and design quality.
+
+The workflow uses required local `runtime-import` directives, expanded during trusted activation before inference. The existing activation checkout includes `.github`, so the reviewer does not fetch upstream URLs or read rubric files from the PR head. Missing rubrics fail prompt preparation rather than silently reducing review coverage. The upstream skill runner, scripts, and examples are not vendored because this workflow already gathers evidence and publishes through its restricted tools.
+
+To refresh, select an immutable upstream commit, replace all nine rubric files, retain the Markdown paragraph reflow, and update the source URL above. Keep the explicit imports in `workflows/ai-review.md` aligned with the rubric inventory, then compile and check activation's rendered `user.txt`: all nine complete checklists should appear exactly once. Prompt preparation must fail if any required rubric is missing. The workflow's concrete-defect threshold and publication rules override broader rubric suggestions, including formatter or style-only findings.
 
 ## Settings
 
