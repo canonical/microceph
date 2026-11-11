@@ -9,7 +9,7 @@ jobs:
   ai-review-tests:
     name: Test AI review automation
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -28,6 +28,37 @@ jobs:
       # cancellation boundaries with an in-memory GitHub API; no external calls.
       - name: Run AI review Node unit tests
         run: node --test .github/scripts/ai-review.test.cjs
+
+      # Use the same converter and runtime setup as ai-review.lock.yml, not mocks
+      # or the latest upstream code. The runtime test checks this commit pin.
+      - name: Checkout pinned gh-aw action scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: github/gh-aw-actions
+          ref: 221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
+          path: .ai-review-actions
+          persist-credentials: false
+
+      # Download the lock's Pi version and real GitHub MCP server before testing.
+      # Docker is preinstalled on this runner; no gh-aw compiler is needed.
+      - name: Prepare tool-catalog test dependencies
+        env:
+          GITHUB_MCP_IMAGE: ghcr.io/github/github-mcp-server:v2.0.3@sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132
+        run: |
+          npm install --prefix "$RUNNER_TEMP/ai-review-pi" --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@1.4.0
+          docker pull "$GITHUB_MCP_IMAGE"
+          # The lock uses this tag at runtime; populate it from the pinned image.
+          docker tag "$GITHUB_MCP_IMAGE" ghcr.io/github/github-mcp-server:v2.0.3
+
+      # Pi discovers the real server's tools over stdio, with container networking
+      # disabled and a dummy token. No model inference or GitHub API calls run.
+      # Assert only the three review tools are active/callable; guard metadata
+      # tools must remain registered but hidden and impossible to activate.
+      - name: Run offline Pi tool-catalog regression
+        env:
+          AI_REVIEW_ACTIONS_ROOT: ${{ github.workspace }}/.ai-review-actions
+          GH_AW_PI_PACKAGE_ROOT: ${{ runner.temp }}/ai-review-pi/node_modules/@earendil-works/pi-coding-agent
+        run: node --test .github/scripts/ai-review-tools.test.cjs
 
   preflight:
     uses: ./.github/workflows/dqlite-preflight.yml

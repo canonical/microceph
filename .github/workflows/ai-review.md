@@ -28,6 +28,21 @@ engine:
   # Testing model: set AI_REVIEW_MODEL to z-ai/glm-5.3-flash.
   model: openrouter/${{ vars.AI_REVIEW_MODEL }}
   model-provider: openai
+  # The pinned Pi converter drops tools.github.allowed; use Pi's native policy.
+  config: |
+    {
+      "mcp": {
+        "exposure": "hidden",
+        "toolExposure": {
+          "github": {
+            "get_file_contents": "direct",
+            "pull_request_read": "direct",
+            "issue_read": "direct"
+          },
+          "safeoutputs": { "*": "direct" }
+        }
+      }
+    }
   env:
     OPENAI_BASE_URL: https://openrouter.ai/api/v1
     CODEX_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -40,6 +55,7 @@ tools:
   cli-proxy: false
   github:
     mode: local
+    # Keep backend metadata tools available to the repository guard.
     toolsets: [repos, issues, pull_requests]
     allowed: [get_file_contents, pull_request_read, issue_read]
     # External PRs and their comments are review data, not trusted instructions.
