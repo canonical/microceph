@@ -71,6 +71,17 @@ def apply_resource(kind):
     return 0 if safe["success"] else 1
 
 
+def prepare_orch_spec(targets):
+    """Write a native generated policy with explicit placement targets."""
+    result = subprocess.run(["/snap/bin/microceph.rados", "-p", ".smb", "-N", "robot-smb",
+                             "get", "spec.smb", "-"], capture_output=True, text=True,
+                            timeout=30, check=True)
+    document = json.loads(result.stdout)
+    document["placement"] = {"hosts": targets}
+    document["unmanaged"] = False
+    (BASE / "orch.json").write_text(json.dumps(document))
+
+
 def cephfs_operation(action, filename=None, cluster="robot-never"):
     import cephfs
     config = Path(os.environ["SNAP_DATA"]) / "conf"
@@ -149,6 +160,8 @@ if __name__ == "__main__":
         initialize(json.loads(sys.argv[2]))
     elif operation == "apply":
         sys.exit(apply_resource(sys.argv[2]))
+    elif operation == "orch-spec":
+        prepare_orch_spec(sys.argv[2:])
     elif operation == "identity":
         retained_user_sid()
     elif operation == "snapshot":

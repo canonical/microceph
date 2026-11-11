@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2023 - Canonical Ltd
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import logging
 
 from . import service
@@ -52,9 +53,22 @@ class StatusService(service.BaseService):
 class ExtendedAPIService(service.BaseService):
     """Client for MicroCeph extended Cluster API."""
 
+    def apply_smb(self, target: str, cluster_id: str, spec: dict) -> None:
+        """Submit a nonblocking, policy-checked member placement request."""
+        payload = {"cluster_id": cluster_id, "orchestrator_spec": spec}
+        self._put("/1.0/services/smb", params={"target": target}, timeout=30,
+                  json={"name": "smb", "bool": False, "payload": json.dumps(payload)},
+                  redact_request=True, redact_response=True)
+
+    def remove_smb(self, target: str, cluster_id: str) -> None:
+        """Request exact-group retirement without purging private identity."""
+        self._delete("/1.0/services/smb", params={"target": target}, timeout=30,
+                     json={"cluster_id": cluster_id, "purge": False, "orchestrated": True},
+                     redact_response=True)
+
     def list_services(self) -> list[dict]:
         """List all services."""
-        services = self._get("/1.0/services")
+        services = self._get("/1.0/services", timeout=30)
         return services.get("metadata")
 
     def list_resources(self) -> list[dict]:
