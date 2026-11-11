@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	client "github.com/canonical/microcluster/client"
+	client "github.com/canonical/microcluster/v2/client"
 
 	mock "github.com/stretchr/testify/mock"
 

@@ -18,17 +18,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/canonical/lxd/lxd/resources"
+	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/common"
-
-	"github.com/canonical/lxd/lxd/resources"
-	"github.com/canonical/lxd/lxd/revert"
-	"github.com/canonical/lxd/shared"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/lxd/shared/revert"
 	"github.com/pborman/uuid"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	state "github.com/canonical/microceph/microceph/clusterstate"
+	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
 )
 

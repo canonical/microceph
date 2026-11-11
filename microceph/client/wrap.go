@@ -2,9 +2,10 @@ package client
 
 import (
 	"context"
-	"github.com/canonical/microceph/microceph/api/types"
 
-	microCli "github.com/canonical/microcluster/client"
+	microCli "github.com/canonical/microcluster/v2/client"
+
+	"github.com/canonical/microceph/microceph/api/types"
 )
 
 // ClientInterface wraps client functions

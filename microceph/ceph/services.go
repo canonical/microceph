@@ -12,12 +12,12 @@ import (
 	"github.com/Rican7/retry/backoff"
 	"github.com/Rican7/retry/strategy"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microcluster/state"
+	"github.com/tidwall/gjson"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	state "github.com/canonical/microceph/microceph/clusterstate"
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/database"
-	"github.com/tidwall/gjson"
 )
 
 // Table to map fetchFunc for workers (daemons) to a service.

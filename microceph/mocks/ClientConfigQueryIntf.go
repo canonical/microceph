@@ -3,8 +3,9 @@
 package mocks
 
 import (
-	state    "github.com/canonical/microcluster/state"
-	mock     "github.com/stretchr/testify/mock"
+	mock "github.com/stretchr/testify/mock"
+
+	state "github.com/canonical/microceph/microceph/clusterstate"
 	database "github.com/canonical/microceph/microceph/database"
 )
 
