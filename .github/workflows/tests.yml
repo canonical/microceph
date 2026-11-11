@@ -33,7 +33,7 @@ jobs:
 
       - name: Upload snap artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: snaps
           path: "*.snap"
@@ -52,10 +52,16 @@ jobs:
         run: |
           sudo add-apt-repository ppa:dqlite/dev
           sudo apt-get update
-          sudo apt-get install -y libdqlite-dev golang-go
+          sudo apt-get install -y libdqlite1.17-dev
+
+      - name: Install Go from go.mod
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: microceph/go.mod
 
       - name: Run unit-tests
         run: |
+          python3 -m unittest discover -s tests/scripts -p test_actionutils.py
           cd microceph
           make check-unit
 
@@ -65,7 +71,7 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
@@ -189,7 +195,7 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
@@ -291,7 +297,7 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
@@ -340,7 +346,7 @@ jobs:
     needs: build-microceph
     steps:
     - name: Download snap
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: snaps
         path: /home/runner
