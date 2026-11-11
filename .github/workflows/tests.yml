@@ -218,12 +218,11 @@ jobs:
             runner: self-hosted-linux-amd64-jammy-xlarge
 
           - id: smb-integration
-            name: SMB local-user singleton and safe refresh
+            name: SMB clustered and singleton lifecycle
             suite: smb-integration
-            # Three backing-Ceph VMs preserve quorum/replicas during reboot;
-            # no clustered SMB gateways or directory fixture are allocated.
-            # The existing three cases also exercise automatic user/share/port
-            # updates, retained SID/data, disabled intent and unchanged tokens.
+            # Serial owned labs: six clustered and three singleton cases.
+            # Three VMs preserve backing-Ceph quorum during reboot; no AD fixture.
+            # Both complete scenarios retain exact case and teardown accounting.
             runner: self-hosted-linux-amd64-noble-large
             lxd_args: --storage-backend=dir
             args: >-
@@ -296,6 +295,9 @@ jobs:
             log.html
             report.html
             smb-summary.json
+            smb-results/clustered/output.xml
+            smb-results/clustered/log.html
+            smb-results/clustered/report.html
             smb-results/singleton/output.xml
             smb-results/singleton/log.html
             smb-results/singleton/report.html

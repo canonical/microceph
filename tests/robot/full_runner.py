@@ -39,6 +39,12 @@ def _singleton(suite):
     return visitor.suite
 
 
+def _clustered(suite):
+    visitor = _SingletonSelection(HERE / "smb-clustered-tests")
+    suite.visit(visitor)
+    return visitor.suite
+
+
 def _case_names(suite):
     if suite is None:
         return set()
@@ -86,20 +92,33 @@ def _full(arguments, snap_path):
     # singleton must still be complete, even when parse-time filters are used.
     if len(expected) != 3 and (complete is not None or not settings.parse_include):
         raise DataError("Full discovery must contain the complete three-case SMB singleton scenario")
+    complete_clustered = _clustered(suite)
+    expected_clustered = _case_names(complete_clustered)
+    if complete_clustered is not None and len(expected_clustered) != 6:
+        raise DataError("Full discovery must contain the complete six-case SMB clustered scenario")
     suite.configure(**settings.suite_config)
     selected = _singleton(suite)
     selected_names = _case_names(selected)
     if selected_names and selected_names != expected:
         raise DataError("Select all three SMB singleton cases or none; partial scenarios cannot allocate a lab")
+    selected_clustered = _clustered(suite)
+    clustered_names = _case_names(selected_clustered)
+    if clustered_names and clustered_names != expected_clustered:
+        raise DataError("Select all six SMB clustered cases or none; partial scenarios cannot allocate a lab")
+    owned = [(kind, part) for kind, part in (("clustered", selected_clustered), ("singleton", selected)) if _case_names(part)]
+    owned.sort(key=lambda item: list(suite.suites).index(item[1]))
     root_name, root_source = suite.name, suite.source
     before = copy.deepcopy(suite)
     after = copy.deepcopy(suite)
-    if selected:
-        index = list(suite.suites).index(selected)
-        before.suites = list(before.suites)[:index]
-        after.suites = list(after.suites)[index + 1:]
+    if owned:
+        indices = [list(suite.suites).index(part) for _, part in owned]
+        if any(_case_names(part) and part not in [s for _, s in owned] for part in list(suite.suites)[min(indices):max(indices)+1]):
+            raise DataError("Owned SMB scenarios must not reorder interleaved ordinary suites")
+        before.suites = list(before.suites)[:min(indices)]
+        after.suites = list(after.suites)[max(indices) + 1:]
     else:
         after.suites = []
+    selected_names |= clustered_names
     # Configuration/selection was applied to the full tree. Reapplying qualified
     # selectors to a separately rooted coordinator would select different cases.
     forwarded = {key: value for key, value in options.items() if key not in {
@@ -130,20 +149,22 @@ def _full(arguments, snap_path):
             elif selected_names:
                 command = [sys.executable, "-u", str(HERE / "smb_runner.py"),
                            *_arguments(forwarded), "--snap-path", snap_path,
+                           "--suites", ",".join(kind for kind, _ in owned),
                            "--outputdir", str(outputdir), "--output", "output.xml",
                            "--log", "NONE", "--report", "NONE", "--xunit", "NONE", "--notimestampoutputs"]
                 part_rc = _run(command)
-                smb_xml = outputdir / "smb-results/singleton/output.xml"
-                if smb_xml.is_file():
-                    result = ExecutionResult(smb_xml)
-                    smb_root = result.suite
-                    result.suite = TestSuite(name=root_name, source=root_source)
-                    result.suite.suites.append(smb_root)
-                    wrapped = private / "singleton.xml"
-                    result.save(wrapped)
-                    outputs.append(wrapped)
-                else:
-                    return rc or part_rc or 252
+                for kind, _ in owned:
+                    smb_xml = outputdir / ("smb-results/" + kind + "/output.xml")
+                    if smb_xml.is_file():
+                        result = ExecutionResult(smb_xml)
+                        smb_root = result.suite
+                        result.suite = TestSuite(name=root_name, source=root_source)
+                        result.suite.suites.append(smb_root)
+                        wrapped = private / (kind + ".xml")
+                        result.save(wrapped)
+                        outputs.append(wrapped)
+                    else:
+                        return rc or part_rc or 252
             else:
                 continue
             rc = rc or part_rc
