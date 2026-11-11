@@ -26,20 +26,23 @@ import (
 )
 
 type smbLocalStartupRunner struct {
-	t          *testing.T
-	db         *sql.DB
-	failure    string
-	active     bool
-	clustered  bool
-	ctdbActive bool
-	commands   []string
-	spec       string
-	config     string
-	users      string
-	disabled   bool
-	unready    bool
-	logical    string
-	onControl  func(context.Context, string) error
+	t               *testing.T
+	db              *sql.DB
+	failure         string
+	active          bool
+	clustered       bool
+	ctdbActive      bool
+	winbindActive   bool
+	winbindDisabled bool
+	joins           string
+	commands        []string
+	spec            string
+	config          string
+	users           string
+	disabled        bool
+	unready         bool
+	logical         string
+	onControl       func(context.Context, string) error
 }
 
 func (r *smbLocalStartupRunner) RunCommand(name string, args ...string) (string, error) {
@@ -80,6 +83,8 @@ func (r *smbLocalStartupRunner) RunCommandContext(ctx context.Context, name stri
 			data = r.config
 		case "users.json":
 			data = r.users
+		case "join.0.json":
+			data = r.joins
 		default:
 			return "", errors.New("Error ENOENT")
 		}
@@ -157,7 +162,24 @@ func (r *smbLocalStartupRunner) RunCommandContext(ctx context.Context, name stri
 		}
 	}
 	if name == "snapctl" {
-		require.Contains(r.t, []string{"microceph.smbd", "microceph.ctdbd"}, args[1], "only installed roles can be controlled")
+		require.Contains(r.t, []string{"microceph.smbd", "microceph.ctdbd", "microceph.winbindd"}, args[1], "only installed roles can be controlled")
+		if args[1] == "microceph.winbindd" {
+			switch args[0] {
+			case "start", "restart":
+				r.winbindActive = true
+			case "stop":
+				r.winbindActive = false
+			}
+			activity := "inactive"
+			if r.winbindActive {
+				activity = "active"
+			}
+			startup := "enabled"
+			if r.winbindDisabled {
+				startup = "disabled"
+			}
+			return "microceph.winbindd " + startup + " " + activity, nil
+		}
 		if args[1] == "microceph.ctdbd" {
 			if !r.clustered {
 				require.Contains(r.t, []string{"stop", "services"}, args[0], "local-only fixture must never start CTDB")

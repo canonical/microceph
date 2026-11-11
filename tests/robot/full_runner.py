@@ -12,14 +12,15 @@ HERE = Path(__file__).resolve().parent
 # The adjacent wrapper must not shadow the installed Robot Framework package.
 sys.path[:] = [path for path in sys.path if Path(path or os.getcwd()).resolve() != HERE]
 
-from robot.api import ExecutionResult, ResultWriter, TestSuiteBuilder
-from robot.conf import RobotSettings
+from robot.api import ExecutionResult, ResultWriter
 from robot.errors import DataError, Information
 from robot.model import SuiteVisitor
-from robot.model.modifier import ModelModifier
-from robot.output import LOGGER
 from robot.result import TestSuite
 from robot.run import RobotFramework
+
+
+sys.path.insert(0, str(HERE / "resources"))
+from robot_discovery import arguments as _arguments, build_suite, case_names as _case_names
 
 
 class _SingletonSelection(SuiteVisitor):
@@ -45,25 +46,10 @@ def _clustered(suite):
     return visitor.suite
 
 
-def _case_names(suite):
-    if suite is None:
-        return set()
-    names = {test.name for test in suite.tests}
-    for child in suite.suites:
-        names.update(_case_names(child))
-    return names
-
-
-def _arguments(options):
-    """Serialize Robot's canonical parsed options, never parse aliases ourselves."""
-    arguments = []
-    for key, value in options.items():
-        if isinstance(value, bool):
-            arguments.append("--" + ("" if value else "no") + key)
-        else:
-            for item in value if isinstance(value, list) else [value]:
-                arguments.extend(["--" + key, str(item)])
-    return arguments
+def _ad(suite):
+    visitor = _SingletonSelection(HERE / "smb-ad-tests")
+    suite.visit(visitor)
+    return visitor.suite
 
 
 def _run(command):
@@ -76,16 +62,7 @@ def _run(command):
 
 def _full(arguments, snap_path):
     options, sources = RobotFramework().parse_arguments([*arguments, str(HERE)])
-    settings = RobotSettings(options)
-    if settings.pythonpath:
-        sys.path[:0] = settings.pythonpath
-    suite = TestSuiteBuilder(included_extensions=settings.extension,
-                             included_files=settings.parse_include,
-                             custom_parsers=settings.parsers, rpa=settings.rpa,
-                             lang=settings.languages,
-                             allow_empty_suite=settings.run_empty_suite).build(*sources)
-    if settings.pre_run_modifiers:
-        suite.visit(ModelModifier(settings.pre_run_modifiers, settings.run_empty_suite, LOGGER))
+    settings, suite = build_suite(options, sources)
     complete = _singleton(suite)
     expected = _case_names(complete)
     # Parse-time filtering may intentionally omit SMB altogether. A discovered
@@ -96,6 +73,10 @@ def _full(arguments, snap_path):
     expected_clustered = _case_names(complete_clustered)
     if complete_clustered is not None and len(expected_clustered) != 6:
         raise DataError("Full discovery must contain the complete six-case SMB clustered scenario")
+    complete_ad = _ad(suite)
+    expected_ad = _case_names(complete_ad)
+    if complete_ad is not None and len(expected_ad) != 9:
+        raise DataError("Full discovery must contain the complete nine-case SMB AD scenario")
     suite.configure(**settings.suite_config)
     selected = _singleton(suite)
     selected_names = _case_names(selected)
@@ -105,7 +86,11 @@ def _full(arguments, snap_path):
     clustered_names = _case_names(selected_clustered)
     if clustered_names and clustered_names != expected_clustered:
         raise DataError("Select all six SMB clustered cases or none; partial scenarios cannot allocate a lab")
-    owned = [(kind, part) for kind, part in (("clustered", selected_clustered), ("singleton", selected)) if _case_names(part)]
+    selected_ad = _ad(suite)
+    ad_names = _case_names(selected_ad)
+    if ad_names and ad_names != expected_ad:
+        raise DataError("Select all nine SMB AD cases or none; partial scenarios cannot allocate a lab")
+    owned = [(kind, part) for kind, part in (("ad", selected_ad), ("clustered", selected_clustered), ("singleton", selected)) if _case_names(part)]
     owned.sort(key=lambda item: list(suite.suites).index(item[1]))
     root_name, root_source = suite.name, suite.source
     before = copy.deepcopy(suite)
@@ -118,7 +103,7 @@ def _full(arguments, snap_path):
         after.suites = list(after.suites)[max(indices) + 1:]
     else:
         after.suites = []
-    selected_names |= clustered_names
+    selected_names |= clustered_names | ad_names
     # Configuration/selection was applied to the full tree. Reapplying qualified
     # selectors to a separately rooted coordinator would select different cases.
     forwarded = {key: value for key, value in options.items() if key not in {

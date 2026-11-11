@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -27,31 +28,52 @@ func newSMBPrivateCommand(ctx context.Context, root string, argv []string) (*exe
 	setup := ""
 	switch argv[0] {
 	case filepath.Join(snap, "bin/ctdb"):
-		if len(argv) < 2 || len(argv) > 3 {
-			return nil, fmt.Errorf("invalid CTDB client arguments")
-		}
-		switch argv[1] {
-		case "pnn", "status", "reloadnodes":
-			if len(argv) != 2 {
+		if len(argv) >= 3 && argv[1] == "-t" {
+			if argv[2] != "5" || !validSMBADCTDBArgs(argv[3:]) {
+				return nil, fmt.Errorf("unsupported AD CTDB client arguments")
+			}
+		} else {
+			if len(argv) < 2 || len(argv) > 3 {
 				return nil, fmt.Errorf("invalid CTDB client arguments")
 			}
-		case "nodestatus":
-			if len(argv) != 3 {
-				return nil, fmt.Errorf("invalid CTDB node argument")
+			switch argv[1] {
+			case "pnn", "status", "reloadnodes":
+				if len(argv) != 2 {
+					return nil, fmt.Errorf("invalid CTDB client arguments")
+				}
+			case "nodestatus":
+				if len(argv) != 3 {
+					return nil, fmt.Errorf("invalid CTDB node argument")
+				}
+				_, err := strconv.ParseUint(argv[2], 10, 64)
+				if err != nil {
+					return nil, err
+				}
+			default:
+				return nil, fmt.Errorf("unsupported CTDB client command")
 			}
-			_, err := strconv.ParseUint(argv[2], 10, 64)
-			if err != nil {
-				return nil, err
-			}
-		default:
-			return nil, fmt.Errorf("unsupported CTDB client command")
 		}
 		setup = "smb_setup_ctdb;"
+	case filepath.Join(snap, "bin/wbinfo"):
+		if len(argv) != 2 || !validSMBADWinbindArg(argv[1]) {
+			return nil, fmt.Errorf("unsupported Winbind client arguments")
+		}
+		setup = "smb_setup_winbind;"
+	case filepath.Join(snap, "bin/getent"):
+		if len(argv) != 3 || argv[1] != "group" || !regexp.MustCompile(`^[0-9]+$`).MatchString(argv[2]) {
+			return nil, fmt.Errorf("unsupported NSS client arguments")
+		}
+		setup = "smb_setup_nss; smb_setup_winbind;"
 	case filepath.Join(snap, "bin/python3"):
 		if len(argv) != 5 || argv[1] != "-B" || argv[2] != filepath.Join(snap, "smb/native.py") {
 			return nil, fmt.Errorf("unsupported SMB binding command")
 		}
 		switch argv[3] {
+		case "join":
+			if argv[4] != "-" {
+				return nil, fmt.Errorf("join requires private stdin")
+			}
+			setup = "smb_setup_nss; smb_setup_ctdb; smb_setup_winbind; smb_bind_custom_dns;"
 		case "accounts":
 			if filepath.Dir(argv[4]) != filepath.Join(root, "config") || !strings.HasPrefix(filepath.Base(argv[4]), ".native-input-") {
 				return nil, fmt.Errorf("invalid private account input")
@@ -130,4 +152,35 @@ func (b *smbNativeOutput) Write(p []byte) (int, error) {
 	}
 	b.data = append(b.data, p...)
 	return n, nil
+}
+
+func validSMBADCTDBArgs(args []string) bool {
+	if len(args) == 1 && args[0] == "getdbmap" {
+		return true
+	}
+	if len(args) != 3 || args[0] != "pfetch" {
+		return false
+	}
+	if args[1] == "autorid.tdb" {
+		return args[2] == "0x434f4e46494700"
+	}
+	if args[1] != "secrets.tdb" {
+		return false
+	}
+	for _, prefix := range []string{"SECRETS/MACHINE_PASSWORD/", "SECRETS/SID/"} {
+		if strings.HasPrefix(args[2], prefix) {
+			return regexp.MustCompile(`^[A-Z0-9][A-Z0-9_-]{0,14}$`).MatchString(strings.TrimPrefix(args[2], prefix))
+		}
+	}
+	return false
+}
+
+func validSMBADWinbindArg(arg string) bool {
+	if arg == "--ping" || arg == "--check-secret" {
+		return true
+	}
+	if strings.HasPrefix(arg, "--domain-info=") {
+		return regexp.MustCompile(`^[A-Z0-9][A-Z0-9_-]{0,14}$`).MatchString(strings.TrimPrefix(arg, "--domain-info="))
+	}
+	return regexp.MustCompile(`^--sid-to-gid=S-1-5-21-[0-9]+-[0-9]+-[0-9]+-513$`).MatchString(arg)
 }
