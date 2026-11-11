@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { prepareReview, cancelSupersededReviews } = require('./ai-review.cjs');
+const { prepareReview, cancelSupersededReviews, requestReview } = require('./ai-review.cjs');
 
 const repo = { owner: 'example', repo: 'microceph' };
 const head = 'a'.repeat(40);
@@ -46,6 +46,16 @@ test('a maintainer command pins the revision selected when authorization runs', 
   });
 });
 
+for (const action of ['opened', 'reopened', 'ready_for_review', 'synchronize']) {
+  test(`a current ${action} event from a writer authorizes the current revisions`, async () => {
+    const api = reviewAPI({ eventName: 'pull_request_target', action });
+    await prepareReview(api);
+    assert.deepEqual(api.outputs, {
+      ready: 'true', number: '17', head_sha: head, base_sha: base, cancel: 'true',
+    });
+  });
+}
+
 for (const [name, options] of [
   ['a reader command', { permission: 'read' }],
   ['an ordinary maintainer comment', { eventComment: { ...comment, body: 'Looks good' } }],
@@ -81,6 +91,113 @@ test('a superseded push cannot cancel a review of the new head', async () => {
   assert.equal(api.outputs.ready, 'false');
   assert.notEqual(api.outputs.cancel, 'true');
 });
+
+function requestAPI(options = {}, initialComments = []) {
+  const api = reviewAPI({
+    eventName: 'pull_request_target', action: 'opened', permission: 'read', ...options,
+  });
+  const comments = initialComments.map((entry) => ({ ...entry }));
+  const calls = { list: 0, create: [], update: [] };
+  const issues = api.github.rest.issues;
+  issues.listComments = () => {};
+  api.github.paginate = async (method, params) => {
+    assert.equal(method, issues.listComments);
+    assert.deepEqual(params, { ...repo, issue_number: pull.number, per_page: 100 });
+    calls.list++;
+    return comments;
+  };
+  issues.createComment = async (params) => {
+    assert.equal(params.owner, repo.owner);
+    assert.equal(params.repo, repo.repo);
+    assert.equal(params.issue_number, pull.number);
+    calls.create.push(params);
+    const created = {
+      id: 100 + comments.length,
+      body: params.body,
+      user: { login: 'github-actions[bot]', type: 'Bot' },
+    };
+    comments.push(created);
+    return { data: created };
+  };
+  issues.updateComment = async (params) => {
+    assert.equal(params.owner, repo.owner);
+    assert.equal(params.repo, repo.repo);
+    calls.update.push(params);
+    const existing = comments.find((entry) => entry.id === params.comment_id);
+    assert.ok(existing);
+    existing.body = params.body;
+    return { data: existing };
+  };
+  return { ...api, comments, calls };
+}
+
+test('an approval request is created once and unchanged requests are left alone', async () => {
+  const api = requestAPI();
+  await requestReview(api);
+  assert.equal(api.comments.length, 1);
+  assert.equal(api.calls.create.length, 1);
+  assert.match(api.comments[0].body, /\/ai-review/);
+  const original = { ...api.comments[0] };
+
+  await requestReview(api);
+  assert.equal(api.calls.list, 2);
+  assert.equal(api.calls.create.length, 1);
+  assert.deepEqual(api.calls.update, []);
+  assert.deepEqual(api.comments, [original]);
+});
+
+test('an outdated bot approval request is updated to the current template', async () => {
+  const api = requestAPI();
+  await requestReview(api);
+  const expectedBody = api.comments[0].body;
+  const id = api.comments[0].id;
+  const marker = expectedBody.split('\n')[0];
+  api.comments[0].body = `${marker}\nOld approval instructions`;
+
+  await requestReview(api);
+  assert.equal(api.calls.create.length, 1);
+  assert.deepEqual(api.calls.update, [{ ...repo, comment_id: id, body: expectedBody }]);
+  assert.equal(api.comments[0].body, expectedBody);
+});
+
+for (const user of [
+  { login: 'contributor', type: 'User' },
+  { login: 'github-actions[bot]', type: 'User' },
+  { login: 'another-bot[bot]', type: 'Bot' },
+]) {
+  test(`a marker spoofed by ${user.login} (${user.type}) is not reused`, async () => {
+    const template = requestAPI();
+    await requestReview(template);
+    const spoof = { id: 50, body: template.comments[0].body, user };
+    const api = requestAPI({}, [spoof]);
+
+    await requestReview(api);
+    assert.equal(api.calls.create.length, 1);
+    assert.deepEqual(api.calls.update, []);
+    assert.deepEqual(api.comments[0], spoof);
+    assert.equal(api.comments[1].body, template.comments[0].body);
+  });
+}
+
+for (const [name, options] of [
+  ['a stale head', { currentPull: { ...pull, head: { sha: 'c'.repeat(40) } } }],
+  ['a stale state', { eventPull: { ...pull, state: 'closed' } }],
+  ['a stale draft transition', { eventPull: { ...pull, draft: true } }],
+  ['a draft', { currentPull: { ...pull, draft: true }, eventPull: { ...pull, draft: true } }],
+  ['a closed pull request', { currentPull: { ...pull, state: 'closed' }, eventPull: { ...pull, state: 'closed' } }],
+  ['a writer', { permission: 'write' }],
+  ['a maintainer', { permission: 'maintain' }],
+  ['an administrator', { permission: 'admin' }],
+  ['a comment event', { eventName: 'issue_comment', action: 'created' }],
+  ['an unsupported action', { action: 'edited' }],
+]) {
+  test(`${name} does not publish an approval request`, async () => {
+    const api = requestAPI(options);
+    await requestReview(api);
+    assert.deepEqual(api.calls, { list: 0, create: [], update: [] });
+    assert.deepEqual(api.comments, []);
+  });
+}
 
 function workflowRun(id, number, status = 'in_progress') {
   return { id, run_number: id, workflow_id: 8, display_title: `AI advisory review PR #${number}`, status };

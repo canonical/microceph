@@ -5,6 +5,30 @@ on:
   - pull_request
 
 jobs:
+  # Review automation tests do not need Ceph/LXD, a model API key, or write access.
+  ai-review-tests:
+    name: Test AI review automation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      # Exercise authorization, approval-comment deduplication/updates, and
+      # cancellation boundaries with an in-memory GitHub API; no external calls.
+      - name: Run AI review Node unit tests
+        run: node --test .github/scripts/ai-review.test.cjs
+
   preflight:
     uses: ./.github/workflows/dqlite-preflight.yml
 
