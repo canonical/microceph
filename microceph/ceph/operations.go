@@ -155,6 +155,10 @@ func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
 		activeServices = append(activeServices, types.Service{Service: "mgr", Location: location})
 	}
 	for _, location := range activeMdss {
+		// The MDS on the target node may run under a prefixed ID (see mdsID).
+		if location == mdsID(name) {
+			location = name
+		}
 		activeServices = append(activeServices, types.Service{Service: "mds", Location: location})
 	}
 	logger.Debugf("active services: %v", activeServices)

@@ -84,7 +84,9 @@ func mgrActiveOrStandby(ctx context.Context, member string) (bool, error) {
 // A member's MDS is viable iff its name appears with a state beginning "up:"
 // in either location. This correctly handles clusters with no filesystem
 // (all MDS are standbys and still viable) as well as active+standby setups.
+// The daemon name is the member's MDS ID (see mdsID), not always its hostname.
 func mdsUp(ctx context.Context, member string) (bool, error) {
+	id := mdsID(member)
 	output, err := cephRunContext(ctx, "mds", "stat", "-f", "json")
 	if err != nil {
 		return false, fmt.Errorf("failed to run 'ceph mds stat': %w", err)
@@ -110,13 +112,13 @@ func mdsUp(ctx context.Context, member string) (bool, error) {
 		return false, fmt.Errorf("failed to parse 'ceph mds stat' output: %w", err)
 	}
 	for _, s := range stat.FSMap.Standbys {
-		if s.Name == member && strings.HasPrefix(s.State, "up:") {
+		if s.Name == id && strings.HasPrefix(s.State, "up:") {
 			return true, nil
 		}
 	}
 	for _, fs := range stat.FSMap.Filesystems {
 		for _, info := range fs.MDSMap.Info {
-			if info.Name == member && strings.HasPrefix(info.State, "up:") {
+			if info.Name == id && strings.HasPrefix(info.State, "up:") {
 				return true, nil
 			}
 		}

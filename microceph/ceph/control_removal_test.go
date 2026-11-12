@@ -193,6 +193,22 @@ func TestEnsureMdsAbsentEvictsAndConfirms(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestEnsureMdsAbsentDigitHostname checks that a host whose name begins with
+// a digit is looked up and evicted under its prefixed MDS ID.
+func TestEnsureMdsAbsentDigitHostname(t *testing.T) {
+	shrinkDaemonRemovalVerify(t)
+	r := withMockRunner(t)
+	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "stat", "-f", "json").
+		Return(mdsStandbys("mds-1node", "node-b"), nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "fail", "mds-1node", "--yes-i-really-mean-it").
+		Return("", nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "stat", "-f", "json").
+		Return(mdsStandbys("node-b"), nil).Once()
+
+	err := ensureMdsAbsent(context.Background(), "1node")
+	assert.NoError(t, err)
+}
+
 func TestEnsureMdsAbsentPreservesEvictionFailureWhenStillPresent(t *testing.T) {
 	shrinkDaemonRemovalVerify(t)
 	r := withMockRunner(t)

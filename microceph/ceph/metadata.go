@@ -10,6 +10,31 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// mdsIDPrefix is prepended to the MDS daemon ID of a host whose name begins
+// with a digit. Ceph refuses to start an MDS whose name starts with a numeric
+// digit, so such hosts cannot use their hostname unchanged.
+const mdsIDPrefix = "mds-"
+
+// mdsID returns the Ceph daemon ID of the MDS on hostname: the hostname
+// itself, or the hostname with mdsIDPrefix prepended when it begins with a
+// digit. The mapping is idempotent. snapcraft/commands/mds.start applies the
+// same rule when it starts ceph-mds, so the two must be kept in sync.
+func mdsID(hostname string) string {
+	if hostname != "" && hostname[0] >= '0' && hostname[0] <= '9' {
+		return mdsIDPrefix + hostname
+	}
+	return hostname
+}
+
+// serviceDaemonID returns the Ceph daemon ID of service on hostname. Only MDS
+// names are constrained; every other service uses the hostname unchanged.
+func serviceDaemonID(service string, hostname string) string {
+	if service == "mds" {
+		return mdsID(hostname)
+	}
+	return hostname
+}
+
 // ensureMdsAbsentFunc commits MDS map removal after the local daemon is
 // stopped. Injectable so DeleteService ordering can be unit-tested without
 // touching Ceph.
@@ -19,7 +44,7 @@ var ensureMdsAbsentFunc = ensureMdsAbsent
 // testing.
 var evictMdsFunc = evictMds
 
-// evictMds runs `ceph mds fail <hostname> --yes-i-really-mean-it`, which
+// evictMds runs `ceph mds fail <mds id> --yes-i-really-mean-it`, which
 // removes a standby MDS from the fsmap (or fails the active MDS so a standby
 // takes over) instead of waiting out the beacon-aging window.
 //
@@ -30,10 +55,11 @@ var evictMdsFunc = evictMds
 // warnings and teardown would fall back entirely to beacon aging. The local
 // daemon is already stopped by the time this runs, so forcing the fail is safe.
 func evictMds(ctx context.Context, hostname string) error {
-	_, err := cephRunContext(ctx, "mds", "fail", hostname, "--yes-i-really-mean-it")
+	id := mdsID(hostname)
+	_, err := cephRunContext(ctx, "mds", "fail", id, "--yes-i-really-mean-it")
 	if err != nil {
-		logger.Errorf("failed to fail mds %q: %v", hostname, err)
-		return fmt.Errorf("failed to fail mds %q: %w", hostname, err)
+		logger.Errorf("failed to fail mds %q: %v", id, err)
+		return fmt.Errorf("failed to fail mds %q: %w", id, err)
 	}
 	return nil
 }
@@ -77,11 +103,12 @@ func ensureMdsAbsent(ctx context.Context, hostname string) error {
 	return fmt.Errorf("mds %q remains in the mds map after removal", hostname)
 }
 
+// bootstrapMds creates the keyring of the MDS on hostname at path.
 func bootstrapMds(hostname string, path string) error {
 	args := []string{
 		"auth",
 		"get-or-create",
-		fmt.Sprintf("mds.%s", hostname),
+		fmt.Sprintf("mds.%s", mdsID(hostname)),
 		"mon", "allow profile mds",
 		"mgr", "allow profile mds",
 		"mds", "allow *",

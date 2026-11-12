@@ -350,6 +350,33 @@ func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsPassTargetNoMon() {
 	assert.NoError(s.T(), err)
 }
 
+// TestCheckNonOsdSvcEnoughOpsFailDigitHostnameLastMds tests that the MDS of a
+// target whose name begins with a digit, which runs as "mds-<hostname>", is
+// still recognised as the target's own. Removing 1node would leave no MDS. Fail.
+func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsFailDigitHostnameLastMds() {
+	sq := mocks.NewServiceQueryInterface(s.T())
+	sq.On("List", mock.Anything, mock.Anything).Return(
+		types.Services{
+			{Service: "mon", Location: "1node"},
+			{Service: "mon", Location: "n1"},
+			{Service: "mon", Location: "n2"},
+		}, nil).Once()
+	database.ServiceQuery = sq
+
+	r := mocks.NewRunner(s.T())
+	r.On("RunCommand", "ceph", "-s", "-f", "json").Return(
+		`{"quorum_names":["1node","n1","n2"]}`, nil).Once()
+	r.On("RunCommand", "ceph", "mgr", "dump", "-f", "json").Return(
+		`{"active_name":"1node","standbys":[{"name":"n1"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
+		`{"mdsmap":[{"name":"mds-1node"}]}`, nil).Once()
+	common.ProcessExec = r
+
+	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
+	err := ops.Run("1node")
+	assert.ErrorContains(s.T(), err, "Insufficient non OSD services")
+}
+
 // TestCheckNonOsdSvcEnoughOpsErrorServiceQuery tests error from ServiceQuery.List.
 func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsErrorServiceQuery() {
 	sq := mocks.NewServiceQueryInterface(s.T())

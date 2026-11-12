@@ -110,7 +110,7 @@ func initMgr(s interfaces.StateInterface, dataPath string) error {
 // initMds starts the metadata service on host
 func initMds(s interfaces.StateInterface, dataPath string) error {
 	// Bootstrap the initial metadata server.
-	mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", s.ClusterState().Name()))
+	mdsDataPath := filepath.Join(dataPath, "mds", fmt.Sprintf("ceph-%s", mdsID(s.ClusterState().Name())))
 
 	err := os.MkdirAll(mdsDataPath, 0700)
 	if err != nil {
