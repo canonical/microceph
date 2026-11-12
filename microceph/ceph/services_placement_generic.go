@@ -72,7 +72,7 @@ func genericServiceInit(s interfaces.StateInterface, name string) error {
 	hostname := s.ClusterState().Name()
 	pathConsts := constants.GetPathConst()
 	pathFileMode := constants.GetPathFileMode()
-	serviceDataPath := filepath.Join(pathConsts.DataPath, name, fmt.Sprintf("ceph-%s", hostname))
+	serviceDataPath := filepath.Join(pathConsts.DataPath, name, fmt.Sprintf("ceph-%s", serviceDaemonID(name, hostname)))
 
 	// Fetch addService handler for name service
 	bootstrapServiceKeyring, ok = GetServiceKeyringTable()[name]
