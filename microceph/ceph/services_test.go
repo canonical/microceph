@@ -124,6 +124,17 @@ func (s *servicesSuite) TestCleanService() {
 	assert.NoDirExists(s.T(), svcPath)
 }
 
+// TestCleanServiceMdsDigitHostname checks that cleanService removes the MDS
+// data directory named after the prefixed MDS ID.
+func (s *servicesSuite) TestCleanServiceMdsDigitHostname() {
+	s.CopyCephConfigs()
+	svcPath := filepath.Join(s.Tmp, "SNAP_COMMON", "data", "mds", "ceph-mds-1node")
+	_ = os.MkdirAll(svcPath, 0770)
+	err := cleanService("1node", "mds")
+	assert.NoError(s.T(), err)
+	assert.NoDirExists(s.T(), svcPath)
+}
+
 // installDeleteServiceRecorder replaces the config render and the external
 // deletion phases and records their exact order. The originals are restored
 // after each test.

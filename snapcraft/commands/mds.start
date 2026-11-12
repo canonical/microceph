@@ -6,4 +6,11 @@ limits
 
 wait_for_config
 
-exec ceph-mds -f --cluster ceph --id "$(hostname)"
+# Ceph rejects MDS names that begin with a digit, so prefix them. Keep this in
+# sync with mdsID in microceph/ceph/metadata.go.
+id="$(hostname)"
+case "${id}" in
+    [0-9]*) id="mds-${id}" ;;
+esac
+
+exec ceph-mds -f --cluster ceph --id "${id}"

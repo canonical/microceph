@@ -190,7 +190,7 @@ func isServicePlacementOnHost(services types.Services, serviceName string, hostn
 // cleanService removes conf data for a service from the cluster.
 func cleanService(hostname, service string) error {
 	paths := constants.GetPathConst()
-	dataPath := filepath.Join(paths.DataPath, service, fmt.Sprintf("ceph-%s", hostname))
+	dataPath := filepath.Join(paths.DataPath, service, fmt.Sprintf("ceph-%s", serviceDaemonID(service, hostname)))
 	err := os.RemoveAll(dataPath)
 	if err != nil {
 		logger.Errorf("failed to remove service %q data: %v", service, err)
