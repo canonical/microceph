@@ -3349,6 +3349,95 @@ def test_wait_for_cluster_members_in_vm_succeeds_on_exact_names(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _wait_for_cloud_init (diagnostics, degraded and lost-agent branches, #911)
+# ---------------------------------------------------------------------------
+
+CLOUD_INIT_WAIT = ["lxc", "exec", "-n", "vm1", "--", "cloud-init", "status", "--wait"]
+CLOUD_INIT_LONG = ["lxc", "exec", "-n", "vm1", "--", "cloud-init", "status", "--long"]
+CLOUD_INIT_LOG_TAIL = ["lxc", "exec", "-n", "vm1", "--", "tail", "-n", "100", "/var/log/cloud-init.log"]
+LOST_AGENT = "Error: Failed to connect to lxd-agent"
+
+
+@pytest.mark.parametrize("rc, stderr, outcome", [
+    (0, "", "ok"),
+    (2, "", "degraded"),
+    (1, LOST_AGENT, "agent_lost"),
+    (2, LOST_AGENT, "agent_lost"),
+    (1, "", "failed"),
+    (124, "\nCommand timed out after 300s", "failed"),
+])
+def test_cloud_init_wait_outcome(rc, stderr, outcome):
+    assert H._cloud_init_wait_outcome(rc, stderr) == outcome
+
+
+def _cloud_init_harness(monkeypatch, wait_results):
+    """Harness whose cloud-init waits return *wait_results* in order."""
+    cap = _with_logger(monkeypatch)
+    h = H()
+    waits = iter(wait_results)
+    calls = []
+
+    def fake_exec(argv, timeout):
+        calls.append(argv)
+        if argv == CLOUD_INIT_WAIT:
+            return next(waits)
+        if argv == CLOUD_INIT_LONG:
+            return _Res(1, "status: error\nerrors:\n\t- package install failed\n", "")
+        if argv == CLOUD_INIT_LOG_TAIL:
+            return _Res(0, "2026-10-02 WARNING apt-get update failed\n", "")
+        raise AssertionError(f"unexpected command: {argv}")
+
+    monkeypatch.setattr(h, "_exec", fake_exec)
+    monkeypatch.setattr(h, "wait_for_vm_agent", lambda vm: calls.append(("agent", vm)))
+    return h, cap, calls
+
+
+def test_cloud_init_failure_reports_rc_output_status_and_log(monkeypatch):
+    h, cap, calls = _cloud_init_harness(monkeypatch, [_Res(1, "status: error\n", "")])
+
+    with pytest.raises(AssertionError) as exc:
+        h._wait_for_cloud_init("vm1")
+
+    assert str(exc.value) == (
+        "cloud-init failed in vm1: \n"
+        "rc=1\n"
+        "STDOUT: status: error\n"
+        "--- cloud-init status --long (rc=1) ---\n"
+        "status: error\nerrors:\n\t- package install failed\n"
+        "--- tail -n 100 /var/log/cloud-init.log (rc=0) ---\n"
+        "2026-10-02 WARNING apt-get update failed"
+    )
+    assert calls == [CLOUD_INIT_WAIT, CLOUD_INIT_LONG, CLOUD_INIT_LOG_TAIL]
+    assert cap.info_lines == ["cloud-init wait in vm1: rc=1\nSTDOUT: status: error\n\nSTDERR: "]
+
+
+def test_cloud_init_degraded_only_warns(monkeypatch):
+    h, cap, calls = _cloud_init_harness(monkeypatch, [_Res(2, "status: degraded done\n", "")])
+
+    h._wait_for_cloud_init("vm1")
+
+    assert calls == [CLOUD_INIT_WAIT]
+    assert "WARN:cloud-init in vm1 finished degraded (rc=2), continuing: status: degraded done" in cap.info_lines
+
+
+def test_cloud_init_lost_agent_waits_for_the_agent_and_retries_once(monkeypatch):
+    h, cap, calls = _cloud_init_harness(monkeypatch, [_Res(1, "", LOST_AGENT), _Res(0, "status: done\n", "")])
+
+    h._wait_for_cloud_init("vm1")
+
+    assert calls == [CLOUD_INIT_WAIT, ("agent", "vm1"), CLOUD_INIT_WAIT]
+
+
+def test_cloud_init_lost_agent_twice_fails_with_diagnostics(monkeypatch):
+    h, cap, calls = _cloud_init_harness(monkeypatch, [_Res(1, "", LOST_AGENT), _Res(1, "", LOST_AGENT)])
+
+    with pytest.raises(AssertionError, match=f"^cloud-init failed in vm1: {LOST_AGENT}\nrc=1\n"):
+        h._wait_for_cloud_init("vm1")
+
+    assert calls == [CLOUD_INIT_WAIT, ("agent", "vm1"), CLOUD_INIT_WAIT, CLOUD_INIT_LONG, CLOUD_INIT_LOG_TAIL]
+
+
+# ---------------------------------------------------------------------------
 # Single-system suite state sequencing
 # ---------------------------------------------------------------------------
 
