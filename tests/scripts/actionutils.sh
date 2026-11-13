@@ -282,7 +282,9 @@ function wait_for_osds() {
     local expect="${1?missing}"
     res=0
     for i in $(seq 1 8); do
-        res=$( ( sudo microceph.ceph -s | grep -F osd: | sed -E "s/.* ([[:digit:]]*) in .*/\1/" ) || true )
+        # An OSD marked in is not necessarily up yet; require both counts.
+        res=$( ( sudo microceph.ceph -s -f json | python3 -c \
+            'import json, sys; m = json.load(sys.stdin)["osdmap"]; print(min(m["num_up_osds"], m["num_in_osds"]))' ) || true )
         if [[ $res -ge $expect ]] ; then
             echo "Found >=${expect} OSDs"
             break
