@@ -3,9 +3,6 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microceph/microceph/common"
-	"github.com/gorilla/mux"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,11 +10,14 @@ import (
 	"sync"
 
 	"github.com/canonical/lxd/lxd/response"
-	"github.com/canonical/microcluster/rest"
-	"github.com/canonical/microcluster/state"
+	"github.com/canonical/lxd/shared/logger"
+	"github.com/gorilla/mux"
 
+	"github.com/canonical/microceph/microceph/api/rest"
 	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
+	state "github.com/canonical/microceph/microceph/clusterstate"
+	"github.com/canonical/microceph/microceph/common"
 )
 
 // /1.0/disks endpoint.
@@ -72,12 +72,12 @@ func cmdDisksPost(s *state.State, r *http.Request) response.Response {
 	}
 
 	// handle physical devices
-	data = types.DiskParameter{req.Path, req.Encrypt, req.Wipe, 0}
+	data = types.DiskParameter{Path: req.Path, Encrypt: req.Encrypt, Wipe: req.Wipe}
 	if req.WALDev != nil {
-		wal = &types.DiskParameter{*req.WALDev, req.WALEncrypt, req.WALWipe, 0}
+		wal = &types.DiskParameter{Path: *req.WALDev, Encrypt: req.WALEncrypt, Wipe: req.WALWipe}
 	}
 	if req.DBDev != nil {
-		db = &types.DiskParameter{*req.DBDev, req.DBEncrypt, req.DBWipe, 0}
+		db = &types.DiskParameter{Path: *req.DBDev, Encrypt: req.DBEncrypt, Wipe: req.DBWipe}
 	}
 
 	// add a regular block device

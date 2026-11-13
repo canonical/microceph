@@ -6,15 +6,14 @@ import (
 	"net/http"
 	"path"
 
-	"github.com/canonical/microceph/microceph/api/types"
-	"github.com/canonical/microceph/microceph/common"
-
 	"github.com/canonical/lxd/lxd/response"
 	"github.com/canonical/lxd/shared/logger"
-	"github.com/canonical/microcluster/rest"
-	"github.com/canonical/microcluster/state"
 
+	"github.com/canonical/microceph/microceph/api/rest"
+	"github.com/canonical/microceph/microceph/api/types"
 	"github.com/canonical/microceph/microceph/ceph"
+	state "github.com/canonical/microceph/microceph/clusterstate"
+	"github.com/canonical/microceph/microceph/common"
 )
 
 // /1.0/services endpoint.

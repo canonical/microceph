@@ -20,6 +20,7 @@ function install_microceph() {
     sudo snap install --dangerous ~/microceph_*.snap
     sudo snap connect microceph:block-devices
     sudo snap connect microceph:hardware-observe
+    sudo snap connect microceph:mount-observe
     # defer dm-crypt enablement for later.
 
     sudo microceph cluster bootstrap
@@ -123,7 +124,7 @@ function install_multinode() {
     # Install and setup microceph snap
     for container in node-wrk0 node-wrk1 node-wrk2 node-wrk3 ; do
         lxc exec $container -- sh -c "sudo snap install --dangerous /mnt/microceph_*.snap"
-        lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe"
+        lxc exec $container -- sh -c "snap connect microceph:block-devices ; snap connect microceph:hardware-observe ; snap connect microceph:mount-observe"
         # Hack: allow access to sysfs hardware info through lxc
         lxc exec $container -- sh -c "sed -e 's|/sys/devices/\*\*/ r,|/sys/devices/** r,|' -i.bak /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"
         lxc exec $container -- sh -c "apparmor_parser -r /var/lib/snapd/apparmor/profiles/snap.microceph.daemon"
@@ -281,7 +282,9 @@ function wait_for_osds() {
     local expect="${1?missing}"
     res=0
     for i in $(seq 1 8); do
-        res=$( ( sudo microceph.ceph -s | grep -F osd: | sed -E "s/.* ([[:digit:]]*) in .*/\1/" ) || true )
+        # An OSD marked in is not necessarily up yet; require both counts.
+        res=$( ( sudo microceph.ceph -s -f json | python3 -c \
+            'import json, sys; m = json.load(sys.stdin)["osdmap"]; print(min(m["num_up_osds"], m["num_in_osds"]))' ) || true )
         if [[ $res -ge $expect ]] ; then
             echo "Found >=${expect} OSDs"
             break
@@ -300,7 +303,9 @@ function wait_for_osds() {
 function free_runner_disk() {
     # Remove stuff we don't need to get some extra disk
     sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
-    sudo docker rmi $(docker images -q)
+    local images
+    images=$(docker images -q) || return
+    printf '%s\n' "$images" | xargs --no-run-if-empty sudo docker rmi
 }
 
 

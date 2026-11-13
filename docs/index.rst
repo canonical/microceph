@@ -56,8 +56,7 @@ constructive feedback.
 * Contribute to the project on `GitHub`_ (documentation contributions go under
   the :file:`docs` directory)
 * GitHub is also used as our bug tracker
-* To speak with us, you can find us on Matrix in `Ubuntu Ceph`_ or the
-  `~openstack-charms`_ channel on Mattermost
+* To speak with us, you can find us on Matrix in `Ubuntu Ceph`_
 
 .. toctree::
    :hidden:
@@ -72,4 +71,3 @@ constructive feedback.
 .. _Code of conduct: https://ubuntu.com/community/ethos/code-of-conduct
 .. _GitHub: https://github.com/canonical/microceph
 .. _Ubuntu Ceph: https://matrix.to/#/#ubuntu-ceph:matrix.org
-.. _~openstack-charms: https://chat.charmhub.io/charmhub/channels/openstack-charms

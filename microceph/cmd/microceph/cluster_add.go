@@ -1,10 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
 
-	"github.com/canonical/microcluster/microcluster"
+	"github.com/canonical/microcluster/v2/microcluster"
 	"github.com/spf13/cobra"
 )
 
@@ -28,12 +27,13 @@ func (c *cmdClusterAdd) Run(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	m, err := microcluster.App(context.Background(), microcluster.Args{StateDir: c.common.FlagStateDir, Verbose: c.common.FlagLogVerbose, Debug: c.common.FlagLogDebug})
+	m, err := microcluster.App(microcluster.Args{StateDir: c.common.FlagStateDir})
 	if err != nil {
 		return err
 	}
 
-	token, err := m.NewJoinToken(args[0])
+	// Preserve Quincy's non-expiring, single-use join-token policy.
+	token, err := m.NewJoinToken(cmd.Context(), args[0], 0)
 	if err != nil {
 		return err
 	}

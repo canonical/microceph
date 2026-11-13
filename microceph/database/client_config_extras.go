@@ -8,10 +8,11 @@ import (
 	"github.com/canonical/lxd/lxd/db/query"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/canonical/lxd/shared/logger"
+	"github.com/canonical/microcluster/v2/cluster"
+
 	"github.com/canonical/microceph/microceph/api/types"
+	state "github.com/canonical/microceph/microceph/clusterstate"
 	"github.com/canonical/microceph/microceph/common"
-	"github.com/canonical/microcluster/cluster"
-	"github.com/canonical/microcluster/state"
 )
 
 var _ = api.ServerEnvironment{}
@@ -34,7 +35,7 @@ INSERT OR REPLACE INTO client_config (member_id, key, value)
 
 var clientConfigItemCreateOrUpdate = cluster.RegisterStmt(`
 INSERT OR REPLACE INTO client_config (member_id, key, value)
-  VALUES ((SELECT internal_cluster_members.id FROM internal_cluster_members WHERE internal_cluster_members.name = ?), ?, ?)
+  VALUES ((SELECT core_cluster_members.id FROM core_cluster_members WHERE core_cluster_members.name = ?), ?, ?)
 `)
 
 // Slice of ClientConfigItem(s)
