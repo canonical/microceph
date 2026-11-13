@@ -93,6 +93,55 @@ func (s *clusterRemoveSuite) TestRemoveNodeLastMon() {
 	assert.Error(s.T(), err)
 }
 
+// TestRemoveNodeThreeToTwo tests that a three member cluster can be scaled
+// down to two members without forcing; quorum of the remaining monmap is
+// enforced by the mon removal itself.
+func (s *clusterRemoveSuite) TestRemoveNodeThreeToTwo() {
+	m := mocks.NewClientInterface(s.T())
+
+	client.MClient = m
+	m.On("GetClusterMembers", mock.Anything).Return([]string{"foonode", "barnode", "quuxnode"}, nil).Once()
+	m.On("GetDisks", mock.Anything).Return(types.Disks{}, nil).Once()
+
+	var services types.Services
+	for _, node := range []string{"foonode", "barnode", "quuxnode"} {
+		for _, service := range []string{"mon", "mgr", "mds"} {
+			services = append(services, types.Service{Service: service, Location: node})
+		}
+	}
+	m.On("GetServices", mock.Anything).Return(services, nil).Twice()
+	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(nil).Once()
+	m.On("DeleteService", mock.Anything, "foonode", "mgr").Return(nil).Once()
+	m.On("DeleteService", mock.Anything, "foonode", "mds").Return(nil).Once()
+
+	err := removeNode(nil, "foonode", false)
+
+	assert.NoError(s.T(), err)
+}
+
+// TestRemoveNodeLastMgr tests that we don't try to delete a node that has the last mgr
+func (s *clusterRemoveSuite) TestRemoveNodeLastMgr() {
+	m := mocks.NewClientInterface(s.T())
+
+	client.MClient = m
+	m.On("GetClusterMembers", mock.Anything).Return([]string{"foonode", "barnode"}, nil).Once()
+	m.On("GetDisks", mock.Anything).Return(types.Disks{}, nil).Once()
+	m.On("GetServices", mock.Anything).Return(
+		types.Services{
+			{Service: "mon", Location: "foonode"},
+			{Service: "mgr", Location: "foonode"},
+			{Service: "mds", Location: "foonode"},
+			{Service: "mon", Location: "barnode"},
+			{Service: "mds", Location: "barnode"},
+		},
+		nil,
+	).Once()
+
+	err := removeNode(nil, "foonode", false)
+
+	assert.ErrorContains(s.T(), err, "Insufficient non OSD services")
+}
+
 // TestRemoveNodeForce tests that we don't check prerequisites and delete a node if forced
 func (s *clusterRemoveSuite) TestRemoveNodeForce() {
 	m := mocks.NewClientInterface(s.T())
