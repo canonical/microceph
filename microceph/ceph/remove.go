@@ -118,8 +118,13 @@ func checkPrerequisites(cli mcTypes.Client, name string) error {
 		return fmt.Errorf("Error getting services: %v", err)
 	}
 
-	// check if the remaining non OSD services is enough to maintain a healthy cluster
-	err = EnsureNonOsdSvcEnough(services, name, 3, 1, 1)
+	// check if the remaining non OSD services is enough to maintain a healthy cluster.
+	// Only the last mon is guarded here. Removing a mon shrinks the monmap, and
+	// the mon removal itself (ensureMonAbsent) refuses to proceed unless the
+	// remaining monitors keep a quorum of the resulting map. Requiring three
+	// remaining mons made it impossible to scale a three member cluster down to
+	// two without --force.
+	err = EnsureNonOsdSvcEnough(services, name, 1, 1, 1)
 	if err != nil {
 		return fmt.Errorf("Insufficient non OSD services: %v", err)
 	}
