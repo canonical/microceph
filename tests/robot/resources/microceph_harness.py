@@ -1685,10 +1685,74 @@ class microceph_harness:
         logger.console(f"[setup] Waiting for VM agent in {vm_name}...")
         self.wait_for_vm_agent(vm_name)
         logger.console(f"[setup] Waiting for cloud-init in {vm_name}...")
-        res = self._exec(["lxc", "exec", "-n", vm_name, "--", "cloud-init", "status", "--wait"], 300)
-        if res.rc != 0:
-            raise AssertionError(f"cloud-init failed in {vm_name}: {res.stderr}")
+        self._wait_for_cloud_init(vm_name)
         logger.console(f"[setup] VM {vm_name} ready.")
+
+    @staticmethod
+    def _cloud_init_wait_outcome(rc, stderr):
+        """Classifies a `cloud-init status --wait` exit as ok, degraded, agent_lost or failed.
+
+        Exit code 2 means cloud-init finished with recoverable errors
+        (degraded), which leaves a usable VM. A lost VM agent is checked before
+        the exit code because lxc exec itself fails then and cloud-init never
+        reported anything.
+        """
+        if rc == 0:
+            return "ok"
+        if "Failed to connect to lxd-agent" in stderr:
+            return "agent_lost"
+        if rc == 2:
+            return "degraded"
+        return "failed"
+
+    @staticmethod
+    def _cloud_init_failure_message(vm_name, res, diagnostics):
+        """Builds the AssertionError text for a failed cloud-init wait.
+
+        *res* is the wait's result and *diagnostics* a list of (label, result)
+        pairs collected from the VM afterwards. cloud-init prints its state on
+        stdout, so both streams of every command are kept.
+        """
+        lines = [
+            f"cloud-init failed in {vm_name}: {res.stderr.strip()}",
+            f"rc={res.rc}",
+            f"STDOUT: {res.stdout.strip()}",
+        ]
+        for label, diag in diagnostics:
+            lines.append(f"--- {label} (rc={diag.rc}) ---")
+            lines.append((diag.stdout + diag.stderr).strip())
+        return "\n".join(lines)
+
+    def _wait_for_cloud_init(self, vm_name):
+        """Waits for cloud-init in *vm_name*, retrying once if the VM agent drops.
+
+        A degraded cloud-init only logs a warning. Any other failure raises
+        with the exit code, both output streams, `cloud-init status --long`
+        and the tail of the cloud-init log, so the cause can be read from the
+        job log.
+        """
+        def wait():
+            res = self._exec(["lxc", "exec", "-n", vm_name, "--", "cloud-init", "status", "--wait"], 300)
+            logger.info(f"cloud-init wait in {vm_name}: rc={res.rc}\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
+            return res, self._cloud_init_wait_outcome(res.rc, res.stderr)
+
+        res, outcome = wait()
+        if outcome == "agent_lost":
+            logger.console(f"[setup] Lost the VM agent in {vm_name} while waiting for cloud-init, retrying once...")
+            self.wait_for_vm_agent(vm_name)
+            res, outcome = wait()
+        if outcome == "ok":
+            return
+        if outcome == "degraded":
+            logger.warn(f"cloud-init in {vm_name} finished degraded (rc=2), continuing: {res.stdout.strip()}")
+            return
+        diagnostics = [
+            ("cloud-init status --long",
+             self._exec(["lxc", "exec", "-n", vm_name, "--", "cloud-init", "status", "--long"], 60)),
+            ("tail -n 100 /var/log/cloud-init.log",
+             self._exec(["lxc", "exec", "-n", vm_name, "--", "tail", "-n", "100", "/var/log/cloud-init.log"], 60)),
+        ]
+        raise AssertionError(self._cloud_init_failure_message(vm_name, res, diagnostics))
 
     def restart_outer_test_vm(self):
         """Restart only this suite's VM and verify a new boot after agent recovery."""
