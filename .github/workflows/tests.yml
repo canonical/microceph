@@ -28,6 +28,24 @@ jobs:
           sudo snap install snapcraft --classic
           snap list
 
+      - name: Diagnose Snap Store setup failure
+        if: failure()
+        timeout-minutes: 3
+        run: |
+          snap version || true
+          timeout 10s getent ahosts api.snapcraft.io || true
+          timeout 10s getent ahostsv6 api.snapcraft.io || true
+          ip -4 route show default || true
+          ip -6 route show default || true
+          for family in 4 6; do
+            curl "-${family}" --connect-timeout 10 --max-time 20 -sS -o /dev/null \
+              -w "IPv${family}: remote=%{remote_ip} http=%{http_code} connect=%{time_connect}s tls=%{time_appconnect}s total=%{time_total}s\n" \
+              -H 'Content-Type: application/json' --data '{}' \
+              https://api.snapcraft.io/api/v1/snaps/auth/nonces || true
+          done
+          timeout 45s sudo snap debug connectivity || true
+          sudo journalctl -u snapd --since '-10 minutes' --no-pager -n 80 || true
+
       - name: Build snaps
         run: snapcraft
 
