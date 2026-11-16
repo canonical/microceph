@@ -57,3 +57,20 @@ func TestClusterGetExportsRemoteKeyBoundToRequest(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &configs))
 	assert.Equal(t, key, configs["keyring.client.siteb"])
 }
+
+// An export for a name Ceph cannot use is refused before any key is created,
+// and the error says which name was refused and what a valid one looks like.
+func TestClusterGetRejectsInvalidRemoteName(t *testing.T) {
+	original := common.ProcessExec
+	t.Cleanup(func() { common.ProcessExec = original })
+	// No expectations: any ceph command fails the test.
+	common.ProcessExec = mocks.NewRunner(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/1.0/cluster", strings.NewReader(`{"remote_name":"with-hyphens"}`))
+	w := httptest.NewRecorder()
+	resp := cmdClusterGet(&mocks.MockState{DBObj: &mocks.MockDB{}}, req)
+	require.NoError(t, resp.Render(w, req))
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `invalid remote name \"with-hyphens\"`)
+	assert.Contains(t, w.Body.String(), "lowercase letters (a-z) and digits (0-9)")
+}
