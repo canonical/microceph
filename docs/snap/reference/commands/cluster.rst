@@ -1,3 +1,6 @@
+.. meta::
+   :description: Reference for the microceph cluster command and its subcommands.
+
 ===========
 ``cluster``
 ===========
@@ -199,6 +202,8 @@ Flags:
 ----------
 
 Generates cluster token for Remote cluster with given name.
+
+The remote name must be 1 to 63 characters long and contain only lowercase letters (a-z) and digits (0-9).
 
 Usage:
 
