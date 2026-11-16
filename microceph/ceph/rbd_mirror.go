@@ -815,8 +815,9 @@ func appendRemoteClusterArgs(args []string, cluster string, client string) []str
 
 // writeRemotePeerToken writes the provided string to a newly created token file.
 func writeRemotePeerToken(token string, remoteName string) error {
-	if !constants.IsValidClusterName(remoteName) {
-		return fmt.Errorf("remote names can only have [a-z] or [0-9] characters")
+	err := constants.ValidateClusterName("remote", remoteName)
+	if err != nil {
+		return err
 	}
 
 	// create token Dir
@@ -825,7 +826,7 @@ func writeRemotePeerToken(token string, remoteName string) error {
 		"rbd_mirror",
 	)
 
-	err := os.MkdirAll(tokenDirPath, constants.PermissionWorldNoAccess)
+	err = os.MkdirAll(tokenDirPath, constants.PermissionWorldNoAccess)
 	if err != nil {
 		logger.Errorf("REPRBD: %s", err.Error())
 		return fmt.Errorf("unable to create %q: %w", tokenDirPath, err)

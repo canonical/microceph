@@ -1,3 +1,6 @@
+.. meta::
+   :description: How to enable, monitor and disable CephFS replication between two MicroCeph clusters.
+
 .. _configure-cephfs-mirroring:
 
 Configure CephFS replication
@@ -17,8 +20,8 @@ directory path relative to the parent volume using MicroCeph CLI commands.
 
 Prerequisites
 -------------
-1. A primary and a secondary MicroCeph cluster, for example named ``primary_cluster`` and ``secondary_cluster``.
-2. Both ``primary_cluster`` and ``secondary_cluster`` have imported exchanged cluster tokens. Refer to our :ref:`guide on importing a remote cluster <import-remote-cluster>`.
+1. A primary and a secondary MicroCeph cluster, for example named ``primary`` and ``secondary``.
+2. Both ``primary`` and ``secondary`` have imported exchanged cluster tokens. Refer to our :ref:`guide on importing a remote cluster <import-remote-cluster>`.
 3. Both clusters have an active CephFS volume called ``vol``.
 4. Both clusters have exactly one ``cephfs-mirror`` daemon enabled. Refer to our :ref:`guide on enabling the cephfs-mirror service <enable-cephfs-mirror-daemon>`.
 
@@ -30,7 +33,7 @@ An operator can enable replication for a given cephfs directory path as follows:
 
 .. terminal:: none
 
-   sudo microceph replication enable cephfs --volume vol --remote secondary_cluster --dir-path </path/to/directory>
+   sudo microceph replication enable cephfs --volume vol --remote secondary --dir-path </path/to/directory>
 
 Here, ``/path/to/directory`` is the desired directory path relative to volume ``vol`` as root.
 
@@ -84,9 +87,9 @@ An operator can check the current replication status of a volume as follows:
   +---------------------+----------------------------+--------+--------------+---------------+---------------+
   | REMOTE NAME         | RESOURCE PATH                      | STATE  | SNAPS SYNCED | SNAPS DELETED | SNAPS RENAMED |
   +---------------------+----------------------------+--------+--------------+---------------+---------------+
-  | primary_cluster     | /volumes/_nogroup/ungrouped_subvol | idle   |            1 |             0 |             0 |
-  | primary_cluster     | /volumes/subvol_group/subvol       | idle   |            1 |             0 |             0 |
-  | primary_cluster     | /path/to/directory                 | idle   |            1 |             0 |             0 |
+  | primary             | /volumes/_nogroup/ungrouped_subvol | idle   |            1 |             0 |             0 |
+  | primary             | /volumes/subvol_group/subvol       | idle   |            1 |             0 |             0 |
+  | primary             | /path/to/directory                 | idle   |            1 |             0 |             0 |
   +---------------------+---------------------------+--------+--------------+---------------+---------------+
 
 The status shows that there are three resources in the volume (vol), all with one snapshot synced to the configured remotes.

@@ -12,15 +12,15 @@ An operator can enable this on any rbd image, or a whole pool. Enabling it on a 
 
 Prerequisites
 --------------
-1. A primary and a secondary MicroCeph cluster, for example named "primary_cluster" and "secondary_cluster"
-2. primary_cluster has imported configurations from secondary_cluster and vice versa. Refer to our :ref:`guide on importing a remote cluster <import-remote-cluster>`.
+1. A primary and a secondary MicroCeph cluster, for example named "primary" and "secondary"
+2. primary has imported configurations from secondary and vice versa. Refer to our :ref:`guide on importing a remote cluster <import-remote-cluster>`.
 3. Both clusters have 2 rbd pools: pool_one and pool_two.
-4. Both pools at cluster "primary_cluster" have 2 images each (image_one and image_two) while the pools at cluster "secondary_cluster" are empty.
+4. Both pools at cluster "primary" have 2 images each (image_one and image_two) while the pools at cluster "secondary" are empty.
 
-Use reciprocal names when importing the two clusters. If ``primary_cluster``
-imports ``secondary_cluster`` with ``--local-name primary_cluster``, then
-``secondary_cluster`` must import ``primary_cluster`` with
-``--local-name secondary_cluster``. On each site, the imported remote's name
+Use reciprocal names when importing the two clusters. If ``primary``
+imports ``secondary`` with ``--local-name primary``, then
+``secondary`` must import ``primary`` with
+``--local-name secondary``. On each site, the imported remote's name
 must match the other site's ``--local-name``. These names are used when Ceph
 registers the RBD pool's mirror peers; ``--local-name`` also selects the client
 identity used to access the remote cluster.
@@ -51,7 +51,7 @@ An operator can enable replication for a given rbd pool which is present at both
 
 .. code-block:: none
 
-   sudo microceph replication enable rbd pool_one --remote secondary_cluster 
+   sudo microceph replication enable rbd pool_one --remote secondary
 
 Here, pool_one is the name of the rbd pool and it is expected to be present at both the clusters.
 
@@ -74,7 +74,7 @@ The above command will enable replication for ALL the images inside pool_one, it
    +-------------------+-----------+--------------------------------------+
    |    REMOTE NAME    | DIRECTION | UUID                                 |
    +-------------------+-----------+--------------------------------------+
-   | secondary_cluster | rx-tx     | f25af3c3-f405-4159-a5c4-220c01d27507 |
+   | secondary         | rx-tx     | f25af3c3-f405-4159-a5c4-220c01d27507 |
    +-------------------+-----------+--------------------------------------+
 
 The status shows that there are 2 images in the pool which are enabled for mirroring.
