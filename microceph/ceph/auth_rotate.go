@@ -3051,7 +3051,7 @@ func ClientSupportsKeyType(session ClientSessionInfo, targetKeyType string) bool
 	// For aes256k: check if release is explicitly known as legacy/insecure.
 	release := strings.ToLower(strings.TrimSpace(session.ConFeaturesRelease))
 	if release != "" {
-		return slices.Contains(legacyInsecureReleases, release)
+		return !slices.Contains(legacyInsecureReleases, release)
 	}
 
 	// If release is unknown or empty: if no connection features are negotiated, it's unsafe.
