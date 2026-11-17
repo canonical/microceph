@@ -1,28 +1,28 @@
 .. meta::
-   :description: How-to guides for deploying and managing MicroCeph with Juju.
+   :description: How-to guides for deploying and operating MicroCeph with Juju
 
 .. _charm-how-to:
 
 How-to guides
 =============
 
-Our how-to guides give directions on how to perform key operations and processes
-in MicroCeph using Juju.
+Our how-to guides walk you through deploying and operating MicroCeph with Juju; from first deployment
+to day-to-day management.
 
-Install and deploy MicroCeph with Juju
---------------------------------------
+Installation
+------------
 
-Deploy a MicroCeph cluster from a charm.
+Deploy MicroCeph with Juju on your machine cloud - MAAS, LXD, AWS, or others.
 
 .. toctree::
    :maxdepth: 1
 
    Install MicroCeph from a charm <install-charmed-microceph>
 
-Manage cluster storage
-----------------------
+Add storage
+-----------
 
-Add physical or virtual OSDs to your cluster.
+Your cluster needs storage to be useful. Add physical disks for production, or virtual ones for testing.
 
 .. toctree::
    :maxdepth: 1
@@ -30,20 +30,22 @@ Add physical or virtual OSDs to your cluster.
    Add physical disk OSDs <adding-osds>
    Add virtual OSDs for test clusters <adding-file-osds>
 
-Configure your cluster
-----------------------
+Enable services
+---------------
 
-Enable and manage optional cluster services.
+Once your cluster has storage, turn on the services your workloads need - like S3-compatible object
+storage via RGW.
 
 .. toctree::
    :maxdepth: 1
 
    Enable RGW <enable-rgw>
 
-Perform cluster maintenance
----------------------------
+Cluster maintenance
+-------------------
 
-Put individual nodes into and out of maintenance mode safely.
+Need to reboot a node or replace hardware? Maintenance mode lets you take a node offline safely,
+without triggering unnecessary data movement or risking availability.
 
 .. toctree::
    :maxdepth: 1

@@ -10,9 +10,13 @@ permissions:
   issues: write
 
 jobs:
+  preflight:
+    uses: ./.github/workflows/dqlite-preflight.yml
+
   full-scan:
     name: Full govulncheck scan
     runs-on: ubuntu-24.04
+    needs: preflight
     steps:
       - name: Checkout
         uses: actions/checkout@v4

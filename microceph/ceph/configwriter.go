@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,6 +31,24 @@ func (c *Config) validateConfigFile() error {
 	}
 
 	return nil
+}
+
+// RenderConfig renders the configuration template with data into a byte slice
+// without touching disk. A caller compares this against the current on-disk
+// file to decide whether a rewrite (and service restart) is actually needed,
+// the "render from dqlite, compare in place" idiom (AGENTS.md conf-file
+// model). The output is byte-identical to WriteConfig for the same data.
+func (c *Config) RenderConfig(data map[string]any) ([]byte, error) {
+	err := c.validateConfigFile()
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	err = c.configTemplate.Execute(&buf, data)
+	if err != nil {
+		return nil, fmt.Errorf("Couldn't render %s: %w", c.configFile, err)
+	}
+	return buf.Bytes(), nil
 }
 
 // WriteConfig writes the configuration file given a data bag and a filemode.

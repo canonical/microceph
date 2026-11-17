@@ -440,6 +440,48 @@ func TestCephBootstrapPutUnknownFieldRejected(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "unknown field must be rejected with 400")
 }
 
+// TestPlacementPutRGWBareBoolRejected verifies the clean break: a bare rgw
+// bool no longer decodes and is rejected with BadRequest.
+func TestPlacementPutRGWBareBoolRejected(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(`{"mode":"reconcile","members":{"node-a":{"rgw":true}}}`))
+
+	resp := cmdPlacementPut(nil, req)
+	_ = resp.Render(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a bare rgw bool must be rejected (clean break)")
+}
+
+func TestPlacementPutRejectsTrailingJSON(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(`{"mode":"reconcile","members":{}} {}`))
+	resp := cmdPlacementPut(nil, req)
+	require.NoError(t, resp.Render(rec, req))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestPlacementPutOperationalFailurePreservesControlRefusal(t *testing.T) {
+	stubPlacementApplyLock(t)
+	controlErr := fmt.Errorf("%w: mon on node-a", ceph.ErrKeepOneInvariant)
+	operationErr := fmt.Errorf("%w: RGW on node-b", ceph.ErrPlacementOperationFailed)
+	stubPlacementApply(t, func(context.Context, types.PlacementPolicy) error {
+		return errors.Join(controlErr, operationErr)
+	})
+
+	body := `{"mode":"reconcile","members":{"node-a":{"control":false},"node-b":{"rgw":{"enabled":true,"ssl":false}}}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/1.0/placement", strings.NewReader(body))
+	resp := cmdPlacementPut(nil, req)
+	require.NoError(t, resp.Render(rec, req))
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	var result struct {
+		Error string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
+	assert.Contains(t, result.Error, controlErr.Error())
+	assert.Contains(t, result.Error, operationErr.Error())
+}
+
 // TestPlacementGetSuccess verifies that cmdPlacementGet returns placement status.
 func TestPlacementGetSuccess(t *testing.T) {
 	origGet := ceph.GetPlacementStatusFunc

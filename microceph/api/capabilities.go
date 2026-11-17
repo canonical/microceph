@@ -15,12 +15,14 @@ var CapabilitiesSupported = []string{
 	"deferred-ceph-bootstrap",
 	"ceph-only-bootstrap",
 	"declarative-placement",
+	// RGW placement accepts explicit frontend intent and reports applied settings.
+	"placement-rgw",
 }
 
 // capabilitiesCmd is the cluster capabilities endpoint (CE142).
 var capabilitiesCmd = mcTypes.Endpoint{
 	Path: "cluster/capabilities",
-	Get:  mcTypes.EndpointAction{Handler: cmdCapabilitiesGet, ProxyTarget: false},
+	Get:  mcTypes.EndpointAction{Handler: cmdCapabilitiesGet, ProxyTarget: true},
 }
 
 // cmdCapabilitiesGet returns the list of supported capability markers.

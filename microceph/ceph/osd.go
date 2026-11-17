@@ -110,6 +110,7 @@ type OSDManager struct {
 	state             mcTypes.State
 	runner            common.Runner
 	fs                afero.Fs
+	lockCarrierFunc   func(string, func(string) error) error
 	storage           interfaces.StorageInterface
 	validator         PathValidator
 	mountChecker      MountChecker
@@ -124,6 +125,7 @@ func NewOSDManager(s mcTypes.State) *OSDManager {
 		state:             s,
 		runner:            common.ProcessExec,
 		fs:                afero.NewOsFs(),
+		lockCarrierFunc:   withExclusiveCarrierLock,
 		storage:           StorageImpl{},
 		validator:         SharedPathValidator{},
 		mountChecker:      SharedMountChecker{},
@@ -792,11 +794,6 @@ func (m *OSDManager) bootstrapOSD(osdDataPath string, nr int64, wal, db *types.D
 		return fmt.Errorf("failed to bootstrap OSD: %w", err)
 	}
 
-	// Write the stamp file.
-	err = afero.WriteFile(m.fs, filepath.Join(osdDataPath, "ready"), []byte(""), 0600)
-	if err != nil {
-		return fmt.Errorf("failed to write stamp file: %w", err)
-	}
 	logger.Infof("OSD %s bootstrapped successfully", osdDataPath)
 	return nil
 }
@@ -1189,6 +1186,24 @@ func (m *OSDManager) generateOSDFiles(osdDataPath string, nr int64) error {
 	return nil
 }
 
+// registerOSD creates the OSD id in the osdmap before first start. ceph-osd's
+// boot-time "osd crush set-device-class" is a silent no-op for ids absent from
+// the osdmap, so without this a new OSD comes up with no device class.
+func (m *OSDManager) registerOSD(osdDataPath string, nr int64) error {
+	fsid, err := afero.ReadFile(m.fs, filepath.Join(osdDataPath, "fsid"))
+	if err != nil {
+		return fmt.Errorf("failed to read OSD fsid: %w", err)
+	}
+
+	_, err = m.runner.RunCommand("ceph", "osd", "new", strings.TrimSpace(string(fsid)), fmt.Sprintf("%d", nr))
+	if err != nil {
+		return fmt.Errorf("failed to register osd.%d in osdmap: %w", nr, err)
+	}
+
+	logger.Infof("Registered osd.%d in osdmap", nr)
+	return nil
+}
+
 func (m *OSDManager) spawnOSD(nr int64) error {
 	logger.Infof("Spawning OSD %d", nr)
 	err := snapRestart("osd", true)
@@ -1214,12 +1229,9 @@ func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskPar
 			return
 		}
 
-		cleanupOSDID := nr
-		if cleanupOSDID < 0 {
-			cleanupOSDID = 0
-		}
-
-		cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, cleanupOSDID)
+		// nr == -1 means no OSD record exists yet. Keep it negative so cleanup
+		// removes our generated partitions without closing OSD 0's WAL/DB mappers.
+		cleanupErr := m.cleanupGeneratedAuxEntries(ctx, generatedAux, nr)
 		if cleanupErr != nil {
 			logger.Errorf("failed to clean generated WAL/DB partitions after add failure: %v", cleanupErr)
 			retErr = fmt.Errorf("%w (automatic cleanup of generated WAL/DB partitions also failed: %v)", retErr, cleanupErr)
@@ -1297,6 +1309,21 @@ func (m *OSDManager) doAddOSDWithStorage(ctx context.Context, data types.DiskPar
 	if err != nil {
 		logger.Errorf("failed to bootstrap OSD %d: %v", nr, err)
 		return err
+	}
+
+	err = m.registerOSD(osdDataPath, nr)
+	if err != nil {
+		logger.Errorf("failed to register OSD %d: %v", nr, err)
+		return err
+	}
+	revert.Add(func() {
+		_ = m.doPurge(nr)
+	})
+
+	// Only mark ready once registered, else osd.start may boot it without a device class.
+	err = afero.WriteFile(m.fs, osdReadyMarkerPath(osdDataPath), []byte(""), 0600)
+	if err != nil {
+		return fmt.Errorf("failed to write stamp file: %w", err)
 	}
 
 	err = m.spawnOSD(nr)
@@ -1649,13 +1676,19 @@ func diskUsedBytes(disk api.ResourcesStorageDisk) uint64 {
 }
 
 func nextPartitionNumber(disk api.ResourcesStorageDisk) uint64 {
-	var maxPart uint64
-	for _, part := range disk.Partitions {
-		if part.Partition > maxPart {
-			maxPart = part.Partition
+	// sfdisk --append reuses the first vacant GPT slot, not max(slot)+1.
+	for next := uint64(1); ; next++ {
+		occupied := false
+		for _, part := range disk.Partitions {
+			if part.Partition == next {
+				occupied = true
+				break
+			}
+		}
+		if !occupied {
+			return next
 		}
 	}
-	return maxPart + 1
 }
 
 func (m *OSDManager) buildDSLDryRunPlan(ctx context.Context, req types.DisksPost) types.DiskAddResponse {
@@ -2087,6 +2120,12 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	err = sanityCheck(ctx, s, osd)
 	if err != nil {
 		return err
+	}
+	// Upgrade legacy WAL/DB ownership records before purging the OSD, while
+	// its device links are still available to verify the partition identity.
+	err = m.migrateGeneratedAuxManifest(getOSDDataPath(osd))
+	if err != nil {
+		return fmt.Errorf("failed to migrate generated WAL/DB partitions for osd.%d: %w", osd, err)
 	}
 
 	if !bypassSafety {

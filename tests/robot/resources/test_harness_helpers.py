@@ -10,10 +10,24 @@ Run with pytest:
     pytest tests/robot/resources/test_harness_helpers.py
 """
 
+import base64
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import os
+import socket
+import sys
 from pathlib import Path
+import socketserver
+import subprocess
+import sys
+import threading
+
+import pytest
 
 import placement_status
+import rgw_probe
+import rgw_scenario
+import rgw_placement
 from microceph_harness import microceph_harness as H
 from cluster_ops import parse_migration_status
 from snap_services import enabled_active_services
@@ -24,6 +38,46 @@ from rbd_replication import (
     rbd_synced_image_count,
 )
 from streaming_process import run_streaming_process
+
+
+@pytest.mark.parametrize("instances, expected", [
+    ([{"name": "target", "status": "Stopped"}], True),
+    ([{"name": "target", "status": "Running"}], False),
+    ([{"name": "target-other", "status": "Stopped"}], False),
+    ([{"name": "target", "status": "Error"}], False),
+    ([{"name": "target"}], False),
+    ([], False),
+    ({}, False),
+])
+def test_named_vm_stopped_requires_exact_stopped_member(instances, expected):
+    assert H._named_vm_stopped(json.dumps(instances), "target") is expected
+
+
+def test_named_vm_stopped_rejects_malformed_output():
+    with pytest.raises(ValueError):
+        H._named_vm_stopped("not JSON", "target")
+
+
+@pytest.mark.parametrize("rc", [1, 124])
+def test_stop_named_vm_rejects_failed_stop(monkeypatch, rc):
+    harness = H()
+    monkeypatch.setattr(harness, "_exec", lambda *_: _Res(rc, "", "stop failed"))
+    with pytest.raises(AssertionError, match="failed to stop target"):
+        harness.stop_named_vm("target")
+
+
+@pytest.mark.parametrize("result", [
+    (1, "", "query failed"),
+    (124, "", "query timed out"),
+    (0, '[{"name":"target","status":"Running"}]', ""),
+    (0, "[]", ""),
+])
+def test_stop_named_vm_requires_confirmed_offline_state(monkeypatch, result):
+    harness = H()
+    responses = iter([_Res(0, "", ""), _Res(*result)])
+    monkeypatch.setattr(harness, "_exec", lambda *_: next(responses))
+    with pytest.raises(AssertionError):
+        harness.stop_named_vm("target")
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +329,6 @@ def test_ceph_osd_counts_valid():
     payload = json.dumps({"osdmap": {"num_up_osds": 3, "num_in_osds": 2}})
     assert H._ceph_osd_counts(payload) == (3, 2)
 
-
 def test_ceph_osd_counts_missing_osdmap():
     assert H._ceph_osd_counts(json.dumps({})) == (0, 0)
 
@@ -325,6 +378,46 @@ def test_legacy_cephx_health_rejects_non_health_or_empty_checks():
     assert H._legacy_cephx_health_is_compatible(
         json.dumps({"status": "HEALTH_UNKNOWN", "checks": {"AUTH_INSECURE_CLIENT_KEY_TYPE": {"severity": "HEALTH_ERR"}}})
     ) is False
+
+
+# ---------------------------------------------------------------------------
+# _health_is_ok_ignoring
+# ---------------------------------------------------------------------------
+
+def test_health_is_ok_ignoring_accepts_health_ok():
+    assert H._health_is_ok_ignoring(json.dumps({"status": "HEALTH_OK", "checks": {}})) is True
+    assert H._health_is_ok_ignoring(json.dumps({"status": "HEALTH_OK", "checks": {}}), {"MON_CLOCK_SKEW"}) is True
+
+
+def test_health_is_ok_ignoring_accepts_warn_made_only_of_ignored_checks():
+    payload = json.dumps(
+        {"status": "HEALTH_WARN", "checks": {"MON_CLOCK_SKEW": {"severity": "HEALTH_WARN"}}}
+    )
+
+    assert H._health_is_ok_ignoring(payload, {"MON_CLOCK_SKEW"}) is True
+    assert H._health_is_ok_ignoring(payload, ()) is False
+    assert H._health_is_ok_ignoring(payload) is False
+
+
+def test_health_is_ok_ignoring_rejects_other_checks_err_and_malformed():
+    mixed = json.dumps(
+        {
+            "status": "HEALTH_WARN",
+            "checks": {
+                "MON_CLOCK_SKEW": {"severity": "HEALTH_WARN"},
+                "OSD_DOWN": {"severity": "HEALTH_WARN"},
+            },
+        }
+    )
+    err = json.dumps(
+        {"status": "HEALTH_ERR", "checks": {"MON_CLOCK_SKEW": {"severity": "HEALTH_WARN"}}}
+    )
+
+    assert H._health_is_ok_ignoring(mixed, {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring(err, {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring(json.dumps({"status": "HEALTH_WARN", "checks": {}}), {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring("not json", {"MON_CLOCK_SKEW"}) is False
+    assert H._health_is_ok_ignoring(json.dumps([]), {"MON_CLOCK_SKEW"}) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1409,6 +1502,15 @@ def test_response_code_error_body():
     assert placement_status.response_code(_ERROR_RESPONSE) == 400
 
 
+def test_response_code_real_error_body_uses_error_code():
+    # microcluster error bodies carry status_code 0 next to the real error_code.
+    body = json.dumps({"type": "error", "status": "", "status_code": 0, "operation": "",
+                       "error_code": 400, "error": "bad request", "metadata": None})
+    assert placement_status.response_code(body) == 400
+    conflict = json.dumps({"type": "error", "status_code": 0, "error_code": 409, "error": "in progress"})
+    assert placement_status.response_code(conflict) == 409
+
+
 def test_response_code_garbage_is_zero():
     # Fail closed: comparisons against 200 must fail on unparseable bodies.
     assert placement_status.response_code("curl: (7) connection refused") == 0
@@ -1451,6 +1553,418 @@ def test_supported_capabilities_malformed_is_empty():
     assert placement_status.supported_capabilities("garbage") == []
     non_list = json.dumps({"status_code": 200, "metadata": {"supported": "nope"}})
     assert placement_status.supported_capabilities(non_list) == []
+
+
+# GET /1.0/placement body carrying an observed RGW member with a frontend, plus
+# a stored policy whose rgw entry has been stripped/redacted (no key material).
+_RGW_PLACEMENT_RESPONSE = json.dumps({
+    "status_code": 200,
+    "metadata": {
+        "active": True,
+        "policy": {
+            "mode": "reconcile",
+            "members": {
+                "node-a": {"rgw": {"enabled": True, "port": 8080, "ssl_port": 443}},
+            },
+        },
+        "observed": [
+            {"member": "node-a", "rgw": True,
+             "rgw_frontend": {"port": 8080, "ssl_port": 443, "ssl": True}},
+            {"member": "node-b", "control": True},
+        ],
+    },
+})
+
+
+def test_member_rgw_frontend_reports_ports_and_tls():
+    fe = placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-a")
+    assert fe == {"port": 8080, "ssl_port": 443, "ssl": True}
+
+
+def test_member_rgw_frontend_absent_member_is_empty():
+    # An existing member with no rgw_frontend key, and a member not present
+    # at all, both read as "no frontend reported" -- not an error.
+    assert placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-b") == {}
+    assert placement_status.member_rgw_frontend(_RGW_PLACEMENT_RESPONSE, "node-z") == {}
+
+
+def test_member_rgw_frontend_malformed_body_raises():
+    # A malformed body must never read as "no frontend reported": absence and
+    # "cannot tell" are different outcomes, so garbage must fail closed.
+    for bad in ("garbage", "", _ERROR_RESPONSE, json.dumps({"status_code": 200})):
+        with pytest.raises(ValueError):
+            placement_status.member_rgw_frontend(bad, "node-a")
+
+
+def test_member_rgw_frontend_missing_observed_key_raises():
+    raw = json.dumps({"status_code": 200, "metadata": {"active": True}})
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(raw, "node-a")
+
+
+def test_member_rgw_frontend_malformed_observed_shape_raises():
+    not_a_list = json.dumps({"status_code": 200, "metadata": {"observed": "nope"}})
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(not_a_list, "node-a")
+
+    bad_frontend = json.dumps({
+        "status_code": 200,
+        "metadata": {"observed": [
+            {"member": "node-a", "rgw_frontend": {"port": 8080, "ssl": "not-a-bool"}},
+        ]},
+    })
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(bad_frontend, "node-a")
+
+    bad_port = json.dumps({
+        "status_code": 200,
+        "metadata": {"observed": [
+            {"member": "node-a", "rgw_frontend": {"port": 70000, "ssl": True}},
+        ]},
+    })
+    with pytest.raises(ValueError):
+        placement_status.member_rgw_frontend(bad_port, "node-a")
+
+
+def test_placement_leaks_rgw_secrets_false_when_stripped():
+    # The stored policy carries port/ssl_port but no cert/key: no leak.
+    assert placement_status.placement_leaks_rgw_secrets(_RGW_PLACEMENT_RESPONSE) is False
+
+
+def test_placement_leaks_rgw_secrets_reject_malformed_status():
+    # Secret checks must fail closed: garbage or error bodies must not read as
+    # "nothing to leak".
+    for bad in ("garbage", "", _ERROR_RESPONSE, json.dumps({"status_code": 200})):
+        with pytest.raises(ValueError):
+            placement_status.placement_leaks_rgw_secrets(bad)
+    misshapen = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": "not-a-map"}},
+    })
+    with pytest.raises(ValueError):
+        placement_status.placement_leaks_rgw_secrets(misshapen)
+
+
+def test_placement_leaks_rgw_secrets_true_when_present():
+    leaky = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {
+            "node-a": {"rgw": {"enabled": True, "ssl_certificate": "Y2VydA=="}},
+        }}},
+    })
+    assert placement_status.placement_leaks_rgw_secrets(leaky) is True
+    leaky_key = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {
+            "node-a": {"rgw": {"enabled": True, "ssl_private_key": "a2V5"}},
+        }}},
+    })
+    assert placement_status.placement_leaks_rgw_secrets(leaky_key) is True
+
+
+_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL = json.dumps({
+    "status_code": 200,
+    "metadata": {
+        "active": True,
+        "policy": {
+            "mode": "reconcile",
+            "members": {
+                "node-a": {"rgw": {"enabled": True, "ssl": True, "ssl_port": 8443}},
+                "node-b": {"rgw": {"enabled": False}},
+            },
+        },
+        "observed": [
+            {"member": "node-a", "rgw": True, "rgw_frontend": {"ssl_port": 8443, "ssl": True}},
+            {"member": "node-b", "rgw": False},
+        ],
+        "placement_refusal": "keep-one invariant: refused to remove last mon on node-c",
+    },
+})
+
+
+def test_placement_metadata_strict_parse():
+    meta = placement_status.placement_metadata(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL)
+    assert meta["active"] is True
+    assert placement_status.placement_metadata(_RGW_PLACEMENT_RESPONSE) == {
+        "active": True,
+        "policy": {"mode": "reconcile", "members": {
+            "node-a": {"rgw": {"enabled": True, "port": 8080, "ssl_port": 443}},
+        }},
+        "observed": [
+            {"member": "node-a", "rgw": True,
+             "rgw_frontend": {"port": 8080, "ssl_port": 443, "ssl": True}},
+            {"member": "node-b", "control": True},
+        ],
+    }
+
+
+def test_placement_metadata_rejects_malformed_bodies():
+    for bad in ("garbage", "", "[1, 2, 3]", _ERROR_RESPONSE,
+                json.dumps({"status_code": 200}),
+                json.dumps({"status_code": 200, "metadata": "not-an-object"})):
+        with pytest.raises(ValueError):
+            placement_status.placement_metadata(bad)
+
+
+def test_placement_refusal_present_absent_and_malformed():
+    assert placement_status.placement_refusal(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL) == \
+        "keep-one invariant: refused to remove last mon on node-c"
+    # No recorded refusal reads as empty on a valid body.
+    assert placement_status.placement_refusal(_RGW_PLACEMENT_RESPONSE) == ""
+    with pytest.raises(ValueError):
+        placement_status.placement_refusal("garbage")
+    with pytest.raises(ValueError):
+        placement_status.placement_refusal(_ERROR_RESPONSE)
+
+
+def test_stored_policy_rgw_returns_member_intent():
+    intent = placement_status.stored_policy_rgw(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL, "node-a")
+    assert intent == {"enabled": True, "ssl": True, "ssl_port": 8443}
+    assert placement_status.stored_policy_rgw(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL, "node-b") == \
+        {"enabled": False}
+
+
+def test_stored_policy_rgw_absent_member_and_policy_are_empty():
+    assert placement_status.stored_policy_rgw(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL, "node-z") == {}
+    no_policy = json.dumps({"status_code": 200, "metadata": {"active": False}})
+    assert placement_status.stored_policy_rgw(no_policy, "node-a") == {}
+    # A member entry without an rgw field (omission policy) is also empty.
+    omitted = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"mode": "reconcile", "members": {"node-a": {"control": True}}}},
+    })
+    assert placement_status.stored_policy_rgw(omitted, "node-a") == {}
+
+
+def test_stored_policy_rgw_rejects_malformed_bodies():
+    # Before/after comparisons of accepted state must fail on garbage rather
+    # than compare {} == {}.
+    for bad in ("garbage", "", _ERROR_RESPONSE):
+        with pytest.raises(ValueError):
+            placement_status.stored_policy_rgw(bad, "node-a")
+    # Not a stored-boolean-policy compatibility check (out of scope; new
+    # placement requests are object-only) -- just another malformed rgw
+    # intent shape, a list where an object is required.
+    misshapen = json.dumps({
+        "status_code": 200,
+        "metadata": {"policy": {"members": {"node-a": {"rgw": ["not", "an", "object"]}}}},
+    })
+    with pytest.raises(ValueError):
+        placement_status.stored_policy_rgw(misshapen, "node-a")
+
+
+def test_observed_rgw_members_flags():
+    flags = placement_status.observed_rgw_members(_RGW_PLACEMENT_RESPONSE_WITH_REFUSAL)
+    assert flags == {"node-a": True, "node-b": False}
+
+
+def test_observed_rgw_members_rejects_malformed_bodies():
+    for bad in ("garbage", "", _ERROR_RESPONSE,
+                json.dumps({"status_code": 200, "metadata": {"observed": "nope"}})):
+        with pytest.raises(ValueError):
+            placement_status.observed_rgw_members(bad)
+    bad_entry = json.dumps({
+        "status_code": 200,
+        "metadata": {"observed": [{"member": "node-a", "rgw": True}, "not-an-entry"]},
+    })
+    with pytest.raises(ValueError):
+        placement_status.observed_rgw_members(bad_entry)
+
+
+def test_rgw_frontend_conf_ports_plaintext():
+    conf = "rgw frontends = beast port=8080\n"
+    assert placement_status.rgw_frontend_conf_ports(conf) == {
+        "port": 8080, "ssl_port": 0, "ssl": False,
+    }
+
+
+def test_rgw_frontend_conf_ports_tls_only():
+    conf = "rgw frontends = beast ssl_port=443 ssl_certificate=/x/server.crt ssl_private_key=/x/server.key\n"
+    assert placement_status.rgw_frontend_conf_ports(conf) == {
+        "port": 0, "ssl_port": 443, "ssl": True,
+    }
+
+
+def test_rgw_frontend_conf_ports_dual_listener():
+    conf = "rgw frontends = beast port=8080 ssl_port=8443 ssl_certificate=/x/server.crt ssl_private_key=/x/server.key\n"
+    assert placement_status.rgw_frontend_conf_ports(conf) == {
+        "port": 8080, "ssl_port": 8443, "ssl": True,
+    }
+
+
+def test_rgw_frontend_conf_ports_rejects_missing_line_and_bad_values():
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_conf_ports("[global]\nrun dir = /x\n")
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_conf_ports("")
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_conf_ports("rgw frontends = beast port=notaport\n")
+
+
+# ---------------------------------------------------------------------------
+# rgw_frontend_tls_paths
+# ---------------------------------------------------------------------------
+
+def test_rgw_frontend_tls_paths_plaintext_is_empty():
+    conf = "rgw frontends = beast port=8080\n"
+    assert placement_status.rgw_frontend_tls_paths(conf) == []
+
+
+def test_rgw_frontend_tls_paths_full_pair_returns_exact_paths():
+    conf = (
+        "rgw frontends = beast port=8080 ssl_port=8443 "
+        "ssl_certificate=/var/snap/microceph/common/rgw-tls/abc/server.crt "
+        "ssl_private_key=/var/snap/microceph/common/rgw-tls/abc/server.key\n"
+    )
+    assert placement_status.rgw_frontend_tls_paths(conf) == [
+        "/var/snap/microceph/common/rgw-tls/abc/server.crt",
+        "/var/snap/microceph/common/rgw-tls/abc/server.key",
+    ]
+
+
+def test_rgw_frontend_tls_paths_half_pair_raises():
+    # A certificate with no matching key (or vice versa) must never read as
+    # "nothing to reference"; it is a broken reference and must fail.
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths(
+            "rgw frontends = beast ssl_port=8443 ssl_certificate=/x/server.crt\n"
+        )
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths(
+            "rgw frontends = beast ssl_port=8443 ssl_private_key=/x/server.key\n"
+        )
+
+
+def test_rgw_frontend_tls_paths_missing_line_raises():
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths("[global]\nrun dir = /x\n")
+    with pytest.raises(ValueError):
+        placement_status.rgw_frontend_tls_paths("")
+
+
+def test_rgw_frontend_tls_paths_quoted_values_via_shlex():
+    # Paths containing spaces are only recovered correctly if the tokenizer
+    # honours shell quoting rather than splitting on every space.
+    conf = (
+        'rgw frontends = beast ssl_port=8443 '
+        'ssl_certificate="/var/snap/microceph/common/rgw tls/abc/server.crt" '
+        'ssl_private_key="/var/snap/microceph/common/rgw tls/abc/server.key"\n'
+    )
+    assert placement_status.rgw_frontend_tls_paths(conf) == [
+        "/var/snap/microceph/common/rgw tls/abc/server.crt",
+        "/var/snap/microceph/common/rgw tls/abc/server.key",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# cluster_member_names
+# ---------------------------------------------------------------------------
+
+_DEPLOYMENT_SUMMARY = (
+    "MicroCeph deployment summary:\n"
+    "- rgw-mvm-first (10.0.0.11)\n"
+    "  Services: mds, mgr, mon, osd\n"
+    "  Disks: 1\n"
+    "- rgw-mvm-first-2 (10.0.0.12)\n"
+    "  Services: osd\n"
+    "  Disks: 1\n"
+)
+
+
+def test_cluster_member_names_parses_deployment_summary():
+    assert placement_status.cluster_member_names(_DEPLOYMENT_SUMMARY) == {
+        "rgw-mvm-first", "rgw-mvm-first-2",
+    }
+
+
+def test_cluster_member_names_does_not_treat_prefix_as_present():
+    # "rgw-mvm-first" is a substring of "rgw-mvm-first-2"; only the member
+    # whose own line actually names it may count as present.
+    text = "MicroCeph deployment summary:\n- rgw-mvm-first-2 (10.0.0.12)\n"
+    names = placement_status.cluster_member_names(text)
+    assert "rgw-mvm-first-2" in names
+    assert "rgw-mvm-first" not in names
+
+
+def test_cluster_member_names_ignores_service_and_disk_lines():
+    text = "MicroCeph deployment summary:\n- node-a (10.0.0.1)\n  Services: osd\n  Disks: 1\n"
+    assert placement_status.cluster_member_names(text) == {"node-a"}
+
+
+def test_cluster_member_names_empty_or_no_members_is_empty_set():
+    assert placement_status.cluster_member_names("") == set()
+    assert placement_status.cluster_member_names(None) == set()
+    assert placement_status.cluster_member_names("MicroCeph deployment summary:\n") == set()
+
+
+# ---------------------------------------------------------------------------
+# rgw_probe.material_needles
+# ---------------------------------------------------------------------------
+
+# A banner line, one long (>=32 byte) base64-looking body line, and a second
+# banner -- shaped like a real PEM without needing a real key.
+_PEM_BODY_LINE = b"A" * 44
+_PEM = b"-----BEGIN CERTIFICATE-----\n" + _PEM_BODY_LINE + b"\n-----END CERTIFICATE-----\n"
+
+
+def test_material_needles_includes_raw_base64_and_json_escaped_forms():
+    needles = rgw_probe.material_needles(_PEM)
+    assert _PEM in needles
+    assert base64.b64encode(_PEM) in needles
+    # JSON-embedding a PEM escapes its newlines to a literal backslash-n.
+    assert json.dumps(_PEM.decode("ascii"))[1:-1].encode() in needles
+
+
+def test_material_needles_includes_long_body_lines_excludes_banners():
+    needles = rgw_probe.material_needles(_PEM)
+    assert _PEM_BODY_LINE in needles
+    assert b"-----BEGIN CERTIFICATE-----" not in needles
+    assert b"-----END CERTIFICATE-----" not in needles
+
+
+def test_material_needles_excludes_short_body_lines():
+    short_pem = b"-----BEGIN CERTIFICATE-----\nshort\n-----END CERTIFICATE-----\n"
+    needles = rgw_probe.material_needles(short_pem)
+    assert b"short" not in needles
+
+
+def test_material_needles_dedups_across_repeated_material():
+    assert rgw_probe.material_needles(_PEM, _PEM) == rgw_probe.material_needles(_PEM)
+
+
+# ---------------------------------------------------------------------------
+# rgw_probe.file_contains_material
+# ---------------------------------------------------------------------------
+
+def test_file_contains_material_matches_in_first_chunk(tmp_path):
+    needle = b"super-secret-material"
+    path = tmp_path / "leak.txt"
+    path.write_bytes(b"prefix " + needle + b" suffix")
+    assert rgw_probe.file_contains_material(path, (needle,)) is True
+
+
+def test_file_contains_material_no_match(tmp_path):
+    path = tmp_path / "clean.txt"
+    path.write_bytes(b"nothing interesting in here")
+    assert rgw_probe.file_contains_material(path, (b"super-secret-material",)) is False
+
+
+def test_file_contains_material_empty_file_is_false(tmp_path):
+    path = tmp_path / "empty.txt"
+    path.write_bytes(b"")
+    assert rgw_probe.file_contains_material(path, (b"needle",)) is False
+
+
+def test_file_contains_material_matches_across_chunk_boundary(tmp_path):
+    # The reader works in 64KiB (65536-byte) chunks; place the needle so it
+    # starts just before that boundary and ends just after it, proving the
+    # overlap-retention logic (not a single unbroken chunk) finds the match.
+    needle = b"boundary-spanning-secret-material-marker"
+    before = b"a" * (65536 - 10)
+    after = b"b" * 4096
+    path = tmp_path / "boundary.txt"
+    path.write_bytes(before + needle + after)
+    assert rgw_probe.file_contains_material(path, (needle,)) is True
 
 
 def test_mon_count_prefers_monmap_num_mons():
@@ -1558,8 +2072,6 @@ def test_control_service_presence_requires_each_explicit_service():
 def test_control_service_presence_malformed_raises():
     # Unparseable output must not be reported as "service absent": an absence
     # assertion would otherwise pass on garbage rather than a genuine removal.
-    import pytest as _pytest
-
     mon = json.dumps({"quorum_names": ["node-a"]})
     mgr = json.dumps([{"name": "node-a"}])
     mds = json.dumps({"fsmap": {"standbys": [], "filesystems": []}})
@@ -1570,7 +2082,7 @@ def test_control_service_presence_malformed_raises():
         (mon, mgr, "bad"),
         ("", "", ""),
     ):
-        with _pytest.raises(ValueError):
+        with pytest.raises(ValueError):
             placement_status.control_service_presence(
                 bad_mon, bad_mgr, bad_mds, "node-a"
             )
@@ -1582,9 +2094,6 @@ def test_member_in_ceph_status_substring():
     assert placement_status.member_in_ceph_status(status, "node-wrk3") is False
     assert placement_status.member_in_ceph_status("", "node-wrk0") is False
     assert placement_status.member_in_ceph_status(None, "node-wrk0") is False
-
-
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -1636,6 +2145,158 @@ import microceph_harness as _mh
 from collections import namedtuple as _nt
 
 _Res = _nt("Res", ["rc", "stdout", "stderr"])
+
+
+# ---------------------------------------------------------------------------
+# RGW endpoint probe -- only an observed refusal counts as closed
+# ---------------------------------------------------------------------------
+
+def _rgw_probe_with_results(monkeypatch, results):
+    probe = rgw_placement.rgw_placement()
+    calls = []
+    replies = iter(results)
+
+    def fake_exec(args, vm_name=None, timeout=30, check=True):
+        calls.append((args, vm_name, check))
+        return next(replies)
+
+    monkeypatch.setattr(probe, "_exec", fake_exec)
+    return probe, calls
+
+
+@pytest.mark.parametrize("response, reachable", [
+    (_Res(0, "reachable\n", ""), True),
+    (_Res(0, "refused\n", ""), False),
+])
+def test_rgw_endpoint_probe_recognizes_guest_socket_observation(monkeypatch, response, reachable):
+    probe, _ = _rgw_probe_with_results(monkeypatch, [response])
+
+    assert probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480, vm_name="node-wrk1") is reachable
+
+
+@pytest.mark.parametrize("error", [
+    _Res(124, "refused\n", "Command timed out after 30s"),
+    _Res(1, "", "Error: Instance not found"),
+    _Res(1, "", "TimeoutError: timed out"),
+    _Res(0, "refused\n", "LXD warning: probe output incomplete"),
+])
+def test_rgw_endpoint_probe_rejects_execution_failures(monkeypatch, error):
+    probe, _ = _rgw_probe_with_results(monkeypatch, [error])
+
+    with pytest.raises(AssertionError):
+        probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480)
+
+
+@pytest.mark.parametrize("response", [
+    "",
+    "False\n",
+    "refused",
+    "refused\nreachable\n",
+    "timeout\n",
+])
+def test_rgw_endpoint_probe_rejects_malformed_guest_response(monkeypatch, response):
+    probe, _ = _rgw_probe_with_results(monkeypatch, [_Res(0, response, "")])
+
+    with pytest.raises(AssertionError, match="Unexpected RGW endpoint probe response"):
+        probe.rgw_endpoint_reachable_in_vm("10.0.0.3", 7480)
+
+
+@pytest.mark.parametrize("outcomes, response", [
+    ([None], "reachable\n"),
+    ([ConnectionRefusedError()], "refused\n"),
+    ([ConnectionRefusedError(), ConnectionRefusedError()], "refused\n"),
+    ([ConnectionRefusedError(), None], "reachable\n"),
+    ([socket.timeout("timed out"), None], "reachable\n"),
+    ([socket.timeout("timed out")], None),
+    ([socket.timeout("timed out"), ConnectionRefusedError()], None),
+    ([ConnectionRefusedError(), socket.timeout("timed out")], None),
+    ([OSError("network unreachable"), ConnectionRefusedError()], None),
+])
+def test_rgw_endpoint_guest_script_preserves_all_address_outcomes(monkeypatch, capsys, outcomes, response):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", "")])
+    probe.rgw_endpoint_reachable_in_vm("gateway.example", 7480)
+    script = calls[0][0][2]
+    addresses = [(f"192.0.2.{index + 1}", 7480) for index in range(len(outcomes))]
+    errors = dict(zip(addresses, outcomes))
+    connections = []
+
+    class Connection:
+        def __init__(self, *args):
+            self.closed = False
+            connections.append(self)
+
+        def settimeout(self, timeout):
+            pass
+
+        def connect(self, address):
+            error = errors[address]
+            if error is not None:
+                raise error
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", address) for address in addresses
+    ])
+    monkeypatch.setattr(socket, "socket", Connection)
+    monkeypatch.setattr(sys, "argv", ["python3", "gateway.example", "7480"])
+    if response is None:
+        with pytest.raises(ExceptionGroup):
+            exec(script, {"__name__": "__main__"})
+        assert capsys.readouterr().out == ""
+    else:
+        exec(script, {"__name__": "__main__"})
+        assert capsys.readouterr().out == response
+    assert all(connection.closed for connection in connections)
+
+
+def test_rgw_endpoint_guest_script_rejects_dns_failure(monkeypatch, capsys):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", "")])
+    probe.rgw_endpoint_reachable_in_vm("gateway.example", 7480)
+
+    def fail_dns(*args):
+        raise socket.gaierror("name resolution failed")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail_dns)
+    monkeypatch.setattr(sys, "argv", ["python3", "gateway.example", "7480"])
+    with pytest.raises(socket.gaierror):
+        exec(calls[0][0][2], {"__name__": "__main__"})
+    assert capsys.readouterr().out == ""
+
+
+def test_wait_for_rgw_endpoint_closed_requires_observed_refusal(monkeypatch):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [
+        _Res(0, "reachable\n", ""),
+        _Res(0, "refused\n", ""),
+    ])
+
+    assert probe.wait_for_rgw_endpoint_closed_in_vm(
+        "10.0.0.3", 7480, vm_name="node-wrk1", attempts=3, interval=0
+    ) is False
+    assert len(calls) == 2
+    assert all(vm_name == "node-wrk1" for _, vm_name, _ in calls)
+
+
+def test_wait_for_rgw_endpoint_closed_remains_open_without_refusal(monkeypatch):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", "")] * 2)
+
+    assert probe.wait_for_rgw_endpoint_closed_in_vm("10.0.0.3", 7480, attempts=2, interval=0) is True
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("failure", [
+    _Res(124, "refused\n", "Command timed out after 30s"),
+    _Res(1, "", "Error: Instance not found"),
+    _Res(0, "", ""),
+    _Res(0, "refused\n", "LXD warning: probe output incomplete"),
+])
+def test_wait_for_rgw_endpoint_closed_never_accepts_probe_failure(monkeypatch, failure):
+    probe, calls = _rgw_probe_with_results(monkeypatch, [_Res(0, "reachable\n", ""), failure])
+
+    with pytest.raises(AssertionError):
+        probe.wait_for_rgw_endpoint_closed_in_vm("10.0.0.3", 7480, attempts=3, interval=0)
+    assert len(calls) == 2
 
 
 class _CapLogger:
@@ -1912,7 +2573,7 @@ def _probe_harness(monkeypatch, rc_for):
     calls = []
     seen = {}
 
-    def fake_exec(container, argv, timeout):
+    def fake_exec(container, argv, timeout, vm_name=None):
         calls.append((container, argv, timeout))
         url = argv[-1]
         seen[url] = seen.get(url, 0) + 1
@@ -2012,7 +2673,9 @@ def test_preflight_exec_targets_the_vm_or_the_container(monkeypatch):
     _with_logger(monkeypatch)
     h = H()
     vm_calls, ct_calls = [], []
-    monkeypatch.setattr(h, "run_in_vm", lambda cmd, timeout, quiet=False: vm_calls.append((cmd, timeout, quiet)))
+    monkeypatch.setattr(
+        h, "run_in_vm", lambda cmd, timeout, quiet=False, vm_name=None: vm_calls.append((cmd, timeout, quiet, vm_name))
+    )
     monkeypatch.setattr(
         h, "exec_in_container",
         lambda container, *argv, timeout, quiet: ct_calls.append((container, argv, timeout, quiet)),
@@ -2020,8 +2683,12 @@ def test_preflight_exec_targets_the_vm_or_the_container(monkeypatch):
 
     h._preflight_exec("", ["curl", "-H", "Snap-Device-Series: 16", "http://x/"], 20)
     h._preflight_exec("node-wrk0", ["curl", "http://x/"], 20)
+    h._preflight_exec("", ["curl", "http://x/"], 20, vm_name="guest-vm")
 
-    assert vm_calls == [("curl -H 'Snap-Device-Series: 16' http://x/", 20, True)]
+    assert vm_calls == [
+        ("curl -H 'Snap-Device-Series: 16' http://x/", 20, True, None),
+        ("curl http://x/", 20, True, "guest-vm"),
+    ]
     assert ct_calls == [("node-wrk0", ("curl", "http://x/"), 20, True)]
 
 
@@ -2037,7 +2704,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     monkeypatch.setattr(h, "_outer_vm", lambda: "vm1")
     events = []
 
-    def fake_run_in_vm(cmd, timeout=300, quiet=False):
+    def fake_run_in_vm(cmd, timeout=300, quiet=False, vm_name=None):
         events.append(("vm", cmd, timeout))
         return _Res(0, snap_list_count + "\n" if "snap list" in cmd else "", "")
 
@@ -2049,7 +2716,9 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
         events.append(("exec", container, argv))
         return _Res(0, "", "")
 
-    monkeypatch.setattr(h, "probe_instance_network", lambda container="", *extra: events.append(("probe", container)))
+    monkeypatch.setattr(
+        h, "probe_instance_network", lambda container="", *extra, vm_name=None: events.append(("probe", container))
+    )
     monkeypatch.setattr(h, "run_in_vm", fake_run_in_vm)
     monkeypatch.setattr(h, "run_in_vm_and_check", fake_run_in_vm)
     monkeypatch.setattr(h, "run_in_container_unchecked", fake_run_in_container)
@@ -2057,7 +2726,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     monkeypatch.setattr(h, "exec_in_container", fake_exec_in_container)
     monkeypatch.setattr(
         h, "run_in_vm_with_snap_retry",
-        lambda cmd, timeout=300: events.append(("vm-snap-retry", cmd, timeout)),
+        lambda cmd, timeout=300, vm_name=None: events.append(("vm-snap-retry", cmd, timeout)),
     )
     monkeypatch.setattr(
         h, "run_in_container_with_snap_retry",
@@ -2067,7 +2736,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     # string those methods build (flags included) and the target they aim it at.
     monkeypatch.setattr(
         h, "_run_apt",
-        lambda container, cmd, timeout, label: events.append(("apt", container, cmd, timeout)),
+        lambda container, cmd, timeout, label, vm_name=None: events.append(("apt", container, cmd, timeout)),
     )
     return h, events
 
@@ -2367,7 +3036,8 @@ def _apt_target_harness(monkeypatch):
     h = H()
     calls = []
     monkeypatch.setattr(
-        h, "_run_apt", lambda container, cmd, timeout, label: calls.append((container, cmd, timeout, label))
+        h, "_run_apt",
+        lambda container, cmd, timeout, label, vm_name=None: calls.append((container, cmd, timeout, label)),
     )
     return h, calls
 
@@ -2644,6 +3314,41 @@ def test_wait_for_control_services_absent_timeout_on_persistent_bad_output(monke
 
 
 # ---------------------------------------------------------------------------
+# wait_for_cluster_members_in_vm (must decide via cluster_member_names, not a
+# substring search over the raw `microceph status` text)
+# ---------------------------------------------------------------------------
+
+def test_wait_for_cluster_members_in_vm_rejects_prefix_match(monkeypatch):
+    # Only "rgw-mvm-first-2" is actually a member; a substring search would
+    # wrongly report "rgw-mvm-first" present too.
+    h = H()
+    status_text = (
+        "MicroCeph deployment summary:\n"
+        "- rgw-mvm-first-2 (10.0.0.12)\n"
+        "  Services: osd\n"
+        "  Disks: 1\n"
+    )
+    monkeypatch.setattr(h, "run_in_vm", lambda *a, **k: _Res(0, status_text, ""))
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    with pytest.raises(AssertionError) as exc:
+        h.wait_for_cluster_members_in_vm("rgw-mvm-first", tries=1)
+    assert "rgw-mvm-first" in str(exc.value)
+
+
+def test_wait_for_cluster_members_in_vm_succeeds_on_exact_names(monkeypatch):
+    h = H()
+    status_text = (
+        "MicroCeph deployment summary:\n"
+        "- rgw-mvm-first (10.0.0.11)\n"
+        "- rgw-mvm-later (10.0.0.13)\n"
+    )
+    monkeypatch.setattr(h, "run_in_vm", lambda *a, **k: _Res(0, status_text, ""))
+    monkeypatch.setattr(_mh.time, "sleep", lambda *_: None)
+    # Must not raise: both requested members are exact matches.
+    h.wait_for_cluster_members_in_vm("rgw-mvm-first", "rgw-mvm-later", tries=1)
+
+
+# ---------------------------------------------------------------------------
 # Single-system suite state sequencing
 # ---------------------------------------------------------------------------
 
@@ -2691,13 +3396,15 @@ def test_local_snap_install_caches_core26(monkeypatch):
     harness = H()
     commands = []
 
-    def fake_run_in_vm_and_check(command, timeout):
+    def fake_run_in_vm_and_check(command, timeout, quiet=False, vm_name=None):
         commands.append((command, timeout))
+        return None
 
     retried = []
     monkeypatch.setattr(harness, "run_in_vm_and_check", fake_run_in_vm_and_check)
     monkeypatch.setattr(
-        harness, "run_in_vm_with_snap_retry", lambda command, timeout=300: retried.append((command, timeout))
+        harness, "run_in_vm_with_snap_retry",
+        lambda command, timeout=300, vm_name=None: retried.append((command, timeout)),
     )
 
     harness.install_microceph_from_local_snap("/tmp/microceph.snap")
@@ -2720,3 +3427,260 @@ def test_ceph_mgr_patch_is_checked_against_the_staging_tree():
     assert "dpkg-deb -x" not in script
     assert "cat >" not in script
     assert "Run Ceph Manager Staging Patch Test" not in unit_suite
+
+
+# Vaultlocker fixture helpers run without root, LXD, Vault or a Robot context.
+def _vaultlocker_fixture_module():
+    import importlib.util
+
+    path = Path(__file__).parents[2] / "scripts" / "vaultlocker_fixture.py"
+    spec = importlib.util.spec_from_file_location("vaultlocker_fixture", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_vaultlocker_snap_revision_is_pinned_without_channel():
+    from vaultlocker_ci import snap_install_args
+
+    assert snap_install_args("vaultlocker", "12", "") == [
+        "snap", "install", "vaultlocker", "--revision=12",
+    ]
+    assert snap_install_args("vaultlocker", "", "latest/edge") == [
+        "snap", "install", "vaultlocker", "--channel=latest/edge",
+    ]
+
+
+@pytest.mark.parametrize("revision,channel", [("12", "latest/edge"), ("", ""), ("bad", "")])
+def test_vaultlocker_snap_selection_rejects_ambiguous_or_invalid_input(revision, channel):
+    from vaultlocker_ci import snap_install_args
+
+    with pytest.raises(ValueError):
+        snap_install_args("vaultlocker", revision, channel)
+
+
+def test_vaultlocker_result_whitelists_metadata_and_validates_uuid():
+    fixture = _vaultlocker_fixture_module()
+    uuid = "32d91bc4-5b4c-43bc-87d4-db08a23c341a"
+    mapper = f"/dev/mapper/crypt-{uuid}"
+    result = fixture.parse_mapper_result(json.dumps({
+        "luks_uuid": uuid, "mapper_path": mapper, "unexpected_secret": "do not return",
+    }))
+    assert result == {"luks_uuid": uuid, "mapper_path": mapper}
+
+
+@pytest.mark.parametrize("result", [
+    {}, {"luks_uuid": "not-a-uuid", "mapper_path": "/dev/mapper/wrong"},
+    {"luks_uuid": "32d91bc4-5b4c-43bc-87d4-db08a23c341a", "mapper_path": "/dev/sda"},
+])
+def test_vaultlocker_result_rejects_invalid_or_unrelated_devices(result):
+    with pytest.raises(ValueError):
+        _vaultlocker_fixture_module().parse_mapper_result(json.dumps(result))
+
+
+def test_vaultlocker_loop_binding_refuses_unowned_devices():
+    fixture = _vaultlocker_fixture_module()
+    records = {"loopdevices": [{"name": "/dev/loop4", "back-file": "/fixture/fresh.img"}]}
+    assert fixture.loop_binding_matches(records, "/dev/loop4", "/fixture/fresh.img")
+    assert not fixture.loop_binding_matches(records, "/dev/loop4", "/fixture/other.img")
+    assert not fixture.loop_binding_matches(records, "/dev/sda", "/fixture/fresh.img")
+    assert not fixture.loop_binding_matches({}, "/dev/loop4", "/fixture/fresh.img")
+
+
+def test_vaultlocker_failure_never_returns_output_or_command_arguments():
+    import subprocess
+
+    secret = "private-token-never-log"
+    error = subprocess.CalledProcessError(
+        3, ["vaultlocker", secret], output=secret, stderr=secret
+    )
+    result = _vaultlocker_fixture_module().safe_failure(error)
+    assert result == "CalledProcessError (exit 3)"
+    assert secret not in result
+
+
+def test_vaultlocker_private_logging_failure_cannot_expose_exception(monkeypatch, tmp_path, capsys):
+    import os
+    import sys
+
+    fixture = _vaultlocker_fixture_module()
+    secret = "private-token-never-log"
+
+    def fail_setup():
+        raise RuntimeError(secret)
+
+    def fail_write(*args, **kwargs):
+        raise PermissionError("Cannot write private diagnostics")
+
+    monkeypatch.setattr(fixture, "setup", fail_setup)
+    monkeypatch.setattr(fixture, "PRIVATE", tmp_path)
+    monkeypatch.setattr(Path, "write_text", fail_write)
+    monkeypatch.setattr(sys, "argv", ["fixture", "setup"])
+    previous_umask = os.umask(0o077)
+    outcome = None
+    try:
+        fixture.main()
+    except BaseException as error:
+        outcome = error
+    finally:
+        os.umask(previous_umask)
+    assert isinstance(outcome, SystemExit)
+    assert outcome.code == 1
+    captured = capsys.readouterr()
+    assert "Fixture setup/fresh: RuntimeError" in captured.err
+    assert secret not in captured.out + captured.err
+
+
+class _ScenarioControlServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    pass
+
+
+@pytest.fixture
+def rgw_scenario_servers():
+    servers = []
+
+    def start(server):
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        servers.append((server, thread))
+        return server
+
+    yield start
+    for server, thread in servers:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def _run_rgw_scenario(*arguments):
+    return subprocess.run(
+        [sys.executable, rgw_scenario.__file__, *arguments],
+        env={**os.environ, "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"},
+        capture_output=True, text=True, timeout=10,
+    )
+
+
+@pytest.mark.parametrize("scenario", ["handover", "outage", "wrong object"])
+def test_rgw_scenario_migration(scenario, tmp_path, rgw_scenario_servers):
+    # Complete a handover between the old and new object reads. The PUT stays
+    # in flight until the sampler has observed that pair of HTTP responses.
+    sampled = threading.Event()
+    ready = {"old": scenario != "outage", "new": scenario == "wrong object"}
+    requests = 0
+
+    class ObjectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            nonlocal requests
+            gateway = "new" if self.headers["Host"].startswith("localhost:") else "old"
+            serves = ready[gateway]
+            requests += 1
+            if scenario == "handover" and requests == 1:
+                ready["new"] = True
+                ready["old"] = False
+            self.send_response(200 if serves else 503)
+            self.end_headers()
+            self.wfile.write(b"wrong object" if scenario == "wrong object" else b"expected object")
+            if requests >= 2:
+                sampled.set()
+
+        def log_message(self, *args):
+            pass
+
+    class ControlHandler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            observed = sampled.wait(5)
+            self.send_response(200 if observed else 500)
+            self.end_headers()
+            self.wfile.write(json.dumps({"status_code": 200 if observed else 500}).encode())
+
+        def log_message(self, *args):
+            pass
+
+    objects = rgw_scenario_servers(HTTPServer(("127.0.0.1", 0), ObjectHandler))
+    socket_path = str(tmp_path / "control.socket")
+    rgw_scenario_servers(_ScenarioControlServer(socket_path, ControlHandler))
+    result = _run_rgw_scenario(
+        "--socket", socket_path, "--timeout", "5", "migration", "{}",
+        "127.0.0.1", "localhost", str(objects.server_port), "/object", "expected object",
+    )
+    assert result.returncode == 0, result.stderr
+    result = json.loads(result.stdout)
+    assert placement_status.response_code(result["response"]) == 200
+    assert result["observation"]["samples"] > 0
+    assert result["observation"]["available"] is (scenario == "handover")
+    assert result["observation"]["replacement_ready"] is (scenario == "handover")
+
+
+@pytest.mark.parametrize("winner", ["a", "b"])
+def test_rgw_scenario_concurrent_requests_accept_either_winner(winner, tmp_path, rgw_scenario_servers):
+    locked = threading.Event()
+    rejected = threading.Event()
+    lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            name = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if name != winner:
+                locked.wait(5)
+            if lock.acquire(blocking=False):
+                locked.set()
+                overlapped = rejected.wait(5)
+                lock.release()
+                code = 200 if overlapped else 500
+            else:
+                rejected.set()
+                code = 409
+            self.send_response(code)
+            self.end_headers()
+            self.wfile.write(json.dumps({"status_code" if code == 200 else "error_code": code}).encode())
+
+        def log_message(self, *args):
+            pass
+
+    socket_path = str(tmp_path / "control.socket")
+    rgw_scenario_servers(_ScenarioControlServer(socket_path, Handler))
+    result = _run_rgw_scenario(
+        "--socket", socket_path, "--timeout", "5", "concurrent", '"a"', '"b"', "member-b",
+    )
+    assert result.returncode == 0, result.stderr
+    codes = [placement_status.response_code(response) for response in json.loads(result.stdout)["responses"]]
+    assert codes == ([200, 409] if winner == "a" else [409, 200])
+
+
+@pytest.mark.parametrize("failure", ["connection refused", "timeout"])
+def test_rgw_scenario_stops_sampler_when_request_fails(failure, tmp_path, rgw_scenario_servers):
+    release = threading.Event()
+
+    class ObjectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"expected object")
+
+        def log_message(self, *args):
+            pass
+
+    class StalledControlHandler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            release.wait(5)
+
+        def log_message(self, *args):
+            pass
+
+    objects = rgw_scenario_servers(HTTPServer(("127.0.0.1", 0), ObjectHandler))
+    socket_path = str(tmp_path / "control.socket")
+    if failure == "timeout":
+        rgw_scenario_servers(_ScenarioControlServer(socket_path, StalledControlHandler))
+    try:
+        # A lost stop signal would leave the non-daemon sampler running and
+        # make the foreground process exceed the outer test deadline.
+        result = _run_rgw_scenario(
+            "--socket", socket_path, "--timeout", "0.25", "migration", "{}",
+            "127.0.0.1", "localhost", str(objects.server_port), "/object", "expected object",
+        )
+        assert result.returncode != 0
+        assert result.stdout == ""
+    finally:
+        release.set()

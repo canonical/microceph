@@ -40,6 +40,7 @@ is_osd_running() {
 }
 
 spawn() {
+    retry_pending=false
     for i in "${SNAP_COMMON}/data/osd"/*; do
         filename="$(basename "${i}")"
         [ -z "$filename" ] && continue
@@ -67,18 +68,44 @@ spawn() {
         # otherwise every later OSD on the node is stranded and the service
         # enters an endless restart loop. See issue #521.
         if ! ceph-osd --cluster ceph --id "${nr}"; then
-            echo "osd.${nr} failed to start" >&2
+            echo "osd.${nr} failed to start; will retry" >&2
+            retry_pending=true
             continue
         fi
     done
 
-    wait
-    sleep infinity &
-    wait
 }
-trap spawn HUP
+
+# A mapper may appear after this service starts (or after Vault is unsealed).
+# Retry failed starts without restarting healthy OSDs or blocking later OSDs.
+# Once all starts succeed, retain the existing reload-driven idle behaviour.
+timer_pid=""
+reload_requested=false
+request_reload() {
+    reload_requested=true
+    if [ -n "$timer_pid" ]; then
+        kill "$timer_pid" 2>/dev/null || true
+    fi
+}
+trap request_reload HUP
 
 wait_for_config
 
-spawn
-exit 0
+while true; do
+    reload_requested=false
+    spawn
+    "$reload_requested" && continue
+
+    delay=infinity
+    if "$retry_pending"; then
+        delay=5
+    fi
+    sleep "$delay" &
+    timer_pid=$!
+    # Also handle a reload received between spawn and registering the timer.
+    if "$reload_requested"; then
+        kill "$timer_pid" 2>/dev/null || true
+    fi
+    wait "$timer_pid" || true
+    timer_pid=""
+done

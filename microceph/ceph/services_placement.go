@@ -41,7 +41,9 @@ func ServicePlacementHandler(ctx context.Context, s interfaces.StateInterface, p
 	var spt = GetServicePlacementTable()
 	var sp PlacementIntf
 
-	logger.Debugf("Enabling %s service, payload: %v", payload.Name, payload.Payload)
+	// payload.Payload is not logged here: for RGW it carries the base64
+	// TLS private key.
+	logger.Debugf("Enabling %s service", payload.Name)
 	sp, ok = spt[payload.Name]
 	if !ok {
 		err := fmt.Errorf("%s enablement is not supported", payload.Name)
@@ -73,11 +75,26 @@ func ServicePlacementHandler(ctx context.Context, s interfaces.StateInterface, p
 // package-level updateConfigFunc injectable var (declared in join.go) so unit
 // tests of the placement pipeline can bypass database-dependent config
 // rendering.
+//
+// The payload is parsed and validated first: PopulateParams is pure (no
+// state access), so a malformed request is rejected with its own error before
+// any state is touched — in particular before ceph.conf is rendered. Errors
+// are wrapped with %w so caller-classifying sentinels (e.g.
+// ceph.ErrRgwFrontendInvalid) survive to the API layer.
 func EnableService(ctx context.Context, s interfaces.StateInterface, payload types.EnableService, item PlacementIntf) error {
 	// Serialize direct service placement with bootstrap, join, deletion, and
 	// startup re-enablement so their snapctl and database phases cannot overlap.
 	serviceStartMu.Lock()
 	defer serviceStartMu.Unlock()
+
+	// Validate the payload before any mutation: a request that cannot be
+	// parsed or validated must not change anything, including ceph.conf.
+	err := item.PopulateParams(s, payload.Payload)
+	if err != nil {
+		retErr := fmt.Errorf("failed to populate the payload for %s enablement: %w", payload.Name, err)
+		logger.Error(retErr.Error())
+		return retErr
+	}
 
 	// Ensure ceph.conf and the admin keyring are rendered from the shared
 	// cluster database before enabling any service. This is intentional for
@@ -87,17 +104,9 @@ func EnableService(ctx context.Context, s interfaces.StateInterface, payload typ
 	// no ceph.conf until Ceph is bootstrapped elsewhere. Rendering here realises
 	// the "pre-joined members activate after Ceph bootstrap" step so role-managed
 	// placement can add services to deferred members.
-	err := updateConfigFunc(ctx, s)
+	err = updateConfigFunc(ctx, s)
 	if err != nil {
-		retErr := fmt.Errorf("failed to render ceph config before %s enablement: %v", payload.Name, err)
-		logger.Error(retErr.Error())
-		return retErr
-	}
-
-	// Populate json payload data to the service object.
-	err = item.PopulateParams(s, payload.Payload)
-	if err != nil {
-		retErr := fmt.Errorf("failed to populate the payload for %s enablement: %v", payload.Name, err)
+		retErr := fmt.Errorf("failed to render ceph config before %s enablement: %w", payload.Name, err)
 		logger.Error(retErr.Error())
 		return retErr
 	}
@@ -105,7 +114,7 @@ func EnableService(ctx context.Context, s interfaces.StateInterface, payload typ
 	// Check if host is hospitable to the new service to be enabled.
 	err = item.HospitalityCheck(s)
 	if err != nil {
-		retErr := fmt.Errorf("host failed hospitality check for %s enablement: %v", payload.Name, err)
+		retErr := fmt.Errorf("host failed hospitality check for %s enablement: %w", payload.Name, err)
 		logger.Error(retErr.Error())
 		return retErr
 	}
@@ -113,7 +122,7 @@ func EnableService(ctx context.Context, s interfaces.StateInterface, payload typ
 	// Initialise the new service.
 	err = item.ServiceInit(ctx, s)
 	if err != nil {
-		retErr := fmt.Errorf("failed to initialise %s service at host: %v", payload.Name, err)
+		retErr := fmt.Errorf("failed to initialise %s service at host: %w", payload.Name, err)
 		logger.Error(retErr.Error())
 		return retErr
 	}
@@ -121,7 +130,7 @@ func EnableService(ctx context.Context, s interfaces.StateInterface, payload typ
 	// Perform Post Placement checks for the service
 	err = item.PostPlacementCheck(s)
 	if err != nil {
-		retErr := fmt.Errorf("%s service unable to sustain on host: %v", payload.Name, err)
+		retErr := fmt.Errorf("%s service unable to sustain on host: %w", payload.Name, err)
 		logger.Error(retErr.Error())
 		return retErr
 	}
@@ -129,7 +138,7 @@ func EnableService(ctx context.Context, s interfaces.StateInterface, payload typ
 	// Perform DB updates to persist the service enablement changes.
 	err = item.DbUpdate(ctx, s)
 	if err != nil {
-		retErr := fmt.Errorf("failed to add DB record for %s: %v", payload.Name, err)
+		retErr := fmt.Errorf("failed to add DB record for %s: %w", payload.Name, err)
 		logger.Error(retErr.Error())
 		return retErr
 	}

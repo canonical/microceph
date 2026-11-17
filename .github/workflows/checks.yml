@@ -5,9 +5,13 @@ on:
   - pull_request
 
 jobs:
+  preflight:
+    uses: ./.github/workflows/dqlite-preflight.yml
+
   static-checks:
     name: Run static checks
     runs-on: ubuntu-24.04
+    needs: preflight
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -45,6 +49,7 @@ jobs:
   unit-tests:
     name: Run Unit tests
     runs-on: ubuntu-24.04
+    needs: preflight
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

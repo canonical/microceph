@@ -269,6 +269,20 @@ func TestHelpFlagPrintsUsageWithoutAnArgumentCount(t *testing.T) {
 	assert.Contains(t, out, "microceph remote import <name> <token>")
 }
 
+// TestClusterBootstrapDefaultCipherFlag verifies that --default-cipher is
+// parsed by the cluster bootstrap command.
+func TestClusterBootstrapDefaultCipherFlag(t *testing.T) {
+	cmd := &cmdClusterBootstrap{
+		common:  &CmdControl{FlagStateDir: "/tmp/nonexistent"},
+		cluster: &cmdCluster{},
+	}
+
+	c := cmd.Command()
+	err := c.ParseFlags([]string{"--default-cipher", "aes256k"})
+	assert.NoError(t, err)
+	assert.Equal(t, "aes256k", cmd.flagDefaultCipher)
+}
+
 // TestMainExitStatus runs main in a child process, because main ends the process with the exit status.
 func TestMainExitStatus(t *testing.T) {
 	if os.Getenv("MICROCEPH_TEST_MAIN_ARGS") != "" {

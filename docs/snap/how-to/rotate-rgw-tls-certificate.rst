@@ -27,18 +27,25 @@ connections.
      --ssl-private-key "$(base64 -w0 /path/to/new-server.key)" \
      --restart
 
-Write certificate without restart
----------------------------------
+Defer certificate activation
+----------------------------
 
-Without ``--restart``, the certificate and key are written to disk but the RGW
-service continues serving the old certificate. You must restart the service
-manually for the change to take effect.
+Omit ``--restart`` to store a new certificate and key for later activation.
+
+.. warning::
+
+   If an earlier certificate update is pending, this command may restart RGW
+   to activate it first, even without ``--restart`` or after a manual restart.
+   Plan for possible client disconnections.
 
 .. code-block:: none
 
    sudo microceph certificate set rgw \
      --ssl-certificate "$(base64 -w0 /path/to/new-server.crt)" \
      --ssl-private-key "$(base64 -w0 /path/to/new-server.key)"
+
+When ready to activate the certificate, repeat the command with ``--restart``.
+The next RGW configuration apply or certificate update can also activate it.
 
 Rotate on a specific node
 -------------------------

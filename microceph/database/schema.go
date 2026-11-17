@@ -23,6 +23,7 @@ var SchemaExtensions = []cluster.Update{
 	schemaUpdate8,
 	schemaUpdate9,
 	schemaUpdate10,
+	schemaUpdate11,
 }
 
 // getClusterTableName returns the name of the table that holds the record of cluster members from sqlite_master.
@@ -328,6 +329,25 @@ BEGIN
 END;
 `, tableName, tableName)
 	_, err = tx.ExecContext(ctx, stmt)
+
+	return err
+}
+
+// schemaUpdate11 records each member's last successfully applied RGW frontend.
+// TLS material stays on the member and is never replicated in this table.
+func schemaUpdate11(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE rgw_frontends (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  member_id  INTEGER NOT NULL,
+  port       INTEGER NOT NULL DEFAULT 0,
+  ssl_port   INTEGER NOT NULL DEFAULT 0,
+  ssl        INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (member_id) REFERENCES "core_cluster_members" (id) ON DELETE CASCADE,
+  UNIQUE(member_id)
+);
+  `
+	_, err := tx.ExecContext(ctx, stmt)
 
 	return err
 }

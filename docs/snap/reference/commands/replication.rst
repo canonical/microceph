@@ -31,7 +31,7 @@ Usage:
 
 .. code-block:: none
 
-  microceph replication enable rbd <resource> [flags]
+  microceph replication enable [command]
 
 Available commands:
 
@@ -69,7 +69,7 @@ Usage:
 
 .. code-block:: none
 
-  microceph replication enable cephfs <resource> [flags]
+  microceph replication enable cephfs [flags]
 
 Flags:
 
@@ -142,7 +142,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph replication list rbd [flags]
+   microceph replication list [command]
 
 Available Commands:
 
@@ -176,7 +176,7 @@ Usage:
 
 .. code-block:: none
 
-   microceph replication list rbd [flags]
+   microceph replication list cephfs [flags]
 
 .. code-block:: none
 
@@ -226,7 +226,7 @@ Usage:
 
 .. code-block:: none
 
-  microceph replication disable cephfs <resource> [flags]
+  microceph replication disable cephfs [flags]
 
 .. code-block:: none
 
@@ -281,8 +281,8 @@ Promote a non-primary cluster to primary status
 
 .. code-block:: none
 
-   --remote         remote MicroCeph cluster name
-   --force          forcefully promote site to primary
+   --remote                 remote MicroCeph cluster name
+   --yes-i-really-mean-it   forcefully promote site to primary
 
 ``replication demote``
 ------------------------
@@ -297,5 +297,6 @@ Usage:
 
 .. code-block:: none
 
-   --remote         remote MicroCeph cluster name
+   --remote                 remote MicroCeph cluster name
+   --yes-i-really-mean-it   demote cluster irrespective of data loss
 

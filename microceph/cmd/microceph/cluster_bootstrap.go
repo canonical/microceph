@@ -23,6 +23,7 @@ type cmdClusterBootstrap struct {
 	flagPubNet           string
 	flagClusterNet       string
 	flagAvailabilityZone string
+	flagDefaultCipher    string
 	flagV2Only           bool
 	flagDeferCeph        bool
 }
@@ -40,8 +41,9 @@ func (c *cmdClusterBootstrap) Command() *cobra.Command {
 	cmd.Flags().StringVar(&c.flagMonIp, "mon-ip", "", "Public address for bootstrapping ceph mon service.")
 	cmd.Flags().StringVar(&c.flagPubNet, "public-network", "", "Comma-delimited list of CIDRs for the Ceph public network (Ceph daemons bind addresses).")
 	cmd.Flags().StringVar(&c.flagClusterNet, "cluster-network", "", "Comma-delimited list of CIDRs for the Ceph cluster network (OSD replication/recovery traffic).")
+	cmd.Flags().StringVar(&c.flagDefaultCipher, "default-cipher", "", "Default cipher for CephX keys: 'aes' or 'aes256k' (AES-256). Defaults to AES-256 when supported, otherwise Ceph's default is left unchanged.")
 	cmd.Flags().BoolVar(&c.flagV2Only, "v2-only", false, "Whether to support V2 messenger only or both V1 and V2")
-	cmd.Flags().BoolVar(&c.flagDeferCeph, "defer-ceph", false, "Initialize MicroCluster only and defer Ceph bootstrap. Ceph network flags (--mon-ip, --public-network, --cluster-network, --v2-only) are ignored with this option; pass them to 'cluster bootstrap-ceph' instead.")
+	cmd.Flags().BoolVar(&c.flagDeferCeph, "defer-ceph", false, "Initialize MicroCluster only and defer Ceph bootstrap. Ceph bootstrap flags (--mon-ip, --public-network, --cluster-network, --v2-only, --default-cipher) cannot be used with this option; pass them to 'cluster bootstrap-ceph' instead.")
 	return cmd
 }
 
@@ -71,10 +73,14 @@ func (c *cmdClusterBootstrap) Run(cmd *cobra.Command, args []string) error {
 		ClusterNet:       c.flagClusterNet,
 		V2Only:           c.flagV2Only,
 		AvailabilityZone: c.flagAvailabilityZone,
+		DefaultCipher:    c.flagDefaultCipher,
 		DeferCeph:        c.flagDeferCeph,
 	}
 
 	if c.flagDeferCeph {
+		if c.flagDefaultCipher != "" {
+			return fmt.Errorf("--default-cipher cannot be used with --defer-ceph; pass it to 'cluster bootstrap-ceph' instead")
+		}
 		if c.flagMonIp != "" || c.flagPubNet != "" || c.flagClusterNet != "" || c.flagV2Only {
 			return fmt.Errorf("Ceph network flags (--mon-ip, --public-network, --cluster-network, --v2-only) are ignored with --defer-ceph; pass them to 'cluster bootstrap-ceph' instead")
 		}

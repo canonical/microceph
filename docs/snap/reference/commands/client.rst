@@ -36,8 +36,8 @@ Usage:
 
 .. code-block:: none
 
-   microceph cluster config [flags]
-   microceph cluster config [command]
+   microceph client config [flags]
+   microceph client config [command]
 
 Available Commands:
 

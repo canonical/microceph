@@ -2,7 +2,16 @@ package ceph
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,9 +20,11 @@ import (
 	"github.com/canonical/lxd/shared"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/database"
 	"github.com/canonical/microceph/microceph/interfaces"
 	"github.com/canonical/microceph/microceph/mocks"
 	"github.com/canonical/microceph/microceph/tests"
@@ -28,16 +39,20 @@ func TestPlacement(t *testing.T) {
 	suite.Run(t, new(placementSuite))
 }
 
-// applyPlacement runs validation before the package-private reconciliation
-// phase. Reconciliation tests use it without exercising policy persistence;
-// ApplyPlacementPolicy's full validate-store-reconcile ordering is covered by
-// dedicated orchestration tests below.
+// applyPlacement mirrors ApplyPlacementPolicy's pipeline minus persistence:
+// normalization, validation, then reconciliation. Reconciliation tests use it
+// without exercising policy storage; the full pipeline, including the
+// storage-boundary TLS strip, is covered by dedicated orchestration tests.
 func applyPlacement(ctx context.Context, s interfaces.StateInterface, policy types.PlacementPolicy) error {
-	err := ValidatePlacement(ctx, s, policy)
+	normalized, err := normalizePlacement(policy)
 	if err != nil {
 		return err
 	}
-	return reconcilePlacement(ctx, s, policy)
+	err = ValidatePlacement(ctx, s, normalized)
+	if err != nil {
+		return err
+	}
+	return reconcilePlacement(ctx, s, normalized)
 }
 
 // TestApplyPlacementPolicyOrdering verifies that the exported placement entry
@@ -989,6 +1004,586 @@ func (s *placementSuite) TestControlServiceViabilityAllRemovalTargetsNoRetainers
 		assert.True(s.T(), viableControl[svc]["node-a"], "%s on node-a must keep its existence-seeded viability", svc)
 		assert.True(s.T(), viableControl[svc]["node-b"], "%s on node-b must keep its existence-seeded viability", svc)
 	}
+}
+
+// testTLSMaterial generates a fresh self-signed certificate/key pair and
+// returns both PEM blocks base64-encoded -- the wire format RgwPlacement
+// expects. Normalization decodes and parses the pair with tls.X509KeyPair,
+// so a fixture must be a real matching pair; fake base64 would be rejected
+// before any dispatch.
+func testTLSMaterial(t *testing.T) (certB64 string, keyB64 string) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "microceph-placement-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return base64.StdEncoding.EncodeToString(certPEM), base64.StdEncoding.EncodeToString(keyPEM)
+}
+
+// rgwEvent records a single RGW enable/disable dispatch in an ordered log.
+type rgwEvent struct {
+	kind   string // "enable" or "remove"
+	member string
+	rgw    types.RgwPlacement // payload (enable only)
+}
+
+// rgwRecorder tracks RGW enable/disable dispatches in an ordered log so tests
+// can assert add-before-remove ordering, dispatched payloads, independent
+// progress past a failed target, and failure aggregation. enableErrs and
+// removeErrs inject per-member dispatch failures.
+type rgwRecorder struct {
+	events     []rgwEvent
+	enableErrs map[string]error
+	removeErrs map[string]error
+}
+
+func withRgwRecorder() (*rgwRecorder, func()) {
+	rec := &rgwRecorder{
+		enableErrs: make(map[string]error),
+		removeErrs: make(map[string]error),
+	}
+	origEnable := enableRgwServiceFunc
+	origRemove := removeRgwServiceFunc
+	enableRgwServiceFunc = func(_ context.Context, _ interfaces.StateInterface, member string, rgw types.RgwPlacement) error {
+		rec.events = append(rec.events, rgwEvent{"enable", member, rgw})
+		err, ok := rec.enableErrs[member]
+		if ok {
+			return err
+		}
+		return nil
+	}
+	removeRgwServiceFunc = func(_ context.Context, _ interfaces.StateInterface, member string) error {
+		rec.events = append(rec.events, rgwEvent{"remove", member, types.RgwPlacement{}})
+		err, ok := rec.removeErrs[member]
+		if ok {
+			return err
+		}
+		return nil
+	}
+	return rec, func() {
+		enableRgwServiceFunc = origEnable
+		removeRgwServiceFunc = origRemove
+	}
+}
+
+// enables returns the ordered list of "member" enabled.
+func (r *rgwRecorder) enables() []string {
+	var result []string
+	for _, e := range r.events {
+		if e.kind == "enable" {
+			result = append(result, e.member)
+		}
+	}
+	return result
+}
+
+// removes returns the ordered list of "member" removed.
+func (r *rgwRecorder) removes() []string {
+	var result []string
+	for _, e := range r.events {
+		if e.kind == "remove" {
+			result = append(result, e.member)
+		}
+	}
+	return result
+}
+
+// enablePayload returns the payload dispatched for the first enable of member.
+func (r *rgwRecorder) enablePayload(member string) (types.RgwPlacement, bool) {
+	for _, e := range r.events {
+		if e.kind == "enable" && e.member == member {
+			return e.rgw, true
+		}
+	}
+	return types.RgwPlacement{}, false
+}
+
+// allEnablesBeforeAllRemoves returns true if every enable event precedes every
+// remove event in the ordered log (RGW add-before-remove).
+func (r *rgwRecorder) allEnablesBeforeAllRemoves() bool {
+	firstRemoveIdx := -1
+	lastEnableIdx := -1
+	for i, e := range r.events {
+		if e.kind == "enable" {
+			lastEnableIdx = i
+		}
+		if e.kind == "remove" && firstRemoveIdx == -1 {
+			firstRemoveIdx = i
+		}
+	}
+	if firstRemoveIdx == -1 || lastEnableIdx == -1 {
+		return true
+	}
+	return lastEnableIdx < firstRemoveIdx
+}
+
+// TestPlacementEnableRGW verifies enabled members are dispatched with their
+// normalized frontend config: explicit TLS intent, effective ports, and --
+// for TLS -- the certificate material the member needs to serve it.
+func (s *placementSuite) TestPlacementEnableRGW() {
+	defer withObservedControl(map[string]map[string]bool{"mon": {}, "mgr": {}, "mds": {}})()
+	rec, restore := withRgwRecorder()
+	defer restore()
+
+	certB64, keyB64 := testTLSMaterial(s.T())
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(true), SSLCertificate: certB64, SSLPrivateKey: keyB64}},
+			"node-b": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false), Port: 8080}},
+		},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	assert.NoError(s.T(), err)
+	assert.ElementsMatch(s.T(), []string{"node-a", "node-b"}, rec.enables())
+	assert.Empty(s.T(), rec.removes())
+
+	tlsPayload, ok := rec.enablePayload("node-a")
+	require.True(s.T(), ok)
+	require.NotNil(s.T(), tlsPayload.SSL)
+	assert.True(s.T(), *tlsPayload.SSL)
+	assert.Equal(s.T(), 443, tlsPayload.SSLPort, "TLS listener defaults to 443")
+	assert.Equal(s.T(), certB64, tlsPayload.SSLCertificate, "TLS material must reach the member dispatch")
+
+	plainPayload, ok := rec.enablePayload("node-b")
+	require.True(s.T(), ok)
+	require.NotNil(s.T(), plainPayload.SSL)
+	assert.False(s.T(), *plainPayload.SSL)
+	assert.Equal(s.T(), 8080, plainPayload.Port)
+	assert.Equal(s.T(), 0, plainPayload.SSLPort, "unused ssl port is zeroed")
+}
+
+// TestPlacementDisableRGW verifies an explicit disable is dispatched to the
+// member. There is no observed-record gate: a prior partial failure may have
+// already removed the services row while local gateway state remains, so the
+// dispatch must still happen for the intent to converge (member-side disable
+// is idempotent).
+func (s *placementSuite) TestPlacementDisableRGW() {
+	defer withObservedControl(map[string]map[string]bool{"mon": {}, "mgr": {}, "mds": {}})()
+	rec, restore := withRgwRecorder()
+	defer restore()
+
+	policy := types.PlacementPolicy{
+		Mode:    types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(false)}}},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), []string{"node-a"}, rec.removes())
+	assert.Empty(s.T(), rec.enables())
+}
+
+// TestPlacementRGWOmittedUntouched verifies that an omitted rgw field (nil)
+// leaves the member untouched.
+func (s *placementSuite) TestPlacementRGWOmittedUntouched() {
+	defer withObservedControl(map[string]map[string]bool{"mon": {}, "mgr": {}, "mds": {}})()
+	rec, restore := withRgwRecorder()
+	defer restore()
+
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Control: boolPtr(true)}, // rgw omitted
+		},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	assert.NoError(s.T(), err)
+	assert.Empty(s.T(), rec.enables(), "omitted rgw must not enable")
+	assert.Empty(s.T(), rec.removes(), "omitted rgw must not remove")
+}
+
+// TestPlacementRGWScaleToZero verifies that a policy where every member has
+// rgw enabled:false attempts every listed disable. Disables are not gated on
+// observed service records, so cleanup converges even for members whose rows
+// a prior partial failure already removed. RGW has no keep-one invariant.
+func (s *placementSuite) TestPlacementRGWScaleToZero() {
+	defer withObservedControl(map[string]map[string]bool{"mon": {}, "mgr": {}, "mds": {}})()
+	rec, restore := withRgwRecorder()
+	defer restore()
+
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(false)}},
+			"node-b": {Rgw: &types.RgwPlacement{Enabled: boolPtr(false)}},
+			"node-c": {Rgw: &types.RgwPlacement{Enabled: boolPtr(false)}},
+		},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	assert.NoError(s.T(), err)
+	assert.Empty(s.T(), rec.enables())
+	assert.ElementsMatch(s.T(), []string{"node-a", "node-b", "node-c"}, rec.removes(),
+		"pure scale-to-zero must attempt every listed disable")
+}
+
+// TestPlacementRGWMigrateAddBeforeRemove verifies that migrating RGW from
+// node-a to node-b enables node-b before disabling node-a, keeping a gateway
+// serving while the old one is torn down.
+func (s *placementSuite) TestPlacementRGWMigrateAddBeforeRemove() {
+	defer withObservedControl(map[string]map[string]bool{"mon": {}, "mgr": {}, "mds": {}})()
+	rec, restore := withRgwRecorder()
+	defer restore()
+
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(false)}},
+			"node-b": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false)}},
+		},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), rec.allEnablesBeforeAllRemoves(), "RGW enables must precede removes: %v", rec.events)
+	assert.Equal(s.T(), []string{"node-b"}, rec.enables())
+	assert.Equal(s.T(), []string{"node-a"}, rec.removes())
+}
+
+// TestPlacementRGWEnableFailureDoesNotStarveIndependentAdditions verifies
+// that every addition is attempted even when an earlier one fails: an
+// unreachable first target must not block independent later targets. With an
+// addition failed, no removal runs -- the migration's old gateway must not
+// be taken offline against a broken replacement -- and the deferred
+// removals are named in the error so the refusal records what did not run.
+func (s *placementSuite) TestPlacementRGWEnableFailureDoesNotStarveIndependentAdditions() {
+	defer withObservedControl(map[string]map[string]bool{"mon": {}, "mgr": {}, "mds": {}})()
+	rec, restore := withRgwRecorder()
+	defer restore()
+	rec.enableErrs["node-a"] = fmt.Errorf("member unreachable")
+
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false)}},
+			"node-b": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false)}},
+			"node-c": {Rgw: &types.RgwPlacement{Enabled: boolPtr(false)}},
+		},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	require.Error(s.T(), err)
+	assert.ErrorIs(s.T(), err, ErrPlacementOperationFailed)
+	assert.Equal(s.T(), []string{"node-a", "node-b"}, rec.enables(),
+		"node-b must still be attempted after node-a failed")
+	assert.Empty(s.T(), rec.removes(), "no removal may run while an addition failed")
+	assert.Contains(s.T(), err.Error(), "node-a", "the failing member must be named")
+	assert.Contains(s.T(), err.Error(), "deferred disabling RGW on node-c",
+		"the deferred removal must be named so the refusal is complete")
+}
+
+// TestPlacementRGWForwarded400StaysClientClassified verifies a failure the
+// member-side service handler rejected as HTTP 400 keeps its client-side
+// classification through the dispatch layer instead of becoming an
+// operational fault.
+func (s *placementSuite) TestPlacementRGWForwarded400StaysClientClassified() {
+	defer withObservedControl(map[string]map[string]bool{"mon": {}, "mgr": {}, "mds": {}})()
+	rec, restore := withRgwRecorder()
+	defer restore()
+	rec.enableErrs["node-a"] = api.StatusErrorf(http.StatusBadRequest, "bad TLS material")
+
+	policy := types.PlacementPolicy{
+		Mode:    types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false)}}},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	require.Error(s.T(), err)
+	assert.ErrorIs(s.T(), err, ErrRgwFrontendInvalid)
+	assert.NotErrorIs(s.T(), err, ErrPlacementOperationFailed)
+}
+
+// TestPlacementRGWMixedFailuresAreOperational verifies that when dispatches
+// fail with both a client-classified 400 and an operational fault, the
+// aggregate is operational: the apply genuinely failed on real cluster state
+// and must not read as a merely bad request. Both causes stay in the message.
+func (s *placementSuite) TestPlacementRGWMixedFailuresAreOperational() {
+	defer withObservedControl(map[string]map[string]bool{"mon": {}, "mgr": {}, "mds": {}})()
+	rec, restore := withRgwRecorder()
+	defer restore()
+	rec.enableErrs["node-a"] = api.StatusErrorf(http.StatusBadRequest, "bad TLS material")
+	rec.enableErrs["node-b"] = fmt.Errorf("member unreachable")
+
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false)}},
+			"node-b": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false)}},
+		},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	require.Error(s.T(), err)
+	assert.ErrorIs(s.T(), err, ErrPlacementOperationFailed)
+	assert.Contains(s.T(), err.Error(), "node-a")
+	assert.Contains(s.T(), err.Error(), "node-b")
+	assert.ElementsMatch(s.T(), []string{"node-a", "node-b"}, rec.enables(),
+		"both independent targets must be attempted")
+}
+
+// TestPlacementRGWDisableFailuresAggregated verifies that in a pure
+// scale-to-zero every listed disable is attempted even when an earlier one
+// fails, and that all failures are collected in one error.
+func (s *placementSuite) TestPlacementRGWDisableFailuresAggregated() {
+	defer withObservedControl(map[string]map[string]bool{"mon": {}, "mgr": {}, "mds": {}})()
+	rec, restore := withRgwRecorder()
+	defer restore()
+	rec.removeErrs["node-a"] = fmt.Errorf("stop failed")
+
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(false)}},
+			"node-b": {Rgw: &types.RgwPlacement{Enabled: boolPtr(false)}},
+			"node-c": {Rgw: &types.RgwPlacement{Enabled: boolPtr(false)}},
+		},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	require.Error(s.T(), err)
+	assert.ErrorIs(s.T(), err, ErrPlacementOperationFailed)
+	assert.Contains(s.T(), err.Error(), "node-a")
+	assert.ElementsMatch(s.T(), []string{"node-a", "node-b", "node-c"}, rec.removes(),
+		"a failed disable must not starve the remaining removals")
+}
+
+// TestPlacementRGWNilProductionDispatchFailsClosed verifies that with no
+// production dispatch wired (the default outside the daemon package), an
+// RGW apply fails instead of silently reporting success.
+func (s *placementSuite) TestPlacementRGWNilProductionDispatchFailsClosed() {
+	defer withObservedControl(map[string]map[string]bool{"mon": {}, "mgr": {}, "mds": {}})()
+	// No recorder: the package-default enableRgwServiceFunc runs and must
+	// fail closed because no production hook is wired in tests.
+	require.Nil(s.T(), ProdEnableRgwServiceFunc)
+
+	policy := types.PlacementPolicy{
+		Mode:    types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false)}}},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	require.Error(s.T(), err)
+	assert.ErrorIs(s.T(), err, ErrPlacementOperationFailed)
+	assert.Contains(s.T(), err.Error(), "no production RGW enable dispatch wired")
+}
+
+// TestPlacementKeepOneRefusalPlusRGWFailure verifies that a control keep-one
+// refusal stays visible alongside an RGW dispatch failure: the returned
+// error carries both the operational cause and the keep-one sentinel, so
+// neither is lost.
+func (s *placementSuite) TestPlacementKeepOneRefusalPlusRGWFailure() {
+	defer withObservedControl(map[string]map[string]bool{
+		"mon": {"node-a": true}, "mgr": {"node-a": true}, "mds": {"node-a": true},
+	})()
+	rec, restore := withRgwRecorder()
+	defer restore()
+	rec.enableErrs["node-b"] = fmt.Errorf("member unreachable")
+
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			// node-a hosts the only control services, so removing them is
+			// refused for keep-one safety.
+			"node-a": {Control: boolPtr(false)},
+			"node-b": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false)}},
+		},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	require.Error(s.T(), err)
+	assert.ErrorIs(s.T(), err, ErrPlacementOperationFailed, "runtime failure takes precedence")
+	assert.ErrorIs(s.T(), err, ErrKeepOneInvariant, "the safety refusal must be retained")
+	assert.Contains(s.T(), err.Error(), "mon on node-a", "the refused removals stay named")
+	assert.Contains(s.T(), err.Error(), "node-b")
+}
+
+// TestPlacementControlRemovalFailureRetainsRefusal verifies a keep-one refusal
+// recorded earlier in the control pass survives a later operational removal
+// failure, so the response and stored reason carry both causes.
+func (s *placementSuite) TestPlacementControlRemovalFailureRetainsRefusal() {
+	defer withObservedControl(map[string]map[string]bool{
+		"mon": {"node-a": true},
+		"mgr": {"node-a": true, "node-b": true},
+		"mds": {"node-a": true, "node-b": true},
+	})()
+	origRemove := removeControlServiceFunc
+	defer func() { removeControlServiceFunc = origRemove }()
+	removeControlServiceFunc = func(_ context.Context, _ interfaces.StateInterface, _ string, service string) error {
+		if service == "mgr" {
+			return fmt.Errorf("member unreachable")
+		}
+		return nil
+	}
+
+	policy := types.PlacementPolicy{
+		Mode:    types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{"node-a": {Control: boolPtr(false)}},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	require.Error(s.T(), err)
+	assert.ErrorIs(s.T(), err, ErrPlacementOperationFailed, "the removal failure takes precedence")
+	assert.ErrorIs(s.T(), err, ErrKeepOneInvariant, "the earlier refusal must be retained")
+	assert.Contains(s.T(), err.Error(), "mon on node-a")
+	assert.Contains(s.T(), err.Error(), "failed to remove mgr on node-a")
+}
+
+// TestPlacementRGWUnknownMemberRejected verifies that an unknown member in
+// the policy is rejected (reusing the existing member validation).
+func (s *placementSuite) TestPlacementRGWUnknownMemberRejected() {
+	rec, restore := withRgwRecorder()
+	defer restore()
+
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"unknown-node": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false)}},
+		},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	assert.Error(s.T(), err)
+	assert.ErrorIs(s.T(), err, ErrUnknownPlacementMember)
+	assert.Empty(s.T(), rec.enables())
+}
+
+// TestPlacementControlBeforeRGW verifies that when a policy has both control
+// and rgw changes, the control pass runs before the RGW pass.
+func (s *placementSuite) TestPlacementControlBeforeRGW() {
+	defer withObservedControl(map[string]map[string]bool{
+		"mon": {}, "mgr": {}, "mds": {},
+	})()
+	ctrlRec, ctrlRestore := withAddRemoveRecorder()
+	defer ctrlRestore()
+	rgwRec, rgwRestore := withRgwRecorder()
+	defer rgwRestore()
+
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {
+				Control: boolPtr(true),
+				Rgw:     &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(false)},
+			},
+		},
+	}
+	err := applyPlacement(context.Background(), s.TestStateInterface, policy)
+	assert.NoError(s.T(), err)
+	assert.NotEmpty(s.T(), ctrlRec.adds(), "control adds must run")
+	assert.NotEmpty(s.T(), rgwRec.enables(), "rgw enable must run")
+	// The control pass is complete before the RGW pass starts, so all three
+	// control services are recorded by the time the RGW enable dispatch runs.
+	assert.Len(s.T(), ctrlRec.adds(), 3, "all control services added before RGW pass")
+}
+
+// TestPolicyForStorageStripsTLSMaterial verifies the storage boundary returns
+// a copy of the policy with the RGW TLS certificate and private key removed,
+// while the explicit ssl intent and effective ports are retained (so a
+// redacted policy resubmitted as-is cannot silently downgrade TLS). The
+// original policy is untouched so the active apply path keeps the material.
+func (s *placementSuite) TestPolicyForStorageStripsTLSMaterial() {
+	certB64, keyB64 := testTLSMaterial(s.T())
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(true), SSLPort: 443, SSLCertificate: certB64, SSLPrivateKey: keyB64}},
+			"node-b": {Control: boolPtr(true)}, // no rgw: untouched
+		},
+	}
+	stored := policyForStorage(policy)
+
+	require.Contains(s.T(), stored.Members, "node-a")
+	storedRgw := stored.Members["node-a"].Rgw
+	require.NotNil(s.T(), storedRgw)
+	assert.Empty(s.T(), storedRgw.SSLCertificate, "certificate must be stripped before storage")
+	assert.Empty(s.T(), storedRgw.SSLPrivateKey, "private key must be stripped before storage")
+	require.NotNil(s.T(), storedRgw.SSL)
+	assert.True(s.T(), *storedRgw.SSL, "explicit ssl intent must be retained")
+	assert.True(s.T(), *storedRgw.Enabled)
+	assert.Equal(s.T(), 443, storedRgw.SSLPort)
+
+	// Original policy untouched: the active reconcile path keeps the material.
+	assert.Equal(s.T(), certB64, policy.Members["node-a"].Rgw.SSLCertificate)
+	assert.Equal(s.T(), keyB64, policy.Members["node-a"].Rgw.SSLPrivateKey)
+}
+
+// TestPlacementPolicyJSONNeverCarriesMaterial verifies the stored encoding of
+// a policy with TLS material contains neither the certificate nor the key,
+// while the non-secret intent survives.
+func (s *placementSuite) TestPlacementPolicyJSONNeverCarriesMaterial() {
+	certB64, keyB64 := testTLSMaterial(s.T())
+	policy := types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(true), SSLPort: 8443, SSLCertificate: certB64, SSLPrivateKey: keyB64}},
+		},
+	}
+	data, err := placementPolicyJSON(policy)
+	require.NoError(s.T(), err)
+	assert.NotContains(s.T(), string(data), certB64)
+	assert.NotContains(s.T(), string(data), keyB64)
+	assert.NotContains(s.T(), string(data), "ssl_certificate")
+	assert.Contains(s.T(), string(data), `"ssl":true`)
+	assert.Contains(s.T(), string(data), `"ssl_port":8443`)
+}
+
+// TestPopulateRGWFrontends verifies the pure helper maps recorded rgw_frontends
+// rows onto observed members that host RGW, and ignores rows for members not
+// observed with RGW (the services row is the presence authority). A member
+// observed with RGW but lacking a frontend row keeps a nil frontend: unknown
+// is reported explicitly, never defaulted to plaintext.
+func (s *placementSuite) TestPopulateRGWFrontends() {
+	observed := map[string]*types.PlacementObservedMember{
+		"node-a": {Member: "node-a", Rgw: true},
+		"node-b": {Member: "node-b", Rgw: true},
+		"node-c": {Member: "node-c", Rgw: false},
+		"node-d": {Member: "node-d", Rgw: true}, // observed RGW, no frontend row
+	}
+	frontends := []database.RgwFrontend{
+		{Member: "node-a", Port: 80, SSLPort: 0, SSL: false},
+		{Member: "node-b", Port: 0, SSLPort: 443, SSL: true},
+		{Member: "node-c", Port: 80, SSL: false}, // not observed with RGW
+		{Member: "node-e", Port: 80, SSL: false}, // not in observed at all
+	}
+	populateRGWFrontends(observed, frontends)
+
+	require.NotNil(s.T(), observed["node-a"].RgwFrontend)
+	assert.Equal(s.T(), 80, observed["node-a"].RgwFrontend.Port)
+	assert.False(s.T(), observed["node-a"].RgwFrontend.SSL)
+
+	require.NotNil(s.T(), observed["node-b"].RgwFrontend)
+	assert.Equal(s.T(), 443, observed["node-b"].RgwFrontend.SSLPort)
+	assert.True(s.T(), observed["node-b"].RgwFrontend.SSL)
+
+	assert.Nil(s.T(), observed["node-c"].RgwFrontend, "member without observed RGW gets no frontend")
+	assert.Nil(s.T(), observed["node-d"].RgwFrontend, "observed RGW without a recorded frontend row stays unknown, never plaintext")
+}
+
+// TestRedactStoredPolicy verifies the GET defense-in-depth redaction blanks
+// the RGW TLS certificate and private key from the declared policy while
+// retaining non-secret fields, and that a nil policy is a no-op.
+func (s *placementSuite) TestRedactStoredPolicy() {
+	policy := &types.PlacementPolicy{
+		Mode: types.PlacementModeReconcile,
+		Members: map[string]types.MemberPlacement{
+			"node-a": {Rgw: &types.RgwPlacement{Enabled: boolPtr(true), SSL: boolPtr(true), Port: 80, SSLPort: 443, SSLCertificate: "Y2VydA==", SSLPrivateKey: "a2V5"}},
+			"node-b": {Control: boolPtr(true)},
+		},
+	}
+	redactStoredPolicy(policy)
+
+	require.NotNil(s.T(), policy.Members["node-a"].Rgw)
+	assert.Empty(s.T(), policy.Members["node-a"].Rgw.SSLCertificate, "certificate must be redacted on GET")
+	assert.Empty(s.T(), policy.Members["node-a"].Rgw.SSLPrivateKey, "key must be redacted on GET")
+	require.NotNil(s.T(), policy.Members["node-a"].Rgw.SSL)
+	assert.True(s.T(), *policy.Members["node-a"].Rgw.SSL, "TLS intent survives GET redaction")
+	assert.True(s.T(), *policy.Members["node-a"].Rgw.Enabled)
+	assert.Equal(s.T(), 80, policy.Members["node-a"].Rgw.Port, "port must be retained")
+	assert.Equal(s.T(), 443, policy.Members["node-a"].Rgw.SSLPort, "ssl_port must be retained")
+
+	// nil policy must not panic.
+	redactStoredPolicy(nil)
 }
 
 // TestRedactSecrets verifies that redactSecrets masks realistic cephx key

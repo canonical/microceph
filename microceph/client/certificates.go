@@ -12,8 +12,10 @@ import (
 )
 
 // SetRGWCertificate sends a PUT request to set the RGW SSL certificates on the target node.
+// Allow two minutes each for pending recovery, new activation, and verified
+// rollback, plus one minute for the surrounding work.
 func SetRGWCertificate(ctx context.Context, c mcTypes.Client, req types.CertificateSetRequest, target string) error {
-	queryCtx, cancel := context.WithTimeout(ctx, time.Second*120)
+	queryCtx, cancel := context.WithTimeout(ctx, 7*time.Minute)
 	defer cancel()
 
 	if target != "" {

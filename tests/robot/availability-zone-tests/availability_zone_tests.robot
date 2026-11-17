@@ -26,6 +26,11 @@ AZ Wait Healthy
     [Documentation]    Polls HEALTH_OK on node-wrk0.
     Wait For Cluster Health OK    node-wrk0
 
+AZ Wait Healthy Allowing Degraded
+    [Documentation]    Like AZ Wait Healthy, but tolerates PG_DEGRADED: with az-c empty the
+    ...    rack rule can only place 2 of 3 replicas, so undersized PGs are expected.
+    Wait For Cluster Health OK    node-wrk0    ignore_checks=PG_DEGRADED
+
 AZ Get OSD ID For Node
     [Documentation]    Returns the numeric OSD ID for the first OSD on a given host node.
     ...    Runs lxc exec to get the OSD tree JSON on the outer VM, then pipes to jq (installed on outer VM).
@@ -168,9 +173,10 @@ Test Force Remove OSD From AZ-C
     Wait For OSD Count Head    3
 
 Test Cluster Healthy After AZ-C OSD Removal
-    [Documentation]    Waits for the cluster to reach HEALTH_OK after the az-c OSD was removed.
+    [Documentation]    Waits for the cluster to settle after the az-c OSD was removed.
+    ...    Only PG_DEGRADED may remain, since the rack rule now spans just 2 AZs.
     [Tags]    crush    availability-zone
-    AZ Wait Healthy
+    AZ Wait Healthy Allowing Degraded
     Run In Container    node-wrk0    microceph.ceph osd tree    30
 
 Test AZ-C Rack Bucket Persists After OSD Removal
@@ -191,7 +197,7 @@ Test AZ-C Rack Bucket Persists After Node Removal
     [Documentation]    Verifies the az.az-c rack bucket still exists after node-wrk3 was removed.
     [Tags]    crush    availability-zone
     OSD Tree Should Contain AZ Rack Bucket    az-c
-    AZ Wait Healthy
+    AZ Wait Healthy Allowing Degraded
 
 Test Rejoin Node Wrk3 Into AZ-C
     [Documentation]    Re-adds node-wrk3 to the cluster with --availability-zone=az-c and waits for 4 nodes.

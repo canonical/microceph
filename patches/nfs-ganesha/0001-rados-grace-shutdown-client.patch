@@ -1,0 +1,97 @@
+From 77cc6461bdb789b821f0025b35f1b76d69347e51 Mon Sep 17 00:00:00 2001
+From: John Ramsden <john.ramsden@canonical.com>
+Date: Sat, 24 Oct 2026 01:10:58 +0000
+Subject: [PATCH] fix(rados-grace): shut down the client before process exit
+
+cluster_connect() loses the rados client handle, leaving its workers
+running when main returns and C++ static destruction begins. This can
+cause segmentation faults or aborts during process exit. Retain the
+handle in main and destroy the I/O context before shutting down the
+client on both successful and failed operations.
+
+Initialize both handles so cleanup is safe before connection, and return
+the client handle immediately after creation so partial setup failures
+also release it. Route setup and grace-object creation failures through
+the common exit path without changing command dispatch or grace logic.
+Those errors retain exit status 1 and now also print the common failure
+diagnostic after cleanup.
+
+Bug: https://github.com/canonical/microceph/issues/899
+
+Upstream-Status: Submitted [https://review.gerrithub.io/c/ffilz/nfs-ganesha/+/1256299]
+Backport: V6.5; adjust hunk offsets and unchanged node argument context.
+
+Change-Id: Ib8517f12a949ac4ab32570e0fc64032201f82dcf
+Assisted-By: omp (openai-codex/gpt-6-astra)
+Assisted-By: omp (openai-codex/gpt-6.1-sol)
+Signed-off-by: John Ramsden <john.ramsden@canonical.com>
+---
+diff --git a/src/tools/ganesha-rados-grace.c b/src/tools/ganesha-rados-grace.c
+index d6a6526..782a607 100644
+--- a/src/tools/ganesha-rados-grace.c
++++ b/src/tools/ganesha-rados-grace.c
+@@ -39,9 +39,9 @@
+ #include <getopt.h>
+ #include <rados_grace.h>
+ 
+-static int cluster_connect(rados_ioctx_t *io_ctx, const char *id,
+-			   const char *cephconf, const char *pool,
+-			   const char *ns, bool create)
++static int cluster_connect(rados_t *cluster, rados_ioctx_t *io_ctx,
++			   const char *id, const char *cephconf,
++			   const char *pool, const char *ns, bool create)
+ {
+ 	int ret;
+ 	rados_t clnt;
+@@ -51,6 +51,7 @@ static int cluster_connect(rados_ioctx_t *io_ctx, const char *id,
+ 		fprintf(stderr, "rados_create: %d\n", ret);
+ 		return ret;
+ 	}
++	*cluster = clnt;
+ 
+ 	ret = rados_conf_read_file(clnt, cephconf);
+ 	if (ret < 0) {
+@@ -98,7 +99,8 @@ static void usage(char *const *argv)
+ int main(int argc, char *const *argv)
+ {
+ 	int ret, nodes = 0;
+-	rados_ioctx_t io_ctx;
++	rados_t cluster = NULL;
++	rados_ioctx_t io_ctx = NULL;
+ 	const char *cmd = "dump";
+ 	uint64_t cur, rec;
+ 	char *userid = NULL;
+@@ -142,10 +144,11 @@ int main(int argc, char *const *argv)
+ 	}
+ 
+ 	do_add = !strcmp(cmd, "add");
+-	ret = cluster_connect(&io_ctx, userid, cephconf, pool, ns, do_add);
++	ret = cluster_connect(&cluster, &io_ctx, userid, cephconf, pool, ns,
++			      do_add);
+ 	if (ret) {
+ 		fprintf(stderr, "Can't connect to cluster: %d\n", ret);
+-		return 1;
++		goto out;
+ 	}
+ 
+ 	if (!strcmp(cmd, "dump")) {
+@@ -163,7 +166,7 @@ int main(int argc, char *const *argv)
+ 		ret = rados_grace_create(io_ctx, oid);
+ 		if (ret < 0 && ret != -EEXIST) {
+ 			fprintf(stderr, "Can't create grace db: %d\n", ret);
+-			return 1;
++			goto out;
+ 		}
+ 		ret = rados_grace_add(io_ctx, oid, nodes, nodeids);
+ 	} else if (!strcmp(cmd, "start")) {
+@@ -193,6 +196,10 @@ int main(int argc, char *const *argv)
+ 		ret = -EINVAL;
+ 	}
+ out:
++	if (io_ctx)
++		rados_ioctx_destroy(io_ctx);
++	if (cluster)
++		rados_shutdown(cluster);
+ 	if (ret) {
+ 		fprintf(stderr, "Failure: %d\n", ret);
+ 		return 1;

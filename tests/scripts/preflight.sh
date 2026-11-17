@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
-# CI preflight probes: detect a gross Snap Store or Ubuntu archive outage
-# before the test matrix starts, so the run records one clearly named infra
-# failure instead of one failure per suite.
+# CI preflight probes: detect infrastructure outages before test jobs start,
+# so the run records a clearly named infra failure instead of test failures.
 #
 # Usage: preflight.sh <probe> [args...]
 #
@@ -11,8 +10,11 @@
 #   snap_canary                     Download and verify a small snap.
 #   apt_canary [package ...]        Refresh indexes and download packages
 #                                   (default: jq s3cmd) into a temp dir.
+#   dqlite_canary                   Refresh the dqlite/dev PPA index and
+#                                   download its runtime and development packages.
 #
-# The probes install nothing and only write inside temporary directories.
+# The probes install nothing. Canaries write only inside temporary directories;
+# dqlite_canary also registers the PPA on its disposable runner.
 
 set -eu
 
@@ -100,8 +102,10 @@ apt_canary() {
         "$work_dir/log" "$work_dir/downloads"
 
     # Keep the runner's Ubuntu mirrors and keys, not unrelated third-party sources.
-    sources=/etc/apt/sources.list
-    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+    # The dqlite canary instead supplies its PPA source with the key registered
+    # by add-apt-repository.
+    sources=${APT_CANARY_SOURCES:-/etc/apt/sources.list}
+    if [ -z "${APT_CANARY_SOURCES:-}" ] && [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
         sources=/etc/apt/sources.list.d/ubuntu.sources
     fi
 
@@ -136,7 +140,23 @@ EOF
     check_apt download "$@"
 }
 
-run="${1:?usage: preflight.sh <probe_endpoints|snap_canary|apt_canary> [args...]}"
+dqlite_canary() {
+    local source
+    if ! sudo add-apt-repository ppa:dqlite/dev -y --no-update; then
+        preflight_fail "dqlite/dev PPA registration failed"
+    fi
+
+    for source in /etc/apt/sources.list.d/dqlite-ubuntu-dev-*.sources \
+        /etc/apt/sources.list.d/dqlite-ubuntu-dev-*.list; do
+        if [ -f "$source" ]; then
+            APT_CANARY_SOURCES="$source" apt_canary libdqlite1.18 libdqlite1.18-dev
+            return
+        fi
+    done
+    preflight_fail "dqlite/dev PPA source missing after registration"
+}
+
+run="${1:?usage: preflight.sh <probe_endpoints|snap_canary|apt_canary|dqlite_canary> [args...]}"
 shift
 
 $run "$@"

@@ -214,11 +214,11 @@ func fixRadosGWRunDir(confFile, correctRunDir string) (bool, error) {
 
 // updateRadosGWMonHost rewrites the `mon host` line in <confDir>/radosgw.conf to
 // keep it in sync with the current set of monitors. Unlike ceph.conf, which is
-// re-rendered on every refresh, radosgw.conf is written once at RGW enable time
-// (see EnableRGW) because the RGW frontend port/SSL settings are not persisted.
-// Rewriting only the mon host line in place preserves those settings while
-// keeping the monitor list fresh. It is a no-op when radosgw.conf does not
-// exist (RGW is not enabled).
+// re-rendered on every refresh, radosgw.conf is written at RGW enable time and
+// on frontend changes (see applyRGWFrontend), the only paths that know the TLS
+// material the frontend references. Rewriting only the mon host line in place
+// preserves those settings while keeping the monitor list fresh. It is a no-op
+// when radosgw.conf does not exist (RGW is not enabled).
 func updateRadosGWMonHost(confDir string, monitors []string) error {
 	// Never wipe an existing mon host line on an empty/unknown monitor set:
 	// a transient gap in the monitor list (e.g. truststore not yet populated,

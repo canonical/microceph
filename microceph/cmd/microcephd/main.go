@@ -77,6 +77,7 @@ func (c *cmdDaemon) Run(cmd *cobra.Command, args []string) error {
 	h.PostBootstrap = PostBootstrap
 	h.PostJoin = PostJoin
 	h.OnStart = OnStart
+	h.OnAuthenticate = OnAuthenticate
 	h.PreRemove = ceph.PreRemove(m)
 
 	daemonArgs := microcluster.DaemonArgs{

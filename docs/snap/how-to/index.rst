@@ -6,41 +6,60 @@
 How-to guides
 =============
 
-Our *how-to* guides give directions on how perform key operations and processes in MicroCeph.
+Our *how-to* guides walk you through the key operations you can perform with MicroCeph;
+from first deployment to day-to-day cluster management.
 
-Installing and initialising MicroCeph cluster
----------------------------------------------
 
-The guides in this section are helpful in the installation and initialisation
-of both single-node and multi-node clusters.
+Installation and initialisation
+-------------------------------
+
+Deploy MicroCeph on a single machine, or at scale across multiple nodes for a production cluster.
+If you want to encrypt your data at rest, enable full disk encryption (FDE) when adding disks as
+existing OSDs cannot be encrypted in place.
 
 .. toctree::
    :maxdepth: 1
 
    single-node
    multi-node
+   Enable full disk encryption <enable-fde>
 
-Configuring your cluster
-------------------------
+Configuration
+-------------
 
-See these guides for client and network configurations, authentication service integration, and
-configuration of metrics, alerts and other service instances.
+Once your cluster is running, you'll want to tune it to your environment: connect it to your network,
+enable additional services, set up authentication, turn on monitoring so you can see what it's doing,
+and adjust client settings for optimal performance.
 
 .. toctree::
    :maxdepth: 1
 
-   rbd-client-cfg
-   integrate-keystone
    configure-network-keys
+   enable-service-instances
+   integrate-keystone
    enable-metrics
    enable-alerts
-   enable-service-instances
+   rbd-client-cfg
 
-Interacting with your cluster
------------------------------
+Consume cluster storage
+-----------------------
 
-Manage your cluster: find steps on how to configure the log level,remove disks,
-migrate services and more.
+With your cluster configured, connect your applications and machines to the cluster storage
+using block devices or shared filesystems.
+
+.. toctree::
+   :maxdepth: 1
+
+   mount-block-device
+   mount-cephfs-share
+   
+Day-to-day operations
+---------------------
+
+As your cluster runs, you'll need to change things: replace aging disks, move services between nodes,
+adjust logging, scale up or down, or take a node offline for maintenance without disrupting your users.
+You'll also need to rotate TLS certificates periodically to keep secure connections to your object
+storage running.
 
 .. toctree::
    :maxdepth: 1
@@ -50,13 +69,12 @@ migrate services and more.
    remove-disk
    perform-cluster-maintenance
    rotate-rgw-tls-certificate
-   Enable full disk encryption <enable-fde>
 
-Managing a remote cluster
--------------------------
+Multi-site replication
+----------------------
 
-Make MicroCeph aware of a remote cluster and configure replication for
-RBD pools and images.
+When a single site isn't enough, whether for disaster recovery or geographic redundancy, you can
+connect a remote MicroCeph cluster, replicate data to it, and fail over when needed.
 
 .. toctree::
    :maxdepth: 1
@@ -66,35 +84,24 @@ RBD pools and images.
    configure-cephfs-mirroring 
    perform-site-failover
 
-Upgrading your cluster
-----------------------
+Upgrade your cluster
+--------------------
 
-Follow these steps carefully to perform a major upgrade.
+When a new major MicroCeph release comes out, you'll want to upgrade to get the latest features, performance
+improvements, and security fixes. Our upgrade guide walks you through upgrading safely, one node at a time,
+without losing data or availability.
 
 .. toctree::
    :maxdepth: 1
 
    major-upgrade
 
+Report security vulnerabilities
+-------------------------------
 
-Consuming cluster storage
--------------------------
-
-Follow these guides to learn how to make use of the storage provided by your cluster.
-
-.. toctree::
-   :maxdepth: 1
-
-   mount-block-device
-   mount-cephfs-share
-
-
-Contact us
-----------
+Found a security issue? Report it responsibly so we can address it and protect our users.
 
 .. toctree::
    :maxdepth: 1
 
    Report security issues <report-security-vuln>
-
-
