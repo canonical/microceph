@@ -1,6 +1,7 @@
 *.snap
 _build
 *.swp
+*.pyc
 .idea
 .vscode
 microceph/coverage.out

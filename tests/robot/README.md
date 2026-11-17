@@ -131,6 +131,18 @@ multi-node-tests                             upgrade-squid-tests
 multi-node-tests-with-custom-microceph-ip    vaultlocker-test
 nfs-multinode-test                           wal-db-tests
 nfs-test                                    wiping-test
+api-tests                          nfs-test
+auth-rotation-tests                nfs-multinode-test
+availability-zone-tests            rbd-replication-test
+cephadm-adopt-test                 single-system-tests
+cephfs-replication-test            static-checks
+cluster-tests                      test-maintenance-modes
+dsl-functional-tests               test-sequential-mon-host-refresh
+loop-file-tests                    unit-tests
+messenger-v2-tests                 upgrade-squid-tests
+multi-node-tests                   wal-db-tests
+multi-node-tests-with-custom-microceph-ip
+                                   wiping-test
 ```
 
 ## Harness conventions
