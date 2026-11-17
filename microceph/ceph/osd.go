@@ -1884,11 +1884,22 @@ func sanityCheck(ctx context.Context, s interfaces.StateInterface, osd int64) er
 }
 
 // IsDowngradeNeeded checks if we need to downgrade the failure domain from 'host' to 'osd' level
-// if we remove the given OSD
+// if we remove the given OSD. An absent host rule is not an error: adopted
+// clusters (AdoptBootstrapper) and legacy clusters that never switched to host
+// failure domain don't have the rule, and such clusters are by definition not
+// on host failure domain, so no downgrade is needed.
 func IsDowngradeNeeded(ctx context.Context, s interfaces.StateInterface, osd int64) (bool, error) {
 	currentRule, err := getDefaultCrushRule()
 	if err != nil {
 		return false, err
+	}
+	hostExists, err := hasCrushRuleStrict("microceph_auto_host")
+	if err != nil {
+		return false, fmt.Errorf("failed to list crush rules: %w", err)
+	}
+	if !hostExists {
+		logger.Infof("No microceph_auto_host rule, no need to downgrade auto failure domain")
+		return false, nil
 	}
 	hostRule, err := getCrushRuleID("microceph_auto_host")
 	if err != nil {

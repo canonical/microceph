@@ -161,6 +161,9 @@ func addCrushRuleLsExpectations(r *mocks.Runner) {
 func addIsOnRackRuleExpectations(r *mocks.Runner, defaultID string, rackID string) {
 	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
 		Return(defaultID+"\n", nil).Once()
+	// The rack rule exists, so the existence check passes and the id lookup follows.
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").
+		Return("microceph_auto_osd\nmicroceph_auto_host\nmicroceph_auto_rack", nil).Once()
 	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
 		Return(fmt.Sprintf(`{"rule_id": %s}`, rackID), nil).Once()
 }
@@ -356,6 +359,118 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 	err := mgr.updateFailureDomain(context.Background(), s.TestStateInterface.ClusterState())
 	assert.NoError(s.T(), err)
 
+}
+
+// TestUpdateFailureDomainAdoptedClusterNoAutoRules is the regression test for
+// adopted clusters (AdoptBootstrapper never creates the microceph_auto_*
+// rules): IsOnRackRule must treat an absent rack rule as "not on rack" instead
+// of failing with ENOENT, so the member-count check runs and the switch's
+// missing-target-rule repair creates the host rule. A disk add must succeed.
+func (s *osdSuite) TestUpdateFailureDomainAdoptedClusterNoAutoRules() {
+	defer withFailureDomainLockStub()()
+
+	u := api.NewURL()
+	state := &mocks.MockState{URL: u, ClusterName: "adopted-node"}
+
+	r := mocks.NewRunner(s.T())
+
+	// IsOnRackRule: default rule (the adopted cluster's own), no rack rule.
+	// Before the fix this failed with "Error ENOENT: No such rule".
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
+		Return("", fmt.Errorf("Error ENOENT: No such rule 'microceph_auto_rack'")).Maybe()
+
+	// rule ls: the adopted cluster only has its own rule. Third listing sees
+	// the host rule the missing-target-rule repair just created.
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("replicated_rule", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("replicated_rule", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("replicated_rule\nmicroceph_auto_host", nil).Once()
+
+	// switchFailureDomain("osd", "host"): create the missing host rule, set
+	// it as default. getPoolsForDomain("osd") finds no osd rule, so there is
+	// nothing to migrate and no further calls are expected.
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once() // create-replicated host
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`{"rule_id": 2}`, nil).Once() // dump host
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once() // config set default
+
+	common.ProcessExec = r
+
+	c := mocks.NewMemberCounterInterface(s.T())
+	c.On("Count", mock.Anything, mock.Anything).Return(3, nil).Once()
+	database.MemberCounter = c
+
+	mgr := NewOSDManager(state)
+	mgr.fs = afero.NewMemMapFs()
+	err := mgr.updateFailureDomain(context.Background(), state)
+	assert.NoError(s.T(), err)
+}
+
+// TestUpdateFailureDomainLegacyClusterStuckAtOsd is the regression test for
+// legacy clusters created before rack support: they only have
+// microceph_auto_osd, so IsOnRackRule must not abort with ENOENT and the
+// host switch must create the missing host rule and migrate the pools.
+func (s *osdSuite) TestUpdateFailureDomainLegacyClusterStuckAtOsd() {
+	defer withFailureDomainLockStub()()
+
+	u := api.NewURL()
+	state := &mocks.MockState{URL: u, ClusterName: "legacy-node"}
+
+	r := mocks.NewRunner(s.T())
+
+	// IsOnRackRule: no rack rule; before the fix this failed with ENOENT.
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
+		Return("", fmt.Errorf("Error ENOENT: No such rule 'microceph_auto_rack'")).Maybe()
+
+	// rule ls: legacy cluster has only microceph_auto_osd. The third listing
+	// sees the host rule the repair created.
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("microceph_auto_osd", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("microceph_auto_osd", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("microceph_auto_osd\nmicroceph_auto_host", nil).Once()
+
+	// switchFailureDomain("osd", "host"): create the missing host rule, set
+	// it as default, then migrate the pool on the osd rule.
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()                // create-replicated host
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`{"rule_id": 2}`, nil).Once()    // dump host
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()                // config set default
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`{"rule_id": 1}`, nil).Once()    // dump osd
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`[{"pool_name":"foopool","crush_rule":1}]`, nil).Once() // pool ls detail
+	r.On("RunCommand", tests.CmdAny("ceph", 6)...).Return("ok", nil).Once()                // pool set foopool
+
+	common.ProcessExec = r
+
+	c := mocks.NewMemberCounterInterface(s.T())
+	c.On("Count", mock.Anything, mock.Anything).Return(3, nil).Once()
+	database.MemberCounter = c
+
+	mgr := NewOSDManager(state)
+	mgr.fs = afero.NewMemMapFs()
+	err := mgr.updateFailureDomain(context.Background(), state)
+	assert.NoError(s.T(), err)
+}
+
+// TestIsDowngradeNeededFalseWhenHostRuleAbsent verifies that the removal path
+// tolerates an absent host rule the same way the add path tolerates an absent
+// rack rule: an adopted/legacy cluster without microceph_auto_host can never
+// be on host failure domain, so no downgrade is needed and no error escapes.
+func (s *osdSuite) TestIsDowngradeNeededFalseWhenHostRuleAbsent() {
+	u := api.NewURL()
+	state := &mocks.MockState{URL: u, ClusterName: "adopted-node"}
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(state).Maybe()
+
+	r := mocks.NewRunner(s.T())
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Once()
+	// Before the fix this dump was issued and failed with ENOENT.
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_host").
+		Return("", fmt.Errorf("Error ENOENT: No such rule 'microceph_auto_host'")).Maybe()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("replicated_rule", nil).Once()
+
+	common.ProcessExec = r
+
+	needDowngrade, err := IsDowngradeNeeded(context.Background(), si, 0)
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), needDowngrade)
 }
 
 // TestHaveOSDInCeph tests the haveOSDInCeph function
@@ -1138,6 +1253,7 @@ func (s *osdSuite) setupRemoveOSD(osd int64) removeOSDMocks {
 	m.state.On("ClusterState").Return(st).Maybe()
 	m.osdQuery.On("HaveOSD", mock.Anything, mock.Anything, osd).Return(true, nil).Once()
 	m.runner.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("microceph_auto_osd\nmicroceph_auto_host", nil).Once()
 	m.runner.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_host").Return(`{"rule_id": 2}`, nil).Once()
 
 	// The scale-down decision runs under the cluster-wide transition lock.
@@ -1211,6 +1327,7 @@ func (s *osdSuite) TestDoRemoveOSDStopsProcessBeforeMarkingDown() {
 
 	assert.Equal(s.T(), []string{
 		"ceph config get mon osd_pool_default_crush_rule",
+		"ceph osd crush rule ls",
 		"ceph osd crush rule dump microceph_auto_host",
 		"ceph osd tree -f json",
 		"ceph osd crush reweight osd.7 0.000000",
@@ -1706,6 +1823,10 @@ func rackDegradeTestSetup(t *testing.T, opts rackDegradeOpts) func() {
 	// getDefaultCrushRule -> ceph config get mon osd_pool_default_crush_rule
 	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
 		Return(opts.defaultRuleID+"\n", nil).Maybe()
+
+	// hasCrushRuleStrict -> the rack rule exists
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").
+		Return("microceph_auto_osd\nmicroceph_auto_host\nmicroceph_auto_rack", nil).Maybe()
 
 	// getCrushRuleID("microceph_auto_rack")
 	if opts.rackRuleErr != nil {

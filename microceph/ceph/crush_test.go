@@ -27,6 +27,9 @@ func mockRackRuleRunner(t *testing.T, defaultID string, rackID string) *mocks.Ru
 	// getDefaultCrushRule -> GetConfigItem -> ceph config get mon osd_pool_default_crush_rule
 	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
 		Return(defaultID+"\n", nil).Maybe()
+	// hasCrushRuleStrict -> ceph osd crush rule ls (rack rule exists)
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").
+		Return("microceph_auto_osd\nmicroceph_auto_host\nmicroceph_auto_rack", nil).Maybe()
 	// getCrushRuleID("microceph_auto_rack") -> ceph osd crush rule dump microceph_auto_rack
 	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
 		Return(fmt.Sprintf(`{"rule_id": %s}`, rackID), nil).Maybe()
@@ -49,12 +52,28 @@ func (s *crushSuite) TestIsOnRackRuleFalseOnHost() {
 	assert.False(s.T(), onRack)
 }
 
-func (s *crushSuite) TestIsOnRackRuleErrorNoRackRule() {
+// TestIsOnRackRuleFalseWhenRackRuleAbsent verifies that an absent rack rule
+// is reported as "not on rack" instead of an error: adopted clusters and
+// legacy clusters never got the rule, and reconciliation on them must be
+// able to proceed.
+func (s *crushSuite) TestIsOnRackRuleFalseWhenRackRuleAbsent() {
 	r := mocks.NewRunner(s.T())
 	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
 		Return("2\n", nil).Maybe()
-	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
-		Return("", fmt.Errorf("rule not found")).Maybe()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").
+		Return("microceph_auto_osd\nmicroceph_auto_host", nil).Maybe()
+	common.ProcessExec = r
+	onRack, err := IsOnRackRule()
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), onRack)
+}
+
+func (s *crushSuite) TestIsOnRackRuleErrorListing() {
+	r := mocks.NewRunner(s.T())
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
+		Return("2\n", nil).Maybe()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").
+		Return("", fmt.Errorf("ceph unreachable")).Maybe()
 	common.ProcessExec = r
 	onRack, err := IsOnRackRule()
 	assert.Error(s.T(), err)

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/logger"
 
 	"github.com/canonical/microceph/microceph/api/types"
 
@@ -156,11 +158,35 @@ func getDefaultCrushRule() (string, error) {
 	return strings.TrimSpace(configs[0].Value), nil
 }
 
+// hasCrushRuleStrict reports whether a crush rule with the given name exists.
+// Unlike haveCrushRule it propagates listing failures instead of treating them
+// as absence, so callers can distinguish "rule absent" from a broken Ceph
+// connection.
+func hasCrushRuleStrict(name string) (bool, error) {
+	rules, err := listCrushRules()
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(rules, name), nil
+}
+
 // IsOnRackRule returns true if the cluster's default crush rule is microceph_auto_rack.
+// An absent rack rule is not an error: adopted clusters (AdoptBootstrapper) and
+// legacy clusters created before rack support never got the rule, and such
+// clusters are by definition not on rack failure domain. Reporting false lets
+// reconciliation proceed and create the rule when a transition needs it.
 func IsOnRackRule() (bool, error) {
 	currentRule, err := getDefaultCrushRule()
 	if err != nil {
 		return false, fmt.Errorf("failed to get default crush rule: %w", err)
+	}
+	rackExists, err := hasCrushRuleStrict("microceph_auto_rack")
+	if err != nil {
+		return false, fmt.Errorf("failed to list crush rules: %w", err)
+	}
+	if !rackExists {
+		logger.Infof("No microceph_auto_rack rule, cluster cannot be on rack failure domain")
+		return false, nil
 	}
 	rackRule, err := getCrushRuleID("microceph_auto_rack")
 	if err != nil {
