@@ -340,6 +340,15 @@ func (m *OSDManager) switchFailureDomain(old string, new string) error {
 	var err error
 
 	newRule := fmt.Sprintf("microceph_auto_%s", new)
+	// Adopted clusters may not yet have the microceph auto rules, so we need
+	// to create the target rules so the switch doesn't fail on rule lookup.
+	if !haveCrushRule(newRule) {
+		logger.Debugf("Adding missing crush rule %v", newRule)
+		err = addCrushRule(newRule, new)
+		if err != nil {
+			return fmt.Errorf("failed to add crush rule %s: %w", newRule, err)
+		}
+	}
 	logger.Debugf("Setting default crush rule to %v", newRule)
 	err = setDefaultCrushRule(newRule)
 	if err != nil {
@@ -438,8 +447,21 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 		return fmt.Errorf("failed to move host %s under rack %s: %w", hostname, rackBucket, err)
 	}
 
-	// If we have 3+ unique AZs with at least one OSD each, switch failure domain to rack.
+	// If we have 3+ unique AZs, consider switching failure domain to rack.
 	if len(data.uniqueAZs) >= 3 {
+		return m.promoteToRackFailureDomain(ctx, data)
+	}
+
+	return nil
+}
+
+// promoteToRackFailureDomain switches the cluster to rack failure domain once
+// 3 or more availability zones have OSDs. The active-AZ count (the decision)
+// and the crush rule updates run under the cluster-wide failure domain
+// transition lock, so a concurrent host transition on another member cannot
+// interleave and revert the promotion, and vice versa.
+func (m *OSDManager) promoteToRackFailureDomain(ctx context.Context, data azData) error {
+	err := serializedFailureDomainTransition(ctx, m.state, func() error {
 		nodes, err := getOSDTreeNodes(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to count AZs with OSDs: %w", err)
@@ -465,42 +487,65 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to switch host pools to rack failure domain: %w", err)
 		}
+		return nil
+	})
+	if errors.Is(err, ErrFailureDomainTransitionBusy) {
+		// The OSD itself is healthy and the promotion is retried on the
+		// next disk add, so a busy lock must not fail the disk add.
+		logger.Warnf("skipping rack failure domain promotion, another transition is in progress")
+		return nil
 	}
-
-	return nil
+	return err
 }
 
 // updateFailureDomain checks if we need to update the crush rules failure domain.
 // Once we have at least 3 nodes with at least 1 OSD each, we set the failure domain to host.
 // Currently this function only handles scale-up scenarios, i.e. adding a new node.
-// When availability zones are configured, this is a no-op as topology is handled by updateTopology.
+// For clusters that have rack-level failure domain, we leave them alone. AZ tagged
+// clusters with fewer than three active zones intentionally fall through to the
+// host switch here so that updateTopology keeps the failure domain at OSD level for
+// them, which would otherwise leave such clusters stuck at osd level forever.
+//
+// The rack-level decision and the rule updates it may trigger run under the
+// cluster-wide failure domain transition lock: they are separate cluster-visible
+// steps, and an unsynchronized stale host transition can revert a rack promotion
+// another member completes in between.
 func (m *OSDManager) updateFailureDomain(ctx context.Context, s mcTypes.State) error {
 	logger.Infof("Checking if we need to update failure domain for OSDs")
 
-	// When AZs are configured, topology is handled by updateTopology — skip.
-	data, err := getAZData(ctx, m.state, m.state.Name())
-	if err != nil {
-		return fmt.Errorf("failed to check for AZs: %w", err)
-	}
-	if len(data.uniqueAZs) > 0 {
-		logger.Infof("Availability zones configured, skipping default failure domain update")
+	err := serializedFailureDomainTransition(ctx, s, func() error {
+		// Rack-level failure domain governs the cluster; don't override it.
+		onRack, err := IsOnRackRule()
+		if err != nil {
+			return fmt.Errorf("failed to check for rack failure domain: %w", err)
+		}
+		if onRack {
+			logger.Infof("Cluster is on rack failure domain, skipping default failure domain update")
+			return nil
+		}
+
+		numNodes, err := database.MemberCounter.Count(ctx, s)
+		if err != nil {
+			return fmt.Errorf("failed to count members: %w", err)
+		}
+
+		if numNodes >= 3 {
+			logger.Infof("We have %d nodes, switching failure domain to host", numNodes)
+			err = m.switchFailureDomain("osd", "host")
+			if err != nil {
+				return fmt.Errorf("failed to set host failure domain: %w", err)
+			}
+			logger.Infof("Successfully switched failure domain to host")
+		}
+		return nil
+	})
+	if errors.Is(err, ErrFailureDomainTransitionBusy) {
+		// The OSD itself is healthy and the transition is retried on the
+		// next disk add, so a busy lock must not fail the disk add.
+		logger.Warnf("skipping failure domain update, another transition is in progress")
 		return nil
 	}
-
-	numNodes, err := database.MemberCounter.Count(ctx, s)
-	if err != nil {
-		return fmt.Errorf("failed to count members: %w", err)
-	}
-
-	if numNodes >= 3 {
-		logger.Infof("We have %d nodes, switching failure domain to host", numNodes)
-		err = m.switchFailureDomain("osd", "host")
-		if err != nil {
-			return fmt.Errorf("failed to set host failure domain: %w", err)
-		}
-		logger.Infof("Successfully switched failure domain to host")
-	}
-	return nil
+	return err
 }
 
 func (m *OSDManager) setStablePath(storage *api.ResourcesStorage, param *types.DiskParameter) error {
@@ -1839,11 +1884,22 @@ func sanityCheck(ctx context.Context, s interfaces.StateInterface, osd int64) er
 }
 
 // IsDowngradeNeeded checks if we need to downgrade the failure domain from 'host' to 'osd' level
-// if we remove the given OSD
+// if we remove the given OSD. An absent host rule is not an error: adopted
+// clusters (AdoptBootstrapper) and legacy clusters that never switched to host
+// failure domain don't have the rule, and such clusters are by definition not
+// on host failure domain, so no downgrade is needed.
 func IsDowngradeNeeded(ctx context.Context, s interfaces.StateInterface, osd int64) (bool, error) {
 	currentRule, err := getDefaultCrushRule()
 	if err != nil {
 		return false, err
+	}
+	hostExists, err := hasCrushRuleStrict("microceph_auto_host")
+	if err != nil {
+		return false, fmt.Errorf("failed to list crush rules: %w", err)
+	}
+	if !hostExists {
+		logger.Infof("No microceph_auto_host rule, no need to downgrade auto failure domain")
+		return false, nil
 	}
 	hostRule, err := getCrushRuleID("microceph_auto_host")
 	if err != nil {
@@ -1941,20 +1997,30 @@ func IsRackDegradeBlocked(ctx context.Context, s interfaces.StateInterface, osd 
 	return false, nil
 }
 
-// scaleDownFailureDomain scales down the failure domain from 'host' to 'osd' level
+// scaleDownFailureDomain scales down the failure domain from 'host' to 'osd' level.
+// The downgrade decision and the rule updates run under the cluster-wide failure
+// domain transition lock: the node count that justifies the downgrade is only
+// valid while no other member concurrently switches rules. A busy lock aborts
+// the removal before any destructive step, so the operator can simply retry.
 func scaleDownFailureDomain(ctx context.Context, s interfaces.StateInterface, osd int64) error {
 	m := NewOSDManager(s.ClusterState())
-	needDowngrade, err := IsDowngradeNeeded(ctx, s, osd)
-	logger.Debugf("Downgrade needed: %v", needDowngrade)
-	if err != nil {
-		return err
-	}
-	if !needDowngrade {
+	err := serializedFailureDomainTransition(ctx, s.ClusterState(), func() error {
+		needDowngrade, err := IsDowngradeNeeded(ctx, s, osd)
+		if err != nil {
+			return err
+		}
+		logger.Debugf("Downgrade needed: %v", needDowngrade)
+		if !needDowngrade {
+			return nil
+		}
+		err = m.switchFailureDomain("host", "osd")
+		if err != nil {
+			return fmt.Errorf("failed to switch failure domain: %w", err)
+		}
 		return nil
-	}
-	err = m.switchFailureDomain("host", "osd")
+	})
 	if err != nil {
-		return fmt.Errorf("failed to switch failure domain: %w", err)
+		return fmt.Errorf("failed to run serialized failure domain scale-down: %w", err)
 	}
 	return nil
 }
