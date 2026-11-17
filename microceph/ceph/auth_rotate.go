@@ -77,12 +77,10 @@ var (
 	setMonAllowInsecureKeyFunc         = SetMonAllowInsecureKey
 	getMonAllowInsecureKeyFunc         = GetMonAllowInsecureKey
 	rotateEntityKeyFunc                = RotateEntityKey
-	rotateEntityKeyToFileFunc          = RotateEntityKeyToFile
 	getOrCreatePendingKeyFunc          = GetOrCreatePendingKey
 	getEntityKeyringFunc               = GetEntityKeyring
 	commitPendingKeyFunc               = CommitPendingKey
 	clearPendingKeyFunc                = ClearPendingKey
-	wipeRotatingServiceKeysFunc        = WipeRotatingServiceKeys
 	dumpAuthKeysFunc                   = DumpAuthKeys
 	getAuthHealthWarningsFunc          = GetAuthHealthWarnings
 	getClientSessionsFunc              = GetClientSessions
@@ -135,7 +133,6 @@ var (
 	disallowInsecureLegacyCiphersFunc  = DisallowInsecureLegacyCiphers
 	finalizeAuthRotationFunc           = FinalizeAuthRotation
 	runAuthRotationPipelineFunc        = runAuthRotationPipeline
-	buildAuthStatusFunc                = BuildAuthStatus
 )
 
 // Query the monitor map and return the current cipher config.
@@ -3054,10 +3051,7 @@ func ClientSupportsKeyType(session ClientSessionInfo, targetKeyType string) bool
 	// For aes256k: check if release is explicitly known as legacy/insecure.
 	release := strings.ToLower(strings.TrimSpace(session.ConFeaturesRelease))
 	if release != "" {
-		if slices.Contains(legacyInsecureReleases, release) {
-			return false
-		}
-		return true
+		return slices.Contains(legacyInsecureReleases, release)
 	}
 
 	// If release is unknown or empty: if no connection features are negotiated, it's unsafe.
