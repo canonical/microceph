@@ -447,8 +447,21 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 		return fmt.Errorf("failed to move host %s under rack %s: %w", hostname, rackBucket, err)
 	}
 
-	// If we have 3+ unique AZs with at least one OSD each, switch failure domain to rack.
+	// If we have 3+ unique AZs, consider switching failure domain to rack.
 	if len(data.uniqueAZs) >= 3 {
+		return m.promoteToRackFailureDomain(ctx, data)
+	}
+
+	return nil
+}
+
+// promoteToRackFailureDomain switches the cluster to rack failure domain once
+// 3 or more availability zones have OSDs. The active-AZ count (the decision)
+// and the crush rule updates run under the cluster-wide failure domain
+// transition lock, so a concurrent host transition on another member cannot
+// interleave and revert the promotion, and vice versa.
+func (m *OSDManager) promoteToRackFailureDomain(ctx context.Context, data azData) error {
+	err := serializedFailureDomainTransition(ctx, m.state, func() error {
 		nodes, err := getOSDTreeNodes(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to count AZs with OSDs: %w", err)
@@ -474,9 +487,15 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to switch host pools to rack failure domain: %w", err)
 		}
+		return nil
+	})
+	if errors.Is(err, ErrFailureDomainTransitionBusy) {
+		// The OSD itself is healthy and the promotion is retried on the
+		// next disk add, so a busy lock must not fail the disk add.
+		logger.Warnf("skipping rack failure domain promotion, another transition is in progress")
+		return nil
 	}
-
-	return nil
+	return err
 }
 
 // updateFailureDomain checks if we need to update the crush rules failure domain.
@@ -486,33 +505,47 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 // clusters with fewer than three active zones intentionally fall through to the
 // host switch here so that updateTopology keeps the failure domain at OSD level for
 // them, which would otherwise leave such clusters stuck at osd level forever.
+//
+// The rack-level decision and the rule updates it may trigger run under the
+// cluster-wide failure domain transition lock: they are separate cluster-visible
+// steps, and an unsynchronized stale host transition can revert a rack promotion
+// another member completes in between.
 func (m *OSDManager) updateFailureDomain(ctx context.Context, s mcTypes.State) error {
 	logger.Infof("Checking if we need to update failure domain for OSDs")
 
-	// Rack-level failure domain governs the cluster; don't override it.
-	onRack, err := IsOnRackRule()
-	if err != nil {
-		return fmt.Errorf("failed to check for rack failure domain: %w", err)
-	}
-	if onRack {
-		logger.Infof("Cluster is on rack failure domain, skipping default failure domain update")
+	err := serializedFailureDomainTransition(ctx, s, func() error {
+		// Rack-level failure domain governs the cluster; don't override it.
+		onRack, err := IsOnRackRule()
+		if err != nil {
+			return fmt.Errorf("failed to check for rack failure domain: %w", err)
+		}
+		if onRack {
+			logger.Infof("Cluster is on rack failure domain, skipping default failure domain update")
+			return nil
+		}
+
+		numNodes, err := database.MemberCounter.Count(ctx, s)
+		if err != nil {
+			return fmt.Errorf("failed to count members: %w", err)
+		}
+
+		if numNodes >= 3 {
+			logger.Infof("We have %d nodes, switching failure domain to host", numNodes)
+			err = m.switchFailureDomain("osd", "host")
+			if err != nil {
+				return fmt.Errorf("failed to set host failure domain: %w", err)
+			}
+			logger.Infof("Successfully switched failure domain to host")
+		}
+		return nil
+	})
+	if errors.Is(err, ErrFailureDomainTransitionBusy) {
+		// The OSD itself is healthy and the transition is retried on the
+		// next disk add, so a busy lock must not fail the disk add.
+		logger.Warnf("skipping failure domain update, another transition is in progress")
 		return nil
 	}
-
-	numNodes, err := database.MemberCounter.Count(ctx, s)
-	if err != nil {
-		return fmt.Errorf("failed to count members: %w", err)
-	}
-
-	if numNodes >= 3 {
-		logger.Infof("We have %d nodes, switching failure domain to host", numNodes)
-		err = m.switchFailureDomain("osd", "host")
-		if err != nil {
-			return fmt.Errorf("failed to set host failure domain: %w", err)
-		}
-		logger.Infof("Successfully switched failure domain to host")
-	}
-	return nil
+	return err
 }
 
 func (m *OSDManager) setStablePath(storage *api.ResourcesStorage, param *types.DiskParameter) error {
@@ -1953,20 +1986,30 @@ func IsRackDegradeBlocked(ctx context.Context, s interfaces.StateInterface, osd 
 	return false, nil
 }
 
-// scaleDownFailureDomain scales down the failure domain from 'host' to 'osd' level
+// scaleDownFailureDomain scales down the failure domain from 'host' to 'osd' level.
+// The downgrade decision and the rule updates run under the cluster-wide failure
+// domain transition lock: the node count that justifies the downgrade is only
+// valid while no other member concurrently switches rules. A busy lock aborts
+// the removal before any destructive step, so the operator can simply retry.
 func scaleDownFailureDomain(ctx context.Context, s interfaces.StateInterface, osd int64) error {
 	m := NewOSDManager(s.ClusterState())
-	needDowngrade, err := IsDowngradeNeeded(ctx, s, osd)
-	logger.Debugf("Downgrade needed: %v", needDowngrade)
-	if err != nil {
-		return err
-	}
-	if !needDowngrade {
+	err := serializedFailureDomainTransition(ctx, s.ClusterState(), func() error {
+		needDowngrade, err := IsDowngradeNeeded(ctx, s, osd)
+		if err != nil {
+			return err
+		}
+		logger.Debugf("Downgrade needed: %v", needDowngrade)
+		if !needDowngrade {
+			return nil
+		}
+		err = m.switchFailureDomain("host", "osd")
+		if err != nil {
+			return fmt.Errorf("failed to switch failure domain: %w", err)
+		}
 		return nil
-	}
-	err = m.switchFailureDomain("host", "osd")
+	})
 	if err != nil {
-		return fmt.Errorf("failed to switch failure domain: %w", err)
+		return fmt.Errorf("failed to run serialized failure domain scale-down: %w", err)
 	}
 	return nil
 }

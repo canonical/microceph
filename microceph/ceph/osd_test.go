@@ -314,6 +314,9 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 
 // TestUpdateFailureDomain tests the updateFailureDomain function
 func (s *osdSuite) TestUpdateFailureDomain() {
+	// The decision and the switch run under the cluster-wide transition lock.
+	defer withFailureDomainLockStub()()
+
 	u := api.NewURL()
 	state := &mocks.MockState{
 		URL:         u,
@@ -1136,6 +1139,10 @@ func (s *osdSuite) setupRemoveOSD(osd int64) removeOSDMocks {
 	m.osdQuery.On("HaveOSD", mock.Anything, mock.Anything, osd).Return(true, nil).Once()
 	m.runner.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Once()
 	m.runner.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_host").Return(`{"rule_id": 2}`, nil).Once()
+
+	// The scale-down decision runs under the cluster-wide transition lock.
+	restore := withFailureDomainLockStub()
+	t.Cleanup(restore)
 
 	osdDataPath := getOSDDataPath(osd)
 	require.NoError(t, os.MkdirAll(osdDataPath, 0700))

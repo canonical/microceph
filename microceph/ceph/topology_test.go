@@ -36,6 +36,23 @@ func withMockAZData(data azData) func() {
 	return func() { getAZData = orig }
 }
 
+// withFailureDomainLockStub replaces the cluster-wide failure domain
+// transition lock with a no-op stub, returning a restore function.
+func withFailureDomainLockStub() func() {
+	origLock := lockFailureDomainTransitionsFunc
+	origUnlock := unlockFailureDomainTransitionsFunc
+	lockFailureDomainTransitionsFunc = func(_ context.Context, _ mcTypes.State) (int64, error) {
+		return 1, nil
+	}
+	unlockFailureDomainTransitionsFunc = func(_ context.Context, _ mcTypes.State, _ int64) error {
+		return nil
+	}
+	return func() {
+		lockFailureDomainTransitionsFunc = origLock
+		unlockFailureDomainTransitionsFunc = origUnlock
+	}
+}
+
 // addCrushBucketExpectations sets up mock expectations for the 4 CRUSH
 // bucket commands issued by updateTopology (via cephRunContext → RunCommandContext).
 // The az parameter is the user-facing AZ name; the CRUSH bucket uses the "az." prefix.
@@ -141,6 +158,8 @@ func (s *topologySuite) TestUpdateTopologyAZ3OrMore() {
 			"az-3": true,
 		},
 	})()
+	// The rack promotion runs under the cluster-wide transition lock.
+	defer withFailureDomainLockStub()()
 
 	u := api.NewURL()
 	state := &mocks.MockState{URL: u, ClusterName: "node1"}
@@ -188,6 +207,8 @@ func (s *topologySuite) TestUpdateTopologyAZ3NoOSDs() {
 			"az-3": true,
 		},
 	})()
+	// The active-AZ count inside the promotion runs under the transition lock.
+	defer withFailureDomainLockStub()()
 
 	u := api.NewURL()
 	state := &mocks.MockState{URL: u, ClusterName: "node1"}
@@ -216,6 +237,9 @@ func (s *topologySuite) TestUpdateTopologyAZ3NoOSDs() {
 // TestUpdateFailureDomainSkipsOnRackRule verifies that updateFailureDomain
 // returns early when the cluster is governed by the rack failure domain rule.
 func (s *topologySuite) TestUpdateFailureDomainSkipsOnRackRule() {
+	// The lock is acquired before the rack rule check.
+	defer withFailureDomainLockStub()()
+
 	u := api.NewURL()
 	state := &mocks.MockState{URL: u, ClusterName: "node1"}
 	si := mocks.NewStateInterface(s.T())
@@ -250,6 +274,8 @@ func (s *topologySuite) TestUpdateFailureDomainFewerAZsSwitchesToHost() {
 			"az-1": true,
 		},
 	})()
+	// The decision and the switch run under the cluster-wide transition lock.
+	defer withFailureDomainLockStub()()
 
 	u := api.NewURL()
 	state := &mocks.MockState{URL: u, ClusterName: "node1"}
@@ -286,6 +312,8 @@ func (s *topologySuite) TestUpdateFailureDomainFewerAZsSwitchesToHost() {
 // normally (switches to host at 3+ nodes) when no AZs are configured.
 func (s *topologySuite) TestUpdateFailureDomainNoAZs() {
 	defer withMockAZData(azData{})()
+	// The decision and the switch run under the cluster-wide transition lock.
+	defer withFailureDomainLockStub()()
 
 	u := api.NewURL()
 	state := &mocks.MockState{URL: u, ClusterName: "node1"}
