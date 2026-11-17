@@ -82,8 +82,11 @@ PREFLIGHT_ENDPOINTS = (
 # The probe uses curl, the same tool as tests/scripts/preflight.sh; the Ubuntu images the
 # harness launches ship it by default. A missing curl is reported as a harness error,
 # never as a network outage.
-PREFLIGHT_ATTEMPTS = 3
-PREFLIGHT_BACKOFF = 2
+# The Snap Store answers 429 or 503 in bursts of up to about 30 s and TLS connects can
+# time out for as long, while snap install keeps working (#904). Six 10 s backoffs wait
+# about 60 s for such a burst to pass before an endpoint is declared unreachable.
+PREFLIGHT_ATTEMPTS = 7
+PREFLIGHT_BACKOFF = 10
 PREFLIGHT_CONNECT_TIMEOUT = 5
 PREFLIGHT_MAX_TIME = 10
 
@@ -449,10 +452,11 @@ class microceph_harness:
         """Builds the single-attempt curl probe argv for *url* (pure helper).
 
         curl -f exits 0 only on an HTTP status below 400. Retries are done by the
-        caller, so curl gets no --retry here.
+        caller, so curl gets no --retry here. -w prints the HTTP status on stdout so a
+        failure can be reported with it (see _preflight_outcome).
         """
         argv = [
-            "curl", "-sSf", "-o", "/dev/null",
+            "curl", "-sSf", "-o", "/dev/null", "-w", "%{http_code}",
             "--connect-timeout", str(PREFLIGHT_CONNECT_TIMEOUT),
             "--max-time", str(PREFLIGHT_MAX_TIME),
         ]
@@ -469,9 +473,27 @@ class microceph_harness:
         return (name, url, ())
 
     @staticmethod
-    def _preflight_message(where, failed):
-        """Builds the PREFLIGHT failure message naming *where* and every failed (name, url, headers)."""
-        names = ", ".join(f"{name} ({url})" for name, url, _ in failed)
+    def _preflight_outcome(res):
+        """Describes a failed probe by its HTTP status and curl exit code (pure helper).
+
+        curl -w '%{http_code}' prints 000 when no HTTP response arrived (DNS, connect or
+        TLS failure), which is reported as such rather than as a status.
+        """
+        code = (res.stdout or "").strip()
+        status = f"HTTP {code}" if code.isdigit() and int(code) != 0 else "no HTTP response"
+        return f"{status}, curl exit {res.rc}"
+
+    @staticmethod
+    def _preflight_message(where, failed, outcomes=None):
+        """Builds the PREFLIGHT failure message naming *where* and every failed (name, url, headers).
+
+        *outcomes* maps an endpoint name to its last _preflight_outcome, appended after its URL.
+        """
+        outcomes = outcomes or {}
+        names = ", ".join(
+            f"{name} ({url}: {outcomes[name]})" if name in outcomes else f"{name} ({url})"
+            for name, url, _ in failed
+        )
         return f"PREFLIGHT: endpoint checks failed from {where}: {names}"
 
     def _preflight_exec(self, container, argv, timeout, vm_name=None):
@@ -498,6 +520,7 @@ class microceph_harness:
             where = f"VM {vm_name}" if vm_name else f"outer VM {vm}"
         pending = list(PREFLIGHT_ENDPOINTS) + [self._preflight_endpoint(spec) for spec in extra_endpoints]
         attempt = [0]
+        outcomes = {}
 
         def all_reachable():
             attempt[0] += 1
@@ -511,6 +534,7 @@ class microceph_harness:
                     # binary is missing. A packaging problem must never be labelled kind=preflight.
                     raise AssertionError(f"[preflight] curl not found in {where}; the reachability probe needs curl")
                 if res.rc != 0:
+                    outcomes[name] = self._preflight_outcome(res)
                     logger.console(
                         f"[preflight] {name} unreachable from {where} "
                         f"(attempt {attempt[0]}/{PREFLIGHT_ATTEMPTS}): {self._last_line(res.stderr)}"
@@ -520,7 +544,7 @@ class microceph_harness:
             if failed and attempt[0] >= PREFLIGHT_ATTEMPTS:
                 # Raised from inside the predicate so the last attempt is not followed
                 # by one more backoff sleep before the failure is reported.
-                message = self._preflight_message(where, failed)
+                message = self._preflight_message(where, failed, outcomes)
                 self._infra_annotate("preflight", message)
                 raise AssertionError(message)
             return not failed
