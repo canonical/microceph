@@ -2523,10 +2523,26 @@ def test_last_line_returns_last_non_blank_line():
 def test_preflight_argv_curl_is_single_attempt_with_headers():
     argv = H._preflight_argv("https://api.snapcraft.io/v2/snaps/info/lxd", ("Snap-Device-Series: 16",))
     assert argv == [
-        "curl", "-sSf", "-o", "/dev/null", "--connect-timeout", "5", "--max-time", "10",
+        "curl", "-sSf", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "5", "--max-time", "10",
         "-H", "Snap-Device-Series: 16", "https://api.snapcraft.io/v2/snaps/info/lxd",
     ]
     assert "--retry" not in argv
+
+
+def test_preflight_retries_outlast_a_snap_store_throttle_burst():
+    """Store 429/503 bursts last up to about 30 s (#904): the backoff alone must wait at least 60 s."""
+    assert (_mh.PREFLIGHT_ATTEMPTS - 1) * _mh.PREFLIGHT_BACKOFF >= 60
+
+
+@pytest.mark.parametrize("res, outcome", [
+    (_Res(22, "429", "curl: (22) The requested URL returned error: 429"), "HTTP 429, curl exit 22"),
+    (_Res(22, "503\n", ""), "HTTP 503, curl exit 22"),
+    (_Res(28, "000", "curl: (28) SSL connection timeout"), "no HTTP response, curl exit 28"),
+    (_Res(6, "", "curl: (6) Could not resolve host"), "no HTTP response, curl exit 6"),
+    (_Res(28, None, ""), "no HTTP response, curl exit 28"),
+])
+def test_preflight_outcome_reports_http_status_and_curl_exit(res, outcome):
+    assert H._preflight_outcome(res) == outcome
 
 
 def test_preflight_endpoints_match_the_runner_side_gate():
@@ -2558,13 +2574,24 @@ def test_preflight_message_names_instance_and_every_endpoint():
     )
 
 
+def test_preflight_message_appends_each_endpoint_outcome():
+    failed = [("snap-store", "https://s.example/", ("H: 1",)), ("ubuntu-archive", "http://a.example/", ())]
+    outcomes = {"snap-store": "HTTP 429, curl exit 22", "ubuntu-archive": "no HTTP response, curl exit 28"}
+    assert H._preflight_message("outer VM vm1", failed, outcomes) == (
+        "PREFLIGHT: endpoint checks failed from outer VM vm1: "
+        "snap-store (https://s.example/: HTTP 429, curl exit 22), "
+        "ubuntu-archive (http://a.example/: no HTTP response, curl exit 28)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # probe_instance_network (stubbed exec)
 # ---------------------------------------------------------------------------
 
 def _probe_harness(monkeypatch, rc_for):
     """Harness whose _preflight_exec is stubbed: every probe call returns
-    rc_for(url, nth_call_for_that_url)."""
+    rc_for(url, nth_call_for_that_url), with curl's -w status 200 on success and
+    000 (no HTTP response) on failure."""
     cap = _with_logger(monkeypatch)
     sleeps = []
     monkeypatch.setattr(_mh.time, "sleep", lambda secs: sleeps.append(secs))
@@ -2578,7 +2605,9 @@ def _probe_harness(monkeypatch, rc_for):
         url = argv[-1]
         seen[url] = seen.get(url, 0) + 1
         rc = rc_for(url, seen[url])
-        return _Res(rc, "", "" if rc == 0 else "noise\ncurl: (28) Connection timed out after 5001 milliseconds\n")
+        if rc == 0:
+            return _Res(rc, "200", "")
+        return _Res(rc, "000", "noise\ncurl: (28) Connection timed out after 5001 milliseconds\n")
 
     monkeypatch.setattr(h, "_preflight_exec", fake_exec)
     return h, cap, calls, sleeps
@@ -2624,7 +2653,7 @@ def test_probe_instance_network_recovers_and_reprobes_only_the_failed_endpoint(m
     probed = [c[1][-1] for c in calls]
     assert probed.count(archive) == 3
     assert probed.count("https://api.snapcraft.io/v2/snaps/info/lxd") == 1
-    assert sleeps == [2, 2]
+    assert sleeps == [_mh.PREFLIGHT_BACKOFF] * 2
     assert _infra_lines(cap, "preflight") == []
 
 
@@ -2638,16 +2667,55 @@ def test_probe_instance_network_outage_fails_with_preflight_annotation(monkeypat
 
     expected = (
         "PREFLIGHT: endpoint checks failed from container microceph-img-builder in outer VM vm1: "
-        "snap-store (https://api.snapcraft.io/v2/snaps/info/lxd), "
-        "ubuntu-archive (http://archive.ubuntu.com/ubuntu/dists/)"
+        "snap-store (https://api.snapcraft.io/v2/snaps/info/lxd: no HTTP response, curl exit 28), "
+        "ubuntu-archive (http://archive.ubuntu.com/ubuntu/dists/: no HTTP response, curl exit 28)"
     )
+    attempts = _mh.PREFLIGHT_ATTEMPTS
     assert str(exc.value) == expected
-    assert len(calls) == 3 * 2
+    assert len(calls) == attempts * 2
     # No backoff sleep after the last attempt.
-    assert sleeps == [2, 2]
+    assert sleeps == [_mh.PREFLIGHT_BACKOFF] * (attempts - 1)
     assert _infra_lines(cap, "preflight") == [f"::error title=Infra::kind=preflight {expected}"]
     assert summary.read_text() == f"kind=preflight {expected}\n"
-    assert any("(attempt 3/3): curl: (28) Connection timed out" in line for line in cap.console_lines)
+    assert any(
+        f"(attempt {attempts}/{attempts}): curl: (28) Connection timed out" in line for line in cap.console_lines
+    )
+
+
+def test_probe_instance_network_waits_out_a_snap_store_429_burst(monkeypatch):
+    store = "https://api.snapcraft.io/v2/snaps/info/lxd"
+    burst = _mh.PREFLIGHT_ATTEMPTS - 1
+    h, cap, calls, sleeps = _probe_harness(monkeypatch, lambda url, n: 22 if (url == store and n <= burst) else 0)
+
+    h.probe_instance_network()
+
+    assert [c[1][-1] for c in calls].count(store) == burst + 1
+    assert sleeps == [_mh.PREFLIGHT_BACKOFF] * burst
+    assert _infra_lines(cap, "preflight") == []
+
+
+def test_probe_instance_network_reports_the_last_http_status(monkeypatch):
+    store = "https://api.snapcraft.io/v2/snaps/info/lxd"
+    h = _probe_harness(monkeypatch, lambda url, n: 0)[0]
+    statuses = {}
+
+    def fake_exec(container, argv, timeout, vm_name=None):
+        url = argv[-1]
+        if url != store:
+            return _Res(0, "200", "")
+        statuses[url] = statuses.get(url, 0) + 1
+        # 503 first, then 429 on every later attempt: the message carries the last one.
+        code = "503" if statuses[url] == 1 else "429"
+        return _Res(22, code, f"curl: (22) The requested URL returned error: {code}\n")
+
+    monkeypatch.setattr(h, "_preflight_exec", fake_exec)
+
+    with pytest.raises(AssertionError) as exc:
+        h.probe_instance_network()
+
+    assert str(exc.value) == (
+        f"PREFLIGHT: endpoint checks failed from outer VM vm1: snap-store ({store}: HTTP 429, curl exit 22)"
+    )
 
 
 def test_probe_instance_network_names_only_the_unreachable_endpoint(monkeypatch):
@@ -2657,7 +2725,9 @@ def test_probe_instance_network_names_only_the_unreachable_endpoint(monkeypatch)
     with pytest.raises(AssertionError) as exc:
         h.probe_instance_network()
 
-    assert str(exc.value) == f"PREFLIGHT: endpoint checks failed from outer VM vm1: ubuntu-archive ({archive})"
+    assert str(exc.value) == (
+        f"PREFLIGHT: endpoint checks failed from outer VM vm1: ubuntu-archive ({archive}: no HTTP response, curl exit 7)"
+    )
     assert len(_infra_lines(cap, "preflight")) == 1
 
 
