@@ -168,9 +168,7 @@ func (s *NFSSuite) TestDisableNFS() {
 	for _, file := range files {
 		_, err := os.Create(file)
 		assert.NoError(s.T(), err)
-		defer func() {
-            _ = os.Remove(file)
-        }()
+		defer os.Remove(file)
 	}
 
 	db := mocks.NewGroupedServiceQueryIntf(s.T())
