@@ -1418,10 +1418,10 @@ func sortDisksByStablePath(disks []api.ResourcesStorageDisk) {
 	})
 }
 
-func configuredOSDPathSetForHost(configured types.Disks, hostname string) map[string]struct{} {
+func configuredOSDPathSetForHost(configured types.Disks, memberName string) map[string]struct{} {
 	paths := make(map[string]struct{}, len(configured))
 	for _, disk := range configured {
-		if disk.Location != hostname {
+		if disk.Location != memberName {
 			continue
 		}
 		paths[disk.Path] = struct{}{}
@@ -1457,6 +1457,15 @@ func trueBoolMapKeys(m map[string]bool) []string {
 	return out
 }
 
+// localMemberName returns the cluster member name of this node. Configured
+// disks record it as their location, and it can differ from the hostname.
+func (m *OSDManager) localMemberName() string {
+	if m.state == nil {
+		return ""
+	}
+	return m.state.Name()
+}
+
 func (m *OSDManager) getStorageAndConfiguredDisks(ctx context.Context) (*api.ResourcesStorage, types.Disks, error) {
 	storage, err := m.getStorageWithRetry()
 	if err != nil {
@@ -1486,7 +1495,7 @@ func (m *OSDManager) matchOSDDisksWithDSL(ctx context.Context, dslExpr string) (
 		return nil, err
 	}
 
-	availableDisks, err := common.FilterAvailableDisks(storage, configuredDisks, &common.DiskFilterConfig{
+	availableDisks, err := common.FilterAvailableDisks(storage, configuredDisks, m.localMemberName(), &common.DiskFilterConfig{
 		IsMountedFunc:    m.mountChecker.IsMounted,
 		IsCephDeviceFunc: m.cephDeviceChecker.IsCephDevice,
 	})
@@ -1574,11 +1583,7 @@ func (m *OSDManager) matchAuxiliaryDisksWithDSL(ctx context.Context, dslExpr str
 	if err != nil {
 		return nil, nil, err
 	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get hostname: %w", err)
-	}
-	configuredPathSet := configuredOSDPathSetForHost(configuredDisks, hostname)
+	configuredPathSet := configuredOSDPathSetForHost(configuredDisks, m.localMemberName())
 	localUsage, err := m.collectLocalAuxDiskUsage(storage)
 	if err != nil {
 		return nil, nil, err

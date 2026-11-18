@@ -417,18 +417,15 @@ type DiskFilterConfig struct {
 }
 
 // FilterAvailableDisks filters storage disks to find those available for OSD creation.
+// memberName is the cluster member name of this node, which is what configured
+// disks record as their location.
 // It excludes disks that:
 // - Have partitions
 // - Are smaller than MinOSDSize (2GB)
 // - Are already configured as OSDs
 // - Are currently mounted
 // - Are used as Ceph WAL/DB devices
-func FilterAvailableDisks(storage *api.ResourcesStorage, configuredDisks types.Disks, cfg *DiskFilterConfig) ([]api.ResourcesStorageDisk, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get hostname: %w", err)
-	}
-
+func FilterAvailableDisks(storage *api.ResourcesStorage, configuredDisks types.Disks, memberName string, cfg *DiskFilterConfig) ([]api.ResourcesStorageDisk, error) {
 	// Set defaults for nil functions
 	isMounted := IsMounted
 	isCephDevice := IsCephDevice
@@ -466,10 +463,12 @@ func FilterAvailableDisks(storage *api.ResourcesStorage, configuredDisks types.D
 
 		devicePath := GetDevicePath(&disk)
 
-		// Check if already configured as OSD on this host
+		// Check if already configured as OSD on this host. Match on the
+		// member name rather than the hostname: they differ when a custom
+		// name was chosen at init or the host was renamed after joining.
 		found := false
 		for _, configured := range configuredDisks {
-			if configured.Location != hostname {
+			if configured.Location != memberName {
 				continue
 			}
 			if configured.Path == devicePath {
