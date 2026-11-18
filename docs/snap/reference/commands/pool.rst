@@ -1,3 +1,6 @@
+.. meta::
+   :description: Reference for the microceph pool command, which sets the replication factor of existing pools and the default size of pools created later.
+
 ========
 ``pool``
 ========
@@ -40,14 +43,20 @@ those pools (provided they exist). It can also be an asterisk ('*') in which
 case the process is applied to all existing pools; or an empty string (''),
 which sets the default pool size, but doesn't change any existing pools.
 
+Changing the replication factor of existing pools leaves the default pool size,
+used for pools created later, unchanged. To set the default pool size as well,
+add the ``--set-default`` flag. With this flag, the pool specification can be
+omitted to set only the default pool size.
+
 Usage:
 
 .. code-block:: none
 
-   microceph pool set-rf --size <replication-factor> <pool-spec>... [flags]
+   microceph pool set-rf --size <replication-factor> [--set-default] [<pool-spec>...] [flags]
 
 Flags:
 
 .. code-block:: none
 
-   --size int   Pool size (required)
+   --set-default   Also set the default size of pools created later
+   --size int      Pool size (required)
