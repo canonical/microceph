@@ -287,6 +287,7 @@ extensions = [
     "sphinx_last_updated_by_git",
     "sphinx.ext.intersphinx",
     "sphinx_sitemap",
+    "sphinx_unified_search",
 ]
 
 # Excludes files or directories from processing
@@ -371,3 +372,20 @@ intersphinx_mapping = {
     # Ubuntu release notes
     'ubuntu-release-notes': ('https://documentation.ubuntu.com/release-notes/', None),
 }
+
+# Configuration for sphinx-unified-search
+
+# Downloads remote docs index once per `make run` to reduce rebuild time
+unified_search_cache_remote_indexes = True
+
+# Enable filter function in search results page
+unified_search_project_filter = True
+unified_search_local_project_name = "Microceph"   # optional, defaults to `project`
+
+unified_search_projects = [
+    {
+        "name": "Ceph (upstream)",
+        "base_url": "https://docs.ceph.com/en/squid/",
+        "searchindex_url": "https://docs.ceph.com/en/squid/searchindex.js",
+    },
+]
