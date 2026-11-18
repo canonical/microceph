@@ -122,7 +122,12 @@ func (c *cmdDiskAdd) Run(cmd *cobra.Command, args []string) error {
 		req.DBEncrypt = c.dbEncrypt
 		req.DryRun = c.flagDryRun
 	} else if c.flagAllDevices {
-		disks, err := getUnpartitionedDisks(cli)
+		memberName, err := localMemberName(m)
+		if err != nil {
+			return err
+		}
+
+		disks, err := getUnpartitionedDisks(cli, memberName)
 		if err != nil {
 			return err
 		}

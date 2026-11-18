@@ -210,7 +210,7 @@ func TestFilterLocalDisks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := filterLocalDisks(tt.resources, tt.disks, mockCfg)
+			result, err := filterLocalDisks(tt.resources, tt.disks, "node-a", mockCfg)
 			require.NoError(t, err, tt.description)
 
 			assert.Equal(t, tt.expectedCount, len(result), tt.description)
@@ -252,11 +252,52 @@ func TestFilterLocalDisksPathPriority(t *testing.T) {
 		},
 	}
 
-	result, err := filterLocalDisks(resources, types.Disks{}, mockCfg)
+	result, err := filterLocalDisks(resources, types.Disks{}, "node-a", mockCfg)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 
 	// Should use DeviceID path not by-path
 	expectedPath := "/dev/disk/by-id/nvme-eui.0000000001000000e4d25cafae2e4c00"
 	assert.Equal(t, expectedPath, result[0].Path)
+}
+
+func TestFilterLocalDisksExcludesDisksConfiguredOnLocalMember(t *testing.T) {
+	mockCfg := &common.DiskFilterConfig{
+		IsMountedFunc: func(device string) (bool, error) {
+			return false, nil
+		},
+		IsCephDeviceFunc: func(device string) (bool, error) {
+			return false, nil
+		},
+	}
+
+	resources := &api.ResourcesStorage{
+		Disks: []api.ResourcesStorageDisk{
+			{ID: "vdb", DevicePath: "virtio-pci-0000:06:00.0", Size: 16 * 1024 * 1024 * 1024, Type: "virtio"},
+			{ID: "vdc", DevicePath: "virtio-pci-0000:07:00.0", Size: 16 * 1024 * 1024 * 1024, Type: "virtio"},
+		},
+	}
+	disks := types.Disks{
+		{OSD: 0, Location: "custom-name", Path: "/dev/disk/by-path/virtio-pci-0000:06:00.0"},
+	}
+
+	result, err := filterLocalDisks(resources, disks, "custom-name", mockCfg)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	assert.Equal(t, "/dev/disk/by-path/virtio-pci-0000:07:00.0", result[0].Path)
+}
+
+func TestDisksOnMember(t *testing.T) {
+	disks := types.Disks{
+		{OSD: 0, Location: "custom-name", Path: "/dev/sdb"},
+		{OSD: 1, Location: "node-b", Path: "/dev/sdb"},
+		{OSD: 2, Location: "custom-name", Path: "/dev/sdc"},
+	}
+
+	filtered := disksOnMember(disks, "custom-name")
+	require.Len(t, filtered, 2)
+	assert.Equal(t, int64(0), filtered[0].OSD)
+	assert.Equal(t, int64(2), filtered[1].OSD)
+
+	assert.Empty(t, disksOnMember(disks, "node-c"))
 }

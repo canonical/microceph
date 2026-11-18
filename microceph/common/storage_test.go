@@ -215,11 +215,47 @@ func TestFilterAvailableDisksExcludesReadOnly(t *testing.T) {
 		},
 	}
 
-	available, err := FilterAvailableDisks(storage, types.Disks{}, &DiskFilterConfig{
+	available, err := FilterAvailableDisks(storage, types.Disks{}, "node-a", &DiskFilterConfig{
 		IsMountedFunc:    func(string) (bool, error) { return false, nil },
 		IsCephDeviceFunc: func(string) (bool, error) { return false, nil },
 	})
 	require.NoError(t, err)
 	require.Len(t, available, 1)
 	assert.Equal(t, "vdb", available[0].ID)
+}
+
+func TestFilterAvailableDisksExcludesDisksConfiguredOnLocalMember(t *testing.T) {
+	hostname, err := os.Hostname()
+	require.NoError(t, err)
+
+	// The member name deliberately differs from the hostname, as it does
+	// when a custom name was chosen at init or the host was renamed.
+	memberName := hostname + "-member"
+
+	storage := &api.ResourcesStorage{
+		Disks: []api.ResourcesStorageDisk{
+			{ID: "vda", DevicePath: "virtio-pci-0000:06:00.0", Size: 8 * 1024 * 1024 * 1024, Type: "virtio"},
+			{ID: "vdb", DevicePath: "virtio-pci-0000:07:00.0", Size: 8 * 1024 * 1024 * 1024, Type: "virtio"},
+			{ID: "vdc", DevicePath: "virtio-pci-0000:08:00.0", Size: 8 * 1024 * 1024 * 1024, Type: "virtio"},
+		},
+	}
+	configured := types.Disks{
+		{OSD: 0, Location: memberName, Path: "/dev/disk/by-path/virtio-pci-0000:06:00.0"},
+		{OSD: 1, Location: "other-member", Path: "/dev/disk/by-path/virtio-pci-0000:07:00.0"},
+		{OSD: 2, Location: hostname, Path: "/dev/disk/by-path/virtio-pci-0000:08:00.0"},
+	}
+
+	available, err := FilterAvailableDisks(storage, configured, memberName, &DiskFilterConfig{
+		IsMountedFunc:    func(string) (bool, error) { return false, nil },
+		IsCephDeviceFunc: func(string) (bool, error) { return false, nil },
+	})
+	require.NoError(t, err)
+
+	ids := make([]string, 0, len(available))
+	for _, disk := range available {
+		ids = append(ids, disk.ID)
+	}
+	// vda backs an OSD on this member. vdb and vdc are recorded under other
+	// members, so a matching by-path name on this host is a different disk.
+	assert.ElementsMatch(t, []string{"vdb", "vdc"}, ids)
 }

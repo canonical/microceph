@@ -145,7 +145,7 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	}
 
 	if wantsDisks {
-		err = printLocalDisks(lc)
+		err = printLocalDisks(m, lc)
 		if err != nil {
 			return err
 		}
@@ -187,9 +187,14 @@ func (c *cmdInit) Run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func printLocalDisks(cli mcTypes.Client) error {
+func printLocalDisks(m *microcluster.MicroCluster, cli mcTypes.Client) error {
+	memberName, err := localMemberName(m)
+	if err != nil {
+		return err
+	}
+
 	// List unpartitioned disks.
-	availableDisks, err := getUnpartitionedDisks(cli)
+	availableDisks, err := getUnpartitionedDisks(cli, memberName)
 	if err != nil {
 		return fmt.Errorf("internal error: unable to fetch unpartitioned disks: %w", err)
 	}
