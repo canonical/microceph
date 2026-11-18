@@ -4,6 +4,15 @@ package types
 type PoolPut struct {
 	Pools []string `json:"pools" yaml:"pools"`
 	Size  int64    `json:"size" yaml:"size"`
+	// SetDefault controls whether osd_pool_default_size is also set to Size.
+	// It is a pointer so that a request without the field, as sent by clients
+	// that predate it, keeps setting the default.
+	SetDefault *bool `json:"set_default,omitempty" yaml:"set_default,omitempty"`
+}
+
+// WantsDefault reports whether the request also sets the default pool size.
+func (p PoolPut) WantsDefault() bool {
+	return p.SetDefault == nil || *p.SetDefault
 }
 
 // Pool represents information about an OSD pool.
