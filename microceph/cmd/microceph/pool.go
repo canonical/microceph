@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -18,28 +20,58 @@ type cmdPool struct {
 }
 
 type cmdPoolSetRF struct {
-	common   *CmdControl
-	poolRF   *cmdPool
-	poolSize int64
+	common         *CmdControl
+	poolRF         *cmdPool
+	poolSize       int64
+	flagSetDefault bool
 }
 
 func (c *cmdPoolSetRF) Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "set-rf --size <SIZE> <POOL>...",
+		Use:   "set-rf --size <SIZE> [--set-default] [<POOL>...]",
 		Short: "Set the replication factor for pools",
 		Long: `Set the replication factor for <POOLS>
     POOLS is either a list of pools an asterisk or an empty string.
     If it's an asterisk, the size is set for all existing pools, but not
     future ones, whereas an empty string implies setting the default pool size.
-    Otherwise, the size is set for the specified pools.`,
-		Args: cobra.MinimumNArgs(1),
+    Otherwise, the size is set for the specified pools.
+    With --set-default, the default pool size is set as well, and POOLS
+    may be omitted.`,
+		Args: c.validateArgs,
 		RunE: c.Run,
 	}
 
 	cmd.Flags().Int64Var(&c.poolSize, "size", 3, "Pool size")
 	_ = cmd.MarkFlagRequired("size")
+	cmd.Flags().BoolVar(&c.flagSetDefault, "set-default", false, "Also set the default size of pools created later")
 
 	return cmd
+}
+
+// validateArgs is the positional argument validator of "pool set-rf". The pools may be omitted
+// when --set-default is given, since setting the default pool size alone is then a complete request.
+func (c *cmdPoolSetRF) validateArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 && !c.flagSetDefault {
+		return errors.New("no pools given: pass one or more pools, '*' or use --set-default")
+	}
+
+	return nil
+}
+
+// setsDefault reports whether "pool set-rf" sets the default pool size: either --set-default was
+// given or one of the pools is an empty string, which has always meant the default pool size.
+func setsDefault(flagSetDefault bool, pools []string) bool {
+	if flagSetDefault {
+		return true
+	}
+
+	for _, pool := range pools {
+		if strings.TrimSpace(pool) == "" {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c *cmdPoolSetRF) Run(cmd *cobra.Command, args []string) error {
@@ -53,9 +85,11 @@ func (c *cmdPoolSetRF) Run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	setDefault := setsDefault(c.flagSetDefault, args)
 	req := &types.PoolPut{
-		Pools: args,
-		Size:  c.poolSize,
+		Pools:      args,
+		Size:       c.poolSize,
+		SetDefault: &setDefault,
 	}
 
 	return client.PoolSetReplicationFactor(context.Background(), cli, req)

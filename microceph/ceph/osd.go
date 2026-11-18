@@ -2602,23 +2602,37 @@ func (m *OSDManager) killOSD(osd int64) error {
 	return nil
 }
 
-func SetReplicationFactor(pools []string, size int64) error {
+// SetReplicationFactor sets the size of the given pools, or of every existing
+// pool when pools is ["*"]. When setDefault is true it also sets the default
+// size of pools created later.
+func SetReplicationFactor(pools []string, size int64, setDefault bool) error {
 	ssize := fmt.Sprintf("%d", size)
-	_, err := common.ProcessExec.RunCommand("ceph", "config", "set", "global",
-		"osd_pool_default_size", ssize)
-	if err != nil {
-		return fmt.Errorf("failed to set pool size default: %w", err)
-	}
+	if setDefault {
+		_, err := common.ProcessExec.RunCommand("ceph", "config", "set", "global",
+			"osd_pool_default_size", ssize)
+		if err != nil {
+			return fmt.Errorf("failed to set pool size default: %w", err)
+		}
 
-	allowSizeOne := "true"
-	if size != 1 {
-		allowSizeOne = "false"
-	}
+		allowSizeOne := "true"
+		if size != 1 {
+			allowSizeOne = "false"
+		}
 
-	_, err = common.ProcessExec.RunCommand("ceph", "config", "set", "global",
-		"mon_allow_pool_size_one", allowSizeOne)
-	if err != nil {
-		return fmt.Errorf("failed to set size one pool config option: %w", err)
+		_, err = common.ProcessExec.RunCommand("ceph", "config", "set", "global",
+			"mon_allow_pool_size_one", allowSizeOne)
+		if err != nil {
+			return fmt.Errorf("failed to set size one pool config option: %w", err)
+		}
+	} else if size == 1 {
+		// Ceph refuses a pool size of one unless mon_allow_pool_size_one is
+		// set. It is only ever enabled here: other pools, or the default,
+		// may still rely on it, so a larger size must not switch it off.
+		_, err := common.ProcessExec.RunCommand("ceph", "config", "set", "global",
+			"mon_allow_pool_size_one", "true")
+		if err != nil {
+			return fmt.Errorf("failed to set size one pool config option: %w", err)
+		}
 	}
 
 	if len(pools) == 1 && pools[0] == "*" {
