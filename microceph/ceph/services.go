@@ -48,6 +48,19 @@ var serviceWorkerTable = map[string](func() (common.Set, error)){
 	"rgw": getUpRgws,
 }
 
+// hasLocalOSDs reports whether this host has an OSD that the osd service
+// would start, i.e. an OSD data directory carrying the ready marker (see
+// snapcraft/commands/osd.start).
+func hasLocalOSDs() bool {
+	markers, err := filepath.Glob(filepath.Join(constants.GetPathConst().DataPath, "osd", "ceph-*", osdReadyMarkerFile))
+	if err != nil {
+		logger.Errorf("failed looking up local OSDs: %v", err)
+		return false
+	}
+
+	return len(markers) > 0
+}
+
 // Restarts (in order) all Ceph Services provided in the input slice on the host.
 func RestartCephServices(ctx context.Context, s interfaces.StateInterface, services []string) error {
 	clusterServices, err := database.ServiceQuery.List(ctx, s.ClusterState())
@@ -178,6 +191,14 @@ func getUpOsds() (common.Set, error) {
 }
 
 func isServicePlacementOnHost(services types.Services, serviceName string, hostname string) bool {
+	// OSDs are tracked in the disks table, never in the services table, so
+	// the services list alone would report them as absent and every OSD
+	// restart (e.g. after `cluster config set cluster_network`) would be
+	// skipped. Look for the OSDs the osd service actually starts instead.
+	if serviceName == "osd" {
+		return hasLocalOSDs()
+	}
+
 	for _, service := range services {
 		if service.Service == serviceName && service.Location == hostname {
 			return true
