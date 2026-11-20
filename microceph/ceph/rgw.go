@@ -56,12 +56,15 @@ func rgwTLSRoot() string {
 }
 
 // rgwFrontendSpec contains validated, effective settings and decoded TLS material.
+// An empty bindAddr keeps the beast port/ssl_port options, which listen on
+// every address; a set one renders endpoint/ssl_endpoint options instead.
 type rgwFrontendSpec struct {
-	port    int
-	sslPort int
-	ssl     bool
-	certPEM []byte
-	keyPEM  []byte
+	bindAddr string
+	port     int
+	sslPort  int
+	ssl      bool
+	certPEM  []byte
+	keyPEM   []byte
 }
 
 // TLS material lives in generations: one directory per certificate and key
@@ -118,24 +121,62 @@ func rgwConfTLSPaths(conf []byte) (string, string) {
 	return certPath, keyPath
 }
 
+// rgwConfPorts reads the listener ports from either the port/ssl_port or the
+// endpoint/ssl_endpoint form of the frontend line.
 func rgwConfPorts(conf []byte) (int, int, error) {
 	var port, sslPort int
 	for _, token := range strings.Fields(rgwFrontendLine(conf)) {
 		name, value, found := strings.Cut(token, "=")
-		if !found || (name != "port" && name != "ssl_port") {
+		if !found {
+			continue
+		}
+		switch name {
+		case "port", "ssl_port":
+		case "endpoint", "ssl_endpoint":
+			var err error
+			_, value, err = net.SplitHostPort(value)
+			if err != nil {
+				return 0, 0, fmt.Errorf("%w: invalid RGW listener endpoint", ErrPlacementOperationFailed)
+			}
+		default:
 			continue
 		}
 		number, err := strconv.Atoi(value)
 		if err != nil {
 			return 0, 0, fmt.Errorf("%w: invalid RGW listener port", ErrPlacementOperationFailed)
 		}
-		if name == "port" {
+		if name == "port" || name == "endpoint" {
 			port = number
 		} else {
 			sslPort = number
 		}
 	}
 	return port, sslPort, nil
+}
+
+// rgwConfBindAddress returns the address the frontend line binds to, or ""
+// when it listens on every address.
+func rgwConfBindAddress(conf []byte) string {
+	for _, token := range strings.Fields(rgwFrontendLine(conf)) {
+		name, value, found := strings.Cut(token, "=")
+		if !found || (name != "endpoint" && name != "ssl_endpoint") {
+			continue
+		}
+		host, _, err := net.SplitHostPort(value)
+		if err == nil {
+			return host
+		}
+	}
+	return ""
+}
+
+// rgwEndpoint formats an endpoint option value, bracketing IPv6 addresses as
+// beast expects. It returns "" when no bind address is set.
+func rgwEndpoint(bindAddr string, port int) string {
+	if bindAddr == "" {
+		return ""
+	}
+	return net.JoinHostPort(bindAddr, strconv.Itoa(port))
 }
 
 func resolveRGWTLSReuse(conf []byte) ([]byte, []byte, error) {
@@ -294,7 +335,7 @@ func rgwFrontendFromConfig(conf []byte) (rgwFrontendSpec, error) {
 		return spec, errors.New("RGW configuration has invalid listener ports")
 	}
 	certPath, keyPath := rgwConfTLSPaths(conf)
-	spec = rgwFrontendSpec{port: port, sslPort: sslPort, ssl: sslPort != 0}
+	spec = rgwFrontendSpec{bindAddr: rgwConfBindAddress(conf), port: port, sslPort: sslPort, ssl: sslPort != 0}
 	if !spec.ssl {
 		if certPath != "" || keyPath != "" {
 			return spec, errors.New("RGW TLS material has no TLS listener")
@@ -564,6 +605,7 @@ func applyRGWFrontend(spec rgwFrontendSpec, monitors []string, restartOnChange b
 	config := map[string]any{
 		"runDir": paths.RunPath, "monitors": strings.Join(monitors, ","),
 		"rgwPort": spec.port, "sslPort": spec.sslPort,
+		"rgwEndpoint": rgwEndpoint(spec.bindAddr, spec.port), "sslEndpoint": rgwEndpoint(spec.bindAddr, spec.sslPort),
 		"sslCertificatePath": certPath, "sslPrivateKeyPath": keyPath,
 	}
 	desired, err := newRadosGWConfig(paths.ConfPath).RenderConfig(config)
@@ -741,11 +783,29 @@ func checkRGWHTTPFrontend(conn net.Conn) error {
 	return errors.New("RGW HTTP listener did not return a ready S3 response")
 }
 
+// rgwProbeHost returns the address the readiness probe dials. A gateway bound
+// to one address does not answer on loopback, so the probe has to use that
+// address; a wildcard address listens on loopback of its own family.
+func rgwProbeHost(bindAddr string) string {
+	ip := net.ParseIP(bindAddr)
+	if ip == nil {
+		return "127.0.0.1"
+	}
+	if ip.IsUnspecified() {
+		if ip.To4() != nil {
+			return "127.0.0.1"
+		}
+		return "::1"
+	}
+	return bindAddr
+}
+
 // Local readiness pins the supplied certificate, not a public DNS name or CA.
 func checkRGWFrontend(spec rgwFrontendSpec) error {
 	dialer := &net.Dialer{Timeout: time.Second}
+	host := rgwProbeHost(spec.bindAddr)
 	if spec.port != 0 {
-		conn, err := dialer.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(spec.port)))
+		conn, err := dialer.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(spec.port)))
 		if err != nil {
 			return err
 		}
@@ -769,7 +829,7 @@ func checkRGWFrontend(spec rgwFrontendSpec) error {
 			break
 		}
 	}
-	conn, err := dialer.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(spec.sslPort)))
+	conn, err := dialer.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(spec.sslPort)))
 	if err != nil {
 		return err
 	}
@@ -832,7 +892,9 @@ func UpdateRGWCertificates(ctx context.Context, s interfaces.StateInterface, cer
 	if err != nil {
 		return err
 	}
-	_, err = applyRGWFrontend(rgwFrontendSpec{port: port, sslPort: sslPort, ssl: true, certPEM: cert, keyPEM: key}, monitors, restart)
+	// Keep the listener the gateway already has; only the pair changes.
+	spec := rgwFrontendSpec{bindAddr: rgwConfBindAddress(conf), port: port, sslPort: sslPort, ssl: true, certPEM: cert, keyPEM: key}
+	_, err = applyRGWFrontend(spec, monitors, restart)
 	if err != nil || !restart {
 		return err
 	}

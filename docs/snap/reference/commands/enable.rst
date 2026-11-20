@@ -1,3 +1,6 @@
+.. meta::
+   :description: Reference for the microceph enable command, which enables MON, MGR, MDS, RGW, NFS and other services on a MicroCeph cluster member.
+
 ==========
 ``enable``
 ==========
@@ -124,13 +127,14 @@ Usage:
 
 .. code-block:: none
 
-   microceph enable rgw [--port <port>] [--ssl-port <port>] [--ssl-certificate <certificate material>] [--ssl-private-key <private key material>] [--target <server>] [--wait <bool>] [flags]
+   microceph enable rgw [--bind-address <ip-address>] [--port <port>] [--ssl-port <port>] [--ssl-certificate <certificate material>] [--ssl-private-key <private key material>] [--target <server>] [--wait <bool>] [flags]
    
 
 Flags:
 
 .. code-block:: none
 
+   --bind-address string     IP address the RGW service listens on (default: all addresses)
    --port int                Service non-SSL port (default: 80) (default 80)
    --ssl-port int            Service SSL port (default: 443) (default 443)
    --ssl-certificate string  base64 encoded SSL certificate

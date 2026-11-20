@@ -83,6 +83,14 @@ To enable the RGW service on node1 and specify a value for extra parameter
 
    sudo microceph enable rgw --target node1 --port 8080
 
+By default, RGW listens on every address of the node. To have it listen on a
+single address only, for example to keep it off other networks, pass
+``--bind-address``. Both the non-SSL and the SSL listeners use that address:
+
+.. code-block:: none
+
+   sudo microceph enable rgw --target node1 --bind-address 10.111.153.78 --port 8080
+
 Finally, view cluster status again and verify expected changes:
 
 .. code-block:: none
