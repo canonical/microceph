@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 
 	"github.com/canonical/lxd/shared/api"
@@ -25,7 +26,9 @@ var (
 
 // RgwServicePlacement applies RGW settings on one member.
 // Placement sets SSL explicitly; legacy service requests infer it from material.
+// An empty BindAddress listens on every address of the member.
 type RgwServicePlacement struct {
+	BindAddress    string
 	Port           int
 	SSLPort        int
 	SSL            *bool
@@ -81,6 +84,15 @@ func (rgw *RgwServicePlacement) PopulateParams(s interfaces.StateInterface, payl
 	}
 	rgw.effPort = normalized.Port
 	rgw.effSSLPort = normalized.SSLPort
+	if rgw.BindAddress != "" {
+		ip := net.ParseIP(rgw.BindAddress)
+		if ip == nil {
+			return fmt.Errorf("%w: bind address %q is not an IP address", ErrRgwFrontendInvalid, rgw.BindAddress)
+		}
+		// Store the canonical form so the same address written differently
+		// renders the same frontend line and does not restart the gateway.
+		rgw.BindAddress = ip.String()
+	}
 	if rgw.SSLCertificate != "" {
 		// Validated above; decode again for the bytes the member writes.
 		rgw.certPEM, rgw.keyPEM, err = types.DecodeRGWCertificate(rgw.SSLCertificate, rgw.SSLPrivateKey)
@@ -112,11 +124,12 @@ func (rgw *RgwServicePlacement) ServiceInit(ctx context.Context, s interfaces.St
 	}
 
 	spec := rgwFrontendSpec{
-		port:    rgw.effPort,
-		sslPort: rgw.effSSLPort,
-		ssl:     *rgw.SSL,
-		certPEM: rgw.certPEM,
-		keyPEM:  rgw.keyPEM,
+		bindAddr: rgw.BindAddress,
+		port:     rgw.effPort,
+		sslPort:  rgw.effSSLPort,
+		ssl:      *rgw.SSL,
+		certPEM:  rgw.certPEM,
+		keyPEM:   rgw.keyPEM,
 	}
 	if spec.ssl && spec.certPEM == nil {
 		// ssl=true with no supplied material: reuse the local pair, or fail
