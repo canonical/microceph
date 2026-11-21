@@ -112,6 +112,12 @@ APT_RETRY_BACKOFF = 10
 # `timeout` (rc 124 as well); the harness timeout, this much longer, is the backstop.
 APT_KILL_AFTER = 10
 APT_HARNESS_MARGIN = 15
+# add-apt-repository asks the Launchpad API for the PPA and its signing key. The
+# failures seen in CI (#909) are Python tracebacks naming a dropped or slow
+# connection, or a key Launchpad could not serve yet; each is worth another attempt.
+ADD_APT_REPOSITORY_TRANSIENT_RE = re.compile(
+    r"IncompleteRead|ConnectionResetError|Connection reset by peer|GPGKeyTemporarilyNotFoundError|timed out"
+)
 
 # --- snap artefact ---
 SNAP_DEST_NAME = "microceph_0_amd64.snap"
@@ -620,6 +626,38 @@ class microceph_harness:
         return res.rc == 124 and not (res.stdout or "").strip()
 
     @staticmethod
+    def _is_transient_add_apt_repository_error(res):
+        """Returns True when add-apt-repository failed on a Launchpad hiccup or ran out of time (pure helper).
+
+        Unlike apt-get, add-apt-repository prints the PPA description before it fetches
+        the signing key, so a timeout is retried whatever stdout holds: with --no-update
+        it only writes the sources entry and the key, and a second run rewrites both.
+        """
+        if res.rc == 0:
+            return False
+        return res.rc == 124 or bool(ADD_APT_REPOSITORY_TRANSIENT_RE.search(res.stderr or ""))
+
+    @staticmethod
+    def _is_stale_apt_index(res):
+        """Returns True when apt-get update failed only because some index files did not download (pure helper).
+
+        A mirror that is mid-sync serves an index that does not match its Release file,
+        and apt-get update exits 100 with 'Failed to fetch ... Mirror sync in progress?'
+        and 'Some index files failed to download' (#909). Retrying does not help, since
+        the mirror lags by minutes to hours, but the other indexes are fine: the next
+        apt-get install decides whether what it needs is available. Any other error line
+        is a real failure.
+        """
+        if res.rc != 100:
+            return False
+        errors = [line.strip() for line in (res.stderr or "").splitlines() if line.strip().startswith("E:")]
+        if not any(line.startswith("E: Some index files failed to download") for line in errors):
+            return False
+        return all(
+            line.startswith(("E: Failed to fetch ", "E: Some index files failed to download")) for line in errors
+        )
+
+    @staticmethod
     def _apt_label_timeout(res, timeout):
         """Gives an in-instance timeout (rc 124, silent) the stderr text of a harness timeout (pure helper).
 
@@ -642,13 +680,17 @@ class microceph_harness:
         words = ["sudo", "apt-get", APT_RETRY_FLAGS, args, *map(str, packages)]
         return " ".join(words)
 
-    def _run_apt(self, container, cmd, timeout, label, vm_name=None):
-        """Runs one apt-get *cmd* in *container* (VM when empty, default outer VM) with one retry when it stalls.
+    def _run_apt(self, container, cmd, timeout, label, vm_name=None, is_transient=None, tolerate=None):
+        """Runs one apt *cmd* in *container* (VM when empty, default outer VM) with one retry when it stalls.
 
         *timeout* bounds each attempt inside the instance; *label* names the command in
-        the kind=apt Infra annotation on exhaustion. Only apt_update / apt_install call
-        this, so *cmd* always comes from _apt_cmd.
+        the kind=apt Infra annotation on exhaustion. *is_transient* decides which failures
+        are retried (default: a silent stall). A failure *tolerate* accepts is logged and
+        returned with rc 0. Only apt_update / apt_install (with a command from _apt_cmd)
+        and add_apt_repository call this.
         """
+        if is_transient is None:
+            is_transient = self._is_transient_apt_stall
         bounded = self._apt_bounded_cmd(cmd, timeout)
         harness_timeout = int(timeout) + APT_HARNESS_MARGIN
         if container:
@@ -662,19 +704,40 @@ class microceph_harness:
             def run():
                 return self.run_in_vm(bounded, harness_timeout, vm_name=vm_name)
 
+        def attempt():
+            res = self._apt_label_timeout(run(), timeout)
+            if res.rc != 0 and tolerate is not None and tolerate(res):
+                logger.warn(f"'{label}' in {where} exited {res.rc}, continuing: {(res.stderr or '').strip()}")
+                return res._replace(rc=0)
+            return res
+
         return self._retry_transient(
-            lambda: self._apt_label_timeout(run(), timeout),
-            self._is_transient_apt_stall,
-            APT_RETRY_ATTEMPTS, APT_RETRY_BACKOFF, "apt", f"'{label}' in {where}",
+            attempt, is_transient, APT_RETRY_ATTEMPTS, APT_RETRY_BACKOFF, "apt", f"'{label}' in {where}",
+        )
+
+    def add_apt_repository(self, repository, timeout=120, vm_name=None):
+        """Adds *repository* (e.g. 'ppa:owner/name') in the VM (default outer VM) without refreshing the indexes.
+
+        Each attempt is bounded like apt_update and a Launchpad hiccup or timeout is
+        retried once; exhaustion emits kind=apt. Run apt_update afterwards.
+        """
+        cmd = f"sudo add-apt-repository --yes --no-update {shlex.quote(str(repository))}"
+        return self._run_apt(
+            "", cmd, timeout, "add-apt-repository", vm_name=vm_name,
+            is_transient=self._is_transient_add_apt_repository_error,
         )
 
     def apt_update(self, container="", timeout=120, vm_name=None):
         """Runs 'apt-get update' in *container*, or in the VM (default outer VM) when *container* is empty.
 
         The Acquire retry flags and the one retry on a silent stall are applied here;
-        callers pass nothing but the target. *timeout* bounds each attempt.
+        callers pass nothing but the target. *timeout* bounds each attempt. A mirror
+        that is mid-sync is tolerated (see _is_stale_apt_index).
         """
-        return self._run_apt(container, self._apt_cmd("update -qq"), timeout, "apt-get update", vm_name=vm_name)
+        return self._run_apt(
+            container, self._apt_cmd("update -qq"), timeout, "apt-get update", vm_name=vm_name,
+            tolerate=self._is_stale_apt_index,
+        )
 
     def apt_install(self, packages, container="", timeout=300, vm_name=None):
         """Installs *packages* (an iterable of names) in *container*, or in the VM (default outer VM) when empty.

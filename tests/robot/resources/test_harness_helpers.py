@@ -2736,7 +2736,7 @@ def _recording_harness(monkeypatch, snap_list_count="0"):
     # string those methods build (flags included) and the target they aim it at.
     monkeypatch.setattr(
         h, "_run_apt",
-        lambda container, cmd, timeout, label, vm_name=None: events.append(("apt", container, cmd, timeout)),
+        lambda container, cmd, timeout, label, vm_name=None, **_: events.append(("apt", container, cmd, timeout)),
     )
     return h, events
 
@@ -3037,7 +3037,7 @@ def _apt_target_harness(monkeypatch):
     calls = []
     monkeypatch.setattr(
         h, "_run_apt",
-        lambda container, cmd, timeout, label, vm_name=None: calls.append((container, cmd, timeout, label)),
+        lambda container, cmd, timeout, label, vm_name=None, **_: calls.append((container, cmd, timeout, label)),
     )
     return h, calls
 
@@ -3160,6 +3160,116 @@ def test_no_public_apt_wrapper_takes_a_hand_built_command():
     source = (Path(__file__).parent / "microceph_harness.py").read_text()
     # The flags are spelled in the constant and used in _apt_cmd, nowhere else.
     assert source.count("APT_RETRY_FLAGS") == 3
+
+
+# ---------------------------------------------------------------------------
+# add-apt-repository retry and stale mirror index (#909)
+# ---------------------------------------------------------------------------
+
+_INCOMPLETE_READ = (
+    "Traceback (most recent call last):\n"
+    "  File \"/usr/lib/python3/dist-packages/softwareproperties/ppa.py\", line 104, in _lp_get\n"
+    "http.client.IncompleteRead: IncompleteRead(79233 bytes read)"
+)
+_STALE_INDEX = (
+    "E: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/noble-updates/universe/binary-amd64/Packages.xz  "
+    "File has unexpected size (1698176 != 1698216). Mirror sync in progress? [IP: 185.125.190.82 80]\n"
+    "   Hashes of expected file:\n"
+    "    - Filesize:1698216 [weak]\n"
+    "E: Some index files failed to download. They have been ignored, or old ones used instead."
+)
+
+
+@pytest.mark.parametrize("res, transient", [
+    (_Res(1, "", _INCOMPLETE_READ), True),
+    (_Res(1, "", "ConnectionResetError: [Errno 104] Connection reset by peer"), True),
+    (_Res(1, "", "softwareproperties.ppa.GPGKeyTemporarilyNotFoundError: Failed to fetch GPG key"), True),
+    (_Res(1, "", "TimeoutError: The read operation timed out"), True),
+    # The PPA description is printed before the key fetch, so stdout does not matter.
+    (_Res(124, "Repository: 'deb https://ppa.launchpadcontent.net/x/y/ubuntu/ resolute main'\n", ""), True),
+    (_Res(1, "", "ERROR: ppa 'x/y' not found (use --login if private)"), False),
+    (_Res(0, "", "timed out"), False),
+])
+def test_is_transient_add_apt_repository_error(res, transient):
+    assert H._is_transient_add_apt_repository_error(res) is transient
+
+
+@pytest.mark.parametrize("res, stale", [
+    (_Res(100, "", _STALE_INDEX), True),
+    (_Res(100, "", "E: Failed to fetch http://x/Packages.xz  Hash Sum mismatch\n"
+                   "E: Some index files failed to download. They have been ignored, or old ones used instead."), True),
+    # Another error next to the index failure is a real failure.
+    (_Res(100, "", "E: Could not get lock /var/lib/apt/lists/lock. It is held by process 1234 (apt-get)\n"
+                   "E: Some index files failed to download. They have been ignored, or old ones used instead."), False),
+    (_Res(100, "", "E: The repository 'http://x resolute Release' does not have a Release file."), False),
+    (_Res(100, "", "E: Failed to fetch http://x/Packages.xz  404  Not Found"), False),
+    (_Res(1, "", _STALE_INDEX), False),
+    (_Res(0, "", ""), False),
+])
+def test_is_stale_apt_index(res, stale):
+    assert H._is_stale_apt_index(res) is stale
+
+
+def test_add_apt_repository_retries_a_launchpad_traceback(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "", _INCOMPLETE_READ), _Res(0, "", "")])
+
+    res = h.add_apt_repository("ppa:lmlogiudice/ceph-lp2166817-updates")
+
+    assert res.rc == 0
+    bounded = (
+        "timeout --kill-after=10 120 sh -c "
+        "'sudo add-apt-repository --yes --no-update ppa:lmlogiudice/ceph-lp2166817-updates'"
+    )
+    assert [c[0][-1] for c in calls] == [bounded, bounded]
+    assert calls[0][0][:4] == ["lxc", "exec", "-n", "vm1"]
+    assert [c[1] for c in calls] == [135, 135]
+    assert sleeps == [10]
+    assert _infra_lines(cap, "apt") == []
+
+
+def test_add_apt_repository_exhaustion_is_an_apt_infra_failure(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(124, "Repository: 'deb ...'\n", "")])
+
+    with pytest.raises(AssertionError):
+        h.add_apt_repository("ppa:x/y")
+
+    assert len(calls) == 2
+    assert _infra_lines(cap, "apt") == [
+        "::error title=Infra::kind=apt 'add-apt-repository' in outer VM vm1 "
+        "failed after 2 attempts: Command timed out after 120s (killed inside the instance)"
+    ]
+
+
+def test_add_apt_repository_unknown_ppa_is_fatal_at_once(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(1, "", "ERROR: ppa 'x/y' not found")])
+
+    with pytest.raises(AssertionError):
+        h.add_apt_repository("ppa:x/y")
+
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_apt_update_tolerates_a_mirror_sync_without_retrying(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(100, "", _STALE_INDEX)])
+
+    res = h.apt_update()
+
+    assert res.rc == 0
+    assert res.stderr == _STALE_INDEX
+    assert len(calls) == 1
+    assert sleeps == []
+    assert _infra_lines(cap, "apt") == []
+    assert any(line.startswith("WARN:'apt-get update' in outer VM vm1 exited 100") for line in cap.info_lines)
+
+
+def test_apt_install_does_not_tolerate_a_failed_index_download(monkeypatch):
+    h, cap, calls, sleeps = _retry_harness(monkeypatch, [_Res(100, "", _STALE_INDEX)])
+
+    with pytest.raises(AssertionError):
+        h.apt_install(["ceph-common"])
+
+    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -3373,7 +3483,8 @@ def test_resolute_ceph_client_setup_is_shared():
     assert "lmlogiudice/ceph-lp2166817-updates" in resource
     assert "Verify Resolute Outer VM" in resource
     assert "Install Ceph Client From PPA" in resource
-    assert "sudo add-apt-repository --yes ppa:${CEPH_PPA}" in resource
+    assert "Add Apt Repository    ppa:${CEPH_PPA}\n    Apt Update\n" in resource
+    assert "sudo add-apt-repository" not in resource
     assert "Should Contain    ${policy.stdout}    ${CEPH_PPA}" in resource
 
     suites = (

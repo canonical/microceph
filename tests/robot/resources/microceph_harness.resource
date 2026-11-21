@@ -48,8 +48,8 @@ Verify Resolute Outer VM
 Install Ceph Client From PPA
     [Documentation]    Installs the CephFS mount client from the same Resolute PPA as the snap.
     Run In VM And Check    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common    300
-    Run In VM And Check    sudo add-apt-repository --yes ppa:${CEPH_PPA}    120
-    Run In VM And Check    sudo apt-get update    120
+    Add Apt Repository    ppa:${CEPH_PPA}
+    Apt Update
     Run In VM And Check    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y ceph-common    300
     ${package}=    Run In VM And Check    dpkg-query -W ceph-common    30
     Should Contain    ${package.stdout}    ~ppa
