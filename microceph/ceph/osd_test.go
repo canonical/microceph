@@ -194,6 +194,24 @@ func addSetDefaultRuleExpectations(r *mocks.Runner) {
 	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()
 }
 
+// addDefaultRuleLookupExpectations registers the staleness-guard lookups
+// switchFailureDomain runs before updating the default crush rule: the
+// current default rule id, then the dump of all rules resolving that id to
+// defaultName.
+func addDefaultRuleLookupExpectations(r *mocks.Runner, defaultID string, defaultName string) {
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
+		Return(defaultID+"\n", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump").
+		Return(fmt.Sprintf(`[{"rule_id":%s,"rule_name":%q}]`, defaultID, defaultName), nil).Once()
+}
+
+// addPoolGetRuleExpectations registers the per-pool crush_rule lookup the
+// switch's staleness guard runs before migrating the given pool.
+func addPoolGetRuleExpectations(r *mocks.Runner, pool string, ruleName string) {
+	r.On("RunCommand", "ceph", "osd", "pool", "get", pool, "crush_rule", "-f", "json").
+		Return(fmt.Sprintf(`{"crush_rule":%q}`, ruleName), nil).Once()
+}
+
 // Expect: run ceph osd tree
 func addOsdTreeExpectations(r *mocks.Runner) {
 	json := `{
@@ -294,6 +312,8 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 	// leading haveCrushRule lookup made the ls calls precede the dump calls,
 	// and the generic matchers only match calls at their registered position.
 	addCrushRuleLsExpectations(r)
+	// staleness guard: resolve the current default rule (id 77 = osd rule)
+	addDefaultRuleLookupExpectations(r, "77", "microceph_auto_osd")
 	// dump crush rules to resolve names
 	addCrushRuleDumpExpectations(r)
 	// set default crush rule
@@ -304,8 +324,64 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 	addCrushRuleDumpExpectations(r)
 	// list pools
 	addCrushRuleLsJsonExpectations(r)
+	// staleness guard: the pool is still on the osd rule
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_osd")
 	// set pool crush rule
 	addOsdPoolSetExpectations(r)
+
+	common.ProcessExec = r
+
+	mgr := NewOSDManager(nil)
+	mgr.fs = afero.NewMemMapFs()
+	err := mgr.switchFailureDomain("osd", "host")
+	assert.NoError(s.T(), err)
+}
+
+// TestSwitchFailureDomainSkipsDefaultWhenClusterMovedOn verifies the
+// staleness guard on the default rule: if the cluster moved to another auto
+// failure domain since the switch was decided (the transition's lock lease
+// expired mid-run and the reclaimer completed its own transition), the stale
+// switch must not revert it.
+func (s *osdSuite) TestSwitchFailureDomainSkipsDefaultWhenClusterMovedOn() {
+	r := mocks.NewRunner(s.T())
+
+	addCrushRuleLsExpectations(r)
+	// The default is now the rack rule: not the switch's source (osd) or
+	// target (host), so the default update must be skipped. No config set
+	// expectation: issuing one fails the test.
+	addDefaultRuleLookupExpectations(r, "99", "microceph_auto_rack")
+	// getPoolsForDomain("osd"): no pools on the osd rule, nothing to migrate.
+	addCrushRuleLsExpectations(r)
+	addCrushRuleDumpExpectations(r)
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`[]`, nil).Once()
+
+	common.ProcessExec = r
+
+	mgr := NewOSDManager(nil)
+	mgr.fs = afero.NewMemMapFs()
+	err := mgr.switchFailureDomain("osd", "host")
+	assert.NoError(s.T(), err)
+}
+
+// TestSwitchFailureDomainSkipsPoolThatMovedAway verifies the per-pool
+// staleness guard: a pool that was on the source rule when the pool list was
+// captured but has since moved (a concurrent transition migrated it, or an
+// operator set a custom rule) must not be dragged back.
+func (s *osdSuite) TestSwitchFailureDomainSkipsPoolThatMovedAway() {
+	r := mocks.NewRunner(s.T())
+
+	addCrushRuleLsExpectations(r)
+	// The default is still the osd rule, so the default update goes through.
+	addDefaultRuleLookupExpectations(r, "77", "microceph_auto_osd")
+	addCrushRuleDumpExpectations(r)
+	addSetDefaultRuleExpectations(r)
+	addCrushRuleLsExpectations(r)
+	addCrushRuleDumpExpectations(r)
+	// foopool was on the osd rule (77) when listed...
+	addCrushRuleLsJsonExpectations(r)
+	// ...but has since moved to the rack rule: the migration must be skipped.
+	// No pool set expectation: issuing one fails the test.
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_rack")
 
 	common.ProcessExec = r
 
@@ -332,6 +408,8 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 	// "host") expectations — all in call order, see TestSwitchHostFailureDomain.
 	addIsOnRackRuleExpectations(r, "77", "99")
 	addCrushRuleLsExpectations(r)
+	// staleness guard: resolve the current default rule (id 77 = osd rule)
+	addDefaultRuleLookupExpectations(r, "77", "microceph_auto_osd")
 	// dump crush rules to resolve names
 	addCrushRuleDumpExpectations(r)
 	// set default crush rule
@@ -342,6 +420,8 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 	addCrushRuleDumpExpectations(r)
 	// list pools
 	addCrushRuleLsJsonExpectations(r)
+	// staleness guard: the pool is still on the osd rule
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_osd")
 	// set pool crush rule
 	addOsdPoolSetExpectations(r)
 
@@ -390,6 +470,9 @@ func (s *osdSuite) TestUpdateFailureDomainAdoptedClusterNoAutoRules() {
 	// it as default. getPoolsForDomain("osd") finds no osd rule, so there is
 	// nothing to migrate and no further calls are expected.
 	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once() // create-replicated host
+	// staleness guard: the default is the cluster's own (custom) rule, which
+	// is not an auto rule, so the default update goes through.
+	addDefaultRuleLookupExpectations(r, "1", "replicated_rule")
 	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`{"rule_id": 2}`, nil).Once() // dump host
 	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once() // config set default
 
@@ -431,10 +514,14 @@ func (s *osdSuite) TestUpdateFailureDomainLegacyClusterStuckAtOsd() {
 	// switchFailureDomain("osd", "host"): create the missing host rule, set
 	// it as default, then migrate the pool on the osd rule.
 	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()                // create-replicated host
+	// staleness guard: the default is still the osd rule.
+	addDefaultRuleLookupExpectations(r, "1", "microceph_auto_osd")
 	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`{"rule_id": 2}`, nil).Once()    // dump host
 	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()                // config set default
 	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`{"rule_id": 1}`, nil).Once()    // dump osd
 	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`[{"pool_name":"foopool","crush_rule":1}]`, nil).Once() // pool ls detail
+	// staleness guard: the pool is still on the osd rule.
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_osd")
 	r.On("RunCommand", tests.CmdAny("ceph", 6)...).Return("ok", nil).Once()                // pool set foopool
 
 	common.ProcessExec = r

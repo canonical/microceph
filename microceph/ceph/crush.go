@@ -96,6 +96,35 @@ func getCrushRuleID(name string) (string, error) {
 	return fmt.Sprintf("%v", val), nil // convert to string
 }
 
+// getCrushRuleName returns the name of the crush rule with the given numeric
+// ID, or an empty string if no rule with that ID exists.
+func getCrushRuleName(id string) (string, error) {
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "crush", "rule", "dump")
+	if err != nil {
+		return "", err
+	}
+	return gjson.Get(output, fmt.Sprintf("#(rule_id==%s).rule_name", id)).String(), nil
+}
+
+// getPoolCrushRule returns the name of the crush rule currently set on a pool.
+func getPoolCrushRule(pool string) (string, error) {
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "get", pool, "crush_rule", "-f", "json")
+	if err != nil {
+		return "", err
+	}
+	rule := gjson.Get(output, "crush_rule").String()
+	if rule == "" {
+		return "", fmt.Errorf("crush_rule not found in pool get output for pool %s", pool)
+	}
+	return rule, nil
+}
+
+// isAutoCrushRule reports whether name is one of the microceph auto failure
+// domain rules.
+func isAutoCrushRule(name string) bool {
+	return name == "microceph_auto_osd" || name == "microceph_auto_host" || name == "microceph_auto_rack"
+}
+
 // getPoolsForDomain returns a list of pools that use a given crush failure domain
 func getPoolsForDomain(domain string) ([]string, error) {
 	var pools []string

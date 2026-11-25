@@ -179,6 +179,11 @@ func (s *topologySuite) TestUpdateTopologyAZ3OrMore() {
 	// by TestSwitchHostFailureDomain. Here we just stub the ceph commands.
 	// crush rule dump (6 args).
 	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", mock.Anything).Return(`{ "rule_id": 3 }`, nil).Maybe()
+	// staleness guard lookups: the current default rule id and the dump of
+	// all rules resolving it to the osd rule.
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Maybe()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump").Return(
+		`[{"rule_id":1,"rule_name":"microceph_auto_osd"},{"rule_id":2,"rule_name":"microceph_auto_host"},{"rule_id":3,"rule_name":"microceph_auto_rack"}]`, nil).Maybe()
 	// pool ls detail (6 args).
 	r.On("RunCommand", "ceph", "osd", "pool", "ls", "detail", "--format=json").Return("[]", nil).Maybe()
 	// crush rule ls (5 args).
@@ -288,11 +293,15 @@ func (s *topologySuite) TestUpdateFailureDomainFewerAZsSwitchesToHost() {
 	// "host") expectations — all in call order, see TestSwitchHostFailureDomain.
 	addIsOnRackRuleExpectations(r, "77", "99")
 	addCrushRuleLsExpectations(r)
+	// staleness guard: resolve the current default rule (id 77 = osd rule)
+	addDefaultRuleLookupExpectations(r, "77", "microceph_auto_osd")
 	addCrushRuleDumpExpectations(r)
 	addSetDefaultRuleExpectations(r)
 	addCrushRuleLsExpectations(r)
 	addCrushRuleDumpExpectations(r)
 	addCrushRuleLsJsonExpectations(r)
+	// staleness guard: the pool is still on the osd rule
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_osd")
 	addOsdPoolSetExpectations(r)
 
 	common.ProcessExec = r
@@ -326,11 +335,15 @@ func (s *topologySuite) TestUpdateFailureDomainNoAZs() {
 	// "host") expectations — all in call order, see TestSwitchHostFailureDomain.
 	addIsOnRackRuleExpectations(r, "77", "99")
 	addCrushRuleLsExpectations(r)
+	// staleness guard: resolve the current default rule (id 77 = osd rule)
+	addDefaultRuleLookupExpectations(r, "77", "microceph_auto_osd")
 	addCrushRuleDumpExpectations(r)
 	addSetDefaultRuleExpectations(r)
 	addCrushRuleLsExpectations(r)
 	addCrushRuleDumpExpectations(r)
 	addCrushRuleLsJsonExpectations(r)
+	// staleness guard: the pool is still on the osd rule
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_osd")
 	addOsdPoolSetExpectations(r)
 
 	common.ProcessExec = r

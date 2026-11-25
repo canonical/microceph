@@ -113,12 +113,15 @@ Test Add First OSD In AZ-B On Node Wrk2
     Wait For OSD Count Head    3
     Sleep    1s
 
-Test CRUSH Rule Stays OSD Level With Two AZs
-    [Documentation]    Verifies the CRUSH rule remains OSD-level with OSDs in two AZs (az-a, az-b).
+Test CRUSH Rule Upgraded To Host Level With Two AZs
+    [Documentation]    Verifies the CRUSH rule upgrades to host level once 3 nodes have OSDs,
+    ...    even with only two AZs (az-a, az-b): rack requires 3 AZs, but host is strictly
+    ...    safer than OSD. Regression coverage for issue #927 (AZ clusters with fewer
+    ...    than 3 zones stayed stuck at OSD level).
     [Tags]    crush    availability-zone
-    ${osd_rule_id}=    AZ Get Rule ID    microceph_auto_osd
+    ${host_rule_id}=    AZ Get Rule ID    microceph_auto_host
     ${default_rule}=    AZ Get Default Rule
-    Should Be Equal As Strings    ${default_rule}    ${osd_rule_id}    msg=Expected OSD rule with only 2 AZs
+    Should Be Equal As Strings    ${default_rule}    ${host_rule_id}    msg=Expected host rule with 3 nodes but only 2 AZs
 
 Test Add OSD In AZ-C On Node Wrk3
     [Documentation]    Adds /dev/sdia as an OSD on node-wrk3 (az-c) and waits for 4 OSDs.

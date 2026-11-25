@@ -335,10 +335,22 @@ func (m *OSDManager) CheckEncryptSupport() error {
 	return nil
 }
 
-// switchFailureDomain switches the crush rules failure domain from old to new
+// switchFailureDomain switches the default crush rule and any pools on the
+// old failure domain's auto rule to the new domain's auto rule, creating the
+// target rule first if it is missing (adopted clusters may not have it).
+//
+// The writes are guarded against stale holders of the failure domain
+// transition lock: a transition whose lease expired mid-run loses mutual
+// exclusion without noticing, and its remaining writes must not revert a
+// transition the lock reclaimer completed in the meantime. The default rule
+// is therefore only updated if it is still on the source rule or already on
+// the target rule (a custom default rule is overridden, as before), and each
+// pool is only migrated if it is still on the source rule. Skipped writes are
+// re-converged by the next transition run.
 func (m *OSDManager) switchFailureDomain(old string, new string) error {
 	var err error
 
+	oldRule := fmt.Sprintf("microceph_auto_%s", old)
 	newRule := fmt.Sprintf("microceph_auto_%s", new)
 	// Adopted clusters may not yet have the microceph auto rules, so we need
 	// to create the target rules so the switch doesn't fail on rule lookup.
@@ -349,10 +361,26 @@ func (m *OSDManager) switchFailureDomain(old string, new string) error {
 			return fmt.Errorf("failed to add crush rule %s: %w", newRule, err)
 		}
 	}
-	logger.Debugf("Setting default crush rule to %v", newRule)
-	err = setDefaultCrushRule(newRule)
+
+	currentDefault, err := getDefaultCrushRule()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get default crush rule: %w", err)
+	}
+	currentDefaultName, err := getCrushRuleName(currentDefault)
+	if err != nil {
+		return fmt.Errorf("failed to resolve default crush rule name: %w", err)
+	}
+	if isAutoCrushRule(currentDefaultName) && currentDefaultName != oldRule && currentDefaultName != newRule {
+		// The cluster moved to another auto failure domain since this
+		// transition decided to run: its lock lease expired mid-transition
+		// and the reclaimer completed its own transition. Don't revert it.
+		logger.Warnf("Not setting default crush rule to %s: the default moved to %s in the meantime", newRule, currentDefaultName)
+	} else {
+		logger.Debugf("Setting default crush rule to %v", newRule)
+		err = setDefaultCrushRule(newRule)
+		if err != nil {
+			return err
+		}
 	}
 
 	osdPools, err := getPoolsForDomain(old)
@@ -361,6 +389,17 @@ func (m *OSDManager) switchFailureDomain(old string, new string) error {
 		return err
 	}
 	for _, pool := range osdPools {
+		// The pool list may be stale for the same reason as the default rule
+		// above, and an operator may have moved the pool to a custom rule in
+		// the meantime: only migrate pools still on the source rule.
+		poolRule, err := getPoolCrushRule(pool)
+		if err != nil {
+			return fmt.Errorf("failed to get current crush rule of pool %s: %w", pool, err)
+		}
+		if poolRule != oldRule {
+			logger.Warnf("Not moving pool %s to crush rule %s: the pool is now on %s", pool, newRule, poolRule)
+			continue
+		}
 		logger.Debugf("Setting pool %v crush rule to %v", pool, newRule)
 		err = setPoolCrushRule(pool, newRule)
 		if err != nil {

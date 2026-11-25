@@ -32,6 +32,12 @@ var failureDomainLockRetrySleep = 500 * time.Millisecond
 // is exhausted.
 var ErrFailureDomainTransitionBusy = errors.New("failure domain transition in progress")
 
+// failureDomainUnlockTimeout bounds the lock release. The release runs with a
+// detached context: the request context may already be canceled when the
+// transition finishes, and a release that fails because of that leaves the
+// lock held until lease expiry, wedging transitions cluster-wide.
+const failureDomainUnlockTimeout = 30 * time.Second
+
 // lockFailureDomainTransitions acquires the cluster-wide failure domain
 // transition lock, waiting up to failureDomainTransitionTimeout for a
 // concurrent transition to finish. The returned token must be passed to
@@ -107,9 +113,16 @@ func serializedFailureDomainTransition(ctx context.Context, s mcTypes.State, fn 
 		return err
 	}
 	defer func() {
-		unlockErr := unlockFailureDomainTransitionsFunc(ctx, s, token)
+		// Release with a fresh detached deadline: the request context may be
+		// canceled by the time the transition finishes (client disconnect,
+		// request timeout), and a release that fails because of that leaves
+		// the lock held until lease expiry. Same pattern as the placement
+		// apply lock release.
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failureDomainUnlockTimeout)
+		defer cancel()
+		unlockErr := unlockFailureDomainTransitionsFunc(unlockCtx, s, token)
 		if unlockErr != nil {
-			logger.Warnf("failed to release failure domain transition lock: %v", unlockErr)
+			logger.Warnf("failed to release failure domain transition lock (another transition can reclaim it once the lease expires): %v", unlockErr)
 		}
 	}()
 	return fn()

@@ -32,11 +32,19 @@ type fakeCluster struct {
 	defaultRl  string
 	pools      map[string]string
 	lockHolder int64
-	denied     int
+	lockHeldAt time.Time
+	// lease bounds how long the lock may be held before it is reclaimable,
+	// mirroring failureDomainLease. Zero means the lock never expires.
+	lease  time.Duration
+	denied int
 
 	pauseArmed bool
-	pauseHit   chan struct{}
-	resume     chan struct{}
+	// pausePrefix/pauseLeft arm a one-shot pause at the pauseLeft-th command
+	// whose joined args start with pausePrefix.
+	pausePrefix string
+	pauseLeft   int
+	pauseHit    chan struct{}
+	resume      chan struct{}
 }
 
 func newFakeCluster(pools ...string) *fakeCluster {
@@ -59,16 +67,18 @@ func newFakeCluster(pools ...string) *fakeCluster {
 }
 
 // tryAcquire mirrors database.TryAcquireFailureDomainLock: a single atomic
-// decision, busy when a live holder exists.
+// decision, busy when a live holder exists, reclaiming the lock when the
+// holder's lease has expired (a lease of zero never expires).
 func (fc *fakeCluster) tryAcquire() (int64, bool) {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
-	if fc.lockHolder != 0 {
+	if fc.lockHolder != 0 && (fc.lease == 0 || time.Since(fc.lockHeldAt) < fc.lease) {
 		fc.denied++
 		return 0, false
 	}
 	token := time.Now().UnixNano()
 	fc.lockHolder = token
+	fc.lockHeldAt = time.Now()
 	return token, true
 }
 
@@ -124,8 +134,38 @@ func (fc *fakeCluster) armPause() {
 	fc.pauseArmed = true
 }
 
+// armPauseAt suspends the occurrence-th ceph command whose joined args start
+// with prefix — the pause point of the stale-transition regression tests —
+// until resumePause is called.
+func (fc *fakeCluster) armPauseAt(prefix string, occurrence int) {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	fc.pausePrefix = prefix
+	fc.pauseLeft = occurrence
+}
+
 func (fc *fakeCluster) resumePause() {
 	close(fc.resume)
+}
+
+// maybePause blocks when an armed pause matches the given command. The mutex
+// is not held while suspended so the other node's lock attempts proceed.
+func (fc *fakeCluster) maybePause(joined string) {
+	fc.mu.Lock()
+	armed := fc.pausePrefix != "" && strings.HasPrefix(joined, fc.pausePrefix)
+	if armed {
+		fc.pauseLeft--
+		if fc.pauseLeft > 0 {
+			armed = false
+		} else {
+			fc.pausePrefix = ""
+		}
+	}
+	fc.mu.Unlock()
+	if armed {
+		fc.pauseHit <- struct{}{}
+		<-fc.resume
+	}
 }
 
 // exec mutates/reads the fake cluster state, mirroring the ceph commands the
@@ -135,6 +175,7 @@ func (fc *fakeCluster) exec(name string, args []string) (string, error) {
 		return "", fmt.Errorf("unexpected command %s %v", name, args)
 	}
 	joined := strings.Join(args, " ")
+	fc.maybePause(joined)
 
 	switch {
 	case joined == "config get mon osd_pool_default_crush_rule":
@@ -144,6 +185,22 @@ func (fc *fakeCluster) exec(name string, args []string) (string, error) {
 
 	case joined == "osd crush rule ls":
 		return "microceph_auto_osd\nmicroceph_auto_host\nmicroceph_auto_rack", nil
+
+	case joined == "osd crush rule dump":
+		// Dump of all rules, used by the switch's staleness guard to resolve
+		// the default rule id to a name.
+		fc.mu.Lock()
+		defer fc.mu.Unlock()
+		type ruleEntry struct {
+			RuleID   int    `json:"rule_id"`
+			RuleName string `json:"rule_name"`
+		}
+		out := []ruleEntry{}
+		for name, id := range fc.ruleIDs {
+			out = append(out, ruleEntry{RuleID: id, RuleName: name})
+		}
+		b, err := json.Marshal(out)
+		return string(b), err
 
 	case strings.HasPrefix(joined, "osd crush rule dump "):
 		rule := args[len(args)-1]
@@ -205,6 +262,17 @@ func (fc *fakeCluster) exec(name string, args []string) (string, error) {
 		b, err := json.Marshal(out)
 		return string(b), err
 
+	case strings.HasPrefix(joined, "osd pool get "):
+		// args: osd pool get <pool> crush_rule -f json
+		fc.mu.Lock()
+		defer fc.mu.Unlock()
+		pool := args[3]
+		rule, ok := fc.pools[pool]
+		if !ok {
+			return "", fmt.Errorf("no such pool %s", pool)
+		}
+		return fmt.Sprintf(`{"crush_rule": %q}`, rule), nil
+
 	case strings.HasPrefix(joined, "osd pool set "):
 		// args: osd pool set <pool> crush_rule <rule>
 		fc.mu.Lock()
@@ -241,15 +309,10 @@ func (r *raceRunner) RunCommandContext(_ context.Context, name string, args ...s
 	return r.fc.exec(name, args)
 }
 
-// TestUpdateFailureDomainSerializedAgainstRackPromotion reproduces the race
-// behind the serialized failure domain transitions: a host transition that
-// has just captured its pool list must not revert a rack promotion another
-// member completes while it is suspended. With the transition lock stubbed to
-// a no-op (the pre-serialization behavior), node B's promotion runs inside
-// node A's window and node A's stale switch reverts it; with serialization,
-// B is denied while A holds the lock and completes cleanly afterwards.
-func TestUpdateFailureDomainSerializedAgainstRackPromotion(t *testing.T) {
-	fc := newFakeCluster(".mgr", "cinder-ceph")
+// wireFakeCluster routes ceph commands and the failure domain transition lock
+// through fc and shortens the lock waits so a failing run is quick.
+func wireFakeCluster(t *testing.T, fc *fakeCluster) (nodeA, nodeB *mocks.MockState, bAZs azData) {
+	t.Helper()
 
 	origExec := common.ProcessExec
 	common.ProcessExec = &raceRunner{fc: fc}
@@ -267,7 +330,6 @@ func TestUpdateFailureDomainSerializedAgainstRackPromotion(t *testing.T) {
 		unlockFailureDomainTransitionsFunc = origUnlock
 	})
 
-	// Short lock waits keep a failing run quick; the test itself is synchronous.
 	origTimeout := failureDomainTransitionTimeout
 	origSleep := failureDomainLockRetrySleep
 	failureDomainTransitionTimeout = 50 * time.Millisecond
@@ -284,13 +346,25 @@ func TestUpdateFailureDomainSerializedAgainstRackPromotion(t *testing.T) {
 	t.Cleanup(func() { database.MemberCounter = origCounter })
 
 	u := api.NewURL()
-	nodeA := &mocks.MockState{URL: u, ClusterName: "node-a"}
-	nodeB := &mocks.MockState{URL: u, ClusterName: "node-b"}
-
-	bAZs := azData{
+	nodeA = &mocks.MockState{URL: u, ClusterName: "node-a"}
+	nodeB = &mocks.MockState{URL: u, ClusterName: "node-b"}
+	bAZs = azData{
 		hostAZ:    "az-a",
 		uniqueAZs: map[string]bool{"az-a": true, "az-b": true, "az-c": true},
 	}
+	return nodeA, nodeB, bAZs
+}
+
+// TestUpdateFailureDomainSerializedAgainstRackPromotion reproduces the race
+// behind the serialized failure domain transitions: a host transition that
+// has just captured its pool list must not revert a rack promotion another
+// member completes while it is suspended. With the transition lock stubbed to
+// a no-op (the pre-serialization behavior), node B's promotion runs inside
+// node A's window and node A's stale switch reverts it; with serialization,
+// B is denied while A holds the lock and completes cleanly afterwards.
+func TestUpdateFailureDomainSerializedAgainstRackPromotion(t *testing.T) {
+	fc := newFakeCluster(".mgr", "cinder-ceph")
+	nodeA, nodeB, bAZs := wireFakeCluster(t, fc)
 
 	// Node A decides "not on rack" and starts its host switch, then suspends
 	// right after capturing the pool list, holding the transition lock.
@@ -332,5 +406,109 @@ func TestUpdateFailureDomainSerializedAgainstRackPromotion(t *testing.T) {
 		"the stale host transition must not win; the cluster must end on rack")
 	for pool, rule := range final.pools {
 		assert.Equal(t, "microceph_auto_rack", rule, "pool %s must end on the rack rule", pool)
+	}
+}
+
+// TestStaleHostTransitionCannotRevertDefaultRule is the regression test for
+// the default-rule staleness guard in switchFailureDomain: node A's host
+// transition suspends after its decision but before any of its writes, its
+// lock lease expires, and node B reclaims the lock and completes a rack
+// promotion. When A resumes, its stale switch must not set the default rule
+// back to host.
+func TestStaleHostTransitionCannotRevertDefaultRule(t *testing.T) {
+	fc := newFakeCluster(".mgr", "cinder-ceph")
+	// The lock is reclaimable once the holder's lease has expired.
+	fc.lease = time.Millisecond
+	nodeA, nodeB, bAZs := wireFakeCluster(t, fc)
+
+	// Node A suspends at the second rule listing: the first is IsOnRackRule's,
+	// so A has decided on the host switch but has not run any of it yet.
+	fc.armPauseAt("osd crush rule ls", 2)
+	nodeADone := make(chan error, 1)
+	go func() {
+		mgrA := NewOSDManager(nodeA)
+		nodeADone <- mgrA.updateFailureDomain(context.Background(), nodeA)
+	}()
+	select {
+	case <-fc.pauseHit:
+	case err := <-nodeADone:
+		t.Fatalf("node A finished before reaching the switch: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for node A to reach the switch")
+	}
+
+	// Let node A's lease expire, then node B reclaims the lock and completes
+	// the rack promotion.
+	time.Sleep(20 * time.Millisecond)
+	mgrB := NewOSDManager(nodeB)
+	errB := mgrB.promoteToRackFailureDomain(context.Background(), bAZs)
+	assert.NoError(t, errB)
+
+	mid := fc.snap()
+	assert.Equal(t, "microceph_auto_rack", mid.defaultRl,
+		"rack promotion must have completed while node A was suspended")
+
+	// Node A resumes its stale host switch.
+	fc.resumePause()
+	assert.NoError(t, <-nodeADone)
+
+	final := fc.snap()
+	assert.Equal(t, "microceph_auto_rack", final.defaultRl,
+		"the stale host transition must not revert the default rule to host")
+	for pool, rule := range final.pools {
+		assert.Equal(t, "microceph_auto_rack", rule, "pool %s must stay on the rack rule", pool)
+	}
+}
+
+// TestStaleHostTransitionCannotMovePoolsBack is the regression test for the
+// per-pool staleness guard in switchFailureDomain: node A's host transition
+// suspends right after capturing the pool list, its lock lease expires, and
+// node B reclaims the lock and migrates the pools to the rack rule. When A
+// resumes, its stale pool list must not drag the pools back to host.
+func TestStaleHostTransitionCannotMovePoolsBack(t *testing.T) {
+	fc := newFakeCluster(".mgr", "cinder-ceph")
+	// The lock is reclaimable once the holder's lease has expired.
+	fc.lease = time.Millisecond
+	nodeA, nodeB, bAZs := wireFakeCluster(t, fc)
+
+	// Node A suspends right after capturing the pool list, holding the lock.
+	fc.armPause()
+	nodeADone := make(chan error, 1)
+	go func() {
+		mgrA := NewOSDManager(nodeA)
+		nodeADone <- mgrA.updateFailureDomain(context.Background(), nodeA)
+	}()
+	select {
+	case <-fc.pauseHit:
+	case err := <-nodeADone:
+		t.Fatalf("node A finished before reaching the pool capture point: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for node A to reach the pool capture point")
+	}
+
+	// Let node A's lease expire; node B reclaims the lock, moves the pools to
+	// the rack rule and sets the default to rack.
+	time.Sleep(20 * time.Millisecond)
+	mgrB := NewOSDManager(nodeB)
+	errB := mgrB.promoteToRackFailureDomain(context.Background(), bAZs)
+	assert.NoError(t, errB)
+
+	mid := fc.snap()
+	assert.Equal(t, "microceph_auto_rack", mid.defaultRl,
+		"rack promotion must have completed while node A was suspended")
+	for pool, rule := range mid.pools {
+		assert.Equal(t, "microceph_auto_rack", rule, "pool %s must be on rack before node A resumes", pool)
+	}
+
+	// Node A resumes with its stale pool list.
+	fc.resumePause()
+	assert.NoError(t, <-nodeADone)
+
+	final := fc.snap()
+	assert.Equal(t, "microceph_auto_rack", final.defaultRl,
+		"the stale host transition must not revert the default rule to host")
+	for pool, rule := range final.pools {
+		assert.Equal(t, "microceph_auto_rack", rule,
+			"the stale host transition must not move pool %s back to host", pool)
 	}
 }
