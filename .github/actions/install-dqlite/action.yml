@@ -1,0 +1,34 @@
+name: install-dqlite
+description: Install libdqlite1.18-dev from ppa:dqlite/dev, retrying transient apt and Launchpad failures.
+
+runs:
+  using: composite
+  steps:
+    - name: Install libdqlite1.18-dev
+      shell: bash
+      run: |
+        set -uo pipefail
+
+        # The runner image ships repositories this job never installs from.
+        # When one of them is down (packages.microsoft.com answering 403),
+        # apt-get update exits 100 even though every index we need was
+        # fetched. Match on the URL rather than on file names, which differ
+        # between runner image versions.
+        grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
+
+        # add-apt-repository calls the Launchpad API and apt-get can catch a
+        # mirror mid-sync, so retry the whole sequence rather than one command.
+        for attempt in 1 2 3; do
+          if sudo add-apt-repository ppa:dqlite/dev -y --no-update &&
+            sudo apt-get update &&
+            sudo apt-get install -y libdqlite1.18-dev; then
+            exit 0
+          fi
+          if [ "$attempt" -lt 3 ]; then
+            echo "::warning::libdqlite1.18-dev install attempt ${attempt} failed, retrying in 15s"
+            sleep 15
+          fi
+        done
+
+        echo "::error::failed to install libdqlite1.18-dev after 3 attempts"
+        exit 1

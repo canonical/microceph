@@ -19,15 +19,32 @@ jobs:
           fetch-depth: 0
 
       - name: Install dependencies
-        run: |
-          sudo add-apt-repository ppa:dqlite/dev -y --no-update
-          sudo apt-get update
-          sudo apt-get install -y libdqlite1.18-dev
+        uses: ./.github/actions/install-dqlite
 
       - name: Install Go (1.27)
         uses: actions/setup-go@v5
         with:
           go-version: 1.27.x
+          # go.sum lives in microceph/, not at the repository root where
+          # setup-go looks by default, so the module cache was never restored.
+          cache-dependency-path: microceph/go.sum
+
+      - name: Download Go modules
+        working-directory: microceph
+        run: |
+          # GOPROXY only falls back to direct on 404/410, so a transient
+          # proxy.golang.org stream error would otherwise fail the job.
+          for attempt in 1 2 3; do
+            if go mod download; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::go mod download attempt ${attempt} failed, retrying in 15s"
+              sleep 15
+            fi
+          done
+          echo "::error::go mod download failed after 3 attempts"
+          exit 1
 
       - name: Install tox
         run: pipx install tox
@@ -57,15 +74,32 @@ jobs:
           fetch-depth: 0
 
       - name: Install dependencies
-        run: |
-          sudo add-apt-repository ppa:dqlite/dev -y --no-update
-          sudo apt-get update
-          sudo apt-get install -y libdqlite1.18-dev
+        uses: ./.github/actions/install-dqlite
 
       - name: Install Go (1.27)
         uses: actions/setup-go@v5
         with:
           go-version: 1.27.x
+          # go.sum lives in microceph/, not at the repository root where
+          # setup-go looks by default, so the module cache was never restored.
+          cache-dependency-path: microceph/go.sum
+
+      - name: Download Go modules
+        working-directory: microceph
+        run: |
+          # GOPROXY only falls back to direct on 404/410, so a transient
+          # proxy.golang.org stream error would otherwise fail the job.
+          for attempt in 1 2 3; do
+            if go mod download; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::go mod download attempt ${attempt} failed, retrying in 15s"
+              sleep 15
+            fi
+          done
+          echo "::error::go mod download failed after 3 attempts"
+          exit 1
 
       - name: Install tox
         run: pipx install tox
