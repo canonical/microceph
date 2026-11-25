@@ -1,7 +1,9 @@
 package ceph
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,7 +24,13 @@ func TestClusterRemove(t *testing.T) {
 }
 
 func (s *clusterRemoveSuite) SetupTest() {
-
+	// Tests that need a live quorum answer override this; by default the
+	// remaining monitors keep quorum.
+	orig := checkMonRemovalQuorumFunc
+	s.T().Cleanup(func() { checkMonRemovalQuorumFunc = orig })
+	checkMonRemovalQuorumFunc = func(ctx context.Context, hostname string) error {
+		return nil
+	}
 }
 
 // TestRemoveNode tests the happy path of node removal
@@ -49,7 +57,7 @@ func (s *clusterRemoveSuite) TestRemoveNode() {
 	)
 	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(nil).Once()
 
-	err := removeNode(nil, "foonode", false)
+	err := removeNode(context.Background(), nil, "foonode", false)
 
 	assert.NoError(s.T(), err)
 }
@@ -66,7 +74,7 @@ func (s *clusterRemoveSuite) TestRemoveNodeWithDisks() {
 		},
 	}, nil).Once()
 
-	err := removeNode(nil, "foonode", false)
+	err := removeNode(context.Background(), nil, "foonode", false)
 
 	assert.Error(s.T(), err)
 }
@@ -88,7 +96,7 @@ func (s *clusterRemoveSuite) TestRemoveNodeLastMon() {
 		nil,
 	)
 
-	err := removeNode(nil, "foonode", false)
+	err := removeNode(context.Background(), nil, "foonode", false)
 
 	assert.Error(s.T(), err)
 }
@@ -114,7 +122,68 @@ func (s *clusterRemoveSuite) TestRemoveNodeThreeToTwo() {
 	m.On("DeleteService", mock.Anything, "foonode", "mgr").Return(nil).Once()
 	m.On("DeleteService", mock.Anything, "foonode", "mds").Return(nil).Once()
 
-	err := removeNode(nil, "foonode", false)
+	err := removeNode(context.Background(), nil, "foonode", false)
+
+	assert.NoError(s.T(), err)
+}
+
+// TestRemoveNodeQuorumLossRefusedBeforeTeardown tests that when removing the
+// node's mon would lose quorum, the removal is refused before any of the
+// node's services are deleted.
+func (s *clusterRemoveSuite) TestRemoveNodeQuorumLossRefusedBeforeTeardown() {
+	m := mocks.NewClientInterface(s.T())
+
+	client.MClient = m
+	m.On("GetClusterMembers", mock.Anything).Return([]string{"foonode", "barnode", "quuxnode"}, nil).Once()
+	m.On("GetDisks", mock.Anything).Return(types.Disks{}, nil).Once()
+
+	var services types.Services
+	for _, node := range []string{"foonode", "barnode", "quuxnode"} {
+		for _, service := range []string{"mon", "mgr", "mds"} {
+			services = append(services, types.Service{Service: service, Location: node})
+		}
+	}
+	// No DeleteService expectation: the mock fails the test if any service
+	// is torn down.
+	m.On("GetServices", mock.Anything).Return(services, nil).Once()
+
+	var checked string
+	checkMonRemovalQuorumFunc = func(ctx context.Context, hostname string) error {
+		checked = hostname
+		return fmt.Errorf("%w: quorum would be lost", ErrKeepOneInvariant)
+	}
+
+	err := removeNode(context.Background(), nil, "foonode", false)
+
+	assert.ErrorIs(s.T(), err, ErrKeepOneInvariant)
+	assert.Equal(s.T(), "foonode", checked)
+}
+
+// TestRemoveNodeWithoutMonSkipsQuorumCheck tests that removing a node that
+// runs no mon does not consult the monitor quorum.
+func (s *clusterRemoveSuite) TestRemoveNodeWithoutMonSkipsQuorumCheck() {
+	m := mocks.NewClientInterface(s.T())
+
+	client.MClient = m
+	m.On("GetClusterMembers", mock.Anything).Return([]string{"foonode", "barnode"}, nil).Once()
+	m.On("GetDisks", mock.Anything).Return(types.Disks{}, nil).Once()
+	m.On("GetServices", mock.Anything).Return(
+		types.Services{
+			{Service: "mgr", Location: "foonode"},
+			{Service: "mon", Location: "barnode"},
+			{Service: "mgr", Location: "barnode"},
+			{Service: "mds", Location: "barnode"},
+		},
+		nil,
+	).Twice()
+	m.On("DeleteService", mock.Anything, "foonode", "mgr").Return(nil).Once()
+
+	checkMonRemovalQuorumFunc = func(ctx context.Context, hostname string) error {
+		s.T().Errorf("unexpected quorum check for %q", hostname)
+		return nil
+	}
+
+	err := removeNode(context.Background(), nil, "foonode", false)
 
 	assert.NoError(s.T(), err)
 }
@@ -137,7 +206,7 @@ func (s *clusterRemoveSuite) TestRemoveNodeLastMgr() {
 		nil,
 	).Once()
 
-	err := removeNode(nil, "foonode", false)
+	err := removeNode(context.Background(), nil, "foonode", false)
 
 	assert.ErrorContains(s.T(), err, "Insufficient non OSD services")
 }
@@ -159,7 +228,7 @@ func (s *clusterRemoveSuite) TestRemoveNodeForce() {
 	)
 	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(nil).Once()
 
-	err := removeNode(nil, "foonode", true)
+	err := removeNode(context.Background(), nil, "foonode", true)
 
 	assert.NoError(s.T(), err)
 }
@@ -182,7 +251,7 @@ func (s *clusterRemoveSuite) TestRemoveNodeReturnsServiceDeletionFailure() {
 	monSafetyErr := errors.New("monitor removal would lose quorum")
 	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(monSafetyErr).Once()
 
-	err := removeNode(nil, "foonode", false)
+	err := removeNode(context.Background(), nil, "foonode", false)
 
 	assert.ErrorIs(s.T(), err, monSafetyErr)
 	assert.ErrorContains(s.T(), err, `failed to delete service "mon" on node "foonode"`)
@@ -202,7 +271,7 @@ func (s *clusterRemoveSuite) TestRemoveNodeForceSuppressesServiceDeletionFailure
 	m.On("DeleteService", mock.Anything, "foonode", "mon").Return(monSafetyErr).Once()
 	m.On("DeleteService", mock.Anything, "foonode", "mgr").Return(mgrDeleteErr).Once()
 
-	err := removeNode(nil, "foonode", true)
+	err := removeNode(context.Background(), nil, "foonode", true)
 
 	assert.NoError(s.T(), err)
 }

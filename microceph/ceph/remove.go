@@ -23,7 +23,7 @@ func PreRemove(m *microcluster.MicroCluster) func(ctx context.Context, s mcTypes
 			return err
 		}
 
-		err = removeNode(cli, s.Name(), force)
+		err = removeNode(ctx, cli, s.Name(), force)
 		if err != nil {
 			return err
 		}
@@ -56,12 +56,16 @@ func EnsureNonOsdSvcEnough(services types.Services, nodeName string, minMon int,
 	return nil
 }
 
-func removeNode(cli mcTypes.Client, node string, force bool) error {
+// checkMonRemovalQuorumFunc is injectable so tests can exercise the
+// pre-remove checks without a live Ceph cluster.
+var checkMonRemovalQuorumFunc = checkMonRemovalQuorum
+
+func removeNode(ctx context.Context, cli mcTypes.Client, node string, force bool) error {
 	logger.Debugf("Removing cluster member %v, force: %v", node, force)
 
 	// check prerquisites unless we're forcing
 	if !force {
-		err := checkPrerequisites(cli, node)
+		err := checkPrerequisites(ctx, cli, node)
 		if err != nil {
 			return err
 		}
@@ -80,7 +84,7 @@ func removeNode(cli mcTypes.Client, node string, force bool) error {
 	return nil
 }
 
-func checkPrerequisites(cli mcTypes.Client, name string) error {
+func checkPrerequisites(ctx context.Context, cli mcTypes.Client, name string) error {
 	// check if member exists
 	clusterMembers, err := client.MClient.GetClusterMembers(cli)
 	if err != nil {
@@ -119,17 +123,37 @@ func checkPrerequisites(cli mcTypes.Client, name string) error {
 	}
 
 	// check if the remaining non OSD services is enough to maintain a healthy cluster.
-	// Only the last mon is guarded here. Removing a mon shrinks the monmap, and
-	// the mon removal itself (ensureMonAbsent) refuses to proceed unless the
-	// remaining monitors keep a quorum of the resulting map. Requiring three
-	// remaining mons made it impossible to scale a three member cluster down to
-	// two without --force.
+	// Only the last mon is guarded by count. Removing a mon shrinks the monmap,
+	// so what matters is whether the remaining monitors keep a quorum of the
+	// resulting map, which is checked below. Requiring three remaining mons made
+	// it impossible to scale a three member cluster down to two without --force.
 	err = EnsureNonOsdSvcEnough(services, name, 1, 1, 1)
 	if err != nil {
 		return fmt.Errorf("Insufficient non OSD services: %v", err)
 	}
 
+	// The mon removal (ensureMonAbsent) enforces the same quorum rule, but
+	// deleteNodeServices keeps tearing down this node's other services after
+	// a mon error. Check quorum here so a degraded cluster is refused before
+	// anything is removed.
+	if hasService(services, name, "mon") {
+		err = checkMonRemovalQuorumFunc(ctx, name)
+		if err != nil {
+			return fmt.Errorf("Cannot remove monitor on node %v: %w", name, err)
+		}
+	}
+
 	return nil
+}
+
+// hasService reports whether node runs service according to services.
+func hasService(services types.Services, node string, service string) bool {
+	for _, svc := range services {
+		if svc.Location == node && svc.Service == service {
+			return true
+		}
+	}
+	return false
 }
 
 func deleteNodeServices(cli mcTypes.Client, name string) error {
