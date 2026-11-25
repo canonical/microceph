@@ -41,7 +41,7 @@ the target key type, which defaults to the cluster's
 daemon and the command tracks its progress and reports the final outcome.
 
 The rotation will be paused when a blocker is encountered, for example by
-unmanaged credentials, incompatible client sessions or a pending
+credentials unknown to the snap, incompatible client sessions or a pending
 ``client.admin`` rotation. Re-running the command with the same key type
 resumes the paused rotation.
 
