@@ -28,6 +28,11 @@ func shrinkDaemonRemovalVerify(t *testing.T) {
 
 func TestVerifyControlDaemonAbsentReturnsOnceAbsent(t *testing.T) {
 	shrinkDaemonRemovalVerify(t)
+	// The daemon is only reported absent on the third poll. On a loaded host
+	// the 5ms poll timers can fire late enough that two waits overrun the 30ms
+	// window, so this test, which does not exercise the timeout, gets ample
+	// headroom. The loop still returns as soon as the third poll succeeds.
+	controlDaemonRemovalVerifyTimeout = 10 * time.Second
 	calls := 0
 	presence := func(_ context.Context, _ string) (bool, error) {
 		calls++
