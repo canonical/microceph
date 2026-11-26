@@ -88,7 +88,7 @@ func unlockFailureDomainTransitions(ctx context.Context, s mcTypes.State, token 
 		return fmt.Errorf("failed to release failure domain transition lock: %w", err)
 	}
 	if !released {
-		logger.Warnf("failure domain transition lock was not held by this transition on release; its lease likely expired and another transition reclaimed it")
+		logger.Warnf("failure domain transition lock was not held by this transition on release; its lease likely expired mid-transition and another transition reclaimed it: this transition's writes may have interleaved with the reclaimer's — the next disk add or removal re-evaluates and re-converges the failure domain")
 	} else {
 		logger.Debugf("failure domain transition lock released (token=%d)", token)
 	}
@@ -107,6 +107,54 @@ var (
 // other members. The acquire error is returned as-is so callers can
 // distinguish a busy lock (ErrFailureDomainTransitionBusy) from a hard
 // failure and decide whether to skip or abort.
+//
+// # Fencing limitations and the residual stale-write window
+//
+// The lock is time-based: a holder whose lease expired is treated as
+// crashed and the next writer reclaims the lock. A holder that is merely
+// stalled (a hung ceph call, a suspended VM) rather than dead loses mutual
+// exclusion without noticing, and writes it issues after resuming could
+// revert a transition the reclaimer completed in the meantime.
+//
+// True fencing is not available here. Fencing requires the guarded store
+// to reject stale writes, and the ceph CLI offers no conditional write for
+// the guarded state: `ceph osd pool set <pool> crush_rule` and `ceph
+// config set mon osd_pool_default_crush_rule` are both unconditional.
+// Re-validating the lock token before each write does not help either:
+// the check and the write are still a non-atomic pair with the same
+// window, so a stall inside that gap defeats the check.
+//
+// The effective mitigation lives in switchFailureDomain: it re-reads the
+// current default rule and each pool's current rule immediately before
+// overwriting them, and skips writes that would revert a transition that
+// has already completed. A stale write then additionally requires the
+// stall to begin and end inside a single sub-millisecond check-then-write
+// gap, not anywhere in the multi-call transition.
+//
+// What remains is bounded and self-healing:
+//   - detection: a transition that lost its lock mid-flight is logged at
+//     release time;
+//   - re-convergence: every disk add re-runs the rack promotion and the
+//     host switch, and every removal re-runs the scale-down, so a
+//     superseded failure domain is repaired on the next disk add or
+//     removal. The only cost is transient rule churn and one PG remapping
+//     cycle, never data loss.
+//
+// # Hardening option not implemented: ceph call deadlines + reclaim grace
+//
+// If deployments turn out to expect long machine suspensions (e.g. VM
+// freeze/restore), one subcase could be fenced further: a holder stalled
+// *inside* a ceph call whose call outlives the lease and lands after the
+// reclaimer's takeover. Fencing it would require (a) hard deadlines on
+// every ceph call issued inside a transition — a refactor of the crush
+// helpers off the context-free RunCommand onto RunCommandContext with a
+// bounded context — and (b) a lock reclaimer that, upon acquiring an
+// *expired* lease, waits one max-call-duration before its first write so
+// the previous holder's in-flight calls have all timed out. Note this
+// still does not fence a holder suspended *between* the guard read and
+// the write (no call is in flight at all then); only a store-side
+// conditional write would close the window fully, so the residual gap is
+// accepted and documented rather than engineered around.
 func serializedFailureDomainTransition(ctx context.Context, s mcTypes.State, fn func() error) error {
 	token, err := lockFailureDomainTransitionsFunc(ctx, s)
 	if err != nil {

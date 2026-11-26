@@ -536,6 +536,100 @@ func (s *osdSuite) TestUpdateFailureDomainLegacyClusterStuckAtOsd() {
 	assert.NoError(s.T(), err)
 }
 
+// setupReconcileStaleRemoving returns the common fixtures for the stale
+// removal flag reconciliation tests: a state, a strict runner (any
+// unregistered ceph call fails), and the flag-write stubs.
+func (s *osdSuite) setupReconcileStaleRemoving() (*mocks.StateInterface, *mocks.Runner, *diskRemovingRecorder) {
+	u := api.NewURL()
+	state := &mocks.MockState{URL: u, ClusterName: "node-a"}
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(state).Maybe()
+
+	r := mocks.NewRunner(s.T())
+	common.ProcessExec = r
+
+	rec := &diskRemovingRecorder{countCmds: func() int { return len(r.Calls) }}
+	s.T().Cleanup(withDiskRemovingStubs(rec))
+	return si, r, rec
+}
+
+// TestReconcileStaleRemovingDisksNothingMarked verifies the fast path: with
+// no stale flags there is no lock acquisition and no ceph call.
+func (s *osdSuite) TestReconcileStaleRemovingDisksNothingMarked() {
+	si, _, rec := s.setupReconcileStaleRemoving()
+
+	acquired := false
+	origLock := lockFailureDomainTransitionsFunc
+	lockFailureDomainTransitionsFunc = func(_ context.Context, _ mcTypes.State) (int64, error) {
+		acquired = true
+		return 1, nil
+	}
+	s.T().Cleanup(func() { lockFailureDomainTransitionsFunc = origLock })
+
+	done, err := reconcileStaleRemovingDisksOnce(context.Background(), si, time.Now())
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), done)
+	assert.False(s.T(), acquired, "nothing flagged: the lock must not be acquired")
+	assert.Len(s.T(), rec.listCutoffs, 1, "only the fast-path listing, no re-list under the lock")
+}
+
+// TestReconcileStaleRemovingDisksClearsAliveKeepsPurged verifies the startup
+// reconciliation: the flag of a stale-marked OSD that is still in Ceph (its
+// removal rolled back with the crash) is cleared, while a purged OSD's row
+// stays flagged until a removal retry deletes it.
+func (s *osdSuite) TestReconcileStaleRemovingDisksClearsAliveKeepsPurged() {
+	si, r, rec := s.setupReconcileStaleRemoving()
+	defer withFailureDomainLockStub()()
+
+	rec.list = []int64{5, 6}
+	// osd.5 survived the crash, osd.6 was purged before it.
+	r.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[{"id":5,"type":"osd"}]}`, nil).Twice()
+
+	daemonStart := time.Now()
+	done, err := reconcileStaleRemovingDisksOnce(context.Background(), si, daemonStart)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), done)
+	assert.Equal(s.T(), []int64{5}, rec.cleared, "only the OSD still in Ceph is eligible again")
+
+	// The age cutoff must be the daemon start time in both listings (the
+	// fast path and the re-list under the lock).
+	assert.Equal(s.T(), []int64{daemonStart.UnixNano(), daemonStart.UnixNano()}, rec.listCutoffs)
+}
+
+// TestReconcileStaleRemovingDisksRetriesOnCephError verifies that a ceph
+// failure while verifying a stale flag aborts the pass without clearing
+// anything, so the outer loop retries once the monitors converge.
+func (s *osdSuite) TestReconcileStaleRemovingDisksRetriesOnCephError() {
+	si, r, rec := s.setupReconcileStaleRemoving()
+	defer withFailureDomainLockStub()()
+
+	rec.list = []int64{5}
+	r.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return("", fmt.Errorf("monitors are electing")).Once()
+
+	done, err := reconcileStaleRemovingDisksOnce(context.Background(), si, time.Now())
+	assert.Error(s.T(), err)
+	assert.False(s.T(), done)
+	assert.Empty(s.T(), rec.cleared, "an unverifiable flag must not be cleared")
+}
+
+// TestReconcileStaleRemovingDisksRetriesOnBusyLock verifies that a busy
+// transition lock just reschedules the reconciliation pass.
+func (s *osdSuite) TestReconcileStaleRemovingDisksRetriesOnBusyLock() {
+	si, _, rec := s.setupReconcileStaleRemoving()
+
+	rec.list = []int64{5}
+	origLock := lockFailureDomainTransitionsFunc
+	lockFailureDomainTransitionsFunc = func(_ context.Context, _ mcTypes.State) (int64, error) {
+		return 0, fmt.Errorf("%w: held", ErrFailureDomainTransitionBusy)
+	}
+	s.T().Cleanup(func() { lockFailureDomainTransitionsFunc = origLock })
+
+	done, err := reconcileStaleRemovingDisksOnce(context.Background(), si, time.Now())
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), done, "a busy lock means: not done, retry later")
+	assert.Empty(s.T(), rec.cleared)
+}
+
 // TestIsDowngradeNeededFalseWhenHostRuleAbsent verifies that the removal path
 // tolerates an absent host rule the same way the add path tolerates an absent
 // rack rule: an adopted/legacy cluster without microceph_auto_host can never
@@ -1307,11 +1401,53 @@ func (s *osdSuite) TestPurgeOSDFailsWhenPurgeCannotBeVerified() {
 	assert.ErrorContains(s.T(), err, "failed to check that osd.6 was purged")
 }
 
+// diskRemovingRecorder records the mark/clear calls the disk-row removal
+// flag stubs receive, plus how many ceph commands had run when the mark
+// happened (the mark must precede every destructive ceph step). The list
+// fields drive the stale-flag listing stub: list/listErr are its results and
+// listCutoffs records the cutoffs it was called with.
+type diskRemovingRecorder struct {
+	countCmds   func() int
+	marked      []int64
+	cmdsAtMark  []int
+	cleared     []int64
+	list        []int64
+	listErr     error
+	listCutoffs []int64
+}
+
+// withDiskRemovingStubs replaces the disk-row removal flag writes with
+// in-memory recorders, returning a restore function.
+func withDiskRemovingStubs(rec *diskRemovingRecorder) func() {
+	origMark := markDiskRemovingFunc
+	origClear := clearDiskRemovingFunc
+	origList := listRemovingDisksFunc
+	markDiskRemovingFunc = func(_ context.Context, _ mcTypes.State, osd int64) error {
+		rec.marked = append(rec.marked, osd)
+		rec.cmdsAtMark = append(rec.cmdsAtMark, rec.countCmds())
+		return nil
+	}
+	clearDiskRemovingFunc = func(_ context.Context, _ mcTypes.State, osd int64) error {
+		rec.cleared = append(rec.cleared, osd)
+		return nil
+	}
+	listRemovingDisksFunc = func(_ context.Context, _ mcTypes.State, markedBefore int64) ([]int64, error) {
+		rec.listCutoffs = append(rec.listCutoffs, markedBefore)
+		return rec.list, rec.listErr
+	}
+	return func() {
+		markDiskRemovingFunc = origMark
+		clearDiskRemovingFunc = origClear
+		listRemovingDisksFunc = origList
+	}
+}
+
 // removeOSDMocks is what doRemoveOSD talks to, see setupRemoveOSD.
 type removeOSDMocks struct {
 	runner   *mocks.Runner
 	osdQuery *mocks.OSDQueryInterface
 	state    *mocks.StateInterface
+	removing *diskRemovingRecorder
 }
 
 // setupRemoveOSD sets up what doRemoveOSD needs to remove osd with the safety checks bypassed: the
@@ -1327,6 +1463,9 @@ func (s *osdSuite) setupRemoveOSD(osd int64) removeOSDMocks {
 		osdQuery: mocks.NewOSDQueryInterface(t),
 		state:    mocks.NewStateInterface(t),
 	}
+	m.removing = &diskRemovingRecorder{countCmds: func() int { return len(m.runner.Calls) }}
+	restoreRemoving := withDiskRemovingStubs(m.removing)
+	t.Cleanup(restoreRemoving)
 	origExec := common.ProcessExec
 	origQuery := database.OSDQuery
 	common.ProcessExec = m.runner
@@ -1426,6 +1565,13 @@ func (s *osdSuite) TestDoRemoveOSDStopsProcessBeforeMarkingDown() {
 		"ceph osd ls -f json",
 	}, ranCommands(m.runner))
 	assert.NoDirExists(s.T(), getOSDDataPath(osd))
+
+	// The disk row was flagged as removing before any ceph command ran, and
+	// the successful removal never rolled the flag back (the row is deleted).
+	assert.Equal(s.T(), []int64{osd}, m.removing.marked)
+	assert.Equal(s.T(), []int{0}, m.removing.cmdsAtMark,
+		"the removing flag must be committed before any ceph command runs")
+	assert.Empty(s.T(), m.removing.cleared)
 }
 
 // TestDoRemoveOSDDoesNotMarkDownWhenKillFails ensures a failed stop preserves local state and
@@ -1435,6 +1581,10 @@ func (s *osdSuite) TestDoRemoveOSDDoesNotMarkDownWhenKillFails() {
 	m := s.setupRemoveOSD(osd)
 	m.expectInCrushTree(osd)
 	expectOSDStopFails(s.T(), m.runner, osd, fmt.Errorf("stop failed"))
+	// The failed removal verifies the rollback: the OSD is still in Ceph, so
+	// the removing flag on its disk row is cleared again.
+	tree := fmt.Sprintf(`{"nodes":[{"id":%d,"type":"osd"}]}`, osd)
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(tree, nil).Once()
 
 	err := doRemoveOSD(context.Background(), m.state, osd, true)
 	assert.ErrorContains(s.T(), err, "failed to stop")
@@ -1447,6 +1597,31 @@ func (s *osdSuite) TestDoRemoveOSDDoesNotMarkDownWhenKillFails() {
 	osdDataPath := getOSDDataPath(osd)
 	assert.FileExists(s.T(), osdReadyMarkerPath(osdDataPath))
 	assert.NoFileExists(s.T(), osdSuppressedReadyMarkerPath(osdDataPath))
+
+	assert.Equal(s.T(), []int64{osd}, m.removing.marked)
+	assert.Equal(s.T(), []int64{osd}, m.removing.cleared,
+		"a verified rollback (OSD still in Ceph) must restore the row's scaling eligibility")
+}
+
+// TestDoRemoveOSDKeepsRemovingFlagWhenOSDGone ensures a removal that fails
+// after the OSD disappeared from Ceph does not clear the removing flag: a
+// purged OSD must stay excluded from the scaling counts until a retry
+// completes the removal and deletes the row.
+func (s *osdSuite) TestDoRemoveOSDKeepsRemovingFlagWhenOSDGone() {
+	const osd = int64(7)
+	m := s.setupRemoveOSD(osd)
+	m.expectInCrushTree(osd)
+	expectOSDStopFails(s.T(), m.runner, osd, fmt.Errorf("stop failed"))
+	// The OSD vanished from the CRUSH tree in the meantime: the rollback
+	// check must not restore the row's eligibility.
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[]}`, nil).Once()
+
+	err := doRemoveOSD(context.Background(), m.state, osd, true)
+	assert.ErrorContains(s.T(), err, "stop failed")
+
+	assert.Equal(s.T(), []int64{osd}, m.removing.marked)
+	assert.Empty(s.T(), m.removing.cleared,
+		"an OSD that is gone from Ceph must stay excluded until a retry deletes the row")
 }
 
 // TestDoRemoveOSDMarksDownAgainWhenBootIsCommittedLate tests the failure behind the "osd.N is not
@@ -1601,7 +1776,8 @@ func (s *osdSuite) TestDoRemoveOSDFailsWhenOSDMapCannotBeRead() {
 	const osd = int64(7)
 	s.noWaitForPresence()
 	m := s.setupRemoveOSD(osd)
-	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[]}`, nil).Twice()
+	// The third tree lookup is the rollback verification of the failed removal.
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[]}`, nil).Times(3)
 	expectNoOSDProcess(s.T(), m.runner, osd)
 	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("", fmt.Errorf("monitors unreachable")).Once()
 
@@ -1612,6 +1788,10 @@ func (s *osdSuite) TestDoRemoveOSDFailsWhenOSDMapCannotBeRead() {
 	assert.DirExists(s.T(), osdDataPath)
 	assert.FileExists(s.T(), osdReadyMarkerPath(osdDataPath))
 	assert.NoFileExists(s.T(), osdSuppressedReadyMarkerPath(osdDataPath))
+
+	assert.Equal(s.T(), []int64{osd}, m.removing.marked)
+	assert.Empty(s.T(), m.removing.cleared,
+		"the OSD is not in Ceph, so the removing flag must stay until a retry deletes the row")
 }
 
 // TestRegisterOSD tests that the OSD is created in the osdmap with its on-disk fsid

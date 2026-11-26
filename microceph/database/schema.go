@@ -25,6 +25,7 @@ var SchemaExtensions = []cluster.Update{
 	schemaUpdate10,
 	schemaUpdate11,
 	schemaUpdate12,
+	schemaUpdate13,
 }
 
 // getClusterTableName returns the name of the table that holds the record of cluster members from sqlite_master.
@@ -374,5 +375,16 @@ INSERT INTO failure_domain_lock (id) VALUES (1);
   `
 	_, err := tx.ExecContext(ctx, stmt)
 
+	return err
+}
+
+// schemaUpdate13 adds a removing_since column to the disks table. OSDs whose
+// removal is in flight keep their row (cleanup and retries need it) but are
+// excluded from the failure domain scaling counts, so a concurrent disk add
+// cannot count a drained-but-not-yet-deleted OSD as a remaining host. The
+// marking time (unix nanoseconds, 0 when not being removed) lets the daemon
+// distinguish removal flags left by a crash from flags of removals in flight.
+func schemaUpdate13(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `ALTER TABLE disks ADD COLUMN removing_since INTEGER NOT NULL DEFAULT 0;`)
 	return err
 }

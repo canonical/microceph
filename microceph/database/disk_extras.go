@@ -30,10 +30,13 @@ type MemberDisk struct {
 
 var _ = api.ServerEnvironment{}
 
+// Both counts exclude disks flagged as removing: their OSDs are being drained
+// and must not count as remaining hosts for failure domain scaling.
 var membersDiskCnt = cluster.RegisterStmt(`
 SELECT core_cluster_members.name AS member, count(disks.id) AS num_disks
   FROM disks
   JOIN core_cluster_members ON disks.member_id = core_cluster_members.id
+  WHERE disks.removing_since = 0
   GROUP BY core_cluster_members.id
 `)
 
@@ -41,7 +44,7 @@ var membersDiskCntExclude = cluster.RegisterStmt(`
 SELECT core_cluster_members.name AS member, count(disks.id) AS num_disks
 FROM disks
 JOIN core_cluster_members ON disks.member_id = core_cluster_members.id
-WHERE disks.id != ?
+WHERE disks.id != ? AND disks.removing_since = 0
 GROUP BY core_cluster_members.id
 `)
 

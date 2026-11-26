@@ -362,9 +362,26 @@ func wireFakeCluster(t *testing.T, fc *fakeCluster) (nodeA, nodeB *mocks.MockSta
 // a no-op (the pre-serialization behavior), node B's promotion runs inside
 // node A's window and node A's stale switch reverts it; with serialization,
 // B is denied while A holds the lock and completes cleanly afterwards.
+// drainFailureDomainReconcile waits for any scheduled failure domain
+// reconciliation goroutine to finish. Tests must defer it AFTER deferring
+// the restores of the globals the goroutine uses (AZ data, lock funcs), so
+// the LIFO defer order lets the goroutine finish first.
+func drainFailureDomainReconcile(t *testing.T) {
+	assert.Eventually(t, func() bool { return !failureDomainReconcilePending.Load() },
+		5*time.Second, time.Millisecond, "the scheduled reconciliation must finish")
+}
+
 func TestUpdateFailureDomainSerializedAgainstRackPromotion(t *testing.T) {
 	fc := newFakeCluster(".mgr", "cinder-ceph")
 	nodeA, nodeB, bAZs := wireFakeCluster(t, fc)
+	// The busy path of node B's promotion schedules a reconciliation, which
+	// reads AZ data; give the goroutine short waits and let it finish before
+	// the test's cleanups restore the globals it uses.
+	defer withMockAZData(bAZs)()
+	defer drainFailureDomainReconcile(t)
+	origSleep2 := failureDomainReconcileSleep
+	failureDomainReconcileSleep = time.Millisecond
+	t.Cleanup(func() { failureDomainReconcileSleep = origSleep2 })
 
 	// Node A decides "not on rack" and starts its host switch, then suspends
 	// right after capturing the pool list, holding the transition lock.
@@ -407,6 +424,204 @@ func TestUpdateFailureDomainSerializedAgainstRackPromotion(t *testing.T) {
 	for pool, rule := range final.pools {
 		assert.Equal(t, "microceph_auto_rack", rule, "pool %s must end on the rack rule", pool)
 	}
+}
+
+// fakeDiskTable is an in-memory stand-in for the dqlite disks table: one row
+// per OSD, each flagged removing while its removal is in flight. The failure
+// domain scaling counts mirror membersDiskCnt by skipping removing rows
+// (one disk per member here, so rows stand in for members).
+type fakeDiskTable struct {
+	mu   sync.Mutex
+	rows map[int64]bool // osd id -> removing
+}
+
+func (t *fakeDiskTable) countExcluding(exclude int64) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := 0
+	for id, removing := range t.rows {
+		if id == exclude || removing {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// fakeMemberCounter implements database.MemberCounterInterface over a
+// fakeDiskTable, mirroring the scaling counts' exclusion of removing rows.
+type fakeMemberCounter struct {
+	table *fakeDiskTable
+}
+
+func (c *fakeMemberCounter) Count(_ context.Context, _ mcTypes.State) (int, error) {
+	return c.table.countExcluding(-1), nil
+}
+
+func (c *fakeMemberCounter) CountExclude(_ context.Context, _ mcTypes.State, exclude int64) (int, error) {
+	return c.table.countExcluding(exclude), nil
+}
+
+// TestScaleDownRemovingFlagPreventsReUpgrade is the regression test for the
+// removal/add race: node C's scale-down flags its disk row as removing under
+// the transition lock, and while the removal's cleanup keeps the row (purge,
+// wipe, config deletion), a concurrent disk add on node B must not count the
+// drained OSD as a third host and switch pools back to host failure domain,
+// leaving size-three pools with only two eligible hosts.
+func TestScaleDownRemovingFlagPreventsReUpgrade(t *testing.T) {
+	fc := newFakeCluster(".mgr", "cinder-ceph")
+	// The cluster is on host failure domain with the pools on the host rule.
+	fc.defaultRl = "microceph_auto_host"
+	for pool := range fc.pools {
+		fc.pools[pool] = "microceph_auto_host"
+	}
+
+	origExec := common.ProcessExec
+	common.ProcessExec = &raceRunner{fc: fc}
+	t.Cleanup(func() { common.ProcessExec = origExec })
+
+	origLock := lockFailureDomainTransitionsFunc
+	origUnlock := unlockFailureDomainTransitionsFunc
+	lockFailureDomainTransitionsFunc = fc.lockFunc
+	unlockFailureDomainTransitionsFunc = func(_ context.Context, _ mcTypes.State, token int64) error {
+		fc.release(token)
+		return nil
+	}
+	t.Cleanup(func() {
+		lockFailureDomainTransitionsFunc = origLock
+		unlockFailureDomainTransitionsFunc = origUnlock
+	})
+
+	// In-memory disks table: one OSD per member node-a/node-b/node-c.
+	table := &fakeDiskTable{rows: map[int64]bool{0: false, 1: false, 2: false}}
+
+	origMark := markDiskRemovingFunc
+	origClear := clearDiskRemovingFunc
+	markDiskRemovingFunc = func(_ context.Context, _ mcTypes.State, osd int64) error {
+		table.mu.Lock()
+		defer table.mu.Unlock()
+		if _, ok := table.rows[osd]; !ok {
+			return fmt.Errorf("no such osd.%d", osd)
+		}
+		table.rows[osd] = true
+		return nil
+	}
+	clearDiskRemovingFunc = func(_ context.Context, _ mcTypes.State, osd int64) error {
+		table.mu.Lock()
+		defer table.mu.Unlock()
+		table.rows[osd] = false
+		return nil
+	}
+	t.Cleanup(func() {
+		markDiskRemovingFunc = origMark
+		clearDiskRemovingFunc = origClear
+	})
+
+	origCounter := database.MemberCounter
+	database.MemberCounter = &fakeMemberCounter{table: table}
+	t.Cleanup(func() { database.MemberCounter = origCounter })
+
+	u := api.NewURL()
+	nodeB := &mocks.MockState{URL: u, ClusterName: "node-b"}
+	nodeC := &mocks.MockState{URL: u, ClusterName: "node-c"}
+	siC := mocks.NewStateInterface(t)
+	siC.On("ClusterState").Return(nodeC).Maybe()
+
+	// Node C removes its last OSD: the scale-down flags the row as removing
+	// and downgrades the failure domain to osd.
+	err := scaleDownFailureDomain(context.Background(), siC, 2)
+	assert.NoError(t, err)
+	mid := fc.snap()
+	assert.Equal(t, "microceph_auto_osd", mid.defaultRl)
+	assert.True(t, table.rows[2], "the scale-down must flag the disk row as removing")
+
+	// While C's removal cleanup keeps the row, a disk add on node B must not
+	// count the removing OSD: with only two eligible hosts there is no switch
+	// back to host failure domain.
+	mgrB := NewOSDManager(nodeB)
+	err = mgrB.updateFailureDomain(context.Background(), nodeB)
+	assert.NoError(t, err)
+
+	final := fc.snap()
+	assert.Equal(t, "microceph_auto_osd", final.defaultRl,
+		"the add must not switch back to host while the third host's removal is in flight")
+	for pool, rule := range final.pools {
+		assert.Equal(t, "microceph_auto_osd", rule,
+			"pool %s must not move back to host while the third host's removal is in flight", pool)
+	}
+}
+
+// TestBusyPromotionSchedulesReconcile is the regression test for the
+// busy-lock convergence gap: node A's host transition holds the lock past
+// node B's acquisition budget, so B's rack promotion is skipped (its disk
+// add still succeeds). The busy path must record a pending reconciliation
+// that acquires the lock after A releases it and converges the cluster to
+// rack without requiring another disk add.
+func TestBusyPromotionSchedulesReconcile(t *testing.T) {
+	fc := newFakeCluster(".mgr", "cinder-ceph")
+	nodeA, nodeB, bAZs := wireFakeCluster(t, fc)
+	defer withMockAZData(bAZs)()
+	defer drainFailureDomainReconcile(t)
+
+	// Short waits for the scheduled retry.
+	origAttempts := failureDomainReconcileAttempts
+	origSleep2 := failureDomainReconcileSleep
+	failureDomainReconcileAttempts = 20
+	failureDomainReconcileSleep = time.Millisecond
+	t.Cleanup(func() {
+		failureDomainReconcileAttempts = origAttempts
+		failureDomainReconcileSleep = origSleep2
+	})
+
+	// Node A starts its host transition and suspends mid-switch, holding the
+	// lock beyond node B's acquisition budget.
+	fc.armPause()
+	nodeADone := make(chan error, 1)
+	go func() {
+		mgrA := NewOSDManager(nodeA)
+		nodeADone <- mgrA.updateFailureDomain(context.Background(), nodeA)
+	}()
+	select {
+	case <-fc.pauseHit:
+	case err := <-nodeADone:
+		t.Fatalf("node A finished before reaching the pool capture point: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for node A to reach the pool capture point")
+	}
+
+	// Node B's rack promotion times out on the busy lock: the disk add
+	// succeeds anyway, and a reconciliation is scheduled.
+	mgrB := NewOSDManager(nodeB)
+	errB := mgrB.promoteToRackFailureDomain(context.Background(), bAZs)
+	assert.NoError(t, errB, "a busy lock must not fail the disk add")
+	assert.True(t, failureDomainReconcilePending.Load(), "the busy path must record a pending reconciliation")
+
+	mid := fc.snap()
+	assert.Equal(t, "microceph_auto_host", mid.defaultRl)
+
+	// Node A finishes and releases the lock; the scheduled reconciliation
+	// converges the cluster to rack on its own — no further disk add.
+	fc.resumePause()
+	assert.NoError(t, <-nodeADone)
+
+	assert.Eventually(t, func() bool {
+		s := fc.snap()
+		if s.defaultRl != "microceph_auto_rack" {
+			return false
+		}
+		for _, rule := range s.pools {
+			if rule != "microceph_auto_rack" {
+				return false
+			}
+		}
+		return true
+	}, 10*time.Second, 10*time.Millisecond,
+		"the scheduled reconciliation must converge the cluster to rack without another disk add")
+
+	// Let the scheduled goroutine exit before the test's cleanups restore the
+	// globals it uses.
+	assert.Eventually(t, func() bool { return !failureDomainReconcilePending.Load() },
+		5*time.Second, time.Millisecond, "the scheduled reconciliation must finish")
 }
 
 // TestStaleHostTransitionCannotRevertDefaultRule is the regression test for
