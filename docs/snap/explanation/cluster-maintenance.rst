@@ -1,3 +1,6 @@
+.. meta::
+   :description: How MicroCeph maintenance mode checks that a node can be taken down safely and how it brings the node into and out of maintenance.
+
 .. _cluster-maintenance:
 
 Maintenance Mode
@@ -26,8 +29,9 @@ Enable maintenance mode
 
 - Check if OSDs on the node are ``ok-to-stop`` to ensure sufficient redundancy to tolerate the loss
   of OSDs on the node.
-- Check if the number of running services is greater than the minimum (majority of MON, 1 MDS, 1 MGR)
-  required for quorum.
+- Check if the number of running services is greater than the minimum (majority of MON, 1 MGR)
+  required for quorum, and that enough MDS services remain to serve every active rank of every
+  CephFS file system (at least one MDS).
 - *(Optional)* Apply noout flag to prevent data migration from triggering during the planned
   maintenance slot. (default=True)
 - *(Optional)* Bring the OSDs down and disable the service (Default=False)
