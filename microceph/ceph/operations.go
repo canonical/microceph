@@ -130,7 +130,6 @@ func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
 		}
 	}
 
-	minMds := 1               // only need at least one: they operate as one active, the rest in standby
 	minMgr := 1               // only need at least one: they operate as one active, the rest in standby
 	minMon := totalMons/2 + 1 // a majority of ceph mon services must remain active to retain quorum
 
@@ -145,6 +144,14 @@ func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
 	activeMdss, err := getActiveMdss()
 	if err != nil {
 		return fmt.Errorf("Error getting active mds services: %v", err)
+	}
+
+	// A single MDS is not enough once the cluster serves more than one file
+	// system or a file system with several active ranks: every active rank
+	// needs its own MDS, so the remaining MDS services must cover them all.
+	minMds, err := getRequiredMdss()
+	if err != nil {
+		return fmt.Errorf("Error getting required mds services: %v", err)
 	}
 
 	activeServices := []types.Service{}
@@ -169,7 +176,7 @@ func (o *CheckNonOsdSvcEnoughOps) Run(name string) error {
 
 // DryRun prints out the action plan.
 func (o *CheckNonOsdSvcEnoughOps) DryRun(name string) string {
-	return fmt.Sprintf("Check if there are at least a majority of mon services, 1 mds service, and 1 mgr service in the cluster besides those in node '%s'", name)
+	return fmt.Sprintf("Check if there are at least a majority of mon services, enough mds services for the active ranks of every file system, and 1 mgr service in the cluster besides those in node '%s'", name)
 }
 
 // GetName returns the name of the action
