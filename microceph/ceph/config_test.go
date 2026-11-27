@@ -505,3 +505,38 @@ func (s *configSuite) TestCephConfFileRendersMultiSubnetPublicNetwork() {
 	assert.NoError(s.T(), err)
 	assert.Contains(s.T(), string(rendered), "public_network = "+multiSubnet)
 }
+
+// TestUpdateConfigRendersAdminKeyrings verifies that the refresh renders both
+// admin keyring files from the shared DB row. ceph.client.admin.keyring is
+// written at bootstrap time and comes first in Ceph's default keyring search
+// path, so leaving it stale keeps bootstrap nodes authenticating with a key
+// a rotation just revoked.
+func (s *configSuite) TestUpdateConfigRendersAdminKeyrings() {
+	s.CopyCephConfigs()
+
+	configMap := map[string]string{
+		"fsid":                 "test-fsid",
+		"public_network":       "10.0.0.0/24",
+		"keyring.client.admin": "test-admin-key",
+		"mon.host.1":           "192.168.123.11",
+	}
+	state := s.setupUpdateConfigMocks(configMap)
+
+	err := UpdateConfig(context.Background(), state)
+	assert.NoError(s.T(), err)
+
+	for _, name := range []string{"ceph.keyring", "ceph.client.admin.keyring"} {
+		secret, err := ParseKeyring(filepath.Join(s.Tmp, "SNAP_DATA", "conf", name))
+		assert.NoError(s.T(), err, name)
+		assert.Equal(s.T(), "test-admin-key", secret, name)
+	}
+
+	// An empty DB row (pre-bootstrap state) must not create a junk keyring.
+	os.Remove(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "ceph.client.admin.keyring"))
+	configMap["keyring.client.admin"] = ""
+	state = s.setupUpdateConfigMocks(configMap)
+	err = UpdateConfig(context.Background(), state)
+	assert.NoError(s.T(), err)
+	_, statErr := os.Stat(filepath.Join(s.Tmp, "SNAP_DATA", "conf", "ceph.client.admin.keyring"))
+	assert.True(s.T(), os.IsNotExist(statErr))
+}
