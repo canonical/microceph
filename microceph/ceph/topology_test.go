@@ -36,6 +36,23 @@ func withMockAZData(data azData) func() {
 	return func() { getAZData = orig }
 }
 
+// withFailureDomainLockStub replaces the cluster-wide failure domain
+// transition lock with a no-op stub, returning a restore function.
+func withFailureDomainLockStub() func() {
+	origLock := lockFailureDomainTransitionsFunc
+	origUnlock := unlockFailureDomainTransitionsFunc
+	lockFailureDomainTransitionsFunc = func(_ context.Context, _ mcTypes.State) (int64, error) {
+		return 1, nil
+	}
+	unlockFailureDomainTransitionsFunc = func(_ context.Context, _ mcTypes.State, _ int64) error {
+		return nil
+	}
+	return func() {
+		lockFailureDomainTransitionsFunc = origLock
+		unlockFailureDomainTransitionsFunc = origUnlock
+	}
+}
+
 // addCrushBucketExpectations sets up mock expectations for the 4 CRUSH
 // bucket commands issued by updateTopology (via cephRunContext → RunCommandContext).
 // The az parameter is the user-facing AZ name; the CRUSH bucket uses the "az." prefix.
@@ -141,6 +158,8 @@ func (s *topologySuite) TestUpdateTopologyAZ3OrMore() {
 			"az-3": true,
 		},
 	})()
+	// The rack promotion runs under the cluster-wide transition lock.
+	defer withFailureDomainLockStub()()
 
 	u := api.NewURL()
 	state := &mocks.MockState{URL: u, ClusterName: "node1"}
@@ -160,6 +179,11 @@ func (s *topologySuite) TestUpdateTopologyAZ3OrMore() {
 	// by TestSwitchHostFailureDomain. Here we just stub the ceph commands.
 	// crush rule dump (6 args).
 	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", mock.Anything).Return(`{ "rule_id": 3 }`, nil).Maybe()
+	// staleness guard lookups: the current default rule id and the dump of
+	// all rules resolving it to the osd rule.
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Maybe()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump").Return(
+		`[{"rule_id":1,"rule_name":"microceph_auto_osd"},{"rule_id":2,"rule_name":"microceph_auto_host"},{"rule_id":3,"rule_name":"microceph_auto_rack"}]`, nil).Maybe()
 	// pool ls detail (6 args).
 	r.On("RunCommand", "ceph", "osd", "pool", "ls", "detail", "--format=json").Return("[]", nil).Maybe()
 	// crush rule ls (5 args).
@@ -188,6 +212,8 @@ func (s *topologySuite) TestUpdateTopologyAZ3NoOSDs() {
 			"az-3": true,
 		},
 	})()
+	// The active-AZ count inside the promotion runs under the transition lock.
+	defer withFailureDomainLockStub()()
 
 	u := api.NewURL()
 	state := &mocks.MockState{URL: u, ClusterName: "node1"}
@@ -213,23 +239,20 @@ func (s *topologySuite) TestUpdateTopologyAZ3NoOSDs() {
 	r.AssertExpectations(s.T())
 }
 
-// TestUpdateFailureDomainSkipsWithAZs verifies that updateFailureDomain
-// returns early when AZs are configured.
-func (s *topologySuite) TestUpdateFailureDomainSkipsWithAZs() {
-	defer withMockAZData(azData{
-		hostAZ: "az-1",
-		uniqueAZs: map[string]bool{
-			"az-1": true,
-		},
-	})()
+// TestUpdateFailureDomainSkipsOnRackRule verifies that updateFailureDomain
+// returns early when the cluster is governed by the rack failure domain rule.
+func (s *topologySuite) TestUpdateFailureDomainSkipsOnRackRule() {
+	// The lock is acquired before the rack rule check.
+	defer withFailureDomainLockStub()()
 
 	u := api.NewURL()
 	state := &mocks.MockState{URL: u, ClusterName: "node1"}
 	si := mocks.NewStateInterface(s.T())
 	si.On("ClusterState").Return(state).Maybe()
 
-	// No runner expectations — switchFailureDomain should NOT be called.
 	r := mocks.NewRunner(s.T())
+	// IsOnRackRule reports the rack rule as active.
+	addIsOnRackRuleExpectations(r, "99", "99")
 	common.ProcessExec = r
 
 	mgr := NewOSDManager(si.ClusterState())
@@ -241,12 +264,23 @@ func (s *topologySuite) TestUpdateFailureDomainSkipsWithAZs() {
 
 	err := mgr.updateFailureDomain(context.Background(), si.ClusterState())
 	assert.NoError(s.T(), err)
+	r.AssertExpectations(s.T())
 }
 
-// TestUpdateFailureDomainNoAZs verifies that updateFailureDomain works
-// normally (switches to host at 3+ nodes) when no AZs are configured.
-func (s *topologySuite) TestUpdateFailureDomainNoAZs() {
-	defer withMockAZData(azData{})()
+// TestUpdateFailureDomainFewerAZsSwitchesToHost is the regression test for
+// having availability zones configured but fewer than three active ones: the
+// rack switch never fires for such clusters, so the host switch must still
+// run once 3 nodes have OSDs instead of leaving the cluster stuck at osd
+// level (canonical/microceph#927).
+func (s *topologySuite) TestUpdateFailureDomainFewerAZsSwitchesToHost() {
+	defer withMockAZData(azData{
+		hostAZ: "az-1",
+		uniqueAZs: map[string]bool{
+			"az-1": true,
+		},
+	})()
+	// The decision and the switch run under the cluster-wide transition lock.
+	defer withFailureDomainLockStub()()
 
 	u := api.NewURL()
 	state := &mocks.MockState{URL: u, ClusterName: "node1"}
@@ -255,12 +289,61 @@ func (s *topologySuite) TestUpdateFailureDomainNoAZs() {
 
 	r := mocks.NewRunner(s.T())
 
-	// switchFailureDomain("osd", "host") expectations.
+	// IsOnRackRule lookups, not on rack, then switchFailureDomain("osd",
+	// "host") expectations — all in call order, see TestSwitchHostFailureDomain.
+	addIsOnRackRuleExpectations(r, "77", "99")
+	addCrushRuleLsExpectations(r)
+	// staleness guard: resolve the current default rule (id 77 = osd rule)
+	addDefaultRuleLookupExpectations(r, "77", "microceph_auto_osd")
 	addCrushRuleDumpExpectations(r)
 	addSetDefaultRuleExpectations(r)
 	addCrushRuleLsExpectations(r)
 	addCrushRuleDumpExpectations(r)
 	addCrushRuleLsJsonExpectations(r)
+	// staleness guard: the pool is still on the osd rule
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_osd")
+	addOsdPoolSetExpectations(r)
+
+	common.ProcessExec = r
+
+	c := mocks.NewMemberCounterInterface(s.T())
+	c.On("Count", mock.Anything, mock.Anything).Return(3, nil).Once()
+	database.MemberCounter = c
+
+	mgr := NewOSDManager(si.ClusterState())
+	mgr.fs = afero.NewMemMapFs()
+
+	err := mgr.updateFailureDomain(context.Background(), si.ClusterState())
+	assert.NoError(s.T(), err)
+}
+
+// TestUpdateFailureDomainNoAZs verifies that updateFailureDomain works
+// normally (switches to host at 3+ nodes) when no AZs are configured.
+func (s *topologySuite) TestUpdateFailureDomainNoAZs() {
+	defer withMockAZData(azData{})()
+	// The decision and the switch run under the cluster-wide transition lock.
+	defer withFailureDomainLockStub()()
+
+	u := api.NewURL()
+	state := &mocks.MockState{URL: u, ClusterName: "node1"}
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(state).Maybe()
+
+	r := mocks.NewRunner(s.T())
+
+	// IsOnRackRule lookups, not on rack, then switchFailureDomain("osd",
+	// "host") expectations — all in call order, see TestSwitchHostFailureDomain.
+	addIsOnRackRuleExpectations(r, "77", "99")
+	addCrushRuleLsExpectations(r)
+	// staleness guard: resolve the current default rule (id 77 = osd rule)
+	addDefaultRuleLookupExpectations(r, "77", "microceph_auto_osd")
+	addCrushRuleDumpExpectations(r)
+	addSetDefaultRuleExpectations(r)
+	addCrushRuleLsExpectations(r)
+	addCrushRuleDumpExpectations(r)
+	addCrushRuleLsJsonExpectations(r)
+	// staleness guard: the pool is still on the osd rule
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_osd")
 	addOsdPoolSetExpectations(r)
 
 	common.ProcessExec = r

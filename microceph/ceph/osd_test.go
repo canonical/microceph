@@ -146,9 +146,26 @@ func (s *osdSuite) TestSanityCheckMissingOSDReturnsNotFound() {
 	assert.EqualError(s.T(), err, "osd.9999 not found")
 }
 
-// Expect: run ceph osd crush rule ls
+// Expect: run ceph osd crush rule ls. switchFailureDomain looks up the target
+// rule (haveCrushRule) and then the old rule inside getPoolsForDomain, so
+// tests must register this helper once per ls call, in call order. The
+// generic matchers tolerate shorter calls, so registrations must not outrun
+// the actual calls.
 func addCrushRuleLsExpectations(r *mocks.Runner) {
-	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return("microceph_auto_osd", nil).Once()
+	r.On("RunCommand", tests.CmdAny("ceph", 4)...).Return("microceph_auto_osd\nmicroceph_auto_host\nmicroceph_auto_rack", nil).Once()
+}
+
+// addIsOnRackRuleExpectations registers the lookups behind IsOnRackRule with
+// the given default and rack rule ids. Callers must register these before the
+// generic CmdAny expectations, which would otherwise match first.
+func addIsOnRackRuleExpectations(r *mocks.Runner, defaultID string, rackID string) {
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
+		Return(defaultID+"\n", nil).Once()
+	// The rack rule exists, so the existence check passes and the id lookup follows.
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").
+		Return("microceph_auto_osd\nmicroceph_auto_host\nmicroceph_auto_rack", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
+		Return(fmt.Sprintf(`{"rule_id": %s}`, rackID), nil).Once()
 }
 
 // Expect: run ceph osd crush rule dump
@@ -175,6 +192,24 @@ func addOsdPoolSetExpectations(r *mocks.Runner) {
 // Expect: run ceph config set
 func addSetDefaultRuleExpectations(r *mocks.Runner) {
 	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()
+}
+
+// addDefaultRuleLookupExpectations registers the staleness-guard lookups
+// switchFailureDomain runs before updating the default crush rule: the
+// current default rule id, then the dump of all rules resolving that id to
+// defaultName.
+func addDefaultRuleLookupExpectations(r *mocks.Runner, defaultID string, defaultName string) {
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
+		Return(defaultID+"\n", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump").
+		Return(fmt.Sprintf(`[{"rule_id":%s,"rule_name":%q}]`, defaultID, defaultName), nil).Once()
+}
+
+// addPoolGetRuleExpectations registers the per-pool crush_rule lookup the
+// switch's staleness guard runs before migrating the given pool.
+func addPoolGetRuleExpectations(r *mocks.Runner, pool string, ruleName string) {
+	r.On("RunCommand", "ceph", "osd", "pool", "get", pool, "crush_rule", "-f", "json").
+		Return(fmt.Sprintf(`{"crush_rule":%q}`, ruleName), nil).Once()
 }
 
 // Expect: run ceph osd tree
@@ -273,6 +308,12 @@ func (s *osdSuite) SetupTest() {
 func (s *osdSuite) TestSwitchHostFailureDomain() {
 	r := mocks.NewRunner(s.T())
 
+	// switchFailureDomain("osd", "host") expectations, in call order. The
+	// leading haveCrushRule lookup made the ls calls precede the dump calls,
+	// and the generic matchers only match calls at their registered position.
+	addCrushRuleLsExpectations(r)
+	// staleness guard: resolve the current default rule (id 77 = osd rule)
+	addDefaultRuleLookupExpectations(r, "77", "microceph_auto_osd")
 	// dump crush rules to resolve names
 	addCrushRuleDumpExpectations(r)
 	// set default crush rule
@@ -283,6 +324,8 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 	addCrushRuleDumpExpectations(r)
 	// list pools
 	addCrushRuleLsJsonExpectations(r)
+	// staleness guard: the pool is still on the osd rule
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_osd")
 	// set pool crush rule
 	addOsdPoolSetExpectations(r)
 
@@ -294,10 +337,64 @@ func (s *osdSuite) TestSwitchHostFailureDomain() {
 	assert.NoError(s.T(), err)
 }
 
+// TestSwitchFailureDomainSkipsDefaultWhenClusterMovedOn verifies the
+// staleness guard on the default rule: if the cluster moved to another auto
+// failure domain since the switch was decided (the transition's lock lease
+// expired mid-run and the reclaimer completed its own transition), the stale
+// switch must not revert it.
+func (s *osdSuite) TestSwitchFailureDomainSkipsDefaultWhenClusterMovedOn() {
+	r := mocks.NewRunner(s.T())
+
+	addCrushRuleLsExpectations(r)
+	// The default is now the rack rule: not the switch's source (osd) or
+	// target (host), so the default update must be skipped. No config set
+	// expectation: issuing one fails the test.
+	addDefaultRuleLookupExpectations(r, "99", "microceph_auto_rack")
+	// getPoolsForDomain("osd"): no pools on the osd rule, nothing to migrate.
+	addCrushRuleLsExpectations(r)
+	addCrushRuleDumpExpectations(r)
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`[]`, nil).Once()
+
+	common.ProcessExec = r
+
+	mgr := NewOSDManager(nil)
+	mgr.fs = afero.NewMemMapFs()
+	err := mgr.switchFailureDomain("osd", "host")
+	assert.NoError(s.T(), err)
+}
+
+// TestSwitchFailureDomainSkipsPoolThatMovedAway verifies the per-pool
+// staleness guard: a pool that was on the source rule when the pool list was
+// captured but has since moved (a concurrent transition migrated it, or an
+// operator set a custom rule) must not be dragged back.
+func (s *osdSuite) TestSwitchFailureDomainSkipsPoolThatMovedAway() {
+	r := mocks.NewRunner(s.T())
+
+	addCrushRuleLsExpectations(r)
+	// The default is still the osd rule, so the default update goes through.
+	addDefaultRuleLookupExpectations(r, "77", "microceph_auto_osd")
+	addCrushRuleDumpExpectations(r)
+	addSetDefaultRuleExpectations(r)
+	addCrushRuleLsExpectations(r)
+	addCrushRuleDumpExpectations(r)
+	// foopool was on the osd rule (77) when listed...
+	addCrushRuleLsJsonExpectations(r)
+	// ...but has since moved to the rack rule: the migration must be skipped.
+	// No pool set expectation: issuing one fails the test.
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_rack")
+
+	common.ProcessExec = r
+
+	mgr := NewOSDManager(nil)
+	mgr.fs = afero.NewMemMapFs()
+	err := mgr.switchFailureDomain("osd", "host")
+	assert.NoError(s.T(), err)
+}
+
 // TestUpdateFailureDomain tests the updateFailureDomain function
 func (s *osdSuite) TestUpdateFailureDomain() {
-	// Mock getAZData to return no AZs so the test proceeds to member count check.
-	defer withMockAZData(azData{})()
+	// The decision and the switch run under the cluster-wide transition lock.
+	defer withFailureDomainLockStub()()
 
 	u := api.NewURL()
 	state := &mocks.MockState{
@@ -307,6 +404,12 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 
 	r := mocks.NewRunner(s.T())
 
+	// IsOnRackRule lookups, not on rack, then switchFailureDomain("osd",
+	// "host") expectations — all in call order, see TestSwitchHostFailureDomain.
+	addIsOnRackRuleExpectations(r, "77", "99")
+	addCrushRuleLsExpectations(r)
+	// staleness guard: resolve the current default rule (id 77 = osd rule)
+	addDefaultRuleLookupExpectations(r, "77", "microceph_auto_osd")
 	// dump crush rules to resolve names
 	addCrushRuleDumpExpectations(r)
 	// set default crush rule
@@ -317,6 +420,8 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 	addCrushRuleDumpExpectations(r)
 	// list pools
 	addCrushRuleLsJsonExpectations(r)
+	// staleness guard: the pool is still on the osd rule
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_osd")
 	// set pool crush rule
 	addOsdPoolSetExpectations(r)
 
@@ -334,6 +439,219 @@ func (s *osdSuite) TestUpdateFailureDomain() {
 	err := mgr.updateFailureDomain(context.Background(), s.TestStateInterface.ClusterState())
 	assert.NoError(s.T(), err)
 
+}
+
+// TestUpdateFailureDomainAdoptedClusterNoAutoRules is the regression test for
+// adopted clusters (AdoptBootstrapper never creates the microceph_auto_*
+// rules): IsOnRackRule must treat an absent rack rule as "not on rack" instead
+// of failing with ENOENT, so the member-count check runs and the switch's
+// missing-target-rule repair creates the host rule. A disk add must succeed.
+func (s *osdSuite) TestUpdateFailureDomainAdoptedClusterNoAutoRules() {
+	defer withFailureDomainLockStub()()
+
+	u := api.NewURL()
+	state := &mocks.MockState{URL: u, ClusterName: "adopted-node"}
+
+	r := mocks.NewRunner(s.T())
+
+	// IsOnRackRule: default rule (the adopted cluster's own), no rack rule.
+	// Before the fix this failed with "Error ENOENT: No such rule".
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
+		Return("", fmt.Errorf("Error ENOENT: No such rule 'microceph_auto_rack'")).Maybe()
+
+	// rule ls: the adopted cluster only has its own rule. Third listing sees
+	// the host rule the missing-target-rule repair just created.
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("replicated_rule", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("replicated_rule", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("replicated_rule\nmicroceph_auto_host", nil).Once()
+
+	// switchFailureDomain("osd", "host"): create the missing host rule, set
+	// it as default. getPoolsForDomain("osd") finds no osd rule, so there is
+	// nothing to migrate and no further calls are expected.
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once() // create-replicated host
+	// staleness guard: the default is the cluster's own (custom) rule, which
+	// is not an auto rule, so the default update goes through.
+	addDefaultRuleLookupExpectations(r, "1", "replicated_rule")
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`{"rule_id": 2}`, nil).Once() // dump host
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once() // config set default
+
+	common.ProcessExec = r
+
+	c := mocks.NewMemberCounterInterface(s.T())
+	c.On("Count", mock.Anything, mock.Anything).Return(3, nil).Once()
+	database.MemberCounter = c
+
+	mgr := NewOSDManager(state)
+	mgr.fs = afero.NewMemMapFs()
+	err := mgr.updateFailureDomain(context.Background(), state)
+	assert.NoError(s.T(), err)
+}
+
+// TestUpdateFailureDomainLegacyClusterStuckAtOsd is the regression test for
+// legacy clusters created before rack support: they only have
+// microceph_auto_osd, so IsOnRackRule must not abort with ENOENT and the
+// host switch must create the missing host rule and migrate the pools.
+func (s *osdSuite) TestUpdateFailureDomainLegacyClusterStuckAtOsd() {
+	defer withFailureDomainLockStub()()
+
+	u := api.NewURL()
+	state := &mocks.MockState{URL: u, ClusterName: "legacy-node"}
+
+	r := mocks.NewRunner(s.T())
+
+	// IsOnRackRule: no rack rule; before the fix this failed with ENOENT.
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_rack").
+		Return("", fmt.Errorf("Error ENOENT: No such rule 'microceph_auto_rack'")).Maybe()
+
+	// rule ls: legacy cluster has only microceph_auto_osd. The third listing
+	// sees the host rule the repair created.
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("microceph_auto_osd", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("microceph_auto_osd", nil).Once()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("microceph_auto_osd\nmicroceph_auto_host", nil).Once()
+
+	// switchFailureDomain("osd", "host"): create the missing host rule, set
+	// it as default, then migrate the pool on the osd rule.
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()                // create-replicated host
+	// staleness guard: the default is still the osd rule.
+	addDefaultRuleLookupExpectations(r, "1", "microceph_auto_osd")
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`{"rule_id": 2}`, nil).Once()    // dump host
+	r.On("RunCommand", tests.CmdAny("ceph", 7)...).Return("ok", nil).Once()                // config set default
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`{"rule_id": 1}`, nil).Once()    // dump osd
+	r.On("RunCommand", tests.CmdAny("ceph", 5)...).Return(`[{"pool_name":"foopool","crush_rule":1}]`, nil).Once() // pool ls detail
+	// staleness guard: the pool is still on the osd rule.
+	addPoolGetRuleExpectations(r, "foopool", "microceph_auto_osd")
+	r.On("RunCommand", tests.CmdAny("ceph", 6)...).Return("ok", nil).Once()                // pool set foopool
+
+	common.ProcessExec = r
+
+	c := mocks.NewMemberCounterInterface(s.T())
+	c.On("Count", mock.Anything, mock.Anything).Return(3, nil).Once()
+	database.MemberCounter = c
+
+	mgr := NewOSDManager(state)
+	mgr.fs = afero.NewMemMapFs()
+	err := mgr.updateFailureDomain(context.Background(), state)
+	assert.NoError(s.T(), err)
+}
+
+// setupReconcileStaleRemoving returns the common fixtures for the stale
+// removal flag reconciliation tests: a state, a strict runner (any
+// unregistered ceph call fails), and the flag-write stubs.
+func (s *osdSuite) setupReconcileStaleRemoving() (*mocks.StateInterface, *mocks.Runner, *diskRemovingRecorder) {
+	u := api.NewURL()
+	state := &mocks.MockState{URL: u, ClusterName: "node-a"}
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(state).Maybe()
+
+	r := mocks.NewRunner(s.T())
+	common.ProcessExec = r
+
+	rec := &diskRemovingRecorder{countCmds: func() int { return len(r.Calls) }}
+	s.T().Cleanup(withDiskRemovingStubs(rec))
+	return si, r, rec
+}
+
+// TestReconcileStaleRemovingDisksNothingMarked verifies the fast path: with
+// no stale flags there is no lock acquisition and no ceph call.
+func (s *osdSuite) TestReconcileStaleRemovingDisksNothingMarked() {
+	si, _, rec := s.setupReconcileStaleRemoving()
+
+	acquired := false
+	origLock := lockFailureDomainTransitionsFunc
+	lockFailureDomainTransitionsFunc = func(_ context.Context, _ mcTypes.State) (int64, error) {
+		acquired = true
+		return 1, nil
+	}
+	s.T().Cleanup(func() { lockFailureDomainTransitionsFunc = origLock })
+
+	done, err := reconcileStaleRemovingDisksOnce(context.Background(), si, time.Now())
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), done)
+	assert.False(s.T(), acquired, "nothing flagged: the lock must not be acquired")
+	assert.Len(s.T(), rec.listCutoffs, 1, "only the fast-path listing, no re-list under the lock")
+}
+
+// TestReconcileStaleRemovingDisksClearsAliveKeepsPurged verifies the startup
+// reconciliation: the flag of a stale-marked OSD that is still in Ceph (its
+// removal rolled back with the crash) is cleared, while a purged OSD's row
+// stays flagged until a removal retry deletes it.
+func (s *osdSuite) TestReconcileStaleRemovingDisksClearsAliveKeepsPurged() {
+	si, r, rec := s.setupReconcileStaleRemoving()
+	defer withFailureDomainLockStub()()
+
+	rec.list = []int64{5, 6}
+	// osd.5 survived the crash, osd.6 was purged before it.
+	r.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[{"id":5,"type":"osd"}]}`, nil).Twice()
+
+	daemonStart := time.Now()
+	done, err := reconcileStaleRemovingDisksOnce(context.Background(), si, daemonStart)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), done)
+	assert.Equal(s.T(), []int64{5}, rec.cleared, "only the OSD still in Ceph is eligible again")
+
+	// The age cutoff must be the daemon start time in both listings (the
+	// fast path and the re-list under the lock).
+	assert.Equal(s.T(), []int64{daemonStart.UnixNano(), daemonStart.UnixNano()}, rec.listCutoffs)
+}
+
+// TestReconcileStaleRemovingDisksRetriesOnCephError verifies that a ceph
+// failure while verifying a stale flag aborts the pass without clearing
+// anything, so the outer loop retries once the monitors converge.
+func (s *osdSuite) TestReconcileStaleRemovingDisksRetriesOnCephError() {
+	si, r, rec := s.setupReconcileStaleRemoving()
+	defer withFailureDomainLockStub()()
+
+	rec.list = []int64{5}
+	r.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return("", fmt.Errorf("monitors are electing")).Once()
+
+	done, err := reconcileStaleRemovingDisksOnce(context.Background(), si, time.Now())
+	assert.Error(s.T(), err)
+	assert.False(s.T(), done)
+	assert.Empty(s.T(), rec.cleared, "an unverifiable flag must not be cleared")
+}
+
+// TestReconcileStaleRemovingDisksRetriesOnBusyLock verifies that a busy
+// transition lock just reschedules the reconciliation pass.
+func (s *osdSuite) TestReconcileStaleRemovingDisksRetriesOnBusyLock() {
+	si, _, rec := s.setupReconcileStaleRemoving()
+
+	rec.list = []int64{5}
+	origLock := lockFailureDomainTransitionsFunc
+	lockFailureDomainTransitionsFunc = func(_ context.Context, _ mcTypes.State) (int64, error) {
+		return 0, fmt.Errorf("%w: held", ErrFailureDomainTransitionBusy)
+	}
+	s.T().Cleanup(func() { lockFailureDomainTransitionsFunc = origLock })
+
+	done, err := reconcileStaleRemovingDisksOnce(context.Background(), si, time.Now())
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), done, "a busy lock means: not done, retry later")
+	assert.Empty(s.T(), rec.cleared)
+}
+
+// TestIsDowngradeNeededFalseWhenHostRuleAbsent verifies that the removal path
+// tolerates an absent host rule the same way the add path tolerates an absent
+// rack rule: an adopted/legacy cluster without microceph_auto_host can never
+// be on host failure domain, so no downgrade is needed and no error escapes.
+func (s *osdSuite) TestIsDowngradeNeededFalseWhenHostRuleAbsent() {
+	u := api.NewURL()
+	state := &mocks.MockState{URL: u, ClusterName: "adopted-node"}
+	si := mocks.NewStateInterface(s.T())
+	si.On("ClusterState").Return(state).Maybe()
+
+	r := mocks.NewRunner(s.T())
+	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Once()
+	// Before the fix this dump was issued and failed with ENOENT.
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_host").
+		Return("", fmt.Errorf("Error ENOENT: No such rule 'microceph_auto_host'")).Maybe()
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("replicated_rule", nil).Once()
+
+	common.ProcessExec = r
+
+	needDowngrade, err := IsDowngradeNeeded(context.Background(), si, 0)
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), needDowngrade)
 }
 
 // TestHaveOSDInCeph tests the haveOSDInCeph function
@@ -1083,11 +1401,53 @@ func (s *osdSuite) TestPurgeOSDFailsWhenPurgeCannotBeVerified() {
 	assert.ErrorContains(s.T(), err, "failed to check that osd.6 was purged")
 }
 
+// diskRemovingRecorder records the mark/clear calls the disk-row removal
+// flag stubs receive, plus how many ceph commands had run when the mark
+// happened (the mark must precede every destructive ceph step). The list
+// fields drive the stale-flag listing stub: list/listErr are its results and
+// listCutoffs records the cutoffs it was called with.
+type diskRemovingRecorder struct {
+	countCmds   func() int
+	marked      []int64
+	cmdsAtMark  []int
+	cleared     []int64
+	list        []int64
+	listErr     error
+	listCutoffs []int64
+}
+
+// withDiskRemovingStubs replaces the disk-row removal flag writes with
+// in-memory recorders, returning a restore function.
+func withDiskRemovingStubs(rec *diskRemovingRecorder) func() {
+	origMark := markDiskRemovingFunc
+	origClear := clearDiskRemovingFunc
+	origList := listRemovingDisksFunc
+	markDiskRemovingFunc = func(_ context.Context, _ mcTypes.State, osd int64) error {
+		rec.marked = append(rec.marked, osd)
+		rec.cmdsAtMark = append(rec.cmdsAtMark, rec.countCmds())
+		return nil
+	}
+	clearDiskRemovingFunc = func(_ context.Context, _ mcTypes.State, osd int64) error {
+		rec.cleared = append(rec.cleared, osd)
+		return nil
+	}
+	listRemovingDisksFunc = func(_ context.Context, _ mcTypes.State, markedBefore int64) ([]int64, error) {
+		rec.listCutoffs = append(rec.listCutoffs, markedBefore)
+		return rec.list, rec.listErr
+	}
+	return func() {
+		markDiskRemovingFunc = origMark
+		clearDiskRemovingFunc = origClear
+		listRemovingDisksFunc = origList
+	}
+}
+
 // removeOSDMocks is what doRemoveOSD talks to, see setupRemoveOSD.
 type removeOSDMocks struct {
 	runner   *mocks.Runner
 	osdQuery *mocks.OSDQueryInterface
 	state    *mocks.StateInterface
+	removing *diskRemovingRecorder
 }
 
 // setupRemoveOSD sets up what doRemoveOSD needs to remove osd with the safety checks bypassed: the
@@ -1103,6 +1463,9 @@ func (s *osdSuite) setupRemoveOSD(osd int64) removeOSDMocks {
 		osdQuery: mocks.NewOSDQueryInterface(t),
 		state:    mocks.NewStateInterface(t),
 	}
+	m.removing = &diskRemovingRecorder{countCmds: func() int { return len(m.runner.Calls) }}
+	restoreRemoving := withDiskRemovingStubs(m.removing)
+	t.Cleanup(restoreRemoving)
 	origExec := common.ProcessExec
 	origQuery := database.OSDQuery
 	common.ProcessExec = m.runner
@@ -1116,7 +1479,12 @@ func (s *osdSuite) setupRemoveOSD(osd int64) removeOSDMocks {
 	m.state.On("ClusterState").Return(st).Maybe()
 	m.osdQuery.On("HaveOSD", mock.Anything, mock.Anything, osd).Return(true, nil).Once()
 	m.runner.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").Return("1\n", nil).Once()
+	m.runner.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").Return("microceph_auto_osd\nmicroceph_auto_host", nil).Once()
 	m.runner.On("RunCommand", "ceph", "osd", "crush", "rule", "dump", "microceph_auto_host").Return(`{"rule_id": 2}`, nil).Once()
+
+	// The scale-down decision runs under the cluster-wide transition lock.
+	restore := withFailureDomainLockStub()
+	t.Cleanup(restore)
 
 	osdDataPath := getOSDDataPath(osd)
 	require.NoError(t, os.MkdirAll(osdDataPath, 0700))
@@ -1185,6 +1553,7 @@ func (s *osdSuite) TestDoRemoveOSDStopsProcessBeforeMarkingDown() {
 
 	assert.Equal(s.T(), []string{
 		"ceph config get mon osd_pool_default_crush_rule",
+		"ceph osd crush rule ls",
 		"ceph osd crush rule dump microceph_auto_host",
 		"ceph osd tree -f json",
 		"ceph osd crush reweight osd.7 0.000000",
@@ -1196,6 +1565,13 @@ func (s *osdSuite) TestDoRemoveOSDStopsProcessBeforeMarkingDown() {
 		"ceph osd ls -f json",
 	}, ranCommands(m.runner))
 	assert.NoDirExists(s.T(), getOSDDataPath(osd))
+
+	// The disk row was flagged as removing before any ceph command ran, and
+	// the successful removal never rolled the flag back (the row is deleted).
+	assert.Equal(s.T(), []int64{osd}, m.removing.marked)
+	assert.Equal(s.T(), []int{0}, m.removing.cmdsAtMark,
+		"the removing flag must be committed before any ceph command runs")
+	assert.Empty(s.T(), m.removing.cleared)
 }
 
 // TestDoRemoveOSDDoesNotMarkDownWhenKillFails ensures a failed stop preserves local state and
@@ -1205,6 +1581,10 @@ func (s *osdSuite) TestDoRemoveOSDDoesNotMarkDownWhenKillFails() {
 	m := s.setupRemoveOSD(osd)
 	m.expectInCrushTree(osd)
 	expectOSDStopFails(s.T(), m.runner, osd, fmt.Errorf("stop failed"))
+	// The failed removal verifies the rollback: the OSD is still in Ceph, so
+	// the removing flag on its disk row is cleared again.
+	tree := fmt.Sprintf(`{"nodes":[{"id":%d,"type":"osd"}]}`, osd)
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(tree, nil).Once()
 
 	err := doRemoveOSD(context.Background(), m.state, osd, true)
 	assert.ErrorContains(s.T(), err, "failed to stop")
@@ -1217,6 +1597,31 @@ func (s *osdSuite) TestDoRemoveOSDDoesNotMarkDownWhenKillFails() {
 	osdDataPath := getOSDDataPath(osd)
 	assert.FileExists(s.T(), osdReadyMarkerPath(osdDataPath))
 	assert.NoFileExists(s.T(), osdSuppressedReadyMarkerPath(osdDataPath))
+
+	assert.Equal(s.T(), []int64{osd}, m.removing.marked)
+	assert.Equal(s.T(), []int64{osd}, m.removing.cleared,
+		"a verified rollback (OSD still in Ceph) must restore the row's scaling eligibility")
+}
+
+// TestDoRemoveOSDKeepsRemovingFlagWhenOSDGone ensures a removal that fails
+// after the OSD disappeared from Ceph does not clear the removing flag: a
+// purged OSD must stay excluded from the scaling counts until a retry
+// completes the removal and deletes the row.
+func (s *osdSuite) TestDoRemoveOSDKeepsRemovingFlagWhenOSDGone() {
+	const osd = int64(7)
+	m := s.setupRemoveOSD(osd)
+	m.expectInCrushTree(osd)
+	expectOSDStopFails(s.T(), m.runner, osd, fmt.Errorf("stop failed"))
+	// The OSD vanished from the CRUSH tree in the meantime: the rollback
+	// check must not restore the row's eligibility.
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[]}`, nil).Once()
+
+	err := doRemoveOSD(context.Background(), m.state, osd, true)
+	assert.ErrorContains(s.T(), err, "stop failed")
+
+	assert.Equal(s.T(), []int64{osd}, m.removing.marked)
+	assert.Empty(s.T(), m.removing.cleared,
+		"an OSD that is gone from Ceph must stay excluded until a retry deletes the row")
 }
 
 // TestDoRemoveOSDMarksDownAgainWhenBootIsCommittedLate tests the failure behind the "osd.N is not
@@ -1371,7 +1776,8 @@ func (s *osdSuite) TestDoRemoveOSDFailsWhenOSDMapCannotBeRead() {
 	const osd = int64(7)
 	s.noWaitForPresence()
 	m := s.setupRemoveOSD(osd)
-	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[]}`, nil).Twice()
+	// The third tree lookup is the rollback verification of the failed removal.
+	m.runner.On("RunCommand", "ceph", "osd", "tree", "-f", "json").Return(`{"nodes":[]}`, nil).Times(3)
 	expectNoOSDProcess(s.T(), m.runner, osd)
 	m.runner.On("RunCommand", "ceph", "osd", "ls", "-f", "json").Return("", fmt.Errorf("monitors unreachable")).Once()
 
@@ -1382,6 +1788,10 @@ func (s *osdSuite) TestDoRemoveOSDFailsWhenOSDMapCannotBeRead() {
 	assert.DirExists(s.T(), osdDataPath)
 	assert.FileExists(s.T(), osdReadyMarkerPath(osdDataPath))
 	assert.NoFileExists(s.T(), osdSuppressedReadyMarkerPath(osdDataPath))
+
+	assert.Equal(s.T(), []int64{osd}, m.removing.marked)
+	assert.Empty(s.T(), m.removing.cleared,
+		"the OSD is not in Ceph, so the removing flag must stay until a retry deletes the row")
 }
 
 // TestRegisterOSD tests that the OSD is created in the osdmap with its on-disk fsid
@@ -1680,6 +2090,10 @@ func rackDegradeTestSetup(t *testing.T, opts rackDegradeOpts) func() {
 	// getDefaultCrushRule -> ceph config get mon osd_pool_default_crush_rule
 	r.On("RunCommand", "ceph", "config", "get", "mon", "osd_pool_default_crush_rule").
 		Return(opts.defaultRuleID+"\n", nil).Maybe()
+
+	// hasCrushRuleStrict -> the rack rule exists
+	r.On("RunCommand", "ceph", "osd", "crush", "rule", "ls").
+		Return("microceph_auto_osd\nmicroceph_auto_host\nmicroceph_auto_rack", nil).Maybe()
 
 	// getCrushRuleID("microceph_auto_rack")
 	if opts.rackRuleErr != nil {

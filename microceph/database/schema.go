@@ -24,6 +24,8 @@ var SchemaExtensions = []cluster.Update{
 	schemaUpdate9,
 	schemaUpdate10,
 	schemaUpdate11,
+	schemaUpdate12,
+	schemaUpdate13,
 }
 
 // getClusterTableName returns the name of the table that holds the record of cluster members from sqlite_master.
@@ -349,5 +351,40 @@ CREATE TABLE rgw_frontends (
   `
 	_, err := tx.ExecContext(ctx, stmt)
 
+	return err
+}
+
+// schemaUpdate12 adds the failure_domain_lock table. It is a single-row table
+// backing the cluster-wide failure domain transition lock: the OSD add and
+// removal paths read the current CRUSH rule state and then update rules and
+// pool placements in separate cluster-visible steps, and the lock serializes
+// those read-modify cycles across members so a stale transition cannot revert
+// a concurrent one (e.g. a host switch reverting a rack promotion completed
+// in between). lock_token 0 means unlocked; any other value is the acquiring
+// writer's token (its acquisition time in Unix nanoseconds), doubling as a
+// lease timestamp so a lock held by a crashed daemon can be reclaimed once
+// the lease expires.
+func schemaUpdate12(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE failure_domain_lock (
+  id         INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
+  lock_token INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT singleton CHECK (id = 1)
+);
+INSERT INTO failure_domain_lock (id) VALUES (1);
+  `
+	_, err := tx.ExecContext(ctx, stmt)
+
+	return err
+}
+
+// schemaUpdate13 adds a removing_since column to the disks table. OSDs whose
+// removal is in flight keep their row (cleanup and retries need it) but are
+// excluded from the failure domain scaling counts, so a concurrent disk add
+// cannot count a drained-but-not-yet-deleted OSD as a remaining host. The
+// marking time (unix nanoseconds, 0 when not being removed) lets the daemon
+// distinguish removal flags left by a crash from flags of removals in flight.
+func schemaUpdate13(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `ALTER TABLE disks ADD COLUMN removing_since INTEGER NOT NULL DEFAULT 0;`)
 	return err
 }

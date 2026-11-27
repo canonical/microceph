@@ -335,15 +335,52 @@ func (m *OSDManager) CheckEncryptSupport() error {
 	return nil
 }
 
-// switchFailureDomain switches the crush rules failure domain from old to new
+// switchFailureDomain switches the default crush rule and any pools on the
+// old failure domain's auto rule to the new domain's auto rule, creating the
+// target rule first if it is missing (adopted clusters may not have it).
+//
+// The writes are guarded against stale holders of the failure domain
+// transition lock: a transition whose lease expired mid-run loses mutual
+// exclusion without noticing, and its remaining writes must not revert a
+// transition the lock reclaimer completed in the meantime. The default rule
+// is therefore only updated if it is still on the source rule or already on
+// the target rule (a custom default rule is overridden, as before), and each
+// pool is only migrated if it is still on the source rule. Skipped writes are
+// re-converged by the next transition run.
 func (m *OSDManager) switchFailureDomain(old string, new string) error {
 	var err error
 
+	oldRule := fmt.Sprintf("microceph_auto_%s", old)
 	newRule := fmt.Sprintf("microceph_auto_%s", new)
-	logger.Debugf("Setting default crush rule to %v", newRule)
-	err = setDefaultCrushRule(newRule)
+	// Adopted clusters may not yet have the microceph auto rules, so we need
+	// to create the target rules so the switch doesn't fail on rule lookup.
+	if !haveCrushRule(newRule) {
+		logger.Debugf("Adding missing crush rule %v", newRule)
+		err = addCrushRule(newRule, new)
+		if err != nil {
+			return fmt.Errorf("failed to add crush rule %s: %w", newRule, err)
+		}
+	}
+
+	currentDefault, err := getDefaultCrushRule()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get default crush rule: %w", err)
+	}
+	currentDefaultName, err := getCrushRuleName(currentDefault)
+	if err != nil {
+		return fmt.Errorf("failed to resolve default crush rule name: %w", err)
+	}
+	if isAutoCrushRule(currentDefaultName) && currentDefaultName != oldRule && currentDefaultName != newRule {
+		// The cluster moved to another auto failure domain since this
+		// transition decided to run: its lock lease expired mid-transition
+		// and the reclaimer completed its own transition. Don't revert it.
+		logger.Warnf("Not setting default crush rule to %s: the default moved to %s in the meantime", newRule, currentDefaultName)
+	} else {
+		logger.Debugf("Setting default crush rule to %v", newRule)
+		err = setDefaultCrushRule(newRule)
+		if err != nil {
+			return err
+		}
 	}
 
 	osdPools, err := getPoolsForDomain(old)
@@ -352,6 +389,17 @@ func (m *OSDManager) switchFailureDomain(old string, new string) error {
 		return err
 	}
 	for _, pool := range osdPools {
+		// The pool list may be stale for the same reason as the default rule
+		// above, and an operator may have moved the pool to a custom rule in
+		// the meantime: only migrate pools still on the source rule.
+		poolRule, err := getPoolCrushRule(pool)
+		if err != nil {
+			return fmt.Errorf("failed to get current crush rule of pool %s: %w", pool, err)
+		}
+		if poolRule != oldRule {
+			logger.Warnf("Not moving pool %s to crush rule %s: the pool is now on %s", pool, newRule, poolRule)
+			continue
+		}
 		logger.Debugf("Setting pool %v crush rule to %v", pool, newRule)
 		err = setPoolCrushRule(pool, newRule)
 		if err != nil {
@@ -438,52 +486,106 @@ func (m *OSDManager) updateTopology(ctx context.Context) error {
 		return fmt.Errorf("failed to move host %s under rack %s: %w", hostname, rackBucket, err)
 	}
 
-	// If we have 3+ unique AZs with at least one OSD each, switch failure domain to rack.
+	// If we have 3+ unique AZs, consider switching failure domain to rack.
 	if len(data.uniqueAZs) >= 3 {
-		nodes, err := getOSDTreeNodes(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to count AZs with OSDs: %w", err)
-		}
-		activeAZs := countAZsWithOSDs(nodes, data.uniqueAZs, data.hostAZ)
-		if activeAZs < 3 {
-			logger.Infof("Have %d unique AZs but only %d with OSDs, skipping rack switch", len(data.uniqueAZs), activeAZs)
-			return nil
-		}
-		logger.Infof("Have %d AZs with OSDs, switching failure domain to rack", activeAZs)
-		if !haveCrushRule("microceph_auto_rack") {
-			err = addCrushRule("microceph_auto_rack", "rack")
-			if err != nil {
-				return fmt.Errorf("failed to add rack crush rule: %w", err)
-			}
-		}
-		err = m.switchFailureDomain("osd", "rack")
-		if err != nil {
-			return fmt.Errorf("failed to switch to rack failure domain: %w", err)
-		}
-		// Also switch any pools that were on host domain to rack.
-		err = m.switchFailureDomain("host", "rack")
-		if err != nil {
-			return fmt.Errorf("failed to switch host pools to rack failure domain: %w", err)
-		}
+		return m.promoteToRackFailureDomain(ctx, data)
 	}
 
+	return nil
+}
+
+// promoteToRackFailureDomain switches the cluster to rack failure domain once
+// 3 or more availability zones have OSDs. The active-AZ count (the decision)
+// and the crush rule updates run under the cluster-wide failure domain
+// transition lock, so a concurrent host transition on another member cannot
+// interleave and revert the promotion, and vice versa.
+func (m *OSDManager) promoteToRackFailureDomain(ctx context.Context, data azData) error {
+	err := serializedFailureDomainTransition(ctx, m.state, func() error {
+		return m.promoteToRackFailureDomainLocked(ctx, data)
+	})
+	if errors.Is(err, ErrFailureDomainTransitionBusy) {
+		// The OSD itself is healthy, so a busy lock must not fail the disk
+		// add — but the promotion must not silently wait for the next disk
+		// add either: record a pending reconciliation that retries it from
+		// the current topology.
+		logger.Warnf("skipping rack failure domain promotion, another transition is in progress; a reconciliation is scheduled")
+		m.scheduleFailureDomainReconcile()
+		return nil
+	}
+	return err
+}
+
+// promoteToRackFailureDomainLocked is the critical section of
+// promoteToRackFailureDomain; the caller must hold the transition lock.
+func (m *OSDManager) promoteToRackFailureDomainLocked(ctx context.Context, data azData) error {
+	nodes, err := getOSDTreeNodes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to count AZs with OSDs: %w", err)
+	}
+	activeAZs := countAZsWithOSDs(nodes, data.uniqueAZs, data.hostAZ)
+	if activeAZs < 3 {
+		logger.Infof("Have %d unique AZs but only %d with OSDs, skipping rack switch", len(data.uniqueAZs), activeAZs)
+		return nil
+	}
+	logger.Infof("Have %d AZs with OSDs, switching failure domain to rack", activeAZs)
+	if !haveCrushRule("microceph_auto_rack") {
+		err = addCrushRule("microceph_auto_rack", "rack")
+		if err != nil {
+			return fmt.Errorf("failed to add rack crush rule: %w", err)
+		}
+	}
+	err = m.switchFailureDomain("osd", "rack")
+	if err != nil {
+		return fmt.Errorf("failed to switch to rack failure domain: %w", err)
+	}
+	// Also switch any pools that were on host domain to rack.
+	err = m.switchFailureDomain("host", "rack")
+	if err != nil {
+		return fmt.Errorf("failed to switch host pools to rack failure domain: %w", err)
+	}
 	return nil
 }
 
 // updateFailureDomain checks if we need to update the crush rules failure domain.
 // Once we have at least 3 nodes with at least 1 OSD each, we set the failure domain to host.
 // Currently this function only handles scale-up scenarios, i.e. adding a new node.
-// When availability zones are configured, this is a no-op as topology is handled by updateTopology.
+// For clusters that have rack-level failure domain, we leave them alone. AZ tagged
+// clusters with fewer than three active zones intentionally fall through to the
+// host switch here so that updateTopology keeps the failure domain at OSD level for
+// them, which would otherwise leave such clusters stuck at osd level forever.
+//
+// The rack-level decision and the rule updates it may trigger run under the
+// cluster-wide failure domain transition lock: they are separate cluster-visible
+// steps, and an unsynchronized stale host transition can revert a rack promotion
+// another member completes in between.
 func (m *OSDManager) updateFailureDomain(ctx context.Context, s mcTypes.State) error {
 	logger.Infof("Checking if we need to update failure domain for OSDs")
 
-	// When AZs are configured, topology is handled by updateTopology — skip.
-	data, err := getAZData(ctx, m.state, m.state.Name())
-	if err != nil {
-		return fmt.Errorf("failed to check for AZs: %w", err)
+	err := serializedFailureDomainTransition(ctx, s, func() error {
+		return m.updateFailureDomainLocked(ctx, s)
+	})
+	if errors.Is(err, ErrFailureDomainTransitionBusy) {
+		// The OSD itself is healthy, so a busy lock must not fail the disk
+		// add — but the transition must not silently wait for the next disk
+		// add either: record a pending reconciliation that retries it from
+		// the current topology.
+		logger.Warnf("skipping failure domain update, another transition is in progress; a reconciliation is scheduled")
+		m.scheduleFailureDomainReconcile()
+		return nil
 	}
-	if len(data.uniqueAZs) > 0 {
-		logger.Infof("Availability zones configured, skipping default failure domain update")
+	return err
+}
+
+// updateFailureDomainLocked is the critical section of updateFailureDomain;
+// the caller must hold the transition lock.
+func (m *OSDManager) updateFailureDomainLocked(ctx context.Context, s mcTypes.State) error {
+	// Rack-level failure domain governs the cluster; don't override it.
+	onRack, err := IsOnRackRule()
+	if err != nil {
+		return fmt.Errorf("failed to check for rack failure domain: %w", err)
+	}
+	if onRack {
+		logger.Infof("Cluster is on rack failure domain, skipping default failure domain update")
 		return nil
 	}
 
@@ -1839,11 +1941,22 @@ func sanityCheck(ctx context.Context, s interfaces.StateInterface, osd int64) er
 }
 
 // IsDowngradeNeeded checks if we need to downgrade the failure domain from 'host' to 'osd' level
-// if we remove the given OSD
+// if we remove the given OSD. An absent host rule is not an error: adopted
+// clusters (AdoptBootstrapper) and legacy clusters that never switched to host
+// failure domain don't have the rule, and such clusters are by definition not
+// on host failure domain, so no downgrade is needed.
 func IsDowngradeNeeded(ctx context.Context, s interfaces.StateInterface, osd int64) (bool, error) {
 	currentRule, err := getDefaultCrushRule()
 	if err != nil {
 		return false, err
+	}
+	hostExists, err := hasCrushRuleStrict("microceph_auto_host")
+	if err != nil {
+		return false, fmt.Errorf("failed to list crush rules: %w", err)
+	}
+	if !hostExists {
+		logger.Infof("No microceph_auto_host rule, no need to downgrade auto failure domain")
+		return false, nil
 	}
 	hostRule, err := getCrushRuleID("microceph_auto_host")
 	if err != nil {
@@ -1941,20 +2054,152 @@ func IsRackDegradeBlocked(ctx context.Context, s interfaces.StateInterface, osd 
 	return false, nil
 }
 
-// scaleDownFailureDomain scales down the failure domain from 'host' to 'osd' level
+// markDiskRemovingFunc and clearDiskRemovingFunc are injectable wrappers for
+// the dqlite writes flagging an OSD's disk row as being removed (and the
+// rollback of that flag).
+var markDiskRemovingFunc = func(ctx context.Context, s mcTypes.State, osd int64) error {
+	return s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return database.MarkDiskRemoving(ctx, tx, osd)
+	})
+}
+
+var clearDiskRemovingFunc = func(ctx context.Context, s mcTypes.State, osd int64) error {
+	return s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return database.ClearDiskRemoving(ctx, tx, osd)
+	})
+}
+
+// listRemovingDisksFunc is the injectable wrapper for listing the local
+// member's disk rows flagged as removing before the given time.
+var listRemovingDisksFunc = func(ctx context.Context, s mcTypes.State, markedBefore int64) ([]int64, error) {
+	var osds []int64
+	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		osds, err = database.ListRemovingDisks(ctx, tx, s.Name(), markedBefore)
+		return err
+	})
+	return osds, err
+}
+
+// removingFlagReconcileInterval and removingFlagReconcileAttempts bound the
+// startup reconciliation of stale removal flags; they are vars so tests can
+// shorten them.
+var (
+	removingFlagReconcileInterval = 30 * time.Second
+	removingFlagReconcileAttempts = 20
+)
+
+// reconcileStaleRemovingDisks clears removal flags left on this member's
+// disk rows by a daemon crash mid-removal, retrying while the monitors come
+// up. It runs once per daemon start, off the OnStart hook.
+func reconcileStaleRemovingDisks(ctx context.Context, s interfaces.StateInterface, daemonStart time.Time) {
+	for attempt := 0; attempt < removingFlagReconcileAttempts; attempt++ {
+		done, err := reconcileStaleRemovingDisksOnce(ctx, s, daemonStart)
+		if err != nil {
+			logger.Warnf("failed to reconcile stale disk removal flags (attempt %d/%d): %v", attempt+1, removingFlagReconcileAttempts, err)
+		}
+		if done {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(removingFlagReconcileInterval):
+		}
+	}
+	logger.Warnf("gave up reconciling stale disk removal flags after %d attempts; the next daemon start retries", removingFlagReconcileAttempts)
+}
+
+// reconcileStaleRemovingDisksOnce performs one reconciliation pass and
+// reports whether it is done. At daemon start no local removal can be in
+// flight, so a row flagged before daemonStart is certainly stale: if its OSD
+// is still in Ceph the interrupted removal rolled back and the OSD must
+// count for failure domain scaling again; if the OSD is gone it was purged
+// and the row stays flagged until the removal is retried and deletes it.
+// The listing and the clearing run under the cluster-wide failure domain
+// transition lock: they change the inputs of the scaling counts, and a
+// removal starting on this member re-marks under the same lock.
+func reconcileStaleRemovingDisksOnce(ctx context.Context, s interfaces.StateInterface, daemonStart time.Time) (bool, error) {
+	m := NewOSDManager(s.ClusterState())
+	cutoff := daemonStart.UnixNano()
+
+	// Fast path: nothing flagged, no lock and no ceph calls needed.
+	marked, err := listRemovingDisksFunc(ctx, s.ClusterState(), cutoff)
+	if err != nil {
+		return false, err
+	}
+	if len(marked) == 0 {
+		return true, nil
+	}
+
+	err = serializedFailureDomainTransition(ctx, s.ClusterState(), func() error {
+		// Re-list under the lock: removals starting on this member mark
+		// under the same lock, and their fresh flags are anyway past the
+		// cutoff.
+		marked, err := listRemovingDisksFunc(ctx, s.ClusterState(), cutoff)
+		if err != nil {
+			return err
+		}
+		for _, osd := range marked {
+			present, err := m.haveOSDInCeph(osd)
+			if err != nil {
+				return fmt.Errorf("failed to check if flagged osd.%d is still in Ceph: %w", osd, err)
+			}
+			if !present {
+				logger.Infof("osd.%d is gone from Ceph; its disk row stays flagged as removing until the removal is retried", osd)
+				continue
+			}
+			logger.Infof("clearing stale removing flag of osd.%d left by an interrupted removal", osd)
+			err = clearDiskRemovingFunc(ctx, s.ClusterState(), osd)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		// A busy transition lock is transient: simply retry later.
+		if errors.Is(err, ErrFailureDomainTransitionBusy) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// scaleDownFailureDomain scales down the failure domain from 'host' to 'osd' level.
+// The downgrade decision and the rule updates run under the cluster-wide failure
+// domain transition lock: the node count that justifies the downgrade is only
+// valid while no other member concurrently switches rules. A busy lock aborts
+// the removal before any destructive step, so the operator can simply retry.
 func scaleDownFailureDomain(ctx context.Context, s interfaces.StateInterface, osd int64) error {
 	m := NewOSDManager(s.ClusterState())
-	needDowngrade, err := IsDowngradeNeeded(ctx, s, osd)
-	logger.Debugf("Downgrade needed: %v", needDowngrade)
-	if err != nil {
-		return err
-	}
-	if !needDowngrade {
+	err := serializedFailureDomainTransition(ctx, s.ClusterState(), func() error {
+		// Commit the OSD's removal state under the transition lock, before
+		// any placement change: the failure domain scaling counts exclude
+		// removing OSDs, so a concurrent disk add on another member cannot
+		// count this drained-but-not-yet-deleted OSD as a remaining host and
+		// switch pools back to the wider failure domain being torn down here.
+		err := markDiskRemovingFunc(ctx, s.ClusterState(), osd)
+		if err != nil {
+			return fmt.Errorf("failed to commit removal state of osd.%d: %w", osd, err)
+		}
+		needDowngrade, err := IsDowngradeNeeded(ctx, s, osd)
+		if err != nil {
+			return err
+		}
+		logger.Debugf("Downgrade needed: %v", needDowngrade)
+		if !needDowngrade {
+			return nil
+		}
+		err = m.switchFailureDomain("host", "osd")
+		if err != nil {
+			return fmt.Errorf("failed to switch failure domain: %w", err)
+		}
 		return nil
-	}
-	err = m.switchFailureDomain("host", "osd")
+	})
 	if err != nil {
-		return fmt.Errorf("failed to switch failure domain: %w", err)
+		return fmt.Errorf("failed to run serialized failure domain scale-down: %w", err)
 	}
 	return nil
 }
@@ -2128,6 +2373,34 @@ func doRemoveOSD(ctx context.Context, s interfaces.StateInterface, osd int64, by
 	if err != nil {
 		return err
 	}
+	// scaleDownFailureDomain flagged the OSD's disk row as removing under the
+	// transition lock. If the removal fails from here on, restore the row's
+	// eligibility for the failure domain scaling counts — but only after
+	// verifying the OSD is still in Ceph, i.e. the removal really rolled
+	// back: a purged OSD must stay excluded until a retry completes the
+	// removal and deletes the row.
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		present, checkErr := m.haveOSDInCeph(osd)
+		if checkErr != nil {
+			logger.Warnf("Failed to check if osd.%d is still in Ceph after a failed removal; its disk row stays flagged as removing: %v", osd, checkErr)
+			return
+		}
+		if !present {
+			logger.Infof("osd.%d is gone from Ceph; its disk row stays flagged as removing until a retry completes the removal", osd)
+			return
+		}
+		// The request context may be canceled by the time the removal fails;
+		// use a detached, bounded context for the rollback write.
+		clearCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		clearErr := clearDiskRemovingFunc(clearCtx, s.ClusterState(), osd)
+		if clearErr != nil {
+			logger.Warnf("Failed to clear the removing flag of osd.%d after a rolled-back removal: %v", osd, clearErr)
+		}
+	}()
 
 	// check if the osd is still in the cluster -- if we're being re-run, it might not be
 	isPresent, err := m.haveOSDInCeph(osd)

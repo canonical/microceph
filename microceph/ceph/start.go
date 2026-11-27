@@ -388,6 +388,9 @@ func shouldSkipMonitorRefresh(first bool, oldMonitors, monitors []string) bool {
 
 // Start is run on daemon startup.
 func Start(ctx context.Context, s interfaces.StateInterface) error {
+	// The daemon start time gates the stale removal flag reconciliation:
+	// only flags older than this start can be crash leftovers.
+	daemonStart := time.Now()
 	// flag: are we on the first run?
 	first := true
 	// Start background loop to refresh the config every minute if needed.
@@ -495,6 +498,7 @@ func Start(ctx context.Context, s interfaces.StateInterface) error {
 		}
 		migrateStaleRunDir()
 		reEnableServices(ctx, s)
+		reconcileStaleRemovingDisks(ctx, s, daemonStart)
 	}()
 
 	go func() {

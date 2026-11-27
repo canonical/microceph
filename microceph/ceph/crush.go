@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/canonical/microceph/microceph/common"
+	"github.com/canonical/microceph/microceph/logger"
 
 	"github.com/canonical/microceph/microceph/api/types"
 
@@ -94,6 +96,35 @@ func getCrushRuleID(name string) (string, error) {
 	return fmt.Sprintf("%v", val), nil // convert to string
 }
 
+// getCrushRuleName returns the name of the crush rule with the given numeric
+// ID, or an empty string if no rule with that ID exists.
+func getCrushRuleName(id string) (string, error) {
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "crush", "rule", "dump")
+	if err != nil {
+		return "", err
+	}
+	return gjson.Get(output, fmt.Sprintf("#(rule_id==%s).rule_name", id)).String(), nil
+}
+
+// getPoolCrushRule returns the name of the crush rule currently set on a pool.
+func getPoolCrushRule(pool string) (string, error) {
+	output, err := common.ProcessExec.RunCommand("ceph", "osd", "pool", "get", pool, "crush_rule", "-f", "json")
+	if err != nil {
+		return "", err
+	}
+	rule := gjson.Get(output, "crush_rule").String()
+	if rule == "" {
+		return "", fmt.Errorf("crush_rule not found in pool get output for pool %s", pool)
+	}
+	return rule, nil
+}
+
+// isAutoCrushRule reports whether name is one of the microceph auto failure
+// domain rules.
+func isAutoCrushRule(name string) bool {
+	return name == "microceph_auto_osd" || name == "microceph_auto_host" || name == "microceph_auto_rack"
+}
+
 // getPoolsForDomain returns a list of pools that use a given crush failure domain
 func getPoolsForDomain(domain string) ([]string, error) {
 	var pools []string
@@ -156,11 +187,35 @@ func getDefaultCrushRule() (string, error) {
 	return strings.TrimSpace(configs[0].Value), nil
 }
 
+// hasCrushRuleStrict reports whether a crush rule with the given name exists.
+// Unlike haveCrushRule it propagates listing failures instead of treating them
+// as absence, so callers can distinguish "rule absent" from a broken Ceph
+// connection.
+func hasCrushRuleStrict(name string) (bool, error) {
+	rules, err := listCrushRules()
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(rules, name), nil
+}
+
 // IsOnRackRule returns true if the cluster's default crush rule is microceph_auto_rack.
+// An absent rack rule is not an error: adopted clusters (AdoptBootstrapper) and
+// legacy clusters created before rack support never got the rule, and such
+// clusters are by definition not on rack failure domain. Reporting false lets
+// reconciliation proceed and create the rule when a transition needs it.
 func IsOnRackRule() (bool, error) {
 	currentRule, err := getDefaultCrushRule()
 	if err != nil {
 		return false, fmt.Errorf("failed to get default crush rule: %w", err)
+	}
+	rackExists, err := hasCrushRuleStrict("microceph_auto_rack")
+	if err != nil {
+		return false, fmt.Errorf("failed to list crush rules: %w", err)
+	}
+	if !rackExists {
+		logger.Infof("No microceph_auto_rack rule, cluster cannot be on rack failure domain")
+		return false, nil
 	}
 	rackRule, err := getCrushRuleID("microceph_auto_rack")
 	if err != nil {
