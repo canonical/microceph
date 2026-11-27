@@ -13,12 +13,18 @@ import (
 // mdsIDPrefix is prepended to the MDS daemon ID of a host whose name begins
 // with a digit. Ceph refuses to start an MDS whose name starts with a numeric
 // digit, so such hosts cannot use their hostname unchanged.
-const mdsIDPrefix = "mds-"
+//
+// The underscore keeps the mapping collision free: member names are validated
+// as FQDNs and may only hold letters, digits, hyphens and dots, so no other
+// member's unprefixed MDS ID can ever equal a prefixed one. A prefix such as
+// "mds-" would make "1node" and "mds-1node" share one MDS identity.
+const mdsIDPrefix = "mds_"
 
 // mdsID returns the Ceph daemon ID of the MDS on hostname: the hostname
 // itself, or the hostname with mdsIDPrefix prepended when it begins with a
-// digit. The mapping is idempotent. snapcraft/commands/mds.start applies the
-// same rule when it starts ceph-mds, so the two must be kept in sync.
+// digit. The mapping is idempotent and distinct hostnames always get distinct
+// IDs. snapcraft/commands/mds.start applies the same rule when it starts
+// ceph-mds, so the two must be kept in sync.
 func mdsID(hostname string) string {
 	if hostname != "" && hostname[0] >= '0' && hostname[0] <= '9' {
 		return mdsIDPrefix + hostname

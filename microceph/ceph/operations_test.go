@@ -351,7 +351,7 @@ func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsPassTargetNoMon() {
 }
 
 // TestCheckNonOsdSvcEnoughOpsFailDigitHostnameLastMds tests that the MDS of a
-// target whose name begins with a digit, which runs as "mds-<hostname>", is
+// target whose name begins with a digit, which runs as "mds_<hostname>", is
 // still recognised as the target's own. Removing 1node would leave no MDS. Fail.
 func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsFailDigitHostnameLastMds() {
 	sq := mocks.NewServiceQueryInterface(s.T())
@@ -369,7 +369,7 @@ func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsFailDigitHostnameLastMds() 
 	r.On("RunCommand", "ceph", "mgr", "dump", "-f", "json").Return(
 		`{"active_name":"1node","standbys":[{"name":"n1"}]}`, nil).Once()
 	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
-		`{"mdsmap":[{"name":"mds-1node"}]}`, nil).Once()
+		`{"mdsmap":[{"name":"mds_1node"}]}`, nil).Once()
 	common.ProcessExec = r
 
 	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}

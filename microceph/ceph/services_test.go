@@ -128,7 +128,7 @@ func (s *servicesSuite) TestCleanService() {
 // data directory named after the prefixed MDS ID.
 func (s *servicesSuite) TestCleanServiceMdsDigitHostname() {
 	s.CopyCephConfigs()
-	svcPath := filepath.Join(s.Tmp, "SNAP_COMMON", "data", "mds", "ceph-mds-1node")
+	svcPath := filepath.Join(s.Tmp, "SNAP_COMMON", "data", "mds", "ceph-mds_1node")
 	_ = os.MkdirAll(svcPath, 0770)
 	err := cleanService("1node", "mds")
 	assert.NoError(s.T(), err)

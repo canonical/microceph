@@ -177,7 +177,7 @@ func (s *controlReadinessSuite) TestMdsUpNoFilesystemStandby() {
 func (s *controlReadinessSuite) TestMdsUpDigitHostname() {
 	r := withMockRunner(s.T())
 	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "stat", "-f", "json").
-		Return(mdsStandbys("mds-1node"), nil).Once()
+		Return(mdsStandbys("mds_1node"), nil).Once()
 
 	ok, err := mdsUp(context.Background(), "1node")
 	assert.NoError(s.T(), err)

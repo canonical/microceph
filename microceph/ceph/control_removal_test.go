@@ -199,8 +199,8 @@ func TestEnsureMdsAbsentDigitHostname(t *testing.T) {
 	shrinkDaemonRemovalVerify(t)
 	r := withMockRunner(t)
 	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "stat", "-f", "json").
-		Return(mdsStandbys("mds-1node", "node-b"), nil).Once()
-	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "fail", "mds-1node", "--yes-i-really-mean-it").
+		Return(mdsStandbys("mds_1node", "node-b"), nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "fail", "mds_1node", "--yes-i-really-mean-it").
 		Return("", nil).Once()
 	r.On("RunCommandContext", mock.Anything, "ceph", "mds", "stat", "-f", "json").
 		Return(mdsStandbys("node-b"), nil).Once()
