@@ -30,3 +30,8 @@ GO-2025-3999  # lxd: privilege escalation via WebSocket hijack in Operations API
 GO-2025-4003  # lxd: CSRF via client-cert auth in LXD-UI; fixed upstream 5.0.5/5.21.4/6.5.0, present in pinned d936c90d47cf; LXD-UI not used by microceph.
 GO-2025-4121  # lxd: local privesc via custom storage volumes; fixed upstream 4.0.11/5.21.5/6.6, present in pinned d936c90d47cf; storage-volume daemon path not used by microceph.
 GO-2026-4595  # lxd: non-recursive cert listing bypasses authz; fixed upstream by commit d936c90d47cf (6.7), which is the exact lxd pin in go.mod; cert endpoint not used by microceph.
+
+# This entry suppresses the GO-2026-5306 scanner finding; it does not apply a
+# security fix. The advisory currently has no fixed event in its standard
+# SEMVER range, so govulncheck still reports the already-fixed dependency.
+GO-2026-5306  # lxd: restricted TLS certificate Type field allows privesc on certificate edit; fixed upstream 5.0.7/5.21.5/6.8 by PR #17936 (65d0c1db01bd), an ancestor of pinned 1a5f7ffe081f; cert endpoint not used by microceph.
