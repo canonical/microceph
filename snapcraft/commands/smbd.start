@@ -11,6 +11,10 @@ exec "$SNAP/bin/unshare" --mount --propagation slave -- /bin/bash -euc '
     smb_setup_ctdb
     smb_ctdb_health
   fi
+  if [[ "$SMB_WORKGROUP" != - ]]; then
+    smb_setup_winbind
+    smb_bind_custom_dns
+  fi
   smb_assert_prepared smbd
   smb_check_start_intent
   exec "$SNAP/bin/smbd" --foreground --no-process-group \

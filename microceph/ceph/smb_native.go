@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -312,6 +313,10 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 	if err != nil {
 		return plan, err
 	}
+	member, err := smbMemberContext(candidate, description)
+	if err != nil {
+		return plan, err
+	}
 	endpoint, err := candidate.Spec.endpointPorts()
 	if err != nil {
 		return plan, err
@@ -323,7 +328,7 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 	if clustered != (candidate.CTDB != nil) {
 		return plan, fmt.Errorf("effective CTDB mode does not match native reservation")
 	}
-	plan.Launch = smbLaunch{Clustered: clustered, FrontendAddress: endpoint.FrontendAddress, SMBPort: endpoint.SMBPort}
+	plan.Launch = smbLaunch{CustomDNS: len(candidate.Spec.CustomDNS) > 0, AD: member, Clustered: clustered, FrontendAddress: endpoint.FrontendAddress, SMBPort: endpoint.SMBPort}
 	required := map[string]any{"config backend": "file", "private dir": root + "/samba/private", "state directory": root + "/samba/state", "cache directory": root + "/samba/cache", "lock directory": root + "/samba/lock", "pid directory": root + "/samba/run", "ncalrpc dir": root + "/samba/ncalrpc", "log file": root + "/diagnostics/log.%m", "smb ports": strconv.Itoa(endpoint.SMBPort)}
 	if clustered {
 		if plan.Launch.FrontendAddress == "" {
@@ -341,6 +346,13 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 		err = projectSMBCTDB(candidate, root, document, description.CTDB, plan.Files)
 		if err != nil {
 			return plan, err
+		}
+	}
+	if member != nil {
+		required["winbindd socket directory"] = "/run/samba/winbindd"
+		required["kerberos method"] = "secrets only"
+		for _, db := range []string{"secrets.tdb", "autorid.tdb", "winbindd_idmap.tdb"} {
+			required["ctdb:"+db] = "yes"
 		}
 	}
 	if plan.Launch.FrontendAddress != "" {
@@ -464,7 +476,18 @@ func projectSMBNative(candidate smbCandidate, root string, binding smbBinding) (
 	if err != nil {
 		return plan, err
 	}
-	plan.Launch.Startup = smbDefaultStartup()
+	if member != nil {
+		plan.Files["config/nsswitch.conf"] = []byte("passwd: files winbind\ngroup: files winbind\nhosts: files dns\nservices: files\n")
+		if len(candidate.Spec.CustomDNS) > 0 {
+			resolver := ""
+			for _, server := range candidate.Spec.CustomDNS {
+				ip, _ := netip.ParseAddr(server)
+				resolver += "nameserver " + ip.Unmap().String() + "\n"
+			}
+			plan.Files["config/resolv.conf"] = []byte(resolver)
+		}
+	}
+	plan.Launch.Startup = smbDefaultStartup(plan.Launch)
 	plan.Files["config/context.json"], err = json.Marshal(plan.Launch)
 	if err != nil {
 		return plan, err

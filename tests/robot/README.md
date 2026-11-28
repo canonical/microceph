@@ -182,3 +182,37 @@ Each PUT has the scenario's request timeout, enforced by `curl` and its owning s
 ### RGW migration sampling
 
 The migration sampler reads the old gateway before the replacement, then pauses for 100 ms. This follows the add-before-remove handover: once the old gateway has stopped, the replacement must be ready for the next read. Reading in the opposite order can miss both sides of a successful handover. Both gateways are probed on each iteration so replacement readiness is recorded even when the old gateway still serves. Each sample must contain a successful object read; it is not an atomic snapshot of both gateways.
+
+
+### External AD qualification
+
+`--test-suite smb-ad-tests` runs one complete ordered **nine-case** installed
+scenario through the SMB owner coordinator. `smb-integration` executes serial
+clustered6, singleton3 and AD9 labs (**18 cases**). The full/default/`--all`
+entry points preserve Robot's canonical selection and reject partial dependent
+SMB scenarios before allocation. Dry-run discovers keywords only and never
+allocates a lab; its passing result is not installed acceptance.
+
+AD uses three fresh owned MicroCeph VMs (VM0 is also a client) plus one dedicated
+Samba AD DC VM. Capacity is checked for all four before allocation and again at
+each allocation, with the same disk/memory headroom policy. The private manifest
+records exact owner-tagged gateway/DC names and block volumes before creation.
+Cleanup refuses foreign resources and attached volumes; failure makes the
+scenario non-green. No existing lab or directory state is reused automatically.
+
+The fixture provisions real DNS/KDC/directory services, users and domain groups.
+It tests one failed join without retry/reset, one logical identity on two
+members, required Kerberos and missing-ticket refusal, separately forced NTLMv2
+and wrong/unknown users, group/read-only authorization, native restart and real
+reboot, bootstrap-source refresh without process changes, retained re-enable,
+a bounded directory outage across an updater tick, and peer purge with retained
+identity/resources/data. SID/UID/GID and computer-account password-generation
+observations must remain stable; nine discovered tests or mocked commands do
+not prove any of these installed behaviors.
+
+CI's existing executing `smb-integration` route runs the complete scenarios;
+skips, missing/extra cases, control failures and cleanup failures are non-green.
+Only sanitized XML/HTML and `smb-summary.json` are uploaded. Never upload the
+private manifest directory, resource/auth files, caches, keyrings, databases or
+raw guest diagnostics. Real package closure/confinement, retained-state upgrade
+and rollback limits still require qualification of the exact candidate artifact.

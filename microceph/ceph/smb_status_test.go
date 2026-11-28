@@ -53,3 +53,20 @@ func TestSMBLocalStatusFreshReadyAndStopped(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, status.ClusterID)
 }
+
+func TestSMBADPublicStatusIsObservedNonsecretAndCancellable(t *testing.T) {
+	state, r, count := smbADLifecycleFixture(t, "")
+	require.NoError(t, enableSMBLocked(context.Background(), state, "alpha"))
+	before := len(r.commands)
+	status, err := SMBLocalStatus(context.Background(), state)
+	require.NoError(t, err)
+	require.True(t, status.Ready)
+	require.Equal(t, "active-directory", status.AuthMode)
+	require.Equal(t, "EXAMPLE.TEST", status.Realm)
+	require.Equal(t, 1, *count)
+	require.Len(t, r.commands, before, "status uses observations, not source or control mutations")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = SMBLocalStatus(ctx, state)
+	require.ErrorIs(t, err, context.Canceled)
+}

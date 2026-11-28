@@ -9,6 +9,10 @@ type SMBService struct {
 
 // SMBStatus is a credential-free local application diagnostic.
 type SMBStatus struct {
+	// AuthMode is the prepared authentication mode, not a join success assertion.
+	AuthMode string `json:"auth_mode,omitempty"`
+	// Realm is the prepared external directory realm; credentials are never exposed.
+	Realm string `json:"realm,omitempty"`
 	// Clustered identifies a prepared CTDB-backed gateway.
 	Clustered bool `json:"clustered,omitempty"`
 	// CTDBPNN is the assigned stable member rank, including zero.

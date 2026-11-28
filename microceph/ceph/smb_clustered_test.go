@@ -28,8 +28,8 @@ func TestSMBClusteredAdmissionAndRoleBoundary(t *testing.T) {
 	require.Equal(t, []string{"ctdbd", "smbd"}, roles)
 	require.Error(t, validateSMBLogicalPolicy([]byte(`{"auth_mode":"user","clustering":"never"}`), spec))
 	spec.Features = append(spec.Features, "domain")
-	_, err = smbCoreRoles(spec)
-	require.Error(t, err)
+	err = validateSMBLocalSpec(spec)
+	require.Error(t, err, "incomplete AD must not be admitted")
 }
 
 func clusteredTestCandidate() smbCandidate {

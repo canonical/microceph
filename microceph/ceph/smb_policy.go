@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,8 +41,25 @@ func validateSMBLocalSpec(spec smbSpec) error {
 	if len(spec.PublicAddresses) > 0 {
 		return fmt.Errorf("public addresses require a separate HA/LB implementation")
 	}
-	if len(spec.JoinSources) > 0 || len(spec.CustomDNS) > 0 || spec.TLSCert != "" || spec.TLSKey != "" || spec.TLSCA != "" {
+	if (!spec.hasFeature("domain") && (len(spec.JoinSources) > 0 || len(spec.CustomDNS) > 0)) || spec.TLSCert != "" || spec.TLSKey != "" || spec.TLSCA != "" {
 		return fmt.Errorf("unsupported SMB domain or remote-control sources")
+	}
+	if spec.hasFeature("domain") {
+		if len(spec.JoinSources) == 0 || len(spec.UserSources) != 0 {
+			return fmt.Errorf("AD requires ordered join sources and no local user/group sources")
+		}
+		for _, uri := range spec.JoinSources {
+			err = validateSMBSourceURI(spec.ClusterID, uri)
+			if err != nil {
+				return err
+			}
+		}
+		for _, address := range spec.CustomDNS {
+			ip, parseErr := netip.ParseAddr(address)
+			if parseErr != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() {
+				return fmt.Errorf("invalid private AD DNS server")
+			}
+		}
 	}
 	if spec.hasFeature("clustered") {
 		for _, uri := range []string{spec.ClusterMetaURI, spec.ClusterLockURI} {
@@ -75,8 +93,12 @@ func validateSMBLogicalPolicy(logical []byte, spec smbSpec) error {
 	if err != nil {
 		return fmt.Errorf("invalid logical SMB policy")
 	}
-	if cluster.AuthMode != "" && cluster.AuthMode != "user" {
-		return fmt.Errorf("only local-user SMB authentication is supported")
+	if spec.hasFeature("domain") {
+		if cluster.AuthMode != "active-directory" {
+			return fmt.Errorf("logical authentication does not match generated spec")
+		}
+	} else if cluster.AuthMode != "" && cluster.AuthMode != "user" {
+		return fmt.Errorf("logical authentication does not match generated spec")
 	}
 	if cluster.Clustering != "" && cluster.Clustering != "default" && cluster.Clustering != "never" && cluster.Clustering != "always" {
 		return fmt.Errorf("unsupported logical SMB clustering policy")
@@ -125,16 +147,22 @@ func validateSMBEffectivePolicy(spec smbSpec, description smbBindingDescription)
 		switch key {
 		case "security":
 			security := smbPolicyOptionName(value)
-			if security != "user" && security != "auto" {
+			if spec.hasFeature("domain") && security == "ads" {
+				break
+			}
+			if spec.hasFeature("domain") || (security != "user" && security != "auto") {
 				return fmt.Errorf("effective domain/security mode is not prepared")
 			}
 		case "realm":
-			if value != "" {
+			if value != "" && !spec.hasFeature("domain") {
 				return fmt.Errorf("effective realm is not prepared")
 			}
 		case "serverrole":
 			role := smbPolicyOptionName(value)
-			if role != "auto" && role != "standalone" && role != "standaloneserver" {
+			if spec.hasFeature("domain") && (role == "auto" || role == "member" || role == "memberserver") {
+				break
+			}
+			if spec.hasFeature("domain") || (role != "auto" && role != "standalone" && role != "standaloneserver") {
 				return fmt.Errorf("effective server role is not prepared")
 			}
 		case "clustering":
@@ -144,6 +172,15 @@ func validateSMBEffectivePolicy(spec smbSpec, description smbBindingDescription)
 			if (!enabled && !disabled) || enabled != spec.hasFeature("clustered") {
 				return fmt.Errorf("effective clustering override conflicts with generated spec")
 			}
+		}
+	}
+	if spec.hasFeature("domain") {
+		if smbPolicyOptionName(effective["security"]) != "ads" {
+			return fmt.Errorf("AD requires effective ADS security")
+		}
+		_, err = smbADIdentity(spec, effective)
+		if err != nil {
+			return err
 		}
 	}
 	role := smbPolicyOptionName(effective["serverrole"])
@@ -215,7 +252,8 @@ func validateSMBPolicyDescription(candidate smbCandidate, description smbBinding
 			return err
 		}
 	}
-	return nil
+	_, err = smbMemberContext(candidate, description)
+	return err
 }
 
 var inspectSMBPolicyFunc = inspectSMBPolicy

@@ -29,6 +29,10 @@ type SMBServiceGroupConfig struct {
 	Ranks map[string]uint64 `json:"ranks,omitempty"`
 	// Endpoints retains canonical private addresses after owner retirement.
 	Endpoints map[string]string `json:"endpoints,omitempty"`
+	// AuthIdentity is the immutable nonsecret AD machine tuple; empty means local users.
+	AuthIdentity string `json:"auth_identity,omitempty"`
+	// AD retains one-shot join and initialization history, never credentials.
+	AD *SMBADState `json:"ad,omitempty"`
 }
 
 func decodeSMBOwnership(raw string) (SMBServiceGroupConfig, error) {
@@ -62,7 +66,8 @@ func decodeSMBOwnership(raw string) (SMBServiceGroupConfig, error) {
 			}
 		}
 	}
-	return config, nil
+	err = validateSMBADHistory(config)
+	return config, err
 }
 
 func smbMemberIdentity(ctx context.Context, tx *sql.Tx, member string) (string, error) {
@@ -134,17 +139,17 @@ func saveSMBGroup(ctx context.Context, tx *sql.Tx, id int64, config SMBServiceGr
 // write transaction before starting smbd. Retain the reservation if cleanup
 // cannot prove that the daemon has stopped.
 func ReserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string) error {
-	_, err := reserveSMBOwner(ctx, tx, clusterID, member, false)
+	_, err := reserveSMBOwner(ctx, tx, clusterID, member, false, "")
 	return err
 }
 
 // ReserveSMBClusteredOwner reserves an actual owner with its stable CTDB rank.
 // Call in a short write transaction; failed startup must retain uncertainty.
 func ReserveSMBClusteredOwner(ctx context.Context, tx *sql.Tx, clusterID, member string) (uint64, error) {
-	return reserveSMBOwner(ctx, tx, clusterID, member, true)
+	return reserveSMBOwner(ctx, tx, clusterID, member, true, "")
 }
 
-func reserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string, clustered bool) (uint64, error) {
+func reserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string, clustered bool, authIdentity string) (uint64, error) {
 	if clusterID == "" || member == "" {
 		return 0, fmt.Errorf("SMB cluster and member must be nonempty")
 	}
@@ -205,7 +210,10 @@ func reserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string, 
 	}
 	id, config, err := smbGroup(ctx, tx, clusterID)
 	if errors.Is(err, sql.ErrNoRows) {
-		config = SMBServiceGroupConfig{Owners: map[string]string{}, LocalSAMStarted: map[string]string{}, Clustered: clustered}
+		config = SMBServiceGroupConfig{Owners: map[string]string{}, LocalSAMStarted: map[string]string{}, Clustered: clustered, AuthIdentity: authIdentity}
+		if authIdentity != "" {
+			config.AD = &SMBADState{}
+		}
 		if clustered {
 			config.Ranks = map[string]uint64{}
 			config.Endpoints = map[string]string{}
@@ -222,6 +230,9 @@ func reserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string, 
 	}
 	if err != nil {
 		return 0, err
+	}
+	if config.AuthIdentity != authIdentity {
+		return 0, fmt.Errorf("SMB authentication identity changed; new logical ID and manual maintenance required")
 	}
 	if config.Clustered != clustered {
 		return 0, fmt.Errorf("SMB mode conflicts with retained rank/identity state; maintenance required")

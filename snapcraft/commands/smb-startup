@@ -37,18 +37,38 @@ try:
     checked_path(root / "config", directory=True)
     checked_path(root / "config/context.json")
     context = json.loads((root / "config/context.json").read_text())
-    if not isinstance(context, dict) or set(context) - {"startup", "frontend_address", "smb_port", "data_checks", "clustered", "ctdb_pnn"}:
+    if not isinstance(context, dict) or set(context) - {"startup", "frontend_address", "smb_port", "data_checks", "clustered", "ctdb_pnn", "ad_member", "custom_dns"}:
         raise ValueError("unsupported context")
     clustered = context.get("clustered", False)
     pnn = context.get("ctdb_pnn")
     if type(clustered) is not bool or (clustered and (type(pnn) is not int or not 0 <= pnn <= 65535)) or (not clustered and pnn is not None):
         raise ValueError("invalid assigned CTDB context")
+    member = context.get("ad_member")
+    workgroup = "-"
+    dns = context.get("custom_dns", False)
+    if type(dns) is not bool or (dns and member is None):
+        raise ValueError("invalid private DNS context")
+    if member is not None:
+        if not clustered or not isinstance(member, dict) or set(member) != {"realm", "workgroup", "netbios_name", "fqdn"}:
+            raise ValueError("AD requires complete clustered member context")
+        realm, workgroup, name, fqdn = (member[key] for key in ("realm", "workgroup", "netbios_name", "fqdn"))
+        if not all(isinstance(value, str) for value in (realm, workgroup, name, fqdn)):
+            raise ValueError("invalid member identity")
+        if re.fullmatch(r"[A-Z0-9][A-Z0-9_-]{0,14}", workgroup) is None or name != owner.upper() or len(name) > 15:
+            raise ValueError("invalid short member identity")
+        if realm != realm.upper() or len(realm) > 253 or len(realm.split(".")) < 2 or any(re.fullmatch(r"[A-Z0-9]([A-Z0-9-]{0,61}[A-Z0-9])?", label) is None for label in realm.split(".")):
+            raise ValueError("invalid member realm")
+        if fqdn != (name + "." + realm).lower() or len(fqdn) > 253:
+            raise ValueError("invalid service FQDN")
+    if dns:
+        checked_path(root / "config/resolv.conf")
     startup = context.get("startup", {})
-    if not isinstance(startup, dict) or set(startup) - {"smbd"}:
+    if not isinstance(startup, dict) or set(startup) - ({"smbd", "winbindd"} if member else {"smbd"}):
         raise ValueError("unsupported startup role")
-    checks = startup.get("smbd", {})
-    if not isinstance(checks, dict) or set(checks) - {"prepared"}:
-        raise ValueError("unsupported startup checks")
+    for checks in startup.values():
+        allowed = {"prepared", "initialized", "records"} if member else {"prepared"}
+        if not isinstance(checks, dict) or set(checks) - allowed or type(checks.get("prepared", False)) is not bool or type(checks.get("initialized", False)) is not bool:
+            raise ValueError("unsupported startup checks")
     stop = root / "stop-requested"
     if stop.exists() or stop.is_symlink() or (base / "owner.json").read_text() != owner:
         raise ValueError("stop requested or owner changed")
@@ -56,7 +76,7 @@ try:
         raise ValueError("command owner changed")
 except (OSError, ValueError, TypeError, KeyError):
     sys.exit("Native SMB prepared context is unsafe or unavailable")
-for value in (owner, str(root), str(int(clustered)), str(pnn) if pnn is not None else "-"):
+for value in (owner, str(root), str(int(clustered)), str(pnn) if pnn is not None else "-", str(int(dns)), workgroup):
     sys.stdout.write(value + "\0")
 PY
 }
@@ -64,11 +84,13 @@ PY
 smb_load_context() {
   local -a context
   mapfile -d '' -t context < <(smb_startup_context)
-  [[ ${#context[@]} == 4 ]] || return 1
+  [[ ${#context[@]} == 6 ]] || return 1
   SMB_OWNER="${context[0]}"
   SMB_ROOT="${context[1]}"
   SMB_CLUSTERED="${context[2]}"
   SMB_PNN="${context[3]}"
+  SMB_CUSTOM_DNS="${context[4]}"
+  SMB_WORKGROUP="${context[5]}"
   if [[ "$SMB_CLUSTERED" == 1 ]]; then
     export CTDB_BASE="$SMB_ROOT/ctdb" CTDB="$SNAP/bin/ctdb"
   fi
@@ -93,7 +115,7 @@ for path in (source, *source.parents):
     if path.is_symlink():
         sys.exit("Unsafe SMB bind source")
 info = source.lstat()
-expected = stat.S_ISDIR if target == Path('/run/ctdb') else stat.S_ISREG
+expected = stat.S_ISDIR if target in (Path('/run/ctdb'), Path('/run/samba/winbindd')) else stat.S_ISREG
 if info.st_uid != os.geteuid() or info.st_mode & 0o022 or not expected(info.st_mode):
     sys.exit("Unsafe SMB bind source")
 paths = [str(source.resolve(strict=True)), str(target.resolve(strict=True))]
@@ -119,6 +141,7 @@ smb_setup_nss() {
 }
 
 smb_assert_prepared() {
+  if [[ "$SMB_WORKGROUP" != - ]]; then smb_assert_ad_prepared "$1"; return; fi
   [[ "$1" == smbd ]] || return 1
   local attempt rc
   for ((attempt=0; attempt<90; attempt++)); do
@@ -163,11 +186,19 @@ from pathlib import Path
 import stat
 import sys
 path, create = Path(sys.argv[1]), sys.argv[2] == "1"
-if create and not os.path.lexists(path):
-    path.mkdir(mode=0o755)
-info = path.lstat()
-if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022 or any(path.iterdir()):
-    sys.exit("Unsafe or occupied SMB runtime mountpoint")
+def directory(path):
+    if create and not os.path.lexists(path):
+        path.mkdir(mode=0o755)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+        sys.exit("Unsafe SMB runtime mountpoint")
+if str(path) == "/run/samba/winbindd":
+    directory(path.parent)
+    if any(entry.name != path.name for entry in path.parent.iterdir()):
+        sys.exit("Winbind runtime parent contains unrelated state")
+directory(path)
+if any(path.iterdir()):
+    sys.exit("SMB runtime mountpoint contains unrelated state")
 PY
 }
 
@@ -207,4 +238,117 @@ smb_ctdb_health() {
     fi
   done <<< "$status"
   [[ "$normal" == true && "$count" == 1 ]]
+}
+
+smb_bind_custom_dns() {
+  [[ "$SMB_CUSTOM_DNS" == 1 ]] || return 0
+  local target
+  target=$("$SNAP/bin/python3" -B -c 'import os; print(os.path.realpath("/etc/resolv.conf", strict=True))')
+  case "$target" in
+    /etc/resolv.conf|/run/systemd/resolve/stub-resolv.conf) ;;
+    *) printf '%s\n' 'Native SMB resolver target is not approved' >&2; return 1 ;;
+  esac
+  [[ -f "$target" ]] || return 1
+  # This is called only after the service's unshare --propagation slave.
+  # No userspace mount-table writes; no new-mount-API privilege expansion.
+  smb_bind_private "$SMB_ROOT/config/resolv.conf" "$target"
+}
+
+
+smb_setup_winbind() {
+  [[ "$SMB_WORKGROUP" != - && "$SMB_CLUSTERED" == 1 ]] || return 1
+  "$SNAP/bin/python3" -B - "$SMB_ROOT" <<'PYCODE'
+import os
+from pathlib import Path
+import stat
+import sys
+root = Path(sys.argv[1])
+for relative, mode in ((".", 0o700), ("samba", 0o700), ("samba/state", 0o700),
+                       ("samba/winbindd", 0o755), ("samba/state/winbindd_privileged", 0o750)):
+    path = root / relative
+    info = path.lstat()
+    if (any(parent.is_symlink() for parent in (path, *path.parents))
+            or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != mode):
+        sys.exit("Unsafe AD socket/private paths")
+PYCODE
+  smb_runtime_mountpoint /run/samba/winbindd
+  smb_bind_private "$SMB_ROOT/samba/winbindd" /run/samba/winbindd
+}
+
+
+smb_assert_ad_prepared() {
+  local role="$1" attempt requirements rc database key extra value inventory
+  for ((attempt=0; attempt<90; attempt++)); do
+    smb_check_start_intent || return 1
+    # Go alone selects prepared/initialization policy and required records.
+    if requirements=$("$SNAP/bin/python3" -B - "$role" "$SMB_ROOT" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+role, root = sys.argv[1], Path(sys.argv[2])
+if role not in ("smbd", "winbindd"):
+    sys.exit(1)
+context = json.loads((root / "config/context.json").read_text())
+checks = context.get("startup", {}).get(role, {})
+if checks.get("prepared") is not True:
+    sys.exit(75)
+member = context.get("ad_member")
+if not isinstance(member, dict):
+    sys.exit(1)
+workgroup = member.get("workgroup", "")
+trust = [{"database": "secrets.tdb", "key": prefix + workgroup}
+         for prefix in ("SECRETS/MACHINE_PASSWORD/", "SECRETS/SID/")]
+strict = role == "smbd" or checks.get("initialized", False)
+if not strict:
+    marker = root / "ad-initializing"
+    if marker.is_symlink() or not marker.is_file() or marker.stat().st_uid != os.geteuid() or marker.stat().st_mode & 0o077 or json.loads(marker.read_text()) != member:
+        sys.exit(1)
+records = trust + ([{"database": "autorid.tdb", "key": "0x434f4e46494700"}] if strict else [])
+if checks.get("records") != records:
+    sys.exit(1)
+lines = []
+for record in records:
+    database, key = record.get("database"), record.get("key")
+    if database not in ("secrets.tdb", "autorid.tdb") or not isinstance(key, str) or not key or any(c.isspace() or c == "\0" for c in key):
+        sys.exit(1)
+    lines.append(database + "\t" + key)
+print("\n".join(lines), end="")
+PY
+    ); then
+      break
+    else
+      rc=$?
+      [[ "$rc" == 75 ]] || return "$rc"
+    fi
+    sleep 1
+  done
+  [[ "$attempt" -lt 90 ]] || return 1
+  if [[ -n "$requirements" ]]; then
+    # pfetch may attach/create a database. Inventory first and never interpret
+    # absence as permission to initialize or repair retained identity state.
+    inventory=$("$SNAP/bin/ctdb" -t 5 getdbmap 2>/dev/null) || return 1
+    while IFS=$'\t' read -r database key extra; do
+      [[ -z "$extra" && "$inventory" == *"name:$database "* ]] || return 1
+      value=$("$SNAP/bin/ctdb" -t 5 pfetch "$database" "$key" 2>/dev/null) || return 1
+      [[ -n "${value//[$' \t\r\n']/}" ]] || return 1
+      unset value
+    done <<< "$requirements"
+  fi
+  smb_check_start_intent
+}
+
+smb_private_log() {
+  "$SNAP/bin/python3" -B - "$1" <<'PY'
+import os
+import stat
+import sys
+path = sys.argv[1]
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+info = os.fstat(fd)
+os.close(fd)
+if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+    sys.exit("Unsafe private SMB diagnostics")
+PY
 }

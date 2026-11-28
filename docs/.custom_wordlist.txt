@@ -420,3 +420,19 @@ quincy
 msgr
 orchestrator
 
+argv
+autorid
+idmap
+IPs
+Kerberos
+keytabs
+SIDs
+Winbind
+workgroup
+venv
+Vaultlocker
+teardown
+allowlisted
+librados
+backport
+subprocess

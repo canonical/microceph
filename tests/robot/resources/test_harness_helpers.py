@@ -3725,7 +3725,7 @@ def test_smb_singleton_coordinator_private_output_and_umask_restoration(tmp_path
 def test_smb_singleton_coordinator_refuses_future_suite_selection(tmp_path):
     runner = _load_smb_runner()
     with pytest.raises(SystemExit):
-        runner.main(["--suites", "ad", "--outputdir", str(tmp_path)])
+        runner.main(["--suites", "future", "--outputdir", str(tmp_path)])
     assert not (tmp_path / "smb-results").exists()
 
 

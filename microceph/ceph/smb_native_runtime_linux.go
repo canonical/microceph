@@ -40,6 +40,9 @@ func prepareSMBAccounts(ctx context.Context, root string, initialize bool) error
 	if err != nil {
 		return err
 	}
+	if candidate.Spec.hasFeature("domain") {
+		return fmt.Errorf("AD member must not import local SAM accounts")
+	}
 	document, err := smbCombinedDocument(candidate)
 	if err != nil {
 		return err
@@ -91,9 +94,24 @@ func decodeSMBLaunch(data []byte) (smbLaunch, error) {
 	if err != nil {
 		return launch, fmt.Errorf("invalid or unsupported SMB runtime context")
 	}
-	for role := range launch.Startup {
-		if role != "smbd" {
+	if launch.CustomDNS && launch.AD == nil {
+		return launch, fmt.Errorf("private DNS requires AD context")
+	}
+	if launch.AD != nil {
+		if !launch.Clustered {
+			return launch, fmt.Errorf("AD member requires clustered runtime context")
+		}
+		raw, _ := json.Marshal(launch.AD)
+		if !validSMBLaunchAD(launch.AD) || len(raw) == 0 {
+			return launch, fmt.Errorf("invalid AD runtime identity")
+		}
+	}
+	for role, checks := range launch.Startup {
+		if role != "smbd" && (role != "winbindd" || launch.AD == nil) {
 			return launch, fmt.Errorf("unsupported SMB startup role")
+		}
+		if launch.AD == nil && (checks.Initialized || len(checks.Records) != 0) {
+			return launch, fmt.Errorf("AD startup requirements conflict with local mode")
 		}
 	}
 	if launch.Clustered != (launch.CTDBPNN != nil) {
@@ -134,7 +152,7 @@ func activeSMBRoot(base string) (string, error) {
 }
 
 func smbReadyNative(ctx context.Context, root, role string) (retErr error) {
-	if role != "smbd" && role != "ctdbd" {
+	if role != "smbd" && role != "ctdbd" && role != "winbindd" {
 		return fmt.Errorf("native readiness role is not prepared")
 	}
 	err := smbNativeRoot(root, filepath.Base(root))
@@ -152,6 +170,18 @@ func smbReadyNative(ctx context.Context, root, role string) (retErr error) {
 	}
 	if role == "ctdbd" {
 		return checkSMBCTDBHealth(ctx, root, true)
+	}
+	if role == "winbindd" {
+		if launch.AD == nil {
+			return fmt.Errorf("Winbind requires AD context")
+		}
+		return smbADReadyFunc(ctx, root)
+	}
+	if launch.AD != nil {
+		err = smbADReadyFunc(ctx, root)
+		if err != nil {
+			return err
+		}
 	}
 	if !launch.Startup[role].Prepared {
 		return fmt.Errorf("SMB runtime is not prepared")

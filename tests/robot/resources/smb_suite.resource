@@ -68,3 +68,23 @@ Check Retired SMB Member
     ${state}=    SMB Snapshot    ${node}    ${cluster}
     Should Be Empty    ${state}[owner]
     Should Be Equal    ${state}[roles][smbd][ActiveState]    inactive
+    Should Be Equal    ${state}[roles][winbindd][ActiveState]    inactive
+    Should Be Equal    ${state}[roles][ctdbd][ActiveState]    inactive
+
+
+SMB AD Suite Setup
+    [Timeout]    40 minutes
+    Require SMB AD Capacity
+    SMB Suite Setup
+    Provision SMB AD Directory
+    Fresh SMB AD Inputs
+    ${prepared}=    Prepare SMB AD Data    0    0
+    Should Be Equal As Integers    ${prepared.rc}    0    msg=${prepared.stderr}
+    Wait For SMB Ceph Health
+
+SMB AD Suite Cleanup
+    TRY
+        Restore SMB Directory
+    FINALLY
+        SMB Suite Cleanup
+    END

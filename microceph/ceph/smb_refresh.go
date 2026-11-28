@@ -97,6 +97,7 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 	}()
 	var started bool
 	var clustered bool
+	var ad bool
 	var warning string
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		err := database.GetSMBConfiguredService(ctx, tx, clusterID, s.ClusterState().Name())
@@ -106,6 +107,19 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		clustered, err = database.IsSMBClusteredGroup(ctx, tx, clusterID)
 		if err != nil {
 			return err
+		}
+		ad, err = database.HasSMBADIdentity(ctx, tx, clusterID)
+		if err != nil {
+			return err
+		}
+		if ad {
+			state, stateErr := database.GetSMBADState(ctx, tx, clusterID, s.ClusterState().Name())
+			if stateErr != nil {
+				return stateErr
+			}
+			if !state.Joined || !state.Initialized {
+				return fmt.Errorf("AD initialization is not confirmed; explicit maintenance required")
+			}
 		}
 		if !clustered {
 			started, err = database.GetSMBLocalSAMStarted(ctx, tx, clusterID, s.ClusterState().Name())
@@ -141,6 +155,20 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		return err
 	}
 	current, err := loadSMBLaunch(root)
+	if err != nil {
+		return err
+	}
+	if ad != (current.AD != nil) {
+		return fmt.Errorf("SMB authentication identity context is missing or changed")
+	}
+	identity := ""
+	if current.AD != nil {
+		raw, _ := json.Marshal(current.AD)
+		identity = string(raw)
+	}
+	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return database.VerifySMBAuthIdentity(ctx, tx, clusterID, s.ClusterState().Name(), identity)
+	})
 	if err != nil {
 		return err
 	}
@@ -200,7 +228,7 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 	if err != nil {
 		return err
 	}
-	if current.Clustered != clustered || candidate.Spec.hasFeature("clustered") != clustered {
+	if candidate.Spec.hasFeature("domain") != ad || current.Clustered != clustered || candidate.Spec.hasFeature("clustered") != clustered {
 		return fmt.Errorf("SMB mode change requires explicit maintenance")
 	}
 	if clustered && (published.Spec.ClusterMetaURI != candidate.Spec.ClusterMetaURI || published.Spec.ClusterLockURI != candidate.Spec.ClusterLockURI) {
@@ -223,17 +251,29 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		err = updateSMBBootstrapCandidate(ctx, s, root, candidate)
+		if err != nil {
+			return err
+		}
 		os.Remove(filepath.Join(root, "diagnostics/last-error"))
 		return nil
 	}
 	if string(pending) != fingerprint {
-		_, roles, err := prepareSMBProjection(ctx, s, candidate, root)
+		next, roles, err := prepareSMBProjection(ctx, s, candidate, root)
 		if err != nil {
 			return err
 		}
-		if (clustered && (len(roles) != 2 || roles[0] != "ctdbd" || roles[1] != "smbd")) || (!clustered && (len(roles) != 1 || roles[0] != "smbd")) {
-			return fmt.Errorf("SMB runtime role change requires explicit maintenance")
+		expected := []string{"smbd"}
+		if clustered {
+			expected = []string{"ctdbd", "smbd"}
 		}
+		if ad {
+			expected = []string{"ctdbd", "winbindd", "smbd"}
+		}
+		if !reflect.DeepEqual(roles, expected) || !reflect.DeepEqual(next.AD, current.AD) {
+			return fmt.Errorf("SMB authentication identity or runtime role change requires explicit maintenance")
+		}
+
 		// Projection rechecks RADOS/config inputs; also re-read manager policy
 		// rather than treating the earlier logical response as immutable.
 		logical, err = cephRunContext(ctx, "smb", "show", "ceph.smb.cluster."+clusterID, "--format", "json")
@@ -314,7 +354,7 @@ func readSMBPublishedCandidate(root, clusterID string) (smbCandidate, error) {
 	if err != nil {
 		return candidate, err
 	}
-	if !reflect.DeepEqual(spec, candidate.Spec) || candidate.CephConfig == "" || len(candidate.Users) != len(candidate.Spec.UserSources) {
+	if !reflect.DeepEqual(spec, candidate.Spec) || candidate.CephConfig == "" || len(candidate.Users) != len(candidate.Spec.UserSources) || len(candidate.Joins) != len(candidate.Spec.JoinSources) {
 		return candidate, fmt.Errorf("inconsistent published SMB candidate")
 	}
 	present, err := smbLogicalPresent(clusterID, candidate.Logical)
@@ -366,6 +406,9 @@ func smbRefreshEnabled(ctx context.Context, root string) (bool, error) {
 	if launch.Clustered {
 		roles = append(roles, "ctdbd")
 	}
+	if launch.AD != nil {
+		roles = append(roles, "winbindd")
+	}
 	for _, role := range roles {
 		out, err := runSMBServiceCommand(ctx, "services", "microceph."+role)
 		if err != nil {
@@ -396,10 +439,10 @@ func applySMBRefresh(ctx context.Context, root string) (retErr error) {
 	defer smbMembershipMu.Unlock()
 	defer func() {
 		if retErr != nil {
-			retErr = errors.Join(retErr, quiesceSMBRefresh(context.Background()))
+			retErr = errors.Join(retErr, quiesceSMBRefresh(context.Background(), root))
 		}
 	}()
-	err := quiesceSMBRefresh(ctx)
+	err := quiesceSMBRefresh(ctx, root)
 	if err != nil {
 		return err
 	}
@@ -414,7 +457,30 @@ func applySMBRefresh(ctx context.Context, root string) (retErr error) {
 	if err != nil {
 		return err
 	}
-	err = prepareSMBAccounts(ctx, root, false)
+	launch, err := loadSMBLaunch(root)
+	if err != nil {
+		return err
+	}
+	if launch.AD != nil {
+		err = prepareSMBADPaths(root)
+		if err != nil {
+			return err
+		}
+		err = smbADPrepareFunc(ctx, root, false)
+		if err != nil {
+			return err
+		}
+		_, err = runSMBServiceCommand(ctx, "restart", "microceph.winbindd")
+		if err != nil {
+			return err
+		}
+		err = (smbSnapService{name: "winbindd", root: root}).Ready(ctx)
+		if err == nil {
+			err = setSMBPrepared(root, "smbd", false)
+		}
+	} else {
+		err = prepareSMBAccounts(ctx, root, false)
+	}
 	if err != nil {
 		return err
 	}
@@ -429,10 +495,76 @@ func applySMBRefresh(ctx context.Context, root string) (retErr error) {
 	return err
 }
 
-func quiesceSMBRefresh(ctx context.Context) error {
-	_, err := runSMBServiceCommand(ctx, "stop", "microceph.smbd")
+func quiesceSMBRefresh(ctx context.Context, root string) error {
+	roles := []string{"smbd"}
+	launch, err := loadSMBLaunchForPublication(root)
 	if err != nil {
 		return err
 	}
-	return confirmSMBInactive(ctx, "smbd")
+	if launch.AD != nil {
+		roles = append(roles, "winbindd")
+	}
+	for _, role := range roles {
+		_, err = runSMBServiceCommand(ctx, "stop", "microceph."+role)
+		if err != nil {
+			return err
+		}
+		err = confirmSMBInactive(ctx, role)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// updateSMBBootstrapCandidate advances only private bootstrap inputs, without
+// invalidating prepared context, restarting consumers or authorizing a new join.
+func updateSMBBootstrapCandidate(ctx context.Context, s interfaces.StateInterface, root string, candidate smbCandidate) error {
+	if !candidate.Spec.hasFeature("domain") {
+		return nil
+	}
+	smbMembershipMu.Lock()
+	defer smbMembershipMu.Unlock()
+	previous, err := readSMBPublishedCandidate(root, candidate.Spec.ClusterID)
+	if err != nil {
+		return err
+	}
+	if previous.fingerprint() == candidate.fingerprint() {
+		return nil
+	}
+	if previous.configurationFingerprint() != candidate.configurationFingerprint() {
+		return fmt.Errorf("bootstrap update changed serving configuration")
+	}
+	member, err := inspectSMBADMember(ctx, root, candidate)
+	if err != nil {
+		return err
+	}
+	launch, err := loadSMBLaunch(root)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(member, launch.AD) {
+		return fmt.Errorf("bootstrap update changed AD identity")
+	}
+
+	recheck, err := readSMBPreparedCandidate(ctx, s, candidate.Spec.ClusterID, root, candidate.Logical)
+	if err != nil {
+		return err
+	}
+	if candidate.fingerprint() != recheck.fingerprint() {
+		return fmt.Errorf("SMB bootstrap sources changed during preparation")
+	}
+	err = ctx.Err()
+	if err != nil {
+		return err
+	}
+	err = checkSMBStartIntent(root)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(candidate)
+	if err != nil {
+		return err
+	}
+	return smbAtomicWrite(filepath.Join(root, "config/candidate.json"), raw)
 }
