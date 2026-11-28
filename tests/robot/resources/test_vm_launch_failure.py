@@ -45,8 +45,11 @@ def _failing_launch(monkeypatch, fail_at):
         if argv[:2] == ["lxc", "launch"]:
             return Result(1 if fail_at == "launch" else 0, "", "launch failed")
         if argv[:2] == ["lxc", "exec"]:
-            assert argv == ["lxc", "exec", "-n", REQUESTED_VM, "--", "cloud-init", "status", "--wait"]
-            return Result(1 if fail_at == "cloud-init" else 0, "", "cloud-init failed")
+            assert argv[:5] == ["lxc", "exec", "-n", REQUESTED_VM, "--"]
+            if argv[5:] == ["cloud-init", "status", "--wait"]:
+                return Result(1 if fail_at == "cloud-init" else 0, "", "cloud-init failed")
+            # Diagnostics collected after a failed cloud-init wait.
+            return Result(0, "", "")
         if argv[:2] in (["lxc", "stop"], ["lxc", "delete"]):
             return Result(0, "", "")
         raise AssertionError(f"unexpected lxc command: {argv}")
