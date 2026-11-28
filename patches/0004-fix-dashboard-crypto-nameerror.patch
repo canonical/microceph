@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: James Beedy <james@vantagecompute.ai>
+Date: Fri, 30 May 2026 00:00:00 +0000
+Subject: [PATCH] mgr: fix NameError in verify_tls_files after cryptotools
+ refactor
+
+Fix by removing the standalone private-key validation block that used
+OpenSSL.crypto directly. The subsequent verify_tls() call already
+validates both cert and key via get_crypto_caller().
+---
+ share/ceph/mgr/mgr_util.py | 10 ++--------
+ 1 file changed, 2 insertions(+), 8 deletions(-)
+
+--- a/share/ceph/mgr/mgr_util.py	2026-05-30 01:12:33.198837423 +0000
++++ b/share/ceph/mgr/mgr_util.py	2026-05-30 01:12:33.201837419 +0000
+@@ -709,18 +709,10 @@
+     elif not os.path.isfile(pkey_fname):
+         raise ServerConfigException('private key %s does not exist' % pkey_fname)
+ 
+-
+-    try:
+-        with open(pkey_fname) as f:
+-            pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, f.read())
+-            pkey.check()
+-    except (ValueError, crypto.Error) as e:
+-        raise ServerConfigException(
+-            'Invalid private key {}: {}'.format(pkey_fname, str(e)))
+     try:
+         with open(pkey_fname) as key_file, open(cert_fname) as cert_file:
+             verify_tls(cert_file.read(), key_file.read())
+-    except (ServerConfigException) as e:
++    except ServerConfigException as e:
+         raise ServerConfigException(str(e))
+ 
+ 
+
+-- 
+2.43.0
