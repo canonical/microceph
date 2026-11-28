@@ -103,6 +103,26 @@ func (s *configWriterSuite) TestWriteRadosGWCompleteConfig() {
 	assert.Contains(s.T(), string(data), "rgw frontends = beast port=80 ssl_port=443 ssl_certificate=/tmp/server.crt ssl_private_key=/tmp/server.key")
 }
 
+func (s *configWriterSuite) TestWriteRadosGWBindAddressConfig() {
+	config := newRadosGWConfig(s.Tmp)
+	err := config.WriteConfig(
+		map[string]any{
+			"monitors":           "foohost",
+			"rgwPort":            80,
+			"sslPort":            443,
+			"rgwEndpoint":        "10.0.0.5:80",
+			"sslEndpoint":        "10.0.0.5:443",
+			"sslCertificatePath": "/tmp/server.crt",
+			"sslPrivateKeyPath":  "/tmp/server.key",
+		},
+		0644,
+	)
+	assert.Equal(s.T(), nil, err)
+	data, err := os.ReadFile(config.GetPath())
+	assert.Equal(s.T(), nil, err)
+	assert.Contains(s.T(), string(data), "rgw frontends = beast endpoint=10.0.0.5:80 ssl_endpoint=10.0.0.5:443 ssl_certificate=/tmp/server.crt ssl_private_key=/tmp/server.key")
+}
+
 func (s *configWriterSuite) TestWriteRadosGWSSLOnlyConfig() {
 	config := newRadosGWConfig(s.Tmp)
 	err := config.WriteConfig(
