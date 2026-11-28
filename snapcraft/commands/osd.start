@@ -31,6 +31,25 @@ get_key() {
     ceph config-key get "microceph:osd${suffix}.${osdid}/key"
 }
 
+# unlock_osd opens every encrypted device (data, WAL, DB) of one OSD. It
+# reports failure through its return code rather than letting `set -eu` (or
+# the `:?` guard in maybe_unlock, which exits the shell on an empty key) abort
+# the wrapper, so an OSD whose key cannot be fetched or whose LUKS open fails
+# does not leave every later OSD on the node locked. See issue #808.
+unlock_osd() {
+    local dir="${1:?missing}"
+    local id="${2:?missing}"
+    local sfx devkey
+
+    for sfx in "" ".wal" ".db"; do
+        [ -b "${dir}/unencrypted${sfx}" ] || continue
+
+        devkey="$( get_key "${id}" "${sfx}" )" || return 1
+        [ -n "${devkey}" ] || return 1
+        maybe_unlock "${dir}/unencrypted${sfx}" "${id}" "${devkey}" "${sfx}" || return 1
+    done
+}
+
 is_osd_running() {
     osdid="${1:?missing}"
 
@@ -52,14 +71,13 @@ spawn() {
 
         is_osd_running "${nr}" && continue
 
-        if [ -b "${i}/unencrypted" ] ; then
-            maybe_unlock "${i}/unencrypted" "${nr}" "$( get_key "${nr}" )"
-        fi
-        if [ -b "${i}/unencrypted.wal" ] ; then
-            maybe_unlock "${i}/unencrypted.wal" "${nr}" "$( get_key "${nr}" ".wal" )" ".wal"
-        fi
-        if [ -b "${i}/unencrypted.db" ] ; then
-            maybe_unlock "${i}/unencrypted.db" "${nr}" "$( get_key "${nr}" ".db" )" ".db"
+        # Without its mapper the OSD cannot start either, so skip it and let
+        # the retry loop try the unlock again (e.g. once the monitors answer
+        # config-key requests) instead of stranding the OSDs after it.
+        if ! unlock_osd "${i}" "${nr}"; then
+            echo "osd.${nr}: failed to unlock encrypted device; will retry" >&2
+            retry_pending=true
+            continue
         fi
 
         # Start the OSD but tolerate per-OSD failure: a single OSD that
