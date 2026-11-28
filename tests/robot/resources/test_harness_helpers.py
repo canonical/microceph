@@ -3731,8 +3731,8 @@ def test_smb_singleton_coordinator_refuses_future_suite_selection(tmp_path):
 
 def test_smb_local_guest_documents_and_redaction():
     from smb_guest import resource_documents, safe_apply_result
-    documents = resource_documents(["192.0.2.1"], "private-password")
-    assert set(documents) == {"nonclustered", "independent"}
+    documents = resource_documents(["192.0.2.1"], "private-password", "refreshed-private")
+    assert set(documents) == {"nonclustered", "independent", "refresh"}
     for document in documents.values():
         cluster = document["resources"][1]
         assert cluster["clustering"] == "never"
@@ -3764,3 +3764,81 @@ def test_smb_snapshot_readiness_requires_prepared_single_serving_role():
     assert not snapshot_ready(state, "alpha", 445)
     state["status"] = None
     assert not snapshot_ready(state, "alpha", 445)
+
+
+def test_smb_refresh_resources_change_users_share_and_endpoint_only():
+    from smb_guest import resource_documents
+    documents = resource_documents(["192.0.2.1"], "old-private", "new-private")
+    original = documents["nonclustered"]["resources"]
+    refreshed = documents["refresh"]["resources"]
+    assert original[0]["values"]["users"][0]["password"] == "old-private"
+    assert refreshed[0]["values"]["users"][0]["password"] == "new-private"
+    assert refreshed[1]["custom_ports"] == {"smb": 3446}
+    assert refreshed[1]["cluster_id"] == original[1]["cluster_id"]
+    assert refreshed[2]["readonly"] is True
+    assert refreshed[2]["cephfs"] == original[2]["cephfs"]
+
+
+def test_smb_refresh_observation_predicates_reject_restart_unready_and_disable():
+    from smb_ops import observations_unchanged, observations_disabled, parse_user_sid
+    from copy import deepcopy
+    state = {"node": "node", "owner": "robot-never", "status": {"cluster_id": "robot-never", "ready": True},
+             "context": {"smb_port": 3445, "startup": {"smbd": {"prepared": True}}},
+             "roles": {"smbd": {"MainPID": "42", "ExecMainStartTimestampMonotonic": "99", "ActiveState": "active"}}}
+    tokens = {"node": ("42", "99")}
+    assert observations_unchanged([state, state], tokens, "robot-never", 3445)
+    assert not observations_unchanged([], tokens, "robot-never", 3445)
+    other = deepcopy(state)
+    other["roles"]["smbd"]["MainPID"] = "43"
+    assert not observations_unchanged([state, other], tokens, "robot-never", 3445)
+    other["status"]["error"] = "pending"
+    assert not observations_unchanged([other], tokens, "robot-never", 3445)
+    other["roles"]["smbd"]["ActiveState"] = "inactive"
+    assert observations_disabled([other], "robot-never", 3445)
+    assert not observations_disabled([state], "robot-never", 3445)
+    assert not observations_disabled([], "robot-never", 3445)
+    assert not observations_disabled([other], "robot-never", 3446)
+    assert parse_user_sid("S-1-5-21-1-2-3-1000\n") == "S-1-5-21-1-2-3-1000"
+    for value in ("", "unavailable", "S-1-5-21-1-2-3-1000\nprivate-output"):
+        with pytest.raises(AssertionError):
+            parse_user_sid(value)
+
+
+def test_smb_sid_probe_uses_guarded_private_snap_child(monkeypatch):
+    import shlex
+    from types import SimpleNamespace
+    from smb_ops import smb_ops
+    library = smb_ops()
+    calls = []
+    def command(*args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(stdout="S-1-5-21-1-2-3-1000\n")
+    monkeypatch.setattr(library, "_node", lambda node: SimpleNamespace(command=command))
+    assert library.smb_user_sid(1) == "S-1-5-21-1-2-3-1000"
+    args, kwargs = calls[0]
+    assert args[:5] == ("snap", "run", "--shell", "microceph.smbd", "-c")
+    child = shlex.split(args[5])
+    assert child[:8] == ["exec", "$SNAP/bin/unshare", "--mount", "--propagation", "slave", "--", "/bin/bash", "-euc"]
+    body = child[8]
+    assert body.index("smb_assert_prepared smbd") < body.index("smb_guest.py")
+    assert "smb_setup_nss" in body and "export SMB_ROOT" in body
+    assert kwargs == {"timeout": 120, "check": True, "quiet": True}
+
+
+def test_smb_observation_window_uses_shared_poller(monkeypatch):
+    from smb_ops import smb_ops
+    import smb_ops as module
+    library = smb_ops()
+    clock = [0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(library, "smb_snapshot", lambda node, cluster: {"at": clock[0], "node": node})
+    def poll(predicate, attempts, interval, fail_msg):
+        assert attempts == 30 and interval == 3
+        assert fail_msg == "SMB observation window did not finish"
+        assert not predicate()
+        clock[0] = 64
+        assert not predicate()
+        clock[0] = 67
+        assert predicate()
+    monkeypatch.setattr(library.harness, "_poll_until", poll)
+    assert library.observe_smb_interval(1) == [{"at": 0, "node": 1}, {"at": 64, "node": 1}, {"at": 67, "node": 1}]

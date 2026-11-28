@@ -284,8 +284,7 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return errors.Join(err, stopSMBApps(root, ops))
 	}
-	os.Remove(filepath.Join(root, "diagnostics", "last-error"))
-	return nil
+	return confirmSMBConfiguration(root, candidate)
 }
 
 // DisableSMB retires only the exact confirmed-stopped local native owner.

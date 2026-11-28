@@ -350,3 +350,51 @@ func ClearSMBLocalSAMStarted(ctx context.Context, tx *sql.Tx, clusterID, member 
 	delete(config.LocalSAMStarted, identity)
 	return saveSMBGroup(ctx, tx, id, config)
 }
+
+// GetSMBConfiguredService requires an exact owner and an existing success row.
+// Observation cannot reserve ownership or complete a failed initial placement.
+func GetSMBConfiguredService(ctx context.Context, tx *sql.Tx, clusterID, member string) error {
+	identity, err := smbMemberIdentity(ctx, tx, member)
+	if err != nil {
+		return err
+	}
+	id, config, err := smbGroup(ctx, tx, clusterID)
+	if err != nil {
+		return err
+	}
+	if config.Owners[identity] != member {
+		return fmt.Errorf("SMB service has no matching owner reservation")
+	}
+	var count int
+	err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM grouped_services WHERE service_group_id=? AND member_id=?", id, identity).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return sql.ErrNoRows
+	}
+	if count != 1 {
+		return fmt.Errorf("duplicate SMB service rows")
+	}
+	return nil
+}
+
+// UpdateSMBServiceInfo updates observation only; it cannot publish new placement.
+func UpdateSMBServiceInfo(ctx context.Context, tx *sql.Tx, clusterID, member, info string) error {
+	err := GetSMBConfiguredService(ctx, tx, clusterID, member)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE grouped_services SET info=? WHERE service_group_id=(SELECT id FROM service_groups WHERE service='smb' AND group_id=?) AND member_id=(SELECT id FROM core_cluster_members WHERE name=?)`, info, clusterID, member)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return fmt.Errorf("SMB configured service changed during update")
+	}
+	return nil
+}
