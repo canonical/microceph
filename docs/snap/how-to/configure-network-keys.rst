@@ -38,6 +38,14 @@ The MicroCeph cluster configuration CLI supports setting, getting, resetting and
 
       $ sudo microceph cluster config set cluster_network 10.5.0.0/16,10.6.0.0/16
 
+.. note::
+
+   Setting or resetting ``cluster_network`` restarts the OSDs on every
+   cluster member so that they move to the new network. Pass ``--wait``
+   to return only once the restarts are done. With ``--skip-restart`` no
+   OSD is restarted, and the change takes effect only after you run
+   :command:`sudo snap restart microceph.osd` on each cluster member.
+
 1. Supported config keys can be configured using the 'set' command:
 
   .. code-block:: shell

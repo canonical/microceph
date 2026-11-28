@@ -93,9 +93,12 @@ func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 	addServiceRestartExpectations(r, ts)
 	common.ProcessExec = r
 
+	// OSDs are never recorded in the services table, only on disk.
+	s.CopyCephConfigs()
+	s.addLocalOSD("ceph-0", true)
+
 	services := types.Services{
 		types.Service{Service: "mon", Location: "foohost"},
-		types.Service{Service: "osd", Location: "foohost"},
 	}
 
 	// Handler is defined for both mon and osd services.
@@ -103,6 +106,69 @@ func (s *servicesSuite) TestRestartServiceWorkerSuccess() {
 	assert.NoError(s.T(), err)
 
 	err = RestartCephService(services, "osd", "foohost")
+	assert.NoError(s.T(), err)
+}
+
+// addLocalOSD creates an OSD data directory under SNAP_COMMON, optionally
+// with the ready marker that osd.start requires before starting the OSD.
+func (s *servicesSuite) addLocalOSD(name string, ready bool) {
+	osdPath := filepath.Join(s.Tmp, "SNAP_COMMON", "data", "osd", name)
+	err := os.MkdirAll(osdPath, 0770)
+	if err != nil {
+		s.T().Fatal("error creating OSD dir:", err)
+	}
+
+	if !ready {
+		return
+	}
+
+	err = os.WriteFile(filepath.Join(osdPath, osdReadyMarkerFile), nil, 0600)
+	if err != nil {
+		s.T().Fatal("error creating OSD ready marker:", err)
+	}
+}
+
+// TestRestartOsdWithoutServiceRecord guards the restart that follows
+// `cluster config set cluster_network`: OSDs have no services table row, so
+// the restart must be decided by the local OSDs, not by that table.
+func (s *servicesSuite) TestRestartOsdWithoutServiceRecord() {
+	strategies := restartServiceRetryStrategies
+	restartServiceRetryStrategies = []strategy.Strategy{strategy.Limit(10)}
+	defer func() { restartServiceRetryStrategies = strategies }()
+
+	r := mocks.NewRunner(s.T())
+	addOsdDumpExpectations(r)
+	addServiceRestartExpectations(r, []string{"osd"})
+	common.ProcessExec = r
+
+	s.CopyCephConfigs()
+	s.addLocalOSD("ceph-3", true)
+
+	services := types.Services{
+		types.Service{Service: "mon", Location: "foohost"},
+		types.Service{Service: "mgr", Location: "foohost"},
+	}
+
+	err := RestartCephService(services, "osd", "foohost")
+	assert.NoError(s.T(), err)
+}
+
+// TestRestartOsdSkippedWithoutLocalOSDs checks that a host without OSDs is
+// not restarted, even if the services table claims otherwise.
+func (s *servicesSuite) TestRestartOsdSkippedWithoutLocalOSDs() {
+	// No expectations: any ceph or snapctl call fails the test.
+	r := mocks.NewRunner(s.T())
+	common.ProcessExec = r
+
+	s.CopyCephConfigs()
+	// An OSD directory without the ready marker is not started by osd.start.
+	s.addLocalOSD("ceph-1", false)
+
+	services := types.Services{
+		types.Service{Service: "osd", Location: "foohost"},
+	}
+
+	err := RestartCephService(services, "osd", "foohost")
 	assert.NoError(s.T(), err)
 }
 
