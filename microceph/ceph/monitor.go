@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/canonical/microceph/microceph/common"
@@ -225,35 +226,15 @@ func verifyMonAbsent(ctx context.Context, hostname string) (bool, error) {
 	return !present, err
 }
 
-// ensureMonAbsent commits MON membership removal before the local daemon is
-// stopped. Stopping first can destroy quorum in a two-to-one migration and
-// leave the quorum-dependent `ceph mon rm` command unable to complete.
-//
-// The operation is deliberately idempotent. If an earlier attempt committed
-// the monmap change but failed during local teardown, the still-present service
-// database row causes reconciliation to call this again; an already-absent MON
-// then proceeds directly to stop, cleanup, and database removal.
-func ensureMonAbsent(ctx context.Context, hostname string) error {
-	monmap, err := getMonmapNames(ctx)
-	if err != nil {
-		return err
-	}
-	present := false
+// monRemovalKeepsQuorum returns an error wrapping ErrKeepOneInvariant unless
+// the monitors left after removing hostname from monmap keep a quorum of the
+// resulting map.
+func monRemovalKeepsQuorum(monmap []string, quorum []string, hostname string) error {
 	monmapSet := make(map[string]bool, len(monmap))
 	for _, name := range monmap {
 		monmapSet[name] = true
-		if name == hostname {
-			present = true
-		}
-	}
-	if !present {
-		return nil
 	}
 
-	quorum, err := getMonQuorumNames(ctx)
-	if err != nil {
-		return err
-	}
 	// The committed post-removal monmap has len(monmap)-1 members and needs a
 	// majority of those members to remain in quorum. Merely finding one other
 	// quorum member is insufficient for a degraded larger monmap: removing A
@@ -276,6 +257,53 @@ func ensureMonAbsent(ctx context.Context, hostname string) error {
 			requiredQuorum,
 			remainingMons,
 		)
+	}
+	return nil
+}
+
+// checkMonRemovalQuorum checks against the live monmap and quorum that the
+// monitor on hostname can be removed without the remaining monitors losing
+// quorum. A hostname absent from the monmap has nothing to remove and passes.
+func checkMonRemovalQuorum(ctx context.Context, hostname string) error {
+	monmap, err := getMonmapNames(ctx)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(monmap, hostname) {
+		return nil
+	}
+
+	quorum, err := getMonQuorumNames(ctx)
+	if err != nil {
+		return err
+	}
+	return monRemovalKeepsQuorum(monmap, quorum, hostname)
+}
+
+// ensureMonAbsent commits MON membership removal before the local daemon is
+// stopped. Stopping first can destroy quorum in a two-to-one migration and
+// leave the quorum-dependent `ceph mon rm` command unable to complete.
+//
+// The operation is deliberately idempotent. If an earlier attempt committed
+// the monmap change but failed during local teardown, the still-present service
+// database row causes reconciliation to call this again; an already-absent MON
+// then proceeds directly to stop, cleanup, and database removal.
+func ensureMonAbsent(ctx context.Context, hostname string) error {
+	monmap, err := getMonmapNames(ctx)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(monmap, hostname) {
+		return nil
+	}
+
+	quorum, err := getMonQuorumNames(ctx)
+	if err != nil {
+		return err
+	}
+	err = monRemovalKeepsQuorum(monmap, quorum, hostname)
+	if err != nil {
+		return err
 	}
 
 	removeErr := removeMon(ctx, hostname)

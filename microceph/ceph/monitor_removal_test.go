@@ -168,3 +168,36 @@ func TestEnsureMonAbsentRejectsIncompleteMonmap(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckMonRemovalQuorumAllowsHealthyThreeToTwo(t *testing.T) {
+	r := withMockRunner(t)
+	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
+		Return(`{"mons":[{"name":"node-a"},{"name":"node-b"},{"name":"node-c"}]}`, nil).Once()
+	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "stat", "-f", "json").
+		Return(`{"quorum_names":["node-a","node-b","node-c"]}`, nil).Once()
+
+	err := checkMonRemovalQuorum(context.Background(), "node-a")
+	assert.NoError(t, err)
+}
+
+func TestCheckMonRemovalQuorumRefusesDegradedResultingMonmap(t *testing.T) {
+	r := withMockRunner(t)
+	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
+		Return(`{"mons":[{"name":"node-a"},{"name":"node-b"},{"name":"node-c"}]}`, nil).Once()
+	// node-c is down. Removing node-a would leave {node-b,node-c}, which
+	// node-b alone cannot keep in quorum.
+	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "stat", "-f", "json").
+		Return(`{"quorum_names":["node-a","node-b"]}`, nil).Once()
+
+	err := checkMonRemovalQuorum(context.Background(), "node-a")
+	assert.ErrorIs(t, err, ErrKeepOneInvariant)
+}
+
+func TestCheckMonRemovalQuorumAbsentMon(t *testing.T) {
+	r := withMockRunner(t)
+	r.On("RunCommandContext", mock.Anything, "ceph", "mon", "dump", "-f", "json").
+		Return(`{"mons":[{"name":"node-b"}]}`, nil).Once()
+
+	err := checkMonRemovalQuorum(context.Background(), "node-a")
+	assert.NoError(t, err)
+}
