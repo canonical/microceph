@@ -43,10 +43,10 @@ Run Python Helper Unit Tests
     Should Be Equal As Integers    ${result.rc}    0    msg=pytest failed:\n${result.stdout}\n${result.stderr}
 
 Run MicroCeph Orchestrator Unit Tests
-    [Documentation]    Verifies the manager module loads with the Ceph 20 orchestrator API.
+    [Documentation]    Verifies Ceph 20 module compatibility and focused SMB orch request translation.
     [Tags]    unit    fast    smoke    python
     ${result}=    Run Process    python3    -m    pytest    -q
-    ...    ${REPO_ROOT}/microceph-orch/tests/test_module_import.py    timeout=300
+    ...    ${REPO_ROOT}/microceph-orch/tests    timeout=300
     Log    ${result.stdout}
     Log    STDERR: ${result.stderr}
     Should Be Equal As Integers    ${result.rc}    0    msg=pytest failed:\n${result.stdout}\n${result.stderr}

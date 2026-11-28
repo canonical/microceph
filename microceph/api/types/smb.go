@@ -5,6 +5,8 @@ package types
 type SMBService struct {
 	ClusterID string `json:"cluster_id" yaml:"cluster_id"`
 	Purge     bool   `json:"purge,omitempty" yaml:"purge,omitempty"`
+	// Orchestrated requests asynchronous retirement and fences queued placement.
+	Orchestrated bool `json:"orchestrated,omitempty" yaml:"orchestrated,omitempty"`
 }
 
 // SMBStatus is a credential-free local application diagnostic.

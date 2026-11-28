@@ -3,6 +3,7 @@
 #
 
 import logging
+import re
 from typing import Tuple, Dict, Any, List, Optional
 from collections import defaultdict
 import time
@@ -199,6 +200,8 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
         for svc_name, hostlist in service_hostlist.items():
             spec = None
             svc_type, svc_id = self._elaborate_service(svc_name)
+            if service_name and svc_name != service_name:
+                continue
             logger.info(f"{svc_name} under description for filter {service_type}")
 
             # skip unrelated services if a specific daemon type is requested.
@@ -257,9 +260,11 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             svc_ports = None
             svc_status_desc = None
             svc_name = f"{svc_daemon_type}.{svc_group_ip}" if svc_group_ip else svc_daemon_type
-            if daemon_type:
-                if svc_daemon_type != daemon_type:
-                    continue
+            if ((service_name and svc_name != service_name)
+                    or (daemon_id and svc_hostname != daemon_id)
+                    or (host and svc_hostname != host)
+                    or (daemon_type and svc_daemon_type != daemon_type)):
+                continue
 
             if svc_daemon_type == 'nfs':
                 info = json.loads(svc['info'])
@@ -313,6 +318,54 @@ class MicroCephOrchestrator(Orchestrator, MgrModule):
             ))
 
         return inventory
+
+    @handle_orch_error
+    def apply_smb(self, spec: SMBSpec) -> str:
+        """Request native placement; acceptance is not service readiness."""
+        cluster_id = spec.cluster_id
+        if (not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,16}[A-Za-z0-9])?", cluster_id)
+                or spec.service_id != cluster_id):
+            raise ValueError("SMB service_id must match a valid logical cluster_id")
+        if spec.unmanaged:
+            return f"SMB service {cluster_id} is unmanaged; no placement requested"
+        unsupported = ("preview_only", "networks", "config", "extra_container_args",
+                       "extra_entrypoint_args", "custom_configs")
+        if any(getattr(spec, field, None) for field in unsupported):
+            raise ValueError("Unsupported native SMB deployment options")
+        placement = spec.placement
+        if any(getattr(placement, field, None) for field in ("label", "host_pattern", "count_per_host")):
+            raise ValueError("Native SMB placement requires explicit member hosts")
+        targets = [host.hostname for host in placement.hosts]
+        if (not targets or len(set(targets)) != len(targets)
+                or placement.count not in (None, len(targets))
+                or any(host.network or host.name for host in placement.hosts)):
+            raise ValueError("Native SMB requires one instance per explicit member")
+        members = {member["name"] for member in self.microceph.cluster.get_cluster_members()}
+        if any(target not in members for target in targets):
+            raise ValueError("SMB placement contains an unknown MicroCeph member")
+        current = {row["location"] for row in self.microceph.services.list_services()
+                   if row["service"] == "smb" and row["group_id"] == cluster_id}
+        if current.difference(targets):
+            raise ValueError("Retire omitted SMB members explicitly before changing placement")
+        document = spec.to_json()
+        for target in targets:
+            self.microceph.services.apply_smb(target, cluster_id, document)
+        return f"SMB placement requested for {cluster_id} on {', '.join(targets)}"
+
+    @handle_orch_error
+    def remove_service(self, service_name: str, force: bool = False) -> str:
+        """Retire exact SMB owners, including failures without success rows."""
+        service_type, separator, cluster_id = service_name.partition(".")
+        if service_type != "smb" or not separator:
+            raise NotImplementedError("Only SMB service retirement is supported")
+        if force or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,16}[A-Za-z0-9])?", cluster_id):
+            raise ValueError("SMB retirement requires an exact group and does not support force")
+        # Include unpublished/queued placements. Go fences this exact group
+        # without touching another owner's shared services. Requests are async
+        # so a module-store callback cannot wait on a native placement lock.
+        for member in self.microceph.cluster.get_cluster_members():
+            self.microceph.services.remove_smb(member["name"], cluster_id)
+        return f"SMB retirement requested for {cluster_id}; private identities retained"
 
     def apply_rbd_mirror(self, spec: ServiceSpec) -> OrchResult[str]:
         logger.info(f"Received Apply Request for RBD Mirror: Spec: {vars(spec).items()}")

@@ -1,16 +1,62 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	"github.com/canonical/microceph/microceph/api/types"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/canonical/microceph/microceph/api/types"
+	"github.com/canonical/microceph/microceph/interfaces"
 )
+
+func TestSMBOrchRetirementReturnsBeforeNativeWork(t *testing.T) {
+	old := retireSMBOrchestratedFunc
+	started := make(chan context.Context, 1)
+	release := make(chan struct{})
+	done := make(chan struct{})
+	retireSMBOrchestratedFunc = func(ctx context.Context, _ interfaces.StateInterface, _ string) error {
+		defer close(done)
+		started <- ctx
+		<-release
+		return nil
+	}
+	t.Cleanup(func() {
+		close(release)
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("retirement worker did not finish")
+		}
+		retireSMBOrchestratedFunc = old
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request := httptest.NewRequest("DELETE", "/1.0/services/smb", strings.NewReader(`{"cluster_id":"alpha","orchestrated":true}`)).WithContext(ctx)
+	returned := make(chan struct{}, 1)
+	go func() {
+		cmdSMBDelete(nil, request)
+		returned <- struct{}{}
+	}()
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("orch callback blocked on native retirement")
+	}
+	cancel()
+	select {
+	case workCtx := <-started:
+		require.NoError(t, workCtx.Err(), "accepted work must outlive the HTTP request")
+	case <-time.After(time.Second):
+		t.Fatal("retirement was not dispatched")
+	}
+}
 
 func TestSMBUsesExistingServiceFamily(t *testing.T) {
 	found := false

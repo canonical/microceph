@@ -119,6 +119,25 @@ Purge Clustered Member Without Affecting Peers Or Shared State
     ${data_after}=    SMB Backing File Digest    initial-0.bin    robot-smb
     Should Be Equal    ${data_after}    ${data_before}
 
+Place Purged Gateway Through Orch CLI And Authenticate
+    Require Clustered Deployment
+    Check Retired SMB Member    2
+    ${retired}=    SMB Snapshot    2
+    Should Not Be True    ${retired}[local_exists]    msg=Orch test requires the preceding confirmed local purge
+    ${peers}=    SMB Snapshots    robot-smb    0    1
+    ${tokens}=    SMB Role Tokens    ${peers}
+    ${prepared}=    Prepare SMB Orch Spec    ${peers}[0][node]    ${peers}[1][node]    ${retired}[node]
+    Should Be Equal As Integers    ${prepared.rc}    0    msg=${prepared.stderr}
+    ${requested}=    Run SMB Checked    0    microceph.ceph    orch    apply    -i    /var/snap/microceph/common/robot-smb/orch.json
+    Should Contain    ${requested}    requested
+    # No direct enable/start: readiness and I/O must follow the orch request.
+    Wait For SMB Ready    2    port=2445
+    SMB Exact Transfer    2    orch-placement.bin
+    SMB Exact Transfer    0    orch-placement.bin    ${False}
+    ${after}=    SMB Snapshots    robot-smb    0    1
+    ${after_tokens}=    SMB Role Tokens    ${after}
+    Should Be Equal    ${after_tokens}    ${tokens}    msg=Targeted orch placement restarted an existing peer
+
 *** Keywords ***
 SMB Scenario Setup
     [Arguments]    ${mode}

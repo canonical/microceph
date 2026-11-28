@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 HERE = Path(__file__).resolve().parent
 EXPECTED_CASES = 3
-SCENARIOS = {"singleton": 3, "clustered": 6, "ad": 9}
+SCENARIOS = {"singleton": 3, "clustered": 7, "ad": 9}
 
 # The adjacent CLI wrapper must not shadow the installed Robot Framework.
 sys.path[:] = [path for path in sys.path if Path(path or os.getcwd()).resolve() != HERE]

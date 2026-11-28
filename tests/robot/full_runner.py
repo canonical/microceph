@@ -71,8 +71,8 @@ def _full(arguments, snap_path):
         raise DataError("Full discovery must contain the complete three-case SMB singleton scenario")
     complete_clustered = _clustered(suite)
     expected_clustered = _case_names(complete_clustered)
-    if complete_clustered is not None and len(expected_clustered) != 6:
-        raise DataError("Full discovery must contain the complete six-case SMB clustered scenario")
+    if complete_clustered is not None and len(expected_clustered) != 7:
+        raise DataError("Full discovery must contain the complete seven-case SMB clustered scenario")
     complete_ad = _ad(suite)
     expected_ad = _case_names(complete_ad)
     if complete_ad is not None and len(expected_ad) != 9:
@@ -85,7 +85,7 @@ def _full(arguments, snap_path):
     selected_clustered = _clustered(suite)
     clustered_names = _case_names(selected_clustered)
     if clustered_names and clustered_names != expected_clustered:
-        raise DataError("Select all six SMB clustered cases or none; partial scenarios cannot allocate a lab")
+        raise DataError("Select all seven SMB clustered cases or none; partial scenarios cannot allocate a lab")
     selected_ad = _ad(suite)
     ad_names = _case_names(selected_ad)
     if ad_names and ad_names != expected_ad:

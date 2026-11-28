@@ -58,24 +58,26 @@ Results land in `output.xml`, `log.html`, and `report.html` in the working direc
 Integration suites own their disposable LXD resources; host-only suites allocate none.
 Default/full runs (including `--all`) route the complete SMB scenarios through
 `smb_runner.py`, which owns serial labs, private manifests, exact case accounting
-and cleanup: six clustered cases and three singleton cases. Explicit
-`--test-suite smb-integration` runs both; `--test-suite smb-singleton-tests` and
+and cleanup: seven clustered cases, three singleton cases and nine AD cases.
+Explicit `--test-suite smb-integration` runs all three; `--test-suite smb-singleton-tests` and
 `--test-suite smb-clustered-tests` select one complete scenario. The coordinator's
-`--suites clustered,singleton` option can also reverse their order. No AD fixture
-or future runtime is allocated. Its private evidence remains in `smb-results/`
+`--suites clustered,singleton` option can also reverse those two scenarios and
+omit the AD fixture. Its private evidence remains in `smb-results/`
 and its verdict in `smb-summary.json`; do not publish the private lab manifest.
 The first singleton case also applies changed user credentials, a read-only share
 and a new port without placement commands, checks retained user SID/data, and
 observes disabled/no-op behavior over more than two production update periods.
 It restores the original inputs before the independent-ID/purge cases. Accounting
-remains exactly three dependent singleton cases. The six clustered cases cover
+remains exactly three dependent singleton cases. The seven clustered cases cover
 cross-gateway I/O/wrong-password refusal, endpoint refresh without CTDB restart,
 unchanged-enable tokens, retained-rank retirement/rejoin, daemon restart, actual
-reboot and peer/shared-resource/data-preserving local purge.
+reboot and peer/shared-resource/data-preserving local purge. The final case
+places the purged member through the real orch CLI, waits for native readiness
+and proves authenticated I/O without restarting existing peers.
 
 Full-tree runs apply Robot's normal selection flags before execution, without
 running suite setup. Selecting no SMB cases skips its coordinator; each selected
-scenario must include all three singleton or all six clustered cases. Partial
+scenario must include all three singleton or all seven clustered cases. Partial
 scenarios fail before allocating a lab. Ordinary
 filtered non-SMB runs remain supported, including qualified suite/test names.
 Full output/log/report options apply to the aggregated result; coordinator or
@@ -188,7 +190,7 @@ The migration sampler reads the old gateway before the replacement, then pauses 
 
 `--test-suite smb-ad-tests` runs one complete ordered **nine-case** installed
 scenario through the SMB owner coordinator. `smb-integration` executes serial
-clustered6, singleton3 and AD9 labs (**18 cases**). The full/default/`--all`
+clustered7, singleton3 and AD9 labs (**19 cases**). The full/default/`--all`
 entry points preserve Robot's canonical selection and reject partial dependent
 SMB scenarios before allocation. Dry-run discovers keywords only and never
 allocates a lab; its passing result is not installed acceptance.

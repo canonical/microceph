@@ -190,6 +190,8 @@ def test_smb_inventory_uses_observed_endpoints(monkeypatch):
     assert [(d.service_name, d.hostname, d.ip, d.ports) for d in daemons] == [
         ("smb.alpha", "node1", "2001:db8::7", [1445]),
         ("smb.alpha", "node2", None, [445]), ("smb.beta", "node3", None, None)]
+    assert [d.hostname for d in adapter.list_daemons(service_name="smb.alpha", daemon_id="node2", host="node2")] == ["node2"]
+    assert adapter.describe_service(service_name="smb.absent") == []
     assert daemons[0].status_desc is None
     assert daemons[1].status_desc is None
     rows[2]['info'] = '{malformed legacy observation'
@@ -201,7 +203,7 @@ def test_smb_inventory_uses_observed_endpoints(monkeypatch):
     assert descriptions[0].spec.config_uri == "rados://.smb/alpha/observed-config.json"
     assert descriptions[0].spec.placement.hosts == ["node1", "node2"]
     assert "must-not-escape" not in repr([vars(d) for d in daemons + descriptions])
-    assert not hasattr(adapter, "apply_smb")
+    assert callable(adapter.apply_smb)
 
     # Never guess a source for legacy rows or select one host's source when
     # applied references disagree. Other services and all daemon rows survive.

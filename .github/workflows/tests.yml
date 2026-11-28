@@ -220,9 +220,9 @@ jobs:
           - id: smb-integration
             name: SMB local and external AD lifecycle
             suite: smb-integration
-            # Serial owned labs: clustered6, singleton3 and actual-DC AD9.
+            # Serial owned labs: clustered7 (including orch CLI), singleton3 and actual-DC AD9.
             # AD checks capacity for three gateway/client VMs plus a dedicated DC.
-            # All 18 cases and owned teardown must pass; skips are non-green.
+            # All 19 cases and owned teardown must pass; skips are non-green.
             runner: self-hosted-linux-amd64-noble-large
             lxd_args: --storage-backend=dir
             args: >-

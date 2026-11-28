@@ -6,8 +6,9 @@ CTDB-backed group of explicitly placed gateways. Both use direct CephFS access.
 Clustered gateways can instead join an existing Active Directory domain.
 Metrics, CephFS proxy and floating-IP failover are not supported. A multi-node backing Ceph cluster alone does not enable clustered SMB.
 
-Configuration is maintained by Ceph's SMB manager module. MicroCeph explicitly
-places and stops gateways; the manager must not schedule containers. Separate
+Configuration is maintained by Ceph's SMB manager module. MicroCeph places and
+stops native gateways through its CLI or its Ceph orchestrator backend; it does
+not schedule SMB containers. Separate
 SMB-specific workers propagate supported configuration changes and reconcile
 published CTDB membership. Neither worker creates placements or repairs lost
 identity/rank history.
@@ -44,9 +45,9 @@ runtime directories. The privileged Winbind pipe stays under root-private state.
 Open your chosen SMB TCP port in any external firewall; MicroCeph does not add
 firewall rules.
 
-If the SMB module is already active with orchestration enabled or unknown,
-stop existing SMB deployments and enter maintenance before changing it. Never
-silently take over a cephadm-managed deployment. On a new deployment::
+If the SMB module is active under another or unknown orchestrator, stop existing
+SMB deployments and enter maintenance before changing it. Never silently take
+over a cephadm-managed deployment. For manual placement on a new deployment::
 
     sudo microceph.ceph config set mgr mgr/smb/update_orchestration false
     sudo microceph.ceph mgr module enable smb
@@ -130,6 +131,72 @@ client authentication file rather than placing passwords in argv::
 Verify a real upload/download and wrong-password refusal before relying on the
 share. Do not expose the private resource file or gateway state in support logs.
 Service inventory reports only applied source references and endpoints.
+
+Place gateways through Ceph orchestration
+-----------------------------------------
+
+The MicroCeph orchestrator translates SMB requests into the same targeted
+``/1.0/services/smb`` operations as the CLI. Go retains ownership, private
+configuration, identity, readiness and retirement checks. There is no separate
+Python service supervisor or automatic host-selection/replacement controller.
+
+For a new orchestrated deployment, select the backend before enabling the SMB
+module::
+
+    sudo microceph.ceph mgr module enable microceph
+    sudo microceph.ceph orch set backend microceph
+    sudo microceph.ceph config set mgr mgr/smb/update_orchestration true
+    sudo microceph.ceph mgr module enable smb
+
+For an existing manual deployment, enter maintenance before switching mode.
+The SMB module captures its orchestration setting during initialization: after
+setting the backend and option, disable and re-enable the SMB module before
+applying resources. This does not authorize converting authentication mode,
+resetting identity or taking over another orchestrator's deployments.
+
+Add explicit placement to the ``ceph.smb.cluster`` resource. For a clustered
+resource using the example above, list actual MicroCeph member names:
+
+.. code-block:: yaml
+
+    placement:
+      hosts:
+        - gateway-a
+        - gateway-b
+
+Then ``microceph.ceph smb apply -i /root/smb-resources.yaml`` requests native
+placement when the logical cluster has a share. A separate ``microceph enable
+smb`` is not needed. Count-only, label/pattern selection, per-host instance names,
+container arguments and generic service overrides are unsupported. Retire
+omitted members explicitly before shrinking or moving an existing placement.
+
+Explicit ``microceph.ceph orch apply -i /root/smb-spec.json`` also works while
+``update_orchestration`` is false. Use the generated spec, not service inventory
+or a separately authored configuration::
+
+    sudo microceph.rados -p .smb -N files get spec.smb /root/smb-spec.json
+
+Keep the file root-private. Set its top-level ``placement.hosts`` to the complete
+explicit member list and ``unmanaged`` to false; leave its ``spec`` policy
+unchanged. The gateway verifies that policy against the generated logical
+configuration. Apply configuration changes through ``ceph smb``, not arbitrary
+orch spec fields.
+
+Placement and ``microceph.ceph orch rm smb.files`` retirement are asynchronous.
+Success means requests were accepted, not that services are ready or stopped.
+Immediate API failures propagate; background failures are logged by
+``microceph.daemon``. Accepted work is not durable across a daemon crash; there
+is no automatic retry/replacement guarantee. Inspect targeted ``microceph status
+smb`` and service journals before relying on completion.
+
+Reapplying an existing owner uses the safe configuration-refresh path; it does
+not override an explicit stop or disabled snap service. Resume a retired/stopped
+member explicitly with ``microceph enable smb --cluster-id files --target
+<member> --wait=true`` during maintenance. Orch removal fences queued placements
+and retires exact owners without purging SAM, AD trust/idmap or CTDB history. It
+cannot force identity destruction. Calling ``orch rm`` directly leaves logical
+SMB resources and CephFS data intact. Normal inventory remains an unmanaged
+observation of applied state, not a durable desired-state specification.
 
 Clustered local-user gateways
 -----------------------------

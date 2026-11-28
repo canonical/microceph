@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/canonical/microceph/microceph/common"
 	"github.com/canonical/microceph/microceph/constants"
@@ -19,6 +22,8 @@ import (
 // SMBServicePlacement identifies an upstream logical cluster, never its secrets.
 type SMBServicePlacement struct {
 	ClusterID string `json:"cluster_id"`
+	// OrchestratorSpec is the expected generated policy, never source contents.
+	OrchestratorSpec json.RawMessage `json:"orchestrator_spec,omitempty"`
 }
 
 // PopulateParams validates the existing service-family payload.
@@ -27,7 +32,11 @@ func (p *SMBServicePlacement) PopulateParams(s interfaces.StateInterface, payloa
 	if err != nil {
 		return err
 	}
-	return validateSMBClusterID(p.ClusterID)
+	err = validateSMBClusterID(p.ClusterID)
+	if err == nil && len(p.OrchestratorSpec) > 0 {
+		_, err = decodeSMBSpec(p.ClusterID, p.OrchestratorSpec)
+	}
+	return err
 }
 
 // HospitalityCheck defers to the group-aware native ownership transaction.
@@ -35,6 +44,11 @@ func (p *SMBServicePlacement) HospitalityCheck(s interfaces.StateInterface) erro
 
 // ServiceInit prepares, applies and records the local service under the placement lock.
 func (p *SMBServicePlacement) ServiceInit(ctx context.Context, s interfaces.StateInterface) error {
+	if len(p.OrchestratorSpec) > 0 {
+		workCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		return enableSMBPlacementLocked(workCtx, s, p.ClusterID, p.OrchestratorSpec)
+	}
 	return enableSMBLocked(ctx, s, p.ClusterID)
 }
 
@@ -67,7 +81,13 @@ func ensureSMBModule(ctx context.Context) error {
 	}
 	option, optionErr := cephRunContext(ctx, "config", "get", "mgr", "mgr/smb/update_orchestration")
 	if active && (optionErr != nil || strings.TrimSpace(option) != "false") {
-		return fmt.Errorf("SMB module is active with conflicting/unknown orchestration setup; disable it in maintenance, set mgr/smb/update_orchestration=false, then reinitialize")
+		if optionErr == nil && strings.TrimSpace(option) == "true" {
+			backend, backendErr := cephRunContext(ctx, "config", "get", "mgr", "mgr/orchestrator/orchestrator")
+			if backendErr == nil && strings.TrimSpace(backend) == "microceph" {
+				return nil
+			}
+		}
+		return fmt.Errorf("SMB module has conflicting/unknown orchestration setup; use manual mode or explicitly select the MicroCeph orchestrator in maintenance")
 	}
 	if active {
 		return nil
@@ -127,12 +147,34 @@ func ensureSMBConfigKey(ctx context.Context, clusterID, root string) error {
 	return smbAtomicWrite(filepath.Join(root, "identity", "config.keyring"), []byte("[client."+name+"]\n\tkey = "+key+"\n"))
 }
 
-func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID string) (retErr error) {
+func smbOrchPolicyMatches(requested, generated []byte) bool {
+	var expected, current struct {
+		Spec map[string]any `json:"spec"`
+	}
+	err := json.Unmarshal(requested, &expected)
+	if err != nil {
+		return false
+	}
+	err = json.Unmarshal(generated, &current)
+	return err == nil && expected.Spec != nil && reflect.DeepEqual(expected.Spec, current.Spec)
+}
+
+func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
+	return enableSMBPlacementLocked(ctx, s, clusterID, nil)
+}
+
+func enableSMBPlacementLocked(ctx context.Context, s interfaces.StateInterface, clusterID string, requested json.RawMessage) (retErr error) {
 	err := validateSMBClusterID(clusterID)
 	if err != nil {
 		return err
 	}
 	root := smbRoot(clusterID)
+	if len(requested) > 0 {
+		err = checkSMBStartIntent(root)
+		if err != nil {
+			return err
+		}
+	}
 	err = ensureSMBModule(ctx)
 	if err != nil {
 		return err
@@ -174,6 +216,23 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	if err != nil {
 		return err
 	}
+	if len(requested) > 0 {
+		if !smbOrchPolicyMatches(requested, []byte(specRaw)) {
+			return fmt.Errorf("orch SMB policy differs from the generated logical policy; apply configuration through ceph smb")
+		}
+		owner, ownerErr := os.ReadFile(filepath.Join(smbBase(), "owner.json"))
+		if ownerErr == nil {
+			if string(owner) != clusterID {
+				return fmt.Errorf("another local SMB cluster retains ownership")
+			}
+			// Existing owners are configuration refreshes, not fresh explicit
+			// maintenance. Preserve disabled intent and all identity fences.
+			return refreshSMBLocked(ctx, s)
+		}
+		if !errors.Is(ownerErr, os.ErrNotExist) {
+			return ownerErr
+		}
+	}
 	for _, dir := range []string{"config", "identity", "samba/private", "samba/state", "samba/cache", "samba/lock", "samba/run", "samba/ncalrpc", "ctdb", "diagnostics"} {
 		err = smbPrivateDir(filepath.Join(root, dir))
 		if err != nil {
@@ -192,6 +251,9 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 	candidate, err := readSMBPreparedCandidateUnreserved(ctx, s, clusterID, root, []byte(logical))
 	if err != nil {
 		return err
+	}
+	if len(requested) > 0 && !smbOrchPolicyMatches(requested, candidate.SpecBytes) {
+		return fmt.Errorf("SMB policy changed during orch admission; retry the current logical policy")
 	}
 	err = inspectSMBPolicyFunc(ctx, root, candidate)
 	if err != nil {
@@ -432,6 +494,36 @@ func enableSMBLocked(ctx context.Context, s interfaces.StateInterface, clusterID
 		return errors.Join(err, stopSMBApps(root, ops))
 	}
 	return confirmSMBConfiguration(root, candidate)
+}
+
+// RetireOrchestratedSMB fences accepted placements even before ownership is
+// published. Only an exact local/SQL owner authorizes stopping shared snap apps.
+func RetireOrchestratedSMB(ctx context.Context, s interfaces.StateInterface, clusterID string) error {
+	serviceStartMu.Lock()
+	defer serviceStartMu.Unlock()
+	err := validateSMBClusterID(clusterID)
+	if err != nil {
+		return err
+	}
+	owner, err := os.ReadFile(filepath.Join(smbBase(), "owner.json"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	var groups []string
+	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		groups, err = database.GetSMBOwnerGroups(ctx, tx, s.ClusterState().Name())
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if string(owner) == clusterID || slices.Contains(groups, clusterID) {
+		return disableSMBLocked(ctx, s, clusterID, false)
+	}
+	// A foreign owner is untouched. Late queued applies for this group observe
+	// the stop fence under the same placement lock before any native effects.
+	return smbAtomicWrite(filepath.Join(smbRoot(clusterID), "stop-requested"), []byte("orch retirement requested\n"))
 }
 
 // DisableSMB retires only the exact confirmed-stopped local native owner.
