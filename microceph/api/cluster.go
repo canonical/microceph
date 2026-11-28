@@ -29,8 +29,8 @@ func cmdClusterGet(s mcTypes.State, r *http.Request) mcTypes.Response {
 	}
 
 	// Check that the cluster name is conformant.
-	if !constants.IsValidClusterName(req.RemoteName) {
-		err := fmt.Errorf("cluster names can only have [a-z] or [0-9] characters")
+	err = constants.ValidateClusterName("remote", req.RemoteName)
+	if err != nil {
 		logger.Error(err.Error())
 		return mcTypes.BadRequest(err)
 	}

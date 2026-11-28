@@ -152,8 +152,9 @@ var reservedRemoteNames = map[string]struct{}{
 }
 
 func validateRemoteName(name string) error {
-	if !constants.IsValidClusterName(name) {
-		return fmt.Errorf("remote names can only have [a-z] or [0-9] characters")
+	err := constants.ValidateClusterName("remote", name)
+	if err != nil {
+		return err
 	}
 
 	_, isReserved := reservedRemoteNames[name]
@@ -174,8 +175,9 @@ func validateRemoteImportRequest(routeName string, req types.RemoteImportRequest
 		return fmt.Errorf("remote name in URL %q does not match request body %q", routeName, req.Name)
 	}
 
-	if !constants.IsValidClusterName(req.LocalName) {
-		return fmt.Errorf("local names can only have [a-z] or [0-9] characters")
+	err = constants.ValidateClusterName("local", req.LocalName)
+	if err != nil {
+		return err
 	}
 
 	return nil

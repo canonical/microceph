@@ -1,3 +1,6 @@
+.. meta::
+   :description: How to import a remote MicroCeph cluster to run Ceph commands against it and set up replication.
+
 .. _import-remote-cluster:
 
 Import a remote MicroCeph cluster
@@ -14,6 +17,13 @@ Working with remote MicroCeph clusters
 --------------------------------------
 
 Assume Primary cluster (named magical) and Secondary cluster (named simple).
+
+.. note::
+
+   Remote and local names must be 1 to 63 characters long and contain only lowercase letters (a-z) and digits (0-9).
+   MicroCeph passes them to Ceph as cluster and client names, as in the
+   ``ceph -s --cluster simple --id magical`` example below.
+
 An operator can generate the cluster token at the secondary cluster as follows:
 
 .. code-block:: none

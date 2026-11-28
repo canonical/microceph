@@ -2,6 +2,7 @@
 package constants
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -98,4 +99,17 @@ var clusterNameRegex = regexp.MustCompile(ClusterNameRegex)
 // IsValidClusterName reports whether name is a valid cluster name.
 func IsValidClusterName(name string) bool {
 	return clusterNameRegex.MatchString(name)
+}
+
+// ValidateClusterName returns an error naming the rejected value and the rule
+// it broke when name is not a valid cluster name. role says which name of the
+// request is checked, for example "remote" or "local".
+func ValidateClusterName(role string, name string) error {
+	if IsValidClusterName(name) {
+		return nil
+	}
+
+	// Ceph uses these names as --cluster and --id values for the commands
+	// MicroCeph runs against a remote, so they are stricter than host names.
+	return fmt.Errorf("invalid %s name %q: names must be 1 to 63 characters long and contain only lowercase letters (a-z) and digits (0-9)", role, name)
 }

@@ -65,3 +65,18 @@ func TestValidateRemoteImportRequest(t *testing.T) {
 	err = validateRemoteImportRequest("remote1", req)
 	assert.Error(t, err)
 }
+
+func TestValidateRemoteImportRequestNamesRejectedName(t *testing.T) {
+	req := types.RemoteImportRequest{
+		Name:      "remote-1",
+		LocalName: "local1",
+	}
+
+	err := validateRemoteImportRequest("remote-1", req)
+	assert.ErrorContains(t, err, `invalid remote name "remote-1"`)
+
+	req.Name = "remote1"
+	req.LocalName = "Local1"
+	err = validateRemoteImportRequest("remote1", req)
+	assert.ErrorContains(t, err, `invalid local name "Local1"`)
+}

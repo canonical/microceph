@@ -71,8 +71,9 @@ var GetRemoteDb = func(ctx context.Context, s mcTypes.State, name string) (types
 var DeleteRemoteDb = func(ctx context.Context, s mcTypes.State, remoteName string) error {
 	pathConst := constants.GetPathConst()
 
-	if !constants.IsValidClusterName(remoteName) {
-		return fmt.Errorf("invalid remote name %q", remoteName)
+	err := constants.ValidateClusterName("remote", remoteName)
+	if err != nil {
+		return err
 	}
 
 	confFile := fmt.Sprintf("%s.conf", remoteName)
@@ -85,7 +86,7 @@ var DeleteRemoteDb = func(ctx context.Context, s mcTypes.State, remoteName strin
 		return fmt.Errorf("invalid remote name %q", remoteName)
 	}
 
-	err := s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		// Remove record to database.
 		err := DeleteRemote(ctx, tx, remoteName)
 		if err != nil {
