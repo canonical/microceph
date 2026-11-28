@@ -69,6 +69,12 @@ VM_APT_TOOLS = ("s3cmd", "jq")
 IMG_BUILDER_NAME = "microceph-img-builder"
 BASE_IMAGE_ALIAS = "ubuntu-22.04"
 MICROCEPH_IMAGE_ALIAS = "ubuntu-22.04-microceph"
+# cloud-init status --wait exit codes that mean first boot is over: 0 done, 2 done with
+# recoverable errors (deprecated keys and the like, cloud-init 23.4 and later).
+CLOUD_INIT_SETTLED_RCS = (0, 2)
+# Passing builds publish the builder in 58 to 159 s; on a runner about five times slower
+# the pack was still progressing when the old 300 s limit killed it (#910).
+IMG_PUBLISH_TIMEOUT = 900
 # raw.lxc device-allow block; the \n is a LITERAL backslash-n for the remote printf.
 RAW_LXC_DEVICE_ALLOW = "lxc.cgroup2.devices.allow = b 7:* rwm\\nlxc.cgroup2.devices.allow = c 10:237 rwm"
 
@@ -2077,6 +2083,10 @@ class microceph_harness:
             fail_msg="",
             raise_on_timeout=False,
         )
+        # The builder's first-boot cloud-init rewrites /etc/apt/sources.list, and an
+        # apt-get update that reads the file mid-rewrite fails with rc 100 (#910), so
+        # let cloud-init finish before the first apt call.
+        self._wait_for_builder_cloud_init(builder)
         self.probe_instance_network(builder)
         # Two calls rather than one chained string, so a stalled install is retried
         # without repeating the update, and each gets its own attempt budget.
@@ -2097,9 +2107,25 @@ class microceph_harness:
             30,
         )
         self.run_in_vm_and_check(f"lxc stop {builder}", 60)
-        self.run_in_vm_and_check(f"lxc publish {builder} --alias {MICROCEPH_IMAGE_ALIAS}", 300)
+        # The image never leaves the VM, so skip the gzip pack that dominates the publish.
+        self.run_in_vm_and_check(
+            f"lxc publish {builder} --alias {MICROCEPH_IMAGE_ALIAS} --compression none", IMG_PUBLISH_TIMEOUT
+        )
         self.run_in_vm_and_check(f"lxc delete {builder}", 10)
         logger.console("[setup] Base image ubuntu-22.04-microceph ready.")
+
+    def _wait_for_builder_cloud_init(self, builder):
+        """Waits up to 300 s for cloud-init in *builder* to finish its first boot.
+
+        Accepts the CLOUD_INIT_SETTLED_RCS exit codes; any other rc (a failed first
+        boot, or the 300 s limit) fails the setup with cloud-init's output.
+        """
+        logger.console(f"[setup] Waiting for cloud-init in {builder}...")
+        res = self.exec_in_container(builder, "cloud-init", "status", "--wait", timeout=300)
+        if res.rc not in CLOUD_INIT_SETTLED_RCS:
+            raise AssertionError(
+                f"cloud-init failed in {builder} (rc={res.rc}):\nSTDERR: {res.stderr}\nSTDOUT: {res.stdout}"
+            )
 
     def create_lxd_containers_with_loop_devices(self, network_type="public"):
         """Creates 4 privileged LXD containers with loop-back disks."""

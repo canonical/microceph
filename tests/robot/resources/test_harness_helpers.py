@@ -2810,6 +2810,65 @@ def test_build_base_lxd_image_probes_the_builder_before_apt(monkeypatch):
     assert [e for e in events if e[0] == "probe"] == [("probe", "microceph-img-builder")]
 
 
+def test_build_base_lxd_image_waits_for_cloud_init_before_the_probe_and_apt(monkeypatch):
+    """#910: the first apt-get update must not race the builder's cloud-init."""
+    h, events = _recording_harness(monkeypatch)
+
+    h.build_base_lxd_image("/root")
+
+    wait_at = events.index(("exec", "microceph-img-builder", ("cloud-init", "status", "--wait")))
+    start_at = events.index(("vm", "lxc start microceph-img-builder", 60))
+    probe_at = events.index(("probe", "microceph-img-builder"))
+    first_apt = next(i for i, e in enumerate(events) if e[0] == "apt")
+    assert start_at < wait_at < probe_at < first_apt
+
+
+def test_build_base_lxd_image_publishes_uncompressed_with_a_longer_timeout(monkeypatch):
+    """#910: a slow but progressing publish must not hit the old 300 s limit."""
+    h, events = _recording_harness(monkeypatch)
+
+    h.build_base_lxd_image("/root")
+
+    publishes = [e for e in events if e[0] == "vm" and e[1].startswith("lxc publish ")]
+    assert publishes == [
+        ("vm", "lxc publish microceph-img-builder --alias ubuntu-22.04-microceph --compression none", 900),
+    ]
+
+
+def _cloud_init_harness(monkeypatch, rc):
+    _with_logger(monkeypatch)
+    h = H()
+    calls = []
+
+    def fake_exec_in_container(container, *argv, timeout=300, check=False, quiet=False):
+        calls.append((container, argv, timeout, check))
+        return _Res(rc, "status: error" if rc else "status: done", "boom" if rc else "")
+
+    monkeypatch.setattr(h, "exec_in_container", fake_exec_in_container)
+    return h, calls
+
+
+@pytest.mark.parametrize("rc", [0, 2])
+def test_wait_for_builder_cloud_init_accepts_done_and_recoverable(monkeypatch, rc):
+    h, calls = _cloud_init_harness(monkeypatch, rc)
+
+    h._wait_for_builder_cloud_init("microceph-img-builder")
+
+    assert calls == [("microceph-img-builder", ("cloud-init", "status", "--wait"), 300, False)]
+
+
+@pytest.mark.parametrize("rc", [1, 124])
+def test_wait_for_builder_cloud_init_fails_on_error_or_timeout(monkeypatch, rc):
+    h, _ = _cloud_init_harness(monkeypatch, rc)
+
+    with pytest.raises(AssertionError) as exc:
+        h._wait_for_builder_cloud_init("microceph-img-builder")
+
+    assert str(exc.value) == (
+        f"cloud-init failed in microceph-img-builder (rc={rc}):\nSTDERR: boom\nSTDOUT: status: error"
+    )
+
+
 # ---------------------------------------------------------------------------
 # _is_transient_snap_store_error -- verbatim CI error texts (#838)
 # ---------------------------------------------------------------------------
