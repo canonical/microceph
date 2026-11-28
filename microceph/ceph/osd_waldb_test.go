@@ -407,6 +407,37 @@ func TestAddDisksWithDSLRequestDryRunIgnoresConfiguredDiskOnOtherHost(t *testing
 	assert.Equal(t, "/dev/disk/by-path/virtio-pci-0000:03:00.0", resp.DryRunPlan[0].WAL.ParentPath)
 }
 
+func TestDSLMatchingSkipsDisksConfiguredOnLocalMember(t *testing.T) {
+	hostname, err := os.Hostname()
+	require.NoError(t, err)
+
+	// Configured disks record the cluster member name as their location,
+	// which differs from the hostname when a custom name was chosen at init
+	// or the host was renamed after joining.
+	memberName := hostname + "-member"
+
+	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
+		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),
+		makeTestDisk("osd2", "virtio-pci-0000:02:00.0", 10),
+		makeTestDisk("osd3", "virtio-pci-0000:03:00.0", 20),
+	}}
+	configured := types.Disks{
+		{OSD: 0, Path: "/dev/disk/by-path/virtio-pci-0000:01:00.0", Location: memberName},
+		{OSD: 1, Path: "/dev/disk/by-path/virtio-pci-0000:03:00.0", Location: memberName},
+	}
+	mgr, _ := newDryRunManagerWithConfiguredDisks(t, storage, configured)
+	mgr.state = &mocks.MockState{ClusterName: memberName}
+
+	result, err := mgr.matchOSDDisksWithDSL(context.Background(), "eq(@size, 10GiB)")
+	require.NoError(t, err)
+	require.Empty(t, result.ValidationError)
+	assert.Equal(t, []string{"/dev/disk/by-path/virtio-pci-0000:02:00.0"}, pathSetToSlice(buildPathSet(result.MatchedDisks)))
+
+	carriers, _, err := mgr.matchAuxiliaryDisksWithDSL(context.Background(), "eq(@size, 20GiB)", false)
+	require.NoError(t, err)
+	assert.Empty(t, carriers, "a disk backing an OSD on this member must not be offered as a WAL/DB carrier")
+}
+
 func TestAddDisksWithDSLRequestDryRunOverlapRejected(t *testing.T) {
 	storage := &api.ResourcesStorage{Disks: []api.ResourcesStorageDisk{
 		makeTestDisk("osd1", "virtio-pci-0000:01:00.0", 10),

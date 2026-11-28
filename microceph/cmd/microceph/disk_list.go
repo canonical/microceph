@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 
 	"github.com/canonical/lxd/shared/api"
@@ -70,30 +69,21 @@ func (c *cmdDiskList) Run(cmd *cobra.Command, args []string) error {
 	}
 	clilogger.Debugf("Found %d configured disks", len(configuredDisks))
 
+	memberName, err := localMemberName(m)
+	if err != nil {
+		return err
+	}
+
 	// List unpartitioned disks.
-	availableDisks, err := getUnpartitionedDisks(cli)
+	availableDisks, err := getUnpartitionedDisks(cli, memberName)
 	if err != nil {
 		return fmt.Errorf("internal error: unable to fetch unpartitoned disks: %w", err)
 	}
 	clilogger.Debugf("Found %d unpartitioned disks", len(availableDisks))
 
 	if c.hostOnly {
-		fcg := types.Disks{}
-
-		// Get system hostname.
-		hostname, err := os.Hostname()
-		if err != nil {
-			return fmt.Errorf("failed to retrieve system hostname: %w", err)
-		}
-
-		for _, disk := range configuredDisks {
-			if disk.Location == hostname {
-				fcg = append(fcg, disk)
-			}
-		}
-
 		// Overwrite configured disks with the filtered disks.
-		configuredDisks = fcg
+		configuredDisks = disksOnMember(configuredDisks, memberName)
 	}
 
 	if c.json {
@@ -160,8 +150,32 @@ func outputJson(configuredDisks types.Disks, availableDisks []Disk) error {
 	return nil
 }
 
+// localMemberName returns the cluster member name of this node. Configured
+// disks record it as their location, and it differs from the hostname when a
+// custom name was chosen at init or the host was renamed after joining.
+func localMemberName(m *microcluster.MicroCluster) (string, error) {
+	status, err := m.Status(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("failed to retrieve the local cluster member name: %w", err)
+	}
+
+	return status.Name, nil
+}
+
+// disksOnMember returns the configured disks located on the given cluster member.
+func disksOnMember(disks types.Disks, memberName string) types.Disks {
+	filtered := types.Disks{}
+	for _, disk := range disks {
+		if disk.Location == memberName {
+			filtered = append(filtered, disk)
+		}
+	}
+
+	return filtered
+}
+
 // getUnpartitionedDisks fetches the list of available resources
-func getUnpartitionedDisks(cli mcTypes.Client) ([]Disk, error) {
+func getUnpartitionedDisks(cli mcTypes.Client, memberName string) ([]Disk, error) {
 	// List configured disks.
 	disks, err := client.GetDisks(context.Background(), cli)
 	if err != nil {
@@ -174,7 +188,7 @@ func getUnpartitionedDisks(cli mcTypes.Client) ([]Disk, error) {
 		return nil, fmt.Errorf("internal error: unable to fetch available disks: %w", err)
 	}
 
-	data, err := filterLocalDisks(resources, disks, nil)
+	data, err := filterLocalDisks(resources, disks, memberName, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -184,8 +198,8 @@ func getUnpartitionedDisks(cli mcTypes.Client) ([]Disk, error) {
 
 // filterLocalDisks filters out the disks that are in use or otherwise not suitable for OSDs.
 // It uses the shared FilterAvailableDisks function and converts to the Disk display type.
-func filterLocalDisks(resources *api.ResourcesStorage, disks types.Disks, cfg *common.DiskFilterConfig) ([]Disk, error) {
-	availableDisks, err := common.FilterAvailableDisks(resources, disks, cfg)
+func filterLocalDisks(resources *api.ResourcesStorage, disks types.Disks, memberName string, cfg *common.DiskFilterConfig) ([]Disk, error) {
+	availableDisks, err := common.FilterAvailableDisks(resources, disks, memberName, cfg)
 	if err != nil {
 		return nil, err
 	}
