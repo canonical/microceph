@@ -45,7 +45,7 @@ func cmdPoolsPut(s mcTypes.State, r *http.Request) mcTypes.Response {
 	}
 
 	logger.Debugf("cmdPoolPut: %v", req)
-	err = ceph.SetReplicationFactor(req.Pools, req.Size)
+	err = ceph.SetReplicationFactor(req.Pools, req.Size, req.WantsDefault())
 	if err != nil {
 		return mcTypes.SmartError(err)
 	}
