@@ -289,6 +289,8 @@ func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsPass() {
 		`{"active_name":"n0","standbys":[{"name":"n1"}]}`, nil).Once()
 	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
 		`{"mdsmap":[{"name":"n0"},{"name":"n1"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "dump", "-f", "json").Return(
+		`{"filesystems":[{"mdsmap":{"max_mds":1}}]}`, nil).Once()
 	common.ProcessExec = r
 
 	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
@@ -316,6 +318,8 @@ func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsFailMonQuorum() {
 		`{"active_name":"n0","standbys":[{"name":"n1"}]}`, nil).Once()
 	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
 		`{"mdsmap":[{"name":"n0"},{"name":"n1"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "dump", "-f", "json").Return(
+		`{"filesystems":[{"mdsmap":{"max_mds":1}}]}`, nil).Once()
 	common.ProcessExec = r
 
 	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
@@ -342,12 +346,141 @@ func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsPassTargetNoMon() {
 		`{"active_name":"n0","standbys":[{"name":"n1"}]}`, nil).Once()
 	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
 		`{"mdsmap":[{"name":"n0"},{"name":"n1"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "dump", "-f", "json").Return(
+		`{"filesystems":[{"mdsmap":{"max_mds":1}}]}`, nil).Once()
 	common.ProcessExec = r
 
 	// Target n3 has no MON, so all 3 active MONs remain
 	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
 	err := ops.Run("n3")
 	assert.NoError(s.T(), err)
+}
+
+// TestCheckNonOsdSvcEnoughOpsFailMdsPerFilesystem tests that one MDS per file
+// system must remain: two file systems with one active rank each, MDSs on n0
+// and n1, target is n0. Only one MDS remains for two file systems. Fail.
+func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsFailMdsPerFilesystem() {
+	sq := mocks.NewServiceQueryInterface(s.T())
+	sq.On("List", mock.Anything, mock.Anything).Return(
+		types.Services{
+			{Service: "mon", Location: "n0"},
+			{Service: "mon", Location: "n1"},
+			{Service: "mon", Location: "n2"},
+		}, nil).Once()
+	database.ServiceQuery = sq
+
+	r := mocks.NewRunner(s.T())
+	r.On("RunCommand", "ceph", "-s", "-f", "json").Return(
+		`{"quorum_names":["n0","n1","n2"]}`, nil).Once()
+	r.On("RunCommand", "ceph", "mgr", "dump", "-f", "json").Return(
+		`{"active_name":"n0","standbys":[{"name":"n1"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
+		`{"mdsmap":[{"name":"n0"},{"name":"n1"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "dump", "-f", "json").Return(
+		`{"filesystems":[{"mdsmap":{"max_mds":1}},{"mdsmap":{"max_mds":1}}]}`, nil).Once()
+	common.ProcessExec = r
+
+	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
+	err := ops.Run("n0")
+	assert.ErrorContains(s.T(), err, "need at least 2 mon, 2 mds, and 1 mgr services")
+}
+
+// TestCheckNonOsdSvcEnoughOpsPassMdsPerFilesystem tests two file systems with
+// one active rank each and MDSs on n0, n1 and n2, target is n0. Two MDSs
+// remain, one for each file system. Pass.
+func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsPassMdsPerFilesystem() {
+	sq := mocks.NewServiceQueryInterface(s.T())
+	sq.On("List", mock.Anything, mock.Anything).Return(
+		types.Services{
+			{Service: "mon", Location: "n0"},
+			{Service: "mon", Location: "n1"},
+			{Service: "mon", Location: "n2"},
+		}, nil).Once()
+	database.ServiceQuery = sq
+
+	r := mocks.NewRunner(s.T())
+	r.On("RunCommand", "ceph", "-s", "-f", "json").Return(
+		`{"quorum_names":["n0","n1","n2"]}`, nil).Once()
+	r.On("RunCommand", "ceph", "mgr", "dump", "-f", "json").Return(
+		`{"active_name":"n0","standbys":[{"name":"n1"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
+		`{"mdsmap":[{"name":"n0"},{"name":"n1"},{"name":"n2"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "dump", "-f", "json").Return(
+		`{"filesystems":[{"mdsmap":{"max_mds":1}},{"mdsmap":{"max_mds":1}}]}`, nil).Once()
+	common.ProcessExec = r
+
+	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
+	err := ops.Run("n0")
+	assert.NoError(s.T(), err)
+}
+
+// TestCheckNonOsdSvcEnoughOpsErrorFsDump tests that a failure to read the file
+// system map aborts the check instead of assuming one MDS is enough.
+func (s *operationsSuite) TestCheckNonOsdSvcEnoughOpsErrorFsDump() {
+	sq := mocks.NewServiceQueryInterface(s.T())
+	sq.On("List", mock.Anything, mock.Anything).Return(
+		types.Services{
+			{Service: "mon", Location: "n0"},
+		}, nil).Once()
+	database.ServiceQuery = sq
+
+	r := mocks.NewRunner(s.T())
+	r.On("RunCommand", "ceph", "-s", "-f", "json").Return(
+		`{"quorum_names":["n0"]}`, nil).Once()
+	r.On("RunCommand", "ceph", "mgr", "dump", "-f", "json").Return(
+		`{"active_name":"n0"}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "status", "-f", "json").Return(
+		`{"mdsmap":[{"name":"n0"}]}`, nil).Once()
+	r.On("RunCommand", "ceph", "fs", "dump", "-f", "json").Return(
+		"", fmt.Errorf("timed out")).Once()
+	common.ProcessExec = r
+
+	ops := CheckNonOsdSvcEnoughOps{ClusterOps: ClusterOps{nil, context.Background()}}
+	err := ops.Run("n0")
+	assert.ErrorContains(s.T(), err, "Error getting required mds services")
+}
+
+// TestGetRequiredMdss tests that the required MDS count is the sum of the
+// active ranks of every file system, and never less than one.
+func (s *operationsSuite) TestGetRequiredMdss() {
+	tests := []struct {
+		name     string
+		fsDump   string
+		required int
+	}{
+		{
+			name:     "no file systems",
+			fsDump:   `{"filesystems":[]}`,
+			required: 1,
+		},
+		{
+			name:     "one file system with one active rank",
+			fsDump:   `{"filesystems":[{"mdsmap":{"max_mds":1}}]}`,
+			required: 1,
+		},
+		{
+			name:     "two file systems",
+			fsDump:   `{"filesystems":[{"mdsmap":{"max_mds":1}},{"mdsmap":{"max_mds":1}}]}`,
+			required: 2,
+		},
+		{
+			name:     "multiple active ranks",
+			fsDump:   `{"filesystems":[{"mdsmap":{"max_mds":2}},{"mdsmap":{"max_mds":1}}]}`,
+			required: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		s.T().Run(tt.name, func(t *testing.T) {
+			r := mocks.NewRunner(t)
+			r.On("RunCommand", "ceph", "fs", "dump", "-f", "json").Return(tt.fsDump, nil).Once()
+			common.ProcessExec = r
+
+			required, err := getRequiredMdss()
+			assert.NoError(t, err)
+			assert.Equal(t, tt.required, required)
+		})
+	}
 }
 
 // TestCheckNonOsdSvcEnoughOpsErrorServiceQuery tests error from ServiceQuery.List.
@@ -408,7 +541,7 @@ func (s *operationsSuite) TestMaintenanceEnterDryRunActionPlanVariants() {
 			},
 			actions: []string{
 				"Check if osds.[1] in node 'node-a' are ok-to-stop.",
-				"Check if there are at least a majority of mon services, 1 mds service, and 1 mgr service in the cluster besides those in node 'node-a'",
+				"Check if there are at least a majority of mon services, enough mds services for the active ranks of every file system, and 1 mgr service in the cluster besides those in node 'node-a'",
 			},
 		},
 		{
@@ -419,7 +552,7 @@ func (s *operationsSuite) TestMaintenanceEnterDryRunActionPlanVariants() {
 			},
 			actions: []string{
 				"Check if osds.[1] in node 'node-a' are ok-to-stop.",
-				"Check if there are at least a majority of mon services, 1 mds service, and 1 mgr service in the cluster besides those in node 'node-a'",
+				"Check if there are at least a majority of mon services, enough mds services for the active ranks of every file system, and 1 mgr service in the cluster besides those in node 'node-a'",
 				"Run `ceph osd set noout`.",
 				"Assert osd has 'noout' flag set.",
 			},
@@ -432,7 +565,7 @@ func (s *operationsSuite) TestMaintenanceEnterDryRunActionPlanVariants() {
 			},
 			actions: []string{
 				"Check if osds.[1] in node 'node-a' are ok-to-stop.",
-				"Check if there are at least a majority of mon services, 1 mds service, and 1 mgr service in the cluster besides those in node 'node-a'",
+				"Check if there are at least a majority of mon services, enough mds services for the active ranks of every file system, and 1 mgr service in the cluster besides those in node 'node-a'",
 				"Stop osd service in node 'node-a'.",
 			},
 		},
@@ -444,7 +577,7 @@ func (s *operationsSuite) TestMaintenanceEnterDryRunActionPlanVariants() {
 			},
 			actions: []string{
 				"Check if osds.[1] in node 'node-a' are ok-to-stop.",
-				"Check if there are at least a majority of mon services, 1 mds service, and 1 mgr service in the cluster besides those in node 'node-a'",
+				"Check if there are at least a majority of mon services, enough mds services for the active ranks of every file system, and 1 mgr service in the cluster besides those in node 'node-a'",
 				"Run `ceph osd set noout`.",
 				"Assert osd has 'noout' flag set.",
 				"Stop osd service in node 'node-a'.",

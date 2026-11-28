@@ -115,3 +115,24 @@ func getActiveMdss() ([]string, error) {
 
 	return activeMdss, nil
 }
+
+// getRequiredMdss returns how many MDS daemons must stay available so that
+// every CephFS file system keeps serving I/O. Each file system needs one MDS
+// per active rank (its max_mds), so the requirement is the sum of max_mds
+// across all file systems. It never returns less than one, which keeps the
+// check as strict as before on clusters without a file system.
+func getRequiredMdss() (int, error) {
+	output, err := common.ProcessExec.RunCommand("ceph", "fs", "dump", "-f", "json")
+	if err != nil {
+		logger.Errorf("Failed fetching fs dump: %v", err)
+		return 0, err
+	}
+
+	required := 0
+	result := gjson.Get(output, "filesystems.#.mdsmap.max_mds")
+	for _, maxMds := range result.Array() {
+		required += int(maxMds.Int())
+	}
+
+	return max(required, 1), nil
+}
