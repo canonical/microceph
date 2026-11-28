@@ -19,6 +19,7 @@ Wiping Tests Suite Setup
     Copy Scripts To VM
     Copy Snap To VM
     Free Runner Disk
+    Prepare Snapd For Local Snap
 
 *** Test Cases ***
 Test Pristine Disk Check

@@ -1,0 +1,13 @@
+#!/bin/bash
+set -eu
+# Only a private app child establishes mounts; final exec is always native.
+# shellcheck disable=SC2016
+exec "$SNAP/bin/unshare" --mount --propagation slave -- /bin/bash -euc '
+  . "$SNAP/commands/smb-startup"
+  smb_load_context
+  smb_setup_nss
+  smb_assert_prepared smbd
+  smb_check_start_intent
+  exec "$SNAP/bin/smbd" --foreground --no-process-group \
+    --configfile "$SMB_ROOT/config/smb.conf"
+'

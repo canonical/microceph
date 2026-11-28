@@ -29,12 +29,13 @@ Run Adoptutils Shell Unit Tests
     Should Be Equal As Integers    ${result.rc}    0    msg=adoptutils shell tests failed:\n${result.stderr}
 
 Run Python Helper Unit Tests
-    [Documentation]    Runs pytest over Python harness regressions, OSD startup/reload, and Vaultlocker reboot behaviour.
+    [Documentation]    Runs pytest over Python harness and SMB contracts, OSD startup/reload, and Vaultlocker reboot behaviour.
     ...    Host-only: no VM or snap needed. robotframework (imported by the harness module) and
     ...    pytest are installed in the tox venv that runs this suite.
     [Tags]    unit    fast    smoke    python
     ${result}=    Run Process    python3    -m    pytest    -q
     ...    ${REPO_ROOT}/tests/robot/resources
+    ...    ${REPO_ROOT}/tests/smb
     ...    ${REPO_ROOT}/tests/scripts/test_osd_start.py
     ...    ${REPO_ROOT}/tests/scripts/test_vaultlocker_reboot.py    timeout=300
     Log    ${result.stdout}

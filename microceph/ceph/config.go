@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 
 	"github.com/canonical/microceph/microceph/constants"
@@ -579,6 +580,8 @@ func getMonitorsFromConfig(configs map[string]string, activeMembers map[string]s
 		}
 	}
 
+	// Raw ceph.conf is part of the initial SMB source-recheck fingerprint.
+	sort.Strings(monHosts)
 	return monHosts
 }
 

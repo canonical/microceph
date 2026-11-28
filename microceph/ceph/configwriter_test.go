@@ -6,12 +6,47 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/canonical/microceph/microceph/constants"
 	"github.com/canonical/microceph/microceph/tests"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/suite"
 )
+
+func TestWriteRenderedConfigPreservesBytesAndMode(t *testing.T) {
+	config := &Config{configDir: t.TempDir(), configFile: "smb.conf"}
+	writer, ok := any(config).(interface{ WriteRendered([]byte, int) error })
+	require.True(t, ok, "the shared Go config writer must accept upstream-rendered bytes")
+	data := []byte("[global]\n\tserver string = literal {{.not_a_go_template}}\n")
+	require.NoError(t, writer.WriteRendered(data, 0600))
+	actual, err := os.ReadFile(config.GetPath())
+	require.NoError(t, err)
+	require.Equal(t, data, actual)
+	info, err := os.Stat(config.GetPath())
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	entries, err := os.ReadDir(config.configDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "publication must not leave temporary files")
+}
+
+func TestWriteRenderedConfigRejectsEscapeAndCleansFailedPublication(t *testing.T) {
+	dir := t.TempDir()
+	config := &Config{configDir: dir, configFile: "../escape"}
+	writer, ok := any(config).(interface{ WriteRendered([]byte, int) error })
+	require.True(t, ok, "rendered config must use the shared filename and publication guards")
+	require.Error(t, writer.WriteRendered([]byte("untrusted"), 0600))
+	config.configFile = "existing-directory"
+	require.NoError(t, os.Mkdir(config.GetPath(), 0700))
+	require.Error(t, writer.WriteRendered([]byte("must not replace directory"), 0600))
+	info, err := os.Stat(config.GetPath())
+	require.NoError(t, err)
+	require.True(t, info.IsDir())
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "failed rename must remove its temporary file")
+}
 
 type configWriterSuite struct {
 	tests.BaseSuite

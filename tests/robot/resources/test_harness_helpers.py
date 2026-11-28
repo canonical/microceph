@@ -3684,3 +3684,83 @@ def test_rgw_scenario_stops_sampler_when_request_fails(failure, tmp_path, rgw_sc
         assert result.stdout == ""
     finally:
         release.set()
+
+
+# The singleton coordinator changes umask only in its own production process.
+# In-process tests must restore it before any real packaging skeleton checks.
+def _load_smb_runner():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("singleton_smb_runner", Path(__file__).parents[1] / "smb_runner.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("statuses,rc", [(["PASS"] * 3, 0), (["PASS"] * 2, 1), (["PASS", "SKIP", "PASS"], 1), (["PASS", "FAIL", "PASS"], 1)])
+def test_smb_runner_exact_case_accounting(tmp_path, statuses, rc):
+    runner = _load_smb_runner()
+    (tmp_path / "output.xml").write_text("<robot><suite>" + "".join(f'<test><status status="{status}"/></test>' for status in statuses) + "</suite></robot>")
+    assert runner._result(tmp_path)["rc"] == rc
+
+
+def test_smb_singleton_coordinator_private_output_and_umask_restoration(tmp_path, monkeypatch):
+    runner = _load_smb_runner()
+    def execute(directory, variables, options, dryrun):
+        assert dryrun
+        directory.mkdir(parents=True)
+        (directory / "output.xml").write_text('<robot><suite>' + '<test><status status="PASS"/></test>' * 3 + '</suite></robot>')
+        return 0
+    monkeypatch.setattr(runner, "_robot", execute)
+    previous = os.umask(0o022)
+    try:
+        assert runner.main(["--dryrun", "--outputdir", str(tmp_path)]) == 0
+        assert (tmp_path / "smb-results/private").stat().st_mode & 0o777 == 0o700
+        assert (tmp_path / "smb-summary.json").stat().st_mode & 0o777 == 0o600
+        with pytest.raises(FileExistsError):
+            runner.main(["--dryrun", "--outputdir", str(tmp_path)])
+    finally:
+        os.umask(previous)
+
+
+def test_smb_singleton_coordinator_refuses_future_suite_selection(tmp_path):
+    runner = _load_smb_runner()
+    with pytest.raises(SystemExit):
+        runner.main(["--suites", "ad", "--outputdir", str(tmp_path)])
+    assert not (tmp_path / "smb-results").exists()
+
+
+def test_smb_local_guest_documents_and_redaction():
+    from smb_guest import resource_documents, safe_apply_result
+    documents = resource_documents(["192.0.2.1"], "private-password")
+    assert set(documents) == {"nonclustered", "independent"}
+    for document in documents.values():
+        cluster = document["resources"][1]
+        assert cluster["clustering"] == "never"
+        assert set(cluster["custom_ports"]) == {"smb"}
+        assert document["resources"][2]["cephfs"]["provider"] == "samba-vfs/new"
+    result = safe_apply_result(1, '{"success":false,"results":[{"msg":"private-password"}]}', "private-password", ["private-password"])
+    assert not result["success"]
+    assert "private-password" not in repr(result)
+
+
+def test_smb_owned_resource_deletion_is_exact():
+    from smb_ops import owned_resources, OWNER_KEY
+    rows = [{"name": "ours", "config": {OWNER_KEY: "owner"}}, {"name": "unrelated", "config": {}}]
+    assert owned_resources(rows, ["ours"], "owner") == ["ours"]
+    with pytest.raises(AssertionError):
+        owned_resources(rows, ["unrelated"], "owner")
+    with pytest.raises(AssertionError):
+        owned_resources(rows, ["ours"], "")
+
+
+def test_smb_snapshot_readiness_requires_prepared_single_serving_role():
+    from smb_ops import parse_snapshot, snapshot_ready, role_tokens
+    state = parse_snapshot(json.dumps({"api": json.dumps({"metadata": {"cluster_id": "alpha", "ready": True}}), "owner": "alpha", "context": {"smb_port": 445, "startup": {"smbd": {"prepared": True}}}, "services": "Id=snap.microceph.smbd.service\nActiveState=active\nMainPID=42\nExecMainStartTimestampMonotonic=99\n"}), "node")
+    assert snapshot_ready(state, "alpha", 445)
+    assert role_tokens([state]) == {"node": ("42", "99")}
+    with pytest.raises(AssertionError):
+        role_tokens([state, state])
+    state["context"]["startup"]["smbd"]["prepared"] = False
+    assert not snapshot_ready(state, "alpha", 445)
+    state["status"] = None
+    assert not snapshot_ready(state, "alpha", 445)

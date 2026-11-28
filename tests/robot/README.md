@@ -55,7 +55,20 @@ tox -e robot -- --snap-path /path/to/microceph_*.snap
 ```
 
 Results land in `output.xml`, `log.html`, and `report.html` in the working directory.
-Each suite creates and destroys its own LXD VM; a failed suite teardown also cleans up.
+Integration suites own their disposable LXD resources; host-only suites allocate none.
+Default/full runs (including `--all`) route the three dependent SMB singleton cases
+through `smb_runner.py`, which owns its lab manifest, exact case accounting and cleanup.
+The explicit `--test-suite smb-integration` and `--test-suite smb-singleton-tests`
+routes use that same coordinator. Its private evidence remains in `smb-results/`
+and its verdict in `smb-summary.json`; do not publish the private lab manifest.
+
+Full-tree runs apply Robot's normal selection flags before execution, without
+running suite setup. Selecting no SMB cases skips its coordinator; selecting all
+three runs it once; a partial SMB scenario fails before allocating a lab. Ordinary
+filtered non-SMB runs remain supported, including qualified suite/test names.
+Full output/log/report options apply to the aggregated result; coordinator or
+cleanup failure cannot become success merely because its test XML contains PASS.
+`--dryrun` validates discovery/keyword resolution only, never installed SMB behavior.
 
 ### Vaultlocker mapper regression
 

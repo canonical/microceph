@@ -1,0 +1,371 @@
+{
+  "provenance": {
+    "artifact_sha256": "346772031c40cc62cc6d474d5fa64c9b9ea63ffae22d5278c554109be09d5ed8",
+    "diagnostic": "phase-06-ceph-prerequisite, 2026-10-20; selected fields from real read-only JSON; healthy/unsettled combination models the gate boundary, not an atomic capture"
+  },
+  "health_ok": {
+    "status": "HEALTH_OK",
+    "checks": {},
+    "mutes": []
+  },
+  "health_warn": {
+    "status": "HEALTH_WARN",
+    "checks": {
+      "PG_AVAILABILITY": {
+        "severity": "HEALTH_WARN",
+        "summary": {
+          "message": "Reduced data availability: 4 pgs peering",
+          "count": 4
+        },
+        "detail": [
+          {
+            "message": "pg 3.2 is stuck peering for 73s, current state peering, last acting [1,3,2]"
+          },
+          {
+            "message": "pg 3.6 is stuck peering for 73s, current state peering, last acting [1,3,2]"
+          },
+          {
+            "message": "pg 3.a is stuck peering for 73s, current state peering, last acting [1,3,2]"
+          },
+          {
+            "message": "pg 3.e is stuck peering for 73s, current state peering, last acting [1,3,2]"
+          }
+        ],
+        "muted": false
+      }
+    },
+    "mutes": []
+  },
+  "clock": {
+    "time_skew_status": {
+      "smb-ci-0c289fdb-n0": {
+        "skew": 0,
+        "latency": 0,
+        "health": "HEALTH_OK"
+      },
+      "smb-ci-0c289fdb-n1": {
+        "skew": -0.0014773810083007813,
+        "latency": 0.003219465,
+        "health": "HEALTH_OK"
+      },
+      "smb-ci-0c289fdb-n2": {
+        "skew": 0,
+        "latency": 0.012581881,
+        "health": "HEALTH_OK"
+      }
+    },
+    "timechecks": {
+      "epoch": 12,
+      "round": 2,
+      "round_status": "finished"
+    }
+  },
+  "unsettled_map": {
+    "fsid": "6803fc8f-f64c-4b3e-8a0b-316ab879f3d5",
+    "epoch": 37,
+    "pools": [
+      {
+        "pool": 1,
+        "pool_name": ".mgr",
+        "size": 3,
+        "pg_num": 1,
+        "pg_num_target": 1,
+        "pg_num_pending": 1,
+        "pg_placement_num": 1,
+        "pg_placement_num_target": 1
+      },
+      {
+        "pool": 2,
+        "pool_name": ".smb",
+        "size": 3,
+        "pg_num": 32,
+        "pg_num_target": 32,
+        "pg_num_pending": 32,
+        "pg_placement_num": 32,
+        "pg_placement_num_target": 32
+      },
+      {
+        "pool": 3,
+        "pool_name": "cephfs.robotsmb.meta",
+        "size": 3,
+        "pg_num": 16,
+        "pg_num_target": 16,
+        "pg_num_pending": 16,
+        "pg_placement_num": 3,
+        "pg_placement_num_target": 16
+      },
+      {
+        "pool": 4,
+        "pool_name": "cephfs.robotsmb.data",
+        "size": 3,
+        "pg_num": 128,
+        "pg_num_target": 128,
+        "pg_num_pending": 128,
+        "pg_placement_num": 128,
+        "pg_placement_num_target": 128
+      }
+    ],
+    "osds": [
+      {
+        "osd": 1,
+        "up": 1,
+        "in": 1
+      },
+      {
+        "osd": 2,
+        "up": 1,
+        "in": 1
+      },
+      {
+        "osd": 3,
+        "up": 1,
+        "in": 1
+      }
+    ]
+  },
+  "settled_map": {
+    "fsid": "6803fc8f-f64c-4b3e-8a0b-316ab879f3d5",
+    "epoch": 62,
+    "pools": [
+      {
+        "pool": 1,
+        "pool_name": ".mgr",
+        "size": 3,
+        "pg_num": 1,
+        "pg_num_target": 1,
+        "pg_num_pending": 1,
+        "pg_placement_num": 1,
+        "pg_placement_num_target": 1
+      },
+      {
+        "pool": 2,
+        "pool_name": ".smb",
+        "size": 3,
+        "pg_num": 32,
+        "pg_num_target": 32,
+        "pg_num_pending": 32,
+        "pg_placement_num": 32,
+        "pg_placement_num_target": 32
+      },
+      {
+        "pool": 3,
+        "pool_name": "cephfs.robotsmb.meta",
+        "size": 3,
+        "pg_num": 16,
+        "pg_num_target": 16,
+        "pg_num_pending": 16,
+        "pg_placement_num": 16,
+        "pg_placement_num_target": 16
+      },
+      {
+        "pool": 4,
+        "pool_name": "cephfs.robotsmb.data",
+        "size": 3,
+        "pg_num": 128,
+        "pg_num_target": 128,
+        "pg_num_pending": 128,
+        "pg_placement_num": 128,
+        "pg_placement_num_target": 128
+      }
+    ],
+    "osds": [
+      {
+        "osd": 1,
+        "up": 1,
+        "in": 1
+      },
+      {
+        "osd": 2,
+        "up": 1,
+        "in": 1
+      },
+      {
+        "osd": 3,
+        "up": 1,
+        "in": 1
+      }
+    ]
+  },
+  "pgs": {
+    "pg_ready": true,
+    "pg_stats": [
+      {"pgid": "4.7f", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.7e", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.7d", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.7c", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.7b", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.7a", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.79", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.78", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.77", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.76", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.75", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.74", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.73", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.72", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.71", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.70", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.6f", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.6e", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.6d", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.6c", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.6b", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.6a", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.69", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.68", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.67", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.66", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.65", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.64", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.63", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.62", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.61", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.60", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.5f", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.5e", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.5d", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.5c", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.5b", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.5a", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.59", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.58", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.57", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.56", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.55", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.54", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.53", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.52", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.51", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.50", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.4f", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.4e", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "2.1f", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.19", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "2.1e", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.18", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "2.1d", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.1b", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.1c", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.1a", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.1b", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.1d", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.1a", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.1c", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "3.8", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.9", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.f", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "3.9", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "2.8", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.e", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.1", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "3.6", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "2.7", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.3", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "3.4", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "2.5", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.2", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "3.5", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.4", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.4", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "3.3", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.2", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "3.7", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.6", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.0", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.7", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "2.1", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "3.0", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.6", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "3.1", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "2.0", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.5", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "3.2", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "2.3", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "1.0", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "3.b", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.a", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.c", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "3.a", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.b", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.d", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "3.d", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "2.c", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.a", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "3.c", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.d", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.b", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.8", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "3.f", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.e", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.9", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "3.e", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.f", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "2.10", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.16", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "2.11", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.17", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "2.12", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.14", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "2.13", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.15", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.14", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.12", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "2.15", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.13", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "2.16", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.10", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "2.17", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.11", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "2.18", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.1e", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "2.19", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.1f", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.20", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.21", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.22", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.23", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.24", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.25", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.26", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.27", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.28", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.29", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.2a", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.2b", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.2c", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.2d", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.2e", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.2f", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.30", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.31", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.32", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.33", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.34", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.35", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.36", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.37", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.38", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.39", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.3a", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.3b", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.3c", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.3d", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.3e", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.3f", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.40", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.41", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.42", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.43", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.44", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.45", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.46", "state": "active+clean", "up": [3, 1, 2], "acting": [3, 1, 2], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.47", "state": "active+clean", "up": [2, 1, 3], "acting": [2, 1, 3], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.48", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.49", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.4a", "state": "active+clean", "up": [1, 2, 3], "acting": [1, 2, 3], "up_primary": 1, "acting_primary": 1},
+      {"pgid": "4.4b", "state": "active+clean", "up": [3, 2, 1], "acting": [3, 2, 1], "up_primary": 3, "acting_primary": 3},
+      {"pgid": "4.4c", "state": "active+clean", "up": [2, 3, 1], "acting": [2, 3, 1], "up_primary": 2, "acting_primary": 2},
+      {"pgid": "4.4d", "state": "active+clean", "up": [1, 3, 2], "acting": [1, 3, 2], "up_primary": 1, "acting_primary": 1}
+    ]
+  }
+}

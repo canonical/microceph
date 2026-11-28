@@ -28,6 +28,7 @@ func (c *cmdEnable) Command() *cobra.Command {
 	cmd.AddCommand(enableMgrCmd.Command())
 	cmd.AddCommand(enableMdsCmd.Command())
 	cmd.AddCommand(enableNFSCmd.Command())
+	cmd.AddCommand((&cmdSMB{common: c.common}).Command())
 	cmd.AddCommand(enableRbdMirrorCmd.Command())
 	cmd.AddCommand(enableFsMirrorCmd.Command())
 

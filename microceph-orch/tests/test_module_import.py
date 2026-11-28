@@ -1,6 +1,7 @@
 """Compatibility tests for loading the MicroCeph manager module."""
 
 import importlib
+import json
 import sys
 import types
 from pathlib import Path
@@ -30,9 +31,17 @@ def _install_ceph20_stubs(monkeypatch):
         pass
 
     class ServiceSpec:
-        pass
+        def __new__(cls, **kwargs):
+            # Real ServiceSpec dispatches SMB to SMBSpec, which requires a full
+            # cluster_id/config_uri. Partial observed rows cannot construct it.
+            if cls is ServiceSpec and kwargs.get("service_type") == "smb":
+                raise ValueError("a valid cluster_id is required")
+            return object.__new__(cls)
 
-    class PlacementSpec:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class PlacementSpec(types.SimpleNamespace):
         pass
 
     class RGWSpec:
@@ -44,8 +53,14 @@ def _install_ceph20_stubs(monkeypatch):
     class MDSSpec:
         pass
 
-    class NFSServiceSpec:
+    class NFSServiceSpec(ServiceSpec):
         pass
+
+    class SMBSpec(ServiceSpec):
+        def __init__(self, **kwargs):
+            if not kwargs.get("cluster_id") or not kwargs.get("config_uri"):
+                raise ValueError("SMB inventory requires observed cluster_id/config_uri")
+            super().__init__(**kwargs)
 
     inventory.Device = Device
     inventory.Devices = Devices
@@ -55,6 +70,7 @@ def _install_ceph20_stubs(monkeypatch):
     service_spec.MONSpec = MONSpec
     service_spec.MDSSpec = MDSSpec
     service_spec.NFSServiceSpec = NFSServiceSpec
+    service_spec.SMBSpec = SMBSpec
     ceph.deployment = deployment
     deployment.inventory = inventory
     deployment.service_spec = service_spec
@@ -90,10 +106,10 @@ def _install_ceph20_stubs(monkeypatch):
     class InventoryHost:
         pass
 
-    class ServiceDescription:
+    class ServiceDescription(types.SimpleNamespace):
         pass
 
-    class DaemonDescription:
+    class DaemonDescription(types.SimpleNamespace):
         pass
 
     def handle_orch_error(function):
@@ -149,3 +165,52 @@ def test_manager_module_imports_with_ceph20_orchestrator(monkeypatch):
     assert module.MicroCephOrchestrator.__name__ == "MicroCephOrchestrator"
     assert module.MicroCephOrchestrator.CLICommand.__name__ == "MicroCephOrchestratorCLICommand"
     assert module.MicroCephOrchestrator.CLICommand.dump_cmd_list() == []
+
+
+def test_smb_inventory_uses_observed_endpoints(monkeypatch):
+    _install_ceph20_stubs(monkeypatch)
+    monkeypatch.syspath_prepend(str(SOURCE_ROOT))
+    for name in ("microceph", "microceph.module"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    module = importlib.import_module("microceph.module")
+    # New complete, legacy partial, and missing observations: no resource/config
+    # fetches and no invented default frontend endpoint for older rows.
+    rows = [
+        {"service": "smb", "group_id": "alpha", "location": "node1", "info": json.dumps({
+            "config_uri": "rados://.smb/alpha/observed-config.json",
+            "frontend_address": "2001:db8::7", "smb_port": 1445,
+            "config": {"password": "must-not-escape"}})},
+        {"service": "smb", "group_id": "alpha", "location": "node2", "info": json.dumps({
+            "config_uri": "rados://.smb/alpha/observed-config.json", "smb_port": 445})},
+        {"service": "smb", "group_id": "beta", "location": "node3", "info": ""},
+    ]
+    adapter = object.__new__(module.MicroCephOrchestrator)
+    adapter.microceph = types.SimpleNamespace(services=types.SimpleNamespace(list_services=lambda: rows))
+    daemons = adapter.list_daemons()
+    assert [(d.service_name, d.hostname, d.ip, d.ports) for d in daemons] == [
+        ("smb.alpha", "node1", "2001:db8::7", [1445]),
+        ("smb.alpha", "node2", None, [445]), ("smb.beta", "node3", None, None)]
+    assert daemons[0].status_desc is None
+    assert daemons[1].status_desc is None
+    rows[2]['info'] = '{malformed legacy observation'
+    assert adapter.list_daemons()[2].ip is None
+    descriptions = adapter.describe_service()
+    assert [(d.spec.service_id, d.running, d.spec.unmanaged) for d in descriptions] == [
+        ("alpha", 2, True)]
+    assert descriptions[0].spec.cluster_id == "alpha"
+    assert descriptions[0].spec.config_uri == "rados://.smb/alpha/observed-config.json"
+    assert descriptions[0].spec.placement.hosts == ["node1", "node2"]
+    assert "must-not-escape" not in repr([vars(d) for d in daemons + descriptions])
+    assert not hasattr(adapter, "apply_smb")
+
+    # Never guess a source for legacy rows or select one host's source when
+    # applied references disagree. Other services and all daemon rows survive.
+    rows.append({"service": "nfs", "group_id": "files", "location": "node4",
+                 "info": '{"bind_address":"0.0.0.0","bind_port":2049}'})
+    for info in ("", "{malformed", "null", "[]", '{"smb_port":445}',
+                 '{"config_uri":42}', '{"config_uri":"https://user:secret@host/config"}',
+                 '{"config_uri":"rados://.smb/other/config.smb"}',
+                 '{"config_uri":"rados://.smb/alpha/other-config.json"}'):
+        rows[1]["info"] = info
+        assert [d.spec.service_id for d in adapter.describe_service()] == ["files"]
+        assert len(adapter.list_daemons()) == 4
