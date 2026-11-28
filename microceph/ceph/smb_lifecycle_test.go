@@ -30,7 +30,7 @@ func TestSMBCoreApplyReadinessAndFailureStopOrder(t *testing.T) {
 	err := startSMBApps(context.Background(), root, []string{"smbd"}, ops)
 	require.Error(t, err)
 	require.NoError(t, checkSMBStartIntent(root), "a confirmed-clean failed update can retry; it is not explicit disable intent")
-	require.Equal(t, []string{"start smbd", "ready smbd", "stop smbd"}, events)
+	require.Equal(t, []string{"start smbd", "ready smbd", "stop smbd", "stop ctdbd"}, events)
 	_, err = os.Stat(filepath.Join(root, "applied.json"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
@@ -54,8 +54,8 @@ func TestSMBFixedAppPlanAndPayload(t *testing.T) {
 	roles, err := smbCoreRoles(smbSpec{ClusterID: "alpha"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"smbd"}, roles)
-	require.Equal(t, []string{"smbd"}, smbStopOrder)
-	for _, feature := range []string{"cephfs-proxy", "clustered", "domain", "future"} {
+	require.Equal(t, []string{"smbd", "ctdbd"}, smbStopOrder)
+	for _, feature := range []string{"cephfs-proxy", "domain", "future"} {
 		roles, err = smbCoreRoles(smbSpec{ClusterID: "alpha", Features: []string{feature}})
 		require.Error(t, err)
 		require.Empty(t, roles)

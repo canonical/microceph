@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-var smbStopOrder = []string{"smbd"}
+var smbStopOrder = []string{"smbd", "ctdbd"}
 
 type smbAppOps struct {
 	prepare func(context.Context, string) error
@@ -65,6 +65,9 @@ func stopSMBApps(root string, ops smbAppOps) error {
 	if err != nil {
 		return err
 	}
+	// Stop intent precedes draining membership so no late reload can survive retirement.
+	smbMembershipMu.Lock()
+	defer smbMembershipMu.Unlock()
 	failures := []error{}
 	for _, role := range smbStopOrder {
 		err = ops.stop(role)
@@ -78,7 +81,7 @@ func stopSMBApps(root string, ops smbAppOps) error {
 func startSMBApps(ctx context.Context, root string, roles []string, ops smbAppOps) error {
 	// Reject the complete plan before any preparation or service effect.
 	for _, role := range roles {
-		if role != "smbd" {
+		if role != "smbd" && role != "ctdbd" {
 			return fmt.Errorf("unsupported SMB service %q", role)
 		}
 	}
@@ -114,8 +117,15 @@ func startSMBApps(ctx context.Context, root string, roles []string, ops smbAppOp
 }
 
 func smbCoreRoles(spec smbSpec) ([]string, error) {
+	clustered := false
 	for _, feature := range spec.Features {
-		return nil, fmt.Errorf("unsupported SMB feature %q; only local-user single-gateway direct CephFS is supported", feature)
+		if feature != "clustered" || clustered {
+			return nil, fmt.Errorf("unsupported or duplicate SMB feature %q", feature)
+		}
+		clustered = true
+	}
+	if clustered {
+		return []string{"ctdbd", "smbd"}, nil
 	}
 	return []string{"smbd"}, nil
 }

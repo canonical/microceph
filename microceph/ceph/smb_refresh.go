@@ -27,6 +27,7 @@ const smbUnreadyDiagnostic = "Local SMB gateway is not ready; previously applied
 // startSMBUpdater observes configuration sources independently of monitor changes.
 // It does not own snap service lifetimes or placement/membership reconciliation.
 func startSMBUpdater(ctx context.Context, s interfaces.StateInterface) {
+	startSMBMembershipUpdater(ctx)
 	go func() {
 		ticker := time.NewTicker(smbUpdateInterval)
 		defer ticker.Stop()
@@ -95,13 +96,20 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		}
 	}()
 	var started bool
+	var clustered bool
 	var warning string
 	err = s.ClusterState().Database().Transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		err := database.GetSMBConfiguredService(ctx, tx, clusterID, s.ClusterState().Name())
 		if err != nil {
 			return err
 		}
-		started, err = database.GetSMBLocalSAMStarted(ctx, tx, clusterID, s.ClusterState().Name())
+		clustered, err = database.IsSMBClusteredGroup(ctx, tx, clusterID)
+		if err != nil {
+			return err
+		}
+		if !clustered {
+			started, err = database.GetSMBLocalSAMStarted(ctx, tx, clusterID, s.ClusterState().Name())
+		}
 		if err != nil {
 			return err
 		}
@@ -114,10 +122,12 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 	if err != nil {
 		return err
 	}
-	if !started {
+	if !clustered && !started {
 		return fmt.Errorf("SMB local SAM initialization is not confirmed; explicit maintenance required")
 	}
-	err = checkSMBLocalSAM(root)
+	if !clustered {
+		err = checkSMBLocalSAM(root)
+	}
 	if err != nil {
 		return err
 	}
@@ -190,8 +200,20 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 	if err != nil {
 		return err
 	}
+	if current.Clustered != clustered || candidate.Spec.hasFeature("clustered") != clustered {
+		return fmt.Errorf("SMB mode change requires explicit maintenance")
+	}
+	if clustered && (published.Spec.ClusterMetaURI != candidate.Spec.ClusterMetaURI || published.Spec.ClusterLockURI != candidate.Spec.ClusterLockURI) {
+		return fmt.Errorf("CTDB recovery sources changed; explicit maintenance required")
+	}
 	fingerprint := candidate.configurationFingerprint()
 	if string(applied) == fingerprint && errors.Is(pendingErr, os.ErrNotExist) {
+		if clustered {
+			err = publishSMBMembership(ctx, root, candidate)
+			if err != nil {
+				return err
+			}
+		}
 		// Health observation is not process repair or permission to reimport SAM.
 		err = smbReadyNativeFunc(ctx, root, "smbd")
 		if err != nil {
@@ -209,7 +231,7 @@ func refreshSMBLocked(ctx context.Context, s interfaces.StateInterface) (retErr 
 		if err != nil {
 			return err
 		}
-		if len(roles) != 1 || roles[0] != "smbd" {
+		if (clustered && (len(roles) != 2 || roles[0] != "ctdbd" || roles[1] != "smbd")) || (!clustered && (len(roles) != 1 || roles[0] != "smbd")) {
 			return fmt.Errorf("SMB runtime role change requires explicit maintenance")
 		}
 		// Projection rechecks RADOS/config inputs; also re-read manager policy
@@ -336,28 +358,42 @@ func smbRefreshEnabled(ctx context.Context, root string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	out, err := runSMBServiceCommand(ctx, "services", "microceph.smbd")
+	launch, err := loadSMBLaunch(root)
 	if err != nil {
-		return false, fmt.Errorf("SMB service intent check failed")
+		return false, err
 	}
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 3 && fields[0] == "microceph.smbd" {
-			if fields[1] == "disabled" {
-				return false, nil
-			}
-			if fields[1] == "enabled" {
-				return true, nil
+	roles := []string{"smbd"}
+	if launch.Clustered {
+		roles = append(roles, "ctdbd")
+	}
+	for _, role := range roles {
+		out, err := runSMBServiceCommand(ctx, "services", "microceph."+role)
+		if err != nil {
+			return false, fmt.Errorf("SMB service intent check failed")
+		}
+		found := false
+		for _, line := range strings.Split(out, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 && fields[0] == "microceph."+role {
+				if fields[1] == "disabled" {
+					return false, nil
+				}
+				found = fields[1] == "enabled"
 			}
 		}
+		if !found {
+			return false, fmt.Errorf("SMB service intent is unknown")
+		}
 	}
-	return false, fmt.Errorf("SMB service intent is unknown")
+	return true, nil
 }
 
 // applySMBRefresh quiesces consumers before context-first publication and SAM
 // import. Compensation is detached but never changes snapd startup intent or
 // writes the user stop fence; incomplete work remains retryable.
 func applySMBRefresh(ctx context.Context, root string) (retErr error) {
+	smbMembershipMu.Lock()
+	defer smbMembershipMu.Unlock()
 	defer func() {
 		if retErr != nil {
 			retErr = errors.Join(retErr, quiesceSMBRefresh(context.Background()))

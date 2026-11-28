@@ -44,7 +44,10 @@ func prepareSMBAccounts(ctx context.Context, root string, initialize bool) error
 	if err != nil {
 		return err
 	}
-	if initialize {
+	clustered := candidate.Spec.hasFeature("clustered")
+	if clustered {
+		err = checkSMBCTDBHealth(ctx, root, false)
+	} else if initialize {
 		err = checkSMBFreshLocalSAM(root, false)
 		if err == nil {
 			err = smbAtomicWrite(filepath.Join(root, "identity/local-sam"), []byte(smbLocalSAMFence))
@@ -68,9 +71,11 @@ func prepareSMBAccounts(ctx context.Context, root string, initialize bool) error
 	if err != nil {
 		return err
 	}
-	err = checkSMBLocalSAM(root)
-	if err != nil {
-		return err
+	if !clustered {
+		err = checkSMBLocalSAM(root)
+		if err != nil {
+			return err
+		}
 	}
 	return setSMBPrepared(root, "smbd")
 }
@@ -90,6 +95,9 @@ func decodeSMBLaunch(data []byte) (smbLaunch, error) {
 		if role != "smbd" {
 			return launch, fmt.Errorf("unsupported SMB startup role")
 		}
+	}
+	if launch.Clustered != (launch.CTDBPNN != nil) {
+		return launch, fmt.Errorf("CTDB context lacks its assigned rank or mode")
 	}
 	return launch, nil
 }
@@ -126,7 +134,7 @@ func activeSMBRoot(base string) (string, error) {
 }
 
 func smbReadyNative(ctx context.Context, root, role string) (retErr error) {
-	if role != "smbd" {
+	if role != "smbd" && role != "ctdbd" {
 		return fmt.Errorf("native readiness role is not prepared")
 	}
 	err := smbNativeRoot(root, filepath.Base(root))
@@ -142,10 +150,17 @@ func smbReadyNative(ctx context.Context, root, role string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	if role == "ctdbd" {
+		return checkSMBCTDBHealth(ctx, root, true)
+	}
 	if !launch.Startup[role].Prepared {
 		return fmt.Errorf("SMB runtime is not prepared")
 	}
-	err = checkSMBLocalSAM(root)
+	if launch.Clustered {
+		err = checkSMBCTDBHealth(ctx, root, true)
+	} else {
+		err = checkSMBLocalSAM(root)
+	}
 	if err != nil {
 		return err
 	}

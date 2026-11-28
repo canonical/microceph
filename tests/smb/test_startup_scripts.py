@@ -129,6 +129,18 @@ def record(program, args):
         self.assertNotEqual(rc, 0)
         self.assertEqual([event["program"] for event in self.recorded()], ["unshare"])
 
+    def test_clustered_context_requires_assigned_rank(self):
+        self.context.update(clustered=True, ctdb_pnn=2)
+        self.publish_context()
+        command = ['bash', '-euc', '. "$SNAP/commands/smb-startup"; smb_startup_context']
+        result = subprocess.run(command, env=self.env, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(b'\0')[-3:-1], [b'1', b'2'])
+        del self.context['ctdb_pnn']
+        self.publish_context()
+        result = subprocess.run(command, env=self.env, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+
     def test_future_context_rejects_before_binds(self):
         for field in ("clustered", "ad_member", "proxy", "metrics_port"):
             with self.subTest(field=field):

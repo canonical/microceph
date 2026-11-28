@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +26,27 @@ func newSMBPrivateCommand(ctx context.Context, root string, argv []string) (*exe
 	snap := os.Getenv("SNAP")
 	setup := ""
 	switch argv[0] {
+	case filepath.Join(snap, "bin/ctdb"):
+		if len(argv) < 2 || len(argv) > 3 {
+			return nil, fmt.Errorf("invalid CTDB client arguments")
+		}
+		switch argv[1] {
+		case "pnn", "status", "reloadnodes":
+			if len(argv) != 2 {
+				return nil, fmt.Errorf("invalid CTDB client arguments")
+			}
+		case "nodestatus":
+			if len(argv) != 3 {
+				return nil, fmt.Errorf("invalid CTDB node argument")
+			}
+			_, err := strconv.ParseUint(argv[2], 10, 64)
+			if err != nil {
+				return nil, err
+			}
+		default:
+			return nil, fmt.Errorf("unsupported CTDB client command")
+		}
+		setup = "smb_setup_ctdb;"
 	case filepath.Join(snap, "bin/python3"):
 		if len(argv) != 5 || argv[1] != "-B" || argv[2] != filepath.Join(snap, "smb/native.py") {
 			return nil, fmt.Errorf("unsupported SMB binding command")
@@ -34,7 +56,7 @@ func newSMBPrivateCommand(ctx context.Context, root string, argv []string) (*exe
 			if filepath.Dir(argv[4]) != filepath.Join(root, "config") || !strings.HasPrefix(filepath.Base(argv[4]), ".native-input-") {
 				return nil, fmt.Errorf("invalid private account input")
 			}
-			setup = "smb_setup_nss;"
+			setup = "smb_setup_nss; if [[ \"$SMB_CLUSTERED\" == 1 ]]; then smb_setup_ctdb; fi;"
 		default:
 			return nil, fmt.Errorf("unsupported SMB binding operation")
 		}

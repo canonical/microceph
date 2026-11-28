@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +20,15 @@ type SMBServiceGroupConfig struct {
 	// LocalSAMStarted is write-ahead uncertainty, not successful preparation.
 	// Nil denotes unknown legacy history; only a new group starts with an empty map.
 	LocalSAMStarted map[string]string `json:"local_sam_started"`
+	// Clustered groups retain immutable ranks and private endpoint evidence.
+	// Omit these fields for existing local-user groups and their rollback path.
+	Clustered bool `json:"clustered,omitempty"`
+	// NextRank advances monotonically; retirement never recycles old slots.
+	NextRank uint64 `json:"next_rank,omitempty"`
+	// Ranks retains each member database identity's original slot.
+	Ranks map[string]uint64 `json:"ranks,omitempty"`
+	// Endpoints retains canonical private addresses after owner retirement.
+	Endpoints map[string]string `json:"endpoints,omitempty"`
 }
 
 func decodeSMBOwnership(raw string) (SMBServiceGroupConfig, error) {
@@ -30,6 +41,18 @@ func decodeSMBOwnership(raw string) (SMBServiceGroupConfig, error) {
 	err := decoder.Decode(&config)
 	if err != nil || config.Owners == nil {
 		return config, fmt.Errorf("invalid or unsupported retained SMB ownership")
+	}
+	if config.Clustered && (config.Ranks == nil || config.Endpoints == nil) {
+		return config, fmt.Errorf("missing retained SMB clustered rank/address information")
+	}
+	if config.Clustered {
+		err = validateSMBClusteredHistory(config)
+		if err != nil {
+			return config, err
+		}
+	}
+	if !config.Clustered && (config.Ranks != nil || config.Endpoints != nil || config.NextRank != 0) {
+		return config, fmt.Errorf("clustered history conflicts with local SMB mode")
 	}
 	for _, identities := range []map[string]string{config.Owners, config.LocalSAMStarted} {
 		for identity, member := range identities {
@@ -111,41 +134,66 @@ func saveSMBGroup(ctx context.Context, tx *sql.Tx, id int64, config SMBServiceGr
 // write transaction before starting smbd. Retain the reservation if cleanup
 // cannot prove that the daemon has stopped.
 func ReserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string) error {
+	_, err := reserveSMBOwner(ctx, tx, clusterID, member, false)
+	return err
+}
+
+// ReserveSMBClusteredOwner reserves an actual owner with its stable CTDB rank.
+// Call in a short write transaction; failed startup must retain uncertainty.
+func ReserveSMBClusteredOwner(ctx context.Context, tx *sql.Tx, clusterID, member string) (uint64, error) {
+	return reserveSMBOwner(ctx, tx, clusterID, member, true)
+}
+
+func reserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string, clustered bool) (uint64, error) {
 	if clusterID == "" || member == "" {
-		return fmt.Errorf("SMB cluster and member must be nonempty")
+		return 0, fmt.Errorf("SMB cluster and member must be nonempty")
 	}
 	identity, err := smbMemberIdentity(ctx, tx, member)
 	if err != nil {
-		return err
+		return 0, err
+	}
+	endpoint := ""
+	if clustered {
+		endpoint, err = smbMemberIP(ctx, tx, identity)
+		if err != nil {
+			return 0, err
+		}
 	}
 	// Scan reservations, not success rows: a failed activation can still run.
 	rows, err := tx.QueryContext(ctx, "SELECT group_id, config FROM service_groups WHERE service='smb'")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for rows.Next() {
 		var group, raw string
 		err = rows.Scan(&group, &raw)
 		if err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		config, err := decodeSMBOwnership(raw)
 		if err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		for startedID, name := range config.LocalSAMStarted {
 			if (name == member || startedID == identity) && (startedID != identity || name != member) {
 				rows.Close()
-				return fmt.Errorf("SMB local SAM member identity does not match; retain uncertainty")
+				return 0, fmt.Errorf("SMB local SAM member identity does not match; retain uncertainty")
 			}
 		}
 		for ownerID, name := range config.Owners {
+			if clustered && config.Clustered {
+				reserved := config.Endpoints[ownerID]
+				if reserved == "" || (ownerID != identity && reserved == endpoint) || (ownerID == identity && reserved != endpoint) {
+					rows.Close()
+					return 0, fmt.Errorf("SMB private endpoint has retained ownership; retire the exact owner first")
+				}
+			}
 			if name == member || ownerID == identity {
 				if group != clusterID || ownerID != identity || name != member {
 					rows.Close()
-					return fmt.Errorf("member %q has retained SMB ownership in %q; retire or fence the exact owner first", member, group)
+					return 0, fmt.Errorf("member %q has retained SMB ownership in %q; retire or fence the exact owner first", member, group)
 				}
 			}
 		}
@@ -153,36 +201,76 @@ func ReserveSMBOwner(ctx context.Context, tx *sql.Tx, clusterID, member string) 
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	id, config, err := smbGroup(ctx, tx, clusterID)
 	if errors.Is(err, sql.ErrNoRows) {
-		config = SMBServiceGroupConfig{Owners: map[string]string{}, LocalSAMStarted: map[string]string{}}
+		config = SMBServiceGroupConfig{Owners: map[string]string{}, LocalSAMStarted: map[string]string{}, Clustered: clustered}
+		if clustered {
+			config.Ranks = map[string]uint64{}
+			config.Endpoints = map[string]string{}
+		}
 		raw, marshalErr := json.Marshal(config)
 		if marshalErr != nil {
-			return marshalErr
+			return 0, marshalErr
 		}
 		result, createErr := tx.ExecContext(ctx, "INSERT INTO service_groups(service, group_id, config) VALUES('smb', ?, ?)", clusterID, string(raw))
 		if createErr != nil {
-			return createErr
+			return 0, createErr
 		}
 		id, err = result.LastInsertId()
 	}
 	if err != nil {
-		return err
+		return 0, err
+	}
+	if config.Clustered != clustered {
+		return 0, fmt.Errorf("SMB mode conflicts with retained rank/identity state; maintenance required")
 	}
 	// Exact retries remain possible for retained legacy multi-owner groups;
-	// neither failed nor offline reservations authorize a new owner.
-	if config.Owners[identity] != member && len(config.Owners) > 0 {
+	// neither failed nor offline reservations authorize a new local owner.
+	if !clustered && config.Owners[identity] != member && len(config.Owners) > 0 {
 		owners := make([]string, 0, len(config.Owners))
 		for _, name := range config.Owners {
 			owners = append(owners, name)
 		}
 		sort.Strings(owners)
-		return fmt.Errorf("Nonclustered SMB cluster %q already has owner %q; retire that owner after verified stop or create a new logical cluster", clusterID, owners[0])
+		return 0, fmt.Errorf("Nonclustered SMB cluster %q already has owner %q; retire that owner after verified stop or create a new logical cluster", clusterID, owners[0])
+	}
+	rank, exists := config.Ranks[identity]
+	if clustered {
+		if !exists {
+			if config.Owners[identity] == member {
+				return 0, fmt.Errorf("retained SMB owner has lost its CTDB rank")
+			}
+			if config.NextRank > 2147483647 {
+				return 0, fmt.Errorf("SMB CTDB rank space exhausted")
+			}
+			rank = config.NextRank
+			config.NextRank++
+			config.Ranks[identity] = rank
+		}
+		config.Endpoints[identity] = endpoint
 	}
 	config.Owners[identity] = member
-	return saveSMBGroup(ctx, tx, id, config)
+	err = saveSMBGroup(ctx, tx, id, config)
+	return rank, err
+}
+
+func smbMemberIP(ctx context.Context, tx *sql.Tx, identity string) (string, error) {
+	var address string
+	err := tx.QueryRowContext(ctx, "SELECT address FROM core_cluster_members WHERE id=?", identity).Scan(&address)
+	if err != nil {
+		return "", fmt.Errorf("SMB owner has uncertain private address: %w", err)
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", fmt.Errorf("invalid SMB private member address: %w", err)
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() {
+		return "", fmt.Errorf("invalid SMB private member IP")
+	}
+	return ip.Unmap().String(), nil
 }
 
 // RecordSMBService publishes the service row only after actual readiness.
@@ -268,7 +356,7 @@ func GetSMBPolicyWarning(ctx context.Context, tx *sql.Tx, clusterID string) (str
 	if err != nil {
 		return "", err
 	}
-	if len(config.Owners) <= 1 {
+	if config.Clustered || len(config.Owners) <= 1 {
 		return "", nil
 	}
 	owners := make([]string, 0, len(config.Owners))
@@ -280,6 +368,9 @@ func GetSMBPolicyWarning(ctx context.Context, tx *sql.Tx, clusterID string) (str
 }
 
 func smbLocalSAMIdentity(config SMBServiceGroupConfig, identity, member string) (bool, error) {
+	if config.Clustered {
+		return false, fmt.Errorf("clustered SMB reservation cannot authorize local SAM initialization")
+	}
 	if config.LocalSAMStarted == nil {
 		return false, fmt.Errorf("SMB local SAM history is unknown; explicit recovery is required")
 	}

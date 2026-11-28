@@ -40,8 +40,24 @@ func validateSMBLocalSpec(spec smbSpec) error {
 	if len(spec.PublicAddresses) > 0 {
 		return fmt.Errorf("public addresses require a separate HA/LB implementation")
 	}
-	if len(spec.JoinSources) > 0 || len(spec.CustomDNS) > 0 || spec.TLSCert != "" || spec.TLSKey != "" || spec.TLSCA != "" || spec.ClusterMetaURI != "" || spec.ClusterLockURI != "" {
-		return fmt.Errorf("unsupported SMB domain, remote-control or clustered sources")
+	if len(spec.JoinSources) > 0 || len(spec.CustomDNS) > 0 || spec.TLSCert != "" || spec.TLSKey != "" || spec.TLSCA != "" {
+		return fmt.Errorf("unsupported SMB domain or remote-control sources")
+	}
+	if spec.hasFeature("clustered") {
+		for _, uri := range []string{spec.ClusterMetaURI, spec.ClusterLockURI} {
+			if !smbCTDBURIPattern.MatchString(uri) {
+				return fmt.Errorf("invalid SMB clustered metadata/recovery URI")
+			}
+			err = validateSMBSourceURI(spec.ClusterID, uri)
+			if err != nil {
+				return err
+			}
+		}
+		if spec.ClusterMetaURI == spec.ClusterLockURI {
+			return fmt.Errorf("SMB cluster metadata and lock must be distinct")
+		}
+	} else if spec.ClusterMetaURI != "" || spec.ClusterLockURI != "" {
+		return fmt.Errorf("clustered sources require clustered SMB")
 	}
 	return nil
 }
@@ -62,8 +78,11 @@ func validateSMBLogicalPolicy(logical []byte, spec smbSpec) error {
 	if cluster.AuthMode != "" && cluster.AuthMode != "user" {
 		return fmt.Errorf("only local-user SMB authentication is supported")
 	}
-	if cluster.Clustering != "" && cluster.Clustering != "default" && cluster.Clustering != "never" {
-		return fmt.Errorf("only nonclustered SMB is supported; use clustering: never")
+	if cluster.Clustering != "" && cluster.Clustering != "default" && cluster.Clustering != "never" && cluster.Clustering != "always" {
+		return fmt.Errorf("unsupported logical SMB clustering policy")
+	}
+	if (cluster.Clustering == "always" && !spec.hasFeature("clustered")) || (cluster.Clustering == "never" && spec.hasFeature("clustered")) {
+		return fmt.Errorf("logical SMB clustering conflicts with generated spec")
 	}
 	return nil
 }
@@ -93,8 +112,8 @@ func validateSMBEffectivePolicy(spec smbSpec, description smbBindingDescription)
 	if err != nil {
 		return err
 	}
-	if description.Clustered || description.DomainController {
-		return fmt.Errorf("effective clustered or domain-controller mode is not supported")
+	if description.DomainController || description.Clustered != spec.hasFeature("clustered") {
+		return fmt.Errorf("effective clustering/domain mode conflicts with generated spec")
 	}
 	// Sambacc preserves order; only the last Samba-equivalent option wins.
 	effective := smbEffectiveGlobals(description)
@@ -119,9 +138,10 @@ func validateSMBEffectivePolicy(spec smbSpec, description smbBindingDescription)
 				return fmt.Errorf("effective server role is not prepared")
 			}
 		case "clustering":
-			switch smbPolicyOptionName(value) {
-			case "no", "false", "off", "0":
-			default:
+			value = smbPolicyOptionName(value)
+			enabled := value == "yes" || value == "true" || value == "on" || value == "1"
+			disabled := value == "no" || value == "false" || value == "off" || value == "0"
+			if (!enabled && !disabled) || enabled != spec.hasFeature("clustered") {
 				return fmt.Errorf("effective clustering override conflicts with generated spec")
 			}
 		}
